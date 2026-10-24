@@ -153,6 +153,7 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<LocalCommandProcessRegistry>();
         builder.Services.AddSingleton<CoreDevelopmentService>();
         builder.Services.AddSingleton<WorkspaceActivationPlanner>();
+        builder.Services.AddSingleton<CoreExecutionTargetService>();
         builder.Services.AddSingleton<WorkspaceActivationService>();
         builder.Services.AddSingleton<AppExecutionTargetService>();
         builder.Services.AddHostedService(sp => sp.GetRequiredService<AppExecutionTargetService>());

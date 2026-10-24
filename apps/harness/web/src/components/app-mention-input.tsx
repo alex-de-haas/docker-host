@@ -6,6 +6,7 @@ import { Popover, PopoverContent } from "@/components/ui/popover";
 import { InputGroupTextarea } from "@/components/ui/input-group";
 import { Button } from "@/components/ui/button";
 import { ContextAppIcon } from "@/components/context-app-icon";
+import { HostyLoader } from "../../../../../shared/web/hosty-states";
 import { cn } from "@/lib/utils";
 import { AssistantApiError, getSession, listContextApps, setSessionApps, type AssistantSession, type ContextApp } from "@/lib/assistant-api";
 import { editMentionDraft, insertMention, mentionQuery, readMentionDraft, writeMentionDraft, serializeMentions, type MentionDraft } from "@/lib/app-mentions";
@@ -161,7 +162,7 @@ export function AppMentionInput({ ref, value, onChange, session, inputRef, conte
   return <Popover open={open} onOpenChange={nextOpen => { if (!nextOpen) setDismissed(key); }}>
     <PopoverPrimitive.Anchor asChild>
       <div ref={wrapper} className="relative w-full min-w-0">
-        <div ref={mirror} aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-3 py-3 text-base text-transparent md:text-sm">
+        <div ref={mirror} data-slot="app-mention-mirror" aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-3 py-3 text-base text-transparent md:text-sm">
           {highlights}{value.slice(current.mentions.at(-1)?.end ?? 0)}{"\n"}
         </div>
         <InputGroupTextarea {...props} ref={inputRef} value={value} disabled={disabled} readOnly={saving || props.readOnly} aria-busy={saving}
@@ -222,12 +223,12 @@ export function AppMentionInput({ ref, value, onChange, session, inputRef, conte
           aria-selected={index === active} aria-disabled={saving || contextBusy || blocked(app)}
           className={cn("flex w-full items-center gap-2 rounded-md p-2 text-left aria-disabled:opacity-50", index === active && "bg-accent")}
           onMouseDown={event => event.preventDefault()} onMouseEnter={() => setActive(index)} onClick={() => void choose(app)}>
-          <ContextAppIcon app={app} /><span className="min-w-0"><span className="block truncate text-sm">{app.displayName}</span><span className="block break-all text-xs text-muted-foreground">{app.id}{blocked(app) ? " · 16-app limit reached" : ""}</span></span>
+          <ContextAppIcon app={app} /><span className="min-w-0"><span className="block truncate text-sm">{app.displayName}</span><span className="block break-all font-mono text-xs text-muted-foreground">{app.id}{blocked(app) ? " · 16-app limit reached" : ""}</span></span>
         </button>)}
       </div>
-      {(waiting || saving) && <p role="status" className="p-2 text-xs text-muted-foreground">{saving ? "Adding app to context…" : "Loading apps…"}</p>}
+      {(waiting || saving) && <p role="status" className="flex items-center gap-2 p-2 text-xs text-muted-foreground"><HostyLoader label={null} className="size-4 shrink-0" />{saving ? "Adding app to context…" : "Loading apps…"}</p>}
       {!waiting && !error && !apps.length && <p role="status" className="p-2 text-xs text-muted-foreground">No matching apps</p>}
-      {error && <div className="p-2"><p role="alert" className="text-xs text-destructive">{error}</p><Button type="button" size="sm" variant="ghost" onClick={() => setRetry(n => n + 1)}>Retry search</Button></div>}
+      {error && <div className="p-2"><p role="alert" className="text-xs text-destructive-foreground">{error}</p><Button type="button" size="sm" variant="ghost" onClick={() => setRetry(n => n + 1)}>Retry search</Button></div>}
       {next !== null && <Button type="button" variant="ghost" size="sm" disabled={loading || saving} onClick={() => {
         const request = generation.current; setLoading(true);
         void listContextApps(search ?? "", next).then(page => { if (generation.current === request) setResults(previous => ({ key, apps: [...previous.apps, ...page.apps], next: page.nextOffset })); })

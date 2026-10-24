@@ -19,7 +19,7 @@ beforeEach(() => {
 });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.resetAllMocks(); vi.unstubAllGlobals(); });
 const render = () => act(async () => root.render(<AppPermissions app={{ id: "legacy" } as CoreApp} />));
-const review = () => act(async () => [...container.querySelectorAll("button")].find(b => b.textContent === "Change permissions")!.click());
+const review = () => act(async () => [...container.querySelectorAll("button")].find(b => b.textContent === "Review permissions")!.click());
 it("distinguishes documentation access from full source access", async () => {
   state = { ...state, required: ["apps.sources.read"], optional: ["apps.sources.full"], missingRequired: [] };
   await render();
@@ -61,7 +61,7 @@ it("shows explicit empty and unavailable states", async () => {
   state = { ...state, status: "stale", error: "Invalid JSON" };
   await act(async () => [...container.querySelectorAll("button")].find(b => b.textContent === "Refresh")!.click());
   expect(container.textContent).toContain("The manifest could not be checked");
-  expect([...container.querySelectorAll("button")].some(b => b.textContent === "Change permissions")).toBe(false);
+  expect([...container.querySelectorAll("button")].some(b => b.textContent === "Review permissions")).toBe(false);
 });
 
 it("explains unsupported requirements and does not offer an impossible approval", async () => {
@@ -69,7 +69,7 @@ it("explains unsupported requirements and does not offer an impossible approval"
   await render();
   expect(container.textContent).toContain("Core does not support these required permissions: removed.permission");
   expect(container.textContent).not.toContain("Required permissions need approval");
-  const button = [...container.querySelectorAll("button")].find(b => b.textContent === "Change permissions")!;
+  const button = [...container.querySelectorAll("button")].find(b => b.textContent === "Review permissions")!;
   expect(button.disabled).toBe(true);
   await review();
   expect(api.prepare).not.toHaveBeenCalled();
@@ -82,4 +82,39 @@ it("opens Core-owned permission review for another app without asking Shell to c
   await review();
   expect(popup).toHaveBeenCalledWith("https://core.test/install/permissions/other.app", "_blank", "noopener,noreferrer");
   expect(api.prepare).not.toHaveBeenCalled(); expect(api.send).not.toHaveBeenCalled(); popup.mockRestore();
+});
+
+it("shows confirmed and unconfirmed provider roles separately without offering local grant controls", async () => {
+  state = { ...state, unconfirmedRoles: ["assistant"] };
+  await act(async () => root.render(<AppPermissions app={{ id: "legacy", confirmedRoles: ["telemetry"] } as CoreApp} />));
+  expect(container.querySelector('[aria-label="Confirmed provider roles"]')?.textContent).toContain("telemetry");
+  expect(container.textContent).toContain("separate app update review: assistant");
+  expect(container.querySelectorAll('[role="switch"], input')).toHaveLength(0);
+});
+it("reports failed reads and recovers without retaining stale error text", async () => {
+  vi.mocked(fetch).mockRejectedValueOnce(new Error("Permission service unavailable"));
+  await render(); expect(container.querySelector('[role="alert"]')?.textContent).toContain("Permission service unavailable");
+  await act(async () => [...container.querySelectorAll("button")].find(button => button.textContent === "Refresh")!.click());
+  expect(container.textContent).not.toContain("Permission service unavailable");
+  expect(container.querySelector('[aria-label="Required permissions"]')).not.toBeNull();
+});
+
+it("does not let an older read overwrite refreshed grant evidence", async () => {
+  let complete!: (value: Response) => void;
+  vi.mocked(fetch).mockImplementationOnce(() => new Promise<Response>(resolve => { complete = resolve; }));
+  await render();
+  state = { ...state, granted: state.required, missingRequired: [], reviewRequired: false };
+  await act(async () => window.dispatchEvent(new Event("focus")));
+  await act(async () => complete(Response.json({ ...state, granted: [], missingRequired: state.required })));
+  expect(container.textContent).not.toContain("Required permissions need approval");
+  expect(container.querySelector('[aria-label="Required permissions"]')?.textContent).toContain("Allowed");
+});
+
+it("labels workspace, test-environment and Core development permissions in plain words with exact unknown fallback", async () => {
+  state = { ...state, required: ["apps.workspaces.read", "apps.mcp.access.request", "apps.sandboxes.manage", "core.workspace.activate", "new.unknown.permission"], optional: [], missingRequired: [] };
+  await render();
+  const group = container.querySelector('[aria-label="Required permissions"]')!;
+  expect(group.textContent).toContain("Development workspace information"); expect(group.textContent).toContain("Request reviewed MCP access");
+  expect(group.textContent).toContain("Create and manage test environments"); expect(group.textContent).toContain("Run and return from a workspace Core build");
+  expect(group.textContent).toContain("new.unknown.permission");
 });

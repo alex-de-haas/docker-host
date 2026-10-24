@@ -1,4 +1,5 @@
 "use client";
+import { DemoAlert, DemoEmpty } from "./DemoFeedback";
 import { Users } from "lucide-react";
 import {
   DemoNavigation,
@@ -50,9 +51,7 @@ export function DemoPeople({ config }: { config: DemoConfig }) {
           {directory.users.length > 0 ? (
             <PeopleList users={directory.users} />
           ) : (
-            <p className="text-sm leading-6 text-muted-foreground">
-              {directory.error?.message || "No assigned Host users were returned."}
-            </p>
+            directory.error ? <DemoAlert>{directory.error.message}</DemoAlert> : <DemoEmpty title="No assigned users">Assign users to this app in Core to see them here.</DemoEmpty>
           )}
         </SectionCard>
       </section>

@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Field,
   FieldDescription,
@@ -15,6 +17,7 @@ import { AgentRuntime } from "@/components/agent-runtime";
 import { AgentProviders } from "@/components/agent-providers";
 import { TranslationProviders } from "@/components/translation-providers";
 import { McpAccess } from "@/components/mcp-access";
+import { HostyLoader } from "../../../../../shared/web/hosty-states";
 import {
   loadSettings,
   saveSettings,
@@ -100,14 +103,14 @@ export function GatewaySettings({
   if (!data) {
     return (
       <main className="mx-auto w-full max-w-7xl p-4 sm:p-6 text-sm text-muted-foreground">
-        Loading…
+        <p role="status" className="flex items-center gap-2"><HostyLoader label={null} className="size-4 shrink-0" />Loading…</p>
       </main>
     );
   }
 
   return (
     <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 p-4 sm:p-6 lg:p-8">
-      <h1 className="text-2xl font-semibold tracking-tight">Hosty Harness</h1>
+      <h1 className="text-2xl font-semibold tracking-[-0.02em]">Hosty Harness</h1>
       <Tabs defaultValue={section} className="gap-6">
         <div className="-m-1 overflow-x-auto overflow-y-hidden p-1">
           <TabsList variant="line" aria-label="Hosty Harness settings">
@@ -155,19 +158,19 @@ export function GatewaySettings({
             <Field>
               <FieldLabel htmlFor="ordinary-retention">Ordinary chat retention (days)</FieldLabel>
               <FieldDescription>After the last conversation activity. Leave empty for Off. Live sandbox-only sessions remain protected until Finish.</FieldDescription>
-              <input id="ordinary-retention" type="number" min={1} max={3650} step={1} placeholder="Off" className="rounded-md border bg-background px-3 py-2" value={ordinaryDays} onChange={event => setOrdinaryDays(event.target.value)} />
+              <Input id="ordinary-retention" type="number" min={1} max={3650} step={1} placeholder="Off" value={ordinaryDays} onChange={event => setOrdinaryDays(event.target.value)} />
             </Field>
             <Field>
               <FieldLabel htmlFor="workspace-retention">Completed workspace retention (days)</FieldLabel>
               <FieldDescription>After explicit Core-verified completion or later conversation activity. Leave empty for Off. Unfinished and deferred workspaces never expire. Core rechecks all repositories before deleting worktrees, owned previews and the conversation. Background source cleanup requires the reviewed apps.workspaces.cleanup permission.</FieldDescription>
-              <input id="workspace-retention" type="number" min={1} max={3650} step={1} placeholder="Off" className="rounded-md border bg-background px-3 py-2" value={completedDays} onChange={event => setCompletedDays(event.target.value)} />
+              <Input id="workspace-retention" type="number" min={1} max={3650} step={1} placeholder="Off" value={completedDays} onChange={event => setCompletedDays(event.target.value)} />
             </Field>
             <div><Button size="sm" disabled={busy || [ordinaryDays, completedDays].some(value => value !== "" && (!Number.isInteger(Number(value)) || Number(value) < 1 || Number(value) > 3650))}
               onClick={() => void save({ retention: { ordinaryDays: ordinaryDays === "" ? null : Number(ordinaryDays), completedWorkspaceDays: completedDays === "" ? null : Number(completedDays) } })}>Save retention</Button></div>
             <Field>
-              <label className="flex items-center gap-2">
-                <input type="checkbox" checked={data.settings.immediateHandoffs === true} disabled={busy}
-                  onChange={event => void save({ immediateHandoffs: event.target.checked })} />
+              <label htmlFor="immediate-handoffs" className="flex items-center gap-2">
+                <Checkbox id="immediate-handoffs" checked={data.settings.immediateHandoffs === true} disabled={busy}
+                  onCheckedChange={checked => void save({ immediateHandoffs: checked === true })} />
                 Start received prompts immediately
               </label>
               <FieldDescription>Off by default: received prompts wait as drafts. Enabling this also lets authorized apps submit prompts without individual Send confirmation. Tool permissions still apply.</FieldDescription>

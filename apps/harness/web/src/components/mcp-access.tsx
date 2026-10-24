@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown, Info, RefreshCw } from "lucide-react";
+import { HostyLoader } from "../../../../../shared/web/hosty-states";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -66,20 +67,22 @@ export function McpAccess({ data, onRefresh }: { data: SettingsResponse; busy: b
   const [latest, setLatest] = useState(data);
   const [draft, setDraft] = useState(() => initial(data));
   const [catalogs, setCatalogs] = useState<ToolCatalog[]>(data.toolCatalogs ?? []);
-  const [dirty, setDirty] = useState(false), [busy, setBusy] = useState(false), [loading, setLoading] = useState(false);
+  const [dirty, setDirty] = useState(false), [busy, setBusy] = useState(false), [loading, setLoading] = useState(true);
   const [error, setError] = useState(""), [status, setStatus] = useState(""), [review, setReview] = useState<Review | null>(null);
   const pending = useRef<{ input: unknown; review?: Review } | null>(null);
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
     let active = true;
+    const abort = new AbortController();
     // Catalogs are loaded on entry, not polled. Discovery never replaces the access draft.
-    void call("/settings/tools").then(response => response.json()).then((result: { catalogs: ToolCatalog[]; unavailable?: string[] }) => {
+    void call("/settings/tools", { signal: abort.signal }).then(response => response.json()).then((result: { catalogs: ToolCatalog[]; unavailable?: string[] }) => {
       if (!active) return;
       setCatalogs(result.catalogs);
       if (result.unavailable?.length) setError(`Could not load tools for ${result.unavailable.join(", ")}. Existing choices are preserved.`);
-    }).catch(cause => { if (active) setError(cause instanceof Error ? cause.message : String(cause)); });
-    return () => { active = false; mounted.current = false; };
+    }).catch(cause => { if (active) setError(cause instanceof Error ? cause.message : String(cause)); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; mounted.current = false; abort.abort(); };
   }, []);
   const [previousData, setPreviousData] = useState(data);
   if (previousData !== data) {
@@ -178,9 +181,10 @@ export function McpAccess({ data, onRefresh }: { data: SettingsResponse; busy: b
   const enabled = entries.filter(p => (draft.access[p.appId]?.enabled ?? p.offered) && catalogs.some(c => c.provider === p.appId));
   const allModes = enabled.flatMap(p => { const c = catalogs.find(c => c.provider === p.appId)!; return c.tools.filter(t => !draft.access[p.appId]?.denied.includes(t.name) && !locallyDisabled(c, t.name)).map(t => mode(c, t.name)); });
   return <FieldGroup>
-    <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-2"><h2 className="text-base font-semibold">MCP & tools</h2>
+    <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-2"><h2 className="text-lg font-semibold tracking-[-0.01em]">MCP & tools</h2>
       <Popover><PopoverTrigger asChild><Button variant="ghost" size="icon" aria-label="About new tools"><Info /></Button></PopoverTrigger><PopoverContent>New tools from enabled applications become available automatically. Tools you explicitly disable remain disabled.</PopoverContent></Popover></div>
       <Button variant="outline" disabled={busy || loading} onClick={() => void refresh()}><RefreshCw data-icon="inline-start" />{loading ? "Loading…" : "Refresh tools"}</Button></div>
+    {loading && <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><HostyLoader label={null} className="size-4" />Loading tools…</p>}
     {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
     {base.discovery !== "ok" && <Alert><AlertDescription>Core is unavailable. Existing access choices are unchanged.</AlertDescription></Alert>}
     <Field orientation="horizontal"><FieldLabel>All enabled applications</FieldLabel><ModeSelect label="Approval for all enabled applications" disabled={busy || loading || !enabled.length}
@@ -198,7 +202,7 @@ export function McpAccess({ data, onRefresh }: { data: SettingsResponse; busy: b
         <ModeSelect label={`Approval for ${provider.displayName}`} disabled={busy || loading || !access.enabled || !catalog}
           value={new Set(modes).size > 1 ? "mixed" : modes[0] ?? draft.defaults[id]?.mode ?? "ask"} change={value => bulk([id], value)} />
       </div><CollapsibleContent className="pt-4"><FieldSet disabled={busy || loading}><FieldLegend className="sr-only">{provider.displayName} tools</FieldLegend><FieldGroup>
-        {!catalog && <p className="text-sm text-muted-foreground">{provider.running ? "Refresh tools to load this application’s catalog." : "Start this application to preview its tools."}</p>}
+        {!catalog && !loading && <p className="text-sm text-muted-foreground">{provider.running ? "Refresh tools to load this application’s catalog." : "Start this application to preview its tools."}</p>}
         {catalog && tools.map(tool => <Field key={tool.name} orientation="responsive"><div className="flex min-w-0 flex-1 items-start gap-3">
           <Checkbox id={`tool-${id}-${tool.name}`} disabled={!access.enabled} checked={access.enabled && !access.denied.includes(tool.name) && !locallyDisabled(catalog, tool.name)}
             onCheckedChange={checked => {

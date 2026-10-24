@@ -1,6 +1,6 @@
 ---
 created: 2026-09-29
-updated: 2026-09-29
+updated: 2026-10-21
 summary: GitHub pull request publication, review, merge and completion for assistant session workspaces.
 components: [apps/core, apps/harness]
 ---
@@ -32,6 +32,11 @@ Provider credentials stay in Core, including authenticated Git push. Credentials
 process environment overrides, with configured credential helpers, redirects and hooks suppressed.
 They are absent from MCP configuration, API responses, operation records and audit details.
 The external read-only facade and delegated Core MCP grants remain read-only.
+
+New-comment admission borrows the already-held selected connection to recheck private source grants
+without re-entering the per-user credential gate. Each checked grant must name that same connection.
+A worktree with private grants for different connection IDs is refused before the comment POST.
+Existing source-read, reply and resolve validation retain their existing paths.
 
 Local agents still have the accepted cooperative working-directory contract. This API does not claim
 exclusive Git access or a filesystem sandbox. Native edits and commits are observed by the existing
@@ -87,6 +92,48 @@ no blocking/required review decision and no failed, pending or unknown checks. G
 repository protection and allowed merge methods. Core defaults to a regular merge; squash/rebase
 require an explicit method and remain subject to repository policy.
 
+## Operator Review In Harness
+
+The workspace inspection API adds `GET /{workspaceId}/worktrees/{id}/review` and `/review/diff`
+under `/api/internal/apps/{appId}/workspace-inspection`. Scopes are `local`, `session`, `target`
+and `pull-request`; a PR scope names an exact bound `pullRequestUrl`. Inventory returns an opaque
+revision, source SHAs, bounded files and full review coordinates. File reads accept that revision
+and reject a changed source. Target uses the cached target ref, without network fetch. PR snapshots
+use the selected connection's authenticated compare response, immutable merge base/head and bounded
+validated patches; incomplete provider responses fail explicitly. Read authorization checks current
+workspace/source access before and after provider/Git reads. General workspace inventory continues
+to omit private comment bodies.
+
+`POST /{workspaceId}/worktrees/{id}/reviews/reply`, `/reviews/resolve` and `/reviews/comment` require the same own-app
+service/user authority, administrator and source-management permission. Each command names its exact
+PR URL, expected published head, thread ID, UUID and explicit `authorIntent`; replies also carry a
+body. New comments carry `path`, `diffSide`, `startLine` and `line` with an empty `threadId`;
+the response returns the created thread and comment IDs. The operator must own the selected GitHub connection, including when inspecting another
+administrator's workspace. Dirty local edits do not prevent discussion or get staged/published by it.
+Current PR/thread identity is refreshed before a new mutation. The browser BFF enforces same origin
+for POST and does not accept delegated facade credentials for these operations.
+
+A separate worktree review journal binds operation UUIDs and immutable fingerprints to user,
+connection, repository and PR. Pending operations cannot be overtaken. A reply records intent before
+posting and includes a recovery marker that is removed from returned comment text. After uncertain
+admission, retry only reconciles that marker; it never blindly posts a second reply. Resolution
+reconciles an already-resolved thread. The browser retains the full original pending command across
+reloads, preserving its expected head even after a provider refresh. An unavailable result remains
+pending. New comments validate a positive ordered same-side range entirely within one complete
+published patch hunk, refresh the PR immediately before admission and pin the REST request's
+`commit_id` to the expected head. Root-thread marker reconciliation precedes moved-head/closed-state
+checks and never reposts a possibly accepted comment. Malformed post confirmations stay pending.
+Ordinary legacy reply/resolve fingerprints retain their original serialized shape.
+
+Review observations retain compatibility with the original comment-body array while adding each
+comment's identity, author login/kind, timestamp and URL. Threads include current/original line ranges,
+start/end sides, outdated/file state and explicit comment completeness. Local overlap evidence is
+separate from provider resolution and does not mark feedback addressed.
+Working review scopes may name an explicit comparison PR; their source identity includes its URL
+and published head, and file responses distinguish complete unpublished RIGHT-side working-line
+ranges from unavailable evidence. These ranges never authorize posting working coordinates.
+
+
 ## Observation And Completion
 
 A Core background service observes draft, ready and completed-contribution PRs every thirty seconds,
@@ -117,7 +164,13 @@ A corrective operation preserves the merged PR reference and starts a fresh remo
 for the same registered checkout. The corrective branch is a sibling ref so the original remote
 branch can remain present. Subsequent publish creates a new PR; the prior merged PR is not
 updated. The assistant performs required source corrections/target integration in the worktree and
-can explicitly configure the new cycle's release selectors before publication.
+can explicitly configure the new cycle's release selectors before publication. The historical reference
+retains the merged PR's last observed summary, including title, state, merge time when supplied by
+GitHub, CI/review totals, head and observation time. Review comment bodies are not copied into this
+summary. Inspection projects it only under the existing publication owner, connection and repository
+checks and only when its head matches the historical reference. It is labelled historical evidence;
+it is not refreshed implicitly and cannot satisfy a new PR's merge checks. Older references without
+a retained observation remain unknown rather than being reconstructed from the active PR.
 
 Complete accepts `merged`, `submitted` or `abandoned`. Merged requires verified post-merge evidence;
 submitted requires the intended open PR and records **Submitted for review**, without waiting for an
@@ -143,6 +196,10 @@ agent; there are no new Publish/Merge/Complete buttons. Existing workspace contr
 ## Testing Expectations
 
 - Verify ownership, installation/permission revocation, connection ownership and credential exclusion.
+- Verify immutable PR/target comparisons, exact revision guards, full side/range coordinates and
+  incomplete patches without index/ref mutations or dropped threads.
+- Exercise reply/resolve recovery with moved heads, closed PRs, lost/unknown replies, unchanged UUIDs,
+  own-user authority and deletion races. Verify review-journal cleanup retains other owners.
 - Exercise lost create/merge responses with identical retry IDs, changed arguments, external actions,
   mismatched PR associations, stale heads, failed/unknown CI and unresolved reviews.
 - Verify verified/user-configured attribution, commit retry identity and retained contributors.

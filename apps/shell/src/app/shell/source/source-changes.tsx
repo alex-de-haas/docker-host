@@ -1,7 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Boxes, GitBranch } from "lucide-react";
+import { GitBranch, Hammer } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { readCoreError, redirectToCoreLoginIfAuthRequired } from "../core-api";
 import { fetchCore } from "../core-transport.js";
@@ -59,26 +61,14 @@ function sourceLabel(status: SourceStatus | null, error: string | null, includeC
   return includeCommit ? `${branch} · ${status.head?.slice(0, 8) ?? "no commits"}` : branch;
 }
 
-export function SourceVersionCell({ app, workspace }: {
-  app: CoreApp; workspace?: WorkspaceSource;
+export function SourceVersionCell({ app, workspace, compact = false }: {
+  app: CoreApp; workspace?: WorkspaceSource; compact?: boolean;
 }) {
   const { canManageApps } = useShellState();
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const { status, error } = useSourceStatus(`/api/apps/${encodeURIComponent(app.id)}/source`, canManageApps, `${app.sourceOverridePath}:${app.sourceManagedPath}`);
-  if (!canManageApps) return <span className="font-mono text-sm" title="Manifest version">{app.version}</span>;
-  return <div className="flex min-w-0 flex-col gap-1">
-    <TooltipProvider delayDuration={150}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span tabIndex={0} aria-label={workspace ? `Workspace: ${workspace.label}` : undefined}
-            className="flex min-w-0 cursor-help items-center gap-1 text-sm">
-            {workspace ? <Boxes aria-hidden="true" className="size-3.5 shrink-0" />
-              : <GitBranch aria-hidden="true" className="size-3.5 shrink-0" />}
-            <span className={`truncate underline decoration-dotted decoration-muted-foreground/70 underline-offset-4${workspace ? "" : " font-mono"}`}>
-              {workspace?.label ?? sourceLabel(status, error, false)}
-            </span>
-          </span>
-        </TooltipTrigger>
-        <TooltipContent className="max-w-sm">
+  if (!canManageApps) return <span className="font-mono text-xs" title="Manifest version">{app.version}</span>;
+  const details = (
           <div className="space-y-1">
             <div className="font-medium">{app.displayName} · source</div>
             {workspace && <div className="break-all">Workspace: {workspace.label}</div>}
@@ -98,11 +88,33 @@ export function SourceVersionCell({ app, workspace }: {
               <div className="opacity-80">Observed {new Date(status.observedAt).toLocaleTimeString()}</div>
             </>}
           </div>
-        </TooltipContent>
+  );
+  return <div className={compact ? "contents" : "flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1"}>
+    <TooltipProvider delayDuration={150}>
+      <Popover open={detailsOpen} onOpenChange={setDetailsOpen}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+        <PopoverTrigger asChild>
+          <Button variant="ghost" size="sm" type="button" aria-label={workspace ? `Workspace: ${workspace.label}` : `Source details for ${app.displayName}`}
+            className="h-auto max-w-full min-w-0 justify-start gap-1.5 rounded-none p-0 has-[>svg]:px-0 font-mono text-xs font-normal text-current underline decoration-dotted decoration-muted-foreground/70 underline-offset-4 hover:bg-transparent hover:text-current dark:hover:bg-transparent">
+            {workspace ? <Hammer data-icon="inline-start" className="size-3" aria-hidden /> : <GitBranch data-icon="inline-start" className="size-3" aria-hidden />}
+            <span className="truncate">
+              {workspace?.label ?? sourceLabel(status, error, false)}
+            </span>
+          </Button>
+        </PopoverTrigger>
+        </TooltipTrigger>
+        {!detailsOpen && <TooltipContent className="max-w-sm">
+          {details}
+        </TooltipContent>}
       </Tooltip>
+      <PopoverContent className="w-80 max-w-[calc(100vw-2rem)] text-xs" align="start" aria-label={`Source details for ${app.displayName}`}>{details}</PopoverContent>
+      </Popover>
     </TooltipProvider>
     {!error && status && ["clean", "changes"].includes(status.state) &&
-      <SourceChangeSummary fileCount={status.fileCount} truncated={status.truncated} lineStats={status.lineStats} />}
+      <span className="inline-flex min-w-0 items-center gap-2"><span aria-hidden="true">·</span>
+        <SourceChangeSummary fileCount={status.fileCount} truncated={status.truncated} lineStats={status.lineStats} />
+      </span>}
   </div>;
 }
 

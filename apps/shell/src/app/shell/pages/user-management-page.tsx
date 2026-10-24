@@ -1,6 +1,7 @@
 "use client";
 
 import { SettingsTokensSection } from "./settings-tokens-section";
+import { HostyEmptySlots, HostyLoader } from "../../../../../../shared/web/hosty-states";
 import { fetchCore } from "../core-transport.js";
 
 
@@ -10,10 +11,12 @@ import { Check, CheckCircle2, LoaderCircle, MoreHorizontal, Trash2, UserCog, Use
 import { toast } from "@/components/reui/operation-toast";
 import { useConfirmation } from "@/components/reui/confirmation";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatDateTime } from "../app-helpers";
@@ -226,7 +229,7 @@ export function UserManagementPanel({
       <h2 className="sr-only">User Management</h2>
 
       <Dialog open={Boolean(credentialUser)} onOpenChange={open => { if (!open) setCredentialUser(null); }}><DialogContent className="sm:max-w-4xl"><DialogHeader><DialogTitle>{credentialUser?.displayName || credentialUser?.email}</DialogTitle><DialogDescription>Account access</DialogDescription></DialogHeader><DialogBody>
-        {credentialUser && <SettingsTokensSection coreOrigin={coreOrigin} sendCsrfJson={sendCsrfJson} userId={credentialUser.id} />}
+        {credentialUser && <SettingsTokensSection coreOrigin={coreOrigin} actorId={activeUser?.id} sendCsrfJson={sendCsrfJson} userId={credentialUser.id} />}
       </DialogBody></DialogContent></Dialog>
       {error && <InlineError message={error} />}
 
@@ -259,9 +262,9 @@ export function UserManagementPanel({
             </TableHeader>
             <TableBody>
               {loading ? (
-                <TableRow><TableCell colSpan={7} className="py-10 text-center text-muted-foreground">Loading users</TableCell></TableRow>
+                <TableRow><TableCell colSpan={7} className="py-10 text-center text-muted-foreground"><span role="status" className="flex items-center justify-center gap-2"><HostyLoader className="size-5" label={null} />Loading users</span></TableCell></TableRow>
               ) : filteredUsers.length === 0 ? (
-                <TableRow><TableCell colSpan={7} className="py-10 text-center text-muted-foreground">No users</TableCell></TableRow>
+                <TableRow><TableCell colSpan={7} className="py-10 text-center text-muted-foreground"><span className="flex flex-col items-center gap-3">{!error && <HostyEmptySlots className="size-12" />}No users</span></TableCell></TableRow>
               ) : filteredUsers.map((user) => (
                 <TableRow key={user.id}>
                   <TableCell>
@@ -294,7 +297,7 @@ export function UserManagementPanel({
       </Card>
 
       {pendingInvitations.length === 0 ? (
-        <p className="text-sm text-muted-foreground">Pending invitations · {loading ? "Loading…" : "0"}</p>
+        <p className="flex items-center gap-2 text-sm text-muted-foreground">Pending invitations · {loading ? <span role="status" className="inline-flex items-center gap-2"><HostyLoader className="size-5" label={null} />Loading…</span> : "0"}</p>
       ) : (
       <Card className="border-0 bg-transparent py-0 shadow-none">
         <CardHeader className="px-0">
@@ -352,22 +355,28 @@ export function UserManagementPanel({
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="inviteRole">Role</Label>
-                  <select id="inviteRole" className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={inviteRole} onChange={(event) => {
-                    const role = event.target.value === "host.admin" ? "host.admin" : "host.user";
+                  <Select value={inviteRole} onValueChange={(value) => {
+                    const role = value === "host.admin" ? "host.admin" : "host.user";
                     setInviteRole(role);
                     if (role === "host.admin") {
                       setInviteAppIds([]);
                     }
                   }}>
-                    <option value="host.user">User</option>
-                    <option value="host.admin">Admin</option>
-                  </select>
+                    <SelectTrigger id="inviteRole" className="w-full"><SelectValue /></SelectTrigger>
+                    <SelectContent><SelectGroup>
+                      <SelectItem value="host.user">User</SelectItem>
+                      <SelectItem value="host.admin">Admin</SelectItem>
+                    </SelectGroup></SelectContent>
+                  </Select>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="inviteTtl">Expires</Label>
-                  <select id="inviteTtl" className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={inviteTtlMs} onChange={(event) => setInviteTtlMs(Number(event.target.value))}>
-                    {ttlOptions.map((option) => <option key={option.ttlMs} value={option.ttlMs}>{option.label}</option>)}
-                  </select>
+                  <Select value={String(inviteTtlMs)} onValueChange={(value) => setInviteTtlMs(Number(value))}>
+                    <SelectTrigger id="inviteTtl" className="w-full"><SelectValue /></SelectTrigger>
+                    <SelectContent><SelectGroup>
+                      {ttlOptions.map((option) => <SelectItem key={option.ttlMs} value={String(option.ttlMs)}>{option.label}</SelectItem>)}
+                    </SelectGroup></SelectContent>
+                  </Select>
                 </div>
               </div>
               {inviteRole === "host.user" && (
@@ -377,7 +386,7 @@ export function UserManagementPanel({
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setInviteOpen(false)}>Cancel</Button>
               <Button type="submit" disabled={pendingAction === "invite"}>
-                {pendingAction === "invite" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
+                {pendingAction === "invite" ? <LoaderCircle className="h-4 w-4 animate-spin motion-reduce:animate-none" /> : <UserPlus className="h-4 w-4" />}
                 Generate link
               </Button>
             </DialogFooter>
@@ -414,7 +423,7 @@ export function UserManagementPanel({
               <DialogFooter>
                 <Button type="button" variant="outline" onClick={() => setAccessUserId(null)}>Cancel</Button>
                 <Button type="button" onClick={saveAccess} disabled={pendingAction === `access:${accessUser.id}`}>
-                  {pendingAction === `access:${accessUser.id}` ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                  {pendingAction === `access:${accessUser.id}` ? <LoaderCircle className="h-4 w-4 animate-spin motion-reduce:animate-none" /> : <Check className="h-4 w-4" />}
                   Save access
                 </Button>
               </DialogFooter>
@@ -467,18 +476,18 @@ function UserRowActionsMenu({
           </DropdownMenuItem>
         )}
         <DropdownMenuItem disabled={roleActionDisabled} onClick={() => onUpdateRole(user)}>
-          {pendingAction === roleActionKey ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+          {pendingAction === roleActionKey ? <LoaderCircle className="h-4 w-4 animate-spin motion-reduce:animate-none" /> : <CheckCircle2 className="h-4 w-4" />}
           {roleActionLabel}
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         {user.disabled ? (
-          <DropdownMenuItem className="text-destructive focus:text-destructive" disabled={purgeActionDisabled} onClick={() => onPurgeUser(user)}>
-            {pendingAction === purgeActionKey ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+          <DropdownMenuItem className="text-destructive-foreground focus:text-destructive-foreground" disabled={purgeActionDisabled} onClick={() => onPurgeUser(user)}>
+            {pendingAction === purgeActionKey ? <LoaderCircle className="h-4 w-4 animate-spin motion-reduce:animate-none" /> : <Trash2 className="h-4 w-4" />}
             Delete permanently
           </DropdownMenuItem>
         ) : (
-          <DropdownMenuItem className="text-destructive focus:text-destructive" disabled={disableActionDisabled} onClick={() => onDisableUser(user)}>
-            {pendingAction === disableActionKey ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <UserX className="h-4 w-4" />}
+          <DropdownMenuItem className="text-destructive-foreground focus:text-destructive-foreground" disabled={disableActionDisabled} onClick={() => onDisableUser(user)}>
+            {pendingAction === disableActionKey ? <LoaderCircle className="h-4 w-4 animate-spin motion-reduce:animate-none" /> : <UserX className="h-4 w-4" />}
             Disable
           </DropdownMenuItem>
         )}
@@ -503,11 +512,10 @@ function AppAccessPicker({ apps, selectedAppIds, onChange }: { apps: AssignableA
           <div className="p-3 text-sm text-muted-foreground">No runtime apps</div>
         ) : options.map((app) => (
           <label key={app.id} className="flex cursor-pointer items-center gap-3 border-b px-3 py-2 text-sm last:border-b-0">
-            <input
-              type="checkbox"
+            <Checkbox
               checked={selected.has(app.id)}
-              onChange={(event) => {
-                if (event.target.checked) {
+              onCheckedChange={(checked) => {
+                if (checked === true) {
                   onChange(Array.from(new Set([...selectedAppIds, app.id])).sort());
                 } else {
                   onChange(selectedAppIds.filter((candidate) => candidate !== app.id));

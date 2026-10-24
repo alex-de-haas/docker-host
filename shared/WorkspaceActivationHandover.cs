@@ -16,6 +16,7 @@ internal interface IWorkspaceActivationRuntime
     Task ReleasePreparationAsync(string id);
     Task RestorePreviousAsync(WorkspaceRuntimeActivation activation);
     Task ValidateAuthorityAsync(string id) => Task.CompletedTask;
+    Task ValidateCoreContractAsync(WorkspaceRuntimeActivation activation) => Task.CompletedTask;
     Task<WorkspaceReturnAppState[]> CaptureReturnAppsAsync(WorkspaceRuntimeActivation activation) => Task.FromResult(Array.Empty<WorkspaceReturnAppState>());
     Task RestoreReturnAppsAsync(WorkspaceRuntimeActivation activation, WorkspaceReturnAppState[] apps) => Task.CompletedTask;
     Task ReturnAppsAsync(string id) => throw new NotSupportedException("Workspace Return is unavailable.");
@@ -31,7 +32,8 @@ internal sealed class WorkspaceActivationHandover(string root, IWorkspaceActivat
             await new WorkspaceActivationReturn(root, runtime).RunAsync(id);
             return;
         }
-        if (a.Phase is "active" or "returned" or "cancelled") return;
+        if (a.Phase == "active") { CompleteReplacement(root, a); return; }
+        if (a.Phase is "returned" or "cancelled") return;
         if (a.Phase is "preparing") throw new InvalidOperationException("Prepare the original request before activation.");
         try
         {
@@ -60,6 +62,7 @@ internal sealed class WorkspaceActivationHandover(string root, IWorkspaceActivat
                     var prepared = await runtime.BuildAsync(a.CoreProject);
                     a = Save(a with { PreparedExecutable = prepared.Executable, Generation = prepared.Generation });
                 }
+                if (a.CoreProject is not null) await runtime.ValidateCoreContractAsync(a);
                 WorkspaceActivationSupervisor.CheckCancellation(root, id);
                 await runtime.ApplyAppsAsync(id);
                 a = WorkspaceRuntimeFiles.Read(root, id);
@@ -70,6 +73,7 @@ internal sealed class WorkspaceActivationHandover(string root, IWorkspaceActivat
             }
             if (a.Phase == "core-stopping")
             {
+                await runtime.ValidateCoreContractAsync(a);
                 WorkspaceActivationSupervisor.CheckCancellation(root, id);
                 var current = await runtime.ObserveAsync();
                 if (current is not null)
@@ -98,6 +102,7 @@ internal sealed class WorkspaceActivationHandover(string root, IWorkspaceActivat
             }
             if (a.Phase == "core-starting")
             {
+                await runtime.ValidateCoreContractAsync(a);
                 WorkspaceActivationSupervisor.CheckCancellation(root, id);
                 var current = await runtime.ObserveAsync();
                 if (current is null)
@@ -121,7 +126,8 @@ internal sealed class WorkspaceActivationHandover(string root, IWorkspaceActivat
                 if (current is null || !IsCandidate(a, current.Launch))
                     throw new IOException("The candidate Core is unavailable or has changed. Retain the operation for recovery.");
                 await runtime.VerifyAppsAsync(id);
-                Save(a with { Phase = "active", ActivatedCore = current.Launch, Error = null });
+                a = Save(a with { Phase = "active", ActivatedCore = current.Launch, Error = null });
+                CompleteReplacement(root, a);
             }
             else if (a.Phase != "active") throw new InvalidOperationException("The retained phase requires explicit recovery: " + a.Phase);
         }
@@ -151,6 +157,33 @@ internal sealed class WorkspaceActivationHandover(string root, IWorkspaceActivat
             throw;
         }
     }
+    // The new owner's verified active receipt is written first. A lost write between these two
+    // files is reconciled under launch.lock by the next admission or replay; apps remain untouched.
+    internal static void CompleteReplacement(string root, WorkspaceRuntimeActivation activation)
+    {
+        if (activation.ReplacesCoreActivationId is not { } replaced || activation.Phase != "active" ||
+            activation.CoreReturned || activation.ActivatedCore is null) return;
+        if (!IsCandidate(activation, activation.ActivatedCore))
+            throw new InvalidOperationException("The replacement Core has no verified candidate identity.");
+        var previous = WorkspaceRuntimeFiles.Read(root, replaced);
+        if (previous.CoreReturned && previous.CoreSupersededBy == activation.Id) return;
+        if (previous.Phase != "active" || previous.CoreReturned || previous.ActivatedCore != activation.PreviousCore ||
+            !IsCandidate(previous, activation.PreviousCore) ||
+            previous.Returns?.Any(r => r.State == "pending") == true)
+            throw new InvalidOperationException("The reviewed previous Core activation changed. Retain both receipts for reconciliation.");
+        WorkspaceRuntimeFiles.Save(root, previous with
+        {
+            CoreReturned = true, CoreSupersededBy = activation.Id, CoreReserved = false,
+            Phase = previous.Apps.All(app => (previous.ReturnedApps ?? []).Contains(app)) ? "returned" : "active"
+        });
+    }
+
+    internal static void ReconcileReplacements(string root)
+    {
+        foreach (var activation in WorkspaceRuntimeFiles.List(root).Where(a => a.Phase == "active" &&
+            !a.CoreReturned && a.ReplacesCoreActivationId is not null)) CompleteReplacement(root, activation);
+    }
+
     private FileStream StoppedLock()
     {
         var directory = Path.Combine(root, "core", "run");

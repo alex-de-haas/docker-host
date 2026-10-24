@@ -56,7 +56,7 @@ export function readAppCredential(request: IncomingMessage): string | null {
   return readIdentityCookie(request);
 }
 
-export async function resolveAppSession(token: string | null): Promise<AppSessionResult> {
+export async function resolveAppSession(token: string | null, signal?: AbortSignal): Promise<AppSessionResult> {
   if (!token) {
     return { status: "not-present" };
   }
@@ -74,7 +74,7 @@ export async function resolveAppSession(token: string | null): Promise<AppSessio
     response = await fetch(new URL("/api/auth/apps/revalidate", coreOrigin), {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${serviceToken}` },
-      body: JSON.stringify({ accessToken: token }),
+      body: JSON.stringify({ accessToken: token }), signal,
     });
   } catch {
     // Core unreachable is transient and must not read as "refused": the difference decides whether

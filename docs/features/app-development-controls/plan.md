@@ -1,8 +1,8 @@
 ---
 status: In Progress
 created: 2026-09-16
-updated: 2026-10-20
-summary: Deferred source-override migration assessment after unified ordinary-app dev mode, live data, shared manual and MCP control, and recoverable runtime return.
+updated: 2026-10-24
+summary: Deferred source-override migration assessment and retained legacy development-request refusal recovery after unified ordinary-app development.
 components: [apps/core, apps/cli, apps/harness, apps/shell]
 ---
 
@@ -18,7 +18,7 @@ coverage limits and fixture cleanup are in the
 passes the real Codex/browser journey on released artifacts, including restart/replay and cleanup.
 It does not change D1's scope or approval boundary.
 
-The remaining work is D1: assess whether removing source overrides can preserve private/local
+The remaining work includes D1: assess whether removing source overrides can preserve private/local
 source, external-agent and system self-development workflows. This is deliberately outside the
 approved ordinary-app implementation. Existing overrides remain available. Do not remove them or
 start a migration without a separate owner decision.
@@ -62,6 +62,17 @@ overrides or close that assessment automatically.
 - System applications and unsupported native/mixed/non-Git profiles retain their existing manual
   behavior. Their parity must be assessed before any broader migration.
 
+## Recorded Pre-admission Refusal (2026-10-24)
+
+A legacy manual dev-apply restart on an active workspace with an editing lease returns
+workspace_in_use before runtime replacement, but has already appended a pending receipt and a
+recoverable-operation error. The documented generic Restart subsequently refreshes the existing
+public-source binding successfully; it does not retire that legacy receipt. Current ordinary app
+summaries remain healthy. Preserve the original request and audit evidence; do not edit the
+journal, release an active writer lease or replay under a different authority to hide the result.
+D10 records the repair separately from the authorized app application and visual-polish batch;
+implementation and any required Core restart need their own approval.
+
 ## Deliverables
 
 
@@ -79,6 +90,8 @@ by ordinary-app acceptance or silently removed when this milestone ships.
 - [x] D7. Verify the selected host/profile/authority matrix and real Harness/browser journey, document shipped behavior and remaining boundaries, regenerate the index and bump affected artifacts when implementation ships; close this plan only when every deliverable is complete.
 - [x] D8. Implement live-worktree consumer/writer coordination and cleanup guards; verify uncommitted edits/hot reload against ordinary data, concurrent preview with separate identity/data/caches, prior source/artifact selection restoration and preservation of all source edits without Git reset/discard.
 - [x] D9. Integrate verified managed-data backups and explicit external-coverage warnings with the selected policy; verify data compatibility, failed backup behavior, separate reviewed restore and preservation of ordinary data through runtime return.
+
+- [ ] D10. Distinguish a confirmed pre-admission legacy development refusal from an uncertain transition: do not leave a new pending restart receipt/error when workspace admission refuses before lifecycle effects. Preserve original-request recovery after actual admission, lease/source authority checks and runtime/data/Return state. Define a supported, evidence-bound recovery for existing affected receipts without guessing from phase alone or mutating journals manually; verify the retained lease refusal and successful generic Restart path.
 
 ## Verification For D1
 

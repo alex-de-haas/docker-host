@@ -1,6 +1,6 @@
 ---
 created: 2026-10-20
-updated: 2026-10-21
+updated: 2026-10-22
 summary: Shared local typography, light and dark cards, accessible forms and outcomes for Core authentication and trusted operation confirmations.
 components: [apps/core]
 ---
@@ -28,10 +28,19 @@ Removal uses a danger action. Terminal outcomes show a status label and distinct
 symbol/color without offering an action that the underlying operation cannot perform.
 The existing popup-completion script and native POST decisions remain unchanged.
 
+Removal shows impact, a short runtime-state explanation and stop/removal and active-Shell warnings
+on the Core page. One Removal options checkbox section covers app data, backups, source and ignored
+runtime errors, without a duplicate static options list. The runtime-state explanation preserves the
+prepared cleanup flag, including an explicit legacy keep choice. Changing choices rebuilds the same installation's
+review facts and renews the nonce/digest before final confirmation. Unsafe source deletion leaves
+Remove disabled with an explanation. The [installation contract](../app-installation-sdk/feature.md#trusted-confirmation)
+owns defaults, compatibility and execution checks; Shell opens this page without a preliminary dialog.
+
 Dark colors follow `prefers-color-scheme`. At narrow widths, cards and text wrap
 within the viewport, input text uses 16 px and actions stay reachable by ordinary
-document scrolling. Keyboard focus combines an ink edge and lime ring. These pages
-introduce no animation or frontend framework.
+document scrolling. Keyboard focus uses one 2 px lime (`#A3E635`) outline with zero offset,
+no ink edge and no shadow/halo. Forced-colors mode uses a 2 px system Highlight outline.
+These pages introduce no animation or frontend framework.
 
 Compact credential actions and protected settings reviews use the same design. App sign-in
 relay/storage pages and sandbox persona confirmation retain their domain presentation.
@@ -89,5 +98,7 @@ Retain approval HTTP coverage for nonce/origin/session checks, required/optional
 permissions, runtime review, stale requests, cancellation and all supported plan
 kinds. Font routes must return valid WOFF2 before login and must not expose arbitrary
 embedded resources. Keep password-manager attributes and the no-origin login rule.
-Check long text and native forms at narrow widths, both themes and keyboard focus;
-never remove a review field or recovery action to match an incomplete visual reference.
+Check long text and native forms at narrow widths, both themes and keyboard focus. Keep the
+single 2 px lime outline at zero offset without an ink edge or shadow/halo, with a 2 px Highlight
+outline in forced-colors mode. Never remove a review field or recovery action to match an incomplete
+visual reference.

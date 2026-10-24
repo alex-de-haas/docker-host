@@ -1,6 +1,6 @@
 {
   "name": "@haas/hosty-demo-app",
-  "version": "0.17.2",
+  "version": "0.18.0",
   "private": true,
   "license": "AGPL-3.0-only",
   "type": "module",
@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@hosty-sdk/app": "*",
+    "@radix-ui/react-select": "^2.4.0",
     "@radix-ui/react-slot": "^1.5.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

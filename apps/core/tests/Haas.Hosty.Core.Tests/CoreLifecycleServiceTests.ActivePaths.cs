@@ -27,6 +27,7 @@ public sealed partial class CoreLifecycleServiceTests
             var stopped = (await new AppRegistryStore(fixture.Paths).GetAppAsync(prepared.Running.Id))!;
             Assert.Null(stopped.ActiveMountPaths);
             Assert.Null(stopped.ActiveSourcePaths);
+            Assert.Null(stopped.Health);
             Assert.Equal(prepared.Running.Mounts, stopped.Mounts);
             Assert.Equal(prepared.Running.SourceState, stopped.SourceState);
             Assert.Equal(prepared.Running.StorageMappings, stopped.StorageMappings);
@@ -63,7 +64,8 @@ public sealed partial class CoreLifecycleServiceTests
             Assert.Equal("runtime_stop_failed", error.Code);
             var retained = (await new AppRegistryStore(fixture.Paths).GetAppAsync(prepared.Running.Id))!;
             Assert.Equal("1.0.0", retained.Version);
-            Assert.Equal("running", retained.RuntimeState);
+            Assert.Equal("unknown", retained.RuntimeState);
+            Assert.Null(retained.Health);
             Assert.Equal(prepared.Running.ActiveMountPaths, retained.ActiveMountPaths);
             Assert.Equal(prepared.Running.ActiveSourcePaths, retained.ActiveSourcePaths);
             Assert.Equal(prepared.Running.Mounts, retained.Mounts);

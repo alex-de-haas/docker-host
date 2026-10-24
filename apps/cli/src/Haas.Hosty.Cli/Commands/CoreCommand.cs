@@ -21,6 +21,8 @@ internal sealed partial class CoreCommand(CommandContext context, bool initializ
     private string? activeOperationId;
     private FileStream? launchLease;
     private CoreStartTarget? launchedTarget;
+    private WorkspaceCoreLaunchReceipt? workspaceContinuation;
+    private readonly string localLaunchRequestId = Guid.NewGuid().ToString("N");
     private static readonly TimeSpan StartTimeout = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan HealthProbeTimeout = TimeSpan.FromSeconds(2);
     // Short deadline for control-plane probes (status/stop) so an unresponsive Core fails fast instead
@@ -89,6 +91,7 @@ internal sealed partial class CoreCommand(CommandContext context, bool initializ
             "return-workspace" => await ReturnWorkspaceAsync(args[1..]),
             "activate-workspace" => await ActivateWorkspaceAsync(args[1..]),
             "workspace-activation" => await WorkspaceActivationStatusAsync(args[1..]),
+            "adopt-workspace" => await AdoptWorkspaceAsync(args[1..]),
             "status" => await StatusAsync(args[1..]),
             "logs" => await LogsAsync(args[1..]),
             "settings" => await new CoreSettingsCommand(context).ExecuteAsync(args[1..]),
@@ -144,6 +147,7 @@ internal sealed partial class CoreCommand(CommandContext context, bool initializ
             return 1;
         }
 
+        await PrepareWorkspaceContinuationAsync(target);
         launchedTarget = target;
         if (options.Foreground)
         {
@@ -152,6 +156,8 @@ internal sealed partial class CoreCommand(CommandContext context, bool initializ
             var ready = await WaitForStatusAsync(target);
             if (ready?.Launch is { } foregroundLaunch && target.GenerationPath is { } foregroundGeneration)
                 CoreBuildRetention.Mark(foregroundGeneration, "ready", target.ProjectPath, foregroundLaunch.ProcessId, foregroundLaunch.StartedAt);
+            if (ready?.Launch is { } readyForegroundLaunch && launchLease is not null)
+                WorkspaceCoreLaunchContinuation.Reconcile(context.Environment.RootDirectory, readyForegroundLaunch);
             if (ready is null) context.Error.WriteLine("Core startup was not confirmed; inspect foreground diagnostics.");
             CoreBuildRetention.Cleanup(context.Environment.RootDirectory);
             launchLease?.Dispose();
@@ -174,6 +180,8 @@ internal sealed partial class CoreCommand(CommandContext context, bool initializ
 
         if (target.GenerationPath is { } generation && status.Launch is { } launch)
             CoreBuildRetention.Mark(generation, "ready", target.ProjectPath, launch.ProcessId, launch.StartedAt);
+        if (status.Launch is { } readyLaunch && launchLease is not null)
+            WorkspaceCoreLaunchContinuation.Reconcile(context.Environment.RootDirectory, readyLaunch);
         RenderStatus(status);
         return 0;
     }
@@ -218,6 +226,8 @@ internal sealed partial class CoreCommand(CommandContext context, bool initializ
         }
 
         var liveStatus = await ReadCoreStatusAsync(suppressErrors: true);
+        if (liveStatus?.Launch is { } observedLaunch && launchLease is not null)
+            WorkspaceCoreLaunchContinuation.Reconcile(context.Environment.RootDirectory, observedLaunch);
         if (liveStatus?.Launch is { } liveLaunch &&
             (liveLaunch.Mode != (options.ProjectPath is null ? "release" : "dev") ||
              options.ProjectPath is not null && !string.Equals(Path.GetFullPath(options.ProjectPath), liveLaunch.ProjectPath, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)))
@@ -247,6 +257,18 @@ internal sealed partial class CoreCommand(CommandContext context, bool initializ
 
     private async Task<CoreStartTarget> ResolveStartTargetAsync(StartOptions options)
     {
+        if (launchLease is not null)
+        {
+            var project = options.ProjectPath is null ? null : Path.GetFullPath(options.ProjectPath);
+            var current = (await ReadCoreStatusAsync(suppressErrors: true))?.Launch;
+            var retained = WorkspaceCoreLaunchContinuation.RecoverTarget(context.Environment.RootDirectory, project, current);
+            if (retained is not null)
+            {
+                workspaceContinuation = retained;
+                return new(retained.Executable, Path.GetDirectoryName(project!)!, [], project, retained.Generation);
+            }
+            _ = WorkspaceCoreLaunchContinuation.Owner(context.Environment.RootDirectory, current, project);
+        }
         if (options.ProjectPath is not null)
         {
             if (string.IsNullOrWhiteSpace(options.ProjectPath))
@@ -599,6 +621,8 @@ internal sealed partial class CoreCommand(CommandContext context, bool initializ
             var operation = CoreLaunchFiles.Read(path, CoreLaunchJson.Default.CoreLaunchOperation);
             if (operation is not null) CoreLaunchFiles.Write(path, operation with { Status = "starting", GenerationPath = prepared.GenerationPath }, CoreLaunchJson.Default.CoreLaunchOperation);
         }
+
+        await PrepareWorkspaceContinuationAsync(prepared);
 
         // StopCoreAsync waits for the old process to fully exit (port released, discovery file
         // removed), so the start below binds cleanly and cannot have its discovery clobbered by the
@@ -984,6 +1008,7 @@ internal sealed partial class CoreCommand(CommandContext context, bool initializ
           activate-workspace <prepared-activation-id> [--resume]
           return-workspace <activation-id> <return-id> [--app <id>] [--core] [--accept-data-changes]
           workspace-activation <activation-id> [--cancel]
+          adopt-workspace <activation-id> --instance <pid:ticks> --generation <absolute-path>
           stop [--keep-apps]
           restart [--keep-apps] [--port <port>] [--project <csproj-path>] [--url <url>] [--foreground]
           logs [--tail <count>]

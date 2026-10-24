@@ -53,10 +53,10 @@ export function OperationErrorToast({ id, report }: { id: string | number; repor
           try { if (await assistant.ask(report, requestId.current) !== false) sonner.dismiss(id); }
           catch (error) { setActionError(error instanceof Error ? error.message : "Could not open the assistant. Retry."); }
           finally { pending.current = false; setBusy(false); }
-        }}>{busy ? <LoaderCircle className="animate-spin" /> : <MessageSquarePlus />}Ask assistant</Button>
+        }}>{busy ? <LoaderCircle className="animate-spin motion-reduce:animate-none" /> : <MessageSquarePlus />}Ask assistant</Button>
       </span>}
     </div>
-    {actionError && <p role="alert" className="text-xs text-destructive">{actionError}</p>}
+    {actionError && <p role="alert" className="text-xs text-destructive-foreground">{actionError}</p>}
   </div>;
 }
 

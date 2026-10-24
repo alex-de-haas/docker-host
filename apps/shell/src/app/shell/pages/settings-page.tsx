@@ -1,6 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import { cn } from "@/lib/utils";
+import { SettingsPageNavigation } from "../sidebar/settings-navigation";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { getManageAppHref } from "../shell-routes";
 import { CoreSourceSettings } from "../core-development";
@@ -19,7 +22,9 @@ import {
 import type {
   CoreApp,
   CoreGlobalMount,
+  SharedMountsLoadStatus,
   CoreSettingsState,
+  CoreStatus,
   SessionResponse,
 } from "../types";
 import { AppSettingsTabPanel } from "./settings-app-section";
@@ -53,8 +58,10 @@ export function SettingsPage({
   sendCsrfJson,
   coreSettings,
   coreSettingsError,
+  coreStatus,
   onSaveCoreSettings,
   globalMounts,
+  globalMountsStatus,
   apps,
   onRefresh,
   canManageApps,
@@ -74,8 +81,10 @@ export function SettingsPage({
   sendCsrfJson: (url: string, body: unknown, method?: string) => Promise<Response>;
   coreSettings: CoreSettingsState | null;
   coreSettingsError: string | null;
+  coreStatus?: CoreStatus | null;
   onSaveCoreSettings: (values: Record<string, string>) => Promise<void>;
   globalMounts: CoreGlobalMount[];
+  globalMountsStatus?: SharedMountsLoadStatus;
   apps: CoreApp[];
   onRefresh: () => Promise<void>;
   canManageApps: boolean;
@@ -89,7 +98,6 @@ export function SettingsPage({
   // Each app has one sidebar entry; this component resolves its settings surface.
   const visibleAppTabs = canManageApps ? appTabs : [];
   const activeAppTab = resolveSettingsSurface(visibleAppTabs, activeTab);
-  if (activeAppTab) return <div className="flex h-full min-h-0 flex-col"><header className="flex items-center justify-between gap-3 border-b px-4 py-3"><h1 className="font-medium">{activeAppTab.label}</h1><Button asChild variant="outline" size="sm"><Link href={getManageAppHref(activeAppTab.appId)}>Manage application</Link></Button></header><div className="min-h-0 flex-1"><AppSettingsTabPanel key={activeAppTab.key} tab={activeAppTab} {...appTabProps} /></div></div>;
 
   // The URL may name a tab that is neither a host one nor an installed app — a stale link, or an app
   // since removed. Resolution lives here rather than in the parser, which has no app list to check
@@ -104,18 +112,19 @@ export function SettingsPage({
     <>
       {resolvedTab === "profile" && <UserProfilePage coreOrigin={coreOrigin} sendCsrfJson={sendCsrfJson} onSaved={onRefresh} />}
 
-      {canManageApps && resolvedTab === "shell" && <section className="space-y-3 max-w-xl">
-        <h2 className="text-lg font-medium">Assistant for Shell</h2>
-        <p className="text-sm text-muted-foreground">Choose which assistant receives prompts and error investigations; its own setting decides whether to prepare a draft or start immediately. Each assistant also has its own panel tab.</p>
-        <label className="block text-sm" htmlFor="shell-assistant">Assistant</label>
-        <select id="shell-assistant" className="w-full rounded-md border bg-background p-2" value={assistantSelection ?? ""} onChange={event => onSelectAssistant(event.target.value)}>
-          <option value="" disabled>{assistants.length === 1 ? "Use the only eligible assistant" : "Choose an assistant"}</option>
-          {assistantSelection && !assistants.some(app => app.appId === assistantSelection) && <option value={assistantSelection} disabled>Previous assistant unavailable — choose again</option>}
-          {assistants.map(assistant => <option key={assistant.appId} value={assistant.appId} disabled={!!assistant.problem}>{apps.find(app => app.id === assistant.appId)?.displayName || assistant.appId}{assistant.problem ? " — requires assistant interface v1" : !assistant.running ? " — unavailable" : ""}</option>)}
-        </select>
+      {canManageApps && resolvedTab === "shell" && <section className="overflow-hidden rounded-xl border bg-card">
+        <header className="border-b bg-muted/25 px-4 py-3"><h2 className="text-sm font-medium">Assistant for Shell</h2></header>
+        <div className="grid gap-3 px-4 py-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]"><div><label className="text-sm font-medium" htmlFor="shell-assistant">Assistant</label><p className="mt-1 text-xs text-muted-foreground">Choose which assistant receives prompts and error investigations; its own setting decides whether to prepare a draft or start immediately. Each assistant also has its own panel tab.</p></div><div className="min-w-0 space-y-2">
+        <Select value={assistantSelection ?? ""} onValueChange={onSelectAssistant}>
+          <SelectTrigger id="shell-assistant" className="w-full"><SelectValue placeholder={assistants.length === 1 ? "Use the only eligible assistant" : "Choose an assistant"} /></SelectTrigger>
+          <SelectContent>
+            {assistantSelection && !assistants.some(app => app.appId === assistantSelection) && <SelectItem value={assistantSelection} disabled>Previous assistant unavailable — choose again</SelectItem>}
+            {assistants.map(assistant => <SelectItem key={assistant.appId} value={assistant.appId} disabled={!!assistant.problem}>{apps.find(app => app.id === assistant.appId)?.displayName || assistant.appId}{assistant.problem ? " — requires assistant interface v1" : !assistant.running ? " — unavailable" : ""}</SelectItem>)}
+          </SelectContent>
+        </Select>
         {assistants.filter(item => item.appId === assistantSelection || (!assistantSelection && assistants.length === 1)).map(item =>
           <p key={item.appId} className="text-sm text-muted-foreground">{item.problem ?? (!item.capabilities?.includes("attachments") ? "File and screenshot handoffs are unavailable: this assistant does not declare attachments." : "Text, application context and attachments are supported.")}</p>)}
-        {!assistants.length && <p className="text-sm text-muted-foreground">Install and confirm an assistant to use these features.</p>}
+        {!assistants.length && <p className="text-sm text-muted-foreground">Install and confirm an assistant to use these features.</p>}</div></div>
       </section>}
 
       {canManageApps && resolvedTab === "source" && <CoreSourceSettings coreOrigin={coreOrigin} />}
@@ -129,7 +138,7 @@ export function SettingsPage({
       </div>}
 
       {resolvedTab === "tokens" && (
-        <div className="flex flex-col gap-8"><SettingsTokensSection coreOrigin={coreOrigin} sendCsrfJson={sendCsrfJson} />{canManageApps && <SettingsAccessList kind="background" coreOrigin={coreOrigin} sendCsrfJson={sendCsrfJson} />}</div>
+        <div className="flex flex-col gap-8"><SettingsTokensSection coreOrigin={coreOrigin} actorId={activeUser?.id} canRevokeAll={canManageApps} sendCsrfJson={sendCsrfJson} />{canManageApps && <SettingsAccessList kind="background" coreOrigin={coreOrigin} actorId={activeUser?.id} sendCsrfJson={sendCsrfJson} />}</div>
       )}
 
       {/* Every remaining tab administers the host. Gating them here as well as in the sidebar keeps
@@ -145,11 +154,12 @@ export function SettingsPage({
           section={resolvedTab}
           settings={coreSettings}
           settingsError={coreSettingsError}
+          coreStatus={coreStatus}
           onSaveSettings={onSaveCoreSettings}
         />
       )}
 
-      {canManageApps && resolvedTab === "policies" && <SettingsAccessList kind="oauth" coreOrigin={coreOrigin} sendCsrfJson={sendCsrfJson} />}
+      {canManageApps && resolvedTab === "policies" && <SettingsAccessList kind="oauth" coreOrigin={coreOrigin} actorId={activeUser?.id} sendCsrfJson={sendCsrfJson} />}
 
       {canManageApps && resolvedTab === "ingress" && (
         <SettingsIngressSection
@@ -161,7 +171,9 @@ export function SettingsPage({
 
       {canManageApps && resolvedTab === "mounts" && (
         <SettingsMountsSection
+          key={`${coreOrigin}:${globalMountsStatus?.scope ?? activeUser?.id ?? ""}`}
           globalMounts={globalMounts}
+          loadStatus={globalMountsStatus}
           apps={apps}
           onRefresh={onRefresh}
           onSaveBindings={async (name, change) => {
@@ -182,18 +194,31 @@ export function SettingsPage({
   );
 
   return (
-    <div className="flex min-w-0 flex-col gap-6">
-      <h1 className="sr-only">Settings</h1>
-      {section && section.tabs.length > 1 ? (
-        <Tabs value={resolvedTab} onValueChange={tab => router.push(getSettingsHref(tab), { scroll: false })} className="min-w-0 gap-6">
-          <div className="max-w-full overflow-x-auto pb-1">
-            <TabsList variant="line" aria-label={`${section.label} settings`}>
-              {sectionTabs.map(tab => <TabsTrigger key={tab.id} value={tab.id}>{tab.label}</TabsTrigger>)}
-            </TabsList>
-          </div>
-          <TabsContent key={resolvedTab} value={resolvedTab}>{content}</TabsContent>
-        </Tabs>
-      ) : content}
+    <div className={cn("settings-page-layout", activeAppTab && "h-full min-h-0 grid-rows-[minmax(0,1fr)] px-4 py-6 sm:px-6 lg:px-8 max-[1000px]:grid-rows-[auto_minmax(0,1fr)]")}>
+      <SettingsPageNavigation selected={activeAppTab?.key ?? resolvedTab} canManageApps={canManageApps}
+        pages={visibleAppTabs} apps={apps} coreOrigin={coreOrigin}
+        onSelect={tab => router.push(getSettingsHref(tab), { scroll: false })} />
+      {activeAppTab ? <section className="flex h-full min-h-0 min-w-0 flex-col gap-4" aria-label={`${activeAppTab.label} settings`}>
+        <header className="flex shrink-0 flex-wrap items-center justify-between gap-3">
+          <h1 className="min-w-0 break-words text-2xl font-semibold tracking-tight">{activeAppTab.label}</h1>
+          <Button asChild variant="outline" size="sm"><Link href={getManageAppHref(activeAppTab.appId)}>App details</Link></Button>
+        </header>
+        <div className="min-h-0 flex-1"><AppSettingsTabPanel key={activeAppTab.key} tab={activeAppTab} {...appTabProps} /></div>
+      </section> : <div className="min-w-0 space-y-6">
+        <header className="space-y-1"><h1 className="text-2xl font-semibold tracking-tight">{section?.label ?? "Settings"}</h1>
+          <p className="text-sm text-muted-foreground">{section?.id === "profile" ? "Your account, connections and devices." : section?.id === "host" ? "Updates, network and shared resources for this host." : section?.id === "security" ? "Manage people, permissions and host policies." : "Make Shell work the way you do."}</p>
+        </header>
+        {section && section.tabs.length > 1 ? (
+          <Tabs value={resolvedTab} onValueChange={tab => router.push(getSettingsHref(tab), { scroll: false })} className="min-w-0 gap-6">
+            <div className="max-w-full overflow-x-auto pb-1">
+              <TabsList variant="line" aria-label={`${section.label} settings`}>
+                {sectionTabs.map(tab => <TabsTrigger key={tab.id} value={tab.id}>{tab.label}</TabsTrigger>)}
+              </TabsList>
+            </div>
+            <TabsContent key={resolvedTab} value={resolvedTab}>{content}</TabsContent>
+          </Tabs>
+        ) : content}
+      </div>}
     </div>
   );
 }

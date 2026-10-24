@@ -291,3 +291,36 @@ it.each([
   expect(events.findIndex(event => event.type === "context_usage")).toBeLessThan(events.findIndex(event => event.type === type));
   expect(f.starts()).toBe(1); expect(f.stopped()).toBe(1);
 });
+
+it("recovers a command result appended before the worker cursor without duplicate transcript rows", async () => {
+  const { SessionManager } = await import("./manager.js");
+  const { SessionStore } = await import("./store.js");
+  const { AuditReporter } = await import("../audit.js");
+  const f = await fixture();
+  const store = new SessionStore(path.join(f.root, "coordinator"), path.join(f.root, "cache"));
+  const make = () => new SessionManager(store, f.adapter, new AuditReporter(null, null, "hosty.harness"), f.root,
+    null, null, null, null, null, null, null, null, f.client, "docker");
+  const first = make(); cleanups.push(() => first.shutdown());
+  const record = await first.createSession({ createdBy: "owner" });
+  await first.postMessage(record.id, "run checks once"); await expect.poll(f.starts).toBe(1);
+  f.options()!.onEvent({ type: "tool_use", toolUseId: "worker-run:command", toolName: "Command", input: { command: "npm test" } });
+  f.options()!.onEvent({ type: "command_result", toolUseId: "worker-run:command", status: "completed", exitCode: 0,
+    durationMs: 1250, summary: "14 passed", stdout: "never-store-output" } as HarnessEvent);
+  await expect.poll(async () => (await store.readEvents(record.id)).filter(event => event.type === "command_result").length).toBe(1);
+  const result = (await store.readEvents(record.id)).find(event => event.type === "command_result")!;
+  expect(result).toMatchObject({ toolUseId: "worker-run:command", status: "completed", exitCode: 0, durationMs: 1250,
+    summary: "14 passed", workerRunId: expect.any(String), workerSequence: expect.any(Number) });
+  await first.shutdown();
+  const saved = (await store.readRecord(record.id))!;
+  saved.workerRun!.sequence = 0; await store.saveRecord(saved);
+  const next = make(); cleanups.push(() => next.shutdown());
+  await next.recoverWorkerRuns(); await next.getSession(record.id);
+  f.options()!.onEvent({ type: "assistant_text", text: "Checks finished." });
+  f.options()!.onEvent({ type: "result", status: "success" });
+  await expect.poll(async () => (await store.readRecord(record.id))!.status).toBe("idle");
+  const events = await store.readEvents(record.id);
+  expect(events.filter(event => event.type === "command_result")).toEqual([result]);
+  expect(events.filter(event => event.type === "tool_use")).toHaveLength(1);
+  expect(JSON.stringify(events)).not.toContain("never-store-output");
+  expect(f.starts()).toBe(1); expect(f.stopped()).toBe(1);
+});

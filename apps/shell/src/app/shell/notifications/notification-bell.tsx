@@ -4,7 +4,7 @@ import { fetchCore } from "../core-transport.js";
 
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Bell, CheckCheck } from "lucide-react";
+import { Bell, Check, CheckCheck, CircleAlert, Info, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -229,6 +229,8 @@ function NotificationRow({
   onActivate: () => void;
 }) {
   const willNavigate = notification.link !== null && safeHttpUrl(notification.link) !== null;
+  const severity = notificationSeverity(notification.level);
+  const SeverityIcon = severity.icon;
   return (
     <DropdownMenuItem
       onSelect={(event) => {
@@ -243,7 +245,8 @@ function NotificationRow({
         !notification.read && "bg-accent/40",
       )}
     >
-      <span className={cn("mt-1.5 h-2 w-2 shrink-0 rounded-full", levelDotClass(notification.level))} />
+      <SeverityIcon aria-hidden className={cn("mt-0.5 size-4 shrink-0", severity.className)} />
+      <span className="sr-only">{severity.label}: </span>
       <span className="min-w-0 flex-1">
         <span className="flex items-center justify-between gap-2">
           <span className={cn("truncate text-sm", !notification.read && "font-medium")}>{notification.title}</span>
@@ -268,16 +271,13 @@ function safeHttpUrl(link: string): string | null {
   }
 }
 
-function levelDotClass(level: string): string {
+function notificationSeverity(level: string) {
   switch (level) {
-    case "success":
-      return "bg-emerald-500";
-    case "warning":
-      return "bg-amber-500";
-    case "error":
-      return "bg-rose-500";
-    default:
-      return "bg-sky-500";
+    case "success": return { icon: Check, label: "Success", className: "text-success-foreground" };
+    case "warning": return { icon: TriangleAlert, label: "Warning", className: "text-warning-foreground" };
+    case "error": return { icon: CircleAlert, label: "Error", className: "text-destructive-foreground" };
+    case "info": return { icon: Info, label: "Information", className: "text-info-foreground" };
+    default: return { icon: Info, label: "Notification", className: "text-muted-foreground" };
   }
 }
 

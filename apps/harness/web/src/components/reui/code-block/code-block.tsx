@@ -175,7 +175,7 @@ const ROOT_TOKEN_CLASS = [
   "data-[gutter-channel]:[--code-block-number-pad:calc(var(--code-block-gutter-gap)+var(--code-block-fold-width))]",
   /* A diff column breathes: the +/- glyph gets a wider channel. */
   "data-[has-diff]:[--code-block-gutter-gap:--spacing(4)]",
-  "[--code-block-line-height:1.5rem]",
+  "[--code-block-line-height:1.25rem]",
   "[--code-block-font-size:0.8125rem]",
   "[--code-block-copy-inset:--spacing(2)]",
   /* Where a PINNED control starts. With a header composed in, the root's top
@@ -270,7 +270,7 @@ const LINE_DIFF_CLASS = [
   "[[data-code-line-numbers]_&]:data-[diff]:after:w-(--code-block-gutter-gap)",
   "data-[diff]:after:select-none",
   "data-[diff=add]:after:text-success",
-  "data-[diff=remove]:after:text-destructive",
+  "data-[diff=remove]:after:text-destructive-foreground",
   "data-[diff=add]:after:content-['+']",
   "data-[diff=remove]:after:content-['-']",
 ].join(" ")
@@ -573,7 +573,7 @@ const CodeBlockLineRow = memo(function CodeBlockLineRow({
             /* Square, centred in the line box: height matches the width and
                the translate makes up the difference to the 24px line. Open
                regions read darker than folded ones. */
-            "text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-ring/50 sticky z-20 inline-flex size-(--code-block-fold-width) shrink-0 translate-y-[calc((var(--code-block-line-height)-var(--code-block-fold-width))/2)] cursor-pointer items-center justify-center rounded-[4px] align-top outline-none focus-visible:ring-2",
+            "text-muted-foreground hover:bg-muted hover:text-foreground sticky z-20 inline-flex size-(--code-block-fold-width) shrink-0 translate-y-[calc((var(--code-block-line-height)-var(--code-block-fold-width))/2)] cursor-pointer items-center justify-center rounded-[4px] align-top outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-brand focus-visible:ring-0",
             /* Margins cancel: -(4px + width) then +4px, so the toggle paints
                in the channel, sits 4px from the code, and the code still
                starts where a row without a toggle does. An uncancelled
@@ -1587,7 +1587,7 @@ function CodeBlockSurface({
         onScroll={handleScroll}
         onKeyDown={handleKeyDown}
         className={cn(
-          "focus-visible:ring-ring/50 relative min-w-0 rounded-[inherit] outline-none focus-visible:ring-[3px]",
+          "relative min-w-0 rounded-[inherit] outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-brand focus-visible:ring-0",
           /* Composed under an ancestor scroller the surface scrolls NOTHING
              itself: both axes belong to the ancestor, whose viewport picks up
              the pre's overflowing width, and the sticky number cell anchors
@@ -1731,7 +1731,7 @@ function CodeBlockLanguage({
       data-slot="code-block-language"
       data-unsupported={!resolvedLanguage || undefined}
       className={cn(
-        "border-border bg-muted/60 text-muted-foreground inline-flex shrink-0 items-center rounded-md border px-1.5 py-0.5 font-mono text-[0.6875rem] leading-none uppercase",
+        "border-border bg-muted/60 text-muted-foreground inline-flex shrink-0 items-center rounded-md border px-1.5 py-0.5 font-mono text-xs",
         className
       )}
       {...props}

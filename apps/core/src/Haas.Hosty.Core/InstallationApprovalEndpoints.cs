@@ -247,6 +247,10 @@ internal sealed class InstallationApprovalService(
         return await lifecycle.SelectReviewedInstallRuntimeAsync(plan, runtime, entry.Settings, ct);
     }
 
+    public Task<AppRemovalPlan> SelectRemovalOptionsAsync(InstallationApproval entry, AppRemoveRequest options, CancellationToken ct)
+        => lifecycle.SelectRemovalOptionsAsync(entry.RemovalPlan
+            ?? throw new AppLifecycleException("approval_invalid", "This request has no removal choices."), options, ct);
+
     public async Task ExecuteAsync(InstallationApproval entry, CancellationToken ct)
     {
         try
@@ -466,8 +470,34 @@ internal static class InstallationApprovalEndpoints
                 }
                 else if (form["decision"] == "runtime")
                     throw new AppLifecycleException("approval_invalid", "This request has no runtime choice.");
+                string? removalDigest = null;
+                if (entry.RemovalPlan is { } removal && (approve || form["decision"] == "removal-options") && form["removalOptions"] == "true")
+                {
+                    store.RequireDecisionNonce(entry, nonce, sessionId);
+                    removalDigest = form["removalDigest"].ToString();
+                    if (removalDigest != removal.DecisionDigest)
+                        throw new AppLifecycleException("approval_invalid", "The removal review changed. Open its Core page again.");
+                    bool Choice(string key)
+                    {
+                        var value = form[key];
+                        if (value.Count > 1 || (value.Count == 1 && value != "true"))
+                            throw new AppLifecycleException("removal_request_invalid", "Choose each cleanup option once.");
+                        return value == "true";
+                    }
+                    var options = new AppRemoveRequest(removal.Options.DeleteRuntimeState,
+                        Choice("deleteData"), Choice("deleteBackups"), Choice("deleteSource"), Choice("ignoreRuntimeErrors"));
+                    if (options != removal.Options || form["decision"] == "removal-options")
+                    {
+                        var changed = await service.SelectRemovalOptionsAsync(entry, options, context.RequestAborted);
+                        store.ChangeRemovalOptions(entry, nonce, sessionId, removalDigest, changed);
+                        return Results.Content(Render(entry, store.IssueNonce(entry, sessionId),
+                            notice: "Cleanup choices updated. Review the consequences below, then confirm removal."), "text/html");
+                    }
+                }
+                else if (form["decision"] == "removal-options")
+                    throw new AppLifecycleException("approval_invalid", "This request has no removal choices.");
                 store.Decide(entry, nonce, sessionId, approve, form["optionalPermission"].Select(p => p!).ToArray(),
-                    form["agentEnabled"] == "true", form["agentSkill"].Select(p => p!).ToArray(), autostart, form["saveEnvironmentConsent"] == "true");
+                    form["agentEnabled"] == "true", form["agentSkill"].Select(p => p!).ToArray(), autostart, form["saveEnvironmentConsent"] == "true", removalDigest);
                 try
                 {
                     await service.RecordAsync(entry, approve ? "approved" : "denied", lifetime.ApplicationStopping);
@@ -625,13 +655,16 @@ internal static class InstallationApprovalEndpoints
             review += RenderConfigurationWarning(installPlan.ConfigurationReadiness, installPlan.AppId == "hosty.shell");
         if (entry.EnvironmentPlan is not null) optionalReview = "<p><label><input type=checkbox name=saveEnvironmentConsent value=true>Remember for matching launches by this installation until revoked</label></p><p class=muted>Leave unchecked to allow only this creation request and its lifecycle.</p>";
         var installChoices = entry.InstallPlan is { } installation ? RenderInstallChoices(installation, entry.Autostart) : "";
+        var removalChoices = entry.RemovalPlan is { } removalChoicesPlan ? RenderRemovalChoices(removalChoicesPlan) : "";
+        var unavailableRemoval = entry.RemovalPlan is { } removalPlan &&
+            (removalPlan.Options.DeleteSource && (removalPlan.Options.IgnoreRuntimeErrors || removalPlan.SourceReview?.Unknown == true));
         var unavailableRuntime = entry.InstallPlan is { RuntimeChoices.Count: > 0 } runtimePlan &&
             !runtimePlan.RuntimeChoices.Any(choice => choice.Key == runtimePlan.TargetRuntime && choice.Available);
         if (entry.AssistantAccessPlan is { } agentPlan) optionalReview = RenderAssistantAccess(agentPlan);
         var action = entry.AssistantAccessBatch is not null ? "Save MCP access" : entry.WorkspaceManifest is not null ? "Allow workspace access" : entry.EnvironmentPlan is not null ? "Allow launch" : entry.AssistantAccessPlan is not null ? "Save MCP access" : entry.HostPathPlan is not null ? "Approve change" : entry.RemovalPlan is not null ? "Remove app" : entry.PermissionPlan is not null ? "Save permissions" : installing ? "Install app" : "Apply update";
         var buttonClass = entry.RemovalPlan is null ? "primary" : "danger";
         var body = entry.Status == "pending"
-            ? $"{(notice is null ? "" : $"<p role=status>{E(notice)}</p>")}{review}<form method=post>{installChoices}{optionalReview}<div class=actions><input type=hidden name=nonce value=\"{E(nonce)}\"><button name=decision value=deny>Cancel</button><button class={buttonClass} name=decision value=approve{(unavailableRuntime ? " disabled" : "")}>{action}</button></div></form>"
+            ? $"{(notice is null ? "" : $"<p role=status>{E(notice)}</p>")}{review}<form method=post>{installChoices}{removalChoices}{optionalReview}<div class=actions><input type=hidden name=nonce value=\"{E(nonce)}\"><button name=decision value=deny>Cancel</button><button class={buttonClass} name=decision value=approve{(unavailableRuntime || unavailableRemoval ? " disabled" : "")}>{action}</button></div></form>"
             : RenderOutcome(entry);
         if (closeWindow) body += $"<script>{CloseWindowScript}</script>";
         return CoreBrowserPages.Approval(title, name, version, entry.CallerName, body);
@@ -787,22 +820,37 @@ internal static class InstallationApprovalEndpoints
             + (skills.Length == 0 ? "<p>No application instructions.</p>" : "<h2>Application instructions</h2><p>Instruction approval is shared across Hosty consumers. Enabling access alone does not approve instructions.</p>" + skills);
     }
 
+    private static string RenderRemovalChoices(AppRemovalPlan plan)
+    {
+        static string Choice(string name, string label, bool selected) =>
+            $"<p><label><input type=checkbox name={name} value=true{(selected ? " checked" : "")}>{label}</label></p>";
+        var options = plan.Options;
+        return $"<input type=hidden name=removalOptions value=true><input type=hidden name=removalDigest value=\"{plan.DecisionDigest}\">"
+            + "<fieldset><legend>Removal options</legend><p>Updated choices must be reviewed before removal.</p>"
+            + Choice("deleteData", "Delete app data, cache, stored secrets and retained configuration", options.DeleteData)
+            + Choice("deleteBackups", "Delete backups", options.DeleteBackups)
+            + Choice("deleteSource", "Delete source checkout", options.DeleteSource)
+            + Choice("ignoreRuntimeErrors", "Ignore runtime errors", options.IgnoreRuntimeErrors)
+            + "<p class=muted>Source deletion requires verified runtime removal and cannot be combined with Ignore runtime errors.</p>"
+            + "<button name=decision value=removal-options>Review cleanup choices</button></fieldset>";
+    }
+
     private static string RenderRemoval(AppRemovalPlan plan, string? callerAppId)
     {
         static string E(string? text) => WebUtility.HtmlEncode(text ?? "");
         var options = plan.Options;
-        var cleanup = $"<li>Runtime state: {(options.DeleteRuntimeState ? "delete" : "keep")}</li>"
-            + $"<li>App data, cache, stored secrets and retained configuration: {(options.DeleteData ? "delete permanently" : "keep")}</li>"
-            + $"<li>Backups: {(options.DeleteBackups ? "delete permanently" : "keep")}</li>"
-            + $"<li>Managed source checkout: {(options.DeleteSource ? "delete permanently" : "keep")}</li>"
-            + $"<li>Runtime errors: {(options.IgnoreRuntimeErrors ? "ignore and continue cleanup" : "stop removal")}</li>";
+        var runtimeState = options.DeleteRuntimeState ? "Runtime state is deleted." : "Runtime state is kept for this request.";
         var impact = plan.Impact;
-        var dependents = string.Join("", impact.Dependents.Select(d => $"<li>{E(d.DisplayName)} ({E(d.AppId)}) {(d.Required ? "requires" : "uses")} this app; its dependency connection is lost on its next start.</li>"));
-        var consumers = string.Join("", impact.Capabilities.SelectMany(c => c.Consumers.Select(d => $"<li>{E(d.DisplayName)} ({E(d.AppId)}) uses {E(c.Slot)} provided by this app.</li>")));
+        var dependents = string.Join("", impact.Dependents.Select(d => $"<li>{E(d.DisplayName)} ({E(d.AppId)}) {(d.Required ? "requires" : "uses")} this app{(d.Aliases.Count > 0 ? $" ({E(string.Join(", ", d.Aliases))})" : "")}; {(d.RuntimeState == "running" ? "running now, and loses the connection at its next start" : "loses the connection when it next starts")}.</li>"));
+        var consumers = string.Join("", impact.Capabilities.SelectMany(c => c.Consumers.Select(d => $"<li>{E(d.DisplayName)} ({E(d.AppId)}) uses {E(c.Slot)} provided by this app; it keeps running, and what it sends goes nowhere.</li>")));
         var publications = string.Join("", impact.PublicOrigins.Select(p => $"<li>{E(p.Hostname)}: tunnel route removed; {(p.OwnershipState == "adopted" ? "existing DNS record kept" : "Hosty-created DNS record removed")}.</li>"));
-        return $"<p>App ID: <code>{E(plan.AppId)}</code></p><p>This stops and removes the app's runtime services.</p><h2>Removal options</h2><ul>{cleanup}</ul>"
+        return $"<p>App ID: <code>{E(plan.AppId)}</code></p><p>This stops and removes the app's runtime services. {runtimeState}</p>"
             + (plan.SourceReview is { } source ? "<h2>Source and workspace state</h2><ul>" + string.Join("", source.Details.Select(d => $"<li>{E(d)}</li>")) + "</ul>" : "")
             + (options.DeleteData || options.DeleteBackups || options.DeleteSource ? "<p class=warning>Selected data is permanently deleted. This cannot be undone through Hosty.</p>" : "")
+            + (options.DeleteSource && options.IgnoreRuntimeErrors ? "<p class=warning>Choose either Delete source checkout or Ignore runtime errors before confirming removal.</p>" : "")
+            + (options.DeleteSource && plan.SourceReview?.Unknown == true ? "<p class=warning>Source contents cannot be verified. Keep source, or resolve its reported state before reviewing deletion again.</p>" : "")
+            + (impact.System ? "<p class=warning>This is a system app. Its provided functions become unavailable after removal.</p>" : "")
+            + (plan.AppId == ShellBootstrap.AppId ? $"<p class=warning>This is the Shell serving the Hosty web interface. Removing it takes this UI offline; Core and other apps keep running and remain reachable from the terminal. Reinstall with <code>hosty setup --with {E(plan.AppId)}</code>.</p>" : "")
             + (callerAppId == plan.AppId ? "<p class=warning>This removes the app requesting confirmation. Its interface becomes unavailable; Core continues the operation.</p>" : "")
             + (dependents.Length + consumers.Length > 0 ? $"<h2>Affected apps</h2><ul>{dependents}{consumers}</ul>" : "")
             + (publications.Length > 0 ? $"<h2>Published addresses going offline</h2><ul>{publications}</ul>" : "");

@@ -1,6 +1,6 @@
 ---
 created: 2026-05-19
-updated: 2026-10-20
+updated: 2026-10-23
 summary: Shell is the Core-managed browser UI app that authenticates users and embeds app pages.
 components: [apps/shell]
 ---
@@ -20,9 +20,10 @@ The implemented Shell provides:
 
 - an administrator-only Dashboard: Core's status and version beside every installed app, with install,
   lifecycle, configuration, updates, logs, backups, restore, prune, and removal;
-- administrator-only Settings: users and invitations, Core's own settings and ingress connection, and
-  host-wide shared mounts;
-- Apps navigation for app manifests that declare shell UI metadata;
+- administrator host management in Settings: users and invitations, Core's own settings and ingress
+  connection, and host-wide shared mounts, alongside each user's personal settings;
+- direct Apps sidebar navigation for authorized apps that declare shell UI metadata, with
+  embedded and standalone opening;
 - embedded app workspaces whose apps establish their own Core-authorized sessions.
 
 The route table and sidebar structure live in [Shell Navigation](../shell-navigation/feature.md).
@@ -52,8 +53,8 @@ Feature UI lives under `apps/shell/src/app/shell/`:
 - `shell-context.tsx` exposes separate persistent Shell state and action contexts to route pages;
 - `shell-route-pages.tsx` adapts individual App Router pages to Shell feature components;
 - `sidebar/` contains Shell navigation and account/theme controls;
-- `pages/` contains the Dashboard, Apps, and Settings view components, including the Settings
-  sections for Core and shared mounts;
+- `pages/` contains the Dashboard and Settings view components, including the Settings sections
+  for Core and shared mounts;
 - `dialogs/` contains install review and installed-app detail dialogs;
 - `workspace/` contains embedded app workspace loading and iframe surfaces;
 - `ui.tsx`, `settings.tsx`, `app-helpers.ts`, and `clipboard.ts` contain shared presentational and formatting helpers;
@@ -62,8 +63,11 @@ Feature UI lives under `apps/shell/src/app/shell/`:
 
 Each top-level route file renders only its route surface; the route table, the legacy paths that
 still resolve, and the sidebar's two groups are described in
-[Shell Navigation](../shell-navigation/feature.md). An administrator-only surface falls back to the
-Apps route while the persistent orchestrator redirects a non-admin session to `/apps`.
+[Shell Navigation](../shell-navigation/feature.md). Administrators land on Dashboard. Ordinary users
+land at `/`, with an empty main surface and their authorized app sidebar; there is no duplicate
+Apps overview. The legacy `/apps` path redirects to `/`, which resolves to Dashboard for
+administrators. An inaccessible administrator-only surface redirects an ordinary user to `/`;
+personal settings remain available under their existing tab-aware authorization.
 
 The sidebar is a persistent desktop-style rail with an expanded and a compact mode; the selected
 mode — like the right panel's docked state — is stored in a cookie the server layout reads, so the
@@ -73,6 +77,10 @@ chrome's column animation stays disabled until the first Core load settles, so t
 column appearing with the apps response snaps into place rather than looking like it opens itself.
 Because the sidebar and Core/session state are owned by the root layout, moving between routes does
 not remount it or briefly render the unauthenticated navigation state.
+
+The sidebar's Apps heading is noninteractive. Compact mode retains direct app rows without an
+All apps catalog icon. On phones, Apps opens the app sidebar and first collapses an expanded tool
+sheet; it does not navigate, reset the app document, or release retained tools.
 
 Hosty Shell is installed as a system runtime app and does not appear as an entry in the Apps
 sidebar.
@@ -100,13 +108,12 @@ for isolation, ownership and recovery contracts.
 
 ## Installed apps
 
-Dashboard is the administrator management surface for installed apps: one table holding non-system runtime apps and Core-managed system apps together, the latter marked by a `System` badge.
+Dashboard is the administrator management surface for installed apps. System and ordinary apps
+share one table; system and active-Shell role icons retain their explanatory tooltips.
 
-The Core and installed-app tables share a responsive grid. Identity and version/source use the
-flexible space; runtime, status, resources and actions have compact columns. On narrower workspaces,
-runtime stacks above version beside the identity, with the identity moving onto its own line only
-below 560 px. Both tables fit without horizontal scrolling; the full breakpoint layout is described
-in [Shell Navigation](../shell-navigation/feature.md).
+Core and app rows share four columns: flexible identity, 188px status, 144px resources and 136px
+actions. Version/source and runtime sit under the name. Narrow layouts use the available container
+width; the details are described in [Shell Navigation](../shell-navigation/feature.md).
 
 Apps expose actions according to Core state, plus — for the two entries that are optional app features rather than lifecycle verbs — the `logs` and `backup` capabilities the app declares (see below):
 
@@ -118,76 +125,146 @@ Apps expose actions according to Core state, plus — for the two entries that a
 - create, restore, delete, and prune backups;
 - remove an app, with optional backup deletion.
 
-Each app row expands into its service details: per service, the runtime state and health message,
-resource usage, and for image-based services the locked, running and available image digests.
-Endpoints are grouped by service with their key, the service address (`not assigned` until Core has
-assigned one) and, for public endpoints, the browser address, each with copy and open controls. A
-stopped app still lists its declared endpoints; a service without endpoints says so.
+For administrators, clicking noninteractive app-row space opens standalone App Details at
+`/apps/<app-id>`, outside Settings, with a `Dashboard / <app name>` breadcrumb linking to
+`/dashboard`. Former `/settings?tab=manage:<app-id>&section=<section>` bookmarks migrate to this
+canonical page with their requested section. This replaces More > Manage application. The app name is a
+native Manage link for keyboard access and opening another tab, without an extra row tab stop.
+Runtime app rows have no service expander or inline expanded service/network panel; More no longer duplicates Manage application. Buttons, menus, version/source
+disclosures and resource popovers keep their independent actions rather than also navigating.
+Modified/nonprimary clicks and text selection do not activate row navigation.
+Core has no expander or expanded detail panel. Its Dashboard row retains metadata, status,
+resources, Logs, Runtime / workspace, Restart, Update and Source settings. Settings > Host > Updates
+contains read-only Core information from the existing Shell status: listen address and public origin
+with copy buttons, data root, runtime host and ingress mode. Missing status or fields show Unavailable;
+a known status without a public origin shows Not configured. The block makes no additional requests
+and does not reset unsaved Core settings.
 
-Core and app rows show a compact status indicator: a green dot for a healthy running runtime,
-an amber dot for states needing attention, a grey dot for stopped runtimes, and a sky-coloured
-spinner during starting, stopping or restarting. Hovering or keyboard-focusing the indicator shows
-the full status in a tooltip; the indicator also has an accessible name. The tooltip composes
-lifecycle and health when they differ ([App Readiness](../app-readiness/feature.md)):
-`running · starting` or `running · degraded`. A healthy app reads its state alone. Expanded service
-details retain their labelled status badges.
+Manage retains per-service runtime state, health messages, resource usage and, for image-based
+services, locked, running and available image digests. Network retains endpoint keys, service
+addresses (`not assigned` until Core has assigned them) and public browser addresses with copy/open,
+port and origin controls. Stopped apps retain declared endpoints; missing observations stay explicit.
 
-Autostart has no column of its own: nearly every app starts with the host, so a column that reads
-`On` down its whole length costs width and says nothing. Only the exception is marked — an app that
-does not start with Core carries a hand icon beside its status, and the tooltip says where to turn
-autostart back on.
+Core and app rows show status text with a dot or distinct attention/error/working shape. The label
+composes lifecycle and health when they differ, following [App Readiness](../app-readiness/feature.md).
+Pending start, stop and restart operations appear as Starting, Stopping or Restarting in this main
+status, without a duplicate verb beneath the app name. Active update progress sits below that
+current runtime/health status in the Status column, including for source/workspace rows. Core
+reports the runtime transition independently of update progress; Shell does not infer lifecycle from
+an operation label. Observed Running, Stopping, Starting and Stopped remain primary, with degraded
+health composed into a running status and missing runtime observations shown as Unknown. Update
+phases `stopping` and `starting` use only Updating below that status, without a service suffix.
+Other supported phases retain Update queued, Preparing update, Creating backup, Installing,
+Downloading or Checking readiness, with the reported service when present.
+Terminal update outcomes add no row message or expiry timer. Existing success, failure and readiness
+toasts remain; problem icons and Manage retain diagnostics. Separate configuration and Restart
+required information remains visible. Dashboard rows do not display a Manual start marker. Autostart
+remains configurable in More and Manage > Launch.
 
-Below 1240 px of dashboard workspace width, the header actions collapse into an **App actions**
-ellipsis menu at the same breakpoint as the row shortcuts. The menu contains Install app,
-Check updates (disabled while a check is running), and Update all when routine updates are available.
-Checking updates keeps the menu open so its progress indicator remains visible.
+Dashboard's Apps heading contains filters and Install app. Search and aggregate resources occupy the table
+header. Fleet Check updates is in App actions at every width; Update all is also a visible contextual
+action when routine updates are available. Checking updates keeps the menu open with progress.
 Routine updates use Core's queued update endpoint without a confirmation popup. Update all
 submits only routine plans and queues Shell itself last. New permissions, provider roles and
 other review-required manifest changes still open Core confirmation through the plan view.
 Core validates the cached plan, current permissions and installed base; stale plans do not apply.
 During a Shell self-update, the page waits for Core's operation to settle and the new Shell origin
 to respond before reloading. Interrupted reads are retried without repeating the mutation.
-At wider widths, the existing icon buttons remain visible. Opening the assistant panel or resizing
-it changes this layout based on the remaining workspace width, not the browser viewport.
+Each app row has one contextual action beside More. Pending, Configure, Update and Start keep their
+existing priority. For a running app, administrators see Logs only when the observed aggregate
+service health is degraded or unhealthy and the app supports logs; otherwise they see Stop.
+Update, manifest, permission and previous-operation diagnostics retain their icons and details
+without changing this shortcut. Missing, unknown or startup health is not treated as a failure. Non-administrators retain their existing Logs shortcut and never gain
+Stop. More retains supported operational actions and their existing busy/permission guards;
+Manage is opened from the row rather than a duplicate menu item.
+Runtime-app Logs and More > Console logs retain their entry points and select Logs in Manage at
+`/apps/<app-id>?section=logs`; readiness and update-notification log actions use the
+same destination. Logs is a capability-gated tab after Launch, with the existing 200-line console
+tail, Refresh, per-service selection and aggregate fallback. It reads only while selected and
+aborts obsolete app/scope requests, preserving mounted configuration drafts. Core's Logs shortcut
+and dialog are unchanged. The entire second metadata line — package
+version or source name and runtime — is monospaced; available app updates
+read current → new. App-version hover shows revision/build information only. A failed update check
+keeps its full diagnostic tooltip on the problem icon after the name and diagnostics in Manage,
+without a duplicate native error title on the version wrapper. Error, warning and permission-problem
+icons use the shared shadcn Tooltip on hover and keyboard focus rather than browser-native titles.
+Diagnostic text preserves line breaks and wraps within the viewport; permission buttons retain
+their direct transition to Permissions.
 
-Each row's Actions cell carries the shortcuts an operator reaches for most — start or stop, restart,
-console logs, and settings — as icon buttons, and the row's overflow menu lists every action the app
-supports, the lifecycle verbs included. The menu is the complete, named set; the icons are a subset of
-it, so an action is never only in one place. Version strings — each app's, and Core's — render
-monospaced so the digits line up down the column, and Core's version is printed bare, without a `v`
-prefix, in the same shape as an app's. Core and non-development apps show one package icon before
-their version block, vertically centered across the installed and available versions when both
-are present; development Core and apps show a workspace icon when matched to a registered workspace,
-or a Git branch icon otherwise.
+Removal entries in Dashboard and Manage open Core's isolated approval directly. Shell does not show
+a preliminary cleanup dialog. Core presents removal impact, cleanup choices, runtime-state and Shell-availability warnings, source-safety facts and the final
+destructive action. Shell reserves the popup in the initiating gesture and retains a blocked-popup
+link, original-request recovery, cancellation/denial and visible failure. The app/selection remains
+until Core confirms successful removal. See [trusted confirmation](../app-installation-sdk/feature.md#trusted-confirmation)
+for cleanup defaults, compatible client behavior and authorization.
 
-Core and application rows use one runtime label: `workspace` for a registered active workspace,
-`source` for an ordinary source folder, or the selected package runtime name. Core uses `release`
-for its installed package. The label does not repeat the underlying development recipe or a dev-mode
-indicator. A stopped app retains its selected source classification. Workspace names remain in
-Version / source, where branch, commit and source details are available on hover or keyboard focus.
-Source change summaries use the same layout for Core and apps: available added/deleted line totals
-first, then the changed-file count, with spacing between the numbers and a small gap below the name.
+Core and active source apps replace the package version with only the workspace display name or
+observed Git branch. A decorative hammer precedes a registered workspace name; a Git branch icon
+precedes a source branch or folder label. Both icons are 12px. The disclosure has zero horizontal
+padding, and the monospaced name retains its dotted underline without a Workspace/Branch prefix
+or background highlight. Core uses the same icons and
+muted `text-xs` source-label styling as app rows. Source/workspace rows omit the pseudo-runtime
+words and their separator; package releases retain their concrete production runtime/profile name.
+Raw development recipes stay hidden.
+Source details include the installed package version, branch, commit, file counts and available line
+totals. Hover and keyboard focus expose a tooltip; click/touch opens the same information in a popover.
+Missing observations are explicit. Core and source/workspace apps retain `SourceChangeSummary`
+after the workspace or branch name on the same second metadata line, separated by a dot. The summary
+shows additions and deletions when available, then the observed count labelled `files`, with a `+`
+suffix for truncation. It wraps naturally at narrow widths without a forced third line. Missing line
+totals are omitted rather than zero-filled; failed or unavailable inspection produces no invented count. The full tooltip/popover and source
+inspection tools in Manage application remain available alongside the visible summary.
+App-owned controls and disclosures use a single visible 2 px lime (`#A3E635`) focus outline or
+ring in both themes, without an additional halo or ink edge. The theme bridge preserves lime on
+Harness and Marketplace controls inside the SDK host. Grouped inputs use only the parent lime
+outline, or red when invalid; invalid borders stay red. SDK-owned rail and chooser controls retain
+their existing styling.
 
-The runtime column provides one selector containing installed release
-profiles and applicable named workspaces. Raw development recipes are hidden. Selecting a package
-entry directly returns to the installed package; no separate workspace popup or previous-runtime
-Return action appears. Core retains the last package runtime independently of workspace transitions.
-The selector contains its choices without a heading and appears only when at least one available
-choice differs from the current target; a source runtime alone does not create an empty menu.
-Shell retains exact request IDs across a self-switch and reconnect, and opens Core confirmation only
-when a candidate requests additional authority.
+The app Runtime / workspace submenu contains installed package profiles and applicable named
+workspaces, retaining supported source/branch choices.
+It appears only when at least one available choice differs from the current target. Selecting a
+package returns to the installed package; no separate previous-runtime action is required. Core
+retains the last package runtime. Shell preserves exact request IDs across self-switch/reconnect and
+opens Core confirmation when a candidate requests additional authority. A submitted selection does
+not replace the current source label before Core reports the new selection.
 
-For a development runtime whose source matches a registered, app-bound worktree, **Version / source**
-shows one workspace icon and label in place of the Git branch, with change counts below. Hovering
-or focusing the label exposes the full workspace name, Git branch, commit, installed package version
-and the existing source details in a tooltip. The label does not open the activation dialog. A registered workspace alone does not
-change a packaged runtime's version display. Dashboard shares the inventory request across rows,
-refreshing on source selection changes, app/workspace events and return to the visible page. A workspace rename updates the label without changing its running process.
-Core uses the same workspace icon, name and hover/focus source details when its factual development
-project is inside an active registered worktree. It does not infer a workspace from a branch name
-or the source configured for the next restart. Unregistered or ambiguous project paths retain the
-Git branch display. Core and app rows share one inventory read, including when no app runs from
-source or the app list is filtered.
+Core's More > Runtime / workspace submenu offers Release and eligible existing named workspaces.
+It does not expose a generic Source/main target. Core-only reviewed selection explicitly deselects
+every app participant and reuses the supported workspace handover API. Source settings remains a
+separate action, and unmanaged/IDE or unavailable launch control stays factual and disabled for new
+selection without hiding retained recovery.
+
+The Core submenu loads candidates and retained operations with one uncached metadata catalog
+request, independent of the number of workspaces. It does not enqueue per-workspace activation
+plans or Git inspections while opening. Catalog errors leave switching disabled and visible;
+Reopening the menu reloads the catalog. Ordinary selection has no separate details or refresh
+action: choosing a target opens its confirmation. A contextual progress/recovery item appears only
+for an unfinished, failed or conflicting Core switch. The selected workspace is reviewed independently.
+
+A named workspace selection reviews a direct Core-only handover while the current Core keeps
+running. Its confirmation shows Current Core and Switch to by name, explains preservation of
+application runtimes/current data and starts one switch. A workspace-to-workspace switch requires
+no intermediate Return or Release. Preparation, build, restart and readiness use an animated,
+motion-aware progress indicator and plain text; request UUIDs and raw lifecycle phases remain
+internal. Success requires the reviewed workspace/worktree/project and exact factual generation,
+PID and process-start identity. A completed activation for the old target cannot confirm a newly
+selected target. Closing More or the dialog preserves the original recovery request.
+
+Release selection retains explicit current-data compatibility acceptance before returning the
+captured original Core target. A direct workspace chain retains that original baseline, rather
+than returning through each intermediate workspace. A confirmed Release baseline completes the
+selection without a second restart. A saved development baseline requires explicit continuation
+to installed Release. Interrupted or unconfirmed operations expose Check progress, Retry switch,
+review, continue or pause actions as appropriate; ordinary completed selections show no manual
+status controls. Recovery remains scoped to user/Core origin, and obsolete responses cannot apply
+to another identity. See [Core development mode](../core-dev-target/feature.md) and
+[workspace activation](../workspace-live-activation/feature.md).
+
+A registered workspace alone does not change a package runtime's version display. Dashboard shares
+workspace inventory across rows and refreshes on selection, app/workspace events and visibility
+restoration. Renaming a workspace changes its label without changing its process. Core uses its
+factual development project for workspace provenance, retaining branch details for unregistered or
+ambiguous paths; configured next-restart source is not treated as the currently running source.
 
 ### Secret settings
 
@@ -217,13 +294,13 @@ with `app_required_settings_missing` until it is set again.
 
 These are two different things, and only one of them is the app's to declare.
 
-**Lifecycle operations are inherent to Core managing an app** — start, stop, restart, update, remove, autostart. Core authorizes them on the administrator session at the endpoint (`RequireAdminSessionAsync`) and never consults the manifest, so an app cannot decline to be stopped or updated by omitting a token. Shell gates them on administrator rights, and additionally hides start, stop, restart, backups, autostart, and removal for `system` apps. Updates are deliberately **not** system-gated: a system app is reviewed-updated through the same plan/apply flow as any other runtime app. The one genuine Core-side refusal is a live source runtime, which has no reviewed update because its manifest is adopted on restart rather than advanced through a plan.
+**Lifecycle operations are inherent to Core managing an app** — start, stop, restart, update, remove, autostart. Core authorizes them on the administrator session at the endpoint (`RequireAdminSessionAsync`) and never consults the manifest, so an app cannot decline to be stopped or updated by omitting a token. Shell gates them on administrator rights and current operation/configuration state. System apps use the same lifecycle and reviewed-update paths as other apps; Shell warns when an action affects its own availability. The one genuine Core-side refusal is a live source runtime, which has no reviewed update because its manifest is adopted on restart rather than advanced through a plan.
 
 **The manifest `capabilities` list describes optional app *features*** a client may surface, and its canonical vocabulary is therefore only `backup` and `logs` — things that genuinely depend on the app (does it have data worth snapshotting?). Core normalizes a declared list to that vocabulary, dropping the retired lifecycle tokens (`update`, `stop`, `restart`, `remove`) and the two that no client ever read: `open` is derived from the app's endpoints, and `restore` lives inside the backup panel. A manifest that declares nothing gets the full default set.
 
 This list is a client hint, never a grant. The separate manifest `provides` field is the axis on which an app declares a role to Core (see [Runtime App Manifest](../runtime-app-manifest/feature.md) and [Core Extension Model](../core-extension-model/feature.md)); self-description is load-bearing there and is guarded by explicit operator consent instead.
 
-System Apps are inspectable and configurable in Shell. Administrators can open their ordinary settings dialog, switch runtime profiles, and apply reviewed updates — system apps update through the exact same plan/apply flow as every other runtime app. Logs remain available when the `logs` capability is present. Shell hides start, stop, restart, backup, restore, autostart, and removal controls for all `system` apps. This lets Marketplace own its catalog URL as a manifest setting without adding Marketplace logic to Core. Core remains the source of truth for what operations are allowed.
+System Apps are inspectable and configurable in Shell. Administrators can open their ordinary settings dialog, switch runtime profiles, and apply reviewed updates — system apps update through the exact same plan/apply flow as every other runtime app. Logs remain available when the `logs` capability is present. System classification does not hide lifecycle or removal controls: they use the same administrator and current operation/configuration guards as other apps. Backup and restore additionally require the `backup` capability. Stopping or restarting the active Shell retains the warning that the action affects its own availability. This lets Marketplace own its catalog URL as a manifest setting without adding Marketplace logic to Core. Core remains the source of truth for what operations are allowed.
 
 ## Profile and authorization surfaces
 
@@ -344,6 +421,11 @@ Required coverage:
 - `runtime-states.ts` — the busy/idle/up predicates and their mutual exclusivity;
 - `shell-routes.ts` — route parsing and building agreeing in both directions, legacy paths
   canonicalizing without looping, and administrator-only surfaces;
+- Home and legacy `/apps` navigation keep the ordinary user's main surface empty and retain the
+  authorized app sidebar; administrators land on Dashboard. The Apps heading is noninteractive,
+  compact mode has no catalog icon, and direct app launch/start guards remain intact. Phone Apps
+  collapses the default tool sheet before opening the sidebar without route navigation, document
+  reset or released tool presentations;
 - `workspace/install-intent.ts` and `workspace/insecure-embed.ts` — the versioned install-feed intent's
   accept/reject rules and the insecure-embed guard;
 - `ingress.ts` — public-origin and ingress-provider resolution.
@@ -353,9 +435,9 @@ verified against a Core-managed Shell rather than a standalone app without Hosty
 
 - Dev bundler changes cover stable Dashboard loading after managed Shell restarts, with no repeated
   entry-level HMR restart or full-page navigation, as well as normal password login on an isolated Core, client and server SDK
-  imports, navigation between Dashboard, Settings and Apps, and Fast Refresh of workspace SDK
-  components without losing the document or session. Compare first visits and repeated transitions
-  separately; retain the webpack production build check.
+  imports, navigation between Dashboard, Settings and embedded app workspaces, and Fast Refresh
+  of workspace SDK components without losing the document or session. Compare first visits and
+  repeated transitions separately; retain the webpack production build check.
 
 - Icon coverage includes manifest-declared names without catalog metadata for both live and compiled
   runtimes, unknown names, image priority, and recovery after a failed URL changes.
@@ -363,11 +445,49 @@ verified against a Core-managed Shell rather than a standalone app without Hosty
 - Dashboard component checks keep runtime selection visible, select package/workspace targets directly,
   preserve multiple development runtime choices, distinguish source folders from registered workspaces
   with one source/workspace/package label, hide menus without an available alternative, and
-  remove workspace metadata after Return.
+  remove workspace metadata after Return. Source labels contain only the workspace or branch name,
+  with monospaced dotted text, a decorative hammer for a workspace or Git branch icon for source,
+  and no type prefix, background highlight or extra padding. Source/workspace rows have no
+  pseudo-runtime word or orphan separator; package runtime names remain unchanged.
 - Recover a retained switch receipt even when its package is already selected or the app is initially
   starting, stopping or updating; a completed Return must not block the next workspace selection.
-- Core and app source summaries keep line totals before changed-file counts, retain truncated counts,
-  and omit unavailable totals.
+- The full version/source and runtime metadata line is monospaced; Core source labels
+  share app rows' muted text-xs styling. Core and source/workspace apps show `SourceChangeSummary`
+  after the source name on the same second line, separated by a dot, with line totals before the
+  `files` count, retained truncation and unavailable totals omitted. Narrow widths wrap naturally.
+  Failed inspection never fabricates counts. Hover, keyboard focus and
+  click/touch still expose the complete retained details.
+- Administrator row clicks and keyboard activation of the app-name link open standalone App Details
+  at `/apps/<app-id>`, with a native Dashboard breadcrumb and migrated legacy Manage section links.
+  Settings Apps lists only declared app-owned `ui.settings` surfaces and has no installed-app catalog.
+  Preserve embedded settings identity, full-height layout and independent drafts. There is no runtime app expander, inline
+  services/network panel or duplicate More > Manage application. Embedded controls/disclosures keep
+  their own actions. Core has no expander; Settings > Host > Updates retains all five host facts
+  and address copy buttons, including unavailable states, administrator gating and unsaved forms.
+  Core actions stay on Dashboard. Manage retains all former service state, health, image-revision,
+  resource and endpoint controls.
+- Runtime-app log entries and direct links select Manage Logs without a popup; Core logs retain
+  their dialog. Cover tail/Refresh, service selection, empty/errors, no hidden reads, scope/exit
+  aborts and retained drafts. A visible assigned app with logs may retain the ordinary-user logs-only
+  page with its accessible Home breadcrumb linking to `/`, but other Manage sections and controls stay
+  administrator-only. Core's existing log API
+  authorization and any refusal remain unchanged; navigation adds no grant.
+- Removal remains administrator-only. Dashboard and Manage removal entries open Core directly,
+  preserving cleanup choices, impact/runtime warnings, source safety, popup fallback, denial/errors and original-request recovery. No opening or unknown status reports success.
+  App-version hover retains revision/build details; the after-name problem icon retains the full
+  update-check error in the shared Tooltip on hover and focus, without native error titles.
+  Permission-problem tooltips preserve the direct Permissions action; tooltip interaction does not
+  activate the Dashboard row.
+- Pending lifecycle verbs appear once in the main status; configuration and restart-needed details
+  remain independently visible. App-owned focus indicators are a single visible 2 px lime
+  (`#A3E635`) outline or ring in both themes, including SDK-hosted app controls, without a halo or
+  ink edge. Grouped inputs keep one parent lime/red outline with red invalid borders retained.
+  Check SDK-owned rail and chooser controls separately.
+- Core Runtime / workspace offers Release and eligible existing named workspaces, retaining Source
+  settings and source/IDE labels. Verify explicit Core-only selection, app exclusion, compatibility
+  acceptance and confirmed Return before a freshly reviewed next target. Retain exact request IDs,
+  repair review after a stale digest, actor-bound queued cancellation and unknown/failed recovery.
+  Release completion needs a new factual Release instance, including after a prior source Return.
 - Core source matching uses its factual development project inside a unique active registered tree;
   packaged Core, pending source settings, path-prefix lookalikes and inaccessible inventory never
   produce a workspace label. Core-only workspaces and rename events retain the shared read.

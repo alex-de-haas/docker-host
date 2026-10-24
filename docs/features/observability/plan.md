@@ -1,9 +1,9 @@
 ---
 status: In Progress
 created: 2026-07-03
-updated: 2026-10-10
+updated: 2026-10-22
 summary: Remaining observability work, adding telemetry ingest and query auth, live tails and fleet-wide views.
-components: [apps/telemetry-backend, apps/telemetry-ui]
+components: [apps/core, apps/telemetry-backend, apps/telemetry-ui]
 ---
 
 # Observability — Remaining Work
@@ -25,6 +25,17 @@ the background, nothing at all in the foreground or under `npm run dev` — reac
 everything else is the one an operator cannot look at from the UI they are already in.
 
 Security comes first. The rest is freshness and reach.
+
+## Platform Boundary, Owner Direction 2026-10-22
+
+Core is application-neutral, including telemetry. The current implementation still selects
+`hosty.telemetry` for producer OTLP wiring and unviewed resource sampling, and a generic
+`otlp-collector` declaration invokes a specific collector's config/file provisioning. These are
+legacy violations, not requirements alternative providers must imitate. The
+[Core boundary audit](../../reviews/2026-10-22-core-application-boundaries.md) records the exact paths.
+D12 owns their removal; it does not choose a new provider schema or authorize runtime switching.
+Agree the contract before implementation. Provider selection, endpoint compatibility, readiness,
+authorization and collector configuration ownership must be explicit and independent of app IDs.
 
 ## Target behavior
 
@@ -191,6 +202,8 @@ kernel.
       files, on a backend that has no migration mechanism at all (`Initialize()` is pure
       `CREATE TABLE IF NOT EXISTS`, with no `ALTER TABLE` or `user_version` anywhere), so it would mean
       inventing one first.
+
+- [ ] D12. **Application-neutral telemetry integration.** Replace the fixed Telemetry ID/endpoint and self-export exception in producer wiring, replace the Telemetry-ID background-sampling gate with actual authorized consumers or an explicit generic observation contract, and remove collector-specific config/file provisioning from Core's generic capability path. Resolve compatible declared providers and explicit selection, preserve absent/stopped/ambiguous behavior and authorization, and leave implementation-specific configuration with its owning app. Retire unused exact-ID sink-path helpers. Verify empty and third-party-only installations, multiple providers, stop/removal, self-export prevention and unchanged viewer-driven sampling. Contract design and approval precede implementation; authenticated ingest remains D1.
 
 ## Phases
 

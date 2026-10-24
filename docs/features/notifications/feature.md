@@ -1,6 +1,6 @@
 ---
 created: 2026-06-16
-updated: 2026-08-31
+updated: 2026-10-21
 summary: A Core-owned per-user notification inbox with app and Core producers and live delivery to any client.
 components: [apps/core, apps/shell]
 ---
@@ -175,9 +175,12 @@ stream's semantics.
 ## Clients
 
 - **Shell bell** (`apps/shell/src/app/shell/notifications/notification-bell.tsx`), rendered by the
-  sidebar: reads `GET /api/notifications`, subscribes to the `notification` event on the Core stream,
+  top strip: reads `GET /api/notifications`, subscribes to the `notification` event on the Core stream,
   polls every 30 seconds as a backstop, and posts `/api/notifications/read`. It tracks ids it has
-  already counted so a record arriving twice (poll plus stream) is not double-counted.
+  already counted so a record arriving twice (poll plus stream) is not double-counted. Each row
+  carries a distinct success/warning/error/information shape and an accessible severity label,
+  using the shared semantic colors; unknown levels remain neutral. Selecting a row retains its
+  existing mark-read action and safe HTTP(S) navigation. Mark all read stays available.
 - **Swift client**: `CoreEventStream` models the `notification` event and consumes the stream, so the
   transport is in place; raising an OS banner from it shipped with
   [agent-background-sessions](../agent-background-sessions/feature.md).
@@ -244,4 +247,6 @@ runtime under AOT rather than at build time, which is what the round-trip test e
 - Purge by dedupe prefix removes Core advisories read and unread while leaving app-owned keys alone.
 - Retention prunes read and over-cap records, keeps every unread one, and writes its audit.
 - The unified stream delivers a new record live to the recipient's session.
+- Shell notification rows expose severity without color alone and retain individual/bulk mark-read,
+  safe navigation and refusal to execute unsafe links.
 - All new types round-trip through the source-gen context with no reflection fallback.

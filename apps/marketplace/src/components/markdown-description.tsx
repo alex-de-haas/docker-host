@@ -12,7 +12,7 @@ import {
 // the shell's design tokens (border-border, bg-muted, text-foreground/-muted) without pulling in a
 // typography plugin the shell does not use.
 const PROSE_CLASS = [
-  "rounded-md border bg-muted/30 p-4 text-sm leading-relaxed text-muted-foreground",
+  "min-w-0 rounded-md border bg-muted/30 p-4 text-sm leading-relaxed text-muted-foreground [overflow-wrap:anywhere]",
   "[&_>_:first-child]:mt-0 [&_>_:last-child]:mb-0",
   "[&_p]:my-2",
   "[&_a]:font-medium [&_a]:text-foreground [&_a]:underline [&_a]:underline-offset-2",

@@ -62,6 +62,7 @@ internal static class WorkspaceActivationSupervisor
         existing = Read(root, id);
         if (Pending(existing) && Alive(existing!)) return existing!;
         var activation = WorkspaceRuntimeFiles.Read(root, id);
+        if (activation.Phase == "active") WorkspaceActivationHandover.CompleteReplacement(root, activation);
         if (activation.Phase is "active" or "returned" or "cancelled")
             return (existing ?? new(id, "", "completed", DateTimeOffset.UtcNow, "")) with
                 { State = activation.Phase == "cancelled" ? "cancelled" : "completed", Error = null };

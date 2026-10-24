@@ -1,6 +1,6 @@
 ---
 created: 2026-06-28
-updated: 2026-10-12
+updated: 2026-10-24
 summary: OpenTelemetry from apps flows to a collector, an SQLite-backed telemetry backend and the telemetry UI app.
 components: [apps/telemetry, apps/telemetry-backend, apps/telemetry-ui, apps/core]
 ---
@@ -317,11 +317,45 @@ payloads with display names from a generic Core app-token endpoint,
 `GET /api/internal/apps/{appId}/app-directory` — a roster read any app can use, not a
 telemetry-specific contract.
 
-Its three pages (`/metrics`, `/logs`, `/traces`) appear under Shell's admin **System** nav group,
-driven entirely by the manifest's `ui` block (`entrypoint` + `navigation`), exactly like Marketplace.
+Its three pages (`/metrics`, `/logs`, `/traces`) appear through Shell's existing app navigation,
+driven by the manifest's `ui` block (`entrypoint` + `navigation`).
 Shell itself contains no observability code: the section, the per-app Observability tab, and Core's
 read proxy were all removed once the UI moved into the app. Console logs are the one telemetry view
 that stayed in Shell, because they run off Core alone.
+
+### Telemetry Web Presentation
+
+Telemetry UI imports the shared local fonts and light/dark Hosty tokens. Purple owns the first
+chart series and Blue moves to the second slot, preserving distinct data colors. Charts use themed
+cards, axes and tooltips, with independent gradient IDs. Technical table values use JetBrains Mono;
+selection and keyboard focus use the shared lime controls. External navigation SVGs use a neutral stroke with at least 3:1 contrast against the adopted
+light/dark navigation backgrounds; external images do not inherit the surrounding link color.
+
+The app-owned Telemetry cell mark identifies empty states. Loading remains labelled and animated,
+with a static reduced-motion form. Initial roster errors block dependent pages with Retry rather
+than showing empty telemetry. Logs and traces start in loading during the existing debounce.
+Failed first metric/list/detail reads show unavailable; successful empty and not-found responses
+remain distinct. Confirmed nonempty lists and metric results stay readable with a refresh error;
+Actual query/roster failures use a red failure notice with a distinct icon; WARN records remain
+amber data. Retained log/trace lists identify their last successful resource, range, severity and
+search scope whenever pending or failed filters differ, including the search debounce. The Logs
+source column follows the displayed data, and retained metric sections report their own successful
+range after partial refreshes. Successful results clear the previous-results notice;
+trace details keep their existing clear-on-read behavior. Successful filtered log/trace searches report no matches
+for nonempty trimmed search text, retaining the separate no-data, loading and unavailable states.
+Trace detail focuses its All traces control once and restores the originating list row on return,
+with an enabled-control fallback if that row disappears; refresh retains the current focus.
+Row action chevrons use the full muted foreground. The light fourth data series uses stronger amber
+without changing the dark palette. Inside waterfall labels sit on a neutral card backplate, retaining
+bar positions and readable durations for full and near-end minimum-width spans.
+ The backend Core-roster empty fallback
+and existing routes, resource selection, authorization and query contracts remain unchanged.
+
+Resource pickers wrap complete labels within the viewport. Header actions wrap rather than consume
+the heading at intermediate widths. Filtering the metric tree to no selectable matches reports that
+result without hiding pinned infrastructure or clearing selected charts; whitespace-only search is
+not a no-match result. Log and span detail attributes retain complete selectable keys and multiline
+values, with stacked phone rows and bounded wide columns; table scrolling remains available.
 
 ## Design decisions
 
@@ -401,14 +435,23 @@ lack of auth. Closing that gap is [plan.md](plan.md)'s first deliverable.
   `Program.cs` (the query routes).
 - `apps/telemetry-ui/src/lib/backend.ts` / `roster.ts` — backend URL resolution and appId→name
   labelling; `src/app/api/**` — the UI's proxy routes; `src/app/{metrics,logs,traces}` — the pages.
-- `apps/shell/src/app/shell/dialogs/app-details-dialog.tsx` — the per-app Console logs dialog, opened
-  from `installed-apps-page.tsx` and gated on the `logs` capability.
+- `apps/shell/src/app/shell/dialogs/app-details-dialog.tsx` — the capability-gated Console logs section
+  in standalone App Details; Core console logs retain their separate Shell dialog.
 
 The app exposes the SDK GET/POST adapter at `/api/hosty/ui/[...action]` behind the existing
 administrator session gate. It supplies host verification, navigation metadata and tool resolution,
 so Shell policy hides app navigation after reloads and standalone navigation finishes loading.
 
 ## Testing Expectations
+
+- Verify red request failures remain distinct from amber WARN records. Preserve cached data and its
+  actual resource/query/range provenance through new filter debounce, delayed reads and errors;
+  keep Logs source attribution visible and check per-resource ranges after partial metric refresh.
+  Successful fresh reads clear the retained-results cue without resetting input or selected metrics.
+- Visual/keyboard checks distinguish successful search misses from empty, loading and failed reads;
+  preserve search and focus through trace entry/return, refresh and a disappearing-row fallback.
+  Verify labelled severity, full-contrast action chevrons and readable waterfall durations in both
+  themes, including near-end minimum-width spans without changing their timing geometry.
 
 - SDK UI routes cover authenticated bootstrap/navigation/panels reads, same-origin navigation
   resolution, and rejection of anonymous, non-administrator and cross-origin requests.

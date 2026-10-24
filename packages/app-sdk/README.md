@@ -81,6 +81,20 @@ rebuild, without editing this wiring. New mandatory Core capabilities can requir
 `node packages/app-sdk/scripts/check-overlay-upgrade.mjs` checks the published export layout using
 identical consumer source before and after a dependency-only presentation revision (run SDK build first).
 
+Standard SDK presentation uses the Hosty ink/mist palette, lime interaction and focus treatment,
+light/dark cards and notices, and reduced-motion-aware progress. The package carries its own local
+IBM Plex Sans and JetBrains Mono subsets and OFL notices; a browser bundler resolves their static
+asset URLs without a CDN or an app-side CSS/font import. Server markup and initial hydration use
+identical base styles; mounted chrome shares one document-owned font sheet using browser-resolved
+URLs. StrictMode and access-portal replay retain that sheet, and the last owner releases it.
+The private family names apply only to SDK-owned controls. The app document keeps its own typography, palette and focus styles; the four
+`--hosty-panel-*` overrides remain supported. This is scoped styling of the existing light-DOM
+renderers, not a Shadow DOM boundary or a change to the composition/authentication contracts.
+
+The installation dialog collects only the source, opens Core confirmation and reports Core's
+actual outcome. Preparation and execution have indeterminate progress; installed does not imply
+configured, running or healthy. Closing the dialog does not cancel a Core-confirmed operation.
+
 Legacy `AppIdentityBridge` exports, `renderState` and `onSession` remain compatible for consumers
 that have not migrated. See [Hosty Overlay](../../docs/features/hosty-overlay/feature.md) for behavior.
 

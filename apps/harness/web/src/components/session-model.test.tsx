@@ -46,3 +46,35 @@ it("preserves the current selection and reports a stale-update error", async () 
   expect(changed).not.toHaveBeenCalled();
   expect(container.querySelector('button[aria-label="Reasoning effort"]')?.textContent).toBe("High");
 });
+
+it("recovers an unavailable model catalog explicitly without changing the selected model or effort", async () => {
+  vi.mocked(api.getSessionModels).mockRejectedValueOnce(new Error("Model catalog temporarily unavailable"));
+  await render();
+  expect(container.querySelector('[role="alert"]')?.textContent).toContain("Model catalog temporarily unavailable");
+  expect(api.setSessionModel).not.toHaveBeenCalled();
+  await act(async () => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Retry models")!.click());
+  expect(api.getSessionModels).toHaveBeenCalledTimes(2);
+  expect(container.querySelector('[role="alert"]')).toBeNull();
+  expect(container.querySelector('[aria-label="Model"]')?.textContent).toBe("First");
+  expect(container.querySelector('[aria-label="Reasoning effort"]')?.textContent).toBe("High");
+  expect(api.setSessionModel).not.toHaveBeenCalled();
+  expect(changed).not.toHaveBeenCalled();
+});
+
+it("scopes catalog labels and errors to the current session and connection, including no connection", async () => {
+  await render();
+  expect(container.querySelector('[aria-label="Model"]')?.textContent).toBe("First");
+  let rejectRead!: (cause: Error) => void;
+  vi.mocked(api.getSessionModels).mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectRead = reject; }));
+  const next = { ...record, id: "other-chat", connectionId: "other-account", connectionRevision: 2 };
+  await act(async () => root.render(<SessionModel session={next} busy={false} onChange={changed} onSavingChange={saving} />));
+  expect(container.querySelector('[aria-label="Model"]')?.textContent).toBe("first (unavailable)");
+  expect(container.querySelector('[role="alert"]')).toBeNull();
+  await act(async () => rejectRead(new Error("Other account catalog unavailable")));
+  expect(container.querySelector('[role="alert"]')?.textContent).toBe("Other account catalog unavailable");
+  await act(async () => root.render(<SessionModel session={{ ...next, connectionId: undefined }} busy={false} onChange={changed} onSavingChange={saving} />));
+  expect(container.querySelector('[role="alert"]')).toBeNull();
+  expect([...container.querySelectorAll("button")].some(button => button.textContent === "Retry models")).toBe(false);
+  expect(api.getSessionModels).toHaveBeenCalledTimes(2);
+  expect(api.setSessionModel).not.toHaveBeenCalled();
+});

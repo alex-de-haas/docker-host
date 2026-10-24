@@ -14,7 +14,8 @@ internal sealed record InspectionApp(string AppId, string Name, string? Subpath,
 internal sealed record InspectionOperation(string Id, string Kind, string State, string? Error);
 internal sealed record InspectionCommit(string Sha, string Author, string At, string Subject);
 internal sealed record InspectionConsumer(string Kind, string Reference, string? Name = null, string? ManagementUrl = null);
-internal sealed record InspectionPullRequest(string Url, string? PublishedHead, PublicationObservation? Observation, string? Unavailable);
+internal sealed record InspectionPullRequest(string Url, string? PublishedHead, PublicationObservation? Observation, string? Unavailable,
+    bool Historical = false);
 internal sealed record InspectedWorktree(string Id, string WorkspaceId, string Repository, string Branch, string TargetBranch,
     string OriginalBase, string IntegrationBase, string Path, string State, InspectionApp[] Apps,
     WorkspaceObservation? Observation, InspectionOperation[] Operations, string[] Leases,

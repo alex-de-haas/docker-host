@@ -1,11 +1,14 @@
 "use client";
 
+import { HostyLoader } from "../../../../../../shared/web/hosty-states";
+
 import { useState } from "react";
 import { Globe, LoaderCircle } from "lucide-react";
 import { toast } from "@/components/reui/operation-toast";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { coreErrorCode, isAuthRequiredRedirectError } from "../core-api";
 import { derivesPublicOrigins, publishesThroughCloudflareApi } from "../ingress";
 import { buildPublicOriginSettingKey, resolvePublishedLabelAction, sanitizeSubdomainLabel, localBrowserPreview, localBrowserSettings } from "../public-origin";
@@ -216,7 +219,7 @@ export function PublicOriginControl({ app, endpoint }: { app: CoreApp; endpoint:
           <DialogBody>
             {loading ? (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <LoaderCircle className="h-4 w-4 animate-spin" /> Loading…
+                <HostyLoader className="h-4 w-4" label={null} /> Loading…
               </div>
             ) : publishes ? (
               !connected ? (
@@ -297,11 +300,14 @@ export function PublicOriginControl({ app, endpoint }: { app: CoreApp; endpoint:
               <div className="space-y-3">
                 {endpoint.localOrigin && <label className="flex flex-col gap-1 text-xs font-medium">
                   Address provider
-                  <select aria-label="Address provider" className="h-8 rounded-md border bg-background px-2" value={manual ? "manual" : "local"}
-                    onChange={event => { const next = event.target.value === "manual"; setManual(next); setValue(next ? currentOrigin : endpoint.localName ?? ""); }}>
-                    <option value="local">Local · this computer only</option>
-                    <option value="manual">Custom proxy address (advanced)</option>
-                  </select>
+                  <Select value={manual ? "manual" : "local"}
+                    onValueChange={value => { const next = value === "manual"; setManual(next); setValue(next ? currentOrigin : endpoint.localName ?? ""); }}>
+                    <SelectTrigger aria-label="Address provider" size="sm" className="w-full"><SelectValue /></SelectTrigger>
+                    <SelectContent><SelectGroup>
+                      <SelectItem value="local">Local · this computer only</SelectItem>
+                      <SelectItem value="manual">Custom proxy address (advanced)</SelectItem>
+                    </SelectGroup></SelectContent>
+                  </Select>
                 </label>}
                 {!manual && endpoint.localOrigin ? <div className="space-y-2">
                   <label className="text-xs font-medium" htmlFor="local-browser-name">Local name</label>
@@ -344,11 +350,11 @@ export function PublicOriginControl({ app, endpoint }: { app: CoreApp; endpoint:
                       that repair, idempotent for the hostname and the DNS record, and there is nothing to press
                       when the route is not drifted. Edited label: the same POST renames the publication. */}
                   <Button type="button" disabled={busy || !publishedAction.enabled} onClick={() => void publish()}>
-                    {busy && <LoaderCircle className="mr-1 h-4 w-4 animate-spin" />}
+                    {busy && <LoaderCircle className="mr-1 h-4 w-4 animate-spin motion-reduce:animate-none" />}
                     {publishedAction.action === "reapply" ? "Reapply" : "Rename"}
                   </Button>
                   <Button type="button" variant="outline" disabled={busy} onClick={() => void unpublish()}>
-                    {busy && <LoaderCircle className="mr-1 h-4 w-4 animate-spin" />}
+                    {busy && <LoaderCircle className="mr-1 h-4 w-4 animate-spin motion-reduce:animate-none" />}
                     Unpublish
                   </Button>
                 </>
@@ -356,19 +362,19 @@ export function PublicOriginControl({ app, endpoint }: { app: CoreApp; endpoint:
                 <>
                   {conflict && (
                     <Button type="button" variant="outline" disabled={busy} onClick={() => void publish(true)}>
-                      {busy && <LoaderCircle className="mr-1 h-4 w-4 animate-spin" />}
+                      {busy && <LoaderCircle className="mr-1 h-4 w-4 animate-spin motion-reduce:animate-none" />}
                       Adopt and publish
                     </Button>
                   )}
                   <Button type="button" disabled={busy || !value.trim()} onClick={() => void publish()}>
-                    {busy && <LoaderCircle className="mr-1 h-4 w-4 animate-spin" />}
+                    {busy && <LoaderCircle className="mr-1 h-4 w-4 animate-spin motion-reduce:animate-none" />}
                     Publish
                   </Button>
                 </>
               ) : null
             ) : (
               <Button type="button" disabled={busy} onClick={() => void saveSetting()}>
-                {busy && <LoaderCircle className="mr-1 h-4 w-4 animate-spin" />}
+                {busy && <LoaderCircle className="mr-1 h-4 w-4 animate-spin motion-reduce:animate-none" />}
                 Save
               </Button>
             )}

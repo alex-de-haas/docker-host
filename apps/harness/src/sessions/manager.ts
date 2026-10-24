@@ -1,5 +1,6 @@
 import { harnessEnvironmentActions } from "./environment-tools.js";
 import { projectWorktreePaths } from "../worker/resources.js";
+import { transcriptFileEdits } from "./transcript-edits.js";
 import type { ConnectionService } from "../connections/service.js";
 import { hasResourceHistory, reconcileRetentionSnapshot, retentionBusy, retentionStatus, type RetentionStatus } from "./retention.js";
 import type { RetentionSnapshot } from "./development.js";
@@ -16,11 +17,13 @@ import { mkdir, stat } from "node:fs/promises";
 import { isWaitingStatus, WaitingNotifier } from "../notifications.js";
 import { composeSystemPrompt, partitionSkills, type AppSkill } from "../mcp/skills.js";
 import { HOST_SYSTEM_PROMPT, DOCKER_SYSTEM_PROMPT } from "./host-prompt.js";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { deriveTitleFromMessage, normalizeTitle } from "./title.js";
 import type { HarnessAdapter, HarnessEvent, HarnessRun } from "../harness/adapter.js";
+import { sanitizeCommandResult } from "../harness/command-result.js";
+import { sanitizeToolResult, shouldRetainToolOutput } from "../harness/tool-result.js";
 import { workingActivity, type SessionActivity, type HarnessActivity } from "../harness/activity.js";
-import type { SessionRecord, SessionStatus, SessionStore, StoredEvent } from "./store.js";
+import { messageRequestId, type MessageReceipt, type StoredMessageReceipt, type SessionRecord, type SessionStatus, type SessionStore, type StoredEvent } from "./store.js";
 import type { AuditReporter } from "../audit.js";
 import type { SettingsStore } from "../settings/store.js";
 import { CORE_PROVIDER_ID, type McpProvider, type ProviderDirectory } from "../settings/providers.js";
@@ -46,6 +49,7 @@ export interface SessionListener {
 }
 
 interface LiveSession {
+  toolOutputCalls?: Map<string, string | null>;
   runEpoch?: string;
   persistedWorkerSequences?: Set<number>;
   activity: SessionActivity;
@@ -75,6 +79,7 @@ interface LiveSession {
   credential: string | null;
   /** This app's identity for its own apps.sources.full operations; never exchanged for another app. */
   workspaceCredential: string | null;
+  credentialRefreshPending?: boolean;
   refreshTimer: NodeJS.Timeout | null;
   /**
    * Harness-facing names of app tools that may run without an approval card: an app the operator
@@ -95,6 +100,7 @@ export class SessionManager {
   private readonly activationGuards = new Map<string, () => Promise<void>>();
   private readonly live = new Map<string, LiveSession>();
   private readonly operations = new Map<string, Promise<unknown>>();
+  private readonly actorCredentialRefreshes = new Map<string, { credential: string }>();
   private serialize<T>(key: string, action: () => Promise<T>): Promise<T> {
     const previous = this.operations.get(key) ?? Promise.resolve();
     const next = previous.catch(() => undefined).then(action);
@@ -200,18 +206,48 @@ export class SessionManager {
   /** Update the owned conversation after app recovery; Core still checks app activity on every tool call. */
   async refreshSessionCredentials(id: string, userId: string, credential: string): Promise<void> {
     await this.serialize(id, async () => {
+      if (this.stopping) return;
       const session = await this.requireLive(id);
       if (session.record.createdBy !== userId) throw new AppContextError(403, "session_forbidden", "This session belongs to another user.");
       session.credential = credential;
       session.workspaceCredential = credential;
-      if (session.run) { await this.refreshMcpServers(session); this.scheduleMcpRefresh(id); }
+      session.credentialRefreshPending = true;
+      if (session.run) {
+        await this.refreshMcpServers(session);
+        if (!this.stopping) this.scheduleMcpRefresh(id);
+      }
+      session.credentialRefreshPending = false;
     });
+  }
+
+  /** Identity readiness is independent of unrelated conversation queues; keep only the latest actor credential. */
+  scheduleActorCredentialRefresh(userId: string, credential: string): void {
+    if (this.stopping) return;
+    const pending = this.actorCredentialRefreshes.get(userId);
+    if (pending) { pending.credential = credential; return; }
+    const request = { credential };
+    this.actorCredentialRefreshes.set(userId, request);
+    void (async () => {
+      try {
+        while (!this.stopping) {
+          const current = request.credential;
+          try { await this.refreshActorCredentials(userId, current); }
+          catch {
+            // Failed sessions retain their retry flag. Do not log credential-bearing provider errors.
+            if (!this.stopping) console.warn("[sessions] Background credential refresh failed; the next identity check will retry.");
+          }
+          if (request.credential === current) break;
+        }
+      } finally {
+        if (this.actorCredentialRefreshes.get(userId) === request) this.actorCredentialRefreshes.delete(userId);
+      }
+    })();
   }
 
   /** Refresh every already-live conversation owned by this actor; never starts or replays a turn. */
   async refreshActorCredentials(userId: string, credential: string): Promise<void> {
     const results = await Promise.allSettled([...this.live.values()]
-      .filter(s => s.record.createdBy === userId && (s.credential !== credential || s.workspaceCredential !== credential))
+      .filter(s => s.record.createdBy === userId && (s.credential !== credential || s.workspaceCredential !== credential || s.credentialRefreshPending))
       .map(s => this.refreshSessionCredentials(s.record.id, userId, credential)));
     const failure = results.find(r => r.status === "rejected");
     if (failure?.status === "rejected") throw failure.reason;
@@ -236,6 +272,11 @@ export class SessionManager {
   async workspaceEvents(credential: string, signal: AbortSignal): Promise<Response> {
     if (!this.development) throw new AppContextError(503, "workspaces_unavailable", "Workspace inspection requires Core.");
     return this.development.inspectionEvents(credential, signal);
+  }
+
+  async workspaceApplications(credential: string, method: string, path: string, body?: unknown): Promise<unknown> {
+    if (!this.development) throw new AppContextError(503, "workspaces_unavailable", "Workspace applications require Core.");
+    return this.development.workspaceApplications(credential, method, path, body);
   }
 
   async inspectWorkspaces(credential: string, path = "", body?: Record<string, unknown>, userId?: string): Promise<unknown> {
@@ -783,13 +824,16 @@ export class SessionManager {
         const { validateSelection } = await import("../worker/models.js");
         validateSelection(selection, await this.modelCatalog(id));
       }
+      const modelChanged = (session.record.executionSelection?.model ?? null) !== selection.model;
       if (session.run) { await (session.run.stopAndWait ? session.run.stopAndWait() : session.run.stop()); session.run = null; }
+      // Retire queued callbacks only after exit succeeds; a refused save keeps its live run.
+      session.runEpoch = undefined;
       session.record.executionSelection = { model: selection.model, reasoningEffort: selection.reasoningEffort };
       session.record.selectionRevision = (session.record.selectionRevision ?? 0) + 1;
       session.record.updatedAt = new Date().toISOString();
       await this.store.saveRecord(session.record);
       await this.append(id, { type: "model_selection_changed", selection: session.record.executionSelection, revision: session.record.selectionRevision });
-      await this.append(id, { type: "context_usage", usage: null });
+      if (modelChanged) await this.append(id, { type: "context_usage", usage: null });
       return session.record;
     });
   }
@@ -1077,9 +1121,56 @@ export class SessionManager {
     await this.leaseWorkspaces(session, false);
   }
 
-  async postMessage(id: string, text: string, credential?: string, attachments: string[] = [], context: { selectionRevision?: unknown; expectedRevision?: unknown; withoutDetails?: boolean; dispatchId?: string; workspaceCredential?: string | null } = {}): Promise<void> {
+  private messageRequest(value: unknown): string {
+    try { return messageRequestId(value); }
+    catch { throw new AppContextError(400, "message_request_id_invalid", "Provide a UUID for this message request."); }
+  }
+
+  private messageActor(actorUserId: unknown): string {
+    if (typeof actorUserId !== "string" || !actorUserId || actorUserId.length > 512)
+      throw new AppContextError(403, "message_actor_required", "An authenticated operator is required for this message request.");
+    return actorUserId;
+  }
+
+  private publicMessageReceipt(receipt: StoredMessageReceipt, actorUserId: string): MessageReceipt {
+    if (receipt.actorUserId !== actorUserId)
+      throw new AppContextError(403, "message_request_forbidden", "This message request belongs to another operator.");
+    const { clientRequestId, state, eventSeq, error } = receipt;
+    return { clientRequestId, state, ...(eventSeq !== undefined ? { eventSeq } : {}), ...(error ? { error } : {}) };
+  }
+
+  async messageReceipt(id: string, requestId: unknown, actorUserId: unknown): Promise<MessageReceipt> {
+    const clientRequestId = this.messageRequest(requestId), actor = this.messageActor(actorUserId);
+    return this.serialize(id, async () => {
+      if (!await this.getSession(id)) throw new SessionNotFoundError(id);
+      const receipt = await this.store.readMessageReceipt(id, clientRequestId);
+      if (!receipt) throw new AppContextError(404, "message_request_not_found", "This message request has not been admitted.");
+      return this.publicMessageReceipt(receipt, actor);
+    });
+  }
+
+  async postMessage(id: string, text: string, credential?: string, attachments: string[] = [], context: { selectionRevision?: unknown; expectedRevision?: unknown; withoutDetails?: boolean; dispatchId?: string; workspaceCredential?: string | null; clientRequestId?: unknown; actorUserId?: string } = {}): Promise<MessageReceipt | void> {
+    const clientRequestId = context.clientRequestId === undefined ? undefined : this.messageRequest(context.clientRequestId);
+    const actorUserId = clientRequestId ? this.messageActor(context.actorUserId) : undefined;
+    const fingerprint = clientRequestId ? createHash("sha256").update(JSON.stringify({
+      actorUserId, text, attachments, appContextRevision: context.expectedRevision ?? 0,
+      withoutAppDetails: context.withoutDetails === true, selectionRevision: context.selectionRevision ?? 0,
+    })).digest("hex") : undefined;
     return this.serialize(id, async () => {
       const session = await this.requireLive(id);
+      if (clientRequestId) {
+        const receipt = await this.store.readMessageReceipt(id, clientRequestId);
+        if (receipt) {
+          const result = this.publicMessageReceipt(receipt, actorUserId!);
+          if (receipt.fingerprint !== fingerprint)
+            throw new AppContextError(409, "message_request_conflict", "This message request was already used with different message details.");
+          if (result.state === "unknown")
+            throw new AppContextError(409, "message_outcome_unknown", "This message may already have been sent. Inspect the conversation before starting another turn.");
+          if (result.state === "rejected")
+            throw new AppContextError(409, "message_request_rejected", "This message was not sent. Review its rejection before starting another turn.");
+          return result;
+        }
+      }
       if (session.record.retentionCleanup) throw new AppContextError(409, "cleanup_pending", "Workspace cleanup has started. Recover deletion before starting a new conversation.");
       if (session.record.handoffPending) throw new AppContextError(409, "handoff_pending", "Finalize the prepared handoff before sending.");
       if (context.dispatchId) {
@@ -1108,6 +1199,7 @@ export class SessionManager {
       if ((context.selectionRevision ?? 0) !== (session.record.selectionRevision ?? 0)) throw new AppContextError(409, "selection_conflict", "Model selection changed. Review it before sending.");
       const docker = session.record.executionMode === "docker";
       let preparedWorker = false, dispatched = false;
+      let messageReceipt: StoredMessageReceipt | undefined;
       let release: (() => void) | undefined;
       try {
         let selectedAdapter = this.adapter;
@@ -1183,15 +1275,24 @@ export class SessionManager {
         }
         session.record.handoffDraft = undefined;
         await this.store.saveRecord(session.record);
+        if (clientRequestId) {
+          // This boundary precedes transcript publication and provider start/send. A crash here is
+          // uncertain, never permission to replay the operator's already admitted request.
+          const receipt: StoredMessageReceipt = { clientRequestId, actorUserId: actorUserId!, fingerprint: fingerprint!, state: "unknown" };
+          await this.store.saveMessageReceipt(id, receipt);
+          messageReceipt = receipt;
+        }
         if (this.connections) session.record.providerLocked = true;
-        await this.append(id, {
+        const messageEventSeq = await this.append(id, {
           type: "user_message",
+          ...(clientRequestId ? { clientRequestId } : {}),
           executionSelection: session.record.executionSelection ?? { model: null, reasoningEffort: null },
           selectionRevision: session.record.selectionRevision ?? 0,
           text,
           appContext: snapshot,
           ...(attached.length > 0 ? { attachments: attached.map((file) => file.name) } : {}),
         });
+        if (messageReceipt) messageReceipt.eventSeq = messageEventSeq;
         await this.setStatus(id, "running");
         this.setActivity(session, workingActivity());
         if (!session.run) {
@@ -1262,9 +1363,23 @@ export class SessionManager {
           if (session.record.handoffDispatch.state === "unknown") session.record.handoffDispatch.state = "running";
           await this.store.saveRecord(session.record);
         }
+        if (messageReceipt) {
+          const accepted: StoredMessageReceipt = { ...messageReceipt, state: "accepted" };
+          // Keep the persisted unknown receipt if this write fails after send; never claim acceptance
+          // from an in-memory assignment or dispatch this UUID again after a lost response.
+          await this.store.saveMessageReceipt(id, accepted);
+          return this.publicMessageReceipt(accepted, actorUserId!);
+        }
       } catch (error) {
-        // Before send there cannot be a remote execution. A failed preparation is not an unknown run.
-        if (preparedWorker && !dispatched) await this.setStatus(id, "failed");
+        // A caught failure before send is definitive; a crash or failure during send remains unknown.
+        if (messageReceipt && !dispatched) {
+          const known = error instanceof AppContextError || error instanceof ConnectionError || error instanceof WorkerError;
+          await this.store.saveMessageReceipt(id, { ...messageReceipt, state: "rejected", error: {
+            code: known ? error.code.slice(0, 80) : "message_dispatch_failed",
+            message: known ? error.message.slice(0, 500) : "The message was not sent. Review the conversation and try again.",
+          } });
+        }
+        if ((preparedWorker || messageReceipt) && !dispatched) await this.setStatus(id, "failed");
         throw error;
       } finally { release?.(); }
     });
@@ -1714,7 +1829,13 @@ export class SessionManager {
       }
     };
     session.listeners.add(wrapped);
-    const replay = await this.store.readEvents(id, afterSeq);
+    let replay: StoredEvent[];
+    try { replay = await this.store.readEvents(id, afterSeq); }
+    catch (error) {
+      // A failed replay returns no cleanup handle; retain only subscriptions owned by live callers.
+      session.listeners.delete(wrapped);
+      throw error;
+    }
     const lastReplayed = replay.length > 0 ? replay[replay.length - 1]!.seq : afterSeq;
     const tail = buffered.filter((event) => event.seq > lastReplayed);
     passthrough = true;
@@ -1921,6 +2042,20 @@ export class SessionManager {
     }
   }
 
+  /** Recover current-turn call identities after coordinator restart without replaying a tool. */
+  private async outputCalls(session: LiveSession): Promise<Map<string, string | null>> {
+    if (session.toolOutputCalls) return session.toolOutputCalls;
+    const calls = new Map<string, string | null>();
+    for (const event of await this.store.readEvents(session.record.id)) {
+      if (["user_message", "session_created", "result", "error"].includes(event.type)
+        || event.type === "session_status" && ["idle", "cancelled", "failed", "abandoned"].includes(String(event.status))) calls.clear();
+      if (event.type === "tool_use" && typeof event.toolUseId === "string" && (calls.has(event.toolUseId) || calls.size < 2048))
+        calls.set(event.toolUseId, calls.has(event.toolUseId) ? null : String(event.toolName ?? ""));
+    }
+    session.toolOutputCalls = calls;
+    return calls;
+  }
+
   private async applyHarnessEvent(id: string, event: HarnessEvent & { workerRunId?: string; workerSequence?: number }, persisted = false): Promise<void> {
     const session = this.live.get(id);
     if (!session) {
@@ -1941,6 +2076,44 @@ export class SessionManager {
         // Live-only: fanned out for typing UX, never persisted (the final text is the record).
         this.fanOut(session, { seq: session.record.lastEventSeq, ts: new Date().toISOString(), ...event });
         return;
+      case "tool_use": {
+        // Bind once while the executing session still owns the descriptor. Replay keeps this fact;
+        // a later app/workspace selection must never reinterpret a historical relative filename.
+        let trees = session.record.developmentWorkspaces ?? [];
+        if (this.worker && ["Edit", "Write", "MultiEdit", "NotebookEdit", "FileChange"].includes(event.toolName)) {
+          const root = (await this.worker.capabilities().catch(() => null))?.resources?.trees;
+          trees = root ? projectWorktreePaths(trees, root) as typeof trees : [];
+        }
+        const fileEdits = transcriptFileEdits(event.toolName, event.input, id, trees, event.cwd);
+        const calls = await this.outputCalls(session);
+        try { await this.append(id, { ...event, ...(fileEdits.length ? { fileEdits } : {}) }); }
+        catch (error) { session.toolOutputCalls = undefined; throw error; }
+        if (typeof event.toolUseId === "string" && (calls.has(event.toolUseId) || calls.size < 2048))
+          calls.set(event.toolUseId, calls.has(event.toolUseId) ? null : event.toolName);
+        return;
+      }
+      case "tool_result": {
+        if (!["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) return;
+        const result = sanitizeToolResult(event);
+        if (!result) return;
+        const toolName = (await this.outputCalls(session)).get(result.toolUseId);
+        if (!toolName || !shouldRetainToolOutput(toolName)) return;
+        await this.append(id, { ...result,
+          ...(event.workerRunId !== undefined ? { workerRunId: event.workerRunId, workerSequence: event.workerSequence } : {}),
+        });
+        return;
+      }
+      case "command_result": {
+        // Completion metadata is an allowlisted projection, never a provider output envelope.
+        // A late callback after a terminal turn cannot change its recorded command outcome.
+        if (!["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) return;
+        const result = sanitizeCommandResult(event);
+        if (!result) return;
+        await this.append(id, { ...result,
+          ...(event.workerRunId !== undefined ? { workerRunId: event.workerRunId, workerSequence: event.workerSequence } : {}),
+        });
+        return;
+      }
       case "approval_request":
         session.pendingApprovals.set(event.approvalId, event.toolName);
         await this.append(id, { ...event });
@@ -2004,7 +2177,7 @@ export class SessionManager {
     await this.append(id, { type: "attachment_added", ...attachment });
   }
 
-  private async append(id: string, payload: Record<string, unknown> & { type: string }): Promise<void> {
+  private async append(id: string, payload: Record<string, unknown> & { type: string }): Promise<number | undefined> {
     const session = this.live.get(id);
     if (!session) {
       return;
@@ -2017,6 +2190,7 @@ export class SessionManager {
       && payload.input && typeof payload.input === "object" && !Array.isArray(payload.input)) {
       payload = { ...payload, input: { ...payload.input, password: "[redacted]" } };
     }
+    if (payload.type === "user_message") session.toolOutputCalls = undefined;
     session.record.lastEventSeq += 1;
     const event: StoredEvent = {
       seq: session.record.lastEventSeq,
@@ -2026,6 +2200,7 @@ export class SessionManager {
     await this.store.appendEvent(id, event);
     await this.store.saveRecord(session.record);
     this.fanOut(session, event);
+    return event.seq;
   }
 
   private fanOut(session: LiveSession, event: StoredEvent): void {

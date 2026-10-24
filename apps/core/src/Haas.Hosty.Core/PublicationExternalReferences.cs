@@ -12,17 +12,17 @@ internal sealed partial class PublicationService
     private string ExternalPath(string id) => Path.Combine(Root, "external", id + ".json");
 
     private async Task<(ISourceProvider Source, string Repository, UserProviderConnection Connection)> ExternalConnection(
-        DevelopmentWorkspace tree, CancellationToken ct)
+        DevelopmentWorkspace tree, CancellationToken ct, UserProviderConnection? heldConnection = null)
     {
         if (!tree.Owner.IsExternal) throw new PublicationException("forbidden", "External workspace required.");
-        await workspaces.RequireExternalSourceAsync(tree, ct);
+        await workspaces.RequireExternalSourceAsync(tree, ct, heldConnection);
         var state = await users.ReadAsync(ct);
         if (!state.Users.Any(u => u.Id == tree.Owner.UserId && !u.Disabled && AppAccessPolicy.IsAdmin(u)))
             throw new PublicationException("forbidden", "PR tracking requires the workspace owner's active administrator account.");
         var source = connections.Providers.ForUrl(tree.Repository);
         var provider = source.Publication ?? throw new PublicationException("unsupported", "This source provider does not support PR tracking.");
         var repository = provider.NormalizeRepository(tree.Repository);
-        var grant = await workspaces.WorkspaceGrantAsync(tree, ct);
+        var grant = await workspaces.WorkspaceGrantAsync(tree, ct, heldConnection);
         if (grant is null)
         {
             foreach (var binding in tree.Apps)
@@ -57,8 +57,15 @@ internal sealed partial class PublicationService
             if (snapshot is null || snapshot.WorkspaceId != tree.Id || !snapshot.Owner.SameIdentity(tree.Owner) ||
                 snapshot.Repository != binding.Repository || snapshot.ConnectionId != binding.Connection.Id)
                 return Unavailable("PR tracking is connected; waiting for the next provider observation.");
-            return urls.Select(url => snapshot.PullRequests.FirstOrDefault(p => p.Url == url)
-                ?? new(url, null, null, "Waiting for the next provider observation.")).ToArray();
+            return urls.Select(url =>
+            {
+                var reference = snapshot.PullRequests.FirstOrDefault(p => p.Url == url)
+                    ?? new(url, null, null, "Waiting for the next provider observation.");
+                // Older snapshots may contain exact-branch completion or private review facts.
+                // This projection remains display-only independently of the writer's version.
+                return reference with { Observation = reference.Observation is { } observation
+                    ? observation with { Complete = false, Reviews = null } : null };
+            }).ToArray();
         }
         catch (Exception ex) when (ex is PublicationException or UserConnectionException or AppLifecycleException)
         { return Unavailable(ex.Message); }
@@ -149,8 +156,10 @@ internal sealed partial class PublicationService
                             ConnectionId = binding.Connection.Id, Provider = binding.Source.Descriptor.Id,
                             Branch = tree.Branch, TargetBranch = tree.TargetBranch, Number = number, Url = url };
                         var observation = await connections.UseForSourceAsync(tree.Owner.UserId, binding.Connection.Id,
-                            c => provider.ObserveAsync(c, record, cycle.Token), cycle.Token);
-                        result = new(url, observation.Head, observation with { Reviews = null }, null);
+                            c => provider.ObserveReferenceAsync(c, record, cycle.Token), cycle.Token);
+                        // A linked PR may use another branch; its display facts never authorize
+                        // exact-source review, completion or source cleanup.
+                        result = new(url, observation.Head, observation with { Complete = false, Reviews = null }, null);
                     }
                     catch (OperationCanceledException) when (!ct.IsCancellationRequested)
                     { result = new(url, null, null, "Provider observation timed out; the next refresh will retry."); }

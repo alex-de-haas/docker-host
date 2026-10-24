@@ -205,6 +205,85 @@ describe("HostyOverlay", () => {
     offline = false; await act(async () => document.querySelector<HTMLButtonElement>("dialog button")!.click());
     expect(document.querySelector("dialog")).toBeNull(); expect(node.querySelector("input")).toBe(draft);
   });
+  it("announces one verified same-actor restoration after outage Retry without remounting or replaying work", async () => {
+    let offline = false;
+    let writes = 0;
+    const restored = vi.fn(); window.addEventListener(APP_SESSION_RESTORED, restored);
+    vi.stubGlobal("fetch", vi.fn(async input => {
+      if (input === "/api/write") { writes++; throw new TypeError("The response was lost."); }
+      if (offline) throw new TypeError("offline");
+      return Response.json(active());
+    }));
+    try {
+      await render();
+      const draft = node.querySelector("input")!; draft.value = "Keep my unsent Harness message";
+      expect(restored).not.toHaveBeenCalled();
+      await expect(appFetch("/api/write", { method: "POST", body: "explicit work" })).rejects.toThrow("response was lost");
+      offline = true;
+      await act(async () => window.dispatchEvent(new Event("focus")));
+      expect(document.body.textContent).toContain("Cannot reach Hosty");
+      expect(node.querySelector("input")).toBe(draft);
+      offline = false;
+      await act(async () => document.querySelector<HTMLButtonElement>("dialog button")!.click());
+      expect(restored).toHaveBeenCalledTimes(1);
+      expect(node.querySelector("input")).toBe(draft);
+      expect(draft.value).toBe("Keep my unsent Harness message");
+      expect(writes).toBe(1);
+      await act(async () => window.dispatchEvent(new Event("focus")));
+      expect(restored).toHaveBeenCalledTimes(1);
+      expect(writes).toBe(1);
+      offline = true;
+      await act(async () => window.dispatchEvent(new Event("focus")));
+      offline = false;
+      await act(async () => document.querySelector<HTMLButtonElement>("dialog button")!.click());
+      expect(restored).toHaveBeenCalledTimes(2);
+      expect(writes).toBe(1);
+    } finally { window.removeEventListener(APP_SESSION_RESTORED, restored); }
+  });
+  it("ends a stalled renewal exchange and preserves the draft without replaying a failed mutation", async () => {
+    vi.useFakeTimers();
+    const popup = { closed: false, close: vi.fn(), document: document.implementation.createHTMLDocument("Core popup") };
+    vi.spyOn(window, "open").mockReturnValue(popup as unknown as Window);
+    const forms: HTMLFormElement[] = [];
+    vi.spyOn(HTMLFormElement.prototype, "submit").mockImplementation(function (this: HTMLFormElement) { forms.push(this.cloneNode(true) as HTMLFormElement); });
+    let writes = 0;
+    let finishExchange!: (response: Response) => void;
+    vi.stubGlobal("fetch", vi.fn(async (input, init?: RequestInit) => {
+      if (input === "/api/hosty/session") return Response.json({ ...active(), activityRequired: true });
+      if (input === "/api/write") { writes++; return Response.json({ code: "reauth_required" }, { status: 401 }); }
+      if (String(input).endsWith("/api/auth/app-code")) return new Promise<Response>((resolve, reject) => {
+        finishExchange = resolve;
+        init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+      });
+      throw new Error(String(input));
+    }));
+    let response!: Promise<Response>;
+    try {
+      await render();
+      const draft = node.querySelector("input")!; draft.value = "Retained renewal draft";
+      await act(async () => { response = appFetch("/api/write", { method: "POST", body: "explicit work" }); await Promise.resolve(); });
+      await act(async () => document.querySelector<HTMLButtonElement>("dialog button")!.click());
+      const state = forms[0].querySelector<HTMLInputElement>('input[name="state"]')!.value;
+      await act(async () => {
+        window.dispatchEvent(new MessageEvent("message", { origin: core, source: popup as unknown as Window,
+          data: { type: "hosty:app-auth-code", state, code: "one-use-code" } }));
+        await Promise.resolve();
+      });
+      await act(async () => { await vi.advanceTimersByTimeAsync(4100); });
+      expect(document.body.textContent).toContain("timed out");
+      expect(document.querySelector<HTMLButtonElement>("dialog button")?.disabled).toBe(false);
+      expect((await response).status).toBe(401);
+      expect(node.querySelector("input")).toBe(draft);
+      expect(draft.value).toBe("Retained renewal draft");
+      expect(writes).toBe(1);
+      await act(async () => window.dispatchEvent(new Event("focus")));
+      expect(writes).toBe(1);
+    } finally {
+      finishExchange?.(Response.json({ message: "cancelled" }, { status: 503 }));
+      await act(async () => { await Promise.resolve(); });
+      vi.useRealTimers();
+    }
+  });
   it("hides app portals, restores existing inert state and never drops the mounted input on expiry", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json(active()))); await render();
     const input = node.querySelector("input")!;
@@ -235,14 +314,14 @@ describe("HostyOverlay", () => {
     const popup = { closed: false, close: vi.fn(), document: document.implementation.createHTMLDocument("Core popup") };
     vi.spyOn(actualWindow, "open").mockReturnValue(popup as unknown as Window);
     const forms: HTMLFormElement[] = [];
-    vi.spyOn(HTMLFormElement.prototype, "submit").mockImplementation(function () { forms.push(this.cloneNode(true) as HTMLFormElement); });
+    vi.spyOn(HTMLFormElement.prototype, "submit").mockImplementation(function (this: HTMLFormElement) { forms.push(this.cloneNode(true) as HTMLFormElement); });
     let renewed = false; let writes = 0; let setupReady = !awaitingSetup; let recoveryReady = !awaitingRecovery;
     const fetcher = vi.fn(async (input: unknown) => {
       if (input === "/api/hosty/session") return Response.json({
         ...active(renewed && !setupReady ? "missing" : "ready", renewed && changed ? "bob" : "alice"),
         activityRequired: true, recovery: { ...recovery, appAuthProtocol: renewed && !recoveryReady ? null : 2 },
       });
-      if (input === "/api/auth/app-code") { renewed = true; return Response.json({ ...(!cookieOnly ? { accessToken: "hostyg_renewed" } : {}), activeUntil: new Date(Date.now() + 3600000).toISOString() }); }
+      if (String(input).endsWith("/api/auth/app-code")) { renewed = true; return Response.json({ ...(!cookieOnly ? { accessToken: "hostyg_renewed" } : {}), activeUntil: new Date(Date.now() + 3600000).toISOString() }); }
       if (input === "/api/write") { writes++; return renewed ? Response.json({ ok: true }) : Response.json({ code: "reauth_required" }, { status: 401 }); }
       throw new Error(String(input));
     }); vi.stubGlobal("fetch", fetcher);

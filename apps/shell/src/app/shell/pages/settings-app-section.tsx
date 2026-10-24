@@ -67,7 +67,7 @@ export function AppSettingsTabPanel({
       return (
         <SettingsMessage title={`${tab.label} is ${tab.runtimeState}`}>
           <p className="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
-            <LoaderCircle className="h-4 w-4 animate-spin" /> This page opens when the app answers.
+            <LoaderCircle className="h-4 w-4 animate-spin motion-reduce:animate-none" /> This page opens when the app answers.
           </p>
         </SettingsMessage>
       );
@@ -113,7 +113,7 @@ export function AppSettingsTabPanel({
     return (
       <SettingsMessage title={`${tab.label} is starting`}>
         <p className="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
-          <LoaderCircle className="h-4 w-4 animate-spin" /> This page opens when the app answers.
+          <LoaderCircle className="h-4 w-4 animate-spin motion-reduce:animate-none" /> This page opens when the app answers.
         </p>
       </SettingsMessage>
     );

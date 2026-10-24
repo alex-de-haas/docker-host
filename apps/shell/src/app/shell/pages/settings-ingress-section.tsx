@@ -46,8 +46,8 @@ export function SettingsIngressSection({
   const originChanged = draftOrigin !== null && savedOrigin !== null && draftOrigin.trim() !== savedOrigin;
 
   return (
-    <div className="space-y-4">
-      <div>
+    <div className="flex min-w-0 flex-col gap-4">
+      <div className="flex flex-col gap-1">
         <h3 className="text-sm font-medium">Ingress</h3>
         <p className="text-xs text-muted-foreground">
           Choose how you open applications: Local on this computer, or Cloudflare through your domain.
@@ -85,9 +85,7 @@ export function SettingsIngressSection({
 
       {provider === INGRESS_PROVIDER_CLOUDFLARE_REMOTE && (
         <>
-          <div className="border-t" />
           <CloudflareConnectionCard />
-          <div className="border-t" />
           {/* Core's own address, beside the app publications that ride the same tunnel. Only under this
               provider: the other two cannot create a route or a record, and there the diagnostics below
               tell the operator what to create by hand instead. */}
@@ -95,7 +93,6 @@ export function SettingsIngressSection({
         </>
       )}
 
-      <div className="border-t" />
       <IngressDiagnostics />
     </div>
   );

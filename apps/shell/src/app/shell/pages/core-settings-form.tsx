@@ -2,7 +2,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { LoaderCircle } from "lucide-react";
+import { HostyLoader } from "../../../../../../shared/web/hosty-states";
 import { Button } from "@/components/ui/button";
+import { Field } from "@/components/ui/field";
 import { SettingInput } from "../settings";
 import type { CoreSettingItem, CoreSettingsState } from "../types";
 import { InlineError } from "../ui";
@@ -105,7 +107,7 @@ export function CoreSettingsForm({
     const value = draft[item.key] ?? item.value;
     const durationHint = settingDurationHint(value, item.unit);
     return (
-      <div key={item.key} className="space-y-1">
+      <Field key={item.key} className="gap-2">
         <SettingInput
           setting={{
             key: item.key,
@@ -117,6 +119,7 @@ export function CoreSettingsForm({
             options: item.options,
           }}
           stacked={layout === "core"}
+          descriptionMode={layout === "core" ? "inline" : "hint"}
           unit={settingUnitLabel(item.unit)}
           value={value}
           disabled={saving}
@@ -138,23 +141,23 @@ export function CoreSettingsForm({
             </Button>
           </div>
         )}
-      </div>
+      </Field>
     );
   };
 
   return (
-    <div className="space-y-3">
+    <div className="flex min-w-0 flex-col gap-3">
       {error && <InlineError message={error} />}
       {saveError && <InlineError message={saveError} />}
 
       {!settings && !error && (
         <p className="flex items-center gap-2 text-sm text-muted-foreground">
-          <LoaderCircle className="size-4 animate-spin" aria-hidden /> Loading Core settings…
+          <HostyLoader className="size-5" label={null} /> Loading Core settings…
         </p>
       )}
 
       {settings && groups.length > 0 && (
-        <div className="space-y-4">
+        <div className="flex min-w-0 flex-col gap-4">
           {layout === "core" ? (
             <CoreSettingsLayout items={shown} renderField={renderField} />
           ) : groups.map((group) => (
@@ -164,9 +167,9 @@ export function CoreSettingsForm({
             </div>
           ))}
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center justify-end gap-3">
             <Button size="sm" disabled={saving || changed.length === 0} onClick={save}>
-              {saving && <LoaderCircle className="size-3.5 animate-spin" aria-hidden />}
+              {saving && <LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" aria-hidden />}
               Save settings
             </Button>
             {changed.length > 0 && !saving && (

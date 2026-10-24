@@ -150,6 +150,118 @@ public sealed class WorkspaceActivationReturnTests : IDisposable
         Assert.Throws<InvalidOperationException>(() => WorkspaceActivationReturn.Prepare(root, id, Request(["foreign"])));
     }
 
+    [Fact]
+    public async Task DirectSwitchReturn_UsesOriginalBaselineRatherThanIntermediateWorkspace()
+    {
+        var runtime = Prepare();
+        var original = WorkspaceRuntimeFiles.Read(root, id);
+        var intermediate = new CoreLaunchIdentity("dev", "/intermediate/core.csproj", "/intermediate/generation", 88, DateTimeOffset.UtcNow.AddMinutes(-1));
+        WorkspaceRuntimeFiles.Save(root, original with { PreviousCore = intermediate,
+            CoreReturnTarget = WorkspaceActivationReturn.ImmediateTarget(original) });
+
+        var returning = WorkspaceActivationReturn.Prepare(root, id, Request([], true));
+        Assert.Equal(previous, returning.Returns!.Last().CoreTarget!.Launch);
+        await new WorkspaceActivationHandover(root, runtime).RunAsync(id);
+
+        var completed = WorkspaceRuntimeFiles.Read(root, id);
+        Assert.True(completed.CoreReturned);
+        Assert.True(WorkspaceActivationHandover.SameTarget(previous, runtime.Current!.Launch));
+        Assert.False(WorkspaceActivationHandover.SameTarget(intermediate, runtime.Current.Launch));
+        Assert.Equal(intermediate, completed.PreviousCore); // Immutable immediate handover evidence.
+        Assert.Equal(1, runtime.Stops);
+        Assert.Equal(1, runtime.Restores);
+        Assert.Equal("new state", File.ReadAllText(Path.Combine(root, "current-data")));
+    }
+
+    [Theory]
+    [InlineData("prepared")]
+    [InlineData("core-starting")]
+    public async Task UnfinishedDirectSwitchReturn_RecoversImmediateOwnerAndKeepsOriginalBaseline(string phase)
+    {
+        var runtime = Prepare();
+        var original = WorkspaceRuntimeFiles.Read(root, id);
+        var intermediate = new CoreLaunchIdentity("dev", "/intermediate/core.csproj", "/intermediate/generation", 88, DateTimeOffset.UtcNow.AddMinutes(-1));
+        WorkspaceRuntimeFiles.Save(root, original with { PreviousCore = intermediate, Apps = [], Phase = phase,
+            CoreReturnTarget = WorkspaceActivationReturn.ImmediateTarget(original) });
+        runtime.Current = phase == "prepared" ? new(intermediate, "http://localhost:3333") : null;
+
+        var returning = WorkspaceActivationReturn.Prepare(root, id, Request([], true));
+        Assert.Equal(intermediate, returning.Returns!.Last().CoreTarget!.Launch);
+        await new WorkspaceActivationHandover(root, runtime).RunAsync(id);
+
+        var completed = WorkspaceRuntimeFiles.Read(root, id);
+        Assert.Equal("returned", completed.Phase);
+        Assert.Equal(previous, completed.CoreReturnTarget!.Launch);
+        Assert.True(WorkspaceActivationHandover.SameTarget(intermediate, runtime.Current!.Launch));
+        Assert.Equal(0, runtime.Stops);
+        Assert.Equal(phase == "prepared" ? 0 : 1, runtime.Restores);
+    }
+
+    [Fact]
+    public async Task FailedDirectSwitchReturn_UpdatesImmediateOwnersProcessIdentityFromExactReturnReceipt()
+    {
+        var runtime = Prepare();
+        var original = WorkspaceRuntimeFiles.Read(root, id);
+        var intermediate = new CoreLaunchIdentity("dev", "/intermediate/core.csproj", "/intermediate/generation", 88, DateTimeOffset.UtcNow.AddMinutes(-1));
+        var owner = original with { Id = Guid.NewGuid().ToString(), WorkspaceId = "workspace-a", CoreProject = intermediate.ProjectPath,
+            Generation = intermediate.GenerationPath, ActivatedCore = intermediate, Apps = [], CoreReserved = true };
+        WorkspaceRuntimeFiles.Save(root, owner);
+        WorkspaceRuntimeFiles.Save(root, original with { PreviousCore = intermediate, Apps = [], Phase = "core-starting",
+            ReplacesCoreActivationId = owner.Id, CoreReturnTarget = WorkspaceActivationReturn.ImmediateTarget(original) });
+        runtime.Current = null;
+
+        WorkspaceActivationReturn.Prepare(root, id, Request([], true));
+        await new WorkspaceActivationHandover(root, runtime).RunAsync(id);
+
+        var recovered = WorkspaceRuntimeFiles.Read(root, owner.Id);
+        Assert.False(recovered.CoreReturned);
+        Assert.Equal("active", recovered.Phase);
+        Assert.Equal(runtime.Current!.Launch, recovered.ActivatedCore);
+        Assert.NotEqual(intermediate.ProcessId, recovered.ActivatedCore!.ProcessId);
+        Assert.Equal(owner.PreviousCore, recovered.PreviousCore);
+        Assert.Equal(owner.Generation, recovered.Generation);
+        Assert.Equal(owner.PreparedExecutable, recovered.PreparedExecutable);
+        Assert.True(WorkspaceRuntimeFiles.Read(root, id).CoreReturned);
+        Assert.Equal(1, runtime.Restores);
+        Assert.True(WorkspaceRuntimeFiles.Read(root, id).Returns!.Last().CoreRestoreStarted);
+    }
+
+    [Fact]
+    public async Task FailedDirectSwitchReturn_DoesNotAdoptUnprovenSameGenerationProcess()
+    {
+        var runtime = Prepare();
+        var original = WorkspaceRuntimeFiles.Read(root, id);
+        var intermediate = new CoreLaunchIdentity("dev", "/intermediate/core.csproj", "/intermediate/generation", 88, DateTimeOffset.UtcNow.AddMinutes(-1));
+        var owner = original with { Id = Guid.NewGuid().ToString(), WorkspaceId = "workspace-a", CoreProject = intermediate.ProjectPath,
+            Generation = intermediate.GenerationPath, ActivatedCore = intermediate, Apps = [], CoreReserved = true };
+        WorkspaceRuntimeFiles.Save(root, owner);
+        WorkspaceRuntimeFiles.Save(root, original with { PreviousCore = intermediate, Apps = [], Phase = "prepared",
+            ReplacesCoreActivationId = owner.Id, CoreReturnTarget = WorkspaceActivationReturn.ImmediateTarget(original) });
+        runtime.Current = new(intermediate with { ProcessId = 900, StartedAt = DateTimeOffset.UtcNow }, "http://localhost:3333");
+
+        WorkspaceActivationReturn.Prepare(root, id, Request([], true));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => new WorkspaceActivationHandover(root, runtime).RunAsync(id));
+
+        Assert.Equal(intermediate, WorkspaceRuntimeFiles.Read(root, owner.Id).ActivatedCore);
+        Assert.False(WorkspaceRuntimeFiles.Read(root, id).CoreReturned);
+        Assert.False(WorkspaceRuntimeFiles.Read(root, id).Returns!.Last().CoreRestoreStarted);
+        Assert.Equal(0, runtime.Stops);
+        Assert.Equal(0, runtime.Restores);
+    }
+
+    [Fact]
+    public void DirectSwitchReservation_BlocksReturnOfPreviousOwnerBeforeDispatch()
+    {
+        Prepare();
+        var original = WorkspaceRuntimeFiles.Read(root, id);
+        WorkspaceRuntimeFiles.Save(root, original with { Id = Guid.NewGuid().ToString(), WorkspaceId = "workspace-b",
+            ReplacesCoreActivationId = id, Phase = "prepared", CoreReserved = true });
+        var retained = File.ReadAllText(WorkspaceRuntimeFiles.PathFor(root, id));
+        var error = Assert.Throws<InvalidOperationException>(() => WorkspaceActivationReturn.Prepare(root, id, Request([], true)));
+        Assert.Contains("retained direct Core switch", error.Message);
+        Assert.Equal(retained, File.ReadAllText(WorkspaceRuntimeFiles.PathFor(root, id)));
+    }
+
     private sealed class FakeRuntime(string root, string id, WorkspaceCoreObservation current) : IWorkspaceActivationRuntime
     {
         internal WorkspaceCoreObservation? Current = current;

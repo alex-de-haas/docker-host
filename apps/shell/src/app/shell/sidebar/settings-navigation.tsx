@@ -1,169 +1,59 @@
 "use client";
 
-import { useState } from "react";
-import { useCompactMenu } from "./use-compact-menu";
-import { ChevronRight, Settings } from "lucide-react";
+import Link from "next/link";
+import { Settings, UserRound, Server, ShieldCheck, PanelsTopLeft, Package } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
-import {
-  HOST_SETTINGS_SECTIONS,
-  getHostSettingsSection,
-  isNonAdminHostSettingsTab,
-} from "../shell-routes";
-import {
-  type AppSurfaceTab,
-} from "../surfaces/app-surface-tabs";
+import { HOST_SETTINGS_SECTIONS, getAppSettingsHref, getHostSettingsSection, isNonAdminHostSettingsTab } from "../shell-routes";
+import { resolveAssetSrc } from "../app-helpers";
+import { AppIcon } from "../app-icon";
+import type { CoreApp } from "../types";
+import type { AppSurfaceTab } from "../surfaces/app-surface-tabs";
 
-export function SettingsNavigation({
-  compact,
-  active,
-  selected,
-  pages,
-  apps = [],
-  canManageApps,
-  onSelect,
-}: {
-  compact: boolean;
-  active: boolean;
-  selected: string;
-  pages: AppSurfaceTab[];
-  apps?: { id: string; displayName: string }[];
-  canManageApps: boolean;
+type SettingsNavigationProps = {
+  compact: boolean; active: boolean; selected: string; pages: AppSurfaceTab[];
+  apps?: { id: string; displayName: string }[]; canManageApps: boolean;
+  onSelect(key: string): void;
+};
+
+// Settings owns its growing navigation; Shell keeps one stable destination.
+export function SettingsNavigation({ compact, active, onSelect }: SettingsNavigationProps) {
+  return <Button variant="ghost" size={compact ? "icon" : "default"} aria-label="Settings" title="Settings"
+    aria-current={active ? "page" : undefined} onClick={() => onSelect("profile")}
+    className={cn(compact ? "size-9" : "w-full justify-start px-2", active && "bg-sidebar-accent text-sidebar-accent-foreground")}>
+    <Settings className="size-4 shrink-0" />{!compact && <span>Settings</span>}
+  </Button>;
+}
+
+const icons = { profile: UserRound, host: Server, security: ShieldCheck, shell: PanelsTopLeft };
+export function SettingsPageNavigation({ selected, canManageApps, pages, apps, coreOrigin, onSelect }: {
+  selected: string; canManageApps: boolean; pages: AppSurfaceTab[];
+  apps: Pick<CoreApp, "id" | "displayName" | "icon" | "iconUrl">[]; coreOrigin: string;
   onSelect(key: string): void;
 }) {
-  const menu = useCompactMenu();
-  const [expandedOverride, setExpandedOverride] = useState<boolean | null>(null);
-  const expanded = expandedOverride ?? active;
-  const hostSections = HOST_SETTINGS_SECTIONS.filter(
-    (section) => canManageApps || section.tabs.some(tab => isNonAdminHostSettingsTab(tab.id)),
-  );
-  const selectSection = (section: typeof HOST_SETTINGS_SECTIONS[number]) => {
-    const tab = section.tabs.find(tab => canManageApps || isNonAdminHostSettingsTab(tab.id));
-    if (tab) onSelect(tab.id);
-  };
-  const appPages = canManageApps ? [
-    ...pages,
-    ...apps.filter(app => app.id !== "hosty.shell" && !pages.some(page => page.appId === app.id)).map(app => ({ key: `manage:${app.id}`, appId: app.id, label: app.displayName, embeddedUrl: "management" })),
-  ] : [];
-  const resolved =
-    pages.find(page => page.key === selected || page.appId === selected || `manage:${page.appId}` === selected)?.key ??
-    appPages.find(page => page.key === selected)?.key ??
-    (getHostSettingsSection(selected)?.id ?? hostSections[0]?.id);
-  const isSelected = (key: string) => active && resolved === key;
-  const rowClass = (key: string) =>
-    cn(
-      "flex min-h-8 w-full items-center rounded-md px-2 text-left text-sm text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-      isSelected(key) && "bg-sidebar-accent text-sidebar-accent-foreground",
-    );
-
-  if (compact)
-    return (
-      <DropdownMenu {...menu.menuProps}>
-        <DropdownMenuTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon"
-            title="Settings"
-            aria-label="Settings"
-            {...menu.triggerProps}
-            className={cn(
-              "size-9",
-              active && "bg-sidebar-accent text-sidebar-accent-foreground",
-            )}
-          >
-            <Settings className="h-4 w-4" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent
-          {...menu.contentProps}
-          side="right"
-          align="start"
-          className="max-h-[80dvh] w-64 overflow-y-auto"
-        >
-          <DropdownMenuLabel>Settings</DropdownMenuLabel>
-          {hostSections.map((section) => (
-            <DropdownMenuItem
-              key={section.id}
-              onSelect={() => selectSection(section)}
-              aria-current={isSelected(section.id) ? "page" : undefined}
-              className={cn(isSelected(section.id) && "bg-accent")}
-            >
-              {section.label}
-            </DropdownMenuItem>
-          ))}
-          {appPages.length > 0 && <DropdownMenuSeparator />}
-          {appPages.map((page) => (
-            <DropdownMenuItem
-              key={page.key}
-              onSelect={() => onSelect(page.key)}
-              aria-current={isSelected(page.key) ? "page" : undefined}
-              className={cn(isSelected(page.key) && "bg-accent")}
-            >
-              {page.label}
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
-    );
-
-  return (
-    <div>
-      <button
-        type="button"
-        onClick={() => setExpandedOverride(!expanded)}
-        aria-expanded={expanded}
-        aria-controls="settings-navigation"
-        className={cn(
-          "flex min-h-9 w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-sidebar-accent",
-          active && "bg-sidebar-accent text-sidebar-accent-foreground",
-        )}
-      >
-        <Settings className="h-4 w-4 shrink-0" />
-        <span className="flex-1">Settings</span>
-        <ChevronRight
-          className={cn(
-            "h-4 w-4 transition-transform",
-            expanded && "rotate-90",
-          )}
-        />
-      </button>
-      {expanded && (
-        <div
-          id="settings-navigation"
-          className="ml-4 mt-1 space-y-1 border-l pl-2"
-        >
-          {hostSections.map((section) => (
-            <button
-              key={section.id}
-              type="button"
-              onClick={() => selectSection(section)}
-              className={rowClass(section.id)}
-              aria-current={isSelected(section.id) ? "page" : undefined}
-            >
-              {section.label}
-            </button>
-          ))}
-          {appPages.map((page) => (
-            <button
-              key={page.key}
-              type="button"
-              onClick={() => onSelect(page.key)}
-              className={cn(rowClass(page.key), !page.embeddedUrl && "opacity-60")}
-              aria-current={isSelected(page.key) ? "page" : undefined}
-            >
-              {page.label}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
+  const active = getHostSettingsSection(selected)?.id;
+  const appsById = new Map(apps.map(app => [app.id, app]));
+  return <nav aria-label="Settings sections" className="settings-page-navigation min-h-0 max-h-full overflow-y-auto">
+    <p className="px-3 py-2 text-xs font-medium text-muted-foreground">Settings</p>
+    {HOST_SETTINGS_SECTIONS.filter(section => canManageApps || section.tabs.some(tab => isNonAdminHostSettingsTab(tab.id))).map(section => {
+      const Icon = icons[section.id as keyof typeof icons];
+      return <Button key={section.id} variant="ghost" className={cn("w-full justify-start", active === section.id && "bg-accent text-accent-foreground")}
+        aria-current={active === section.id ? "page" : undefined} onClick={() => onSelect(section.tabs.find(tab => canManageApps || isNonAdminHostSettingsTab(tab.id))!.id)}>
+        <Icon className="size-4" />{section.label}
+      </Button>;
+    })}
+    {canManageApps && pages.length > 0 && <><p className="px-3 pt-5 pb-2 text-xs font-medium text-muted-foreground">Apps</p>
+      {pages.map(page => {
+        const app = appsById.get(page.appId);
+        const label = app?.displayName?.trim() || page.appLabel || page.label || page.appId;
+        const current = selected === page.key || selected === page.appId;
+        return <Button asChild key={page.key} variant="ghost"
+          className={cn("w-full min-w-0 justify-start max-[1000px]:w-auto", current && "bg-accent text-accent-foreground")}>
+          <Link href={getAppSettingsHref(page.appId)} scroll={false} aria-current={current ? "page" : undefined} title={label}>
+            <AppIcon src={resolveAssetSrc(coreOrigin, app?.iconUrl)} name={app?.icon ?? page.icon} fallback={Package} className="size-4" />
+            <span className="truncate">{label}</span>
+          </Link>
+        </Button>;
+      })}</>}
+  </nav>;
 }

@@ -160,7 +160,7 @@ internal static class CoreBrowserPages
         button.danger:not(:disabled):hover { background: var(--danger-soft); color: var(--danger); border-color: var(--danger); }
         button:disabled { opacity: .5; cursor: not-allowed; }
         :is(button, input, select, a, summary):focus-visible {
-          outline: 3px solid var(--lime); outline-offset: 2px; box-shadow: 0 0 0 2px var(--text);
+          outline: 2px solid var(--lime); outline-offset: 0; box-shadow: none;
         }
         .core-brand { display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 600; }
         .hosty-mark { flex: none; }
@@ -178,7 +178,7 @@ internal static class CoreBrowserPages
         }
         @media (forced-colors: active) {
           button, input, select, main, fieldset { border: 1px solid ButtonText; }
-          :is(button, input, select, a, summary):focus-visible { outline: 3px solid Highlight; }
+          :is(button, input, select, a, summary):focus-visible { outline: 2px solid Highlight; }
         }
         """;
 

@@ -1,7 +1,6 @@
 "use client";
 
 import { createContext, useContext, useEffect, useId, useMemo, useState, type ReactNode } from "react";
-import { Cpu, MemoryStick } from "lucide-react";
 import { CartesianGrid, Line, LineChart, XAxis, YAxis } from "recharts";
 import { Frame, FrameHeader, FramePanel, FrameTitle } from "@/components/reui/frame";
 import { Button } from "@/components/ui/button";
@@ -23,7 +22,7 @@ export function ResourceUsageProvider({ coreOrigin, children }: { coreOrigin: st
   return <Resources.Provider value={{ snapshot, fresh, scale }}>{children}</Resources.Provider>;
 }
 
-const config = { cpu: { label: "CPU", color: "var(--info)" }, memory: { label: "RAM", color: "var(--success)" } };
+const config = { cpu: { label: "CPU", color: "var(--chart-1)" }, memory: { label: "RAM", color: "var(--chart-2)" } };
 const timeLabel = (time: number) => new Date(time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
 export function ResourceUsage({ appId, service, label }: { appId?: string; service?: string; label: string }) {
@@ -43,19 +42,19 @@ export function ResourceUsage({ appId, service, label }: { appId?: string; servi
     <PopoverTrigger asChild>
       <Button variant="ghost" size="sm" className="h-auto w-full min-w-0 justify-start gap-1 px-1.5 py-1 text-xs tabular-nums"
         aria-label={`${label} resources: CPU ${formatCpu(cpu)}, RAM ${formatMemory(memory)}${elevated ? ", above recent CPU baseline" : ""}`}>
-        <span className="flex shrink-0 flex-col gap-0.5">
-          <span className="flex items-center gap-1"><Cpu aria-hidden="true" /><span>{formatCpu(cpu)}</span>
-            {elevated && <span aria-hidden="true" className="size-1.5 rounded-full bg-primary" />}
-          </span>
-          <span className="flex items-center gap-1 text-muted-foreground"><MemoryStick aria-hidden="true" />{formatMemory(memory)}</span>
+        <span className="flex w-full min-w-0 flex-col gap-1 font-mono">
+          {(["cpu", "memory"] as const).map(metric => <span key={metric} className="grid min-w-0 grid-cols-[1.5rem_minmax(0,1fr)_3.5rem] items-center gap-1.5">
+            <span className="w-6 shrink-0 text-[10px] text-muted-foreground">{metric === "cpu" ? "CPU" : "RAM"}</span>
+            <span className="min-w-0 truncate text-left">{metric === "cpu" ? formatCpu(cpu) : formatMemory(memory)}</span>
+            <ChartContainer config={config} className="h-4 w-14 shrink-0" aria-hidden="true">
+              <LineChart data={points} margin={{ top: 2, bottom: 2, left: 0, right: 0 }} accessibilityLayer={false}>
+                <XAxis hide dataKey="timestamp" type="number" domain={["dataMin", "dataMax"]} />
+                <YAxis hide domain={metric === "cpu" ? [0, scale] : [0, "auto"]} />
+                <Line dataKey={metric} stroke={`var(--color-${metric})`} strokeWidth={1.5} dot={false} isAnimationActive={false} connectNulls={false} />
+              </LineChart>
+            </ChartContainer>
+          </span>)}
         </span>
-        <ChartContainer config={config} className="ml-auto h-7 w-8 shrink-0" aria-hidden="true">
-          <LineChart data={points.slice(-30)} margin={{ top: 2, bottom: 2, left: 0, right: 0 }} accessibilityLayer={false}>
-            <XAxis hide dataKey="timestamp" type="number" domain={["dataMin", "dataMax"]} />
-            <YAxis hide domain={[0, scale]} />
-            <Line dataKey="cpu" stroke="var(--color-cpu)" strokeWidth={1.5} dot={false} isAnimationActive={false} connectNulls={false} />
-          </LineChart>
-        </ChartContainer>
       </Button>
     </PopoverTrigger>
     <PopoverContent className="w-[min(24rem,calc(100vw-2rem))] rounded-xl border-0 p-0" align="end" aria-labelledby={titleId}>

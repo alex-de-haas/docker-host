@@ -198,6 +198,29 @@ generated block by hand; run `--fix` after changing any document.
 lives in docker-host and the others carry a byte-identical copy, so change it
 there first.
 
+## Core Platform Boundary
+
+- Core is the application-neutral platform. It must remain usable through its supported API and
+  CLI with none of the standard distribution apps installed or running, and with independently
+  implemented UI clients and providers.
+- Treat runtime application IDs as opaque identifiers. Do not hard-code first-party app IDs,
+  names, repository paths or vendor identity to discover/select an app, grant authority, choose
+  lifecycle behavior, resolve navigation or infer a capability. Use reviewed declarations,
+  compatible interfaces, current installation records and explicit operator selections instead.
+- Core must not know a client application's internal routes, such as Shell settings tabs. The
+  owning client provides navigation through an explicit supported contract; replacing an origin
+  and appending a first-party route is not a generic resolver.
+- Distribution app lists are installation data, not platform policy. Keep bundle defaults outside
+  generic runtime decisions; an app's provenance or standard ID confers no special authority or
+  required presence. Existing compatibility migrations must stay explicitly scoped and tracked for
+  removal, never become precedent for new identity-based behavior.
+- The platform-owned resource identity `hosty:core` is not a runtime application ID. Keep its
+  privileged operations separate from ordinary app lifecycle; this distinction does not authorize
+  special handling of any installed application.
+- Review Core changes against an empty app registry and a third-party app with an unrelated ID.
+  Add meaningful contract/regression coverage when changing these boundaries. Record remaining
+  legacy violations in their owning plans rather than silently treating them as accepted design.
+
 ## Background UI Updates
 
 - First decide whether a screen needs background updates, based on its intended behavior, the

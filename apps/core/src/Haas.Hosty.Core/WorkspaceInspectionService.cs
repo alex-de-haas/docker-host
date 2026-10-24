@@ -2,21 +2,35 @@ using System.Collections.Concurrent;
 
 namespace Haas.Hosty.Core;
 
-internal sealed class WorkspaceInspectionService(DevelopmentWorkspaceService workspaces, AppRegistryStore apps,
+internal sealed partial class WorkspaceInspectionService(DevelopmentWorkspaceService workspaces, AppRegistryStore apps,
     IClock clock, PublicationService? publications = null, UserDirectoryStore? users = null,
     UserConnectionService? connections = null, ISourceGitAccess? privateSources = null,
     LocalCommandProcessRegistry? processes = null, WorkspaceObservationState? observationState = null)
 {
     private readonly ConcurrentDictionary<string, (string Key, InspectionCommit[] Commits, bool Truncated, AppSourceFile[] Changes, string? Error)> details = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim[] detailGates = Enumerable.Range(0, 64).Select(_ => new SemaphoreSlim(1, 1)).ToArray();
-    public async Task<WorkspaceInventory> ListAsync(string userId, CancellationToken ct)
+    public async Task<WorkspaceInventory> ListAsync(string userId, CancellationToken ct, bool ownedOnly = false)
     {
         var installed = await apps.ListAppRecordsAsync(ct);
         var allowed = new List<DevelopmentWorkspace>();
         foreach (var tree in (await workspaces.ListAsync(null, true, ct)).Workspaces)
         {
+            if (ownedOnly && tree.Owner.UserId != userId) continue;
             try { await RequireSourceAsync(tree, userId, installed, ct); allowed.Add(tree); }
             catch (AppLifecycleException) { /* Inaccessible source must not leak through metadata or counts. */ }
+        }
+        // The accepted removal receipt outlives final source metadata unlink. Keep recovery
+        // discoverable after a crash or browser-storage loss until verified removal is recorded.
+        var discards = await workspaces.PendingDiscardJournalsAsync(userId, ct);
+        foreach (var journal in discards)
+        {
+            if (allowed.Any(w => w.WorkspaceId == journal.WorkspaceId)) continue;
+            try
+            {
+                await RequireDiscardAccessAsync(journal, userId, ct);
+                allowed.AddRange(journal.Snapshots!);
+            }
+            catch (AppLifecycleException) { /* Revoked source authority cannot expose recovery inventories. */ }
         }
         foreach (var id in details.Keys.Where(id => !allowed.Any(w => w.Id == id))) details.TryRemove(id, out _);
         var result = new List<InspectedWorkspace>();
@@ -33,6 +47,10 @@ internal sealed class WorkspaceInspectionService(DevelopmentWorkspaceService wor
             var state = children.All(w => w.State == "released") ? "released"
                 : children.Any(w => w.State != "active" || w.Observation?.State != "ok") ? "attention" : "active";
             var workflow = await workspaces.WorkflowAsync(owner, ct);
+            var discard = discards.FirstOrDefault(d => d.WorkspaceId == group.Key);
+            if (discard is not null)
+                workflow = workflow with { State = "deleting", Closure = "closed", Operations = [.. (workflow.Operations ?? []).Where(o => o.Id != discard.Command.RequestId),
+                    new(discard.Command.RequestId, "discard", discard.Command.ExpectedRevision, "pending", discard.Error)] };
             var metadata = await workspaces.MetadataAsync(owner, ct);
             result.Add(new(group.Key, state, projection, children) { Name = first.Name ?? "Workspace", Workflow = workflow,
                 UpdatedAt = group.Select(w => w.UpdatedAt ?? w.Observation?.At).Append(workflow.UpdatedAt ?? workflow.CompletedAt).Append(metadata.UpdatedAt).Max() });
@@ -224,7 +242,7 @@ internal sealed class WorkspaceInspectionService(DevelopmentWorkspaceService wor
         var record = (await publications.ListAsync(null, ct)).Publications.FirstOrDefault(p => p.WorkspaceId == tree.Id && p.Owner.SameIdentity(tree.Owner));
         if (record is null || record.Owner.UserId != userId) return result.Values.ToArray();
         foreach (var previous in record.History.Where(p => SafeUrl(p.Url)))
-            result[previous.Url] = new(previous.Url, previous.Head, null, "Historical reference; no current provider observation.");
+            result[previous.Url] = new(previous.Url, previous.Head, null, "Historical reference; no authorized retained observation.", Historical: true);
         if (record.Url is { } recordedUrl && SafeUrl(recordedUrl))
             result[recordedUrl] = new(recordedUrl, record.PublishedHead, null, "No authorized provider observation.");
         var connection = (await users.ReadAsync(ct)).ProviderConnections?.FirstOrDefault(c => c.Id == record.ConnectionId && c.UserId == userId
@@ -241,7 +259,12 @@ internal sealed class WorkspaceInspectionService(DevelopmentWorkspaceService wor
         }
         catch (Exception ex) when (ex is PublicationException or UserConnectionException or AppLifecycleException) { return result.Values.ToArray(); }
         foreach (var previous in record.History.Where(p => SafeUrl(p.Url)))
-            result[previous.Url] = new(previous.Url, previous.Head, null, "Historical reference; no current provider observation.");
+        {
+            var retained = previous.Observation;
+            var matched = retained?.Head is { } head && head == previous.Head;
+            result[previous.Url] = new(previous.Url, previous.Head, matched ? retained! with { Reviews = null } : null,
+                matched ? null : "Historical reference; the retained observation is missing or does not match its recorded head.", Historical: true);
+        }
         if (record.Url is { } url && SafeUrl(url))
         {
             var observation = record.Observation;

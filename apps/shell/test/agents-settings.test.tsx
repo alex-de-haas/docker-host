@@ -21,7 +21,7 @@ afterEach(async () => { await act(async () => root.unmount()); container.remove(
 const render = () => act(async () => root.render(<SettingsAgentsSection coreOrigin="https://core.test" sendCsrfJson={send} />));
 it("offers tools independently of instruction approval", async () => {
   await render();
-  await act(async () => container.querySelector<HTMLInputElement>('input')!.click());
+  await act(async () => container.querySelector<HTMLButtonElement>('[role="checkbox"][aria-label="Offer Notes to agents"]')!.click());
   expect(send).toHaveBeenCalledWith("https://core.test/api/core/agents/notes", { revision: "revision-reviewed", offered: true }, "PUT");
 });
 it("approves the displayed digest with its revision and leaves tools disabled", async () => {
@@ -35,7 +35,7 @@ it("keeps confirmed state and reloads after a stale approval", async () => {
   await render();
   await act(async () => [...container.querySelectorAll("button")].find(b => b.textContent === "Approve these instructions")!.click());
   expect(container.querySelector('[role="alert"]')?.textContent).toContain("Review the current state");
-  expect(container.querySelector<HTMLInputElement>("input")?.checked).toBe(false);
+  expect(container.querySelector('[role="checkbox"][aria-label="Offer Notes to agents"]')?.getAttribute("aria-checked")).toBe("false");
   expect(fetch).toHaveBeenCalledTimes(2);
 });
 
@@ -50,7 +50,7 @@ it("does not show login redirect errors on initial load or refresh", async () =>
 it("does not show login redirect errors while saving", async () => {
   await render();
   send.mockRejectedValue(new AuthRequiredRedirectError());
-  await act(async () => container.querySelector<HTMLInputElement>('input')!.click());
+  await act(async () => container.querySelector<HTMLButtonElement>('[role="checkbox"][aria-label="Offer Notes to agents"]')!.click());
   expect(container.querySelector('[role="alert"]')).toBeNull();
   expect(fetch).toHaveBeenCalledTimes(1);
 });
@@ -58,6 +58,6 @@ it("does not show login redirect errors while saving", async () => {
 it("assigns a target to one assistant without changing the global offer", async () => {
   vi.mocked(fetch).mockResolvedValue(Response.json({ ...directory, assistants: [{ id: "harness", displayName: "Harness" }] }));
   await render();
-  await act(async () => container.querySelector<HTMLInputElement>('input[aria-label="Allow Harness to use Notes MCP"]')!.click());
+  await act(async () => container.querySelector<HTMLButtonElement>('[role="checkbox"][aria-label="Allow Harness to use Notes MCP"]')!.click());
   expect(send).toHaveBeenCalledWith("https://core.test/api/core/agents/notes", { revision: "revision-reviewed", offered: false, assistantIds: ["harness"] }, "PUT");
 });

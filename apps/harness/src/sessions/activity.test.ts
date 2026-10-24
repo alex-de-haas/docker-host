@@ -62,6 +62,25 @@ it("finishes replay with the latest activity when an update arrives during the j
   sub.unsubscribe();
 });
 
+it("releases only the failed subscription when reading replay rejects", async () => {
+  const existing = vi.fn();
+  const healthy = await manager.subscribe(id, 0, existing);
+  // Count owned live resources: a rejected subscription returns no cleanup handle to its caller.
+  const listeners = (manager as unknown as { live: Map<string, { listeners: Set<unknown> }> }).live.get(id)!.listeners;
+  const failure = new Error("Replay read failed");
+  vi.spyOn(store, "readEvents").mockRejectedValueOnce(failure);
+  await expect(manager.subscribe(id, 0, vi.fn())).rejects.toBe(failure);
+  expect(listeners.size).toBe(1);
+
+  const retried = vi.fn();
+  const recovered = await manager.subscribe(id, 0, retried);
+  adapter.emit({ type: "activity", activity: tool });
+  await vi.waitFor(() => expect(retried).toHaveBeenCalledWith(expect.objectContaining({ type: "session_activity", activity: tool })));
+  expect(existing).toHaveBeenCalledWith(expect.objectContaining({ type: "session_activity", activity: tool }));
+  healthy.unsubscribe(); recovered.unsubscribe();
+  expect(listeners.size).toBe(0);
+});
+
 it.each(["result", "error", "cancel"])("clears activity on %s and rejects late events after a terminal state", async terminal => {
   adapter.emit({ type: "activity", activity: tool });
   await vi.waitFor(async () => expect(await snapshot()).toMatchObject({ activity: tool }));

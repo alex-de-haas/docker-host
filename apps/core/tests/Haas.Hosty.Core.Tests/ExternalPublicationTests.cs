@@ -72,6 +72,45 @@ public sealed partial class CoreLifecycleServiceTests
         await Assert.ThrowsAsync<PublicationException>(() => f.Service.CommandAsync(f.W.Id, f.W.Owner, "merge", new(Guid.NewGuid().ToString()), default));
     }
 
+    [Fact]
+    public async Task ExternalPublication_DifferentBranchMetadataNeverBecomesWorkspaceCompletionEvidence()
+    {
+        var f = await ExternalPublicationFixture();
+        f.Provider.ExpectedBranch = "hosty/session/another-task";
+        f.Provider.State = "merged";
+        f.Provider.Complete = true;
+        await f.Service.RefreshExternalReferencesAsync(default);
+
+        var result = Assert.Single(await f.Service.ReadExternalReferencesAsync(f.W, "admin", default));
+        Assert.Equal("merged", result.Observation!.State);
+        Assert.Equal("SUCCESS", Assert.Single(result.Observation.Checks!).State);
+        Assert.False(result.Observation.Complete);
+        Assert.Null(result.Observation.Reviews);
+        Assert.Empty(await f.Service.MergedWorkspaceHeadsAsync(f.W.Owner, default));
+        Assert.Empty((await f.Service.ListAsync(null, default)).Publications);
+        Assert.Equal(f.W.Observation!.Head, (await f.Workspaces.Read(f.W.Id, f.W.Owner, default)).Observation!.Head);
+        Assert.Equal(0, f.Provider.Created);
+        Assert.Equal(0, f.Provider.Merged);
+    }
+
+    [Fact]
+    public async Task ExternalPublication_LegacySnapshotNeverProjectsCompletionOrPrivateReviewEvidence()
+    {
+        var f = await ExternalPublicationFixture();
+        await f.Service.RefreshExternalReferencesAsync(default);
+        var path = Path.Combine(f.F.Paths.CoreRoot, "development/publications/external", f.W.Id + ".json");
+        var snapshot = (await JsonStorage.ReadAsync<ExternalPublicationSnapshot>(path))!;
+        var previous = Assert.Single(snapshot.PullRequests);
+        await JsonStorage.WriteAsync(path, snapshot with { PullRequests = [previous with { Observation = previous.Observation! with {
+            Complete = true, Reviews = [new("private-thread", "file.cs", 1, false, ["Private legacy review body"])] } }] });
+
+        var result = Assert.Single(await f.Service.ReadExternalReferencesAsync(f.W, "admin", default));
+        Assert.NotNull(result.Observation);
+        Assert.False(result.Observation.Complete);
+        Assert.Null(result.Observation.Reviews);
+        Assert.DoesNotContain("Private legacy review body", CoreJson.Text(result));
+    }
+
     [Theory]
     [InlineData("disconnect")]
     [InlineData("disabled")]

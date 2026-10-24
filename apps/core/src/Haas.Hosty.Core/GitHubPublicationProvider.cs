@@ -6,7 +6,7 @@ using System.Text.RegularExpressions;
 
 namespace Haas.Hosty.Core;
 
-internal sealed class GitHubPublicationProvider(HttpClient http, IClock clock) : IPublicationProvider
+internal sealed partial class GitHubPublicationProvider(HttpClient http, IClock clock) : IPublicationProvider
 {
     public string NormalizeRepository(string url) => Repository(url);
     public string PullRequestUrl(string repository, int number) => $"https://github.com/{Slug(repository)}/pull/{number}";
@@ -131,13 +131,13 @@ internal sealed class GitHubPublicationProvider(HttpClient http, IClock clock) :
         return Reference(await Request(c, r.Number is null ? HttpMethod.Post : HttpMethod.Patch,
             $"/repos/{Slug(r.Repository)}/pulls" + (r.Number is null ? "" : "/" + r.Number), body, ct));
     }
-    private async Task<JsonNode> Graph(UserProviderConnection c, PublicationRecord r, CancellationToken ct)
+    private async Task<JsonNode> Graph(UserProviderConnection c, PublicationRecord r, CancellationToken ct, bool requireWorkspaceBranch = true)
     {
         const string query = """
             query($owner: String!, $repo: String!, $number: Int!) {
               repository(owner: $owner, name: $repo) {
                 pullRequest(number: $number) {
-                  id number url title state isDraft headRefName headRefOid baseRefName
+                  id number url title state isDraft headRefName headRefOid baseRefName baseRefOid mergedAt
                   comments { totalCount }
                   headRepository { nameWithOwner }
                   mergeCommit { oid }
@@ -145,8 +145,12 @@ internal sealed class GitHubPublicationProvider(HttpClient http, IClock clock) :
                   reviewThreads(first: 100) {
                     pageInfo { hasNextPage }
                     nodes {
-                      id path line isResolved
-                      comments(first: 20) { pageInfo { hasNextPage } nodes { body } }
+                      id path line originalLine startLine originalStartLine diffSide startDiffSide
+                      isResolved isOutdated subjectType
+                      comments(first: 100) {
+                        pageInfo { hasNextPage }
+                        nodes { id databaseId body createdAt url author { login __typename } }
+                      }
                     }
                   }
                   commits(last: 1) {
@@ -172,13 +176,20 @@ internal sealed class GitHubPublicationProvider(HttpClient http, IClock clock) :
         var data = await Request(c, HttpMethod.Post, "/graphql", new JsonObject { ["query"] = query,
             ["variables"] = new JsonObject { ["owner"] = parts[0], ["repo"] = parts[1], ["number"] = r.Number } }, ct);
         var pr = data["data"]?["repository"]?["pullRequest"] ?? throw new PublicationException("pr_missing", "Pull request is unavailable.");
-        if (!string.Equals(Text(pr["headRepository"], "nameWithOwner"), r.HeadRepository, StringComparison.OrdinalIgnoreCase) || Text(pr, "headRefName") != r.Branch || Text(pr, "baseRefName") != r.TargetBranch)
+        if (!string.Equals(Text(pr["headRepository"], "nameWithOwner"), r.HeadRepository, StringComparison.OrdinalIgnoreCase) ||
+            (requireWorkspaceBranch && Text(pr, "headRefName") != r.Branch) || Text(pr, "baseRefName") != r.TargetBranch)
             throw new PublicationException("pr_mismatch", "The PR no longer matches its registered workspace, repository and target.");
         return pr;
     }
-    public async Task<PublicationObservation> ObserveAsync(UserProviderConnection c, PublicationRecord r, CancellationToken ct)
+    public Task<PublicationObservation> ObserveAsync(UserProviderConnection c, PublicationRecord r, CancellationToken ct)
+        => Observe(c, r, ct, requireWorkspaceBranch: true);
+
+    public Task<PublicationObservation> ObserveReferenceAsync(UserProviderConnection c, PublicationRecord r, CancellationToken ct)
+        => Observe(c, r, ct, requireWorkspaceBranch: false);
+
+    private async Task<PublicationObservation> Observe(UserProviderConnection c, PublicationRecord r, CancellationToken ct, bool requireWorkspaceBranch)
     {
-        var pr = await Graph(c, r, ct);
+        var pr = await Graph(c, r, ct, requireWorkspaceBranch);
         var threads = pr["reviewThreads"]!;
         var contexts = pr["commits"]?["nodes"]?.AsArray().LastOrDefault()?["commit"]?["statusCheckRollup"]?["contexts"];
         if (threads["pageInfo"]?["hasNextPage"]?.GetValue<bool>() == true || contexts?["pageInfo"]?["hasNextPage"]?.GetValue<bool>() == true)
@@ -187,18 +198,30 @@ internal sealed class GitHubPublicationProvider(HttpClient http, IClock clock) :
             Text(n, "status") is { Length: > 0 } status ? status == "COMPLETED" ? Text(n, "conclusion") : status : Text(n, "state"))).ToArray() ?? [];
         var state = Text(pr, "state").ToLowerInvariant(); var merge = Text(pr["mergeCommit"], "oid");
         var complete = false; string? completionError = null;
-        if (state == "merged")
+        if (state == "merged" && requireWorkspaceBranch)
         {
             try { complete = await Completion(c, r, merge, ct); }
             catch (Exception ex) when (ex is PublicationException or HttpRequestException or JsonException)
             { completionError = "PR merged; configured release evidence is unavailable or not yet published."; }
         }
-        var reviews = threads["nodes"]!.AsArray().Select(t => new PublicationReview(Text(t, "id"), Text(t, "path"), t?["line"]?.GetValue<int>(),
-            t?["isResolved"]?.GetValue<bool>() == true, (t?["comments"]?["nodes"]?.AsArray().Select(n => Text(n, "body")) ?? []).Concat(t?["comments"]?["pageInfo"]?["hasNextPage"]?.GetValue<bool>() == true ? ["Additional comments are available on the PR."] : []).ToArray())).ToArray();
+        var reviews = !requireWorkspaceBranch ? null : threads["nodes"]!.AsArray().Select(t => new PublicationReview(Text(t, "id"), Text(t, "path"), t?["line"]?.GetValue<int>(),
+            t?["isResolved"]?.GetValue<bool>() == true,
+            (t?["comments"]?["nodes"]?.AsArray().Select(n => VisibleReviewBody(Text(n, "body"))) ?? [])
+                .Concat(t?["comments"]?["pageInfo"]?["hasNextPage"]?.GetValue<bool>() == true
+                    ? ["Additional comments are available on the PR."] : []).ToArray(),
+            t?["originalLine"]?.GetValue<int>(), t?["startLine"]?.GetValue<int>(), t?["originalStartLine"]?.GetValue<int>(),
+            Text(t, "diffSide"), Text(t, "startDiffSide"), t?["isOutdated"]?.GetValue<bool>() == true, Text(t, "subjectType"),
+            t?["comments"]?["pageInfo"]?["hasNextPage"]?.GetValue<bool>() != true,
+            t?["comments"]?["nodes"]?.AsArray().Select(ReviewComment).ToArray() ?? [])).ToArray();
         return new(clock.UtcNow, state, Text(pr, "headRefOid"), Text(pr, "baseRefName"), merge,
             pr["isDraft"]?.GetValue<bool>() ?? false, Text(pr, "mergeStateStatus"), Text(pr, "reviewDecision"),
-            threads["nodes"]!.AsArray().Count(t => t?["isResolved"]?.GetValue<bool>() != true), complete, checks, completionError, reviews, Text(pr, "title"), pr["comments"]?["totalCount"]?.GetValue<int>());
+            threads["nodes"]!.AsArray().Count(t => t?["isResolved"]?.GetValue<bool>() != true), complete, checks, completionError, reviews, Text(pr, "title"), pr["comments"]?["totalCount"]?.GetValue<int>(), Text(pr, "baseRefOid"),
+            state == "merged" && DateTimeOffset.TryParse(Text(pr, "mergedAt"), out var mergedAt) ? mergedAt : null);
     }
+    private static PublicationReviewComment ReviewComment(JsonNode? node) => new(Text(node, "id"), VisibleReviewBody(Text(node, "body")),
+        Text(node?["author"], "login"), Text(node?["author"], "__typename"),
+        DateTimeOffset.TryParse(Text(node, "createdAt"), out var created) ? created : null,
+        Text(node, "url"), node?["databaseId"]?.GetValue<long>());
     private async Task<bool> Completion(UserProviderConnection c, PublicationRecord r, string commit, CancellationToken ct)
     {
         if (string.IsNullOrEmpty(commit)) return false;
@@ -246,13 +269,22 @@ internal sealed class GitHubPublicationProvider(HttpClient http, IClock clock) :
         await Request(c, HttpMethod.Post, "/graphql", new JsonObject { ["query"] = "mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id}){pullRequest{id}}}",
             ["variables"] = new JsonObject { ["id"] = Text(pr, "id") } }, ct);
     }
-    public async Task ResolveReviewAsync(UserProviderConnection c, PublicationRecord r, string threadId, string head, CancellationToken ct)
+    public Task ResolveReviewAsync(UserProviderConnection c, PublicationRecord r, string threadId, string head, CancellationToken ct)
+        => ResolveReviewAsync(c, r, threadId, head, () => Task.CompletedTask, ct);
+
+    public async Task ResolveReviewAsync(UserProviderConnection c, PublicationRecord r, string threadId, string head,
+        Func<Task> admitMutation, CancellationToken ct)
     {
         var pr = await Graph(c, r, ct);
         var thread = pr["reviewThreads"]?["nodes"]?.AsArray().FirstOrDefault(t => Text(t, "id") == threadId);
-        if (Text(pr, "headRefOid") != head || Text(pr, "state") != "OPEN" || thread is null)
+        if (thread is null)
             throw new PublicationException("review_changed", "Refresh the current PR head and review thread before resolving.");
+        // An already achieved state reconciles a lost response, even if the head moved
+        // afterwards. A new resolution still requires the exact reviewed open PR head.
         if (thread["isResolved"]?.GetValue<bool>() == true) return;
+        if (Text(pr, "headRefOid") != head || Text(pr, "state") != "OPEN")
+            throw new PublicationException("review_changed", "Refresh the current PR head and review thread before resolving.");
+        await admitMutation();
         await Request(c, HttpMethod.Post, "/graphql", new JsonObject { ["query"] = "mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{id isResolved}}}",
             ["variables"] = new JsonObject { ["id"] = threadId } }, ct);
     }

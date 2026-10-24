@@ -29,21 +29,34 @@ it("renders unknown, estimated, missing-limit and over-limit usage without misle
   const root = createRoot(container);
   try {
     await act(async () => root.render(<ContextUsageIndicator usage={null} />));
-    expect(container.textContent).toContain("Not available");
+    expect(container.querySelector('[data-slot="context-usage"]')?.getAttribute("aria-label")).toContain("Not available");
+    expect(container.textContent).toBe("?");
     expect(container.querySelector('[role="meter"]')).toBeNull();
     await act(async () => root.render(<ContextUsageIndicator usage={usage} />));
-    expect(container.textContent).toContain("≈ 58.1K / 1M · 5.8%");
+    expect(container.textContent).toBe("5.8%");
+    expect(container.querySelector('[data-slot="context-usage"]')?.getAttribute("aria-label")).toContain("≈ 58.1K / 1M · 5.8%");
     expect(container.querySelector('[role="meter"]')?.getAttribute("aria-valuenow")).toBe("5.81");
     const trigger = container.querySelector<HTMLElement>('[data-slot="context-usage"]')!;
     await act(async () => trigger.focus());
-    expect(document.querySelector('[role="tooltip"]')?.textContent).toContain("Estimated context usage");
+    expect(document.querySelector('[role="tooltip"]')?.textContent).toContain("Estimated context usage: 58,100 tokens of 1,000,000");
+    expect(document.querySelector('[role="tooltip"]')?.textContent).toContain("Last measured");
+    expect(document.querySelector('[role="tooltip"]')?.textContent).toContain("provider\'s compaction limit");
     await act(async () => trigger.blur());
     await act(async () => root.render(<ContextUsageIndicator usage={{ ...usage, maxTokens: null }} />));
-    expect(container.textContent).toContain("limit unavailable");
+    expect(container.textContent).toBe("?");
+    expect(container.querySelector('[data-slot="context-usage"]')?.getAttribute("aria-label")).toContain("≈ 58.1K tokens · limit unavailable");
     expect(container.querySelector('[role="meter"]')).toBeNull();
     await act(async () => root.render(<ContextUsageIndicator usage={{ ...usage, usedTokens: 1100000 }} />));
     expect(container.textContent).toContain("110%");
     expect(container.querySelector('[role="meter"]')?.getAttribute("aria-valuenow")).toBe("100");
     expect(container.querySelector('[role="meter"]')?.getAttribute("aria-valuetext")).toContain("110%");
+    expect(container.querySelector('circle[pathLength="100"]')?.getAttribute("stroke-dashoffset")).toBe("0");
+    await act(async () => root.render(<ContextUsageIndicator usage={{ ...usage, usedTokens: 0, estimated: false }} connected={false} />));
+    expect(container.textContent).toBe("0%");
+    expect(container.querySelector('[role="meter"]')?.getAttribute("aria-valuenow")).toBe("0");
+    expect(container.querySelector('circle[pathLength="100"]')?.getAttribute("stroke-dashoffset")).toBe("100");
+    await act(async () => trigger.focus());
+    expect(document.querySelector('[role="tooltip"]')?.textContent).toContain("Context usage: 0 tokens of 1,000,000");
+    expect(document.querySelector('[role="tooltip"]')?.textContent).toContain("Disconnected; showing the last measurement");
   } finally { await act(async () => root.unmount()); container.remove(); }
 });

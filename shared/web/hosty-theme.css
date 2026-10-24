@@ -1,0 +1,285 @@
+/* Shared Hosty design tokens. Fonts are bundled locally with their OFL notices. */
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-weight: 100 900;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("./fonts/plex-sans-latin.woff2") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-weight: 100 900;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("./fonts/plex-sans-latin-ext.woff2") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-weight: 100 900;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("./fonts/plex-sans-cyrillic.woff2") format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url("./fonts/jetbrains-mono-latin.woff2") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url("./fonts/jetbrains-mono-latin-ext.woff2") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url("./fonts/jetbrains-mono-cyrillic.woff2") format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+
+@theme inline {
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-destructive-soft: var(--destructive-soft);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-brand: var(--brand);
+  --color-brand-soft: var(--brand-soft);
+  --color-brand-foreground: var(--brand-foreground);
+  --color-brand-strong: var(--brand-strong);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-success-soft: var(--success-soft);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-info-soft: var(--info-soft);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-warning-soft: var(--warning-soft);
+  --color-invert: var(--invert);
+  --color-invert-foreground: var(--invert-foreground);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+}
+
+:root {
+  --radius: 0.625rem;
+  --background: #F6F8FB;
+  --foreground: #0F1B2D;
+  --card: #FFFFFF;
+  --card-foreground: #0F1B2D;
+  --popover: #FFFFFF;
+  --popover-foreground: #0F1B2D;
+  --primary: #0F1B2D;
+  --primary-foreground: #FFFFFF;
+  --secondary: #EEF2F7;
+  --secondary-foreground: #0F1B2D;
+  --muted: #EEF2F7;
+  --muted-foreground: #5A6A82;
+  --accent: #ECFCCB;
+  --accent-foreground: #0F1B2D;
+  --destructive: #D93036;
+  --destructive-foreground: #B4232A;
+  --destructive-soft: #FDECEC;
+  --border: #DFE5EE;
+  --input: #C3CDDB;
+  --ring: var(--brand);
+  --brand: #A3E635;
+  --brand-soft: var(--accent);
+  --brand-foreground: #0F1B2D;
+  --brand-strong: #5A9A0A;
+  --sidebar: #F6F8FB;
+  --sidebar-foreground: #3A4B66;
+  --sidebar-primary: #0F1B2D;
+  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-accent: #ECFCCB;
+  --sidebar-accent-foreground: #0F1B2D;
+  --sidebar-border: #DFE5EE;
+  --sidebar-ring: var(--brand);
+  --success: #16A34A;
+  --success-foreground: #0F6B33;
+  --success-soft: #E8F7EE;
+  --info: #1C68FF;
+  --info-foreground: #1449C2;
+  --info-soft: #E8F0FF;
+  --warning: #F59E0B;
+  --warning-foreground: #8A5300;
+  --warning-soft: #FEF3DC;
+  --invert: #0F1B2D;
+  --invert-foreground: #FFFFFF;
+  --chart-1: #1C68FF;
+  --chart-2: #7C3AED;
+  --chart-3: #C026D3;
+  --chart-4: #F59E0B;
+  --chart-5: #64748B;
+}
+
+.dark {
+  --radius: 0.625rem;
+  --background: #0F1B2D;
+  --foreground: #F1F5FA;
+  --card: #17253B;
+  --card-foreground: #F1F5FA;
+  --popover: #1C2B44;
+  --popover-foreground: #F1F5FA;
+  --primary: #F1F5FA;
+  --primary-foreground: #0F1B2D;
+  --secondary: #26364F;
+  --secondary-foreground: #F1F5FA;
+  --muted: #1C2B44;
+  --muted-foreground: #93A3BA;
+  --accent: #273B2E;
+  --accent-foreground: #F1F5FA;
+  --destructive: #D93036;
+  --destructive-foreground: #FF969B;
+  --destructive-soft: #3C202C;
+  --border: #26364F;
+  --input: #2E3F5C;
+  --ring: var(--brand);
+  --brand: #A3E635;
+  --brand-soft: var(--accent);
+  --brand-foreground: #0F1B2D;
+  --brand-strong: #A3E635;
+  --sidebar: #0B1524;
+  --sidebar-foreground: #B8C4D6;
+  --sidebar-primary: #F1F5FA;
+  --sidebar-primary-foreground: #0F1B2D;
+  --sidebar-accent: #273B2E;
+  --sidebar-accent-foreground: #F1F5FA;
+  --sidebar-border: #1A2A42;
+  --sidebar-ring: var(--brand);
+  --success: #16A34A;
+  --success-foreground: #74DEA0;
+  --success-soft: #14352C;
+  --info: #4D8BFF;
+  --info-foreground: #8DB4FF;
+  --info-soft: #182E52;
+  --warning: #F59E0B;
+  --warning-foreground: #FBCB74;
+  --warning-soft: #3C3021;
+  --invert: #F1F5FA;
+  --invert-foreground: #0F1B2D;
+  --chart-1: #4D8BFF;
+  --chart-2: #A78BFA;
+  --chart-3: #E879F9;
+  --chart-4: #FBBF24;
+  --chart-5: #94A3B8;
+}
+
+/* SDK workspace frames consume the same app theme through their public overrides. */
+:root, .dark {
+  --hosty-panel-background: var(--background);
+  --hosty-panel-foreground: var(--foreground);
+  --hosty-panel-muted: var(--muted-foreground);
+  --hosty-panel-border: var(--border);
+}
+
+@layer base {
+  body { font-size: 14px; line-height: 1.5714; }
+  ::selection { background: var(--brand); color: var(--brand-foreground); }
+  :focus-visible { outline: 2px solid var(--brand); outline-offset: 0; }
+  input:focus-visible, textarea:focus-visible { border-color: var(--brand); }
+}
+
+/* App controls opt into lime focus even inside the SDK host's unlayered default; tool chrome stays independent. */
+.hosty-panel-workspace :is([class~="focus-visible:outline-brand"], [class~="focus-visible:outline-destructive"]):focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 0;
+}
+.hosty-panel-workspace [class~="focus-visible:outline-destructive"]:focus-visible,
+.hosty-panel-workspace [class~="focus-visible:outline-brand"][aria-invalid="true"]:focus-visible {
+  outline-color: var(--destructive);
+}
+.hosty-panel-workspace [data-slot="attachment-trigger"]:focus-visible {
+  outline-offset: -2px;
+}
+
+/* Composite input focus belongs to its frame; this also beats the SDK host's unlayered child outline. */
+[data-slot="input-group"] [data-slot="input-group-control"]:focus-visible {
+  outline: none;
+  outline-offset: 0;
+}
+
+/* Keep touch fields readable even when a utility supplies a smaller text size. */
+@media (pointer: coarse) { input, select, textarea { font-size: 16px; } }
+
+/* Standard primitives retain their behavior; these tokens also cover raw native controls. */
+@layer components {
+  [data-slot="card"], [data-slot="frame"] { border-radius: 14px; }
+  [data-slot="progress-indicator"] { background: var(--brand); }
+  [data-slot="checkbox"][data-state="checked"],
+  [data-slot="switch"][data-state="checked"] { background: var(--brand); border-color: var(--brand-strong); color: var(--brand-foreground); }
+  [data-slot="switch"][data-state="checked"] [data-slot="switch-thumb"] { background: var(--brand-foreground); }
+  [data-slot="table-row"][data-state="selected"] { background: var(--accent); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .animate-spin, .animate-pulse { animation: none; }
+}
+
+@layer components {
+  .hosty-grid-loader { display: inline-block; flex-shrink: 0; vertical-align: middle; }
+  .hosty-grid-loader rect {
+    fill: currentColor;
+    opacity: .18;
+    stroke: transparent;
+    animation: hosty-cell-light 1.4s linear infinite;
+    animation-delay: calc(var(--cell-order) * .2s);
+  }
+  .hosty-empty-slots rect { fill: none; stroke: var(--border); }
+  .hosty-empty-slots [data-core] { fill: var(--brand); stroke: var(--brand-strong); }
+}
+@keyframes hosty-cell-light {
+  0%, 12% { fill: var(--brand); stroke: var(--brand-strong); opacity: 1; }
+  14%, 100% { fill: currentColor; stroke: transparent; opacity: .18; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hosty-grid-loader rect { animation: none; fill: currentColor; stroke: transparent; opacity: .55; }
+  .hosty-grid-loader [data-core] { fill: var(--brand); stroke: var(--brand-strong); opacity: 1; }
+}

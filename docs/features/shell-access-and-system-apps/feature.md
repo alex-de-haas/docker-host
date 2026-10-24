@@ -1,6 +1,6 @@
 ---
 created: 2026-06-04
-updated: 2026-10-01
+updated: 2026-10-23
 summary: Assignments apply equally to system and ordinary apps, and management views are administrator-only.
 components: [apps/core, apps/shell]
 ---
@@ -26,13 +26,17 @@ required. Core checks the redirect against the requested app, not every app on t
 ## Shell Navigation And Management
 
 `GET /api/apps` returns all apps to administrators and only assigned apps to other users. The Apps
-group contains the UI-capable apps returned by Core, including assigned system apps, with system
-badges. Shell excludes itself from the embedded app navigation. A stopped app remains visible with
-its runtime state.
+group contains the UI-capable apps returned by Core, including assigned system apps. Shell excludes
+itself from the embedded app navigation. A stopped app remains visible with its runtime state.
 
-Dashboard and host management actions require an administrator. Ordinary users see their available
-apps and personal settings. Core rejects unauthorized administrative requests independently of
-whether Shell hides a button. Role changes clear inaccessible management views on refresh.
+Dashboard and host management actions require an administrator. Administrators land on Dashboard;
+ordinary users land at `/` with an empty main surface, their authorized app sidebar and access to
+personal settings. The duplicate Apps overview is absent. `/apps` is a legacy redirect to `/`,
+which resolves to Dashboard for administrators. The sidebar Apps heading is noninteractive and
+compact mode has no catalog control. Phone Apps opens the sidebar without navigating to another
+page. Core rejects unauthorized administrative requests independently of whether Shell hides a
+button. Role changes clear inaccessible management views on refresh and redirect an ordinary user
+to `/` when the requested surface is administrator-only.
 
 Administrators manage ordinary and system apps through the same lifecycle, settings, logs, backup,
 reviewed-update and removal flows. The system marker gives no lifecycle immunity; operation-specific
@@ -46,3 +50,7 @@ preconditions and confirmation still apply. Removing Shell has a Core/CLI recove
 - Assignment removal and role changes affect subsequent identity and management requests.
 - Standalone password login works without Shell access and returns only to the requested app.
 - Shell navigation and action visibility follow the resolved user role; Core remains authoritative.
+- Home and legacy `/apps` navigation resolve to Dashboard for administrators and the empty Home
+  surface with authorized app navigation for ordinary users. Direct app launch, stopped-app start
+  authority and personal settings remain available under their existing checks; the phone Apps
+  button opens the sidebar without route navigation.

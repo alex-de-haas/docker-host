@@ -1,6 +1,6 @@
 ---
 created: 2026-10-07
-updated: 2026-10-20
+updated: 2026-10-23
 summary: Local external agents use authorized Core-owned worktrees, separate plan progress, and read-only pull request tracking through Harness and Core.
 components: [apps/core, apps/plans]
 ---
@@ -74,11 +74,18 @@ selected connection, it uses the owner's sole connected account for that provide
 expired or ambiguous connections have explicit explanations in Workspaces. Another administrator's
 account is never selected. Selecting an application's Git source connection resolves ambiguity.
 
-Each reference is correlated with the workspace repository, head repository, working branch and
-target branch. Unrelated URLs and PRs are refused before exposing observations; implicit fork or
-branch reassignment is not supported. Multiple references refresh independently. A new remote head
-updates status and checks together without modifying local Git, and Workspaces displays a head
-difference when applicable. Provider failures replace successful facts with an unavailable reason.
+Each reference is correlated with the workspace repository, head repository, target branch and
+canonical PR URL. Read-only title, state and check observations allow the linked PR's working branch
+to differ from the current workspace, including follow-up PRs created by another task in the same
+repository. This does not reassign the workspace's branch or accept a foreign fork or repository.
+Multiple references refresh independently. A new remote head updates status and checks together
+without modifying local Git, and Workspaces displays a head difference when applicable. Provider
+failures replace successful facts with an unavailable reason.
+
+These display observations never carry completion evidence or private review bodies, including when
+reading older cached snapshots. Review, publication and merge commands retain exact workspace/source
+and current-head checks. Workspace completion and cleanup fetch separate, fresh, branch-bound provider
+evidence; a linked card's merged state or passing CI never proves the workspace is safe to remove.
 
 Observations persist under Core's `development/publications/external` directory and survive restart
 while the workspace is retained. Successful workspace Delete removes these snapshots; late provider
@@ -227,6 +234,14 @@ Revocation stops future Core calls; it does not remove the external program's ex
 system access to a directory it already received. These instructions coordinate trusted local work
 and do not create a Hosty filesystem sandbox.
 
+An administrator can dispose of unwanted external work without reconnecting the old client.
+Harness's separate [confirmed physical discard](../workspace-lifecycle-controls/feature.md#confirmed-physical-discard)
+reviews and removes registered worktrees/private branches, unfinished files, owned temporary test
+data and workspace metadata. Pause and explicit stopped-process/lease recovery resolve abandoned
+activity first; live or unknown consumers remain blockers. Discard is an operator inspection action,
+not additional authority granted to an external credential. Normal `cleanup_workspace`, Complete,
+Delete and retention still refuse unfinished work.
+
 | Core tool | Purpose |
 | --- | --- |
 | `prepare_workspace(requestId, taskId, appId, leaseId, targetBranch?, label?)` | Prepare or reuse this task's installed-app source binding |
@@ -279,7 +294,11 @@ Return preserves current data and live source edits.
 
 - Exercise external PR observation with multiple references, remote head changes, provider errors,
   malformed or unrelated URLs, expired/disconnected/ambiguous accounts, owner access loss and
-  persisted observations. Verify that no publication command or source cleanup is created.
+  persisted observations. Include linked PRs whose working branch differs from the workspace, and
+  preserve head-repository, target-branch, canonical-URL and selected-account checks. Verify that
+  current and legacy metadata snapshots expose no completion/private-review evidence, and that
+  branch mismatches still refuse exact-source review, merge, completion and cleanup evidence.
+  Verify that no publication command or source cleanup is created.
 - Verify the exact GitHub query against a real PR and inspect state, checks, review summaries and
   connection loss through Core-managed Workspaces after normal browser login.
 - Preserve legacy owner JSON, allocation IDs, preparation argument fingerprints, persisted records,

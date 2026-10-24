@@ -115,6 +115,7 @@ internal static class AppManagementAuthorization
             foreach (var route in routes) result.Add(route, [permission]);
         }
         result["GET /api/development/activation-workspaces"] = [CoreAppPermissions.WorkspacesRead];
+        result["GET /api/core/execution-targets"] = [CoreAppPermissions.ReadCore, CoreAppPermissions.WorkspacesRead];
         result["POST /api/development/workspaces/{workspaceId}/execution-recipe"] = [CoreAppPermissions.Sources];
         result["GET /api/apps/execution-targets"] = [CoreAppPermissions.ReadApps, CoreAppPermissions.WorkspacesRead];
         result["GET /api/apps/{appId}/execution-targets"] = [CoreAppPermissions.ReadApps, CoreAppPermissions.WorkspacesRead];
@@ -163,7 +164,7 @@ internal static class AppManagementAuthorization
         Add(CoreAppPermissions.ReadCore,
             "GET /api/core/status", "GET /api/core/development", "GET /api/core/operations/{id}",
             "GET /api/core/update-status", "GET /api/core/bootstrap", "GET /api/core/settings");
-        Add(CoreAppPermissions.CoreLifecycle, "POST /api/core/restart");
+        Add(CoreAppPermissions.CoreLifecycle, "POST /api/core/restart", "POST /api/core/stop");
         Add(CoreAppPermissions.UpdateCore, "POST /api/core/update");
         Add(CoreAppPermissions.CoreLogs, "GET /api/core/logs");
         Add(CoreAppPermissions.ConfigureCore,

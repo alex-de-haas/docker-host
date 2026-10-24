@@ -119,7 +119,7 @@ export function CoreLogsDialog({
         <DialogBody className="flex min-h-0 flex-col gap-3">
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="outline" size="sm" onClick={() => { setState((current) => ({ ...current, loading: true, error: null })); void loadLogs(); }} disabled={state.loading}>
-              <RefreshCw className={cn("h-4 w-4", state.loading && "animate-spin")} />
+              <RefreshCw className={cn("h-4 w-4", state.loading && "animate-spin motion-reduce:animate-none")} />
               Refresh
             </Button>
             <div className="flex items-center gap-1">

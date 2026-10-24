@@ -270,14 +270,62 @@ describe("codex harness adapter", () => {
       () => events.find((candidate) => candidate.type === "approval_request"),
       "approval_request",
     );
-    expect(approval).toMatchObject({ toolName: "FileChange" });
+    expect(approval).toMatchObject({ toolName: "FileChange", input: {
+      changes: [{ path: "/tmp/x", kind: { type: "update" }, diff: "@@ -1 +1 @@\n-old\n+new\n" }],
+      grantRoot: null, reason: null,
+    } });
     // Nothing ran while the approval was pending.
     expect(events.some((event) => event.type === "tool_use")).toBe(false);
 
     expect(active.resolveApproval(approval.approvalId, "allow")).toBe(true);
     await waitFor(() => events.find((candidate) => candidate.type === "result"), "result after allow");
+    expect(events.find(event => event.type === "tool_use" && event.toolName === "FileChange")).toMatchObject({ cwd: process.cwd() });
     expect(events.some((event) => event.type === "tool_use")).toBe(true);
     expect(events.some((event) => event.type === "assistant_text" && event.text === "written")).toBe(true);
+  });
+
+  it.each(["missing", "wrong-thread", "wrong-turn", "wrong-item", "unscoped-item",
+    "wrong-request-thread", "wrong-request-turn", "unscoped-request", "completed", "completed-restarted", "oversized", "bounded-count", "bounded-bytes"])(
+    "does not attach an unavailable or mismatched file proposal (%s)", async scenario => {
+      const active = start();
+      await waitFor(() => events.find(event => event.type === "harness_session"), "handshake");
+      active.send(`file-proposal ${scenario}`);
+      const approval = await waitFor(() => events.find(event => event.type === "approval_request"), "file approval");
+      expect(approval).toMatchObject({ toolName: "FileChange", input: { changes: null } });
+      expect(active.resolveApproval(approval.approvalId, "deny")).toBe(true);
+      await waitFor(() => events.find(event => event.type === "result"), "denied turn completion");
+    });
+
+  it("does not reuse a consumed proposal after a duplicate item start", async () => {
+    const active = start();
+    await waitFor(() => events.find(event => event.type === "harness_session"), "handshake");
+    active.send("file-proposal consumed-restarted");
+    const approvals = await waitFor(() => {
+      const pending = events.filter(event => event.type === "approval_request");
+      return pending.length === 2 ? pending : null;
+    }, "two native requests");
+    expect(approvals[0]).toMatchObject({ input: { changes: [{ path: "/tmp/x" }] } });
+    expect(approvals[1]).toMatchObject({ input: { changes: null } });
+  });
+
+  it("retains earlier bounded proposals without evicting them for later items", async () => {
+    const active = start();
+    await waitFor(() => events.find(event => event.type === "harness_session"), "handshake");
+    active.send("file-proposal bounded-count-first");
+    const approval = await waitFor(() => events.find(event => event.type === "approval_request"), "bounded file approval");
+    expect(approval).toMatchObject({ input: { changes: [{ path: "/tmp/x", diff: "@@ -1 +1 @@\n-old\n+new\n" }] } });
+    expect(active.resolveApproval(approval.approvalId, "deny")).toBe(true);
+  });
+
+  it("clears the retained proposal budget between native turns", async () => {
+    const active = start();
+    await waitFor(() => events.find(event => event.type === "harness_session"), "handshake");
+    active.send("file-proposal retain-before-terminal");
+    await waitFor(() => events.find(event => event.type === "result"), "first turn completion");
+    active.send("file-proposal next-turn");
+    const approval = await waitFor(() => events.find(event => event.type === "approval_request"), "next turn approval");
+    expect(approval).toMatchObject({ input: { changes: [{ path: "/tmp/x", diff: "@@ -1 +1 @@\n-old\n+new\n" }] } });
+    expect(active.resolveApproval(approval.approvalId, "deny")).toBe(true);
   });
 
   it("denies without executing and reports an unknown approval id", async () => {

@@ -21,11 +21,11 @@ export function ChatAttachment({ name, size, file, state = "done", description, 
     <Attachment size="sm" state={state} className="w-full" aria-label={name}
       aria-busy={state === "uploading" || state === "processing"}>
       <AttachmentMedia variant={image ? "image" : "icon"}>
-        {image && file ? <LocalImagePreview file={file} /> : state === "uploading" ? <Loader2 className="animate-spin" aria-hidden /> : <FileText aria-hidden />}
+        {image && file ? <LocalImagePreview file={file} /> : state === "uploading" ? <Loader2 className="motion-safe:animate-spin" aria-hidden /> : <FileText aria-hidden />}
       </AttachmentMedia>
       <AttachmentContent>
         <AttachmentTitle title={name}>{name}</AttachmentTitle>
-        <AttachmentDescription title={description}>
+        <AttachmentDescription title={description} className="tabular-nums">
           {[size === null ? null : formatAttachmentSize(size), description].filter(Boolean).join(" · ")}
         </AttachmentDescription>
       </AttachmentContent>
