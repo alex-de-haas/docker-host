@@ -71,9 +71,9 @@ export function Alert({ severity, title, detail }: { severity: AlertSeverity; ti
   );
 }
 
-export function EmptyState({ title, description, loading = false }: { title: string; description?: string; loading?: boolean }) {
+export function EmptyState({ title, description, loading = false, className }: { title: string; description?: string; loading?: boolean; className?: string }) {
   return (
-    <div role={loading ? "status" : undefined} aria-busy={loading || undefined} className="flex min-h-32 flex-col items-center justify-center rounded-lg border bg-card p-6 text-center">
+    <div role={loading ? "status" : undefined} aria-busy={loading || undefined} className={cn("flex min-h-32 flex-col items-center justify-center rounded-lg border bg-card p-6 text-center", className)}>
       {loading ? <HostyLoader className="mb-3 size-8" label={null} /> : <HostyEmptySlots className="mb-3 size-12" />}
       <div className="font-medium">{title}</div>
       {description && <div className="mt-1 text-sm text-muted-foreground">{description}</div>}

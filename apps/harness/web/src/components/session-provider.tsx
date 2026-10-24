@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { HostyLoader } from "../../../../../shared/web/hosty-states";
 import { ChevronDown, Loader2 } from "lucide-react";
 import { APP_SESSION_RESTORED } from "@hosty-sdk/app/browser-auth";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -116,7 +117,7 @@ export function SessionProvider({ session, busy, onChange, onSavingChange }: {
               </div>
             </DropdownMenuRadioItem>)}
           </DropdownMenuRadioGroup>
-          {loading && <p role="status" className="px-2 py-1.5 text-xs text-muted-foreground">Loading providers…</p>}
+          {loading && <p role="status" className="flex items-center gap-2 px-2 py-1.5 text-xs text-muted-foreground"><HostyLoader label={null} className="size-4 shrink-0" />Loading providers…</p>}
           {!loading && !readError && !connections.length && <p className="px-2 py-1.5 text-xs text-muted-foreground">Add a provider in Hosty Harness settings.</p>}
         </DropdownMenuContent>
       </DropdownMenu>
