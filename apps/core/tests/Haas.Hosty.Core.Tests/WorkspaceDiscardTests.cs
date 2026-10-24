@@ -333,20 +333,57 @@ public sealed partial class CoreLifecycleServiceTests
         var second = await AdditionalDiscardTree(f);
         foreach (var tree in new[] { f.Tree, second }) await AddDiscardableSource(tree);
         var records = (await f.Service.ListAsync(f.Owner, true, default)).Workspaces;
-        var blockedCache = Path.Combine(f.F.Paths.CoreRoot, "development", "publications", "external", records[^1].Id + ".json");
-        Directory.CreateDirectory(blockedCache);
+        string CachePath(DevelopmentWorkspace tree) => Path.Combine(f.F.Paths.CoreRoot, "development", "publications", "external", tree.Id + ".json");
+        // Atomic record rewrites during discard can change filesystem enumeration order.
+        // Stop before any metadata removal, then use the durable journal's cleanup order.
+        foreach (var tree in records) Directory.CreateDirectory(CachePath(tree));
         var plan = await f.Service.PrepareDiscardAsync(f.Owner, "admin", [], default);
         var command = DiscardInput(plan);
         await f.Service.AdmitDiscardAsync(f.Owner, "admin", command, [], default);
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => f.Service.FinishDiscardAsync(f.Owner, "admin", command, default));
         Assert.False(Directory.Exists(f.Tree.Path)); Assert.False(Directory.Exists(second.Path));
-        Assert.NotNull(await f.Service.ReadDeletionAsync(f.Tree.WorkspaceId, default));
-        Assert.Single((await f.Service.ListAsync(f.Owner, true, default)).Workspaces);
-        Directory.Delete(blockedCache);
+        var deletion = Assert.IsType<WorkspaceDeletionJournal>(await f.Service.ReadDeletionAsync(f.Tree.WorkspaceId, default));
+        Assert.Equal(2, deletion.Worktrees.Length);
+        Assert.Equal(2, (await f.Service.ListAsync(f.Owner, true, default)).Workspaces.Length);
+        Directory.Delete(CachePath(deletion.Worktrees[0]));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => f.Service.FinishDiscardAsync(f.Owner, "admin", command, default));
+        var remaining = Assert.Single((await f.Service.ListAsync(f.Owner, true, default)).Workspaces);
+        Assert.Equal(deletion.Worktrees[1].Id, remaining.Id);
+        Directory.Delete(CachePath(deletion.Worktrees[1]));
         var restarted = new DevelopmentWorkspaceService(f.F.Paths, f.F.Apps, f.F.Clock);
         Assert.Equal("removed", (await restarted.FinishDiscardAsync(f.Owner, "admin", command, default)).State);
         Assert.Empty((await restarted.ListAsync(f.Owner, true, default)).Workspaces);
         Assert.Null(await restarted.ReadDeletionAsync(f.Tree.WorkspaceId, default));
+    }
+
+    [Theory]
+    [InlineData("pipe")]
+    [InlineData("cache/pipe")]
+    public async Task WorkspaceDiscard_SpecialFilesBlockReviewWithoutOpeningOrRemovingSource(string relativePath)
+    {
+        if (OperatingSystem.IsWindows()) return;
+        using var f = await DiscardFixtureAsync();
+        await AddDiscardableSource(f.Tree);
+        var readme = Path.Combine(f.Tree.Path, "README.md");
+        var before = await File.ReadAllBytesAsync(readme);
+        var specialFile = Path.Combine(f.Tree.Path, relativePath);
+        var start = new System.Diagnostics.ProcessStartInfo("mkfifo");
+        start.ArgumentList.Add(specialFile);
+        Assert.Equal(0, (await ProcessRunner.RunAsync(start, TimeSpan.FromSeconds(5), default)).ExitCode);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+
+        var plan = await Task.Run(() => f.Service.PrepareDiscardAsync(f.Owner, "admin", [], timeout.Token))
+            .WaitAsync(timeout.Token);
+
+        Assert.Contains(plan.Blockers, blocker => blocker.Contains("Only regular source files", StringComparison.Ordinal));
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            f.Service.AdmitDiscardAsync(f.Owner, "admin", DiscardInput(plan), [], timeout.Token));
+        Assert.Equal("workspace_discard_blocked", error.Code);
+        Assert.Equal(before, await File.ReadAllBytesAsync(readme));
+        Assert.True(File.Exists(specialFile));
+        Assert.Equal("in-progress", (await f.Service.WorkflowAsync(f.Owner, timeout.Token)).State);
+        File.Delete(specialFile);
+        Assert.Empty((await f.Service.PrepareDiscardAsync(f.Owner, "admin", [], timeout.Token)).Blockers);
     }
 
     [Fact]

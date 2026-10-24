@@ -221,6 +221,7 @@ internal sealed partial class DevelopmentWorkspaceService
                 else
                 {
                     if (entry is not FileInfo info) throw Error("unavailable", "An unexpected source entry cannot be inspected.");
+                    await AppSourceService.RequireRegularFileAsync(entry.FullName, ct);
                     await using var stream = new FileStream(entry.FullName, FileMode.Open, FileAccess.Read, FileShare.Read, 65536, FileOptions.Asynchronous | FileOptions.SequentialScan);
                     Add(Convert.ToHexStringLower(await SHA256.HashDataAsync(stream, ct)));
                     entry.Refresh();

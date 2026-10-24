@@ -325,6 +325,9 @@ If remaining source changes after admission, the operation returns `review-requi
 source and exposes already removed trees separately. Continuing requires a fresh review and explicit
 confirmation; retry never expands old consent to new bytes.
 
+Discard review rejects special files such as Unix FIFOs before opening them. Untracked and ignored
+paths receive the same check, preserving source and leaving workspace operations available.
+
 Core reports `removed` only after verifying physical paths, branches, registrations, owned resources
 and workspace metadata are absent. Minimal actor-bound operation/audit receipts remain for replay;
 full source reviews and cleanup snapshots are removed. Harness offers optional conversation deletion
@@ -394,5 +397,7 @@ pending platform 0.150.2 → 0.151.0 and Harness 0.66.0 → 0.67.0 artifact bump
   expired, cross-user, source-substitution, active/unknown consumer and incomplete inspection cases.
 - Interrupt after repository/resource/metadata cleanup, restart and replay the original request; require
   renewed consent for changed remaining source and compact completed receipts without a source archive.
+- Inject partial metadata-cleanup failures using the persisted deletion journal's order, independent
+  of filesystem enumeration changes caused by atomic record rewrites.
 - Test explicit confirmation without name entry, no mutation on review/cancel, refusal versus uncertainty, recovery after
   browser storage loss and optional conversation deletion after verified physical removal.
