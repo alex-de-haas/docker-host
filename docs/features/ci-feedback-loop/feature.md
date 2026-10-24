@@ -1,6 +1,6 @@
 ---
 created: 2026-10-20
-updated: 2026-10-21
+updated: 2026-10-24
 summary: Affected component CI, explicit local integration checks and publication of verified main revisions.
 components: [.github, scripts]
 ---
@@ -25,6 +25,11 @@ The fast PR path contains classification, version consistency, documentation val
 - A strictly validated version-only change in `Directory.Build.props` selects Core, CLI and Core NativeAOT without triggering unrelated speech, SDK or native lifecycle scenarios. Added, deleted, malformed or substantive configuration stays conservative.
 - Documentation also selects Plans because its tests exercise the repository document parser contract.
 - CI scheduling edits select workflow lint; policy implementation changes and unrecognized inputs conservatively select all checks.
+
+The classification log retains full per-path selection reasons. The job output carries only the
+bounded gate contract: version, selected components/profiles, required jobs and an empty reasons
+object. This keeps both `CI_PLAN` and the copied `needs` environment small for large changesets,
+while the aggregate still validates every required result and rejects failed unexpected jobs.
 
 Core's managed build/unit suite and NativeAOT publication are independent jobs. A production Core source/configuration/dependency change selects NativeAOT; isolated unit-test edits do not require it. The AOT script retains its cold Release compile and zero-new-warning check.
 
@@ -145,7 +150,7 @@ or Linux native readiness. Hosted validation is reported separately in the pull 
 
 - Policy tests cover affected/shared/unknown inputs, semantic version metadata, deleted/renamed paths, exact source resolution and exclusion of local runtime suites from every CI selection.
 - Local launcher tests cover explicit selection, prerequisite and command failures, unsupported platforms, shell-free arguments, native inference opt-in and side-effect-free previews.
-- Gate tests cover failed classification, missing/cancelled/failed/required-skipped jobs and workflow coverage.
+- Gate tests cover failed classification, missing/cancelled/failed/required-skipped jobs, workflow coverage and bounded process startup for large changesets without weakening required results.
 - Publication tests cover exact main identity, stale source, current run attempts, failed or missing CI, complete verified artifact consumption, and required signing identity/source/workflow fields.
 - GitHub Actions syntax and composite shell scripts are linted; docs/index and version checks run on every PR.
 - Hosted operating-system and publication results are reported separately from local static/unit validation. Branch protection migrates only after a successful hosted aggregate.
