@@ -6,6 +6,7 @@ See the [project documentation](docs/root.md) for the runtime app model, feature
 
 This disposable Harness acceptance branch verifies GitHub review against an exact published head.
 The fixture is intentionally documentation-only and must not be merged.
+A second synthetic fixture commit exercises stale-head protection for review replies.
 
 ## Install
 
