@@ -6,6 +6,7 @@ import type { CoreEnvironment, SandboxDiagnostics, SandboxInstance } from "@host
 import type { EnvironmentApps } from "@hosty-sdk/app/sandbox/react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { OperationStatus, StatusBadge } from "../ui";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
@@ -294,7 +295,7 @@ function FeedbackNotice({ value }: { value: Feedback }) {
 }
 function PendingNotice({ kind, busy, onRetry }: { kind: string; busy: boolean; onRetry: () => void }) {
   return <div className="flex flex-wrap items-center gap-3 px-3 py-2 text-sm">
-    <p role="status">{busy ? `${kind} operation is in progress…` : `${kind} operation needs confirmation.`}</p>
+    <OperationStatus tone={busy ? "working" : "attention"} className="text-sm">{busy ? `${kind} operation is in progress…` : `${kind} operation needs confirmation.`}</OperationStatus>
     <Button type="button" variant="outline" size="sm" disabled={busy} onClick={onRetry}>Retry same request</Button>
   </div>;
 }
@@ -310,7 +311,7 @@ function SandboxRow({ rowKey, label, state, workspace, kind, error, children }: 
         <ChevronRight aria-hidden="true" className={cn("shrink-0 transition-transform", open && "rotate-90")} />
         <Icon aria-hidden="true" className="shrink-0" />
         <span className="flex min-w-0 flex-1 flex-col items-start gap-1 text-left"><span className="truncate">{label}</span><span className="max-w-full truncate text-xs text-muted-foreground">{workspace}</span></span>
-        <Badge variant="outline" className="shrink-0">{state}</Badge>
+        <Badge variant="outline" className="shrink-0"><StatusBadge value={state} label={state} className="gap-1.5 text-xs" /></Badge>
       </Button></CollapsibleTrigger>
       {error && <p role="alert" className="break-words px-3 pb-3 text-sm text-destructive-foreground">{error}</p>}
       <CollapsibleContent><div className="flex flex-col gap-4 border-t p-3">{children}</div></CollapsibleContent>

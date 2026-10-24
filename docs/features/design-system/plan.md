@@ -1960,6 +1960,30 @@ the deliverable that changes it.
   D30's Folders, Network, Permissions, Updates and Backups tabs; D30 accepts their adopted
   presentation without changing those contracts.
 
+## D6 Continuation (2026-10-24)
+
+The owner resumes D6 after the merged redesign and D8. The remaining pass preserves the adopted
+layouts and factual lifecycle predicates. It covers Shell update/transition and sandbox status
+presentation, installation progress, and Harness workspace-operation feedback. Read loading keeps
+its branded grid mark; an active operation uses an Info-blue labelled ring, while confirmation or
+an unconfirmed outcome uses a static amber warning. Verified completion has no working animation.
+Both themes and actual reduced-motion media behavior are checked in an isolated managed sandbox.
+D16 retains the broader contrast/grayscale acceptance; D19 retains the deferred app-theme adoption.
+
+Verification on macOS with Docker Desktop passes `npm run shell:test` (206 unit and 733 component
+tests), `npm run shell:lint` (zero errors; three pre-existing warnings), `npm run shell:build`,
+`npm run harness:test` (1,581 tests), `npm run harness:lint`, `npm run lint -w apps/harness/web`,
+`npm run harness:build-web`, and the Shell/Harness API/worker Docker builds. The Harness suite
+requires its web build first; its settings-page test passes with that prerequisite present.
+Browser checks use a separately initialized Core-managed child, normal password login and Docker
+artifacts from the registered workspace. Real starting/update-readiness, degraded and failed
+fixtures preserve their lifecycle and disabled actions. Light/dark working, attention and failure
+colors remain distinct; computed working animation changes from `spin` to `none` with the actual
+system reduced-motion preference, then returns after restoring the preference. Harness rendering
+inherits both themes. Component tests cover Core final/unconfirmed states, sandbox request replay,
+installation and workspace-removal recovery without changing lifecycle authority. The owned child is Finished; its containers, networks, volumes and data root are removed, preview ports are closed, and the disposable parent is stopped. The normal Core retains its original process identity.
+
+
 ## Deliverables
 
 IDs D1–D32 retain their original obligations or explicitly delegate extracted work below. No ID is
@@ -1972,7 +1996,7 @@ Testing Expectations rather than repeating completed implementation as new work.
 - [ ] D3. Complete the deferred native AppIcon adoption and its independent Swift version outcome when the owner reopens native scope. The web portion is implemented: canonical SDK/shared mark geometry, generated light/dark/icon/favicon cuts, outlined IBM Plex Sans 600 lockups, tokens/README and Shell public assets. Web-only generation preserves native outputs. D31 consumes the shared source; Shell and SDK version outcomes remain with the current web batch.
 - [ ] D4. Complete remaining Plans/Telemetry/Demo App chart accents, required distinct-series swaps and own-app empty artwork. Telemetry swaps Hosty Blue with chart-2 and Demo App with chart-3; retain the implemented Harness/Marketplace chart-4 swaps and Shell Hosty Blue. Preserve baked ink tiles in both themes and appropriate dark-card separation. Seven manifest cell icons are already implemented. Frame strips and tool accent treatment depend on a reviewed and approved outcome of D39; D14 owns tool-icon composition and D10 owns placement of empty states.
 - [x] D5. Demo App and Telemetry use theme-legible external navigation SVGs while preserving their manifest paths and navigation behavior. Demo neutral strokes measure at least 3:1 on the adopted light/dark surfaces, and Core-managed Shell rendering confirms the external artwork. Telemetry retains its earlier verified neutral strokes; neither app relies on inherited `currentColor` through an external image.
-- [ ] D6. Finish status-semantic and motion adoption: keep Info-blue labelled working, amber needs-you, red failure and distinct state shapes; replace remaining neutral active-update/transition indicators. Working motion becomes a static ring under reduced motion, and lime remains an interaction/progress color rather than a data-chart series. D16 owns the full contrast/grayscale acceptance pass.
+- [x] D6. Finish status-semantic and motion adoption: Info-blue labelled working, amber needs-you, red failure and distinct state shapes cover the remaining Shell update/Core-transition/sandbox/installation and Harness workspace-operation feedback. Completion and unconfirmed outcomes stay static even with retained busy guards; reduced motion preserves labelled static rings. Managed Core/Docker checks cover both themes and the actual motion preference with real readiness/update states. Unit/component tests, lint and production/Docker builds pass; Shell 0.112.2 → 0.112.3, Harness 0.67.5 → 0.67.6. Lime remains an interaction/progress color. D16 retains full contrast/grayscale acceptance.
 - [x] D8. Complete the compact Dashboard state-filter menu below 820 px of container width, retaining the merged redesign, combined search/filter semantics, full-host counts and selected state. Five focused tests cover live/zero/empty states, shared selection, focus and synthetic touch input. Core-managed child/Docker verification through normal password login covers light/dark phone-width views, keyboard selection/Escape, the 819/820 px boundary and sidebar resizing at a fixed viewport. Shell tests, lint and production/Docker builds pass; Shell 0.112.1 → 0.112.2. D7 accepts the rest of Dashboard; D13 retains physical-device acceptance.
 - [x] D9. Build the ReUI Data Grid pattern for current-user Tokens & devices: the specified search/filtering, sorting, density/column controls, selection/bulk behavior and pagination. Preserve existing credential visibility, Create/Connect/Rename/Revoke authority and recovery. Current-user navigation stays under My profile; authorized support for another user stays in that user's detail.
 - [ ] D10. Complete remaining labelled grid-loader and empty-state placement, including environment inventory, unavailable service observations and shared-mount empty results. Keep factual loading/error/empty/no-results distinctions, static reduced-motion behavior and theme contrast. D4 supplies app-specific empty artwork; working/status indicators remain separate data.

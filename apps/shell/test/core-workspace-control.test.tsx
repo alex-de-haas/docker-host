@@ -204,6 +204,7 @@ it("retains the exact uncertain apply across unmount and retries only its origin
   expect(saved.pending.body).toEqual(original);
   expect(document.querySelector('[role="dialog"] [role="status"]')?.textContent).toContain("Reconnecting to Core…");
   expect(document.querySelector('[role="dialog"] [role="status"] svg')?.classList.contains("animate-spin")).toBe(true);
+  expect(document.querySelector('[role="dialog"] [role="status"]')?.classList.contains("text-info-foreground")).toBe(true);
   expect(document.querySelector('[role="dialog"]')?.textContent).not.toContain("Connection lost after submission");
   expect(button("Check progress")).toBeUndefined();
   await act(async () => root.unmount()); root = createRoot(container); await render();

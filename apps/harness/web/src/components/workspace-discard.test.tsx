@@ -140,6 +140,8 @@ function expectBusy(label: "Checking removal…" | "Removing workspace…") {
   const status = [...document.querySelectorAll<HTMLElement>('[role="status"]')].find(node => node.textContent === label || [...node.querySelectorAll("p")].some(paragraph => paragraph.textContent === label));
   expect(status).toBeDefined();
   expect(status!.querySelector('svg[aria-hidden="true"]')).not.toBeNull();
+  expect(status!.classList.contains("text-info-foreground")).toBe(true);
+  expect(status!.querySelector('svg')?.classList.contains("motion-reduce:animate-none")).toBe(true);
 }
 
 it("shows review loading feedback until a slow read completes without starting removal", async () => {

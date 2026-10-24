@@ -69,6 +69,26 @@ preference; after hydration the fixed light/dark SVG follows the resolved Shell 
 a saved manual choice and system-theme changes. Six cells are white in dark mode or ink in
 light mode, with a lime center in both. The fixed ICO is not a competing head icon.
 
+## Status Semantics And Motion
+
+Shell lifecycle and sandbox badges use distinct shapes: an Info-blue labelled ring for active
+work, an amber triangle for attention and a red alert circle for failure. Sandbox building,
+installing, provisioning, resetting and finishing states use the working ring; quota and cleanup
+failures retain their distinct warning/failure semantics and original labels.
+
+Dashboard app-update feedback and Core installation, reconnection and verification messages use
+Info blue. Waiting for confirmation and unconfirmed Core outcomes use a static amber warning;
+confirmed updates use a static success check. Core action and metadata controls stop their working
+animation for those outcomes even while the existing busy guard is retained. These projections do
+not change the primary runtime state, action authority, recovery journal or request identity.
+Shell sandbox request recovery uses the same working/attention distinction. App initialization
+keeps read loading separate from active installation, readiness and failure. Shell Core-workspace
+and Harness workspace-removal progress use Info-blue operation feedback.
+
+Working rings keep their shape and label with `prefers-reduced-motion: reduce` and stop rotating.
+Warning, failure and completion shapes remain static in both themes. Lime retains its existing
+interaction, selection and progress roles; status feedback does not introduce a lime data series.
+
 ## SDK, Telemetry And Credential Adoption
 
 SDK-owned access/permission/activity cards and banners, installation, tool rail/chooser, retained
@@ -467,6 +487,14 @@ Catalog settings loads with explicit retry, saves against its observed source an
 unsaved source on rejection. These presentation changes add no install or permission authority.
 
 ## Testing Expectations
+
+- Cover active update stages, Core completion/unconfirmed outcomes and retained disabled actions,
+  sandbox confirmation/retry with the original request ID, initialization read/work/failure states
+  and workspace-removal recovery. Keep final/attention feedback static even with a stale busy flag.
+- Verify light/dark status colors and shapes in a Core-managed Docker sandbox through normal
+  password login. Exercise real lifecycle readiness and update progress with the actual
+  `prefers-reduced-motion` preference on and off; rings and labels remain visible when animation
+  stops. Restore the test preference and Finish the owned environment after verification.
 
 - Cover compact Dashboard state filters together with search, full-host counts, zero/empty results
   and live state changes. Verify retained selection across the 819/820 px container boundary and

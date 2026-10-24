@@ -139,8 +139,8 @@ export function WorkspaceDiscard({ workspaceId, pendingRequestId, disabled, canP
   return <Dialog open onOpenChange={open => { if (!open && !removing) onClose(); }}><DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-2xl" showCloseButton={!removing}>
     <DialogHeader><DialogTitle>{removed ? "Workspace removed" : recovering ? "Workspace removal" : "Discard and remove workspace?"}</DialogTitle>
       <DialogDescription>{removed ? "Core verified physical cleanup of this workspace and its owned temporary resources." : "Permanently remove the reviewed local worktrees, workspace branches and temporary test data, including unfinished work. This cannot be undone."}</DialogDescription></DialogHeader>
-    {busy && <div role="status" className="flex items-start gap-3 rounded-lg border bg-muted/40 px-3 py-4 text-sm">
-      <LoaderCircle aria-hidden className="mt-0.5 size-5 shrink-0 animate-spin text-muted-foreground motion-reduce:animate-none" />
+    {busy && <div role="status" className="flex items-start gap-3 rounded-lg border bg-muted/40 px-3 py-4 text-sm text-info-foreground">
+      <LoaderCircle aria-hidden className="mt-0.5 size-5 shrink-0 animate-spin motion-reduce:animate-none" />
       <div className="space-y-1">
         <p className="font-medium">{removing ? removed ? "Finishing cleanup…" : "Removing workspace…" : "Checking removal…"}</p>
         <p className="text-xs text-muted-foreground">{removing ? "This may take a while. Keep this window open while Core confirms the result." : "Loading the current workspace and removal details."}</p>
