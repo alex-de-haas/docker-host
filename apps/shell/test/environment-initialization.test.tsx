@@ -157,3 +157,28 @@ it("maps existing selection, administrator and Core-only readiness to the setup 
   expect(container.querySelector('a[href]')).toBeNull();
   expect(request).not.toHaveBeenCalled();
 });
+
+
+it("separates reading from active installation and keeps completion and failure static", async () => {
+  const request = vi.fn();
+  const item = { id: "1".repeat(32) } as CoreEnvironment;
+  transport.read.mockReturnValue(new Promise(() => {}));
+  await act(async () => root.render(<EnvironmentInitialization item={item} origin="https://core.test" pollVersion={0} request={request} />));
+  expect(container.querySelector(".lucide-loader-circle")).toBeNull();
+  transport.read.mockResolvedValue(Response.json({ phase: "installing", hasAdministrator: false, recoveryRequired: false,
+    apps: ["installing", "starting", "ready", "failed"].map(state => ({ id: state, title: state, state })) }));
+  await act(async () => root.render(<EnvironmentInitialization item={item} origin="https://core.test" pollVersion={1} request={request} />));
+  const rows = [...container.querySelectorAll('[aria-label="Selected application progress"] li')];
+  expect(rows).toHaveLength(4);
+  for (const row of rows.slice(0, 2)) {
+    const ring = row.querySelector(".lucide-loader-circle")!;
+    expect(ring.classList.contains("text-info-foreground")).toBe(true);
+    expect(ring.classList.contains("motion-reduce:animate-none")).toBe(true);
+    expect(ring.getAttribute("aria-hidden")).toBe("true");
+  }
+  expect(rows[2].querySelector(".lucide-circle-check")).not.toBeNull();
+  expect(rows[3].querySelector(".lucide-circle-alert")).not.toBeNull();
+  expect(rows.slice(2).every(row => !row.querySelector(".animate-spin"))).toBe(true);
+  expect(container.textContent).toContain("1 of 4 ready");
+  expect(request).not.toHaveBeenCalled();
+});

@@ -246,6 +246,9 @@ it.each(["Core", "application"])("recovers the legacy %s journal and retries a n
   transport.send.mockRejectedValueOnce(new TypeError("Network response was lost"));
   await render();
   expect(transport.send).not.toHaveBeenCalled();
+  const confirmation = [...container.querySelectorAll('[role="status"]')].find(node => node.textContent?.includes("needs confirmation"))!;
+  expect(confirmation.classList.contains("text-warning-foreground")).toBe(true);
+  expect(confirmation.querySelector('.animate-spin')).toBeNull();
   await click("Retry same request");
   expect(JSON.parse(sessionStorage.getItem(key)!)).toEqual(pending);
   expect(container.textContent).toContain("Network response was lost");
@@ -291,6 +294,9 @@ it("clears a recovered legacy workspace-create journal after the original reques
   });
   await render();
   expect(transport.send).not.toHaveBeenCalled();
+  const confirmation = [...container.querySelectorAll('[role="status"]')].find(node => node.textContent?.includes("needs confirmation"))!;
+  expect(confirmation.classList.contains("text-warning-foreground")).toBe(true);
+  expect(confirmation.querySelector('.animate-spin')).toBeNull();
   await click("Retry same request");
   expect(transport.send.mock.calls.map(([url, request]) => [url, request])).toEqual([[`${origin}/api/core-environments/from-workspace`, body]]);
   expect(sessionStorage.getItem(key)).toBeNull();
@@ -309,4 +315,19 @@ it("keeps Restart available to recover an unhealthy application sandbox", async 
   expect(transport.send.mock.calls[0][0]).toBe(`${origin}/api/sandbox-instances/${instanceId}/operations/restart`);
   expect(transport.send.mock.calls[0][1]).toMatchObject({ expectedRevision: 7 });
   expect(transport.send.mock.calls[0][1].requestId).toMatch(/^[\da-f-]{36}$/i);
+});
+
+
+it.each([
+  ["building", "text-info-foreground", "loader-circle"],
+  ["finishing", "text-info-foreground", "loader-circle"],
+  ["cleanup-failed", "text-destructive-foreground", "circle-alert"],
+  ["quota-exceeded", "text-warning-foreground", "triangle-alert"],
+] as const)("gives a %s sandbox a labelled state shape while retaining its observed label", async (state, tone, icon) => {
+  environments = [child({ state })]; await render();
+  const badge = row("Playback QA").querySelector('[data-slot="badge"]')!;
+  expect(badge.textContent).toBe(state);
+  expect(badge.querySelector(`.${tone}`)).not.toBeNull();
+  expect(badge.querySelector(`.lucide-${icon}[aria-hidden="true"]`)).not.toBeNull();
+  expect(transport.send).not.toHaveBeenCalled();
 });

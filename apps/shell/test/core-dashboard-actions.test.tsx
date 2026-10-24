@@ -89,3 +89,43 @@ it("blocks metadata Update during an accepted or unconfirmed stop", async () => 
   expect(container.querySelector<HTMLButtonElement>('[aria-label="Update Core"]')?.disabled).toBe(true);
   expect(container.querySelector<HTMLButtonElement>('[aria-label="More actions for Hosty Core"]')?.disabled).toBe(true);
 });
+
+
+it.each([
+  ["installing", "Installing update", "text-info-foreground", "loader-circle"],
+  ["reconnecting", "Reconnecting", "text-info-foreground", "loader-circle"],
+  ["verifying", "Verifying update", "text-info-foreground", "loader-circle"],
+  ["completed", "Updated", "text-success-foreground", "check"],
+  ["unconfirmed", "Update not confirmed", "text-warning-foreground", "triangle-alert"],
+] as const)("uses factual %s update feedback without changing the Core lifecycle", async (phase, label, tone, icon) => {
+  development.launch.mode = "release";
+  coreUpdating = true;
+  coreUpdate = { currentVersion: "1.0.0", updateAvailable: true, releaseTag: "next", checkedAt: "now", clientPhase: phase };
+  await render();
+  const message = container.querySelector('.dashboard-status [role="status"]')!;
+  expect(message.textContent).toBe(label);
+  expect(message.classList.contains(tone)).toBe(true);
+  expect(message.querySelector(`.lucide-${icon}[aria-hidden="true"]`)).not.toBeNull();
+  expect(!!message.querySelector('.animate-spin')).toBe(icon === "loader-circle");
+  expect(!!primary()?.querySelector('.animate-spin')).toBe(icon === "loader-circle");
+  if (phase === "completed" || phase === "unconfirmed") {
+    expect(container.querySelector('[data-testid="core-row"] .animate-spin')).toBeNull();
+    expect(primary()?.textContent).toBe(phase === "completed" ? "Updated" : "Needs confirmation");
+  }
+  expect(container.querySelector('.dashboard-status')?.textContent).toContain("Running");
+  expect(primary()?.disabled).toBe(true);
+  expect(fixture.stop).not.toHaveBeenCalled(); expect(fixture.restart).not.toHaveBeenCalled();
+});
+
+it.each(["Waiting for confirmation", "Stop not confirmed"])("keeps %s static and guarded", async phase => {
+  fixture.stopBusy = true; fixture.phase = phase;
+  await render();
+  const message = container.querySelector('.dashboard-status [role="status"]')!;
+  expect(message.textContent).toBe(phase);
+  expect(message.classList.contains("text-warning-foreground")).toBe(true);
+  expect(message.querySelector('.lucide-triangle-alert')).not.toBeNull();
+  expect(message.querySelector('.animate-spin')).toBeNull();
+  expect(primary()?.textContent).toBe("Needs confirmation");
+  expect(primary()?.querySelector('.animate-spin')).toBeNull();
+  expect(primary()?.disabled).toBe(true);
+});

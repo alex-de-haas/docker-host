@@ -392,7 +392,7 @@ export function useCoreWorkspaceControl({ coreOrigin, state, workspaces, workspa
       </div>
       {error && !reconnecting && <InlineError message={error} />}
       {catalogError && <InlineError message={catalogError} />}
-      {showingProgress && <div role="status" aria-live="polite" className="flex items-center gap-3 rounded-lg border bg-muted/30 p-3">
+      {showingProgress && <div role="status" aria-live="polite" className="flex items-center gap-3 rounded-lg border bg-muted/30 p-3 text-info-foreground">
         <LoaderCircle aria-hidden="true" className="size-5 shrink-0 animate-spin motion-reduce:animate-none" />
         <div><p className="font-medium">{progressLabel}</p><p className="text-xs text-muted-foreground">This can take a little while. Progress updates automatically.</p></div>
       </div>}

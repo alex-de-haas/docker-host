@@ -84,15 +84,15 @@ export function EmptyState({ title, description, loading = false }: { title: str
 // `health` composes the app's health fold onto its lifecycle state the way Aspire's dashboard does —
 // `running · degraded` — with the *health's* tone, since that is the news. Omitted, or `healthy`,
 // and the badge is the lifecycle state alone.
-export function StatusBadge({ value, health, compact = false }: { value: string; health?: string | null; compact?: boolean }) {
+export function StatusBadge({ value, health, compact = false, className, label }: { value: string; health?: string | null; compact?: boolean; className?: string; label?: string }) {
   if (health && health !== "healthy" && health !== "stopped" && health !== "unknown") {
-    return <StatusBadge value={`${value} · ${health}`} compact={compact} />;
+    return <StatusBadge value={`${value} · ${health}`} compact={compact} className={className} label={label} />;
   }
 
   const normalized = value.toLowerCase();
   const failed = /error|failed|unhealthy|offline/.test(normalized);
-  const attention = /degraded|unknown|configuration|approval/.test(normalized);
-  const transitional = !failed && /starting|stopping|restarting|updating|preparing/.test(normalized);
+  const attention = /degraded|unknown|configuration|approval|needs-attention|quota-exceeded/.test(normalized);
+  const transitional = !failed && !attention && /starting|stopping|restarting|updating|preparing|building|installing|finishing|resetting|provisioning/.test(normalized);
   const running = !failed && !attention && !transitional && /running|ready|healthy|^ok$/.test(normalized);
   const tone = failed ? "text-destructive-foreground" : attention ? "text-warning-foreground" : transitional ? "text-info-foreground" : running ? "text-success-foreground" : "text-muted-foreground";
   const glyph = failed ? <CircleAlert aria-hidden className="size-3.5 shrink-0" />
@@ -100,10 +100,24 @@ export function StatusBadge({ value, health, compact = false }: { value: string;
     : transitional ? <LoaderCircle aria-hidden className="size-3.5 shrink-0 animate-spin motion-reduce:animate-none" />
     : <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-current" />;
   if (compact) return <TooltipProvider delayDuration={150}><Tooltip>
-    <TooltipTrigger asChild><span role="img" aria-label={value} tabIndex={0} className={cn("inline-flex size-6 items-center justify-center rounded-sm", tone)}>{glyph}</span></TooltipTrigger>
+    <TooltipTrigger asChild><span role="img" aria-label={value} tabIndex={0} className={cn("inline-flex size-6 items-center justify-center rounded-sm", tone, className)}>{glyph}</span></TooltipTrigger>
     <TooltipContent>{value}</TooltipContent>
   </Tooltip></TooltipProvider>;
-  return <span className={cn("inline-flex items-center gap-2 text-sm", tone)}>{glyph}<span>{value.charAt(0).toUpperCase() + value.slice(1)}</span></span>;
+  return <span className={cn("inline-flex items-center gap-2 text-sm", tone, className)}>{glyph}<span>{label ?? value.charAt(0).toUpperCase() + value.slice(1)}</span></span>;
+}
+
+/** Progress and outcomes use the same labels but never share an animated working glyph. */
+export function OperationStatus({ children, tone = "working", className }: {
+  children: ReactNode;
+  tone?: "working" | "attention" | "failed" | "success";
+  className?: string;
+}) {
+  const Icon = tone === "working" ? LoaderCircle : tone === "attention" ? TriangleAlert : tone === "failed" ? CircleAlert : Check;
+  const color = tone === "working" ? "text-info-foreground" : tone === "attention" ? "text-warning-foreground" : tone === "failed" ? "text-destructive-foreground" : "text-success-foreground";
+  return <div role="status" className={cn("flex min-w-0 items-start gap-1 text-xs leading-4", color, className)}>
+    <Icon aria-hidden className={cn("mt-0.5 size-3 shrink-0", tone === "working" && "animate-spin motion-reduce:animate-none")} />
+    <span className="min-w-0 whitespace-normal wrap-anywhere">{children}</span>
+  </div>;
 }
 
 export function RoleBadge({ role, disabled }: { role: "host.admin" | "host.user"; disabled?: boolean }) {

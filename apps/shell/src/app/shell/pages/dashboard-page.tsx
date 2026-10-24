@@ -22,7 +22,7 @@ import { SourceVersionCell } from "../source/source-changes";
 import { AppSessionMenuItem } from "../assistant/app-session-action";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { isRoutineUpdate, updateFeedback, updateCheckDescription } from "../update-feedback";
+import { isRoutineUpdate, updateFeedback, updateCheckDescription, coreUpdateFeedback, coreOperationNeedsAttention } from "../update-feedback";
 import {
   ArrowUpCircle,
   Boxes,
@@ -97,7 +97,7 @@ import type {
   CoreUpdateStatus,
   OpenAppPanel,
 } from "../types";
-import { EmptyState, StatusBadge } from "../ui";
+import { EmptyState, OperationStatus, StatusBadge } from "../ui";
 
 // The administrator's home: what the host is, and every app on it. Dashboard and Installed Apps used
 // to be two pages, and the first was an aggregate of the second — a summary of a screen you had to
@@ -365,7 +365,14 @@ function CoreSection({
   });
   const stopping = useCoreStop(coreOrigin, development.state, !canManageApps || development.busy || runtime.busy || coreUpdating);
   const coreBusy = development.busy || runtime.busy || coreUpdating || stopping.busy;
-  const coreActionLabel = stopping.busy ? "Stopping…" : development.busy ? "Restarting…" : runtime.busy ? "Switching…" : "Updating…";
+  const corePhase = stopping.phase || development.phase;
+  const phaseNeedsAttention = coreOperationNeedsAttention(corePhase);
+  const updateStatus = coreUpdateFeedback(coreUpdating, coreUpdate?.clientPhase);
+  const actionTone = stopping.busy || development.busy || runtime.busy
+    ? phaseNeedsAttention ? "attention" : "working" : updateStatus?.tone ?? "working";
+  const CoreActionIcon = actionTone === "attention" ? TriangleAlert : actionTone === "success" ? Check : LoaderCircle;
+  const coreActionLabel = actionTone === "attention" ? "Needs confirmation" : actionTone === "success" ? "Updated"
+    : stopping.busy ? "Stopping…" : development.busy ? "Restarting…" : runtime.busy ? "Switching…" : "Updating…";
   const showRestartRequired = Boolean(development.state?.restartRequired && !development.busy && !stopping.busy);
   const needsDiagnostics = ["degraded", "unhealthy", "failed"].includes(status?.status ?? "");
   const showUpdate = !dev && canManageApps && (coreUpdate?.updateAvailable === true || coreUpdating);
@@ -398,7 +405,7 @@ function CoreSection({
                       disabled={coreBusy}
                       onClick={onUpdateCore}
                     >
-                      {coreUpdating ? <LoaderCircle className="h-4 w-4 animate-spin motion-reduce:animate-none" /> : <ArrowUpCircle className="h-4 w-4" />}
+                      {coreUpdating && updateStatus?.tone === "working" ? <LoaderCircle className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden /> : <ArrowUpCircle className="h-4 w-4" aria-hidden />}
                     </Button>
                   )}
                 </div>
@@ -408,11 +415,8 @@ function CoreSection({
               </TableCell>
               <TableCell role="cell" className="dashboard-status"><div className="space-y-1">
                 <StatusBadge value={status ? status.status : "offline"} />
-                {(stopping.phase || development.phase) && <div role="status" className="text-xs text-muted-foreground">{stopping.phase || development.phase}</div>}
-                {!dev && (coreUpdating || coreUpdate?.clientPhase) && <div role="status" className="flex items-center gap-1 text-xs text-muted-foreground">
-                  {coreUpdating && <LoaderCircle className="size-3 animate-spin motion-reduce:animate-none" />}
-                  {coreUpdate?.clientPhase === "completed" ? "Updated" : coreUpdate?.clientPhase === "reconnecting" ? "Reconnecting" : coreUpdate?.clientPhase === "verifying" ? "Verifying update" : coreUpdate?.clientPhase === "unconfirmed" ? "Update not confirmed" : "Installing update"}
-                </div>}
+                {corePhase && <OperationStatus tone={phaseNeedsAttention ? "attention" : "working"}>{corePhase}</OperationStatus>}
+                {!dev && updateStatus && <OperationStatus tone={updateStatus.tone}>{updateStatus.label}</OperationStatus>}
                 {!dev && coreUpdate?.error && <span title={updateCheckDescription(coreUpdate)} className="text-xs text-warning-foreground">Check failed</span>}
               </div></TableCell>
               <TableCell role="cell" className="dashboard-resources"><ResourceUsage appId="hosty.core" label="Hosty Core" /></TableCell>
@@ -421,7 +425,7 @@ function CoreSection({
                   {canManageApps && (
                     <>
                       <div className="dashboard-context-action">
-                        {coreBusy ? <Button variant="outline" size="sm" disabled><LoaderCircle data-icon="inline-start" className="animate-spin motion-reduce:animate-none" />{coreActionLabel}</Button>
+                        {coreBusy ? <Button variant="outline" size="sm" disabled><CoreActionIcon data-icon="inline-start" className={actionTone === "working" ? "animate-spin motion-reduce:animate-none" : undefined} aria-hidden />{coreActionLabel}</Button>
                           : showRestartRequired ? <Button variant="outline" size="sm" disabled={!development.state?.manageable} onClick={() => void development.restart()}>Restart</Button>
                           : needsDiagnostics ? <Button variant="outline" size="sm" onClick={() => setLogsOpen(true)}>Logs</Button>
                           : <Button variant="outline" size="sm" disabled={!status || !development.state?.manageable} onClick={() => void stopping.stop()}>Stop</Button>}
@@ -706,9 +710,7 @@ function InstalledAppRow({
 function AppUpdateFeedback({ app }: { app: CoreApp }) {
   const label = updateFeedback(app);
   if (!label) return null;
-  return <div role="status" className="flex min-w-0 items-start gap-1 text-xs leading-4 text-muted-foreground [&>svg]:mt-0.5 [&>svg]:shrink-0">
-    <LoaderCircle className="size-3 animate-spin motion-reduce:animate-none" /><span className="min-w-0 whitespace-normal wrap-anywhere">{label}</span>
-  </div>;
+  return <OperationStatus>{label}</OperationStatus>;
 }
 
 // Core's version, and — when an update is offered — the version the channel publishes under it, in the

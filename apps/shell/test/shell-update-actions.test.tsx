@@ -278,6 +278,9 @@ it.each([
   const main = [...cell.querySelectorAll("span")].find(node => node.textContent === status)!;
   const feedback = [...cell.querySelectorAll("span, button")].find(node => node.textContent === label)!;
   expect(main).toBeDefined(); expect(feedback).toBeDefined();
+  const progress = feedback.closest('[role="status"]')!;
+  expect(progress.classList.contains("text-info-foreground")).toBe(true);
+  expect(progress.querySelector('svg[aria-hidden="true"]')?.classList.contains("motion-reduce:animate-none")).toBe(true);
   expect(main.compareDocumentPosition(feedback) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(appRow().querySelector(".dashboard-identity")?.textContent).not.toContain(label);
   expect(appRow().querySelector(".dashboard-version")?.textContent).toContain(target.version);
