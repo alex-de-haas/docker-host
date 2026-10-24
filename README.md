@@ -26,8 +26,9 @@ Open a new terminal and initialize Hosty:
 hosty init
 ```
 
-Choose the applications you want. Shell and Marketplace are recommended and preselected; Core is
-always included. Ports are assigned automatically and retained across restarts. Once the selected
+Synthetic QA fixture A1: disposable review acceptance text for this session only.
+Synthetic QA fixture A2: RIGHT additions replace two adjacent LEFT prose lines.
+Synthetic QA fixture A3: use this labelled location to exercise review comments.
 apps are ready, init prints a setup link and opens the browser. Enter your administrator email,
 name and password there; Shell opens after registration when installed. Docker must be running
 for the standard application profiles.
@@ -111,8 +112,9 @@ Use $hosty-app-skill to wrap this app as a Hosty runtime app.
 
 ## Local development
 
-Install .NET SDK 10.0.401 or a later .NET 10 SDK, as required by `global.json`. This includes
-the Native AOT fix needed for current macOS linkers; older SDKs can fail during native linking.
+Synthetic QA fixture B1: disposable review acceptance text for this session only.
+Synthetic QA fixture B2: RIGHT additions replace two adjacent LEFT prose lines.
+Synthetic QA fixture B3: use this second labelled location to exercise review comments.
 
 See [Local development and testing](docs/features/local-development/feature.md) for detailed guidance.
 
