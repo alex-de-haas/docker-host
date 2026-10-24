@@ -9,7 +9,8 @@ internal sealed record WorkspaceRuntimeActivation(string Id, string WorkspaceId,
     string? CoreProject, CoreLaunchIdentity PreviousCore, string[] Apps, string Phase,
     string? PreparedExecutable = null, string? Generation = null, string? Snapshot = null, string? Error = null, IReadOnlyDictionary<string, string>? SourceStamps = null,
     string? ListenUrl = null, CoreLaunchIdentity? ActivatedCore = null, string? PreviousExecutable = null, string[]? ReturnedApps = null, bool CoreReturned = false,
-    WorkspaceReturnReceipt[]? Returns = null, WorkspaceActivationActor? Authority = null, bool CoreReserved = false, string? PreviousExecutableHash = null, string? PreparationFingerprint = null, bool PreparationReleased = false);
+    WorkspaceReturnReceipt[]? Returns = null, WorkspaceActivationActor? Authority = null, bool CoreReserved = false, string? PreviousExecutableHash = null, string? PreparationFingerprint = null, bool PreparationReleased = false,
+    WorkspaceCoreReturnTarget? CoreReturnTarget = null, string? ReplacesCoreActivationId = null, string? CoreSupersededBy = null);
 
 internal sealed record WorkspaceActivationActor(string UserId, string Via, string? AppId = null,
     DateTimeOffset? Installation = null, string? Principal = null, string? Review = null, string? AppIdentityHash = null);
@@ -17,7 +18,9 @@ internal sealed record WorkspaceActivationActor(string UserId, string Via, strin
 internal sealed record WorkspaceReturnAppMutation(string RequestId, string AppId);
 internal sealed record WorkspaceReturnRequest(string RequestId, string[] Apps, bool Core, bool AcceptDataChanges);
 internal sealed record WorkspaceReturnAppState(string AppId, string Target, bool WasRunning, bool BootRunning, bool BootObserved = false);
-internal sealed record WorkspaceReturnReceipt(WorkspaceReturnRequest Request, string State, WorkspaceReturnAppState[]? AppsBeforeCoreReturn = null);
+internal sealed record WorkspaceCoreReturnTarget(CoreLaunchIdentity Launch, string? Executable, string? ExecutableHash);
+internal sealed record WorkspaceReturnReceipt(WorkspaceReturnRequest Request, string State, WorkspaceReturnAppState[]? AppsBeforeCoreReturn = null,
+    WorkspaceCoreReturnTarget? CoreTarget = null, bool CoreRestoreStarted = false);
 
 internal static class WorkspaceRuntimeFiles
 {

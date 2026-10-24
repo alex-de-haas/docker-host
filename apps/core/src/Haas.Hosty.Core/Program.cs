@@ -2,6 +2,12 @@ using System.Net.Sockets;
 using Haas.Hosty.Core;
 using Haas.Hosty.Launch;
 
+if (args is [WorkspaceActivationCapability.Argument])
+{
+    Console.WriteLine(WorkspaceActivationCapability.Schema);
+    return 0;
+}
+
 if (args is ["--initialization-contract"])
 {
     Console.WriteLine(Haas.Hosty.Initialization.InitializationFiles.Schema);

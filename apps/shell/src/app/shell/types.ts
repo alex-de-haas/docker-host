@@ -407,6 +407,8 @@ export type CoreGlobalMount = {
   hostPathExists?: boolean;
 };
 
+export type SharedMountsLoadStatus = { loading: boolean; loaded: boolean; error: string | null; scope?: string | null };
+
 export type AppsResponse = {
   apps: CoreApp[];
   // Fleet update-check status (plan-first updates): drives the header "Check updates" spinner from
@@ -443,44 +445,6 @@ export type AppUpdateCheckStatus = {
 // pending (never built, expired, or consumed by an apply).
 export type AppPendingUpdatePlanResponse = {
   plan: CoreUpdatePlan | null;
-};
-
-// What removing an app would affect, from GET /api/apps/{id}/remove-impact. Advisory only: Core never
-// refuses a removal, and an app nothing declares against reports empty lists.
-// See docs/features/removable-system-apps/.
-export type CoreRemovalImpact = {
-  appId: string;
-  displayName: string;
-  system: boolean;
-  dependents: CoreRemovalDependent[];
-  capabilities: CoreRemovalCapabilityImpact[];
-  // Hosty-published hostnames that removal takes offline.
-  publicOrigins: CoreRemovalPublicOrigin[];
-};
-
-// One published hostname the removal takes down. An "adopted" record keeps its DNS entry — Hosty manages
-// it but did not create it.
-export type CoreRemovalPublicOrigin = { endpointKey: string; hostname: string; ownershipState: string };
-
-// An installed app that declares a cross-app dependency on the one being removed. A running dependent
-// keeps its wired HOSTY_DEPENDENCY_* values until it restarts, so the loss lands at its next start.
-export type CoreRemovalDependent = {
-  appId: string;
-  displayName: string;
-  runtimeState: string;
-  required: boolean;
-  aliases: string[];
-};
-
-export type CoreRemovalCapabilityImpact = {
-  slot: string;
-  consumers: CoreRemovalConsumer[];
-};
-
-export type CoreRemovalConsumer = {
-  appId: string;
-  displayName: string;
-  runtimeState: string;
 };
 
 // Core's own behavior settings (auth session/grant lifetimes for now), served in the same shape as
@@ -728,17 +692,15 @@ export type CoreError = {
 };
 
 export type AppAction = "start" | "stop" | "restart" | "backup" | "autostart";
-// "logs" is the per-app console-logs (docker logs) dialog, opened from the Installed Apps actions menu
-// — distinct from the structured OTLP-logs stream in the Observability section.
+// "logs" opens the per-app console output tab in App Details, distinct from structured OTLP logs.
 export type DetailView = "backups" | "settings" | "update" | "remove" | "logs";
 
 // Tabs inside the consolidated Settings dialog. Hidden when the app has no matching data.
-export type SettingsTab = "app" | "permissions" | "publicOrigins" | "mounts" | "source" | "backups";
-// Three top-level destinations: the host you manage, the host you configure, and the apps you use.
-// `installed-apps` and `users` were folded into `dashboard` and `settings`; their URLs still resolve
-// and are canonicalized by the client.
+export type SettingsTab = "app" | "parameters" | "permissions" | "publicOrigins" | "mounts" | "source" | "backups" | "logs";
+// Home is a neutral entry: administrators resolve to Dashboard; ordinary users open apps from
+// navigation. Legacy catalog URLs no longer render a second app list.
 export type ShellView =
-  | "available-apps"
+  | "home"
   | "dashboard"
   | "settings";
 
@@ -784,6 +746,8 @@ export type WorkspaceRoute = {
 export type ShellRouteState = {
   view: ShellView;
   workspace: WorkspaceRoute | null;
+  // Shell-owned app management is separate from embedded app workspaces and host settings.
+  appDetails?: { appId: string; section: SettingsTab };
   // Always resolved, so no consumer has to repeat the default. Only read while `view` is
   // "settings"; carried on every route so a link into Settings can name its tab from anywhere.
   // A host tab id, or the id of an app whose settings page fills the tab. Raw, because the two are
@@ -889,13 +853,6 @@ export type OpenPanelOptions = {
 };
 
 export type OpenAppPanel = (app: CoreApp, view: DetailView, options?: OpenPanelOptions) => void;
-
-export type RemoveOptions = {
-  deleteData: boolean;
-  deleteBackups: boolean;
-  deleteSource: boolean;
-  ignoreRuntimeErrors: boolean;
-};
 
 export type AppPageLink = {
   label: string;

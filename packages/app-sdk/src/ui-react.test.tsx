@@ -43,6 +43,40 @@ beforeEach(() => {
   }));
   host = null; element = document.createElement("div"); document.body.append(element); root = createRoot(element);
 });
+it("preserves the document's inherited palette and typography inside the SDK workspace", async () => {
+  element.style.cssText = "color:rgb(71,83,97);font:400 17px/27px Georgia;background:rgb(237,229,221)";
+  element.style.setProperty("--hosty-panel-foreground", "rgb(11,22,33)");
+  const before = { color: getComputedStyle(element).color, fontFamily: getComputedStyle(element).fontFamily,
+    fontSize: getComputedStyle(element).fontSize, lineHeight: getComputedStyle(element).lineHeight };
+  const rootStyle = document.documentElement.getAttribute("style"), bodyStyle = document.body.getAttribute("style");
+  await act(async () => root.render(<HostyUiRoot navigation={{ renderer: "custom" }}>
+    <Document /><span data-document-label>App-owned text</span>
+  </HostyUiRoot>));
+  await act(async () => host!.refresh());
+  const label = element.querySelector<HTMLElement>("[data-document-label]")!;
+  const after = getComputedStyle(label);
+  expect({ color: after.color, fontFamily: after.fontFamily, fontSize: after.fontSize, lineHeight: after.lineHeight }).toEqual(before);
+  expect(document.documentElement.getAttribute("style")).toBe(rootStyle);
+  expect(document.body.getAttribute("style")).toBe(bodyStyle);
+});
+it("preserves app-owned typography and focus styling after SDK styles load", async () => {
+  const appStyle = document.createElement("style");
+  appStyle.textContent = ".document-action{font:600 18px/28px Georgia}.document-action:focus-visible{outline:3px dashed rgb(40,50,60);outline-offset:4px}";
+  document.head.append(appStyle);
+  try {
+    await act(async () => root.render(<HostyUiRoot navigation={{ renderer: "custom" }}>
+      <Document /><button className="document-action">App action</button>
+    </HostyUiRoot>));
+    await act(async () => host!.refresh());
+    const action = element.querySelector<HTMLButtonElement>(".document-action")!;
+    action.focus();
+    const app = getComputedStyle(action);
+    expect(app.outline).toBe("3px dashed rgb(40,50,60)");
+    expect(app.outlineOffset).toBe("4px");
+    expect(app.fontFamily).toBe("Georgia"); expect(app.fontSize).toBe("18px");
+    expect(app.fontWeight).toBe("600"); expect(app.lineHeight).toBe("28px");
+  } finally { appStyle.remove(); }
+});
 it("retains iframe identity across same-panel instances and movement to another workspace", async () => {
   await act(async () => root.render(<HostyUiRoot panelLayout="slot">
     <HostyPanelWorkspace><Document /></HostyPanelWorkspace>

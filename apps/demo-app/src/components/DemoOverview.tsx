@@ -1,4 +1,5 @@
 "use client";
+import { DemoAlert, DemoEmpty } from "./DemoFeedback";
 import {
   Activity,
   Clock3,
@@ -44,7 +45,7 @@ export function DemoOverview({ config, storage, appStartedAt }: { config: DemoCo
     <DemoShell>
       <DemoPageHeader
         eyebrow={config.appId}
-        title="Hosty Demo App"
+        title="Overview"
         description="Runtime diagnostics for Hosty app lifecycle development."
         actions={
           <Status status="online">
@@ -131,9 +132,7 @@ export function DemoOverview({ config, storage, appStartedAt }: { config: DemoCo
           {auth.directory.users.length > 0 ? (
             <PeopleList users={auth.directory.users} />
           ) : (
-            <p className="text-sm leading-6 text-muted-foreground">
-              {auth.directory.error?.message || "No assigned Host users were returned."}
-            </p>
+            auth.directory.error ? <DemoAlert>{auth.directory.error.message}</DemoAlert> : <DemoEmpty title="No assigned users">Assign users to this app in Core to see them here.</DemoEmpty>
           )}
         </SectionCard>
       </section>
@@ -215,9 +214,7 @@ export function DemoOverview({ config, storage, appStartedAt }: { config: DemoCo
             {auth.directory.users.length > 0 ? (
               <PeopleList users={auth.directory.users} />
             ) : (
-              <p className="text-sm leading-6 text-muted-foreground">
-                {auth.directory.error?.message || "No assigned Host users were returned."}
-              </p>
+              auth.directory.error ? <DemoAlert>{auth.directory.error.message}</DemoAlert> : <DemoEmpty title="No assigned users">Assign users to this app in Core to see them here.</DemoEmpty>
             )}
           </div>
         </SectionCard>
@@ -271,7 +268,7 @@ export function DemoOverview({ config, storage, appStartedAt }: { config: DemoCo
 
       <section className="flex flex-col gap-4" aria-label="Storage">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div className="min-w-0 space-y-1">
+          <div className="flex min-w-0 flex-col gap-1">
             <h2 className="text-xl font-semibold leading-7">Storage probes</h2>
             <p className="text-sm text-muted-foreground">
               App-owned data, log, and external source mount checks.

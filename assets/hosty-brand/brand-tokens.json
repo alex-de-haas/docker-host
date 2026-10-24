@@ -1,35 +1,66 @@
 {
   "brand": "Hosty",
-  "assetsVersion": "3.0.0-svg",
+  "assetsVersion": "4.0.0-grid",
   "format": "SVG (source) + PNG/ICO (generated)",
   "generator": "build-assets.mjs",
-  "logomark": "H-graph: five rounded-square nodes (four corners + center) wired into the letter H.",
-  "iconSizesPx": [16, 20, 24, 32, 48, 64, 96, 128, 256, 512],
-  "faviconSizesPx": [16, 32, 48, 64, 128, 256],
+  "logomark": "Seven square cells on a 3 \u00d7 3 grid, with a lime Core cell.",
+  "iconSizesPx": [
+    16,
+    20,
+    24,
+    32,
+    48,
+    64,
+    96,
+    128,
+    256,
+    512
+  ],
+  "faviconSizesPx": [
+    16,
+    32,
+    48,
+    64,
+    128,
+    256
+  ],
   "colors": {
     "ink": "#0F1B2D",
-    "offWhite": "#F8FAFC",
     "white": "#FFFFFF",
-    "blue": "#1C68FF",
-    "cyan": "#28D5E5",
-    "darkSurface": "#0F1B2D"
-  },
-  "stroke": {
-    "viewBox": "0 0 100 100",
-    "width": 6,
-    "linecap": "round",
-    "linejoin": "round"
+    "lime": "#A3E635",
+    "darkTile": "#22324B"
   },
   "usage": {
     "svg/hosty-mark-light.svg": "Ink mark (transparent) for light backgrounds.",
-    "svg/hosty-mark-dark.svg": "Off-white mark (transparent) for dark backgrounds.",
-    "svg/hosty-icon-brand.svg": "Brand-blue rounded tile with white mark.",
-    "svg/hosty-icon-light.svg": "White tile with ink mark.",
-    "svg/hosty-icon-dark.svg": "Dark tile with off-white mark.",
-    "svg/hosty-favicon.svg": "Theme-aware transparent mark (prefers-color-scheme): ink mark in light theme, off-white in dark theme. Scaled up for small-size legibility.",
+    "svg/hosty-mark-dark.svg": "White grid (transparent) and lime Core for dark backgrounds.",
+    "svg/hosty-icon-brand.svg": "Ink tile, white grid and lime Core; retained filename.",
+    "svg/hosty-icon-light.svg": "Ink tile, white grid and lime Core; light-theme alias.",
+    "svg/hosty-icon-dark.svg": "Ink tile, white grid and lime Core; baked dark-theme alias.",
+    "svg/hosty-favicon.svg": "Theme-aware transparent grid, scaled 1.16, with the Core cell always lime.",
     "svg/hosty-logo-horizontal-*.svg": "Mark + Hosty wordmark lockup (light / dark / on-white).",
     "icons/light": "PNG ink marks (transparent) for light backgrounds.",
-    "icons/dark": "PNG off-white marks (transparent) for dark backgrounds.",
+    "icons/dark": "PNG white grid (transparent) with lime Core for dark backgrounds.",
     "favicon.ico": "Multi-size ICO: 16, 32, 48, 64, 128, 256 px."
+  },
+  "source": "packages/app-sdk/src/core-mark-geometry.ts",
+  "wordmark": {
+    "family": "IBM Plex Sans",
+    "weight": 600,
+    "format": "outlined paths",
+    "source": "wordmark.json"
+  },
+  "grid": {
+    "viewBox": "0 0 100 100",
+    "plain": {
+      "cell": 22,
+      "gap": 7,
+      "inset": 10
+    },
+    "tile": {
+      "cell": 16,
+      "gap": 5.5,
+      "inset": 20.5,
+      "radius": 22
+    }
   }
 }

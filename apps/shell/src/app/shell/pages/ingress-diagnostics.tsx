@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { LoaderCircle, RefreshCw } from "lucide-react";
+import { Frame, FrameHeader, FramePanel } from "@/components/reui/frame";
 import { Button } from "@/components/ui/button";
 import { isAuthRequiredRedirectError } from "../core-api";
 import { publishesThroughCloudflareApi } from "../ingress";
@@ -82,25 +83,26 @@ export function IngressDiagnostics() {
   const retained = diagnostics !== null && !publishes ? diagnostics.publications : [];
 
   return (
-    <div className="space-y-2">
-      <div className="flex items-start justify-between gap-2">
-        <div>
-          <h3 className="text-sm font-medium">Checks</h3>
+    <section className="min-w-0" aria-labelledby="ingress-checks-heading">
+      <Frame className="min-w-0">
+      <FrameHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0 flex-1">
+          <h3 id="ingress-checks-heading" className="text-sm font-medium">Checks</h3>
           <p className="text-xs text-muted-foreground">
             Whether the addresses Hosty published still match what Cloudflare serves, and which public endpoints
             have no address at all.
           </p>
         </div>
-        <Button type="button" variant="outline" size="sm" disabled={loading} onClick={() => { setLoading(true); void load(); }}>
-          {loading ? <LoaderCircle className="mr-1 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1 h-3.5 w-3.5" />}
+        <Button type="button" variant="outline" size="sm" className="shrink-0 self-start" disabled={loading} onClick={() => { setLoading(true); void load(); }}>
+          {loading ? <LoaderCircle className="mr-1 h-3.5 w-3.5 animate-spin motion-reduce:animate-none" /> : <RefreshCw className="mr-1 h-3.5 w-3.5" />}
           Check again
         </Button>
-      </div>
-
+      </FrameHeader>
+      <FramePanel className="flex min-w-0 flex-col gap-3 [overflow-wrap:anywhere]">
       {error && <InlineError message={error} />}
 
       {retained.length > 0 && (
-        <div className="space-y-1 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-400">
+        <div className="space-y-1 rounded-md border border-warning/30 bg-warning-soft p-3 text-xs text-warning-foreground">
           <p className="font-medium">
             {retained.length} address{retained.length === 1 ? " is" : "es are"} still published on Cloudflare
           </p>
@@ -121,7 +123,7 @@ export function IngressDiagnostics() {
       {diagnostics && (
         <div className="space-y-2 text-xs">
           {retained.length > 0 ? null : drifted.length > 0 ? (
-            <div className="space-y-1 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-amber-700 dark:text-amber-400">
+            <div className="space-y-1 rounded-md border border-warning/30 bg-warning-soft p-3 text-warning-foreground">
               <p className="font-medium">Published addresses that no longer match Cloudflare</p>
               <ul className="space-y-0.5">
                 {drifted.map((publication) => (
@@ -210,6 +212,8 @@ export function IngressDiagnostics() {
           )}
         </div>
       )}
-    </div>
+      </FramePanel>
+      </Frame>
+    </section>
   );
 }

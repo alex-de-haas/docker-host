@@ -3,7 +3,7 @@
 import { appFetch } from "@hosty-sdk/app/browser-auth";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Activity, ChevronDown, LineChart, ListChecks, LoaderCircle, RefreshCw } from "lucide-react";
+import { Activity, ChevronDown, LineChart, ListChecks, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -25,7 +25,7 @@ import {
 } from "@/components/observability/metric-series-card";
 import { MetricSelectorTree, type MetricGroup } from "@/components/observability/metric-selector-tree";
 import type { AppMetricsResponse, TelemetryApp } from "@/lib/types";
-import { EmptyState, PageHeader } from "@/components/page-shell";
+import { EmptyState, PageHeader, RequestError, RetainedResults } from "@/components/page-shell";
 
 const ALL = "__all__";
 
@@ -214,6 +214,7 @@ export function ObservabilityMetricsPage({ apps }: { apps: TelemetryApp[] }) {
     selectedAppId === ALL ? "All resources" : apps.find((app) => app.id === selectedAppId)?.displayName ?? "All resources";
 
   const anyLoading = targetApps.some((app) => metricsByApp[app.id]?.loading);
+  const anyError = targetApps.some((app) => metricsByApp[app.id]?.error);
   // Apps with at least one buffered series, in selection order.
   const populated = targetApps.filter((app) => (metricsByApp[app.id]?.metrics?.series.length ?? 0) > 0);
   const everyTargetSettled = targetApps.every((app) => metricsByApp[app.id] && !metricsByApp[app.id]!.loading);
@@ -238,29 +239,31 @@ export function ObservabilityMetricsPage({ apps }: { apps: TelemetryApp[] }) {
           <div className="flex flex-wrap items-center gap-2">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm">
-                  {selectedLabel}
-                  <ChevronDown className="h-4 w-4" />
+                <Button variant="outline" size="sm" className="h-auto min-h-8 min-w-0 max-w-full whitespace-normal text-left">
+                  <span className="min-w-0 wrap-anywhere">{selectedLabel}</span>
+                  <ChevronDown data-icon="inline-end" aria-hidden="true" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuContent align="end" className="w-56 max-w-[calc(100vw-2rem)]">
                 <DropdownMenuLabel>Resource</DropdownMenuLabel>
                 <DropdownMenuSeparator />
                 <DropdownMenuRadioGroup value={selectedAppId} onValueChange={setSelectedAppId}>
                   <DropdownMenuRadioItem value={ALL}>All resources</DropdownMenuRadioItem>
                   {apps.map((app) => (
                     <DropdownMenuRadioItem key={app.id} value={app.id}>
-                      {app.displayName}
+                      <span className="min-w-0 wrap-anywhere">{app.displayName}</span>
                     </DropdownMenuRadioItem>
                   ))}
                 </DropdownMenuRadioGroup>
               </DropdownMenuContent>
             </DropdownMenu>
-            <div className="flex gap-1">
+            <div role="group" aria-label="Time range" className="flex gap-1">
               {METRIC_RANGES.map((range) => (
                 <Button
                   key={range.seconds}
-                  variant={range.seconds === rangeSeconds ? "secondary" : "ghost"}
+                  variant="ghost"
+                  aria-pressed={range.seconds === rangeSeconds}
+                  className="telemetry-filter-button"
                   size="sm"
                   onClick={() => selectRange(range.seconds)}
                 >
@@ -269,24 +272,19 @@ export function ObservabilityMetricsPage({ apps }: { apps: TelemetryApp[] }) {
               ))}
             </div>
             <Button variant="outline" size="sm" onClick={() => refresh(rangeSeconds)} disabled={targetApps.length === 0}>
-              <RefreshCw className={cn("h-4 w-4", anyLoading && "animate-spin")} />
+              <RefreshCw className={cn("h-4 w-4", anyLoading && "animate-spin text-info")} />
               Refresh
             </Button>
           </div>
         }
       />
 
-      {targetApps.some((app) => metricsByApp[app.id]?.error) && (
+      {anyError && (
         <div className="space-y-2">
           {targetApps.map((app) => {
             const error = metricsByApp[app.id]?.error;
             return error ? (
-              <div
-                key={app.id}
-                className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-200"
-              >
-                {app.displayName}: {error}
-              </div>
+              <RequestError key={app.id}>{app.displayName}: {error}</RequestError>
             ) : null;
           })}
         </div>
@@ -308,7 +306,13 @@ export function ObservabilityMetricsPage({ apps }: { apps: TelemetryApp[] }) {
           <div className="min-w-0 flex-1">
             {populated.length === 0 ? (
               anyLoading || !everyTargetSettled ? (
-                <EmptyState icon={LoaderCircle} title="Loading metrics" iconClassName="animate-spin" />
+                <EmptyState icon={LineChart} title="Loading metrics" loading />
+              ) : anyError ? (
+                <EmptyState
+                  icon={LineChart}
+                  title="Metrics unavailable"
+                  description="Could not load metrics for every selected resource. Refresh to try again."
+                />
               ) : (
                 <EmptyState
                   icon={Activity}
@@ -327,6 +331,10 @@ export function ObservabilityMetricsPage({ apps }: { apps: TelemetryApp[] }) {
                 {sections.map(({ app, series }) => (
                   <section key={app.id} className="space-y-3">
                     <h3 className="text-sm font-medium">{app.displayName}</h3>
+                    {(metricsByApp[app.id]?.loading || metricsByApp[app.id]?.error
+                      || metricsByApp[app.id]?.metrics?.rangeSeconds !== rangeSeconds) && (
+                      <RetainedResults>metrics: {app.displayName} · {METRIC_RANGES.find(range => range.seconds === metricsByApp[app.id]?.metrics?.rangeSeconds)?.label ?? `${metricsByApp[app.id]?.metrics?.rangeSeconds}s`}</RetainedResults>
+                    )}
                     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                       {series.map((entry) => (
                         <MetricSeriesCard key={metricSeriesKey(entry)} series={entry} />

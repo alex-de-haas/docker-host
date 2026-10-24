@@ -1,5 +1,11 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import { MoreHorizontal } from "lucide-react";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle } from "@/components/ui/dialog";
 import { workspaceAction } from "@/lib/assistant-api";
@@ -10,11 +16,11 @@ type RemoteStatus = { acceptedHead?: string; remote?: { repository: string; targ
 type Connection = { id: string; label: string; accountName: string };
 type Pending = { action: string; input: Record<string, unknown> };
 type Receipt = { operation?: { id: string; state: string; error?: string }; operations?: { id: string; state: string; error?: string }[] };
-const field = "w-full rounded border bg-background p-2 text-sm";
+const field = "my-1 w-full text-sm";
 const labels: Record<string, string> = { "merge-upstream": "Integrate upstream", "abort-merge": "Abort upstream integration", "remote-connect": "Connect repository", "remote-fetch": "Fetch upstream", "remote-push-base": "Publish accepted base", commit: "Commit selected changes", "pr-configure": "Configure publication", "pr-push": "Push branch", "pr-publish": "Create / update PR" };
 
-export function LocalRepositoryActions({ sessionId, appId, tree, disabled, refresh }: {
-  sessionId: string; appId: string; tree: Worktree; disabled: boolean; refresh: () => void;
+export function LocalRepositoryActions({ sessionId, appId, tree, disabled, refresh, compact = false }: {
+  sessionId: string; appId: string; tree: Worktree; disabled: boolean; refresh: () => void; compact?: boolean;
 }) {
   const key = `hosty.local-remote.${sessionId}.${tree.id}.${appId}`;
   const [status, setStatus] = useState<RemoteStatus | null>(null);
@@ -107,29 +113,34 @@ export function LocalRepositoryActions({ sessionId, appId, tree, disabled, refre
   const files = tree.observation?.local?.files ?? [];
   const clean = tree.observation?.state === "ok" && files.length === 0 && !tree.observation?.local?.truncated;
   const observed = status?.observation;
-  return <section className="flex flex-col gap-2 rounded border p-3 text-xs" aria-label={`Repository actions for ${appId}`}>
+  const otherActions = [
+    ...(!status?.remote ? [{ kind: "remote-connect", label: "Connect repository…", disabled: locked || !status }] : []),
+    ...(tree.observation?.conflict ? [{ kind: "abort-merge", label: "Abort integration…", disabled: locked }] : []),
+    ...(status?.remote ? [{ kind: "remote-fetch", label: "Fetch upstream…", disabled: locked },
+      ...(observed?.head ? [{ kind: "merge-upstream", label: "Integrate upstream…", disabled: locked || !clean }] : []),
+      ...(observed?.state === "missing" ? [{ kind: "remote-push-base", label: "Publish accepted base…", disabled: locked }] : []),
+      ...(!configured ? [{ kind: "pr-configure", label: "Configure publication…", disabled: locked }] : []),
+    ] : []),
+  ];
+  return <section className="min-w-0 space-y-2 rounded-lg border bg-muted/20 p-2.5 text-xs" aria-label={`Repository actions for ${appId}`}>
     <p className="font-medium">Repository · {appId}</p>
     {status && !status.remote && <p>Local only · no remote connected</p>}
     {status?.remote && <><p className="break-all">{status.remote.repository}<br />Target: {status.remote.targetBranch}</p>
       <p>{observed ? `${observed.state === "missing" ? "Remote target does not exist" : `${observed.ahead} ahead · ${observed.behind} behind${observed.related ? "" : " · unrelated history"}`} · observed ${new Date(observed.at).toLocaleString()}` : "Upstream not observed"}</p></>}
     <div className="flex flex-wrap gap-2">
       <Button size="sm" variant="outline" disabled={locked || !files.length} onClick={() => void open("commit")}>Commit…</Button>
-      {!status?.remote && <Button size="sm" variant="outline" disabled={locked || !status} onClick={() => void open("remote-connect")}>Connect repository…</Button>}
-      {tree.observation?.conflict && <Button size="sm" variant="outline" disabled={locked} onClick={() => void open("abort-merge")}>Abort integration…</Button>}
-      {status?.remote && <>
-        <Button size="sm" variant="outline" disabled={locked} onClick={() => void open("remote-fetch")}>Fetch upstream…</Button>
-        {observed?.head && <Button size="sm" variant="outline" disabled={locked || !clean} onClick={() => void open("merge-upstream")}>Integrate upstream…</Button>}
-        {observed?.state === "missing" && <Button size="sm" variant="outline" disabled={locked} onClick={() => void open("remote-push-base")}>Publish accepted base…</Button>}
-        {!configured ? <Button size="sm" variant="outline" disabled={locked} onClick={() => void open("pr-configure")}>Configure publication…</Button> : <>
-          <Button size="sm" variant="outline" disabled={locked || !clean} onClick={() => void open("pr-push")}>Push branch…</Button>
-          <Button size="sm" variant="outline" disabled={locked || !clean} onClick={() => void open("pr-publish")}>Pull request…</Button>
-        </>}
+      {status?.remote && configured && <>
+        <Button size="sm" variant="outline" disabled={locked || !clean} onClick={() => void open("pr-push")}>Push branch…</Button>
+        <Button size="sm" variant="outline" disabled={locked || !clean} onClick={() => void open("pr-publish")}>Pull request…</Button>
       </>}
+      {compact ? <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon-sm" aria-label={`${appId} repository actions`} disabled={locked}><MoreHorizontal className="size-3.5" /></Button></DropdownMenuTrigger>
+        <DropdownMenuContent align="end">{otherActions.map(item => <DropdownMenuItem key={item.kind} disabled={item.disabled} onSelect={() => void open(item.kind)}>{item.label}</DropdownMenuItem>)}</DropdownMenuContent>
+      </DropdownMenu> : otherActions.map(item => <Button key={item.kind} size="sm" variant="outline" disabled={item.disabled} onClick={() => void open(item.kind)}>{item.label}</Button>)}
     </div>
     {pending && <div><p>Unconfirmed: {labels[pending.action]}. Retry retains the original arguments and request ID.</p>
       <Button size="sm" variant="outline" disabled={disabled || busy} onClick={() => void run(pending)}>Retry repository action</Button>
       <Button size="sm" variant="ghost" disabled={busy} onClick={() => void inspectPending()}>Check last action</Button></div>}
-    {error && <p role="alert" className="text-destructive">{error}</p>}
+    {error && <p role="alert" className="text-destructive-foreground">{error}</p>}
     <Dialog open={!!action} onOpenChange={open => { if (!open) setAction(null); }}><DialogContent className="max-h-[85vh] overflow-y-auto">
       <DialogTitle>{action ? labels[action] : "Repository"}</DialogTitle>
       <DialogDescription>{action === "remote-connect" ? "Connect an existing repository. This preserves local source and worktree identity and sends no source."
@@ -145,19 +156,19 @@ export function LocalRepositoryActions({ sessionId, appId, tree, disabled, refre
         {status?.remote && <><br />Remote: {status.remote.repository}<br />Target branch: {status.remote.targetBranch}</>}
         {action === "remote-push-base" && <><br />Accepted base to publish: {status?.acceptedHead}</>}</p>
       {action === "remote-connect" && <>
-        <label>Repository URL<input className={field} value={repository} onChange={e => setRepository(e.target.value)} /></label>
-        <label>Target branch<input className={field} value={targetBranch} onChange={e => setTargetBranch(e.target.value)} /></label>
-        <label>Source connection<select className={field} value={connectionId} onChange={e => setConnectionId(e.target.value)}><option value="">Choose a connection</option>{connections.map(c => <option key={c.id} value={c.id}>{c.label} · {c.accountName}</option>)}</select></label>
+        <label>Repository URL<Input className={field} value={repository} onChange={e => setRepository(e.target.value)} /></label>
+        <label>Target branch<Input className={field} value={targetBranch} onChange={e => setTargetBranch(e.target.value)} /></label>
+        <label>Source connection<Select value={connectionId} onValueChange={setConnectionId}><SelectTrigger className={field} aria-label="Source connection"><SelectValue placeholder="Choose a connection" /></SelectTrigger><SelectContent>{connections.map(c => <SelectItem key={c.id} value={c.id}>{c.label} · {c.accountName}</SelectItem>)}</SelectContent></Select></label>
       </>}
       {(action === "commit" || action === "merge-upstream") && <>
-        {action === "commit" && <fieldset><legend>Selected changes</legend>{files.map(file => <label key={file.path} className="flex items-center gap-2 break-all"><input type="checkbox" checked={paths.includes(file.path)} onChange={e => setPaths(current => e.target.checked ? [...current, file.path] : current.filter(p => p !== file.path))} />{file.path}</label>)}</fieldset>}
-        {action === "merge-upstream" && <><p className="break-all">Upstream commit: {observed?.head}</p>{!observed?.related && <label><input type="checkbox" checked={allowUnrelatedHistories} onChange={e => setAllowUnrelatedHistories(e.target.checked)} /> I reviewed both histories and allow merging unrelated histories.</label>}</>}
-        <label>Commit message<textarea className={field} value={message} onChange={e => setMessage(e.target.value)} /></label>
-        <label>Author name<input className={field} value={authorName} onChange={e => setAuthorName(e.target.value)} /></label>
-        <label>Author email<input className={field} value={authorEmail} onChange={e => setAuthorEmail(e.target.value)} /></label>
+        {action === "commit" && <fieldset><legend>Selected changes</legend>{files.map(file => <label key={file.path} className="flex items-center gap-2 break-all"><Checkbox checked={paths.includes(file.path)} onCheckedChange={value => setPaths(current => value === true ? [...current, file.path] : current.filter(p => p !== file.path))} />{file.path}</label>)}</fieldset>}
+        {action === "merge-upstream" && <><p className="break-all">Upstream commit: {observed?.head}</p>{!observed?.related && <label className="flex items-start gap-2"><Checkbox checked={allowUnrelatedHistories} onCheckedChange={value => setAllowUnrelatedHistories(value === true)} /> I reviewed both histories and allow merging unrelated histories.</label>}</>}
+        <label>Commit message<Textarea className={field} value={message} onChange={e => setMessage(e.target.value)} /></label>
+        <label>Author name<Input className={field} value={authorName} onChange={e => setAuthorName(e.target.value)} /></label>
+        <label>Author email<Input className={field} value={authorEmail} onChange={e => setAuthorEmail(e.target.value)} /></label>
       </>}
-      {action === "pr-publish" && <><label>PR title<input className={field} value={title} onChange={e => setTitle(e.target.value)} /></label><label>PR description<textarea className={field} value={body} onChange={e => setBody(e.target.value)} /></label></>}
-      {error && <p role="alert" className="text-destructive">{error}</p>}
+      {action === "pr-publish" && <><label>PR title<Input className={field} value={title} onChange={e => setTitle(e.target.value)} /></label><label>PR description<Textarea className={field} value={body} onChange={e => setBody(e.target.value)} /></label></>}
+      {error && <p role="alert" className="text-destructive-foreground">{error}</p>}
       <DialogFooter><Button variant="outline" onClick={() => setAction(null)}>Cancel</Button><Button disabled={locked || (action === "remote-connect" && (!repository.trim() || !targetBranch.trim() || !connectionId)) || (action === "commit" && (!paths.length || !message.trim() || !authorName.trim() || !authorEmail.trim())) || (action === "merge-upstream" && (!message.trim() || !authorName.trim() || !authorEmail.trim() || (!observed?.related && !allowUnrelatedHistories))) || (action === "pr-publish" && !title.trim())} onClick={() => void run()}>{busy ? "Working…" : "Confirm " + (action ? labels[action].toLowerCase() : "action")}</Button></DialogFooter>
     </DialogContent></Dialog>
   </section>;

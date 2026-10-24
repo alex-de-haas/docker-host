@@ -2,61 +2,20 @@ import type { ComponentProps, HTMLAttributes } from "react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
-export type StatusProps = ComponentProps<typeof Badge> & {
-  status: "online" | "offline" | "maintenance" | "degraded";
-};
+export type StatusProps = ComponentProps<typeof Badge> & { status: "online" | "offline" | "maintenance" | "degraded" };
+export const Status = ({ className, status, ...props }: StatusProps) => <Badge
+  className={cn("group gap-1.5", status, className)} variant={status === "online" ? "success" : status === "maintenance" ? "info" : status === "degraded" ? "warning" : "secondary"} {...props} />;
 
-export const Status = ({ className, status, ...props }: StatusProps) => (
-  <Badge
-    className={cn("flex items-center gap-2", "group", status, className)}
-    variant="secondary"
-    {...props}
-  />
-);
-
-export type StatusIndicatorProps = HTMLAttributes<HTMLSpanElement>;
-
-export const StatusIndicator = ({
-  className,
-  ...props
-}: StatusIndicatorProps) => (
-  <span className={cn("relative flex h-2 w-2", className)} {...props}>
-    <span
-      className={cn(
-        "absolute inline-flex h-full w-full animate-ping rounded-full opacity-75",
-        "group-[.online]:bg-emerald-500",
-        "group-[.offline]:bg-red-500",
-        "group-[.maintenance]:bg-blue-500",
-        "group-[.degraded]:bg-amber-500"
-      )}
-    />
-    <span
-      className={cn(
-        "relative inline-flex h-2 w-2 rounded-full",
-        "group-[.online]:bg-emerald-500",
-        "group-[.offline]:bg-red-500",
-        "group-[.maintenance]:bg-blue-500",
-        "group-[.degraded]:bg-amber-500"
-      )}
-    />
-  </span>
-);
-
-export type StatusLabelProps = HTMLAttributes<HTMLSpanElement>;
-
-export const StatusLabel = ({
-  className,
-  children,
-  ...props
-}: StatusLabelProps) => (
-  <span className={cn("text-muted-foreground", className)} {...props}>
-    {children ?? (
-      <>
-        <span className="hidden group-[.online]:block">Running</span>
-        <span className="hidden group-[.offline]:block">Stopped</span>
-        <span className="hidden group-[.maintenance]:block">Restarting</span>
-        <span className="hidden group-[.degraded]:block">Degraded</span>
-      </>
-    )}
-  </span>
-);
+export function StatusIndicator({ className, ...props }: HTMLAttributes<HTMLSpanElement>) {
+  return <span aria-hidden="true" className={cn("inline-flex shrink-0", className)} {...props}>
+    <span className="size-2 rounded-full bg-current group-[.maintenance]:hidden group-[.degraded]:hidden group-[.offline]:bg-transparent group-[.offline]:ring-1 group-[.offline]:ring-current" />
+    <span className="hidden size-3 rounded-full border-2 border-current border-t-transparent group-[.maintenance]:inline-block motion-safe:animate-spin" />
+    <span className="hidden size-2 rotate-45 border border-current group-[.degraded]:inline-block" />
+  </span>;
+}
+export function StatusLabel({ className, children, ...props }: HTMLAttributes<HTMLSpanElement>) {
+  return <span className={className} {...props}>{children ?? <>
+    <span className="hidden group-[.online]:block">Running</span><span className="hidden group-[.offline]:block">Stopped</span>
+    <span className="hidden group-[.maintenance]:block">Restarting</span><span className="hidden group-[.degraded]:block">Degraded</span>
+  </>}</span>;
+}

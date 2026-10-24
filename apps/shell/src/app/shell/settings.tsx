@@ -1,11 +1,12 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, Eye, EyeOff, Globe, Info } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
@@ -55,24 +56,24 @@ export function PublicOriginInput({ setting, endpoint, value, disabled, onChange
   );
 }
 
-export function SettingInput({ setting, value, disabled, onChange, onReveal, stacked = false, unit }: { setting: CoreInstallSetting | CoreSetting; value: string | null; disabled?: boolean; onChange: (value: string) => void; onReveal?: () => Promise<string | null>; stacked?: boolean; unit?: string | null }) {
+export function SettingInput({ setting, value, disabled, onChange, onReveal, stacked = false, unit, descriptionMode = "hint" }: { setting: CoreInstallSetting | CoreSetting; value: string | null; disabled?: boolean; onChange: (value: string) => void; onReveal?: () => Promise<string | null>; stacked?: boolean; unit?: string | null; descriptionMode?: "hint" | "inline" }) {
   const controlId = `setting-${setting.key}`;
   const label = setting.label?.trim() || formatSettingLabel(setting.key);
   const description = setting.description?.trim();
   return (
     <div className={cn("grid gap-2", !stacked && "sm:grid-cols-[1fr_2fr] sm:items-center sm:gap-4")}>
       <div className="flex min-w-0 items-center gap-2">
-        <Label htmlFor={controlId} className={cn("min-w-0", stacked ? "leading-snug" : "truncate")} title={setting.key}>
+        <Label htmlFor={controlId} className={cn("min-w-0", stacked || descriptionMode === "inline" ? "leading-snug whitespace-normal" : "truncate")} title={setting.key}>
           {label}
         </Label>
         {setting.required && <Badge variant="secondary">required</Badge>}
-        {description && <SettingDescriptionHint description={description} />}
+        {description && descriptionMode === "hint" && <SettingDescriptionHint description={description} />}
       </div>
-      <div className="flex min-w-0 items-center gap-2">
-        <div className="min-w-0 flex-1">
+      <div className="min-w-0 space-y-2">
+        <div className="flex min-w-0 items-center gap-2"><div className="min-w-0 flex-1">
           <SettingControl controlId={controlId} setting={setting} value={value} disabled={disabled} onChange={onChange} onReveal={onReveal} />
-        </div>
-        {unit && <span className="shrink-0 text-xs text-muted-foreground">{unit}</span>}
+        </div>{unit && <span className="shrink-0 text-xs text-muted-foreground">{unit}</span>}</div>
+        {description && descriptionMode === "inline" && <p className="text-xs leading-relaxed text-muted-foreground">{description}</p>}
       </div>
     </div>
   );
@@ -88,7 +89,7 @@ function SettingDescriptionHint({ description }: { description: string }) {
           <button
             type="button"
             aria-label="Setting description"
-            className="text-muted-foreground transition-colors hover:text-foreground focus-visible:text-foreground focus-visible:outline-none"
+            className="text-muted-foreground transition-colors hover:text-foreground focus-visible:text-foreground outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-brand focus-visible:ring-0"
           >
             <Info className="h-3.5 w-3.5" />
           </button>
@@ -103,6 +104,8 @@ function SettingDescriptionHint({ description }: { description: string }) {
 // setting edited before typed controls existed (or by an app using looser parsing) may hold any of these,
 // so we recognise the common truthy spellings when deciding the toggle's displayed state.
 const truthyBooleanSettingValues = new Set(["true", "1", "yes", "on", "enabled"]);
+// Encode every option so an empty setting value is valid without reserving a possible raw value.
+const settingSelectValuePrefix = "setting:";
 
 function isBooleanSettingChecked(value: string) {
   return truthyBooleanSettingValues.has(value.trim().toLowerCase());
@@ -117,6 +120,20 @@ function SettingControl({ controlId, setting, value, disabled, onChange, onRevea
   // deliberately (see toggleReveal), so the plaintext lives only as long as it is on screen.
   const [stored, setStored] = useState<string | null>(null);
   const [revealError, setRevealError] = useState(false);
+  const revealRequest = useRef({ revision: 0 });
+  const mounted = useRef(true);
+  useEffect(() => {
+    const request = revealRequest.current;
+    mounted.current = true;
+    return () => { mounted.current = false; ++request.revision; };
+  }, []);
+  useLayoutEffect(() => { ++revealRequest.current.revision; }, [value]);
+  const [previousValue, setPreviousValue] = useState(value);
+  if (previousValue !== value) {
+    setPreviousValue(value);
+    setStored(null);
+    if (value === null) { setRevealed(false); setRevealError(false); }
+  }
   // For a secret, null is the draft's "untouched" marker (see AppSettingsDraft); elsewhere it is just
   // a nullable upstream setting value. Coalesce so .trim() never throws and the Input stays controlled.
   const safeValue = value ?? "";
@@ -126,6 +143,7 @@ function SettingControl({ controlId, setting, value, disabled, onChange, onRevea
     const hasStored = "hasValue" in setting && setting.hasValue === true;
     const { displayValue, placeholder, shouldFetchStored } = resolveSecretFieldState({ draftValue: value, hasStored, revealed, stored });
     const toggleReveal = () => {
+      const request = ++revealRequest.current.revision;
       setRevealError(false);
       if (revealed) {
         setRevealed(false);
@@ -137,10 +155,9 @@ function SettingControl({ controlId, setting, value, disabled, onChange, onRevea
       setRevealed(true);
       if (shouldFetchStored && onReveal) {
         onReveal().then(
-          (fetched) => setStored(fetched ?? ""),
+          (fetched) => { if (mounted.current && request === revealRequest.current.revision) setStored(fetched ?? ""); },
           () => {
-            setRevealError(true);
-            setRevealed(false);
+            if (mounted.current && request === revealRequest.current.revision) { setRevealError(true); setRevealed(false); }
           },
         );
       }
@@ -166,7 +183,7 @@ function SettingControl({ controlId, setting, value, disabled, onChange, onRevea
         >
           {revealed ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
         </button>
-        {revealError && <p className="mt-1 text-xs text-destructive">Couldn&rsquo;t load the stored value.</p>}
+        {revealError && <p className="mt-1 text-xs text-destructive-foreground">Couldn&rsquo;t load the stored value.</p>}
       </div>
     );
   }
@@ -213,20 +230,21 @@ function SettingControl({ controlId, setting, value, disabled, onChange, onRevea
   }
 
   if (setting.type === "select" && setting.options && setting.options.length > 0) {
+    const selectedOption = setting.options.find(option => option.value === safeValue);
+    const unavailable = safeValue !== "" && !selectedOption;
+    const selectValue = selectedOption || unavailable ? settingSelectValuePrefix + safeValue : "";
     return (
-      <select
-        id={controlId}
-        className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-        value={safeValue}
-        disabled={disabled}
-        onChange={(event) => onChange(event.target.value)}
-      >
-        {setting.options.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
+      <Select value={selectValue} disabled={disabled} onValueChange={next => onChange(next.slice(settingSelectValuePrefix.length))}>
+        <SelectTrigger id={controlId} className="w-full"><SelectValue placeholder="Select an option" /></SelectTrigger>
+        <SelectContent>
+          <SelectGroup>
+            {unavailable && <SelectItem value={selectValue} disabled>{safeValue} (unavailable)</SelectItem>}
+            {setting.options.map(option => (
+              <SelectItem key={option.value} value={settingSelectValuePrefix + option.value}>{option.label}</SelectItem>
+            ))}
+          </SelectGroup>
+        </SelectContent>
+      </Select>
     );
   }
 

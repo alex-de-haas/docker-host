@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { WorkerApiError } from "./worker/contracts.js";
+import { EventStreamTransport } from "./event-stream-transport.js";
 import type { ConnectionService } from "./connections/service.js";
 import { WorkerError } from "./runtime/errors.js";
 import { createHostySessionResponse } from "@hosty-sdk/app/session/server";
@@ -26,6 +27,7 @@ import { readAppCredential, resolveAppSession, exchangeLaunchCode, getAppRecover
 import { isValidCodeVerifier } from "@hosty-sdk/app/app-code";
 import { isSourceConnectionRoute, requestSourceConnection } from "./source-connections.js";
 import { isWorkspaceAccessReviewRoute, requestWorkspaceAccessReview } from "./workspace-access-reviews.js";
+import { workspaceApplicationsRoute } from "./workspace-applications.js";
 import { serveStaticSite } from "./settings/static-site.js";
 
 // Upper bound for an event stream opened with an app session rather than a delegated token: the
@@ -67,6 +69,7 @@ export function createGatewayServer(
   internal?: (request: IncomingMessage, response: ServerResponse) => Promise<boolean>,
 ): Server {
   const handoffs = new HandoffStore(manager, settings, providers);
+  const eventStreams = new EventStreamTransport(manager);
   const translations = connections && settings ? new TranslationService(connections, settings) : null;
   const recovered = handoffs.sweep().then(() => manager.recoverWorkerRuns()).then(() => manager.recoverMcpApprovals()).catch(error => {
     // A transient directory/storage failure is retried by the periodic sweep. Keep unrelated
@@ -76,7 +79,7 @@ export function createGatewayServer(
   const timer = setInterval(() => { void handoffs.sweep().catch(error => console.error("[handoff] cleanup failed", error)); }, 60_000);
   timer.unref();
   const server = createServer((request, response) => {
-    void recovered.then(async () => { if (await internal?.(request, response)) return; return route(request, response, manager, adapter, settings, providers, proxy, facade, connections, handoffs, translations); }).catch((error) => {
+    void recovered.then(async () => { if (await internal?.(request, response)) return; return route(request, response, manager, adapter, settings, providers, proxy, facade, connections, handoffs, translations, eventStreams); }).catch((error) => {
       if (response.destroyed) return;
       if (error instanceof ProviderError) { sendJson(response, error.status, { code: error.code, message: error.message }); return; }
       if (error instanceof SessionBusyError) {
@@ -103,6 +106,9 @@ export function createGatewayServer(
       }
     });
   });
+  eventStreams.attach(server);
+  const close = server.close.bind(server);
+  server.close = ((callback?: (error?: Error) => void) => { eventStreams.close(); return close(callback); }) as typeof server.close;
   server.on("close", () => clearInterval(timer));
   return server;
 }
@@ -121,6 +127,7 @@ async function route(
   connections: ConnectionService | null,
   handoffs: HandoffStore,
   translations: TranslationService | null,
+  eventStreams: EventStreamTransport,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", "http://gateway.local");
   const method = request.method ?? "GET";
@@ -178,9 +185,9 @@ async function route(
     ]);
     const credential = readAppCredential(request);
     if (session.status === "active" && session.identity.hostRole === "host.admin" && credential) {
-      // A same-actor probe after recovery updates all live runs, including those whose UI is closed.
-      // Updating credentials neither starts a turn nor resends a message; transport retry stays with the manager.
-      await manager.refreshActorCredentials(session.identity.userId, credential).catch(() => undefined);
+      // Refresh closed conversation views too, without making validated identity wait on
+      // another conversation's execution queue. Core still checks authority on each tool call.
+      manager.scheduleActorCredentialRefresh(session.identity.userId, credential);
     }
     const result = await createHostySessionResponse(session, recovery, { administratorOnly: true });
     response.setHeader("Cache-Control", "no-store");
@@ -294,6 +301,12 @@ async function route(
       message: "A session cookie may only change state from the gateway's own pages.",
     });
     return;
+  }
+
+  if (method === "POST" && url.pathname === "/api/event-stream-tickets") {
+    if (actor.via === "provider-token") throw new AppContextError(403, "admin_session_required", "Open Harness through Core to read events.");
+    response.setHeader("Cache-Control", "no-store");
+    sendJson(response, 200, await eventStreams.issue(await readJson(request), request, actor)); return;
   }
 
   if (isSourceConnectionRoute(method, url.pathname)) {
@@ -624,14 +637,32 @@ async function route(
     return;
   }
 
-  const inspection = url.pathname.match(/^\/api\/development-workspaces(\/local-apps|\/[a-f0-9]{64}(?:\/name|\/execution-target(?:\/[a-f0-9-]{36})?|\/activation\/(?:plan|apply|list|status|cancel|resume|return)|\/(?:environments|sandboxes)\/[a-f0-9]{32}\/(?:start|stop|finish|dispose)|\/previews(?:\/[a-f0-9]{32}\/[a-zA-Z0-9._-]+\/(?:checks|run|restart|logs))?|\/worktrees\/[a-f0-9]{64}(?:\/(?:diff|recover-lease))?|\/workflow(?:\/(?:complete|resume|pause|defer|delete|close))?)?)?$/);
+  if (workspaceApplicationsRoute(method, url.pathname)) {
+    const credential = actor.via === "app-session" ? readAppCredential(request) : null;
+    if (!credential) throw new AppContextError(401, "reauth_required", "Open Harness through Core to manage workspace applications.");
+    response.setHeader("cache-control", "no-store");
+    sendJson(response, 200, await manager.workspaceApplications(credential, method, url.pathname,
+      method === "POST" ? await readJson(request) : undefined)); return;
+  }
+
+  const inspection = url.pathname.match(/^\/api\/development-workspaces(\/local-apps|\/[a-f0-9]{64}(?:\/name|\/execution-target(?:\/[a-f0-9-]{36})?|\/discard\/(?:plan|apply|status)|\/activation\/(?:plan|apply|list|status|cancel|resume|return)|\/(?:environments|sandboxes)\/[a-f0-9]{32}\/(?:start|stop|finish|dispose)|\/previews(?:\/[a-f0-9]{32}\/[a-zA-Z0-9._-]+\/(?:checks|run|restart|logs))?|\/worktrees\/[a-f0-9]{64}(?:\/(?:diff|recover-lease|review(?:\/diff)?|reviews\/(?:reply|resolve|comment)))?|\/workflow(?:\/(?:complete|resume|pause|defer|delete|close))?)?)?$/);
   if (inspection && (method === "GET" || method === "POST")) {
     const credential = actor.via === "app-session" ? readAppCredential(request) : null;
     if (!credential) throw new AppContextError(401, "reauth_required", "Open Harness through Core to inspect workspaces.");
-    if (method === "POST" && !/\/(?:name|execution-target|activation\/(?:plan|apply|list|status|cancel|resume|return)|(?:environments|sandboxes)\/[a-f0-9]{32}\/(?:start|stop|finish|dispose)|worktrees\/[a-f0-9]{64}\/recover-lease|workflow\/(?:complete|resume|pause|defer|delete|close)|previews\/[a-f0-9]{32}\/[a-zA-Z0-9._-]+\/(?:checks|run|restart|logs))$/.test(inspection[1] ?? ""))
+    const discard = /\/discard\/(plan|apply|status)$/.exec(inspection[1] ?? "");
+    if (discard && method !== (discard[1] === "apply" ? "POST" : "GET"))
+      throw new AppContextError(405, "workspace_method_invalid", "Removal review and status require GET; removal apply requires POST.");
+    if (method === "POST" && !/\/(?:name|execution-target|discard\/apply|activation\/(?:plan|apply|list|status|cancel|resume|return)|(?:environments|sandboxes)\/[a-f0-9]{32}\/(?:start|stop|finish|dispose)|worktrees\/[a-f0-9]{64}\/(?:recover-lease|reviews\/(?:reply|resolve|comment))|workflow\/(?:complete|resume|pause|defer|delete|close)|previews\/[a-f0-9]{32}\/[a-zA-Z0-9._-]+\/(?:checks|run|restart|logs))$/.test(inspection[1] ?? ""))
       throw new AppContextError(400, "workspace_action_invalid", "Choose a workspace lifecycle action.");
-    sendJson(response, 200, await manager.inspectWorkspaces(credential, (inspection[1] ?? "") + url.search,
-      method === "POST" ? await readJson(request) : undefined, actor.userId)); return;
+    if (method === "GET" && /\/reviews\/(?:reply|resolve|comment)$/.test(inspection[1] ?? ""))
+      throw new AppContextError(405, "workspace_method_invalid", "Review actions require POST.");
+    response.setHeader("cache-control", "no-store");
+    const inspected = await manager.inspectWorkspaces(credential, (inspection[1] ?? "") + url.search,
+      method === "POST" ? await readJson(request) : undefined, actor.userId);
+    // Drafts and pending browser actions belong to the authenticated operator, not the workspace owner.
+    const reviewInventory = method === "GET" && /\/worktrees\/[a-f0-9]{64}\/review$/.test(inspection[1] ?? "");
+    sendJson(response, 200, reviewInventory && inspected && typeof inspected === "object"
+      ? { ...inspected, viewerId: actor.userId } : inspected); return;
   }
 
   const sessionMatch = url.pathname.match(/^\/api\/sessions\/([a-zA-Z0-9-]+)(\/.*)?$/);
@@ -665,7 +696,7 @@ async function route(
     if (actor.via !== "app-session" || !credential)
       throw new AppContextError(401, "reauth_required", "Sign in through Core to refresh this conversation.");
     await manager.refreshSessionCredentials(sessionId, actor.userId, credential);
-    await manager.refreshActorCredentials(actor.userId, credential);
+    manager.scheduleActorCredentialRefresh(actor.userId, credential);
     response.setHeader("Cache-Control", "no-store");
     sendJson(response, 200, { updated: true }); return;
   }
@@ -746,6 +777,12 @@ async function route(
     return;
   }
 
+  const messageReceiptMatch = rest.match(/^\/messages\/([^/]+)$/);
+  if (messageReceiptMatch && method === "GET") {
+    response.setHeader("Cache-Control", "no-store");
+    sendJson(response, 200, await manager.messageReceipt(sessionId, messageReceiptMatch[1], actor.userId)); return;
+  }
+
   if (rest === "/messages" && method === "POST") {
     const body = await readJson(request);
     // Stored names only — the manager resolves each to a workspace path and refuses any that is
@@ -759,8 +796,12 @@ async function route(
     }
     try {
       // The presented token seeds the session's delegation chain; see SessionManager.postMessage.
-      await manager.postMessage(sessionId, body.text, await delegationCredential(request, false), attachments, { selectionRevision: body.selectionRevision, expectedRevision: body.appContextRevision, withoutDetails: body.withoutAppDetails === true,
-        workspaceCredential: actor.via === "app-session" ? readAppCredential(request) : undefined });
+      const receipt = await manager.postMessage(sessionId, body.text, await delegationCredential(request, false), attachments, { selectionRevision: body.selectionRevision, expectedRevision: body.appContextRevision, withoutDetails: body.withoutAppDetails === true,
+        workspaceCredential: actor.via === "app-session" ? readAppCredential(request) : undefined,
+        clientRequestId: body.clientRequestId, actorUserId: actor.userId });
+      response.setHeader("Cache-Control", "no-store");
+      sendJson(response, 202, { accepted: true, ...receipt });
+      return;
     } catch (error) {
       if (error instanceof Error && /attachments need a workspace/.test(error.message)) {
         // The gateway's configuration, not the request: the same answer the upload route gives.
@@ -773,8 +814,6 @@ async function route(
       }
       throw error;
     }
-    sendJson(response, 202, { accepted: true });
-    return;
   }
 
   const approvalMatch = rest.match(/^\/approvals\/([a-zA-Z0-9-]+)$/);
@@ -856,12 +895,36 @@ async function streamEvents(
   tokenExpSeconds: number,
 ): Promise<void> {
   const afterSeq = Number.parseInt(url.searchParams.get("after") ?? "0", 10) || 0;
+  let closed = false;
+  let unsubscribe: (() => void) | undefined;
+  let heartbeat: ReturnType<typeof setInterval> | undefined;
+  let tokenDeadline: ReturnType<typeof setTimeout> | undefined;
+  const releaseSubscription = (): void => {
+    const release = unsubscribe; unsubscribe = undefined; release?.();
+  };
+  const cleanup = (): void => {
+    if (closed) return;
+    closed = true;
+    clearInterval(heartbeat); clearTimeout(tokenDeadline);
+    response.off("close", cleanup); request.off("aborted", cleanup);
+    releaseSubscription();
+  };
+  // Observe cancellation before any asynchronous session lookup or replay read. IncomingMessage's
+  // close event can mean a completed GET body; the response owns the long-lived stream instead.
+  response.once("close", cleanup);
+  request.once("aborted", cleanup);
+  if (response.destroyed || response.writableEnded || request.aborted) { cleanup(); return; }
+
   // Checked before the headers go out: once a 200 is committed, a session that turns out to be gone
   // can only be reported as an empty stream, and the client's reconnect loop reads that as a
   // transient drop and comes straight back. A 404 is terminal on the client and says why.
-  if (!(await manager.getSession(sessionId))) {
+  let exists: boolean;
+  try { exists = !!await manager.getSession(sessionId); }
+  catch (error) { cleanup(); throw error; }
+  if (closed) return;
+  if (!exists) {
     sendJson(response, 404, { code: "session_not_found", message: "Session not found." });
-    return;
+    cleanup(); return;
   }
   response.writeHead(200, {
     "content-type": "text/event-stream",
@@ -871,11 +934,12 @@ async function streamEvents(
   });
 
   const write = (event: unknown): void => {
+    if (closed || response.destroyed || response.writableEnded) return;
     response.write(`data: ${JSON.stringify(event)}\n\n`);
     // The session this stream belongs to has been deleted; there is nothing further to send, and
     // holding the connection open would leave the client reconnecting into a 404.
     if ((event as { type?: string }).type === "session_deleted") {
-      response.end();
+      response.end(); cleanup();
     }
   };
 
@@ -885,35 +949,28 @@ async function streamEvents(
   } catch {
     // Deleted between the check above and this line. The headers are already out, so the only
     // honest answer is to close; the client's next attempt gets the 404.
-    response.end();
-    return;
+    if (!closed) response.end();
+    cleanup(); return;
   }
-  const { replay, unsubscribe } = subscription;
-  for (const event of replay) {
+  unsubscribe = subscription.unsubscribe;
+  // A browser can leave while subscribe reads persisted replay. Its close event has already run,
+  // so dispose the late subscription explicitly and never install timers for the dead response.
+  if (closed) { releaseSubscription(); return; }
+  if (response.destroyed || response.writableEnded) { cleanup(); return; }
+  for (const event of subscription.replay) {
     write(event);
   }
+  if (closed) return;
 
   // Comment heartbeat keeps intermediaries from timing the idle stream out.
-  const heartbeat = setInterval(() => response.write(":hb\n\n"), 25_000);
+  heartbeat = setInterval(() => response.write(":hb\n\n"), 25_000);
   // The token was checked when the stream opened; a long-lived connection must not outlive it —
   // a revoked or downgraded admin would otherwise keep receiving transcripts indefinitely. The
   // stream ends at token expiry and the client reconnects with a freshly issued token, which
   // re-runs the full access policy on the Core side.
-  const tokenDeadline = setTimeout(
-    () => response.end(),
-    Math.max(0, tokenExpSeconds * 1000 - Date.now()),
-  );
-  // Bound to the response as well as the request: this stream can be ended from the server side
-  // (a deletion, the token deadline), and waiting only on the request's own close would leave the
-  // heartbeat writing into a finished response — which throws rather than being ignored.
-  // Idempotent, so being called from both is harmless.
-  const cleanup = (): void => {
-    clearInterval(heartbeat);
-    clearTimeout(tokenDeadline);
-    unsubscribe();
-  };
-  response.on("close", cleanup);
-  request.on("close", cleanup);
+  tokenDeadline = setTimeout(() => {
+    response.end(); cleanup();
+  }, Math.max(0, tokenExpSeconds * 1000 - Date.now()));
 }
 
 function applyCors(request: IncomingMessage, response: ServerResponse): void {

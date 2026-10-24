@@ -42,7 +42,11 @@ internal sealed partial class CoreCommand
         var root = context.Environment.RootDirectory;
         WorkspaceRuntimeActivation returning;
         using (CoreLaunchFiles.Lock(root))
+        {
+            if (includeCore && (await ReadCoreStatusAsync(suppressErrors: true))?.Launch is { } currentLaunch)
+                WorkspaceCoreLaunchContinuation.Reconcile(root, currentLaunch);
             returning = WorkspaceActivationReturn.Prepare(root, args[0], new(args[1], apps.ToArray(), includeCore, accept));
+        }
         if (returning.Returns?.LastOrDefault() is not { State: "pending" } current || current.Request.RequestId != args[1])
             return await WorkspaceActivationStatusAsync([args[0]]);
         return await ActivateWorkspaceAsync([args[0], "--resume"]);
@@ -82,11 +86,14 @@ internal sealed partial class CoreCommand
             HttpRequestException or OperationCanceledException or System.ComponentModel.Win32Exception)
         {
             WorkspaceActivationSupervisor.Save(root, helper with { State = ex is OperationCanceledException || WorkspaceActivationSupervisor.CancellationRequested(root, id) ? "paused" : "failed",
-                Error = "Activation did not finish. Inspect the retained phase and helper log; resume the original request." });
+                Error = WorkspaceHelperError(ex) });
             context.Error.WriteLine(ex.Message);
             return 1;
         }
     }
+
+    internal static string WorkspaceHelperError(Exception error) => error is WorkspaceActivationCompatibilityException compatibility
+        ? compatibility.Message : "Activation did not finish. Inspect the retained phase and helper log; resume the original request.";
 
     private sealed class WorkspaceRuntime(CoreCommand command, CommandContext context) : IWorkspaceActivationRuntime
     {
@@ -111,6 +118,9 @@ internal sealed partial class CoreCommand
             _ = await core.PostAsync<JsonElement>("workspace-activations/" + id + "/" + action);
         }
         public Task ValidateAuthorityAsync(string id) => PostAsync(id, "validate-authority");
+        public Task ValidateCoreContractAsync(WorkspaceRuntimeActivation activation) => activation.ReplacesCoreActivationId is not null
+            ? WorkspaceActivationCapability.RequireAsync(activation.PreparedExecutable ?? throw new IOException("The prepared Core executable is unavailable."))
+            : Task.CompletedTask;
         public async Task<WorkspaceReturnAppState[]> CaptureReturnAppsAsync(WorkspaceRuntimeActivation activation)
         {
             using var core = await CoreControlClient.TryCreateAsync(context) ?? throw new IOException("Core is unavailable.");

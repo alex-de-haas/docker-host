@@ -5,6 +5,7 @@ import { Loader2, Mic, Square, X } from "lucide-react";
 import { Tooltip } from "radix-ui";
 import type { ProviderDescriptor, SpeechResult } from "@hosty-sdk/app/providers";
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { call } from "@/lib/api";
 import { recordingWave } from "@/lib/speech-audio";
 
@@ -94,16 +95,20 @@ export function SpeechInput({ disabled, onText }: { disabled: boolean; onText: (
     : !provider.available ? `${provider.displayName} is unavailable. Check the app's status in Dashboard.`
     : "Dictate into your draft";
   return <div className="flex flex-wrap items-center gap-1">
-    {roster?.granted && roster.providers.length > 1 && <select aria-label="Speech provider" className="max-w-40 rounded border bg-background p-1 text-xs" value={choice} disabled={busy || disabled} onChange={e => setSelected(e.target.value)}>
-      <option value="">Speech provider…</option>{roster.providers.map(p => <option key={identity(p)} value={identity(p)}>{p.displayName}{p.available ? "" : " (unavailable)"}</option>)}
-    </select>}
+    {roster?.granted && roster.providers.length > 1 && <Select value={JSON.stringify(choice)} disabled={busy || disabled} onValueChange={value => setSelected(JSON.parse(value) as string)}>
+      <SelectTrigger size="sm" aria-label="Speech provider" className="max-w-40"><SelectValue /></SelectTrigger>
+      <SelectContent><SelectGroup>
+        <SelectItem value={JSON.stringify("")}>Speech provider…</SelectItem>
+        {roster.providers.map(p => <SelectItem key={identity(p)} value={JSON.stringify(identity(p))}>{p.displayName}{p.available ? "" : " (unavailable)"}</SelectItem>)}
+      </SelectGroup></SelectContent>
+    </Select>}
     {busy ? <>
-      <Button type="button" size="icon" variant="ghost" aria-label={phase === "recording" ? "Stop recording" : "Transcribing"} disabled={phase !== "recording"} onClick={() => active.current?.recorder?.stop()}>{phase === "recording" ? <Square /> : <Loader2 className="animate-spin" />}</Button>
+      <Button type="button" size="icon" variant="ghost" aria-label={phase === "recording" ? "Stop recording" : "Transcribing"} disabled={phase !== "recording"} onClick={() => active.current?.recorder?.stop()}>{phase === "recording" ? <Square /> : <Loader2 className="motion-safe:animate-spin" />}</Button>
       <Button type="button" size="icon" variant="ghost" aria-label="Cancel dictation" onClick={cancel}><X /></Button>
       <span role="status" className="text-xs">{phase === "recording" ? "Recording (up to 120 s)" : phase === "starting" ? "Opening microphone…" : "Transcribing…"}</span>
     </> : <Tooltip.Provider delayDuration={150}><Tooltip.Root>
       <Tooltip.Trigger asChild>
-        <span className="inline-flex rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" tabIndex={unavailable ? 0 : undefined} aria-label={unavailable ? `Dictation unavailable. ${hint}` : undefined}>
+        <span className="inline-flex rounded-md outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-brand focus-visible:ring-0" tabIndex={unavailable ? 0 : undefined} aria-label={unavailable ? `Dictation unavailable. ${hint}` : undefined}>
           <Button type="button" size="icon" variant="ghost" aria-label="Dictate" disabled={unavailable} onClick={() => void start()}><Mic /></Button>
         </span>
       </Tooltip.Trigger>
@@ -111,8 +116,8 @@ export function SpeechInput({ disabled, onText }: { disabled: boolean; onText: (
         {hint}<Tooltip.Arrow className="fill-foreground" />
       </Tooltip.Content></Tooltip.Portal>
     </Tooltip.Root></Tooltip.Provider>}
-    {rosterError && <p role="alert" className="w-full text-xs text-destructive">Could not check speech providers: {rosterError}</p>}
-    {error && <p role="alert" className="w-full text-xs text-destructive">{error}</p>}
+    {rosterError && <p role="alert" className="w-full text-xs text-destructive-foreground">Could not check speech providers: {rosterError}</p>}
+    {error && <p role="alert" className="w-full text-xs text-destructive-foreground">{error}</p>}
   </div>;
 }
 function identity(provider: ProviderDescriptor) { return JSON.stringify([provider.appId, provider.key]); }

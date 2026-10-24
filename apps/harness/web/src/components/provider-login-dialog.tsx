@@ -70,7 +70,7 @@ export function ProviderLoginDialog({
         {pending && (
           <>
             <div className="flex items-center justify-between gap-3 rounded-lg border bg-muted/30 px-4 py-3">
-              <code className="select-all text-xl font-semibold tracking-widest">
+              <code className="select-all font-mono text-xl font-semibold tracking-widest">
                 {login.userCode ?? "Preparing…"}
               </code>
               <Button
@@ -115,7 +115,7 @@ export function ProviderLoginDialog({
             )}
             <div className="grid gap-2 text-xs text-muted-foreground">
               <p className="flex items-center gap-2">
-                <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                <Loader2 className="size-3.5 motion-safe:animate-spin" aria-hidden />
                 Waiting for confirmation…
               </p>
               <p>

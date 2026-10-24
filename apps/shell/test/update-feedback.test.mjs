@@ -2,16 +2,26 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { updateFeedback, updateCheckDescription } from "../src/app/shell/update-feedback.ts";
 
-test("readiness is still in progress; success expires and unrelated actions hide it", () => {
-  const changedAt = "2026-09-10T10:00:00Z";
-  const app = { lastOperation: "update", operationStatus: "updating", updateProgress: { stage: "checking", changedAt } };
-  assert.equal(updateFeedback(app, Date.parse(changedAt)), "Checking readiness");
+test("readiness is in progress; completion and unrelated actions have no row feedback", () => {
+  const app = { lastOperation: "update", operationStatus: "updating", updateProgress: { stage: "checking" } };
+  assert.equal(updateFeedback(app), "Checking readiness");
   app.operationStatus = "updated";
   app.updateProgress.stage = "completed";
-  assert.equal(updateFeedback(app, Date.parse(changedAt) + 1000), "Updated");
-  assert.equal(updateFeedback(app, Date.parse(changedAt) + 30_000), null);
+  assert.equal(updateFeedback(app), null);
+  app.operationStatus = "updating";
+  assert.equal(updateFeedback(app), null);
+  app.updateProgress.stage = "checking";
   app.lastOperation = "stop";
-  assert.equal(updateFeedback(app, Date.parse(changedAt) + 1000), null);
+  assert.equal(updateFeedback(app), null);
+});
+
+test("stop and start belong to runtime status rather than the update detail", () => {
+  for (const stage of ["stopping", "starting"]) {
+    const app = { operationStatus: "updating", lastOperation: "update", updateProgress: { stage, service: "web" } };
+    assert.equal(updateFeedback(app), "Updating");
+    assert.equal(updateFeedback({ ...app, operationStatus: "failed" }), null);
+    assert.equal(updateFeedback({ ...app, lastOperation: "restart" }), null);
+  }
 });
 
 test("failed check retains the found update and names the last successful check", () => {
@@ -30,11 +40,13 @@ test("never checked, failure without a result, and successful empty checks stay 
   assert.match(updateCheckDescription({ ...verdict, error: null }), /No updates found/);
 });
 
-test("older Core progress falls back honestly; unhealthy completion is not success", () => {
-  assert.equal(updateFeedback({ operationStatus: "updating" }, 0), "Updating");
-  const app = { lastOperation: "update", operationStatus: "updated", updateProgress: { stage: "needs-attention", changedAt: "2026-09-10" } };
-  assert.equal(updateFeedback(app, 0), "Updated · needs attention");
-  assert.equal(updateFeedback({ ...app, health: { status: "healthy" } }, 0), null);
+test("older Core progress falls back honestly and terminal outcomes have no row feedback", () => {
+  assert.equal(updateFeedback({ operationStatus: "updating" }), "Updating");
+  for (const stage of ["completed", "needs-attention", "failed", "interrupted"]) {
+    const app = { lastOperation: "update", operationStatus: "updated", updateProgress: { stage } };
+    assert.equal(updateFeedback(app), null);
+    assert.equal(updateFeedback({ ...app, operationStatus: "updating" }), null);
+  }
 });
 
 test("bulk update excludes retained offers after failures, review requirements and running operations", async () => {

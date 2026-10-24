@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Boxes, RefreshCw } from "lucide-react";
+import { HostyEmptySlots, HostyLoader } from "../../../../../../shared/web/hosty-states";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -80,7 +81,7 @@ export function SettingsPermissionsSection({ coreOrigin, apps }: { coreOrigin: s
       <Input id="permissions-search" type="search" placeholder="Name, description or app…" value={query} onChange={event => setQuery(event.target.value)} />
     </Field>
     {error && <Alert variant="destructive"><AlertTitle>Could not load app permissions</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
-    {loading && <p role="status" className="text-sm text-muted-foreground">Loading app permissions…</p>}
+    {loading && <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><HostyLoader className="size-5" label={null} />Loading app permissions…</p>}
     {entries && <>
       <p role="status" className="text-sm text-muted-foreground">{filtered?.length} of {entries.length} permissions and roles</p>
       <Table aria-label="App permissions and provider roles">
@@ -105,7 +106,7 @@ export function SettingsPermissionsSection({ coreOrigin, apps }: { coreOrigin: s
               </ul> : <span className="text-muted-foreground">No apps</span>}
             </TableCell>
           </TableRow>)}
-          {!filtered?.length && <TableRow><TableCell colSpan={3} className="h-24 text-center">{search ? "No permissions, roles or apps match your search." : "No permissions or roles are available."}</TableCell></TableRow>}
+          {!filtered?.length && <TableRow><TableCell colSpan={3} className="h-24 text-center"><span className="flex flex-col items-center gap-3 py-4 text-muted-foreground"><HostyEmptySlots className="size-12" />{search ? "No permissions, roles or apps match your search." : "No permissions or roles are available."}</span></TableCell></TableRow>}
         </TableBody>
       </Table>
     </>}

@@ -3,12 +3,15 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { McpAccess } from "./mcp-access";
-import { ApiError, call, loadSettings, type SettingsResponse } from "../lib/api";
-vi.mock("../lib/api", async original => ({ ...await original<typeof import("../lib/api")>(), call: vi.fn(), loadSettings: vi.fn() }));
+import { GatewaySettings } from "./gateway-settings";
+import { AgentRuntime } from "./agent-runtime";
+import { ApiError, call, loadSettings, saveSettings, type SettingsResponse } from "../lib/api";
+vi.mock("../lib/api", async original => ({ ...await original<typeof import("../lib/api")>(), call: vi.fn(), loadSettings: vi.fn(), saveSettings: vi.fn() }));
 let root: Root, container: HTMLDivElement, data: SettingsResponse;
 const refresh = vi.fn();
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   HTMLElement.prototype.scrollIntoView = vi.fn();
   data = {
     settings: { systemPrompt: "", mcpProviders: {}, mcpAutoAllow: {}, mcpDefaults: {}, mcpToolRules: {}, mcpSkillApprovals: {} },
@@ -184,4 +187,161 @@ it("discard after a local failure retains access already approved in Core", asyn
   await click(button("Discard"));
   expect(container.querySelector('[aria-label="Allow Media"]')?.getAttribute("data-state")).toBe("checked");
   expect(button("Save").disabled).toBe(true);
+});
+
+const renderSettings = async () => {
+  data.agentConnections = false;
+  vi.mocked(saveSettings).mockImplementation(async patch => { data = { ...data, settings: { ...data.settings, ...patch } }; return structuredClone(data); });
+  await act(async () => root.render(<GatewaySettings section="prompt" />));
+};
+const editInput = async (id: string, value: string) => act(async () => {
+  const input = document.getElementById(id) as HTMLInputElement;
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+});
+it("keeps retention edits as drafts with Off/null and integer limits through the shared number inputs", async () => {
+  data.settings.retention = { ordinaryDays: null, completedWorkspaceDays: 45 };
+  await renderSettings();
+  expect((document.getElementById("ordinary-retention") as HTMLInputElement).value).toBe("");
+  expect((document.getElementById("workspace-retention") as HTMLInputElement).value).toBe("45");
+  await editInput("ordinary-retention", "1.5");
+  expect(button("Save retention").disabled).toBe(true);
+  await editInput("ordinary-retention", "3651");
+  expect(button("Save retention").disabled).toBe(true);
+  await editInput("ordinary-retention", "3650");
+  await editInput("workspace-retention", "");
+  expect(saveSettings).not.toHaveBeenCalled();
+  await click(button("Save retention"));
+  expect(saveSettings).toHaveBeenCalledExactlyOnceWith({ retention: { ordinaryDays: 3650, completedWorkspaceDays: null } });
+});
+it("uses explicit label activation for immediate handoffs and restores confirmed policy on refusal without losing drafts", async () => {
+  await renderSettings(); await editInput("ordinary-retention", "30");
+  const checkbox = document.getElementById("immediate-handoffs") as HTMLButtonElement;
+  const label = container.querySelector<HTMLLabelElement>('label[for="immediate-handoffs"]')!;
+  expect(label.textContent).toContain("Start received prompts immediately");
+  let reject!: (cause: Error) => void;
+  vi.mocked(saveSettings).mockImplementationOnce(() => new Promise((_resolve, fail) => { reject = fail; }));
+  await click(label);
+  expect(saveSettings).toHaveBeenCalledExactlyOnceWith({ immediateHandoffs: true });
+  expect(checkbox.disabled).toBe(true);
+  await click(label);
+  expect(saveSettings).toHaveBeenCalledTimes(1);
+  await act(async () => reject(new Error("Handoff update refused")));
+  expect(checkbox.getAttribute("aria-checked")).toBe("false");
+  expect(container.textContent).toContain("Handoff update refused");
+  expect((document.getElementById("ordinary-retention") as HTMLInputElement).value).toBe("30");
+  await click(label);
+  expect(checkbox.getAttribute("aria-checked")).toBe("true");
+  await click(label);
+  expect(saveSettings).toHaveBeenLastCalledWith({ immediateHandoffs: false });
+  expect(checkbox.getAttribute("aria-checked")).toBe("false");
+});
+
+it("distinguishes runtime discovery failure from pending reads and retains confirmed runtime on refresh failure", async () => {
+  let rejectFirst!: (cause: Error) => void;
+  vi.mocked(call).mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectFirst = reject; }));
+  await act(async () => root.render(<AgentRuntime />));
+  expect(container.querySelector('[role="status"]')?.textContent).toBe("Checking worker…");
+  expect(container.textContent).toContain("Loading runtime…");
+  await act(async () => rejectFirst(new Error("Runtime discovery offline")));
+  expect(container.querySelector('[role="alert"]')?.textContent).toContain("Runtime discovery offline");
+  expect(container.querySelector('[role="status"]')?.textContent).toBe("Worker status unavailable");
+  expect(container.textContent).toContain("Runtime unavailable");
+  expect(container.textContent).not.toContain("Loading runtime…");
+  let completeRefresh!: (response: Response) => void;
+  vi.mocked(call).mockImplementationOnce(() => new Promise(resolve => { completeRefresh = resolve; }));
+  await click(button("Refresh"));
+  expect(button("Refresh").disabled).toBe(true);
+  expect(container.querySelector('[role="status"]')?.textContent).toBe("Checking worker…");
+  await act(async () => completeRefresh(Response.json({ defaultMode: "docker", worker: { available: true, ready: false, reason: "Worker authorization pending" } })));
+  expect(container.textContent).toContain("Docker");
+  expect(container.querySelector('[role="status"]')?.textContent).toBe("Worker is connecting");
+  vi.mocked(call).mockRejectedValueOnce(new Error("Refresh offline"));
+  await click(button("Refresh"));
+  expect(container.textContent).toContain("Docker");
+  expect(container.querySelector('[role="status"]')?.textContent).toBe("Last observed: Worker is connecting");
+  expect(container.querySelector('[role="alert"]')?.textContent).toBe("Refresh offline");
+  expect(container.textContent).not.toContain("Checking worker…");
+  expect(button("Refresh").disabled).toBe(false);
+});
+
+
+function deferredCatalogRead() {
+  let resolve!: (value: Response) => void, reject!: (reason: Error) => void;
+  const promise = new Promise<Response>((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
+}
+
+it("labels initial tool discovery as loading instead of asking for a second refresh", async () => {
+  const catalogs = data.toolCatalogs;
+  data.toolCatalogs = [];
+  const read = deferredCatalogRead();
+  vi.mocked(call).mockReturnValueOnce(read.promise);
+  await act(async () => root.render(<McpAccess data={data} busy={false} error={null} status={null} feedbackAppId={null} onRefresh={refresh} onSave={vi.fn()} />));
+  await click(button("Notes"));
+  expect(container.querySelector('[role="status"]')?.textContent).toBe("Loading tools…");
+  expect(container.querySelector(".hosty-grid-loader")).not.toBeNull();
+  expect(button("Loading…").disabled).toBe(true);
+  expect(container.querySelector('[aria-label="Allow Notes"]')?.hasAttribute("disabled")).toBe(true);
+  expect(container.textContent).not.toContain("Refresh tools to load");
+  expect(call).toHaveBeenCalledExactlyOnceWith("/settings/tools", { signal: expect.any(AbortSignal) });
+  await act(async () => read.resolve(Response.json({ catalogs })));
+  expect(container.querySelector(".hosty-grid-loader")).toBeNull();
+  expect(button("Refresh tools").disabled).toBe(false);
+  expect(button("Notes").textContent).toContain("2/2");
+  expect(container.textContent).toContain("read");
+  expect(saveSettings).not.toHaveBeenCalled();
+  expect(refresh).not.toHaveBeenCalled();
+  expect(call).toHaveBeenCalledTimes(1);
+});
+
+it("settles a failed initial catalog read and loads catalogs on an explicit retry without saving", async () => {
+  const catalogs = data.toolCatalogs;
+  data.toolCatalogs = [];
+  const read = deferredCatalogRead();
+  vi.mocked(call).mockReturnValueOnce(read.promise);
+  await render();
+  expect(container.querySelector(".hosty-grid-loader")).not.toBeNull();
+  await act(async () => read.reject(new Error("Catalog connection lost")));
+  expect(container.querySelector('[role="alert"]')?.textContent).toContain("Catalog connection lost");
+  expect(container.querySelector(".hosty-grid-loader")).toBeNull();
+  expect(button("Refresh tools").disabled).toBe(false);
+  vi.mocked(call).mockResolvedValueOnce(Response.json({ catalogs }));
+  await click(button("Refresh tools"));
+  expect(container.querySelector('[role="alert"]')).toBeNull();
+  expect(button("Notes").textContent).toContain("2/2");
+  expect(saveSettings).not.toHaveBeenCalled();
+  expect(call).toHaveBeenCalledExactlyOnceWith("/settings/tools");
+});
+
+it("aborts entry discovery on unmount and ignores its late completion", async () => {
+  const read = deferredCatalogRead();
+  vi.mocked(call).mockReturnValueOnce(read.promise);
+  await act(async () => root.render(<McpAccess data={data} busy={false} error={null} status={null} feedbackAppId={null} onRefresh={refresh} onSave={vi.fn()} />));
+  const signal = vi.mocked(call).mock.calls[0]?.[1]?.signal;
+  expect(signal?.aborted).toBe(false);
+  await act(async () => root.render(null));
+  expect(signal?.aborted).toBe(true);
+  await act(async () => read.resolve(Response.json({ catalogs: [], unavailable: ["notes"] })));
+  expect(container.textContent).toBe("");
+  expect(refresh).not.toHaveBeenCalled();
+  expect(saveSettings).not.toHaveBeenCalled();
+  expect(call).toHaveBeenCalledTimes(1);
+});
+
+it("retains access drafts while refreshed tool discovery is pending and when it completes", async () => {
+  await render();
+  await click(container.querySelector('[aria-label="Allow Media"]')!);
+  const read = deferredCatalogRead();
+  vi.mocked(call).mockReturnValueOnce(read.promise);
+  await click(button("Refresh tools"));
+  expect(container.querySelector('[aria-label="Allow Media"]')?.getAttribute("data-state")).toBe("checked");
+  expect(container.textContent).toContain("Unsaved changes");
+  expect(container.querySelector(".hosty-grid-loader")).not.toBeNull();
+  await act(async () => read.resolve(Response.json({ catalogs: data.toolCatalogs })));
+  expect(container.querySelector(".hosty-grid-loader")).toBeNull();
+  expect(container.querySelector('[aria-label="Allow Media"]')?.getAttribute("data-state")).toBe("checked");
+  expect(button("Save").disabled).toBe(false);
+  expect(call).toHaveBeenCalledExactlyOnceWith("/settings/tools");
+  expect(saveSettings).not.toHaveBeenCalled();
 });

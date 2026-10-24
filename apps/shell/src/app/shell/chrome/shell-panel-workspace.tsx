@@ -1,17 +1,19 @@
 "use client";
 
 import { useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import { ExternalLink, PanelsTopLeft, Plus, ArrowLeft } from "lucide-react";
+import { ExternalLink, PanelsTopLeft, Ellipsis, ArrowLeft, X } from "lucide-react";
 import { HostyAppFrame, useHostyUiHost, useHostyChrome, type HostyAppFrameProps } from "@hosty-sdk/app/ui/react";
 import type { UiHostSnapshot, UiWorkspaceRenderer } from "@hosty-sdk/app/ui/host";
 import { panelKey, type PanelTarget, type UiPanel } from "@hosty-sdk/app/ui/types";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { HostyEmptySlots, HostyLoader } from "../../../../../../shared/web/hosty-states";
 import { AppIcon } from "../app-icon";
-import { panelFocusIndex } from "../surfaces/panel-rail-state";
 import { ShellWorkspaceSplit } from "./shell-workspace-split";
 
 const empty: UiHostSnapshot = { bootstrap: null, catalog: [], tools: [], selected: null, expanded: false, width: 360, error: null };
@@ -27,18 +29,18 @@ const frameStyles = `
 type Props = Pick<HostyAppFrameProps, "onAskAssistant" | "onAuthRequired"> & {
   children: ReactNode;
   initialWidth?: number;
+  pageMinimum?: number;
   onExpandedChange?: (expanded: boolean) => void;
   onStartApp?: (appId: string) => void | Promise<void>;
   outbound?: { target: PanelTarget; presentationId?: string; message: unknown; nonce: number } | null;
 };
 
 /** Shell owns all chrome; the SDK owns authority, presentation identity and frame transport. */
-export function ShellPanelWorkspace({ children, initialWidth = 360, onExpandedChange, onStartApp, onAskAssistant, onAuthRequired, outbound }: Props) {
+export function ShellPanelWorkspace({ children, initialWidth = 360, pageMinimum = 560, onExpandedChange, onStartApp, onAskAssistant, onAuthRequired, outbound }: Props) {
   const host = useHostyUiHost();
   const chrome = useHostyChrome();
   const state = useSyncExternalStore(host?.subscribeSnapshot ?? noop, host?.getSnapshot ?? (() => empty), () => empty);
   const toolsEnabled = chrome.tools.enabled && !state.error?.code.startsWith("unsupported");
-  const railVisible = toolsEnabled && chrome.tools.launcher !== "hide";
   const workspace = state.workspaces?.find(w => w.workspaceId === "default");
   const tools = state.tools.filter(t => t.workspaceId === "default");
   const tool = tools.find(t => t.presentationId === workspace?.selectedId);
@@ -46,6 +48,7 @@ export function ShellPanelWorkspace({ children, initialWidth = 360, onExpandedCh
   const selected = state.catalog.find(p => panelKey(p.panel) === tool?.key);
   const [picker, setPicker] = useState(false), [error, setError] = useState<string | null>(null);
   const [narrow, setNarrow] = useState(false);
+  const [query, setQuery] = useState("");
   const [focusRequest, setFocusRequest] = useState<{ id: string } | null>(null);
   const root = useRef<HTMLDivElement>(null), body = useRef<HTMLElement>(null), dismiss = useRef<HTMLButtonElement>(null);
   const frames = useRef(new Map<string, HTMLDivElement>());
@@ -102,9 +105,9 @@ export function ShellPanelWorkspace({ children, initialWidth = 360, onExpandedCh
   useEffect(() => { if (picker) window.dispatchEvent(new CustomEvent("hosty:ui:modal", { detail: "picker:default" })); }, [picker]);
   useLayoutEffect(() => {
     const element = root.current; if (!element) return;
-    const read = () => setNarrow((element.getBoundingClientRect().width || window.innerWidth) < 900);
+    const read = () => setNarrow((element.getBoundingClientRect().width || window.innerWidth) < pageMinimum + 320 + 24);
     read(); const observer = new ResizeObserver(read); observer.observe(element); return () => observer.disconnect();
-  }, []);
+  }, [pageMinimum]);
   useLayoutEffect(() => {
     if (!expanded) return;
     opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -148,14 +151,23 @@ export function ShellPanelWorkspace({ children, initialWidth = 360, onExpandedCh
     : tool?.readiness === "unreported" ? "This tool has not confirmed that it loaded. If it stays blank, open it separately."
     : tool?.resolved.state === "degraded" ? "This app’s health check is failing. Its page may still work." : null;
   const siblings = tools.filter(t => t.key === tool?.key);
+  const search = query.trim().toLowerCase();
+  const matchingTools = state.catalog.filter(item => `${item.label} ${item.appName}`.toLowerCase().includes(search));
+  const toolGroups = new Map<string, { appName: string; items: UiPanel[] }>();
+  for (const item of matchingTools) {
+    const group = toolGroups.get(item.panel.appId) ?? { appName: item.appName, items: [] };
+    group.items.push(item); toolGroups.set(item.panel.appId, group);
+  }
+
   const panel = <div className="flex h-full min-h-0 min-w-0">
     {narrow && expanded && <button aria-label="Return to document" className="fixed inset-0 z-30 bg-black/40" onClick={() => host?.collapseWorkspace("default")} />}
     <aside id={bodyId} ref={body} hidden={!expanded} inert={!expanded} aria-label={selected?.label ?? "Tool"}
       role={narrow ? "dialog" : "complementary"} aria-modal={narrow && expanded || undefined}
       className={cn("min-h-0 min-w-0 flex-1 flex-col bg-background", !expanded ? "hidden" : "flex",
-        narrow && "fixed inset-y-3 right-3 z-40 w-[min(440px,calc(100vw-24px))] rounded-xl border shadow-lg")}
+        narrow && "shell-tool-sheet fixed inset-y-3 right-3 z-40 w-[min(440px,calc(100vw-24px))] rounded-xl border shadow-lg")}
       onKeyDown={event => {
-        if (!narrow) return;
+        // Portaled menus own their keyboard events even though React bubbles them through the sheet.
+        if (!narrow || event.defaultPrevented || !event.currentTarget.contains(event.target as Node)) return;
         if (event.key === "Escape") { event.preventDefault(); host?.collapseWorkspace("default"); }
         if (event.key === "Tab") {
           const elements = Array.from(body.current?.querySelectorAll<HTMLElement>('button,a[href],select,iframe') ?? []).filter(e => !e.closest("[hidden]") && !(e as HTMLButtonElement).disabled);
@@ -167,15 +179,21 @@ export function ShellPanelWorkspace({ children, initialWidth = 360, onExpandedCh
       <header className="flex h-11 shrink-0 items-center gap-2 border-b px-3">
         {narrow && <Button ref={dismiss} variant="ghost" size="icon" aria-label="Return to document" onClick={() => host?.collapseWorkspace("default")}><ArrowLeft /></Button>}
         <span className="min-w-0 flex-1 truncate text-sm font-medium">{selected?.label ?? "Tool"}</span>
+        <Button variant="ghost" size="sm" onClick={() => { setQuery(""); setPicker(true); }}>All tools</Button>
         {tool?.resolved.standaloneHref && <Button variant="ghost" size="icon" asChild><a href={tool.resolved.standaloneHref} target="_blank" rel="noopener noreferrer" aria-label="Open separately" title="Open separately"><ExternalLink /></a></Button>}
+        <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label="Tool actions"><Ellipsis /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem disabled={!tool} onSelect={() => { if (tool) host?.closePresentation(tool.presentationId); }}>End this tool view</DropdownMenuItem></DropdownMenuContent></DropdownMenu>
+        <Button ref={narrow ? undefined : dismiss} variant="ghost" size="icon" aria-label="Hide tool" title="Hide tool" onClick={() => host?.collapseWorkspace("default")}><X /></Button>
       </header>
       {notice && <Alert className="m-2 w-auto" role="status"><AlertDescription>{notice}
         {unavailable && <Button variant="outline" size="sm" aria-label="Choose another tool" onClick={() => { setPicker(true); void host?.refresh(); }}>Choose tool</Button>}
       </AlertDescription></Alert>}
       {siblings.length > 1 && <label className="flex items-center gap-2 border-b p-2 text-sm">Open views
-        <select aria-label="Tool instance" className="min-w-0 rounded-md border bg-background p-1" value={tool?.presentationId} onChange={event => host?.focusPresentation(event.target.value)}>
-          {siblings.map((item, index) => <option key={item.presentationId} value={item.presentationId}>{selected?.label} {index + 1}</option>)}
-        </select></label>}
+        <Select value={tool?.presentationId ?? ""} onValueChange={value => host?.focusPresentation(value)}>
+          <SelectTrigger aria-label="Tool instance" size="sm" className="min-w-0"><SelectValue /></SelectTrigger>
+          <SelectContent><SelectGroup>
+            {siblings.map((item, index) => <SelectItem key={item.presentationId} value={item.presentationId}>{selected?.label} {index + 1}</SelectItem>)}
+          </SelectGroup></SelectContent>
+        </Select></label>}
       {tools.map(item => <div data-shell-panel-frame key={item.presentationId} ref={element => {
         if (element) { frames.current.set(item.presentationId, element); }
         else frames.current.delete(item.presentationId);
@@ -188,33 +206,26 @@ export function ShellPanelWorkspace({ children, initialWidth = 360, onExpandedCh
       </div>)}
       {narrow && <span tabIndex={0} className="sr-only" onFocus={() => dismiss.current?.focus()} />}
     </aside>
-    <TooltipProvider delayDuration={350}><nav aria-label="Tools" hidden={!railVisible} style={!railVisible ? { display: "none" } : undefined} inert={!railVisible || narrow && expanded} className={cn("flex w-12 shrink-0 flex-col items-center gap-1 overflow-y-auto py-2", expanded && !narrow && "border-l")}>
-      {state.catalog.map((item, index) => <Tooltip key={panelKey(item.panel)}><TooltipTrigger asChild>
-        <Button variant="ghost" size="icon" aria-label={item.label} aria-controls={bodyId} aria-expanded={expanded && tool?.key === panelKey(item.panel)}
-          className={cn("relative size-9 rounded-lg", expanded && tool?.key === panelKey(item.panel) && "bg-muted shadow-xs ring-1 ring-border")}
-          onClick={() => void select(item)} onKeyDown={event => {
-            const next = panelFocusIndex(event.key, index, state.catalog.length);
-            if (next !== null) { event.preventDefault(); root.current?.querySelectorAll<HTMLButtonElement>('nav[aria-label="Tools"] button')[next]?.focus(); }
-          }}>
-          <AppIcon src={null} name={item.icon} fallback={PanelsTopLeft} className="size-4" />
-          {tools.some(t => t.key === panelKey(item.panel) && t.attention > 0) && <span className="absolute right-1 top-1 size-1.5 rounded-full bg-primary" aria-label="Needs attention" />}
-        </Button></TooltipTrigger><TooltipContent side="left">{item.appName}: {item.label}</TooltipContent></Tooltip>)}
-      <Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon" aria-label="Add tool" className="size-9 rounded-lg" onClick={() => { setError(null); setPicker(true); void host?.refresh(); }}><Plus /></Button></TooltipTrigger><TooltipContent side="left">Add tool</TooltipContent></Tooltip>
-    </nav></TooltipProvider>
+
   </div>;
   return <div ref={root} className="h-full min-h-0 min-w-0" data-shell-panel-layout={narrow ? "drawer" : "dock"}>
     <style>{frameStyles}</style>
-    <ShellWorkspaceSplit panel={panel} showPanel={railVisible || expanded} expanded={expanded && !narrow} initialPanelWidth={initialWidth} onWidthChange={width => host?.setWidth(width)}>
+    <ShellWorkspaceSplit panel={panel} showPanel={expanded && !narrow} keepPanelVisible={expanded && narrow} railSize={0} expanded={expanded && !narrow} initialPanelWidth={initialWidth} pageMinimum={pageMinimum} onWidthChange={width => host?.setWidth(width)}>
       <div className="h-full min-h-0" inert={narrow && expanded}>{children}</div>
     </ShellWorkspaceSplit>
     <Dialog open={picker && toolsEnabled} onOpenChange={open => { setPicker(open); if (open) window.dispatchEvent(new CustomEvent("hosty:ui:modal", { detail: "picker:default" })); }}>
-      <DialogContent><DialogHeader><DialogTitle>Add tool</DialogTitle><DialogDescription>Open a tool beside your document.</DialogDescription></DialogHeader>
+      <DialogContent><DialogHeader><DialogTitle>All tools</DialogTitle><DialogDescription>Open a tool and keep its current conversation or draft.</DialogDescription></DialogHeader>
         {(error || state.error) && <Alert role="status"><AlertDescription>{error ?? state.error?.message}</AlertDescription></Alert>}
-        {!state.catalog.length && <p className="text-sm text-muted-foreground">No tools are available for your account.</p>}
-        <div className="flex min-h-0 flex-col gap-2 overflow-y-auto">{state.catalog.map(item => <div key={panelKey(item.panel)} className="flex items-center gap-2">
-          <Button variant="outline" className="h-auto min-w-0 flex-1 justify-start py-3" onClick={() => void select(item)}><AppIcon src={null} name={item.icon} fallback={PanelsTopLeft} className="size-4" /><span className="flex min-w-0 flex-col items-start"><span>{item.label}</span><span className="text-xs text-muted-foreground">{item.appName}{!item.available && ` · ${item.state}`}</span></span></Button>
-          {!item.available && item.canStart && onStartApp && <Button variant="outline" onClick={() => void Promise.resolve(onStartApp(item.panel.appId)).then(() => host?.refresh())}>Start app</Button>}
-        </div>)}</div>
+        <Input className="shrink-0" aria-label="Search tools" placeholder="Search tools and apps" value={query} onChange={event => setQuery(event.target.value)} />
+        {!state.bootstrap && !state.error && !state.catalog.length ? <p role="status" className="flex items-center gap-2 py-4 text-sm text-muted-foreground"><HostyLoader label={null} className="size-6" />Loading tools…</p>
+          : !matchingTools.length && (!state.error || state.catalog.length > 0) && <div role="status" className="flex flex-col items-center gap-2 rounded-lg border bg-card px-4 py-5 text-center"><HostyEmptySlots className="size-12" /><p className="text-sm font-medium">{state.catalog.length ? "No tools match your search" : "No tools are available for your account."}</p>{state.catalog.length > 0 && <Button variant="outline" size="sm" onClick={() => setQuery("")}>Clear search</Button>}</div>}
+        <div className="min-h-0 space-y-4 overflow-y-auto">{[...toolGroups].map(([appId, group]) => <section key={appId} className="space-y-2" aria-label={`${group.appName} tools`}>
+          <h3 className="text-xs font-medium text-muted-foreground">{group.appName}</h3>
+          <div className="grid grid-cols-2 gap-2 min-[400px]:grid-cols-4">{group.items.map(item => <div key={panelKey(item.panel)} className="flex min-w-0 flex-col gap-2">
+            <Button variant="outline" aria-pressed={tool?.key === panelKey(item.panel)} className={cn("h-auto w-full min-w-0 flex-1 flex-col justify-start px-2 py-3", tool?.key === panelKey(item.panel) && "border-brand-strong bg-brand-soft")} onClick={() => void select(item)}><AppIcon src={null} name={item.icon} fallback={PanelsTopLeft} className="size-4" /><span className="flex min-w-0 flex-col items-start"><span className="w-full truncate">{item.label}</span><span className="w-full truncate text-xs text-muted-foreground">{item.appName}{!item.available && ` · ${item.state}`}</span></span></Button>
+            {!item.available && item.canStart && onStartApp && <Button variant="outline" onClick={() => void Promise.resolve(onStartApp(item.panel.appId)).then(() => host?.refresh())}>Start app</Button>}
+          </div>)}</div>
+        </section>)}</div>
         <Button variant="outline" onClick={() => void host?.refresh()}>Refresh tools</Button>
       </DialogContent>
     </Dialog>

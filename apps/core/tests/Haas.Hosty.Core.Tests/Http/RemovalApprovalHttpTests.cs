@@ -45,11 +45,10 @@ public sealed class RemovalApprovalHttpTests
         Assert.Contains(Target, html);
         Assert.Contains("&lt;Target&gt;", html);
         Assert.DoesNotContain("<Target>", html);
-        Assert.Contains("Backups: " + (destructive ? "delete permanently" : "keep"), html);
-        Assert.Contains("Managed source checkout: " + (destructive ? "delete permanently" : "keep"), html);
-        Assert.Contains("App data, cache, stored secrets and retained configuration: " + (destructive ? "delete permanently" : "keep"), html);
-        Assert.Contains("Runtime state: delete", html);
-        Assert.Contains("Runtime errors: stop removal", html);
+        foreach (var name in new[] { "deleteData", "deleteBackups", "deleteSource" })
+            Assert.Contains($"type=checkbox name={name} value=true{(destructive ? " checked" : "")}>", html);
+        Assert.Contains("type=checkbox name=ignoreRuntimeErrors value=true>", html);
+        Assert.Contains("Runtime state is deleted.", html);
         var nonce = Nonce(html);
         using var wrongOrigin = await Decide(browser, id, nonce, "approve", "http://market.example");
         Assert.Equal(HttpStatusCode.Forbidden, wrongOrigin.StatusCode);
@@ -148,6 +147,136 @@ public sealed class RemovalApprovalHttpTests
         Assert.NotNull(await Apps(host).GetAppAsync(Target));
         using var repeated = await Decide(browser, id, Nonce(html), "approve");
         Assert.Equal(HttpStatusCode.Conflict, repeated.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("approve")]
+    [InlineData("removal-options")]
+    public async Task CoreCleanupChoices_RequireNewReviewBeforeExecution(string decision)
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        using var app = await Setup(host);
+        var id = await Prepare(app, Internal, false);
+        (await app.PostAsJsonAsync($"{Internal}/{id}/submit", new { })).EnsureSuccessStatusCode();
+        using var browser = Browser(host);
+        var original = await browser.GetStringAsync($"/install/confirm/{id}");
+        Assert.Contains("<input type=checkbox name=deleteData value=true>", original);
+        Assert.DoesNotContain("name=deleteRuntimeState", original);
+        using var changed = await DecideChoices(browser, id, original, decision, deleteData: true);
+        changed.EnsureSuccessStatusCode();
+        var review = await changed.Content.ReadAsStringAsync();
+        Assert.Contains("Cleanup choices updated", review);
+        Assert.Contains("name=deleteData value=true checked", review);
+        Assert.Contains("This cannot be undone", review);
+        Assert.NotEqual(Nonce(original), Nonce(review));
+        Assert.Equal("pending", host.Services.GetRequiredService<InstallationApprovalStore>().Get(id).Status);
+        await AssertIntact(host);
+        using var stale = await DecideChoices(browser, id, original, "approve", deleteData: true);
+        Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
+        using var confirmed = await DecideChoices(browser, id, review, "approve", deleteData: true);
+        confirmed.EnsureSuccessStatusCode();
+        Assert.Equal("succeeded", await Wait(host, id));
+        Assert.Null(await Apps(host).GetAppAsync(Target));
+        var paths = host.Services.GetRequiredService<CoreDataPaths>();
+        Assert.False(File.Exists(Path.Combine(paths.AppsRoot, Target, "data", "keep.txt")));
+        Assert.False(File.Exists(Path.Combine(paths.AppsRoot, Target, "cache", "keep.txt")));
+        Assert.True(File.Exists(Path.Combine(paths.BackupsRoot, Target, "keep.txt")));
+        Assert.True(File.Exists(Path.Combine(paths.ResolveManagedCheckoutPath(Target), "keep.txt")));
+    }
+
+    [Theory]
+    [InlineData("digest")]
+    [InlineData("origin")]
+    [InlineData("reinstall")]
+    [InlineData("duplicate-choice")]
+    public async Task CleanupChoiceChanges_RejectStaleOrUntrustedForms(string change)
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        using var app = await Setup(host);
+        var id = await Prepare(app, Internal, false);
+        (await app.PostAsJsonAsync($"{Internal}/{id}/submit", new { })).EnsureSuccessStatusCode();
+        using var browser = Browser(host);
+        var review = await browser.GetStringAsync($"/install/confirm/{id}");
+        if (change == "reinstall")
+            await Apps(host).UpsertAppAsync((await Apps(host).GetAppAsync(Target))! with { InstalledAt = DateTimeOffset.UtcNow.AddDays(1) });
+        using var response = await DecideChoices(browser, id, review, "removal-options", deleteData: true,
+            digest: change == "digest" ? "forged" : null,
+            origin: change == "origin" ? "http://market.example" : "http://localhost", duplicateData: change == "duplicate-choice");
+        Assert.Equal(change == "origin" ? HttpStatusCode.Forbidden : HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal("pending", host.Services.GetRequiredService<InstallationApprovalStore>().Get(id).Status);
+        await AssertIntact(host);
+    }
+
+    [Fact]
+    public async Task CleanupChoices_CancelDoesNotApplyEditsOrDeleteFiles()
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        using var app = await Setup(host);
+        var id = await Prepare(app, Internal, false);
+        (await app.PostAsJsonAsync($"{Internal}/{id}/submit", new { })).EnsureSuccessStatusCode();
+        using var browser = Browser(host);
+        var review = await browser.GetStringAsync($"/install/confirm/{id}");
+        (await DecideChoices(browser, id, review, "deny", deleteData: true)).EnsureSuccessStatusCode();
+        Assert.Equal("denied", await Wait(host, id));
+        await AssertIntact(host);
+    }
+
+    [Fact]
+    public async Task SourceDeletionAndIgnoredRuntimeErrors_CannotBeApprovedTogether()
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        using var app = await Setup(host);
+        var id = await Prepare(app, Internal, false);
+        (await app.PostAsJsonAsync($"{Internal}/{id}/submit", new { })).EnsureSuccessStatusCode();
+        using var browser = Browser(host);
+        var original = await browser.GetStringAsync($"/install/confirm/{id}");
+        using var changed = await DecideChoices(browser, id, original, "removal-options", deleteSource: true, ignoreRuntimeErrors: true);
+        changed.EnsureSuccessStatusCode();
+        var review = await changed.Content.ReadAsStringAsync();
+        Assert.Contains("Choose either Delete source checkout or Ignore runtime errors", review);
+        Assert.Contains("value=approve disabled", review);
+        (await DecideChoices(browser, id, review, "approve", deleteSource: true, ignoreRuntimeErrors: true)).EnsureSuccessStatusCode();
+        Assert.Equal("failed", await Wait(host, id));
+        await AssertIntact(host);
+    }
+
+    [Fact]
+    public async Task ExplicitLegacyRuntimeStateChoice_IsPreservedWhenCoreEditsCleanup()
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        using var app = await Setup(host);
+        using var prepared = await app.PostAsJsonAsync(Internal, new { removeAppId = Target,
+            removalOptions = new { deleteRuntimeState = false } });
+        prepared.EnsureSuccessStatusCode();
+        var id = JsonDocument.Parse(await prepared.Content.ReadAsStringAsync()).RootElement.GetProperty("id").GetString()!;
+        (await app.PostAsJsonAsync($"{Internal}/{id}/submit", new { })).EnsureSuccessStatusCode();
+        using var browser = Browser(host);
+        var original = await browser.GetStringAsync($"/install/confirm/{id}");
+        Assert.Contains("Runtime state is kept for this request.", original);
+        using var changed = await DecideChoices(browser, id, original, "removal-options", deleteData: true);
+        changed.EnsureSuccessStatusCode();
+        Assert.Contains("Runtime state is kept for this request.", await changed.Content.ReadAsStringAsync());
+        Assert.False(host.Services.GetRequiredService<InstallationApprovalStore>().Get(id).RemovalPlan!.Options.DeleteRuntimeState);
+        await AssertIntact(host);
+    }
+
+    private static Task<HttpResponseMessage> DecideChoices(HttpClient client, string id, string review, string decision,
+        bool deleteData = false, bool deleteSource = false, bool ignoreRuntimeErrors = false,
+        string? digest = null, string origin = "http://localhost", bool duplicateData = false)
+    {
+        var values = new List<KeyValuePair<string, string>> {
+            new("nonce", Nonce(review)), new("decision", decision), new("removalOptions", "true"),
+            new("removalDigest", digest ?? Regex.Match(review, "name=removalDigest value=\"([^\"]+)\"").Groups[1].Value),
+            // A Core review never accepts a replacement target or an editable runtime-state flag.
+            new("removeAppId", Caller), new("deleteRuntimeState", "false"),
+        };
+        if (deleteData) values.Add(new("deleteData", "true"));
+        if (duplicateData) values.Add(new("deleteData", "true"));
+        if (deleteSource) values.Add(new("deleteSource", "true"));
+        if (ignoreRuntimeErrors) values.Add(new("ignoreRuntimeErrors", "true"));
+        return client.SendAsync(new HttpRequestMessage(HttpMethod.Post, $"/install/confirm/{id}") {
+            Content = new FormUrlEncodedContent(values), Headers = { { "Origin", origin } },
+        });
     }
 
     private static object Options(bool destructive) => new { deleteRuntimeState = true, deleteData = destructive,

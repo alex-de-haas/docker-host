@@ -220,14 +220,31 @@ internal sealed class InstallationApprovalStore(IClock clock)
         }
     }
 
+    public void ChangeRemovalOptions(InstallationApproval entry, string nonce, string sessionId,
+        string digest, AppRemovalPlan plan)
+    {
+        lock (gate)
+        {
+            RequireDecisionNonce(entry, nonce, sessionId);
+            if (entry.RemovalPlan is not { } prior || prior.DecisionDigest != digest ||
+                prior.AppId != plan.AppId || prior.Identity != plan.Identity)
+                throw new AppLifecycleException("approval_invalid", "The removal review changed. Open its Core page again.");
+            entry.RemovalPlan = plan;
+            entry.DecisionNonce = null;
+            entry.DecisionSession = null;
+        }
+    }
+
     public void Decide(InstallationApproval entry, string nonce, string sessionId, bool approve, IReadOnlyList<string>? optionalPermissions = null, bool agentEnabled = false, IReadOnlyList<string>? agentSkills = null,
-        bool? autostart = null, bool saveEnvironmentConsent = false)
+        bool? autostart = null, bool saveEnvironmentConsent = false, string? removalDigest = null)
     {
         lock (gate)
         {
             RequireDecisionNonce(entry, nonce, sessionId);
             if (approve)
             {
+                if (removalDigest is not null && entry.RemovalPlan?.DecisionDigest != removalDigest)
+                    throw new AppLifecycleException("approval_invalid", "The removal review changed. Open its Core page again.");
                 entry.SaveEnvironmentConsent = entry.EnvironmentPlan is not null && saveEnvironmentConsent;
                 if (entry.AssistantAccessPlan is { } agent)
                 {
@@ -289,7 +306,7 @@ internal sealed class InstallationApproval
     public string? McpRequestDigest { get; init; }
     public bool AgentEnabled { get; set; }
     public IReadOnlyList<string> AgentSkills { get; set; } = [];
-    public AppRemovalPlan? RemovalPlan { get; init; }
+    public AppRemovalPlan? RemovalPlan { get; set; }
     public HostPathApprovalPlan? HostPathPlan { get; init; }
     public CoreEnvironmentConsentPlan? EnvironmentPlan { get; init; }
     public bool SaveEnvironmentConsent { get; set; }
@@ -318,6 +335,7 @@ internal sealed record AppRemovalPlan(string AppId, string DisplayName, string V
 {
     internal string Identity { get; init; } = "";
     public AppSourceReview? SourceReview { get; init; }
+    internal string DecisionDigest => DevelopmentWorkspaceService.Hash(Identity + "\n" + CoreJson.Text(this));
 }
 
 internal sealed record AppPermissionPlan(string AppId, string DisplayName, DateTimeOffset InstalledAt,

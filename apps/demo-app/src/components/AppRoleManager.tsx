@@ -2,9 +2,11 @@
 
 import { useMemo, useState } from "react";
 import { appFetch } from "@hosty-sdk/app/browser-auth";
-import { Check, LoaderCircle, RotateCcw } from "lucide-react";
+import { Check, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { DemoAlert, DemoEmpty } from "./DemoFeedback";
+import { HostyLoader } from "../../../../shared/web/hosty-states";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import type { DemoRoleManagementSnapshot } from "@/lib/app-role-management";
 import type { DemoAppRole } from "@/lib/app-roles";
 import { StateBadge } from "./DemoAppUi";
@@ -25,6 +27,7 @@ export function AppRoleManager({
 
   async function updateRole(userId: string, overrideRole?: DemoAppRole | "") {
     const role = overrideRole ?? drafts[userId] ?? "";
+    const previousAssignments = createDrafts(snapshot);
     setPendingUserId(userId);
     setMessage(null);
 
@@ -41,7 +44,12 @@ export function AppRoleManager({
       }
 
       setSnapshot(payload.snapshot);
-      setDrafts(createDrafts(payload.snapshot));
+      // Preserve edits only; clean rows adopt authoritative concurrent changes.
+      const nextDrafts = createDrafts(payload.snapshot);
+      setDrafts(previous => Object.fromEntries(Object.entries(nextDrafts).map(([id, next]) => [
+        id, id !== userId && previous[id] !== undefined && previous[id] !== previousAssignments[id]
+          ? previous[id] : next,
+      ])));
       setMessage({ tone: "success", text: "App role assignment saved." });
     } catch (error) {
       setMessage({
@@ -64,13 +72,13 @@ export function AppRoleManager({
     <div className="flex flex-col gap-4">
       <div className="grid gap-3 rounded-lg border bg-muted/30 p-4 sm:grid-cols-3">
         <div>
-          <div className="text-xs font-medium uppercase tracking-normal text-muted-foreground">
+          <div className="text-xs font-medium text-muted-foreground">
             Current principal
           </div>
           <div className="mt-1 break-all text-sm font-medium">{snapshot.current.principal}</div>
         </div>
         <div>
-          <div className="text-xs font-medium uppercase tracking-normal text-muted-foreground">
+          <div className="text-xs font-medium text-muted-foreground">
             Effective role
           </div>
           <div className="mt-1">
@@ -80,7 +88,7 @@ export function AppRoleManager({
           </div>
         </div>
         <div>
-          <div className="text-xs font-medium uppercase tracking-normal text-muted-foreground">
+          <div className="text-xs font-medium text-muted-foreground">
             Source
           </div>
           <div className="mt-1 text-sm font-medium">
@@ -90,23 +98,10 @@ export function AppRoleManager({
       </div>
 
       {!snapshot.canManage && (
-        <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
-          Current app permissions do not include demo.roles.manage.
-        </div>
+        <DemoAlert tone="warning">Your app access is read only. Managing assignments requires demo.roles.manage.</DemoAlert>
       )}
 
-      {message && (
-        <div
-          className={cn(
-            "rounded-lg border p-4 text-sm",
-            message.tone === "success"
-              ? "border-green-600/30 bg-green-600/5 text-green-700"
-              : "border-destructive/30 bg-destructive/5 text-destructive"
-          )}
-        >
-          {message.text}
-        </div>
-      )}
+      {message && <DemoAlert tone={message.tone}>{message.text}</DemoAlert>}
 
       <div className="grid gap-3">
         {snapshot.users.length > 0 ? (
@@ -131,7 +126,7 @@ export function AppRoleManager({
                   </div>
                   <div className="mt-2 flex flex-wrap gap-2">
                     <StateBadge tone={user.hostRole === "host.admin" ? "success" : "neutral"}>
-                      {user.hostRole}
+                      {user.sandboxRole ? `Sandbox · ${user.sandboxRole}` : user.hostRole || "Unknown host role"}
                     </StateBadge>
                     <StateBadge tone={user.appRole.role === "admin" ? "success" : "neutral"}>
                       {user.appRole.roleLabel}
@@ -142,52 +137,46 @@ export function AppRoleManager({
 
                 <label className="grid gap-2 text-sm font-medium">
                   App role
-                  <select
-                    className="h-9 rounded-md border bg-background px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50"
-                    disabled={!snapshot.canManage || pending}
-                    onChange={event => setDraft(user.id, event.target.value as DemoAppRole | "")}
-                    value={draft}
-                  >
-                    <option value="">Default ({user.appRole.roleLabel})</option>
-                    {roleOptions.map(role => (
-                      <option key={role.role} value={role.role}>
-                        {role.label}
-                      </option>
-                    ))}
-                  </select>
+                  <Select disabled={!snapshot.canManage || pendingUserId !== null} value={draft || "default"}
+                    onValueChange={value => setDraft(user.id, value === "default" ? "" : value as DemoAppRole)}>
+                    <SelectTrigger className="w-full" aria-label={`App role for ${user.displayName || user.email || user.id}`}><SelectValue /></SelectTrigger>
+                    <SelectContent position="popper"><SelectGroup>
+                      <SelectItem value="default">Default ({user.appRole.roleLabel})</SelectItem>
+                      {roleOptions.map(role => <SelectItem key={role.role} value={role.role}>{role.label}</SelectItem>)}
+                    </SelectGroup></SelectContent>
+                  </Select>
                 </label>
 
                 <div className="flex items-end gap-2 lg:justify-end">
                   <Button
-                    disabled={!snapshot.canManage || pending || !dirty}
+                    disabled={!snapshot.canManage || pendingUserId !== null || !dirty}
                     onClick={() => void updateRole(user.id)}
                     size="sm"
                     type="button"
                   >
-                    {pending ? <LoaderCircle className="size-4 animate-spin" /> : <Check className="size-4" />}
-                    Save
+                    {pending ? <HostyLoader label={null} className="size-4" /> : <Check data-icon="inline-start" aria-hidden="true" />}
+                    {pending ? "Saving…" : "Save"}
                   </Button>
                   <Button
-                    disabled={!snapshot.canManage || pending || !user.appRole.assignment}
+                    disabled={!snapshot.canManage || pendingUserId !== null || !user.appRole.assignment}
                     onClick={() => {
                       setDraft(user.id, "");
                       void updateRole(user.id, "");
                     }}
                     size="icon-sm"
                     title="Reset to default"
+                    aria-label={`Reset role for ${user.displayName || user.email || user.id} to default`}
                     type="button"
                     variant="outline"
                   >
-                    <RotateCcw className="size-4" />
+                    <RotateCcw data-icon="inline-start" aria-hidden="true" />
                   </Button>
                 </div>
               </div>
             );
           })
         ) : (
-          <p className="rounded-lg border p-4 text-sm leading-6 text-muted-foreground">
-            {snapshot.directory.error?.message || "No assigned Host users were returned."}
-          </p>
+          snapshot.directory.error ? <DemoAlert>{snapshot.directory.error.message}</DemoAlert> : <DemoEmpty title="No assigned users">Assign users to this app in Core to manage their roles here.</DemoEmpty>
         )}
       </div>
 
@@ -199,7 +188,7 @@ export function AppRoleManager({
             <div className="mt-3 flex flex-wrap gap-1.5">
               {role.permissions.map(permission => (
                 <code
-                  className="rounded border bg-background px-1.5 py-0.5 text-[11px] leading-5 text-muted-foreground"
+                  className="wrap-anywhere rounded border bg-background px-1.5 py-0.5 text-xs leading-5 text-muted-foreground"
                   key={permission}
                 >
                   {permission}

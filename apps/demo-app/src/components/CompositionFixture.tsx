@@ -6,6 +6,12 @@ import { HostyAppFrame, HostyNavigation, HostyPanelWorkspace, useHostyNavigation
 import { createPresentationRequestId, panelKey, ui, type PanelTarget, type UiFrameSurface } from "@hosty-sdk/app/ui";
 import type { UiHostSnapshot } from "@hosty-sdk/app/ui/host";
 
+import { Button } from "./ui/button";
+import { Input } from "./ui/input";
+import { Textarea } from "./ui/textarea";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
+import { DemoAlert, DemoEmpty } from "./DemoFeedback";
+
 const empty: UiHostSnapshot = { bootstrap: null, catalog: [], tools: [], selected: null, expanded: false, width: 360, error: null };
 const noop = () => () => {};
 
@@ -35,28 +41,30 @@ export function CompositionDesktop() {
         <h1>UI composition conformance</h1>
         <p>Two app views share retained tools. Choose a declared panel and an existing route, then open the views.</p>
         <div className="composition-controls">
-          <label>Tool <select value={selected ? panelKey(selected.panel) : ""} onChange={event => setPanel(event.target.value)}>
-            {snapshot.catalog.map(item => <option key={panelKey(item.panel)} value={panelKey(item.panel)}>{item.appName}: {item.label}</option>)}
-          </select></label>
-          <label>Existing route <input value={route} placeholder={selected?.route ?? "/"} onChange={event => setRoute(event.target.value)} /></label>
-          <button type="button" disabled={!selected || !navigation.catalog} onClick={launchViews}>Open two app views</button>
-          <button type="button" onClick={() => setShowNavigation(value => !value)}>Toggle app navigation</button>
-          <button type="button" onClick={() => host.setViewChrome("root", { tools: { enabled: !host.getChrome().tools.enabled } })}>Toggle tool access</button>
-          <button type="button" disabled={!active} onClick={async () => {
+          <label>Tool <Select value={selected ? panelKey(selected.panel) : ""} onValueChange={setPanel} disabled={!snapshot.catalog.length}>
+            <SelectTrigger aria-label="Tool"><SelectValue placeholder="No available tools" /></SelectTrigger>
+            <SelectContent position="popper"><SelectGroup>{snapshot.catalog.map(item => <SelectItem key={panelKey(item.panel)} value={panelKey(item.panel)}>{item.appName}: {item.label}</SelectItem>)}</SelectGroup></SelectContent>
+          </Select></label>
+          <label>Existing route <Input value={route} placeholder={selected?.route ?? "/"} onChange={event => setRoute(event.target.value)} /></label>
+          <Button type="button" disabled={!selected || !navigation.catalog} onClick={launchViews}>Open two app views</Button>
+          <Button type="button" onClick={() => setShowNavigation(value => !value)}>Toggle app navigation</Button>
+          <Button type="button" onClick={() => host.setViewChrome("root", { tools: { enabled: !host.getChrome().tools.enabled } })}>Toggle tool access</Button>
+          <Button type="button" disabled={!active} onClick={async () => {
             if (!active) return;
             const destination = active.workspaceId === "floating" ? "default" : "floating";
             setMessage(await host.movePresentation(active.presentationId, destination) ? `Moved to ${destination}` : "The tool could not be moved.");
-          }}>Move selected tool</button>
-          <button type="button" onClick={() => void ui.openToolPicker({ requestId: createPresentationRequestId() })}>Shared tools</button>
+          }}>Move selected tool</Button>
+          <Button type="button" onClick={() => void ui.openToolPicker({ requestId: createPresentationRequestId() })}>Shared tools</Button>
         </div>
-        {snapshot.error && <p role="status">{snapshot.error.message}</p>}
+        {snapshot.error && <DemoAlert>{snapshot.error.message}</DemoAlert>}
         {!snapshot.bootstrap?.canHost && <p>Review the Demo app’s optional panel access in Core to use this fixture.</p>}
         {message && <p role="status">{message}</p>}
+        {!launch && <DemoEmpty title="Open the test views">Choose a tool and route, then open the two app views to check retained tools and drafts.</DemoEmpty>}
         <div className="composition-views">{launch && views.map(view => {
           const query = new URLSearchParams({ view, target: JSON.stringify(launch.target) });
           const surface = { ...launch.surface, route: `/composition/view?${query}` };
           return <section key={view} className="composition-view">
-            <header><strong>App {view}</strong><button type="button" onClick={() => setViews(values => values.filter(value => value !== view))}>Close app {view}</button></header>
+            <header><strong>App {view}</strong><Button type="button" onClick={() => setViews(values => values.filter(value => value !== view))}>Close app {view}</Button></header>
             <HostyAppFrame surface={surface} title={`App ${view}`} view={{ viewId: `fixture-${view}`, workspaceId: "default",
               chrome: { navigation: showNavigation ? "show" : "hide", tools: { enabled: true, launcher: "hide" } } }} />
           </section>;
@@ -87,19 +95,20 @@ export function CompositionView() {
   return <div className="p-3"><HostyNavigation /><h1 className="my-3 text-lg">App view {search.get("view") ?? "on another endpoint"}</h1>
     <p>Navigation belongs to this app; tools belong to the desktop.</p>
     <div className="my-3 flex flex-wrap gap-2">
-      <button className="rounded border p-2" onClick={() => void open("exact", false)}>Open shared target</button>
-      <button className="rounded border p-2" onClick={() => void open("new", false)}>Open another instance</button>
-      <button className="rounded border p-2" onClick={() => void open("exact", true)}>Open distinct route</button>
+      <Button variant="outline" onClick={() => void open("exact", false)}>Open shared target</Button>
+      <Button variant="outline" onClick={() => void open("new", false)}>Open another instance</Button>
+      <Button variant="outline" onClick={() => void open("exact", true)}>Open distinct route</Button>
     </div>
-    <label>App draft<textarea className="block w-full rounded border p-2" aria-label="App draft" /></label>
+    <label className="flex flex-col gap-2">App draft<Textarea aria-label="App draft" /></label>
     {message && <p role="status">{message}</p>}
   </div>;
 }
 
 const fixtureStyles = `
-.composition-desktop{height:100dvh;font:14px system-ui}.composition-main{padding:20px}.composition-main h1{font-size:20px;font-weight:600;margin-bottom:8px}
-.composition-controls{display:flex;align-items:end;flex-wrap:wrap;gap:10px;margin:18px 0}.composition-controls label{display:grid;gap:4px}.composition-controls button,.composition-controls input,.composition-controls select,.composition-view header button{border:1px solid #8894a6;border-radius:6px;padding:6px 8px}
-.composition-views{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.composition-view{height:65vh;display:flex;flex-direction:column;border:1px solid #8894a6;border-radius:8px;overflow:hidden}.composition-view header{display:flex;align-items:center;justify-content:space-between;padding:8px}
-.composition-view iframe{min-height:0;flex:1}.composition-floating{position:fixed;right:60px;bottom:24px;width:430px;height:500px;z-index:40;box-shadow:0 8px 32px #0005;border:1px solid #8894a6;border-radius:8px;overflow:hidden}.composition-floating[hidden]{display:none}.composition-window.hosty-panel-workspace{height:100%}.composition-window .hosty-panel-document{display:none}.composition-window .hosty-panel-body{flex:1;margin:0}.composition-window .hosty-panel-resize{display:none}
+.composition-desktop{height:100dvh}.composition-main{padding:20px;min-width:0}.composition-main h1{font-size:22px;line-height:30px;font-weight:600;margin-bottom:8px}
+.composition-main>p{max-width:72ch;color:var(--muted-foreground)}
+.composition-controls{display:flex;align-items:end;flex-wrap:wrap;gap:10px;margin:18px 0}.composition-controls label{display:grid;gap:6px;min-width:0}.composition-controls [data-slot=select-trigger]{max-width:min(400px,calc(100vw - 40px));width:100%}
+.composition-views{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.composition-view{min-width:0;height:65vh;display:flex;flex-direction:column;background:var(--card);border:1px solid var(--border);border-radius:14px;overflow:hidden}.composition-view header{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px;border-bottom:1px solid var(--border)}
+.composition-view iframe{min-height:0;flex:1}.composition-floating{position:fixed;right:60px;bottom:24px;width:430px;height:500px;z-index:40;box-shadow:0 8px 32px #0005;background:var(--card);border:1px solid var(--border);border-radius:14px;overflow:hidden}.composition-floating[hidden]{display:none}.composition-window.hosty-panel-workspace{height:100%}.composition-window .hosty-panel-document{display:none}.composition-window .hosty-panel-body{flex:1;margin:0}.composition-window .hosty-panel-resize{display:none}
 @media(max-width:700px){.composition-views{grid-template-columns:1fr}.composition-floating{right:8px;width:min(430px,calc(100vw - 16px))}}
 `;

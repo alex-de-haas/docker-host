@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text.Json;
 using Microsoft.Net.Http.Headers;
 
 namespace Haas.Hosty.Core;
@@ -34,6 +36,7 @@ internal static class AppAssetEndpoints
             HttpResponse response,
             CoreDataPaths paths,
             AppRegistryStore apps,
+            DevelopmentWorkspaceService workspaces,
             UserDirectoryStore users,
             IClock clock,
             CancellationToken cancellationToken) =>
@@ -62,19 +65,51 @@ internal static class AppAssetEndpoints
                         return Results.NotFound();
                     }
 
-                    return Serve(appId, assetPath, request, response, paths);
+                    return await ServeAsync(app, assetPath, request, response, paths, workspaces, cancellationToken);
                 },
                 cancellationToken: cancellationToken));
     }
 
-    private static IResult Serve(
-        string appId,
+    private static async Task<IResult> ServeAsync(
+        AppRecord app,
         string assetPath,
         HttpRequest request,
         HttpResponse response,
-        CoreDataPaths paths)
+        CoreDataPaths paths,
+        DevelopmentWorkspaceService workspaces,
+        CancellationToken ct)
     {
-        if (!TryResolveAsset(paths.AppsRoot, appId, assetPath, out var fullPath, out var contentType))
+        // Only the admitted app icon is public from a workspace. The repository can contain private
+        // images and documents that were never declared as display assets by this installation.
+        var icon = CoreDataPaths.NormalizeRelativeAssetPath("", app.CatalogMetadata?.Icon);
+        var isIconRequest = assetPath == icon;
+        if (isIconRequest && ContentTypes.TryGetValue(Path.GetExtension(assetPath), out var iconType) &&
+            iconType.StartsWith("image/", StringComparison.Ordinal))
+        {
+            try
+            {
+                var root = await workspaces.ActiveAppDisplayRootAsync(app, ct);
+                if (root is not null && TryResolveAssetUnderRoot(root, assetPath, out var sourcePath, out _) &&
+                    await ReadIconAsync(sourcePath, ct) is { } bytes &&
+                    MountPathPolicy.ResolveRealPath(root) == Path.GetFullPath(root) &&
+                    !CoreDataPaths.ContainsSymbolicLink(root, sourcePath))
+                {
+                    SetSecurityHeaders(response);
+                    // Source bytes can change without a version, length or timestamp change. Do not
+                    // let a stale version query or If-Modified-Since make them immutable/unchanged.
+                    response.Headers.CacheControl = "private, no-cache";
+                    var iconEtag = new EntityTagHeaderValue($"\"{Convert.ToHexStringLower(SHA256.HashData(bytes))}\"");
+                    return Results.File(bytes, iconType, entityTag: iconEtag, enableRangeProcessing: false);
+                }
+            }
+            catch (Exception ex) when (ex is AppLifecycleException or IOException or UnauthorizedAccessException or JsonException)
+            {
+                // Display-only source failures leave the installed package available. Never repair
+                // workspace metadata or copy files into an installed package from a GET.
+            }
+        }
+
+        if (!TryResolveAsset(paths.AppsRoot, app.Id, assetPath, out var fullPath, out var contentType))
         {
             return Results.NotFound();
         }
@@ -94,14 +129,15 @@ internal static class AppAssetEndpoints
             return Results.NotFound();
         }
 
-        response.Headers["X-Content-Type-Options"] = "nosniff";
-        response.Headers["Content-Security-Policy"] = "default-src 'none'; sandbox";
+        SetSecurityHeaders(response);
         // A ?v= cache-buster (the app version) makes the URL change whenever the asset does, so the body
         // is safe to cache immutably; without it, revalidate against the ETag. `private` either way:
         // the response is authorized per session, so a shared cache must never serve it to another user.
         // `no-cache` on its own only forces revalidation — a shared cache may still store the body,
         // so the private directive has to be explicit in both branches.
-        response.Headers.CacheControl = request.Query.ContainsKey("v")
+        // A temporarily unavailable development icon can recover at this same URL. Its packaged
+        // fallback must not become immutable while the journal still selects development mode.
+        response.Headers.CacheControl = !(isIconRequest && app.DevModeId is not null) && request.Query.ContainsKey("v")
             ? "private, max-age=31536000, immutable"
             : "private, no-cache";
 
@@ -111,6 +147,25 @@ internal static class AppAssetEndpoints
         return Results.File(fullPath, contentType, lastModified: info.LastWriteTimeUtc, entityTag: etag, enableRangeProcessing: false);
     }
 
+    private static void SetSecurityHeaders(HttpResponse response)
+    {
+        response.Headers["X-Content-Type-Options"] = "nosniff";
+        response.Headers["Content-Security-Policy"] = "default-src 'none'; sandbox";
+    }
+
+    private static async Task<byte[]?> ReadIconAsync(string path, CancellationToken ct)
+    {
+        const int maxBytes = 512 * 1024;
+        await AppSourceService.RequireRegularFileAsync(path, ct);
+        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete,
+            bufferSize: 4096, FileOptions.Asynchronous | FileOptions.SequentialScan);
+        if (stream.Length > maxBytes) return null;
+        // Read one byte beyond the budget so a growing file cannot bypass the length check.
+        var bytes = new byte[maxBytes + 1];
+        var count = await stream.ReadAtLeastAsync(bytes, bytes.Length, throwOnEndOfStream: false, cancellationToken: ct);
+        return count > maxBytes ? null : bytes[..count];
+    }
+
     // Resolve a requested asset to a servable file: allowlisted extension, contained under the app's
     // folder, existing, and (if a symlink) with its real target still inside the folder. Returns false
     // for anything else so the endpoint answers a plain 404. Extracted for direct testing of the guard.
@@ -118,23 +173,23 @@ internal static class AppAssetEndpoints
     {
         fullPath = string.Empty;
         contentType = string.Empty;
-        if (!ContentTypes.TryGetValue(Path.GetExtension(assetPath), out var resolvedType))
+        if (!CoreDataPaths.TryResolveContainedPath(appsRoot, appId, out var appRoot) ||
+            // Check the root itself as well as descendants before entering the common path guard.
+            CoreDataPaths.ContainsSymbolicLink(appsRoot, appRoot))
         {
             return false;
         }
 
-        if (!CoreDataPaths.TryResolveContainedPath(appsRoot, appId, out var appRoot) ||
-            // The app root itself, not just what is under it: if apps/<id> is a link, every path below
-            // it resolves outside the apps tree while still looking contained.
-            CoreDataPaths.ContainsSymbolicLink(appsRoot, appRoot) ||
+        return TryResolveAssetUnderRoot(appRoot, assetPath, out fullPath, out contentType);
+    }
+
+    private static bool TryResolveAssetUnderRoot(string appRoot, string assetPath, out string fullPath, out string contentType)
+    {
+        fullPath = string.Empty;
+        contentType = string.Empty;
+        if (!ContentTypes.TryGetValue(Path.GetExtension(assetPath), out var resolvedType) ||
             !CoreDataPaths.TryResolveContainedRelativePath(appRoot, assetPath, out var candidate) ||
-            !File.Exists(candidate) ||
-            // Reserved namespaces are not display assets. Vendoring refuses to write into them, but a
-            // request can still name one directly, and app runtime data lives under data/ — which is
-            // exactly the path the IDOR was read through.
-            CoreDataPaths.IsReservedAppRootPath(assetPath) ||
-            // Fails closed on a link anywhere below the app root, including an ancestor directory: the
-            // containment above is lexical and says nothing about where a link inside the tree points.
+            !File.Exists(candidate) || CoreDataPaths.IsReservedAppRootPath(assetPath) ||
             CoreDataPaths.ContainsSymbolicLink(appRoot, candidate))
         {
             return false;

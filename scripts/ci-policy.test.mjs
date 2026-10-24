@@ -164,14 +164,14 @@ test("aggregate rejects malformed or weakened classification contracts", () => {
   ]) assert.ok(evaluateGate(invalid, results(plan)).length, JSON.stringify(invalid));
 });
 
-test("output values have fixed keys and JSON-escape hostile filename newlines", () => {
+test("output values have fixed keys and exclude hostile filenames", () => {
   const plan = classifyPaths(["docs/features/example/line\nforged_output=true.md"]);
   const outputs = planOutputs(plan);
   assert.equal(outputs.plans, "true");
   assert.equal(outputs.core_aot, "false");
   assert.equal(outputs.workflows, "false");
   assert.ok(!outputs.plan.includes("\n"));
-  assert.deepEqual(JSON.parse(outputs.plan), plan);
+  assert.deepEqual(JSON.parse(outputs.plan), { ...plan, reasons: {} });
 });
 
 function fixture(t) {
@@ -213,7 +213,7 @@ test("CLI uses actual Git deleted and renamed paths, and safely writes GitHub ou
   const lines = readFileSync(output, "utf8").trimEnd().split("\n");
   assert.equal(lines.length, Object.keys(planOutputs(plan)).length);
   assert.ok(!lines.some(line => line === "forged_output=true"));
-  assert.deepEqual(JSON.parse(lines.find(line => line.startsWith("plan=")).slice(5)), plan);
+  assert.deepEqual(JSON.parse(lines.find(line => line.startsWith("plan=")).slice(5)), { ...plan, reasons: {} });
 });
 
 test("CLI fails classification instead of producing a green empty plan for bad refs", t => {
@@ -240,6 +240,26 @@ test("CLI gate consumes JSON from environment and returns a failing exit for den
   assert.equal(run.status, 1);
 });
 
+
+test("large change sets keep gate environment bounded without weakening required checks", () => {
+  const paths = Array.from({ length: 750 }, (_, index) => core(`${"nested/".repeat(16)}file-${index}.cs`));
+  const plan = classifyPaths(paths);
+  assert.ok(Buffer.byteLength(JSON.stringify(plan)) > 128 * 1024, "fixture exceeds Linux's per-string exec limit");
+  const outputs = planOutputs(plan);
+  const needs = { ...results(plan), changes: { result: "success", outputs } };
+  const env = { ...process.env, CI_PLAN: outputs.plan, CI_NEEDS_JSON: JSON.stringify(needs) };
+  assert.ok(Buffer.byteLength(env.CI_PLAN) < 8 * 1024);
+  assert.ok(Buffer.byteLength(env.CI_NEEDS_JSON) < 8 * 1024);
+  const transported = JSON.parse(outputs.plan);
+  for (const field of ["components", "profiles", "required"]) assert.deepEqual(transported[field], plan[field]);
+  assert.equal(plan.reasons.core.length, paths.length, "full per-path diagnostics remain available");
+  let run = spawnSync(process.execPath, [script, "gate"], { env, encoding: "utf8" });
+  assert.equal(run.status, 0, run.error?.message || run.stderr);
+  needs.core.result = "failure";
+  run = spawnSync(process.execPath, [script, "gate"], { env: { ...env, CI_NEEDS_JSON: JSON.stringify(needs) }, encoding: "utf8" });
+  assert.equal(run.status, 1, run.error?.message || run.stderr);
+  assert.match(run.stderr, /Required job core: failure/);
+});
 
 test("platform version-only metadata does not trigger unrelated .NET runtimes", () => {
   const props = version => `<Project>\n<!-- Platform version -->\n<PropertyGroup><Version>${version}</Version></PropertyGroup>\n</Project>\n`;

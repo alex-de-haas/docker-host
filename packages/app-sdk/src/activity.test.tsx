@@ -23,7 +23,7 @@ describe("activity renewal", () => {
     const fetchMock = vi.fn(async (input: unknown, _init?: RequestInit) => {
       if (input === "/api/auth/identity") return Response.json({ status: "active", activityRequired: true, activeUntil: new Date(Date.now() - 1000).toISOString(),
         recovery: { appId: "native-sample", corePublicOrigin: "http://native-renewal.localhost:7070", appAuthProtocol: 2 } });
-      if (input === "/api/auth/app-code") { renewed = true; return Response.json({ accessToken: "renewed-native-grant", activeUntil: new Date(Date.now() + 3600_000).toISOString() }); }
+      if (String(input).endsWith("/api/auth/app-code")) { renewed = true; return Response.json({ accessToken: "renewed-native-grant", activeUntil: new Date(Date.now() + 3600_000).toISOString() }); }
       return renewed ? Response.json({ ok: true }) : Response.json({ code: "reauth_required" }, { status: 401 });
     }); vi.stubGlobal("fetch", fetchMock);
     await act(async () => { root.render(<AppIdentityBridge><Draft /></AppIdentityBridge>); });
@@ -37,7 +37,7 @@ describe("activity renewal", () => {
       browser.dispatchEvent(new CustomEvent(NATIVE_APP_AUTH_RESULT, { detail: { state: url.searchParams.get("state"), code: "native-code" } }));
       expect((await result).status).toBe(200);
     });
-    const exchange = fetchMock.mock.calls.find(call => call[0] === "/api/auth/app-code")!;
+    const exchange = fetchMock.mock.calls.find(call => String(call[0]).endsWith("/api/auth/app-code"))!;
     const proof = JSON.parse((exchange[1] as RequestInit).body as string);
     expect(proof.code).toBe("native-code"); expect(appCodeChallenge(proof.codeVerifier)).toBe(url.searchParams.get("codeChallenge"));
     expect(node.querySelector("input")).toBe(draft); expect(draft.value).toBe("Unsaved native draft"); expect(mounts).toBe(1);
@@ -54,7 +54,7 @@ describe("activity renewal", () => {
     const fetchMock = vi.fn(async (input: unknown) => {
       if (input === "/api/auth/identity") return Response.json({ status: "active", activeUntil: new Date(Date.now() - 1000).toISOString(), activityRequired: true,
         recovery: { appId: "sample", corePublicOrigin: "http://core.localhost:7070", appAuthProtocol: 1 } });
-      if (input === "/api/auth/app-code") return Response.json({ accessToken: "hostyg_renewed", activeUntil: new Date(Date.now() + 3600_000).toISOString() });
+      if (String(input).endsWith("/api/auth/app-code")) return Response.json({ accessToken: "hostyg_renewed", activeUntil: new Date(Date.now() + 3600_000).toISOString() });
       return Response.json({ code }, { status: 401 });
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -68,7 +68,7 @@ describe("activity renewal", () => {
     await act(async () => { [...node.querySelectorAll("button")].find(b => b.textContent === "Renew access")!.click(); });
     expect(open).toHaveBeenCalledTimes(1);
     const url = new URL(String(open.mock.calls[0]![0]));
-    fetchMock.mockImplementation(async input => input === "/api/auth/app-code"
+    fetchMock.mockImplementation(async input => String(input).endsWith("/api/auth/app-code")
       ? Response.json({ accessToken: "hostyg_renewed", activeUntil: new Date(Date.now() + 3600_000).toISOString() }) : Response.json({ ok: true }));
     await act(async () => {
       window.dispatchEvent(new MessageEvent("message", { origin: url.origin, source: popup as unknown as Window,
@@ -97,7 +97,7 @@ describe("activity renewal", () => {
     const fetcher = vi.fn(async (input: unknown, _init?: RequestInit) => {
       if (input === "/api/auth/identity") return Response.json({ status: "active", activityRequired: true, activeUntil: new Date(Date.now() - 1000).toISOString(),
         recovery: { appId: "mounted-sample", corePublicOrigin: coreOrigin, appAuthProtocol: ++metadataCalls === 1 ? 1 : 2 } });
-      if (input === "/api/auth/app-code") { renewed = true; return Response.json({ accessToken: "fresh-upgraded-grant", activeUntil: new Date(Date.now() + 3600_000).toISOString() }); }
+      if (String(input).endsWith("/api/auth/app-code")) { renewed = true; return Response.json({ accessToken: "fresh-upgraded-grant", activeUntil: new Date(Date.now() + 3600_000).toISOString() }); }
       return renewed ? Response.json({ ok: true }) : Response.json({ code: "reauth_required" }, { status: 401 });
     }); vi.stubGlobal("fetch", fetcher);
     await act(async () => { root.render(<AppIdentityBridge><Draft /></AppIdentityBridge>); });
@@ -120,7 +120,7 @@ describe("activity renewal", () => {
         data: { type: "hosty:app-auth-code", state: newState, code: "fresh-upgraded-code" } }));
       expect((await request).status).toBe(200);
     });
-    const exchange = fetcher.mock.calls.find(call => call[0] === "/api/auth/app-code")!;
+    const exchange = fetcher.mock.calls.find(call => String(call[0]).endsWith("/api/auth/app-code"))!;
     const proof = JSON.parse((exchange[1] as RequestInit).body as string);
     expect(appCodeChallenge(proof.codeVerifier)).toBe(newChallenge);
     expect(node.querySelector("input")).toBe(draft); expect(draft.value).toBe("Keep this draft through upgrade"); expect(mounts).toBe(1);

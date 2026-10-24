@@ -1,8 +1,9 @@
 "use client";
 
-import { Fragment, useMemo, useRef, useState } from "react";
-import { Check, ChevronDown, ChevronRight, HelpCircle, Loader2, ShieldCheck, Wrench, X } from "lucide-react";
+import { Fragment, useId, useMemo, useRef, useState } from "react";
+import { Check, ChevronDown, ChevronRight, HelpCircle, ShieldCheck, Wrench, X, FileCode2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { HostyLoader } from "../../../../../shared/web/hosty-states";
 import { Button } from "@/components/ui/button";
 import { InlineError } from "@/components/status";
 import { Markdown } from "@/components/markdown";
@@ -24,6 +25,13 @@ import {
 } from "@/lib/tool-display";
 import type { AssistantEvent, AssistantQuestion } from "@/lib/assistant-api";
 import type { AttachmentIndex } from "@/lib/attachments";
+import { repositoryName, type DevelopmentWorkspace } from "@/lib/development-api";
+import { resolveTranscriptReview, type TranscriptReviewReference } from "@/lib/transcript-edits";
+import { commandDuration, commandOutcome, isCommandTool, recordedEditGroups, recordedEditTotals, recordedFileEdits, type CommandOutcome, type RecordedFileEdit } from "@/lib/transcript-activity";
+import type { ToolOutput } from "@/lib/tool-output";
+export type TranscriptReviewContext = {
+  sessionId: string; workspaces: readonly DevelopmentWorkspace[]; onOpen: (reference: TranscriptReviewReference) => void;
+};
 
 // The transcript, moved out of Shell with the rest of the panel. The gateway's event log is the
 // source: every proposed write pauses as an inline approval card until the operator decides.
@@ -87,6 +95,7 @@ export function TranscriptEvent({
   onAnswer,
   appNames,
   attachments,
+  reviewContext,
 }: {
   event: AssistantEvent;
   decision: ApprovalDecision | null;
@@ -100,6 +109,7 @@ export function TranscriptEvent({
   appNames?: Record<string, string>;
   /** Every upload in the log; absent, each upload simply draws its own row. */
   attachments?: AttachmentIndex;
+  reviewContext?: TranscriptReviewContext;
 }) {
   switch (event.type) {
     case "app_context_changed": {
@@ -113,7 +123,7 @@ export function TranscriptEvent({
       const names = (Array.isArray(event.attachments) ? event.attachments : []).map(String);
       return (
         <div className="space-y-1">
-          {String(event.text ?? "").trim() && <div className="ml-8 rounded-lg bg-primary/10 px-3 py-2 text-sm whitespace-pre-wrap">
+          {String(event.text ?? "").trim() && <div className="ml-3 min-w-0 rounded-lg bg-primary/10 px-3 py-2 text-sm whitespace-pre-wrap wrap-anywhere sm:ml-8">
             {String(event.text ?? "")}
           </div>}
           {names.length > 0 && (
@@ -139,8 +149,12 @@ export function TranscriptEvent({
       );
     case "tool_use": {
       const toolName = String(event.toolName ?? "tool");
-      return isListedToolUse(toolName) ? <ToolRow toolName={toolName} input={event.input} appNames={appNames} mcp={event.mcp} /> : null;
+      return isListedToolUse(toolName) ? <><ToolRow toolName={toolName} input={event.input} appNames={appNames} mcp={event.mcp} /><TranscriptChanges events={[event]} reviewContext={reviewContext} /></> : null;
     }
+    case "tool_result":
+      return <p className="p-2 text-xs text-muted-foreground">Tool output has no unique matching call in this turn.</p>;
+    case "command_result":
+      return <div className="space-y-1 rounded-md border border-muted-foreground/25 p-2 text-xs"><p className="text-muted-foreground">Command result has no unique matching call in this turn.</p><CommandResult outcome={commandOutcome(event)} /></div>;
     case "approval_request":
       return (
         <ApprovalCard
@@ -183,58 +197,139 @@ export function TranscriptEvent({
 /** Stored metadata remains visible even when the session cache no longer contains the file. */
 function AttachmentRow({ files }: { files: { name: string; size: number | null }[] }) {
   return (
-    <div className="ml-8 flex min-w-0 flex-col gap-2" aria-label="Message attachments">
+    <div className="ml-3 flex min-w-0 flex-col sm:ml-8 gap-2" aria-label="Message attachments">
       {files.map((file, index) => <ChatAttachment key={`${file.name}-${index}`} name={file.name} size={file.size} />)}
     </div>
   );
 }
 
-/** An event records that a tool was called; it does not establish success or completion. */
-export function ToolActivity({ events, appNames }: { events: AssistantEvent[]; appNames?: Record<string, string> }) {
+/** Recorded outcomes belong to their factual command; a turn result cannot establish one. */
+export function ToolActivity({ events, appNames, reviewContext, commandResults = {}, toolResults = {} }: {
+  events: AssistantEvent[]; appNames?: Record<string, string>; reviewContext?: TranscriptReviewContext; commandResults?: Readonly<Record<number, CommandOutcome>>; toolResults?: Readonly<Record<number, ToolOutput>>;
+}) {
   const [open, setOpen] = useState(false);
-  const labels = [...new Set(events.map(event => summarizeToolUse(String(event.toolName ?? "tool"), event.input, appNames, event.mcp).label))];
-  return <Collapsible open={open} onOpenChange={setOpen} className="min-w-0" data-slot="tool-activity">
-    <CollapsibleTrigger asChild>
-      <button type="button" className="flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-2 text-left text-xs text-muted-foreground hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring">
+  const failedCalls = events.filter(event => {
+    const outcome = isCommandTool(event) ? commandResults[event.seq] : toolResults[event.seq];
+    return outcome?.status === "failed" && !outcome.conflict;
+  }).length;
+  return <div className="flex min-w-0 flex-col gap-2">
+    <Collapsible open={open} onOpenChange={setOpen} className="min-w-0" data-slot="tool-activity">
+      <CollapsibleTrigger asChild><Button type="button" variant="ghost" size="sm" className="h-auto min-h-8 w-full min-w-0 justify-start gap-2 px-2 text-left text-xs text-muted-foreground">
         <Wrench className="size-3.5 shrink-0" aria-hidden />
-        <span className="shrink-0 font-medium">{events.length} tool {events.length === 1 ? "call" : "calls"}</span>
-        <span className="min-w-0 truncate">{labels.join(", ")}</span>
+        <span className="min-w-0 font-medium tabular-nums">{events.length} tool {events.length === 1 ? "call" : "calls"}</span>
+        {failedCalls > 0 && <Badge variant="outline" className="shrink-0 tabular-nums text-destructive-foreground">{failedCalls} failed</Badge>}
         <ChevronDown className={cn("ml-auto size-3.5 shrink-0", open && "rotate-180")} aria-hidden />
-      </button>
-    </CollapsibleTrigger>
-    <CollapsibleContent className="ml-3 flex min-w-0 flex-col gap-2 border-l pl-3 pt-1">
-      {events.map(event => <ToolRow key={event.seq} toolName={String(event.toolName ?? "tool")} input={event.input} appNames={appNames} mcp={event.mcp} />)}
+      </Button></CollapsibleTrigger>
+      <CollapsibleContent className="ml-3 flex min-w-0 flex-col gap-2 border-l pl-3 pt-1">
+        {events.map(event => <ToolRow key={event.seq} toolName={String(event.toolName ?? "tool")} input={event.input} appNames={appNames} mcp={event.mcp} output={toolResults[event.seq]}
+          command={isCommandTool(event) ? { outcome: commandResults[event.seq], legacy: !event.toolUseId } : undefined} />)}
+      </CollapsibleContent>
+    </Collapsible>
+    <TranscriptChanges events={events} reviewContext={reviewContext} />
+  </div>;
+}
+function TranscriptChanges({ events, reviewContext }: { events: AssistantEvent[]; reviewContext?: TranscriptReviewContext }) {
+  const [open, setOpen] = useState(false);
+  const edits = recordedFileEdits(events);
+  if (!edits.length) return null;
+  const totals = recordedEditTotals(edits);
+  const entries = edits.some(edit => !edit.review);
+  return <Collapsible open={open} onOpenChange={setOpen} className="min-w-0" data-slot="transcript-changes">
+    <CollapsibleTrigger asChild><Button type="button" variant="ghost" size="sm" className="h-auto min-h-8 w-full min-w-0 justify-start gap-2 px-2 text-left text-xs text-muted-foreground">
+      <FileCode2 className="size-3.5 shrink-0" aria-hidden />
+      <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
+        <span className="font-medium tabular-nums">Changes · {edits.length} {entries ? edits.length === 1 ? "file entry" : "file entries" : edits.length === 1 ? "file" : "files"}</span>
+        {totals.additions !== undefined && <span className="font-mono font-normal tabular-nums text-success-foreground" aria-label={`${totals.additions} recorded additions`}>+{totals.additions}</span>}
+        {totals.deletions !== undefined && <span className="font-mono font-normal tabular-nums text-destructive-foreground" aria-label={`${totals.deletions} recorded deletions`}>−{totals.deletions}</span>}
+        {(totals.additions === undefined || totals.deletions === undefined) && <span className="text-muted-foreground">Line totals unavailable</span>}
+      </span>
+      <ChevronDown className={cn("ml-auto size-3.5 shrink-0", open && "rotate-180")} aria-hidden />
+    </Button></CollapsibleTrigger>
+    <CollapsibleContent className="min-w-0 pt-1">
+      <TranscriptEditFiles edits={edits} reviewContext={reviewContext} />
     </CollapsibleContent>
   </Collapsible>;
+}
+function CommandResult({ outcome, legacy = false, compact = false }: { outcome?: CommandOutcome; legacy?: boolean; compact?: boolean }) {
+  const Tag = compact ? "span" : "div";
+  return <Tag data-slot="command-result" className={cn("min-w-0 items-center text-xs font-normal tabular-nums", compact ? "ml-auto inline-flex shrink-0 gap-x-1 whitespace-nowrap @sm:gap-x-2" : "flex flex-wrap gap-x-2 gap-y-1 px-1")} aria-label={compact ? undefined : "Recorded command result"}>
+    <Badge variant="outline" className={cn(outcome?.status === "failed" ? "text-destructive-foreground" : "text-muted-foreground", compact && "px-1.5 py-0 @sm:px-2")}>
+      {outcome?.conflict ? "Conflicting recorded results" : outcome?.status === "completed" ? "Completed" : outcome?.status === "failed" ? "Failed" : outcome?.status === "cancelled" ? "Cancelled" : "Outcome unavailable"}
+    </Badge>
+    {outcome?.exitCode !== undefined && <span className="font-mono text-muted-foreground">Exit {outcome.exitCode}</span>}
+    {outcome?.durationMs !== undefined && <span className="font-mono text-muted-foreground">{commandDuration(outcome.durationMs)}</span>}
+    {!compact && outcome?.summary && <span className="min-w-0 basis-full break-words text-muted-foreground">{outcome.summary}</span>}
+    {!compact && !outcome && legacy && <span className="text-muted-foreground">This older call has no recorded result identity.</span>}
+  </Tag>;
+}
+function TranscriptEditFiles({ edits, reviewContext }: { edits: RecordedFileEdit[]; reviewContext?: TranscriptReviewContext }) {
+  const id = useId();
+  if (!edits.length) return null;
+  return <div className="ml-3 flex min-w-0 flex-col gap-2 border-l pl-3" aria-label="File edits">
+    {recordedEditGroups(edits).map((group, groupIndex) => <section key={group.key} className="min-w-0 space-y-1"
+      aria-label={group.repository ? `Changes in ${group.repository}` : "Unbound file edit"}>
+      {group.repository && <h4 className="truncate px-2 text-xs font-semibold text-muted-foreground" title={group.repository}>{repositoryName(group.repository)}</h4>}
+      {group.edits.map((edit, index) => {
+        const target = edit.review && reviewContext && resolveTranscriptReview(edit.review, reviewContext.sessionId, reviewContext.workspaces);
+        const unavailable = !edit.review ? edit.unavailable : !target ? "This file's recorded workspace is unavailable in this session." : undefined;
+        const hintId = `${id}-${groupIndex}-${index}-source`;
+        return <div key={edit.key} className="min-w-0">
+          <Button type="button" variant="ghost" size="sm" className="h-auto min-h-8 w-full justify-start gap-2 px-2 text-xs" disabled={!target}
+            aria-label={`Review ${edit.path}`} aria-describedby={unavailable ? hintId : undefined}
+            onClick={() => edit.review && target && reviewContext?.onOpen(edit.review)}>
+            <FileCode2 className="size-3.5 shrink-0" aria-hidden /><span className="min-w-0 flex-1 break-all whitespace-normal text-left font-mono font-normal">{edit.path}</span>
+            {edit.additions !== undefined && <span className="shrink-0 font-mono font-normal tabular-nums text-success-foreground" aria-label={`${edit.additions} recorded additions`}>+{edit.additions}</span>}
+            {edit.deletions !== undefined && <span className="shrink-0 font-mono font-normal tabular-nums text-destructive-foreground" aria-label={`${edit.deletions} recorded deletions`}>−{edit.deletions}</span>}
+          </Button>
+          {(edit.additions === undefined || edit.deletions === undefined) && <p className="px-2 text-xs text-muted-foreground">Recorded line totals unavailable.</p>}
+          {unavailable && <p id={hintId} className="px-2 pb-1 text-xs text-muted-foreground">{unavailable}</p>}
+        </div>;
+      })}
+    </section>)}
+  </div>;
 }
 
 // One line per tool call: what it was for, not what it was called. A run that reads thirty files is
 // thirty rows, so the row carries the model's own description (or the path, the pattern, the query)
 // and the raw input waits behind a click — a transcript that showed every input would be a wall of
 // JSON with the conversation somewhere inside it.
-function ToolRow({ toolName, input, appNames, mcp }: {
-  toolName: string; input: unknown; appNames?: Record<string, string>; mcp?: unknown;
+function ToolRow({ toolName, input, appNames, mcp, output, command }: {
+  toolName: string; input: unknown; appNames?: Record<string, string>; mcp?: unknown; output?: ToolOutput; command?: { outcome?: CommandOutcome; legacy: boolean };
 }) {
   const [open, setOpen] = useState(false);
   const summary = useMemo(() => summarizeToolUse(toolName, input, appNames, mcp), [toolName, input, appNames, mcp]);
+  const description = input && typeof input === "object" && "description" in input ? input.description : undefined;
   const Chevron = open ? ChevronDown : ChevronRight;
 
   return (
-    <div className="px-1 text-xs text-muted-foreground">
-      <button
-        type="button"
+    <div className={cn("@container min-w-0 text-xs text-muted-foreground", !command && "px-1")}>
+      <Button
+        type="button" variant="ghost" size="sm"
         onClick={() => setOpen((current) => !current)}
         aria-expanded={open}
-        className="flex w-full min-w-0 items-center gap-1.5 text-left hover:text-foreground"
+        className="h-auto min-h-8 w-full min-w-0 justify-start gap-1.5 px-1 py-1 text-left text-xs text-muted-foreground hover:text-foreground"
       >
-        <Wrench className="h-3 w-3 shrink-0" aria-hidden />
-        <span className="shrink-0 font-medium">{summary.label}</span>
-        {summary.detail && <span className="min-w-0 truncate">{summary.detail}</span>}
-        <Chevron className="ml-auto h-3 w-3 shrink-0" aria-hidden />
-      </button>
-      {open && (
+        <Wrench className="size-3 shrink-0" aria-hidden />
+        <span className="min-w-0 flex-1 truncate">
+          <span className="font-medium">{summary.label}</span>
+          {summary.detail && <span className={cn("ml-1 font-normal", (["Command", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Glob", "Grep", "WebFetch", "FileChange"].includes(toolName) || toolName === "Bash" && !(typeof description === "string" && description.length > 0)) && "font-mono")}>{summary.detail}</span>}
+        </span>
+        {command && <CommandResult outcome={command.outcome} compact />}
+        <Chevron className="ml-auto size-3 shrink-0" aria-hidden />
+      </Button>
+      {open && <div className="min-w-0">
+        {command?.outcome?.summary && <p className="py-1 font-mono text-xs tabular-nums text-muted-foreground">{command.outcome.summary}</p>}
+        {command?.legacy && !command.outcome && <p className="py-1 text-xs text-muted-foreground">This older call has no recorded result identity.</p>}
         <ChatCodeBlock code={JSON.stringify(input ?? {}, null, 2)} language="json" title="Tool input" />
-      )}
+        {!output ? <p className="py-2 text-xs text-muted-foreground">Tool output was not recorded for this call.</p>
+          : output.conflict ? <p className="py-2 text-xs text-warning-foreground">Conflicting recorded outputs; the result is unavailable.</p>
+          : <>
+            {!command && output.status !== "completed" && <p className={cn("pt-2 text-xs", output.status === "failed" ? "text-destructive-foreground" : "text-muted-foreground")}>{output.status === "failed" ? "Tool failed" : output.status === "cancelled" ? "Tool cancelled" : "Tool outcome unavailable"}</p>}
+            <ChatCodeBlock code={output.output} title="Tool output" />
+            {!output.output && <p className="pb-2 text-xs text-muted-foreground">Empty output.</p>}
+            {output.truncated && <p className="pb-2 text-xs text-muted-foreground">Output truncated to the recorded limit.</p>}
+          </>}
+      </div>}
     </div>
   );
 }
@@ -272,6 +367,8 @@ function ApprovalCard({
 }) {
   const view = useMemo(() => describeApproval(toolName, input, appNames), [toolName, input, appNames]);
   const [why, setWhy] = useState("");
+  const [denyOpen, setDenyOpen] = useState(false);
+  const reasonInput = useRef<HTMLInputElement>(null), denyButton = useRef<HTMLButtonElement>(null);
   const [busy, setBusy] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -294,25 +391,25 @@ function ApprovalCard({
   };
 
   return (
-    <Card className="min-w-0 gap-3 py-3" data-slot="approval-card" aria-busy={busy}>
-      <CardHeader className="gap-2 px-3">
+    <Card className={cn("min-w-0 gap-3 overflow-hidden py-0", !decision && "border-warning-foreground/40")} data-slot="approval-card" aria-busy={busy}>
+      <CardHeader className={cn("gap-2 border-b px-3 py-3", !decision ? "border-warning-foreground/25 bg-warning-soft" : "bg-muted/35")}>
         <div className="flex flex-wrap items-center gap-2">
-          <ShieldCheck className="size-4 text-muted-foreground" aria-hidden />
+          <ShieldCheck className={cn("size-4", !decision ? "text-warning-foreground" : "text-muted-foreground")} aria-hidden />
           <span className="text-xs text-muted-foreground">{category}</span>
-          <Badge variant={decision ? "outline" : "secondary"} className="ml-auto">
+          <Badge variant={decision ? "outline" : "secondary"} className={cn("ml-auto", !decision && "border-warning-foreground/30 bg-warning-soft text-warning-foreground")}>
             {decision ? (decision.decision === "allow" ? "Allowed" : decision.decision === "cancelled" ? "Cancelled" : "Denied") : submitted ? "Decision sent" : "Needs approval"}
           </Badge>
         </div>
-        <CardTitle className="text-sm leading-snug wrap-anywhere">{view.heading}</CardTitle>
+        <CardTitle className="text-sm font-semibold wrap-anywhere">{view.heading}</CardTitle>
         {title && title !== view.heading && <CardDescription className="wrap-anywhere">{title}</CardDescription>}
       </CardHeader>
-      <CardContent className="flex min-w-0 flex-col gap-2 px-3">
+      <CardContent className={cn("flex min-w-0 flex-col gap-2 px-3", decision && "pb-3")}>
         <ApprovalBody view={view} />
         {reason && <p className="text-xs text-muted-foreground wrap-anywhere">{reason}</p>}
         {decision?.message && <p className="text-sm wrap-anywhere">{decision.message}</p>}
-        {!decision && reasonBox && <FieldGroup className="gap-2"><Field>
+        {!decision && reasonBox && denyOpen && <FieldGroup className="gap-2"><Field>
           <FieldLabel htmlFor={`${approvalId}-reason`} className="text-xs">Reason for denying (optional)</FieldLabel>
-          <Input id={`${approvalId}-reason`} value={why} disabled={disabled}
+          <Input ref={reasonInput} id={`${approvalId}-reason`} value={why} disabled={disabled}
             aria-describedby={`${approvalId}-reason-hint`} placeholder="Explain what should change…"
             onChange={event => setWhy(event.target.value)}
             onKeyDown={event => {
@@ -324,10 +421,14 @@ function ApprovalCard({
         </Field></FieldGroup>}
         {error && <div role="alert"><InlineError message={error} /></div>}
       </CardContent>
-      {!decision && <CardFooter className="flex-wrap justify-end gap-2 border-t px-3 pt-3">
+      {!decision && <CardFooter className="flex-wrap justify-end gap-2 border-t px-3 py-3">
         {submitted ? <span role="status" className="mr-auto text-xs text-muted-foreground">Waiting for confirmation…</span> : <>
-          <Button type="button" size="sm" variant="outline" disabled={disabled} onClick={() => void decide("deny")}><X data-icon="inline-start" />Deny</Button>
-          <Button type="button" size="sm" disabled={disabled} onClick={() => void decide("allow")}>{busy ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <Check data-icon="inline-start" />}Allow</Button>
+          {reasonBox && denyOpen && <Button type="button" size="sm" variant="ghost" disabled={disabled} onClick={() => { setDenyOpen(false); requestAnimationFrame(() => denyButton.current?.focus()); }}>Cancel denial</Button>}
+          <Button ref={denyButton} type="button" size="sm" variant="outline" disabled={disabled} aria-expanded={reasonBox ? denyOpen : undefined} aria-controls={reasonBox ? `${approvalId}-reason` : undefined} onClick={() => {
+            if (reasonBox && !denyOpen) { setDenyOpen(true); requestAnimationFrame(() => reasonInput.current?.focus()); }
+            else void decide("deny");
+          }}><X data-icon="inline-start" />{reasonBox && !denyOpen ? "Deny…" : "Deny"}</Button>
+          <Button type="button" size="sm" disabled={disabled} onClick={() => void decide("allow")}>{busy ? <HostyLoader label={null} className="size-4" /> : <Check data-icon="inline-start" />}Allow once</Button>
         </>}
       </CardFooter>}
     </Card>
@@ -340,8 +441,8 @@ function ApprovalBody({ view }: { view: ApprovalView }) {
       return (
         <div className="flex min-w-0 flex-col gap-2">
           {/* Commands start unwrapped so paths stay on one line; Wrap is an explicit reader choice. */}
-          <ChatCodeBlock code={view.command} language="shell" title="Command" />
-          {view.cwd && <div className="text-xs break-all text-muted-foreground">in {view.cwd}</div>}
+          <ChatCodeBlock code={view.command} language="shell" title="Command" tone="ink" />
+          {view.cwd && <div className="font-mono text-xs break-all text-muted-foreground">in {view.cwd}</div>}
         </div>
       );
     case "file":
@@ -360,7 +461,7 @@ function ApprovalBody({ view }: { view: ApprovalView }) {
           {view.args.map(([key, value]) => (
             <Fragment key={key}>
               <dt className="font-mono text-muted-foreground">{key}</dt>
-              <dd className="min-w-0 break-all whitespace-pre-wrap">{value}</dd>
+              <dd className="min-w-0 break-all font-mono whitespace-pre-wrap">{value}</dd>
             </Fragment>
           ))}
         </dl>
@@ -381,7 +482,7 @@ function FileChange({ change }: { change: FileChangeView }) {
       <div className="flex flex-wrap items-baseline gap-2 text-xs">
         <span className="font-mono break-all">{change.path ?? "(unnamed file)"}</span>
         {change.kind && (
-          <Badge variant="outline" className="font-normal">
+          <Badge variant="outline" className="font-medium">
             {change.kind}
           </Badge>
         )}
@@ -454,7 +555,7 @@ function QuestionCard({ questionId, questions, answers, cancelled, onAnswer }: {
     <CardHeader className="px-3">
       <div className="flex flex-wrap items-center gap-2">
         <HelpCircle className="size-4 text-muted-foreground" aria-hidden />
-        <CardTitle className="text-sm">{answers ? "Your answers" : cancelled ? "Question cancelled" : "Your input is needed"}</CardTitle>
+        <CardTitle className="text-sm font-semibold">{answers ? "Your answers" : cancelled ? "Question cancelled" : "Your input is needed"}</CardTitle>
         <Badge variant="outline" className="ml-auto">{answers ? "Answered" : cancelled ? "Cancelled" : submitted ? "Answer sent" : "Question"}</Badge>
       </div>
     </CardHeader>
@@ -472,7 +573,7 @@ function QuestionCard({ questionId, questions, answers, cancelled, onAnswer }: {
           if (!question.multiSelect) setOther(current => ({ ...current, [question.question]: "" }));
         };
         const options = question.options.map((option, index) => <Field key={option.label} orientation="horizontal"
-          className="items-start rounded-md border p-2.5 has-data-[state=checked]:border-primary has-data-[state=checked]:bg-muted" data-disabled={disabled}>
+          className="items-start rounded-md border p-2.5 has-data-[state=checked]:border-brand-strong has-data-[state=checked]:bg-brand-soft" data-disabled={disabled}>
           {question.multiSelect ? <Checkbox id={`${baseId}-${index}`} checked={picks.includes(option.label)} disabled={disabled}
             onCheckedChange={checked => choose(option.label, checked === true)} />
             : <RadioGroupItem id={`${baseId}-${index}`} value={String(index)} disabled={disabled} />}
@@ -482,7 +583,7 @@ function QuestionCard({ questionId, questions, answers, cancelled, onAnswer }: {
           </FieldContent>
         </Field>);
         return <FieldSet key={question.question} className="min-w-0 gap-2">
-          <FieldLegend id={`${baseId}-legend`} className="mb-0 text-sm wrap-anywhere">{question.question}</FieldLegend>
+          <FieldLegend id={`${baseId}-legend`} className="mb-0 text-sm font-semibold wrap-anywhere">{question.question}</FieldLegend>
           <FieldDescription className="text-xs">{question.multiSelect ? "Choose one or more, or add your own answer." : "Choose one, or write your own answer."}</FieldDescription>
           {question.multiSelect ? <div className="flex flex-col gap-2">{options}</div>
             : <RadioGroup aria-labelledby={`${baseId}-legend`} className="gap-2"
@@ -503,7 +604,7 @@ function QuestionCard({ questionId, questions, answers, cancelled, onAnswer }: {
     {!answers && !cancelled && <CardFooter className="justify-end border-t px-3 pt-3">
       {submitted ? <span role="status" className="mr-auto text-xs text-muted-foreground">Waiting for confirmation…</span>
         : <Button type="button" size="sm" disabled={!complete || disabled} onClick={() => void submit()}>
-          {submitting && <Loader2 className="animate-spin" data-icon="inline-start" />}Send answer
+          {submitting && <HostyLoader label={null} className="size-4" />}Send answer
         </Button>}
     </CardFooter>}
   </Card>;

@@ -39,7 +39,7 @@ export function OtlpLogTable({ records, showSource = false }: { records: OtlpLog
   const columnCount = showSource ? 5 : 4;
 
   return (
-    <div className="overflow-hidden rounded-lg border">
+    <div className="telemetry-table overflow-x-auto rounded-xl border bg-card">
       <table className="w-full border-collapse text-left text-xs">
         <thead className="bg-muted/30">
           <tr className="border-b text-[11px] uppercase tracking-wide text-muted-foreground">
@@ -68,9 +68,9 @@ export function OtlpLogTable({ records, showSource = false }: { records: OtlpLog
                   aria-expanded={expanded}
                   aria-label={`Toggle details of ${record.severityText || "log"} entry`}
                   className={cn(
-                    "group cursor-pointer border-b align-top transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none",
-                    expanded && "bg-muted/30",
-                    isError && !expanded && "bg-red-500/[0.03]",
+                    "group cursor-pointer border-b align-top transition-colors hover:bg-muted/40 focus-visible:bg-accent focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-brand focus-visible:ring-0",
+                    expanded && "bg-accent",
+                    isError && !expanded && "bg-destructive-soft/40",
                   )}
                   onClick={toggle}
                   onKeyDown={(event) => {
@@ -83,7 +83,7 @@ export function OtlpLogTable({ records, showSource = false }: { records: OtlpLog
                   <td className="px-2 py-1.5">
                     <ChevronRight
                       className={cn(
-                        "h-3.5 w-3.5 shrink-0 text-muted-foreground/60 transition-transform group-hover:text-muted-foreground",
+                        "h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform",
                         expanded && "rotate-90 text-muted-foreground",
                       )}
                     />
@@ -105,7 +105,7 @@ export function OtlpLogTable({ records, showSource = false }: { records: OtlpLog
                     </Badge>
                   </td>
                   <td className="px-2 py-1.5">
-                    <div className={cn("break-words font-mono", isError && "text-red-700 dark:text-red-300")}>
+                    <div className={cn("break-words font-mono", isError && "text-destructive-foreground")}>
                       {record.body || "—"}
                     </div>
                   </td>
@@ -200,12 +200,12 @@ function LogDetails({ record }: { record: OtlpLogRow }) {
             {attributes.map(([key, value], index) => (
               <div
                 key={key}
-                className={cn("grid grid-cols-[minmax(0,12rem)_1fr] gap-3 px-2.5 py-1.5 text-[11px]", index > 0 && "border-t")}
+                className={cn("grid grid-cols-1 gap-0.5 px-2.5 py-1.5 text-[11px] sm:grid-cols-[minmax(0,12rem)_minmax(0,1fr)] sm:gap-3", index > 0 && "border-t")}
               >
-                <span className="truncate font-mono text-muted-foreground" title={key}>
+                <span className="min-w-0 break-all font-mono text-muted-foreground">
                   {key}
                 </span>
-                <span className="break-all font-mono">{value}</span>
+                <span className="min-w-0 whitespace-pre-wrap break-all font-mono">{value}</span>
               </div>
             ))}
           </div>
@@ -241,13 +241,13 @@ function logRowKey(record: OtlpLogRow): string {
 
 export function severityClasses(severityNumber: number): string {
   if (severityNumber >= 17) {
-    return "bg-red-500/10 text-red-700 dark:text-red-300";
+    return "bg-destructive-soft text-destructive-foreground";
   }
   if (severityNumber >= 13) {
-    return "bg-amber-500/10 text-amber-700 dark:text-amber-300";
+    return "bg-warning-soft text-warning-foreground";
   }
   if (severityNumber >= 9) {
-    return "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
+    return "bg-info-soft text-info-foreground";
   }
   return "bg-muted text-muted-foreground";
 }

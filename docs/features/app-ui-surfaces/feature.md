@@ -1,6 +1,6 @@
 ---
 created: 2026-08-19
-updated: 2026-10-20
+updated: 2026-10-22
 summary: Apps declare where their pages belong, such as settings, panels or navigation, and Shell places them.
 components: [apps/shell, apps/core]
 ---
@@ -29,7 +29,7 @@ contract format, not additions to it. Core resolves each surface to a URL exactl
 navigation entry, so Shell discovers placements without reading manifests.
 
 **`ui.settings` is singular and `ui.panels` is a list, deliberately.** One app has one place its
-operator configuration lives; the same app may ship several distinct tools, and the right icon rail is
+operator configuration lives; the same app may ship several distinct tools, and the Tools menu is
 where they belong. The fields stay per-kind rather than collapsing into one `ui.surface`, leaving
 room beside them for kinds not built yet.
 
@@ -56,18 +56,22 @@ and new installations still require icons.
 
 ## Settings Navigation
 
-Settings is expandable in the sidebar and opens a flyout in compact mode. It contains the built-in
-My profile, Host, Users & security and Shell groups, followed by one entry per application. Apps
-with `ui.settings` render their own page; other apps open Manage application. Internal navigation
-belongs to the app. Ordinary users see personal Profile and Tokens & devices. Stopped apps keep
-their settings entries and display the existing start/readiness UI when selected.
+Shell's sidebar has one Settings entry. The Settings page owns grouped navigation for My profile,
+Host, Users & security and Shell, followed by an Apps group with one app-named entry only for each
+declared `ui.settings` surface. There is no installed-app settings catalog. Apps without their own
+settings page remain manageable through standalone App Details at `/apps/<app-id>` from Dashboard.
+Internal settings navigation belongs to the app. Ordinary users see personal Profile and
+Tokens & devices. Declaring stopped apps keep their settings entries and display the existing
+start/readiness UI when selected.
 
 The former horizontal tab strip is removed. Selection stays in `/settings?tab=...`, so bookmarks,
 reload and back/forward retain the page. App entries use the app id as their key.
 Old page-specific bookmarks resolve to the same app entry. Removed or unknown apps fall back to
 the host's normal default.
 
-A small Shell header links the app settings page to Manage application. The iframe fills the remaining
+A small Shell header links the app settings page to standalone App Details. Host-managed details
+use Dashboard as their administrator breadcrumb parent; app-owned settings remain in Settings.
+The iframe fills the remaining
 workspace surface beside the sidebar and beneath that header, with no
 Shell padding inside that surface or height subtraction for tabs. The app owns content padding; its modal overlay covers
 the full iframe without covering Shell navigation or an independently docked panel. Built-in host
@@ -104,31 +108,25 @@ consent. The remaining consent mechanism and chat/tool acceptance are tracked in
 
 ## Shell's Chrome
 
-Two rails and a strip, so content stays visible beside its tools rather than under them.
+Shell has a left navigation rail, a 48 px top strip and a retained tool workspace.
+The top strip provides Assistant and a ReUI Tools menu beside notifications and theme. Tools lists
+actor-accessible panels in catalog order with app names, availability and observed attention;
+All tools opens the existing picker, including authorized app startup and catalog refresh.
 
-The navigation and 48 px top strip share the Shell's background without an enclosing border.
-The left navigation toggle and page title sit together above the workspace, aligned to its
-left edge. The brand occupies the navigation width and shows only its mark in compact mode.
-Notifications, theme selection and the right panel toggle stay at the right edge.
-Shell places the shared SDK workspace inside its own navigation and top strip. The document and
-right tool body share a resizable area with a 48 px rail; a tool header provides its title,
-**Open separately** and **Return to document**. The same component supplies standalone panels.
+The document and open tool body share a resizable area. A tool header provides its title,
+Open separately, Hide and a menu containing End this tool view. Hide collapses the workspace while
+keeping frames mounted and inert. Ending a view uses the SDK's presentation-close operation.
+Unopened tools are not mounted. Central navigation, collapse and tool switches preserve the selected
+conversation and draft. Removed access, installation replacement and frame-policy revocation
+invalidate affected tools rather than silently selecting a replacement.
 See [SDK Panel System](../sdk-panel-system/feature.md) for the host protocol and [panel resizing](../shell-panel-resize/feature.md).
-
-**The right panel** lists actor-accessible `ui.panels` in catalog order. The rail remains visible
-when the body is collapsed. Selecting another tool retains every previously opened iframe in this
-window, hidden and inert, while unopened tools are not mounted. Central navigation, Shell-owned
-pages, collapse and tool switches preserve the selected conversation and draft. Removed access,
-installation replacement and frame-policy revocation invalidate affected tools rather than silently
-selecting a replacement. The top-strip toggle and assistant shortcut use the same host.
 
 Each panel has an explicit app-local ID or a Core-derived legacy ID. Selection uses app ID,
 installation ID and panel ID, never label or array index. Labels/icons/reordering do not change
 explicit identity. An ID-less endpoint/route change does; identical legacy declarations coalesce.
 Core supplies typed provider surfaces so navigation entries never become implicit side panels.
 
-Tooltips name app and panel. Buttons expose expanded state and attention; Up/Down and Home/End
-move rail focus without activating a tool. The shared workspace is a dock at widths of at least
+Menu items name app and panel, and retain ReUI keyboard navigation and focus handling. The shared workspace is a dock at widths of at least
 900 px and a dismissible modal drawer below that boundary. It retains the same frame tree across
 that change and restores document access/focus on dismissal.
 
@@ -140,16 +138,12 @@ retain mounted drafts. Protocol placement and domain readiness are separate: a p
 its exact requested route after loading; an older/refused frame remains unreported with explicit
 separate-open recovery. A frame's app-owned sign-in is not a delegated-token exchange.
 
-**The top strip** owns what belongs to neither rail: a toggle for each rail, and the name
-of whatever fills the content area — an app's page, or the Shell page — plus the notification bell
-and the theme control, both relocated here from the sidebar footer. The right-rail toggle is absent
-when no app contributes a panel. Apps contribute nothing to the strip; an app that could write there
-would be writing outside its frame.
+**The top strip** owns navigation controls and the current page title. Tools are absent when the
+host disables their launcher. Applications do not write arbitrary content into Shell chrome.
 
 Navigation collapses and expands through its top-strip toggle, retaining the persisted
 desktop preference and mobile drawer state. There is no button on the sidebar's edge.
-The right panel keeps its top-strip toggle and a resize gap, without an edge button or
-grip icon.
+The right panel keeps a resize gap while docked; collapsing it leaves the document its full width.
 
 ## Current Placements
 
@@ -198,6 +192,12 @@ The icon rail ships in Shell **0.82.0**, with the icon authoring/projection cont
 Core/CLI **0.107.0**. Gateway **0.32.2** declares `bot`; Demo App **0.11.2** declares
 `contact-round`. The manifest format remains `app.0.1`.
 
+The Shell tool picker groups the authorized catalog by application, retains app startup actions,
+and distinguishes an unavailable catalog from a genuinely empty catalog or a search with no
+matches. Clearing a failed search keeps the picker open. Phone tool sheets use the same visible
+viewport height as Shell dialogs; hiding and crossing the phone breakpoint retain mounted frames
+and local drafts.
+
 ## Testing Expectations
 
 - Shell: `npm test --workspace apps/shell` includes both pure rules and the jsdom rail
@@ -217,7 +217,9 @@ Core/CLI **0.107.0**. Gateway **0.32.2** declares `bot`; Demo App **0.11.2** dec
   iframe; fresh collapsed loads must not open a frame. Hidden content is inert.
 
 - Each declaring app contributes exactly one app-named Settings entry in compact and expanded
-  navigation. Old page-specific links resolve to that entry, including for stopped apps.
+  navigation; non-declaring apps contribute none. There is no duplicate installed-app settings
+  catalog. Old page-specific links resolve to the same declared entry, including for stopped apps;
+  host-managed App Details opens separately at `/apps/<app-id>`.
 - App settings fill the workspace; internal tabs and modal overlays belong to the app. Host
   sections retain administrator gating and the viewer's own Access tokens section.
 - Check rounded workspace/panel surfaces in light and dark themes, expanded and compact
@@ -244,7 +246,7 @@ Core/CLI **0.107.0**. Gateway **0.32.2** declares `bot`; Demo App **0.11.2** dec
   - The Settings tab renders the gateway's page *with its data*: the MCP provider list comes from an
     API that answers 401 without a credential, so a page that merely painted would not show it.
   - The strip renders on every page, its toggle collapses the sidebar, the theme control works from
-    its new home, and the right-rail toggle is absent until an app declares a panel.
+    its new home, and Assistant and Tools honor the host launcher visibility.
   - The top-strip sidebar toggle preserves keyboard focus and works in expanded, compact,
     and mobile drawer layouts without changing the right panel.
   - The gateway is gone from the sidebar, and — the pair that matters, since the page-link rule is

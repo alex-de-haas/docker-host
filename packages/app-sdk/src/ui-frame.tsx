@@ -1,4 +1,5 @@
 "use client";
+import { SdkChromeStyles } from "./sdk-chrome";
 import { useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { UiHostContext } from "./ui-context";
 import { appendThemeLaunchParams, parseActiveFrameAskAssistant, parseActiveFrameAttention, parseActiveFrameAuthRequired, parseActiveFramePermissionReview } from "./embedder";
@@ -118,13 +119,13 @@ export function HostyAppFrame(props: HostyAppFrameProps) {
     }
   }, [outboundReady, connection.generation, props.outbound?.nonce, surface.origin]);
   const insecure = typeof window !== "undefined" && window.location.protocol === "https:" && new URL(surface.origin).protocol === "http:";
-  if (insecure) return <div role="status" className="hosty-panel-notice"><strong>{title} needs HTTPS to appear here</strong>
+  if (insecure) return <div data-hosty-sdk role="status" className="hosty-panel-notice"><SdkChromeStyles /><strong>{title} needs HTTPS to appear here</strong>
     <p>This app publishes an HTTP address. Configure its public HTTPS origin in Hosty.</p>
     {/^(localhost|127\.|\[::1\])/.test(new URL(surface.origin).hostname) && <p>This local address is reachable only from the Hosty computer.</p>}
     {standaloneHref && <a href={standaloneHref} target="_blank" rel="noopener noreferrer">Open separately</a>}
   </div>;
   return <>
-    {review && <a className="hosty-panel-review" href={review} target="_blank" rel="noopener noreferrer">Review access in Core</a>}
+    {review && <><SdkChromeStyles /><a data-hosty-sdk className="hosty-panel-review" href={review} target="_blank" rel="noopener noreferrer">Review access in Core</a></>}
     <iframe ref={ref} className={className} title={title} src={launch} sandbox={frameSandbox(surface.framePolicy)}
       allow={surface.framePolicy.microphone ? "clipboard-write; microphone 'src'" : "clipboard-write"}
       style={{ border: 0, height: "100%", width: "100%", colorScheme: resolvedTheme }} onLoad={() => setLoaded(true)} />

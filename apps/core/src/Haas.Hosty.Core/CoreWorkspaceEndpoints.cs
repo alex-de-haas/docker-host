@@ -8,6 +8,20 @@ internal static class CoreWorkspaceEndpoints
             WorkspaceInspectionService inspection, CancellationToken ct) => CoreSessionAuthorization.RequireSessionAsync(request, users, clock,
                 user => AppAccessPolicy.IsAdmin(user) ? Handle(() => inspection.ListAsync(user.Id, ct))
                     : Task.FromResult<IResult>(CoreJson.Json(new ErrorResponse("admin_required", "An administrator is required."), 403)), cancellationToken: ct));
+        app.MapGet("/api/core/execution-targets", (HttpRequest request, UserDirectoryStore users, IClock clock,
+            CoreExecutionTargetService targets, WorkspaceActivationAccess access, CancellationToken ct) =>
+            CoreSessionAuthorization.RequireSessionAsync(request, users, clock, user =>
+                AppAccessPolicy.IsAdmin(user) ? Handle(async () =>
+                {
+                    var actor = AppManagementAuthorization.Caller(request) is { } caller
+                        ? new Haas.Hosty.Launch.WorkspaceActivationActor(user.Id, "app:" + caller.App.Id, caller.App.Id, caller.App.InstalledAt,
+                            AppIdentityHash: AppIdentityService.HashToken(request.Headers[AppManagementAuthorization.IdentityHeader].ToString()))
+                        : new(user.Id, "manual", Principal: "browser:" + DevelopmentWorkspaceService.Hash(CoreSessionAuthorization.ReadSessionId(request)!));
+                    // Match activation/list authority without admitting a lifecycle operation.
+                    await access.ValidateAsync(actor, false, ct);
+                    return await targets.InventoryAsync(user.Id, ct);
+                }) : Task.FromResult<IResult>(CoreJson.Json(new ErrorResponse("admin_required", "An administrator is required."), 403)),
+                cancellationToken: ct));
         app.MapPost("/api/development/workspaces/{workspaceId}/activation/{kind}", (string workspaceId, string kind,
             WorkspaceActivationCommand input, HttpRequest request, UserDirectoryStore users, IClock clock,
             WorkspaceActivationActions actions, CancellationToken ct) => CoreSessionAuthorization.RequireSessionAsync(request, users, clock,

@@ -80,6 +80,25 @@ export interface SessionRecord {
   lastEventSeq: number;
 }
 
+/** A dispatch receipt is admission evidence, not a promise that the model completed successfully. */
+export interface MessageReceipt {
+  clientRequestId: string;
+  state: "unknown" | "accepted" | "rejected";
+  eventSeq?: number;
+  error?: { code: string; message: string };
+}
+
+export interface StoredMessageReceipt extends MessageReceipt {
+  actorUserId: string;
+  fingerprint: string;
+}
+
+export function messageRequestId(value: unknown): string {
+  if (typeof value !== "string" || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(value))
+    throw new Error("invalid message request id");
+  return value.toLowerCase();
+}
+
 export interface StoredEvent {
   seq: number;
   ts: string;
@@ -176,6 +195,39 @@ export class SessionStore {
     });
     this.writes.set(record.id, task);
     try { await task; } finally { if (this.writes.get(record.id) === task) this.writes.delete(record.id); }
+  }
+
+  private messageReceiptPath(id: string, requestId: string): string {
+    return path.join(this.sessionDir(id), "message-requests", messageRequestId(requestId) + ".json");
+  }
+
+  /** Fixed-size receipts follow transcript retention; never evict an old ID and allow its replay. */
+  async saveMessageReceipt(id: string, receipt: StoredMessageReceipt): Promise<void> {
+    const target = this.messageReceiptPath(id, receipt.clientRequestId);
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(`${target}.tmp`, JSON.stringify(receipt), "utf8");
+    await rename(`${target}.tmp`, target);
+  }
+
+  async readMessageReceipt(id: string, requestId: string): Promise<StoredMessageReceipt | null> {
+    let content: string;
+    try { content = await readFile(this.messageReceiptPath(id, requestId), "utf8"); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw error;
+    }
+    // Corrupt or unreadable evidence must never be interpreted as permission to send again.
+    if (content.length > 4096) throw new Error("invalid message receipt");
+    const receipt = JSON.parse(content) as StoredMessageReceipt;
+    if (!receipt || receipt.clientRequestId !== messageRequestId(requestId)
+      || typeof receipt.actorUserId !== "string" || !receipt.actorUserId || receipt.actorUserId.length > 512
+      || typeof receipt.fingerprint !== "string" || !/^[a-f0-9]{64}$/.test(receipt.fingerprint)
+      || !["unknown", "accepted", "rejected"].includes(receipt.state)
+      || (receipt.eventSeq !== undefined && (!Number.isSafeInteger(receipt.eventSeq) || receipt.eventSeq < 1))
+      || (receipt.error !== undefined && (typeof receipt.error?.code !== "string" || receipt.error.code.length > 80
+        || typeof receipt.error.message !== "string" || receipt.error.message.length > 500)))
+      throw new Error("invalid message receipt");
+    return receipt;
   }
 
   async readRecord(id: string): Promise<SessionRecord | null> {

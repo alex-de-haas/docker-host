@@ -2,6 +2,8 @@
 
 import { useEffect, useId, useState, type FormEvent } from "react";
 import { Plus } from "lucide-react";
+import { HostyLoader } from "../../../../../../shared/web/hosty-states";
+import { EnvironmentStages } from "./environment-stages";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -56,14 +58,15 @@ export function CreateEnvironmentDialog({ origin, disabled, onCreate }: {
   };
   return <Dialog open={open} onOpenChange={setOpen}>
     <DialogTrigger asChild><Button type="button" size="sm" disabled={disabled}><Plus data-icon="inline-start" />Create environment</Button></DialogTrigger>
-    <DialogContent className="max-h-[85dvh] overflow-y-auto">
+    <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-2xl">
       <DialogHeader><DialogTitle>Create environment</DialogTitle><DialogDescription>A fresh Core with separate apps, accounts and data. Register its administrator in the browser after installation.</DialogDescription></DialogHeader>
       <form onSubmit={event => void submit(event)} className="flex flex-col gap-5">
+        <EnvironmentStages current={0} />
         <FieldGroup>
           <Field><FieldLabel htmlFor={`${id}-name`}>Name</FieldLabel><Input id={`${id}-name`} value={label} onChange={e => setLabel(e.target.value)} required maxLength={120} disabled={disabled} /></Field>
           <FieldSet><FieldLegend>Applications</FieldLegend><FieldDescription>Core is always included. Recommended apps are selected below.</FieldDescription>
-            {!entries && !error && <p role="status">Loading available applications…</p>}
-            <FieldGroup>{entries?.map(entry => <Field key={entry.id} orientation="horizontal">
+            {!entries && !error && <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><HostyLoader label={null} />Loading available applications…</p>}
+            <FieldGroup className="gap-0 overflow-hidden rounded-xl border bg-card divide-y">{entries?.map(entry => <Field key={entry.id} orientation="horizontal" className="px-4 py-4">
               <Checkbox id={`${id}-${entry.id}`} checked={selected.includes(entry.id)} disabled={disabled}
                 onCheckedChange={checked => setSelected(previous => checked === true ? [...previous, entry.id] : previous.filter(value => value !== entry.id))} />
               <FieldContent><FieldLabel htmlFor={`${id}-${entry.id}`}>{entry.title}{entry.defaultEnabled && <Badge variant="secondary">Recommended</Badge>}</FieldLabel><FieldDescription>{entry.description}</FieldDescription></FieldContent>
@@ -71,7 +74,7 @@ export function CreateEnvironmentDialog({ origin, disabled, onCreate }: {
           </FieldSet>
           {!selected.includes("hosty.shell") && entries && <FieldDescription>Without Shell, manage the environment through CLI/API. You can install Shell later with hosty setup.</FieldDescription>}
         </FieldGroup>
-        <details><summary className="cursor-pointer text-sm">Advanced: ports and resources</summary>
+        <details className="rounded-xl border px-4 py-3"><summary className="cursor-pointer text-sm font-medium">Advanced: ports and resources</summary>
           <FieldGroup className="mt-4">
             <Field><FieldLabel htmlFor={`${id}-port`}>Core port</FieldLabel><Input id={`${id}-port`} type="number" min={1024} max={65535} placeholder="Automatic" value={corePort} onChange={e => setCorePort(e.target.value)} /></Field>
             <Field><FieldLabel htmlFor={`${id}-app-ports`}>Application ports</FieldLabel><Input id={`${id}-app-ports`} value={appPorts} onChange={e => setAppPorts(e.target.value)} placeholder="Automatic" /><FieldDescription>Optional overrides: appId:service:portKey=port, separated by commas.</FieldDescription></Field>

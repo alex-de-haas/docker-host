@@ -1,10 +1,12 @@
 "use client";
 
 import { fetchCore } from "../core-transport.js";
+import { HostyLoader } from "../../../../../../shared/web/hosty-states";
 
 
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { isAuthRequiredRedirectError, redirectToCoreLoginIfAuthRequired } from "../core-api";
 
 type Skill = { key: string; digest: string | null; approvedDigest: string | null; markdown: string | null };
@@ -55,16 +57,16 @@ export function SettingsAgentsSection({ coreOrigin, sendCsrfJson }: {
         <p className="text-sm text-muted-foreground">Choose available MCP applications and grant access to individual assistants. Tool approval rules stay with each assistant.</p></div>
       <Button variant="outline" disabled={busy} onClick={() => void load().catch(showLoadError)}>Refresh</Button>
     </div>
-    {error && <p role="alert" className="text-destructive">{error}</p>}
-    {!directory && !error && <p>Loading agent directory…</p>}
+    {error && <p role="alert" className="text-destructive-foreground">{error}</p>}
+    {!directory && !error && <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><HostyLoader className="size-5" label={null} />Loading agent directory…</p>}
     {directory?.targets.map(target => <article key={target.id} className="space-y-4 rounded-lg border p-4">
       <div className="flex items-start justify-between gap-4">
         <div><h3 className="font-medium">{target.displayName}</h3>
           <p className="text-sm text-muted-foreground">{target.id} · {target.interfaces.map(item => item.key + ": " + item.readiness).join(", ")}</p></div>
         <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={target.offered} disabled={busy}
+          <Checkbox checked={target.offered} disabled={busy}
             aria-label={"Offer " + target.displayName + " to agents"}
-            onChange={event => void change(target, event.target.checked)} />Offer to agents
+            onCheckedChange={value => void change(target, value === true)} />Offer to agents
         </label>
       </div>
       <fieldset className="space-y-2" disabled={busy}>
@@ -72,9 +74,9 @@ export function SettingsAgentsSection({ coreOrigin, sendCsrfJson }: {
         <p className="text-sm text-muted-foreground">Access uses the current user’s permissions and covers MCP only. The offer switch above must also be enabled.</p>
         {!directory.assistants?.length && <p className="text-sm text-muted-foreground">No confirmed assistant is installed.</p>}
         {directory.assistants?.map(assistant => <label key={assistant.id} className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={target.assistantIds?.includes(assistant.id) ?? false}
+          <Checkbox checked={target.assistantIds?.includes(assistant.id) ?? false} disabled={busy}
             aria-label={`Allow ${assistant.displayName} to use ${target.displayName} MCP`}
-            onChange={event => void change(target, target.offered, undefined, event.target.checked
+            onCheckedChange={value => void change(target, target.offered, undefined, value === true
               ? [...(target.assistantIds ?? []), assistant.id]
               : (target.assistantIds ?? []).filter(id => id !== assistant.id))} />{assistant.displayName}
         </label>)}

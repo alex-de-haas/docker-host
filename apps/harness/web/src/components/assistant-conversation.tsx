@@ -4,11 +4,13 @@ import { applyContextUsage, emptyContextUsage } from "@/lib/context-usage";
 import { HostyNavigationBoundary } from "@hosty-sdk/app/react";
 import { SessionModel } from "@/components/session-model";
 import { SessionAutonomy } from "@/components/session-autonomy";
+import { SessionExecutionIndicator } from "@/components/session-execution-indicator";
 import { useHostyUi } from "@hosty-sdk/app/ui/react";
 import { AssistantActivity } from "@/components/assistant-activity";
 import type { SessionActivity } from "../../../src/harness/activity";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { cn } from "@/lib/utils";
 import { SpeechInput } from "@/components/speech-input";
 import { SessionCredentials } from "@/components/session-credentials";
 import { SessionSandboxes } from "@/components/session-sandboxes";
@@ -17,8 +19,9 @@ import { SessionProvider } from "@/components/session-provider";
 import { AppMentionInput, type AppMentionInputHandle } from "@/components/app-mention-input";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { AppContextPicker, type AppContextPickerHandle } from "@/components/app-context-picker";
-import { ArrowLeft, History, Loader2, MessageSquarePlus, Paperclip, Plus, Blocks, Send, Sparkles, Square } from "lucide-react";
+import { ArrowLeft, History, Loader2, MessageSquarePlus, Paperclip, Plus, Blocks, Send, Sparkles, Square, PanelRight, Diamond, Pencil, Hammer } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Alert, InlineError, StatusBadge } from "@/components/status";
 import { Markdown } from "@/components/markdown";
 import { ChatAttachment } from "@/components/chat-attachment";
@@ -27,18 +30,23 @@ import {
   MessageScrollerItem, MessageScrollerProvider, MessageScrollerViewport,
 } from "@/components/ui/message-scroller";
 import { transcriptItems } from "@/lib/transcript-items";
+import { resolveTranscriptReview, type TranscriptReviewReference } from "@/lib/transcript-edits";
 import { InputGroup, InputGroupAddon } from "@/components/ui/input-group";
 import { DevelopmentNavigation } from "@/components/development-navigation";
 import { CreateApp } from "@/components/create-app";
 import { SessionRetention } from "@/components/session-retention";
+import { RetainedWorkspacePane, useNarrowWorkspace } from "@/components/retained-workspace-pane";
+import { WorkspaceReview, type ReviewChoice } from "@/components/workspace-review";
+import type { Worktree } from "@/lib/development-api";
 import { WorkspaceDetails } from "@/components/workspace-details";
-import { orderWorkspaces, useDevelopmentInventory } from "@/lib/development-api";
-import { SessionList } from "@/components/session-list";
+import { orderWorkspaces, useDevelopmentInventory, workflowIsActive } from "@/lib/development-api";
+import { SessionList, SessionTitleInput } from "@/components/session-list";
 import { hasMessageContent, indexAttachments, takeChosenFiles, takePastedImages } from "@/lib/attachments";
 import { approvalDecisions, cancelledQuestions, ToolActivity, TranscriptEvent } from "@/components/transcript";
 import { retryHandoff } from "@/lib/assistant-api";
 import { composeAskDraft } from "@/lib/ask-draft";
-import { clearDraft, pruneDrafts, readDraft, writeDraft, readDraftAttachments, writeDraftAttachments } from "@/lib/draft-store";
+import { clearDraft, draftStorageText, pruneDrafts, readDraft, writeDraft, readDraftAttachments, writeDraftAttachments } from "@/lib/draft-store";
+import { dispatchPendingSend, forgetPendingSend, readPendingSend, claimPendingSend, PENDING_SEND_PREFIX, PENDING_SEND_CHANGED, withPendingSendLock, isMessageAdmissionRejection, retryPendingSend, type PendingSend } from "@/lib/pending-send";
 import { useSessionListRefresh } from "@/lib/use-session-list-refresh";
 import { activityTime, orderSessions, publishAttention, waitingCount } from "@/lib/attention";
 import {
@@ -50,7 +58,6 @@ import {
   getSession,
   listAppNames,
   listSessions,
-  postMessage,
   uploadAttachment,
   type StoredAttachment,
   renameSession,
@@ -107,6 +114,8 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const [sending, setSending] = useState(false);
   const [stoppingSession, setStoppingSession] = useState<string | null>(null);
   const sendingRef = useRef(false);
+  const [pendingSend, setPendingSend] = useState<PendingSend | null>(null);
+  const [sendRecoveryBlocked, setSendRecoveryBlocked] = useState(false);
   const [providerSaving, setProviderSaving] = useState(false);
   const providerSavingRef = useRef(false);
   const onProviderSaving = useCallback((saving: boolean) => {
@@ -158,13 +167,55 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     }
   }, []);
   const [ready, setReady] = useState(false);
-  const inventory = useDevelopmentInventory(fullPage && ready);
+  const inventory = useDevelopmentInventory(ready);
   useSessionListRefresh(fullPage && ready, sessions, session?.id, setSessions);
   const [tab, setTab] = useState("sessions");
+  const [workspaceVisible, setWorkspaceVisible] = useState(true);
+  const decisionCard = useRef<HTMLDivElement | null>(null);
+  const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   const [externalId, setExternalId] = useState("");
   const [mobileDetails, setMobileDetails] = useState(false);
-  const [mobileSessions, setMobileSessions] = useState(false);
-  const workspace = inventory.workspaces.find(w => w.owner.kind === "assistant" && w.owner.appId === "hosty.harness" && w.owner.reference === session?.id && w.workflow.state !== "deleted");
+  const narrowWorkspace = useNarrowWorkspace();
+  const workspaceModal = narrowWorkspace && mobileDetails;
+  const [mobileSessions, setMobileSessions] = useState(fullPage && !requestedSessionId);
+  const [review, setReview] = useState<{ workspaceId: string; tree: Worktree; sessionId?: string; transcriptChoice?: ReviewChoice } | null>(null);
+  const [reviewChoices, setReviewChoices] = useState<Record<string, ReviewChoice>>({});
+  const reviewOpener = useRef<HTMLElement | null>(null);
+  const conversationRef = useRef<HTMLElement | null>(null);
+  const openReview = (workspaceId: string, tree: Worktree, sessionId?: string, choice?: ReviewChoice) => {
+    reviewOpener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    if (choice) setReviewChoices(previous => ({ ...previous, [tree.id]: choice }));
+    setReview({ workspaceId, tree, sessionId }); setMobileDetails(false);
+  };
+  const openTranscriptReview = (reference: TranscriptReviewReference) => {
+    const target = resolveTranscriptReview(reference, session?.id, inventory.workspaces);
+    if (!target) return;
+    reviewOpener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setReview({ workspaceId: target.workspace.id, tree: target.tree, sessionId: session?.id,
+      transcriptChoice: { view: "session", path: reference.path } });
+    setMobileDetails(false);
+  };
+  const transcriptReviewContext = session ? { sessionId: session.id, workspaces: inventory.workspaces, onOpen: openTranscriptReview } : undefined;
+  const closeReview = () => { if (review?.sessionId) setMobileSessions(false); setReview(null); requestAnimationFrame(() => {
+    if (reviewOpener.current?.isConnected && reviewOpener.current.getClientRects().length) reviewOpener.current.focus();
+    else (composerRef.current ?? conversationRef.current)?.focus();
+  }); };
+  const sessionWorkspace = inventory.workspaces.find(w => w.owner.kind === "assistant" && w.owner.appId === "hosty.harness" && w.owner.reference === session?.id);
+  const workspace = sessionWorkspace?.workflow.state === "deleted" ? undefined : sessionWorkspace;
+  const observedWorkspaceFence = !!sessionWorkspace && (!!sessionWorkspace.workflow.closure || ["completed", "deferred", "deleting", "deleted"].includes(sessionWorkspace.workflow.state));
+  const observedWorkspaceActive = !!sessionWorkspace && workflowIsActive(sessionWorkspace.workflow);
+  const workspaceSessionId = sessionWorkspace?.owner.reference;
+  const [fencedWorkspaceSessions, setFencedWorkspaceSessions] = useState<Set<string>>(() => new Set());
+  if (workspaceSessionId && (observedWorkspaceFence || observedWorkspaceActive) && fencedWorkspaceSessions.has(workspaceSessionId) !== observedWorkspaceFence) {
+    const next = new Set(fencedWorkspaceSessions);
+    if (observedWorkspaceFence) next.add(workspaceSessionId); else next.delete(workspaceSessionId);
+    setFencedWorkspaceSessions(next);
+  }
+  // A failed inventory read cannot reopen known closed source; only an observed active workflow can.
+  const workspaceReadOnly = observedWorkspaceFence || (!observedWorkspaceActive && !!session && fencedWorkspaceSessions.has(session.id));
+  const composerBlocked = workspaceReadOnly || inventory.loading;
+  const composerBlockedRef = useRef(composerBlocked);
+  useEffect(() => { composerBlockedRef.current = composerBlocked; }, [composerBlocked]);
   const external = orderWorkspaces(inventory.workspaces.filter(w => w.owner.kind === "external" && w.workflow.state !== "deleted"));
   const selectedExternal = external.find(w => w.id === externalId) ?? external[0];
   if (selectedExternal && externalId !== selectedExternal.id) setExternalId(selectedExternal.id);
@@ -180,6 +231,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
 
   /** Attaches to one session and follows its log. Shared by reattach, switch and new. */
   const attach = useCallback((record: AssistantSession) => {
+    if (activeSessionId.current !== record.id) setReview(null);
     streamAbortRef.current?.abort();
     activeSessionId.current = record.id;
     setContextUsage(emptyContextUsage(record.id));
@@ -187,6 +239,9 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     setHealth(null);
     void getHealth(record.id).then(value => { if (activeSessionId.current === record.id) setHealth(value); }).catch(() => {});
     setError(null);
+    let retainedSend: PendingSend | null = null;
+    try { retainedSend = readPendingSend(record.id); setPendingSend(retainedSend); setSendRecoveryBlocked(false); }
+    catch (error) { setPendingSend(null); setSendRecoveryBlocked(true); setError(error instanceof Error ? error.message : String(error)); }
     setContextUnavailable(false);
     setWithoutAppDetails(false);
     setStatus(record.status);
@@ -196,11 +251,14 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     setStreamed("");
     // Whatever was left unsent in this session, put back in the box. Per session, so switching away
     // and back returns your own half-written sentence rather than someone else's.
-    setInput(readDraft(record.id, record.handoffDraft?.text ?? ""));
+    setInput(readDraft(record.id, retainedSend?.draftText ?? record.handoffDraft?.text ?? ""));
     // Files are not a draft: a selection made for one session must not follow the operator into
     // the next and be uploaded there.
     setPending([]);
-    setUploaded(readDraftAttachments(record.id) ?? record.handoffDraft?.attachments ?? []);
+    const savedFiles = readDraftAttachments(record.id) ?? record.handoffDraft?.attachments ?? [];
+    const recoveredFiles = [...new Map([...savedFiles, ...(retainedSend?.attachments ?? [])].map(file => [file.name, file])).values()];
+    setUploaded(recoveredFiles);
+    if (retainedSend) writeDraftAttachments(record.id, recoveredFiles);
     setUploadingFile(null);
     setFailedUpload(null);
     try {
@@ -325,7 +383,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     requestedSessionRef.current = record.id;
     setSurfaceSessionId(null);
     setRequestedSessionId(record.id);
-    setMobileSessions(false); setMobileDetails(false);
+    setMobileSessions(false); setMobileDetails(false); setReview(null);
   };
 
   const startNew = useCallback(async () => {
@@ -334,7 +392,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
       const record = await createSession({});
       setSessions((current) => [record, ...current]);
       setHistoryOpen(false);
-      attach(record);
+      attach(record); setReview(null); setMobileSessions(false);
       await navigateSelection(record.id);
       return record;
     } catch (cause) {
@@ -351,7 +409,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
         const requested = new URLSearchParams(window.location.search).get("session");
         if (requested && /^[a-zA-Z0-9-]+$/.test(requested)) {
           requestedSessionRef.current = requested;
-          setRequestedSessionId(requested);
+          setRequestedSessionId(requested); setMobileSessions(false);
         }
         // Listed separately from the health probe because a failure means different things: no
         // harness is a state to show, while no *list* is not knowledge of an empty fleet of sessions.
@@ -529,12 +587,19 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   }, [input, session]);
 
   useEffect(() => {
+    const refreshPending = () => {
+      if (!session) return;
+      try { setPendingSend(readPendingSend(session.id)); setSendRecoveryBlocked(false); }
+      catch (error) { setSendRecoveryBlocked(true); setError(error instanceof Error ? error.message : String(error)); }
+    };
     const changed = (event: StorageEvent) => {
+      if (session && event.key === PENDING_SEND_PREFIX + session.id) refreshPending();
       if (session && event.key === `hosty.assistant.draft.${session.id}`) setInput(event.newValue ?? "");
       if (session && event.key === `hosty.assistant.attachments.${session.id}`) setUploaded(readDraftAttachments(session.id) ?? []);
     };
     window.addEventListener("storage", changed);
-    return () => window.removeEventListener("storage", changed);
+    window.addEventListener(PENDING_SEND_CHANGED, refreshPending);
+    return () => { window.removeEventListener("storage", changed); window.removeEventListener(PENDING_SEND_CHANGED, refreshPending); };
   }, [session]);
 
   // Overlay live status while retaining stream updates for previously selected sessions.
@@ -542,6 +607,10 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     () => session ? sessions.map(record => record.id === session.id && record.status !== status ? { ...record, status } : record) : sessions,
     [sessions, session, status],
   );
+
+  const appIconMetadata = useMemo(() => [...new Map([
+    ...listedSessions.flatMap(record => record.contextApps ?? []), ...(session?.contextApps ?? []),
+  ].map(app => [app.id, app])).values()], [listedSessions, session?.contextApps]);
 
   useEffect(() => {
     publishAttention(waitingCount(listedSessions));
@@ -564,9 +633,53 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     };
   }, []);
 
+  const acceptSend = useCallback(async (request: PendingSend) => {
+    const sentNames = new Set(request.attachments.map(file => file.name));
+    const settled = await withPendingSendLock(request.sessionId, () => {
+      if (readPendingSend(request.sessionId)?.clientRequestId !== request.clientRequestId) return false;
+      // Retire the original draft before releasing its journal; another view cannot claim it
+      // between confirmation and cleanup. Storage failure keeps the original receipt recoverable.
+      if (readDraft(request.sessionId) === draftStorageText(request.draftText)) {
+        writeDraft(request.sessionId, "");
+        if (readDraft(request.sessionId)) throw new Error("The message was accepted, but its saved draft could not be cleared. Retry checks the same receipt.");
+      }
+      const remaining = readDraftAttachments(request.sessionId)?.filter(file => !sentNames.has(file.name)) ?? [];
+      if (!writeDraftAttachments(request.sessionId, remaining)) throw new Error("The message was accepted, but its saved attachments could not be cleared. Retry checks the same receipt.");
+      forgetPendingSend(request);
+      return true;
+    });
+    if (!settled) return;
+    setSessions(current => current.map(item => item.id === request.sessionId ? { ...item, handoffDraft: undefined } : item));
+    setSession(current => current?.id === request.sessionId ? { ...current, handoffDraft: undefined } : current);
+    if (activeSessionId.current !== request.sessionId) return;
+    setPendingSend(current => current?.clientRequestId === request.clientRequestId ? null : current);
+    setContextUnavailable(false); setWithoutAppDetails(false);
+    setUploaded(current => current.filter(file => !sentNames.has(file.name)));
+    setInput(current => current === request.draftText ? "" : current);
+    const named = await getSession(request.sessionId).catch(() => null);
+    if (named && activeSessionId.current === request.sessionId) onSessionChange(named);
+  }, [onSessionChange]);
+
+  const recoverSend = useCallback(async () => {
+    if (!pendingSend || sendingRef.current || sendRecoveryBlocked) return;
+    const request = pendingSend;
+    sendingRef.current = true; setSending(true); setError(null);
+    try {
+      const receipt = await retryPendingSend(request);
+      if (receipt?.state === "accepted") await acceptSend(request);
+      else if (receipt?.state === "rejected") {
+        forgetPendingSend(request);
+        if (activeSessionId.current === request.sessionId) setPendingSend(current => current?.clientRequestId === request.clientRequestId ? null : current);
+        throw new Error(receipt.error?.message ?? "The message was not sent. Review the draft before sending again.");
+      } else throw new Error("This message may already have been sent. Inspect the conversation; this check did not resend it.");
+    } catch (error) {
+      if (activeSessionId.current === request.sessionId) setError(error instanceof Error ? error.message : String(error));
+    } finally { sendingRef.current = false; setSending(false); }
+  }, [pendingSend, sendRecoveryBlocked, acceptSend]);
+
   const send = useCallback(async () => {
     const trimmed = (mentionInputRef.current?.serialize() ?? input).trim();
-    if (!hasMessageContent(trimmed, pending.length, uploaded.length) || !session || sendingRef.current || providerSavingRef.current || stoppingRef.current === session.id || running || contextSaving || mentionSavingRef.current || !health?.available) {
+    if (!hasMessageContent(trimmed, pending.length, uploaded.length) || !session || pendingSend || sendRecoveryBlocked || composerBlockedRef.current || sendingRef.current || providerSavingRef.current || stoppingRef.current === session.id || running || contextSaving || mentionSavingRef.current || !health?.available) {
       return;
     }
     sendingRef.current = true;
@@ -574,6 +687,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     setError(null);
     setFailedUpload(null);
     let activeFile: File | null = null;
+    let request: PendingSend | undefined;
     try {
       // Files first, then the message that names them by their stored names — which may differ from
       // what the operator called them. A failed upload stops here with the text kept, so nothing is
@@ -591,33 +705,26 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
           setUploaded((current) => [...current, attachment]);
           setPending((current) => current.filter((candidate) => candidate !== file));
         }
+        if (!writeDraftAttachments(session.id, stored)) throw new Error("Browser storage is unavailable. Your uploaded attachment remains in this panel; allow storage before sending.");
       }
       if (activeSessionId.current === session.id) setUploadingFile(null);
       // Lock the composer before the HTTP response: SSE may confirm (or finish) the turn first.
       if (activeSessionId.current === session.id) setStatus("running");
-      await postMessage(session.id, trimmed, stored.map((attachment) => attachment.name), session.appContextRevision ?? 0, withoutAppDetails, session.selectionRevision ?? 0);
-      // Clear only after acceptance, and never overwrite another session opened during the request.
-      clearDraft(session.id);
-      setSessions(current => current.map(item => item.id === session.id ? { ...item, handoffDraft: undefined } : item));
-      setSession(current => current?.id === session.id ? { ...current, handoffDraft: undefined } : current);
-      if (activeSessionId.current !== session.id) return;
-      setContextUnavailable(false);
-      setWithoutAppDetails(false);
-      setUploaded([]);
-      setPending([]);
-      setInput("");
-      // The gateway names an unnamed session from its first message, so the record the list holds is
-      // stale the moment that message lands. Re-read rather than deriving the same title here: two
-      // implementations of one rule drift, and the server's is the one that is stored.
-      if (!session.title) {
-        const named = await getSession(session.id).catch(() => null);
-        if (named?.title) {
-          onSessionChange(named);
-        }
-      }
+      request = { version: 1, clientRequestId: crypto.randomUUID(), sessionId: session.id, text: trimmed, draftText: input,
+        attachments: stored, appContextRevision: session.appContextRevision ?? 0, withoutAppDetails, selectionRevision: session.selectionRevision ?? 0 };
+      await claimPendingSend(request);
+      if (activeSessionId.current === session.id) setPendingSend(request);
+      const receipt = await dispatchPendingSend(request);
+      if (receipt?.state !== "accepted") throw new Error("The send outcome could not be verified. Retry checks the original request before sending again.");
+      await acceptSend(request);
     } catch (cause) {
       if (activeSessionId.current !== session.id) return;
       setFailedUpload(activeFile);
+      // These explicit pre-admission refusals settle the first attempt. Preserve the editable
+      // draft so context/provider corrections can start a distinct intentional request.
+      if (request && isMessageAdmissionRejection(cause)) {
+        forgetPendingSend(request); setPendingSend(current => current?.clientRequestId === request?.clientRequestId ? null : current);
+      }
       if (cause instanceof AssistantApiError && cause.code === "app_context_unavailable") setContextUnavailable(true);
       if (cause instanceof AssistantApiError && cause.code === "app_context_conflict") {
         const current = await getSession(session.id).catch(() => null);
@@ -631,7 +738,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
       sendingRef.current = false;
       setSending(false);
     }
-  }, [input, pending, running, status, contextSaving, session, uploaded, withoutAppDetails, health?.available, onSessionChange]);
+  }, [input, pending, pendingSend, sendRecoveryBlocked, running, status, contextSaving, session, uploaded, withoutAppDetails, health?.available, onSessionChange, acceptSend]);
 
   const stop = useCallback(async () => {
     if (!session || !running || sendingRef.current || providerSavingRef.current || stoppingRef.current) return;
@@ -765,23 +872,36 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const attachmentIndex = useMemo(() => indexAttachments(events), [events]);
   const items = useMemo(() => transcriptItems(events, attachmentIndex.claimed), [events, attachmentIndex]);
 
+  const pendingDecision = events.find(event => status === "awaiting_approval" && event.type === "approval_request" && !decidedApprovals.has(String(event.approvalId)) || status === "awaiting_question" && event.type === "question_request" && !cancelledQuestionIds.has(String(event.questionId)) && !answeredQuestions.has(String(event.questionId)));
+
+  const createAppAction = session && !showSessions ? <CreateApp key={`creation-${session.id}`} session={session} busy={running || sending || stopping || providerSaving} onChange={record => { onSessionChange(record); void inventory.refresh(); }} /> : null;
+
   return (
-    <div className="flex h-dvh min-h-0 min-w-0 flex-col">
-      {fullPage && <header className="flex flex-wrap shrink-0 items-center gap-1 border-b px-3 py-2">
+    <div className={`harness-conversation flex h-dvh min-h-0 min-w-0 flex-col overflow-hidden ${review ? "harness-review-active" : ""}`}>
+      {fullPage && !review && <header inert={workspaceModal} className={`${tab === "external" ? "flex" : "flex min-[900px]:hidden"} flex-wrap shrink-0 items-center gap-1 border-b px-3 py-2`}>
         <Button size="sm" variant={tab === "sessions" ? "secondary" : "ghost"} onClick={() => setTab("sessions")}>Sessions</Button>
         <Button size="sm" variant={tab === "external" ? "secondary" : "ghost"} onClick={() => setTab("external")}>External workspaces</Button>
         {tab === "sessions" && <Button className="ml-auto md:hidden" size="sm" variant="ghost" onClick={() => { setMobileSessions(v => !v); setMobileDetails(false); }}>Session list</Button>}
         {tab === "sessions" && workspace && <Button className="min-[900px]:hidden" size="sm" variant="outline" onClick={() => { setMobileDetails(v => !v); setMobileSessions(false); }}>Workspace details</Button>}
       </header>}
-      {fullPage && inventory.error && <p role="alert" className="border-b px-4 py-2 text-sm text-destructive">{inventory.error}</p>}
-      {fullPage && tab === "external" && <div className="grid min-h-0 flex-1 grid-cols-1 overflow-auto md:grid-cols-[260px_1fr]">
-        <nav aria-label="External workspaces" className="border-r p-2">{external.map(w => <button key={w.id} type="button" aria-current={selectedExternal?.id === w.id ? "page" : undefined} onClick={() => setExternalId(w.id)} className={`block w-full rounded p-3 text-left text-sm hover:bg-muted ${selectedExternal?.id === w.id ? "bg-muted" : ""}`}>{w.name || w.owner.label}<span className="block truncate text-xs text-muted-foreground">{w.owner.reference}</span></button>)}{!external.length && <p className="p-3 text-sm text-muted-foreground">No external workspaces available.</p>}</nav>
-        {selectedExternal && <WorkspaceDetails key={selectedExternal.id} workspace={selectedExternal} title={selectedExternal.name || selectedExternal.owner.label} refresh={inventory.refresh} />}
+      {fullPage && inventory.error && <p role="alert" className="border-b px-4 py-2 text-sm text-destructive-foreground">{inventory.error}</p>}
+      {fullPage && tab === "external" && <div className={`${review ? "hidden" : "grid"} min-h-0 flex-1 grid-cols-1 overflow-auto md:grid-cols-[264px_1fr]`}>
+        <nav aria-label="External workspaces" className="min-w-0 border-r py-2">{external.map(w => {
+          const label = w.name?.trim() || w.owner.label?.trim() || "Workspace";
+          return <div key={w.id} className={`mx-1 flex items-center rounded-md hover:bg-muted ${selectedExternal?.id === w.id ? "bg-accent" : ""}`}>
+            <Button variant="ghost" type="button" aria-current={selectedExternal?.id === w.id ? "page" : undefined}
+              onClick={() => setExternalId(w.id)} className="h-9 w-full min-w-0 justify-start gap-2 rounded-md px-3 text-left">
+              <Hammer className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+              <span className="min-w-0 flex-1 truncate text-sm font-normal" title={label}>{label}</span>
+            </Button>
+          </div>;
+        })}{!external.length && <p className="p-3 text-sm text-muted-foreground">No external workspaces available.</p>}</nav>
+        {selectedExternal && <WorkspaceDetails key={selectedExternal.id} workspace={selectedExternal} appMetadata={appIconMetadata} title={selectedExternal.name || selectedExternal.owner.label} refresh={inventory.refresh} onReview={(tree, choice) => openReview(selectedExternal.id, tree, undefined, choice)} />}
       </div>}
-      <div className={`${fullPage && tab !== "sessions" ? "hidden" : "flex"} min-h-0 flex-1`}>
-      {fullPage && <div className={`${mobileSessions ? "block" : "hidden"} w-full shrink-0 border-r md:block md:w-52`}><DevelopmentNavigation sessions={listedSessions} activeId={session?.id} workspaces={inventory.workspaces}
-        onNew={() => { setMobileSessions(false); void startNew(); }} onPick={pickSession} onDelete={remove} /></div>}
-      <main className={`${fullPage && mobileDetails && workspace ? "hidden min-[900px]:flex" : fullPage && mobileSessions ? "hidden md:flex" : "flex"} min-h-0 min-w-0 flex-1 flex-col`}>
+      <div className={`${fullPage && tab !== "sessions" && !review ? "hidden" : "flex"} min-h-0 flex-1`}>
+      {fullPage && <div inert={workspaceModal} className={`${review ? "hidden" : mobileSessions ? "block md:block" : "hidden md:block"} w-full shrink-0 border-r md:w-[264px]`}><DevelopmentNavigation sessions={listedSessions} activeId={session?.id} workspaces={inventory.workspaces}
+        createAppAction={createAppAction} externalCount={external.length} onExternal={() => setTab("external")} onNew={() => { setMobileSessions(false); void startNew(); }} onPick={pickSession} onDelete={remove} /></div>}
+      <main ref={conversationRef} tabIndex={-1} inert={workspaceModal} className={`${review ? "hidden" : fullPage && mobileSessions ? "hidden md:flex" : "flex"} min-h-0 min-w-0 flex-1 flex-col`}>
 
       <header className="flex flex-wrap shrink-0 items-center gap-2 border-b px-3 py-2">
         {showSessions ? (
@@ -792,49 +912,61 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
           </>
         ) : (
           <>
-            {fullPage ? <h1 className="min-w-0 truncate text-sm font-medium">{session?.title || "New session"}</h1> : <HostyNavigationBoundary><Sparkles className="h-4 w-4 shrink-0" aria-hidden /><span className="text-sm font-medium">Assistant</span></HostyNavigationBoundary>}
-            <StatusBadge value={status} />
-            {session && (
-              <AppContextPicker key={session.id} ref={contextPickerRef} opener={addButtonRef} compact side="bottom" session={session} busy={sending || mentionSaving || providerSaving} onBusyChange={setContextSaving} running={running}
-                onChange={onSessionChange} />
-            )}
-            {!fullPage && <div className="ml-auto flex items-center gap-1">
-              <Button variant="ghost" size="sm" disabled={!session || sending} onClick={async () => {
-                if (!session || sendingRef.current) return;
-                sendingRef.current = true; setSending(true); setError(null);
-                try {
-                  writeDraft(session.id, input);
-                  const stored = [...uploaded];
-                  for (const file of pending) {
-                    const attachment = await uploadAttachment(session.id, file);
-                    stored.push(attachment);
-                    setUploaded(current => [...current, attachment]);
-                    setPending(current => current.filter(candidate => candidate !== file));
-                  }
-                  if (!writeDraftAttachments(session.id, stored)) throw new Error("Browser storage is unavailable. Your draft and attachments remain in this panel.");
-                  localStorage.setItem(SESSION_STORAGE_KEY, session.id);
-                  const entry = ui.getNavigation().entries.find(e => e.route === "/development");
-                  if (entry) { const result = await ui.navigate(entry.key, { requestId: crypto.randomUUID(), placement: "main", search: `?session=${encodeURIComponent(session.id)}` }); if (result.status === "accepted") return; }
-                  window.open(`/development?session=${encodeURIComponent(session.id)}`, "_blank", "noopener");
-                } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
-                finally { sendingRef.current = false; setSending(false); }
-              }}>Open in Harness</Button>
-              <Button variant="ghost" size="icon-sm" title="Manage sessions" aria-label="Session history" disabled={!ready} onClick={() => {
-                setHistoryOpen(true);
-                void listSessions().then(setSessions).catch(cause => setError(cause instanceof Error ? cause.message : String(cause)));
-              }}><History /></Button>
-              <Button variant="ghost" size="icon-sm" title="New session" aria-label="New session" disabled={!ready} onClick={() => void startNew()}><MessageSquarePlus /></Button>
-            </div>}
+            <div className={cn("flex min-w-0 flex-1 items-center gap-2", fullPage && "basis-48")}>
+              {fullPage ? <>{session && renamingSessionId === session.id ? <SessionTitleInput key={session.id} title={session.title ?? ""} onCommit={async title => { setRenamingSessionId(null); await rename(session.id, title); }} onCancel={() => setRenamingSessionId(null)} /> : <><h1 className="min-w-0 truncate text-sm font-medium">{session ? session.title || "Untitled session" : "New session"}</h1>{session && <Button variant="ghost" size="icon-sm" aria-label="Rename session" onClick={() => setRenamingSessionId(session.id)}><Pencil className="size-3.5" /></Button>}</>}</> : <HostyNavigationBoundary><Sparkles className="h-4 w-4 shrink-0" aria-hidden /><span className="text-sm font-medium">Assistant</span></HostyNavigationBoundary>}
+            </div>
+            <div className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-2">
+              <StatusBadge value={status} />
+              {session && <SessionExecutionIndicator executionMode={session.executionMode} />}
+              {fullPage && workspace && <Button variant="ghost" size="icon-sm" className="hidden min-[900px]:inline-flex" aria-label="Toggle workspace" aria-pressed={workspaceVisible} onClick={() => setWorkspaceVisible(value => !value)}><PanelRight /></Button>}
+              {session && (
+                <AppContextPicker key={session.id} ref={contextPickerRef} opener={addButtonRef} compact side="bottom" session={session} busy={sending || mentionSaving || providerSaving} onBusyChange={setContextSaving} running={running}
+                  onChange={onSessionChange} />
+              )}
+              {!fullPage && <div className="flex items-center gap-1">
+                {createAppAction}
+                <Button variant="ghost" size="sm" disabled={!session || sending} onClick={async () => {
+                  if (!session || sendingRef.current) return;
+                  sendingRef.current = true; setSending(true); setError(null);
+                  try {
+                    writeDraft(session.id, input);
+                    const stored = [...uploaded];
+                    for (const file of pending) {
+                      const attachment = await uploadAttachment(session.id, file);
+                      stored.push(attachment);
+                      setUploaded(current => [...current, attachment]);
+                      setPending(current => current.filter(candidate => candidate !== file));
+                    }
+                    if (!writeDraftAttachments(session.id, stored)) throw new Error("Browser storage is unavailable. Your draft and attachments remain in this panel.");
+                    localStorage.setItem(SESSION_STORAGE_KEY, session.id);
+                    const entry = ui.getNavigation().entries.find(e => e.route === "/development");
+                    if (entry) { const result = await ui.navigate(entry.key, { requestId: crypto.randomUUID(), placement: "main", search: `?session=${encodeURIComponent(session.id)}` }); if (result.status === "accepted") return; }
+                    window.open(`/development?session=${encodeURIComponent(session.id)}`, "_blank", "noopener");
+                  } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+                  finally { sendingRef.current = false; setSending(false); }
+                }}>Open in Harness</Button>
+                <Button variant="ghost" size="icon-sm" title="Manage sessions" aria-label="Session history" disabled={!ready} onClick={() => {
+                  setHistoryOpen(true);
+                  void listSessions().then(setSessions).catch(cause => setError(cause instanceof Error ? cause.message : String(cause)));
+                }}><History /></Button>
+                <Button variant="ghost" size="icon-sm" title="New session" aria-label="New session" disabled={!ready} onClick={() => void startNew()}><MessageSquarePlus /></Button>
+              </div>}
+            </div>
           </>
         )}
       </header>
-      {session && !showSessions && <CreateApp key={`creation-${session.id}`} session={session} busy={running || sending || stopping || providerSaving} onChange={record => { onSessionChange(record); void inventory.refresh(); }} />}
+      {!showSessions && pendingDecision && <div className="flex shrink-0 items-center gap-2 border-b border-warning-foreground/25 bg-warning-soft px-3 py-2 text-sm text-warning-foreground"><Diamond className="size-4 shrink-0" /><span className="min-w-0 flex-1">Needs you · {pendingDecision.type === "approval_request" ? "Approval requested" : "Answer requested"}</span><Button size="sm" variant="outline" onClick={() => { decisionCard.current?.scrollIntoView({ block: "center", behavior: "instant" }); decisionCard.current?.focus(); }}>Review</Button></div>}
+      {!showSessions && !pendingDecision && (running || stopping) && <div className="flex shrink-0 items-center border-b bg-info-soft"><div className="min-w-0 flex-1"><AssistantActivity status={status} activity={activity?.activity ?? null} connection={connection} stopping={stopping} appNames={appNames} /></div><Button variant="ghost" size="sm" className="mr-2" disabled={stopping} onClick={() => void stop()}><Square className="size-3" />Stop</Button></div>}
       {session && !showSessions && <SessionRetention sessionId={session.id} revision={`${status}:${workspace?.workflow.revision ?? ""}`} />}
 
       {!showSessions && session && <SessionCredentials key={`credentials-${session.id}`} sessionId={session.id} />}
       {!fullPage && !showSessions && session && <SessionSandboxes key={`sandbox-${session.id}`} sessionId={session.id} />}
       {!fullPage && !showSessions && session && <SessionWorkspaces key={`workspaces-${session.id}`} session={session} running={running} />}
       {error && <div className="shrink-0 p-3" role="alert"><InlineError message={error} /></div>}
+      {pendingSend && <div className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-warning-soft px-3 py-2 text-sm" role="status">
+        <span className="min-w-0 flex-1">Send not confirmed. Your draft is retained; Retry checks the original request.</span>
+        <Button type="button" variant="outline" size="sm" disabled={sending} onClick={() => void recoverSend()}>{sending ? "Checking send…" : "Retry send"}</Button>
+      </div>}
 
       {showSessions ? (
         <SessionList
@@ -849,7 +981,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
           <MessageScrollerProvider key={session?.id ?? "connecting"} autoScroll>
             <MessageScroller className="h-auto flex-1">
               <MessageScrollerViewport aria-label="Assistant conversation">
-                <MessageScrollerContent className="gap-3 p-3">
+                <MessageScrollerContent className="mx-auto w-full max-w-[760px] gap-4 p-3 sm:p-4">
 
                   {health && !health.available && (
                     <MessageScrollerItem messageId="unavailable"><Alert severity="warning" title="Assistant unavailable" detail={health.reason} /></MessageScrollerItem>
@@ -862,14 +994,16 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
 
                   {items.map((item) => item.kind === "activity" ? (
                     <MessageScrollerItem key={item.key} messageId={item.key}>
-                      <ToolActivity events={item.events} appNames={appNames} />
+                      <ToolActivity events={item.events} appNames={appNames} reviewContext={transcriptReviewContext} commandResults={item.commandResults} toolResults={item.toolResults} />
                     </MessageScrollerItem>
                   ) : (
                     <MessageScrollerItem key={item.key} messageId={item.key}>
+                    <div ref={item.event === pendingDecision ? decisionCard : undefined} tabIndex={item.event === pendingDecision ? -1 : undefined}>
                     <TranscriptEvent
                       event={item.event}
                       appNames={appNames}
                       attachments={attachmentIndex}
+                      reviewContext={transcriptReviewContext}
                       decision={item.event.type === "approval_request" ? decidedApprovals.get(String(item.event.approvalId)) ?? null : null}
                       questionCancelled={item.event.type === "question_request" && cancelledQuestionIds.has(String(item.event.questionId))}
                       answers={item.event.type === "question_request" ? answeredQuestions.get(String(item.event.questionId)) ?? null : null}
@@ -879,6 +1013,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                       onDecide={decide}
                       onAnswer={answer}
                     />
+                    </div>
                     </MessageScrollerItem>
                   ))}
                   {streamed && (
@@ -901,14 +1036,15 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
             </MessageScroller>
           </MessageScrollerProvider>
 
+          {!composerBlocked && <>
           {contextUnavailable && (
             <label className="flex gap-2 px-3 py-2 text-xs">
-              <input type="checkbox" checked={withoutAppDetails} onChange={event => setWithoutAppDetails(event.target.checked)} />
+              <Checkbox checked={withoutAppDetails} onCheckedChange={value => setWithoutAppDetails(value === true)} />
               Send without fresh app details for this message
             </label>
           )}
           <form
-            className="shrink-0 p-3" aria-label="Message composer"
+            className="mx-auto w-full max-w-[760px] shrink-0 p-3 sm:p-4" aria-label="Message composer"
             onSubmit={(event) => {
               event.preventDefault();
               void send();
@@ -948,7 +1084,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                 rows={2}
                 aria-label="Message"
                 placeholder={session ? "Ask the operator assistant…" : "Waiting for the gateway…"}
-                disabled={!session || sending}
+                disabled={!session || sending || !!pendingSend || sendRecoveryBlocked}
                 className="max-h-48 min-h-20 w-full px-3"
               />
               <input
@@ -966,12 +1102,11 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                 }}
               />
               <InputGroupAddon align="block-end" className="flex-col items-stretch gap-2">
-                {session && <ContextUsageIndicator usage={contextUsage.sessionId === session.id ? contextUsage.usage : null} connected={connection === "connected"} />}
                 {(pending.length > 0 || uploaded.length > 0) && (
                   <div className="flex max-h-48 shrink-0 flex-col gap-2 overflow-y-auto pb-2" aria-label="Attachments to send">
                     {uploaded.map((attachment) => (
                       <ChatAttachment key={`stored-${attachment.name}`} name={attachment.name} size={attachment.size}
-                        description="Uploaded · ready to send" disabled={sending} onRemove={() => {
+                        description="Uploaded · ready to send" disabled={sending || !!pendingSend} onRemove={() => {
                           const remaining = uploaded.filter(item => item.name !== attachment.name);
                           setUploaded(remaining);
                           if (session) writeDraftAttachments(session.id, remaining);
@@ -981,7 +1116,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                       <ChatAttachment key={`${file.name}-${index}`} name={file.name} size={file.size} file={file}
                         state={uploadingFile === file ? "uploading" : failedUpload === file ? "error" : "idle"}
                         description={uploadingFile === file ? "Uploading…" : failedUpload === file ? "Upload failed · send to retry" : "Ready to upload"}
-                        disabled={sending}
+                        disabled={sending || !!pendingSend}
                         onRemove={() => setPending(current => current.filter((_, i) => i !== index))} />
                     ))}
                   </div>
@@ -990,7 +1125,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                   <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <Button ref={addButtonRef} type="button" size="icon" variant="ghost" disabled={!session || sending || mentionSaving || providerSaving} aria-label="Add to message"><Plus /></Button>
+                        <Button ref={addButtonRef} type="button" size="icon" variant="ghost" disabled={!session || sending || !!pendingSend || sendRecoveryBlocked || mentionSaving || providerSaving} aria-label="Add to message"><Plus /></Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent side="top" align="start" onCloseAutoFocus={event => {
                         if (openContextAfterMenu.current) {
@@ -1012,27 +1147,40 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                       onSessionChange(record);
                       void getHealth(record.id).then(value => { if (activeSessionId.current === record.id) setHealth(value); }).catch(() => {});
                     }} />}
+                    {session && <ContextUsageIndicator usage={contextUsage.sessionId === session.id ? contextUsage.usage : null} connected={connection === "connected"} />}
                   </div>
-                  {session && <SpeechInput key={session.id} disabled={sending} onText={text => setInput(current => current ? `${current}${/\s$/.test(current) ? "" : " "}${text}` : text)} />}
+                  {session && <SpeechInput key={session.id} disabled={sending || !!pendingSend || sendRecoveryBlocked} onText={text => setInput(current => current ? `${current}${/\s$/.test(current) ? "" : " "}${text}` : text)} />}
                   {running || stopping ? (
                     <Button type="button" size="icon" className="shrink-0" disabled={sending || stopping} onClick={() => void stop()} aria-label="Stop" title="Stop response">
-                      {sending || stopping ? <Loader2 className="animate-spin" /> : <Square className="fill-current" />}
+                      {sending || stopping ? <Loader2 className="motion-safe:animate-spin" /> : <Square className="fill-current" />}
                     </Button>
                   ) : (
-                    <Button type="submit" size="icon" className="shrink-0" disabled={!session || sending || providerSaving || contextSaving || mentionSaving || !health?.available || !hasMessageContent(input, pending.length, uploaded.length)} aria-label="Send">
-                      {sending ? <Loader2 className="animate-spin" /> : <Send />}
+                    <Button type="submit" size="icon" className="shrink-0" disabled={!session || sending || !!pendingSend || sendRecoveryBlocked || providerSaving || contextSaving || mentionSaving || !health?.available || !hasMessageContent(input, pending.length, uploaded.length)} aria-label="Send">
+                      {sending ? <Loader2 className="motion-safe:animate-spin" /> : <Send />}
                     </Button>
                   )}
                 </div>
               </InputGroupAddon>
             </InputGroup>
           </form>
+          </>}
         </>
       )}
       </main>
-      {fullPage && workspace && <div className={`${mobileDetails ? "block flex-1" : "hidden"} min-h-0 min-w-0 border-l min-[900px]:block min-[900px]:w-72 min-[900px]:flex-none 2xl:w-96`}>
-        <WorkspaceDetails key={workspace.id} workspace={workspace} title={workspace.name || session?.title || "Workspace"} sessionId={session?.id} running={running} refresh={inventory.refresh} deleteConversation={session ? () => remove(session.id) : undefined} />
-      </div>}
+      {fullPage && workspace && <RetainedWorkspacePane open={mobileDetails} visible={workspaceVisible} reviewing={!!review} onClose={() => setMobileDetails(false)}>
+        <WorkspaceDetails key={workspace.id} workspace={workspace} appMetadata={appIconMetadata} title={workspace.name || session?.title || "Workspace"} sessionId={session?.id} running={running} refresh={inventory.refresh} deleteConversation={session ? () => remove(session.id) : undefined} onReview={(tree, choice) => openReview(workspace.id, tree, session?.id, choice)} />
+      </RetainedWorkspacePane>}
+      {review && <WorkspaceReview key={`${review.workspaceId}:${review.tree.id}`} workspaceId={review.workspaceId} tree={review.tree}
+        choice={review.transcriptChoice ?? reviewChoices[review.tree.id] ?? { view: "session", path: "" }} onChoice={choice => {
+          if (review.transcriptChoice) setReview(previous => previous ? { ...previous, transcriptChoice: choice } : previous);
+          else setReviewChoices(previous => ({ ...previous, [review.tree.id]: choice }));
+        }}
+        onBack={closeReview} onAsk={!composerBlocked && review.sessionId && review.sessionId === session?.id ? reference => {
+          if (activeSessionId.current !== review.sessionId || composerBlockedRef.current) return;
+          setInput(current => activeSessionId.current !== review.sessionId ? current : current ? `${current}\n\n${reference}` : reference);
+          closeReview();
+          requestAnimationFrame(() => { if (activeSessionId.current === review.sessionId) composerRef.current?.focus(); });
+        } : undefined} />}
       </div>
     </div>
   );

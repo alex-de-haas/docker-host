@@ -18,8 +18,8 @@ export function appReadinessProblem(app: CoreApp): AppProblem | null {
   };
 }
 
-// Every problem derivable from the app record alone. The collapsed row's icons and the panel's alert list
-// both render from this one call, so what the row warns about and what the panel explains can never drift
+// Every problem derivable from the app record alone. Dashboard icons and the Manage alert list
+// both render from this one call, so what the row warns about and what Manage explains can never drift
 // apart — before this they were computed independently in two places.
 //
 // Probe-only health and digest details stay beside the services. Persisted update-check failures are
@@ -51,7 +51,7 @@ export function collectAppProblems(app: CoreApp): AppProblem[] {
     problems.push({
       severity: "error",
       title: unavailable.length === 1 ? "A reserved host port failed to bind" : `${unavailable.length} reserved host ports failed to bind`,
-      detail: `${names.join(", ")} — something else on this host is holding the port. Reassign it from the endpoint below, or free the port and restart the app.`,
+      detail: `${names.join(", ")} — something else on this host is holding the port. Reassign it in the app’s Network section, or free the port and restart the app.`,
     });
   }
 

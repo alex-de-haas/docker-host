@@ -17,9 +17,9 @@ export function SessionRetention({ sessionId, revision }: { sessionId: string; r
   }, [sessionId, revision, refresh]);
   const current = value?.id === sessionId ? value : null;
   return <details className="shrink-0 border-b px-3 py-2 text-xs text-muted-foreground">
-    <summary className="cursor-pointer">Retention{current?.status?.dueAt ? ` · Eligible after ${new Date(current.status.dueAt).toLocaleString()}` : current?.status ? ` · ${current.status.state}` : ""}</summary>
+    <summary className="cursor-pointer tabular-nums">Retention{current?.status?.dueAt ? ` · Eligible after ${new Date(current.status.dueAt).toLocaleString()}` : current?.status ? ` · ${current.status.state}` : ""}</summary>
     <p className="mt-2">{current?.error ?? current?.status?.message ?? "Checking Core…"}</p>
-    {current?.status?.completedAt && <p>Core completion: {new Date(current.status.completedAt).toLocaleString()}</p>}
+    {current?.status?.completedAt && <p className="tabular-nums">Core completion: {new Date(current.status.completedAt).toLocaleString()}</p>}
     <p>Daily cleanup rechecks the current state. An eligibility date does not guarantee deletion.</p>
     {current?.status?.state === "blocked" && <Button size="sm" disabled={busy} variant="outline" onClick={async () => {
       setBusy(true);

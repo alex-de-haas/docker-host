@@ -1,6 +1,6 @@
 ---
 created: 2026-10-19
-updated: 2026-10-21
+updated: 2026-10-23
 summary: Select named app workspaces or installed package runtimes with scoped access review, retained package choices and recoverable Core-owned transitions.
 components: [apps/core, apps/cli, apps/shell, apps/harness, shared]
 ---
@@ -399,8 +399,46 @@ The digest covers participant facts, source contents and installed runtime/confi
 changes invalidate admission. The earlier `activation-plan` endpoint remains a selection-only API.
 
 The advanced activation APIs retain explicit app/Core selections for Core handover and recovery.
-Ordinary app selection uses the unified execution paths above; Dashboard and workspace detail do not
-expose the retained-activation panel or its participant/compatibility controls. Core Source exposes
+Ordinary app selection uses the unified execution paths above without the advanced retained-group
+participant panel. Dashboard's Core Runtime / workspace control offers Release and eligible existing
+named workspaces through an explicitly Core-only review, excluding every app participant. Its
+persistent dialog exposes that Core operation's status, retry/preparation review, resume, boundary
+pause and Core-only Return; it does not expose an arbitrary app-participant selection editor.
+`GET /api/core/execution-targets` supplies the selector's Core candidates and retained ownership in
+one authorized metadata read. It filters by source repository and current user ownership, preserves
+private-source checks, and avoids per-candidate Git observations, lifecycle review and executable
+hashing. Choosing a destination still performs a fresh authoritative Core-only review.
+
+An active Core group can hand over directly to another reviewed Core workspace. The selected
+candidate builds while the current Core stays running. Admission binds the exact current owner,
+factual launch and captured baseline executable hash into the reviewed digest. Only the verified
+new active receipt retires the old Core ownership; the old activation's application participants
+retain their independent ownership and runtimes. Interrupted retirement reconciles idempotently
+under the launch lock. A pending, unknown, unreserved or changed owner cannot be replaced by a
+project-path guess.
+
+The immediate previous launch remains the strict handover/failed-start recovery identity. A
+separate Core Return target retains the original chain baseline and executable hash across
+successful direct switches. A failed pre-activation switch returns to its exact immediate owner;
+a successful switch's Return selects the original baseline. The admitted Return receipt preserves
+that exact target through retries, including process identity reconciliation backed by its receipt.
+Source consumer tracking follows the live recovery target rather than pinning every superseded
+workspace as an active Core consumer. Captured generations retain the managed build retention rules.
+
+Same-target ordinary CLI restarts preserve the activation through durable workspace-launch
+continuations and exact readiness checks; [Core development mode](../core-dev-target/feature.md)
+describes explicit recovery for older launches without that evidence. Direct candidates and
+workspace continuations must support the read-only workspace-activation.2 contract before Stop.
+Unsupported old builds are refused with an update explanation while existing services stay running.
+
+Dashboard's confirmation shows current and selected targets by name with explicit Switch Core.
+Animated, motion-aware progress replaces raw phases and request IDs. Success is tied to the
+selected workspace, tree, reviewed project and factual generation/PID/start identity. Release
+selection keeps current-data compatibility acceptance for baseline Return; an already confirmed
+Release baseline needs no second restart. Original UUIDs and useful recovery actions remain
+internal to that friendly presentation.
+
+Original requests are retained by user/Core origin across menu closure, reconnect and remount. Core Source exposes
 repository URL, ref, relative project and optional source connection alongside the running build and
 update origin. Unsaved source fields retain their opening revision; background status cannot overwrite them.
 
@@ -472,6 +510,43 @@ ordinary runtime consumer. Returning one participant releases only that particip
 Harness shows app/Core runtime users and the activation controls needed to inspect or Return them.
 Harness's native setup installs the monorepo dependency set so its setup cannot prune dependencies
 used by Shell or another app in a shared worktree.
+
+## Direct Core Switch Verification
+
+The 2026-10-23 macOS acceptance runs `scripts/check-workspace-activation.py <worktree> direct
+--managed` with the final Core/CLI builds. A disposable parent starts and owns a source child Core;
+normal setup/password login creates its separate administrator. A local Git fixture provides two
+registered Core workspaces. A separate native application remains on its installed local runtime.
+
+The scenario verifies exact A readiness, ordinary same-target restart with updated activation
+ownership, direct A-to-B apply without Return, retirement of A's Core ownership, original-baseline
+Return and idempotent apply/Return replay without additional process changes. Both dirty source
+sentinels, the authenticated session, native application PID/installation/runtime and ordinary
+application data remain intact. Parent Finish removes the child and its data; the helper, native
+service, parent Core and Git server exit, the port is released, and disposable credentials, source,
+builds and snapshots are removed.
+
+Verification includes 76 Core activation/source regressions, the full 335-test CLI suite, 201 Shell
+Node tests and 553 React tests, Core/CLI builds, isolated Shell production build, lint/type checks,
+document/link validation and version consistency. The live dev Core's legacy activation is explicitly
+adopted, then a same-workspace restart confirms its new generation while preserving the original
+Release Return target. Existing native app process identities are retained. Startup autostart
+reconciliation remains a separate existing policy; the operator's prior app running states are
+restored after the dev restart.
+
+Focused regressions cover direct admission and stale ownership, pre-Stop build/capability failure,
+reserved-owner races, interrupted retirement, failed-start immediate-owner Return and exact-process
+provenance. CLI continuation/adoption tests cover generation and executable changes, lost responses,
+private-source and registered-binding refusal, and unsupported candidates. Shell tests cover exact
+selected-target success, original UUID recovery, review repair, animated build/readiness/reconnect
+and suppression of technical identifiers/statuses. Native Windows/Linux lifecycle acceptance is
+not run by this macOS check; their separate development-mode acceptance remains tracked.
+
+The Core selector catalog regression passes six focused backend tests, 102 affected inspection,
+authorization and serializer tests, and all 201 Shell Node / 556 React tests. A separate
+parent-managed Core on macOS lists three prepared workspaces in 16 ms on the first GET and 2 ms
+on subsequent GETs, without changing persisted Git observations, dirty source, runtime identity,
+activation records or snapshots. Finish removes the child, its processes and test data.
 
 ## Testing Expectations
 
@@ -555,3 +630,9 @@ used by Shell or another app in a shared worktree.
   consumers exit and the app journal owns the binding.
 - Verify named workspace creation/rename, source-only recipe configuration without activation,
   exact replay, unchanged source stamps and UI rename refresh without page reload.
+
+- Verify direct Core A-to-B preparation while A runs, exclusive admission, original baseline Return,
+  pre-Stop failure, interrupted ownership retirement, same-target restart continuity and exact
+  request/process identity recovery. Refuse unsupported candidates and unproven launch changes.
+- Verify friendly Core confirmation/progress/reconnect without UUIDs/raw phases and no success for
+  an old activation or a different workspace, tree, project, generation, PID or start identity.

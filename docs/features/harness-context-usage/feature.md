@@ -7,9 +7,12 @@ components: [apps/harness]
 
 # Harness Context Usage
 
-Harness shows the latest context observation near the composer controls in both the full-page
-chat and the embedded assistant. The indicator displays used tokens, the provider-reported
-window and its percentage, with a compact progress bar. It has no category breakdown.
+Harness shows the latest context observation as a compact circular indicator immediately after
+the provider selector in the composer, in both the full-page chat and the embedded assistant.
+The percentage sits beside the ring for readability.
+The shared tooltip exposes used tokens, the provider-reported window, percentage, estimate status
+and measurement time, and remains available on keyboard focus. The indicator has no category
+breakdown.
 
 ## Provider Measurements
 
@@ -31,11 +34,15 @@ reading without failing the conversation; a timed-out request disables further d
 that native run to avoid accumulating unresolved control requests. Teardown cancels the local
 wait and ignores late replies. Summary reads do not request detailed token-count API calculations.
 
-Compaction clears the previous observation and subsequent readings replace it. A saved model
-selection also clears the indicator until another observation arrives. Counts may decrease.
+Compaction clears the previous observation and subsequent readings replace it. Changing the selected
+model, including switching to or from the provider default, clears the indicator until another
+observation arrives. Changing only reasoning effort, returning to default effort, or saving the
+same selection preserves the last observation and its timestamp through reconnect and reload.
+The next provider measurement replaces it normally. Counts may decrease.
 A valid zero is shown as zero; absent or invalid measurements are shown as **Not available**.
-A known count without a valid limit remains visible without a percentage or bar. Counts above
-the reported limit retain their real percentage while the visual bar stops at 100%.
+A known count without a valid limit remains available in the tooltip without a percentage or
+filled ring. Counts above the reported limit retain their real percentage while the visual ring
+stops at 100%.
 
 ## Persistence And Delivery
 
@@ -56,8 +63,8 @@ Switching conversations clears the previous reading. While disconnected, the las
 remains visible; the tooltip identifies it as the last measurement and includes its timestamp.
 
 The indicator has an accessible label and meter value, and its explanation is available on
-keyboard focus as well as hover. It uses the existing theme and shared shadcn progress/tooltip
-components.
+keyboard focus as well as hover. The decorative SVG ring uses the existing theme and the
+explanation uses the shared shadcn tooltip.
 
 See [Hosty Harness](../ai-gateway/feature.md) for the conversation surface and
 [Assistant Shared Docker Runtime](../assistant-shared-docker-runtime/feature.md) for execution and recovery.
@@ -68,12 +75,15 @@ See [Hosty Harness](../ai-gateway/feature.md) for the conversation surface and
   or reasoning tokens, and cover invalid values, missing windows, zero and over-limit readings.
 - Adapter tests cover Codex thread/turn isolation and compaction, and Claude summary sampling,
   subagent exclusion, coalescing, diagnostic failures, timeouts and teardown.
-- Session tests cover durable SSE delivery, reconnect, reload, model reset, cancelled-run
-  callbacks and conversation isolation. Worker recovery tests retain the context observation
+- Session tests cover durable SSE delivery, reconnect, reload, effort-only/default/no-op preservation, actual-model invalidation, cancelled-run
+  callbacks and conversation isolation. Settings teardown retires the old native run only after
+  a successful stop; late callbacks cannot clear context or replace native identity, while a failed
+  stop preserves the selection and live callback authority. Worker recovery tests retain the context observation
   after detailed replay expires, with and without final text, for success and failure.
 - The worker Docker fixture exercises the real Claude summary control without submitting a prompt.
-- UI tests cover estimates, unknown counts, missing limits, percentages above 100%, keyboard
-  tooltip access, replay ordering and exclusion from the transcript.
+- UI tests cover the circular indicator after the provider selector, estimates, unknown counts,
+  missing limits, percentages above 100%, keyboard tooltip access, replay ordering and exclusion
+  from the transcript. Check full-page and embedded composers at desktop and narrow widths.
 - Run `npm run harness:test`, `npm run harness:lint`, `npm run harness:build-web`,
   `npm run test:integration -- worker`, `node scripts/check-versions.mjs`,
   `node scripts/docs-index.mjs --check` and `git diff --check`.

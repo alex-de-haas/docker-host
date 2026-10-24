@@ -9,6 +9,7 @@ public sealed partial class CoreLifecycleServiceTests
     {
         public string? RepositoryOverride;
         public int Observed;
+        public string? ExpectedBranch;
         public int? FailedNumber;
         public List<int?> ObservedNumbers { get; } = [];
         public int? DelayedNumber;
@@ -22,6 +23,47 @@ public sealed partial class CoreLifecycleServiceTests
         public bool LoseCreate;
         public int Created;
         public int Merged;
+        public Func<PublicationRecord, CancellationToken, Task<PublicationReviewSnapshot>>? ReviewSnapshot;
+        public Task<PublicationReviewSnapshot> ReadReviewSnapshotAsync(UserProviderConnection c, PublicationRecord r, CancellationToken ct)
+            => ReviewSnapshot?.Invoke(r, ct) ?? throw new PublicationException("provider_unsupported", "No review snapshot fixture configured.");
+        public int ReviewReplies;
+        public int ReviewResolutions;
+        public bool LoseReviewReply;
+        public bool ReplyObserved;
+        public Func<Task>? BeforeReplyAdmission;
+        public Func<Task>? BeforeReviewResolution;
+        public async Task<string> ReplyReviewAsync(UserProviderConnection c, PublicationRecord r, string threadId,
+            string head, string body, string marker, bool recoverOnly, Func<Task> admitMutation, CancellationToken ct)
+        {
+            Assert.Equal(Head, head);
+            Assert.Equal("thread", threadId);
+            if (ReplyObserved) return "comment";
+            if (recoverOnly) throw new PublicationException("reply_uncertain", "Not observed yet.");
+            if (BeforeReplyAdmission is not null) await BeforeReplyAdmission();
+            await admitMutation();
+            ReviewReplies++;
+            ReplyObserved = true;
+            if (LoseReviewReply) throw new HttpRequestException("Reply response lost.");
+            return "comment";
+        }
+        public int ReviewComments;
+        public bool LoseReviewComment;
+        public bool CommentObserved;
+        public Func<Task>? BeforeCommentAdmission;
+        public async Task<PublicationReviewCommentCreated> CreateReviewCommentAsync(UserProviderConnection c,
+            PublicationRecord r, PublicationReviewCommand command, string marker, bool recoverOnly,
+            Func<Task> admitMutation, CancellationToken ct)
+        {
+            if (CommentObserved) return new("new-thread", "new-comment");
+            if (recoverOnly) throw new PublicationException("comment_uncertain", "Not observed yet.");
+            Assert.Equal(Head, command.ExpectedHead);
+            if (BeforeCommentAdmission is not null) await BeforeCommentAdmission();
+            await admitMutation();
+            ReviewComments++;
+            CommentObserved = true;
+            if (LoseReviewComment) throw new HttpRequestException("Comment response lost.");
+            return new("new-thread", "new-comment");
+        }
         public bool LoseReady;
         public int Readied;
         public PublicationReference? Reference;
@@ -43,9 +85,15 @@ public sealed partial class CoreLifecycleServiceTests
             if (LoseCreate) { LoseCreate = false; throw new HttpRequestException("Lost provider response"); }
             return Task.FromResult(Reference!);
         }
-        public async Task<PublicationObservation> ObserveAsync(UserProviderConnection c, PublicationRecord r, CancellationToken ct)
+        public Task<PublicationObservation> ObserveAsync(UserProviderConnection c, PublicationRecord r, CancellationToken ct)
+            => Observe(r, ct, requireWorkspaceBranch: true);
+        public Task<PublicationObservation> ObserveReferenceAsync(UserProviderConnection c, PublicationRecord r, CancellationToken ct)
+            => Observe(r, ct, requireWorkspaceBranch: false);
+        private async Task<PublicationObservation> Observe(PublicationRecord r, CancellationToken ct, bool requireWorkspaceBranch)
         {
             Observed++; ObservedNumbers.Add(r.Number);
+            if (requireWorkspaceBranch && ExpectedBranch is not null && r.Branch != ExpectedBranch)
+                throw new PublicationException("pr_mismatch", "The PR branch does not match this workspace.");
             if (BeforeObserve is not null) await BeforeObserve(r, ct);
             if (r.Number == DelayedNumber) await Task.Delay(ObservationDelay, ct);
             if (r.Number == FailedNumber) throw new PublicationException("pr_mismatch", "The PR branch does not match this workspace.");
@@ -58,7 +106,20 @@ public sealed partial class CoreLifecycleServiceTests
             if (LoseReady) { LoseReady = false; throw new HttpRequestException("Lost ready response"); }
             return Task.CompletedTask;
         }
-        public Task ResolveReviewAsync(UserProviderConnection c, PublicationRecord r, string threadId, string head, CancellationToken ct) => Task.CompletedTask;
+        public bool LoseReviewResolution;
+        public bool ReviewResolved;
+        public Task ResolveReviewAsync(UserProviderConnection c, PublicationRecord r, string threadId, string head, CancellationToken ct)
+            => ResolveReviewAsync(c, r, threadId, head, () => Task.CompletedTask, ct);
+        public async Task ResolveReviewAsync(UserProviderConnection c, PublicationRecord r, string threadId, string head,
+            Func<Task> admitMutation, CancellationToken ct)
+        {
+            if (ReviewResolved) return;
+            if (BeforeReviewResolution is not null) await BeforeReviewResolution();
+            await admitMutation();
+            ReviewResolutions++;
+            ReviewResolved = true;
+            if (LoseReviewResolution) throw new HttpRequestException("Resolution response lost.");
+        }
         public Task<PublicationIdentity> IdentityAsync(UserProviderConnection c, CancellationToken ct) => Task.FromResult(new PublicationIdentity("Verified Author", "verified@example.test"));
     }
     private static async Task<(LifecycleFixture F, DevelopmentWorkspaceService Workspaces, PublicationService Service, PublicationProviderFixture Provider, DevelopmentWorkspace W, UserDirectoryStore Users)> PublicationFixture()

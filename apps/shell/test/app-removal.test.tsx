@@ -17,9 +17,9 @@ describe("Core-confirmed app removal", () => {
     const api = client();
     vi.mocked(api.status).mockResolvedValueOnce({ ...draft, status: "executing" });
     const submitted = vi.fn(); const finished = vi.fn();
-    const result = requestAppRemoval(api, "target", { deleteData: true, deleteBackups: false }, submitted).then(finished);
+    const result = requestAppRemoval(api, "target", submitted).then(finished);
     await vi.advanceTimersByTimeAsync(0);
-    expect(api.prepare).toHaveBeenCalledExactlyOnceWith({ removeAppId: "target", removalOptions: { deleteData: true, deleteBackups: false } });
+    expect(api.prepare).toHaveBeenCalledExactlyOnceWith({ removeAppId: "target" });
     expect(api.submit).toHaveBeenCalledExactlyOnceWith("removal", {}, false);
     expect(submitted).toHaveBeenCalledWith({ ...draft, status: "pending" });
     expect(finished).not.toHaveBeenCalled();
@@ -31,7 +31,7 @@ describe("Core-confirmed app removal", () => {
   });
   it("returns denial without reporting success or repeating removal", async () => {
     const api = client(); vi.mocked(api.status).mockResolvedValue({ ...draft, status: "denied" });
-    const result = requestAppRemoval(api, "target", {}, vi.fn());
+    const result = requestAppRemoval(api, "target", vi.fn());
     await vi.advanceTimersByTimeAsync(1000);
     expect((await result).status).toBe("denied");
     expect(api.submit).toHaveBeenCalledTimes(1);
@@ -40,7 +40,7 @@ describe("Core-confirmed app removal", () => {
     const api = client();
     vi.mocked(api.status).mockResolvedValueOnce({ ...draft, status: "executing" });
     const dismiss = vi.fn(); const finished = vi.fn();
-    const result = requestAppRemoval(api, "target", {}, () => dismiss).then(finished);
+    const result = requestAppRemoval(api, "target", () => dismiss).then(finished);
     await vi.advanceTimersByTimeAsync(0);
     expect(dismiss).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1000);
@@ -54,28 +54,28 @@ describe("Core-confirmed app removal", () => {
     const api = client();
     vi.mocked(api.status).mockRejectedValue(new Error("Access revoked"));
     const dismiss = vi.fn();
-    const result = expect(requestAppRemoval(api, "target", {}, () => dismiss)).rejects.toThrow("Access revoked");
+    const result = expect(requestAppRemoval(api, "target", () => dismiss)).rejects.toThrow("Access revoked");
     await vi.advanceTimersByTimeAsync(1000); await result;
     expect(dismiss).toHaveBeenCalledTimes(1);
     expect(api.submit).toHaveBeenCalledTimes(1);
   });
   it("reports execution errors", async () => {
     const api = client(); vi.mocked(api.status).mockResolvedValue({ ...draft, status: "failed", error: "Target changed" });
-    const result = expect(requestAppRemoval(api, "target", {}, vi.fn())).rejects.toThrow("Target changed");
+    const result = expect(requestAppRemoval(api, "target", vi.fn())).rejects.toThrow("Target changed");
     await vi.advanceTimersByTimeAsync(1000);
     await result;
   });
   it("recovers a lost submission response without repeating the mutation", async () => {
     const api = client(); vi.mocked(api.submit).mockRejectedValue(new Error("Connection lost"));
     vi.mocked(api.status).mockResolvedValueOnce({ ...draft, status: "pending" });
-    const result = requestAppRemoval(api, "target", {}, vi.fn());
+    const result = requestAppRemoval(api, "target", vi.fn());
     await vi.advanceTimersByTimeAsync(1000);
     expect((await result).status).toBe("succeeded");
     expect(api.submit).toHaveBeenCalledTimes(1);
   });
   it("does not poll indefinitely after the confirmation expires", async () => {
     const api = client(); vi.mocked(api.submit).mockResolvedValue({ ...draft, status: "pending", expiresAt: "2000-01-01T00:00:00Z" });
-    await expect(requestAppRemoval(api, "target", {}, vi.fn())).rejects.toThrow("expired");
+    await expect(requestAppRemoval(api, "target", vi.fn())).rejects.toThrow("expired");
     expect(api.status).not.toHaveBeenCalled();
   });
 });
@@ -107,7 +107,7 @@ describe("uncertain Core approval submission", () => {
     vi.mocked(api.status).mockRejectedValueOnce(new TypeError("Network unavailable"))
       .mockRejectedValueOnce(new InstallationError("Proxy unavailable", 502))
       .mockResolvedValueOnce({ ...draft, status: "pending" });
-    const result = requestAppRemoval(api, "target", {}, submitted);
+    const result = requestAppRemoval(api, "target", submitted);
     await vi.advanceTimersByTimeAsync(4000);
     expect((await result).status).toBe("succeeded");
     expect(api.prepare).toHaveBeenCalledTimes(1);
@@ -118,7 +118,7 @@ describe("uncertain Core approval submission", () => {
   it.each([401, 403])("keeps a %i submit refusal terminal without further requests", async status => {
     const api = client(); const submitted = vi.fn();
     vi.mocked(api.submit).mockRejectedValue(new InstallationError("Authorization refused", status));
-    await expect(requestAppRemoval(api, "target", {}, submitted)).rejects.toMatchObject({ status });
+    await expect(requestAppRemoval(api, "target", submitted)).rejects.toMatchObject({ status });
     expect(api.status).not.toHaveBeenCalled();
     expect(submitted).not.toHaveBeenCalled();
   });
@@ -126,7 +126,7 @@ describe("uncertain Core approval submission", () => {
     const api = client(); const submitted = vi.fn();
     vi.mocked(api.submit).mockRejectedValue(new TypeError("Submit response lost"));
     vi.mocked(api.status).mockRejectedValue(new InstallationError("Access revoked", 403));
-    await expect(requestAppRemoval(api, "target", {}, submitted)).rejects.toMatchObject({ status: 403 });
+    await expect(requestAppRemoval(api, "target", submitted)).rejects.toMatchObject({ status: 403 });
     expect(api.status).toHaveBeenCalledExactlyOnceWith(draft.id);
     expect(submitted).not.toHaveBeenCalled();
   });
@@ -134,7 +134,7 @@ describe("uncertain Core approval submission", () => {
     const api = client(); const submitted = vi.fn();
     vi.mocked(api.submit).mockRejectedValue(new TypeError("Submit response lost"));
     vi.mocked(api.status).mockResolvedValue(draft);
-    await expect(requestAppRemoval(api, "target", {}, submitted)).rejects.toThrow("Submit response lost");
+    await expect(requestAppRemoval(api, "target", submitted)).rejects.toThrow("Submit response lost");
     expect(api.prepare).toHaveBeenCalledTimes(1); expect(api.submit).toHaveBeenCalledTimes(1);
     expect(api.status).toHaveBeenCalledExactlyOnceWith(draft.id);
     expect(submitted).not.toHaveBeenCalled();
@@ -144,7 +144,7 @@ describe("uncertain Core approval submission", () => {
     vi.mocked(api.prepare).mockResolvedValue({ ...draft, expiresAt });
     vi.mocked(api.submit).mockRejectedValue(new TypeError("Submit response lost"));
     vi.mocked(api.status).mockRejectedValue(new InstallationError("Proxy unavailable", 502));
-    const result = expect(requestAppRemoval(api, "target", {}, vi.fn())).rejects.toMatchObject({
+    const result = expect(requestAppRemoval(api, "target", vi.fn())).rejects.toMatchObject({
       name: CoreApprovalStatusUnknownError.prototype.name, requestId: draft.id, expiresAt,
       message: expect.stringContaining("Check Core before preparing another request"),
     });
@@ -162,7 +162,7 @@ it.each([403, 409])("does not recover a definitive real Shell submit refusal wit
     return Response.json(draft);
   });
   const api = createInstallationClient({ baseUrl: "/api/installations", request });
-  await expect(requestAppRemoval(api, "target", {}, vi.fn())).rejects.toBe(refusal);
+  await expect(requestAppRemoval(api, "target", vi.fn())).rejects.toBe(refusal);
   expect(request.mock.calls.map(([url]) => url)).toEqual([
     "/api/installations", "/api/installations/removal/submit",
   ]);
@@ -176,7 +176,7 @@ it("stops uncertain-submit status recovery on an actual CoreRequestError authori
     return Response.json(draft);
   });
   const api = createInstallationClient({ baseUrl: "/api/installations", request });
-  await expect(requestAppRemoval(api, "target", {}, vi.fn())).rejects.toBe(refusal);
+  await expect(requestAppRemoval(api, "target", vi.fn())).rejects.toBe(refusal);
   expect(request.mock.calls.map(([url]) => url)).toEqual([
     "/api/installations", "/api/installations/removal/submit", "/api/installations/removal",
   ]);

@@ -1,6 +1,6 @@
 ---
 created: 2026-09-25
-updated: 2026-10-16
+updated: 2026-10-22
 summary: One Core resource sampler for containers, local process trees and Core itself, shared by Dashboard and Telemetry.
 components: [apps/core, apps/shell, apps/telemetry-ui]
 ---
@@ -102,25 +102,24 @@ added. Telemetry pins both infrastructure families and offers Core in the Metric
 
 ## Dashboard
 
-App rows show a CPU value and sparkline plus a RAM value beside status only while the app runtime
+App rows show separate CPU and RAM values and sparklines beside status only while the app runtime
 is running and no update is in progress. Degraded health keeps the display because the runtime is
-still running. Starting, stopping, stopped, unknown and updating apps leave the resource cell empty,
-preserving column alignment without a resource button or historical popover. Expanded services use
-the same app-level rule and also hide resources when the service is stopped or exited. Core and the
-all-app total remain visible, and resource sampling and history retention are independent of these
-display rules.
+still running. Starting, stopping, stopped, unknown and updating apps show a dash,
+preserving column alignment without a resource button or historical popover. App service details
+live in Manage rather than an expanded Dashboard panel. Manage shows service resources only for
+an observed active service while the app is up and not updating, and hides stopped, exited or
+unknown service readings. Core and the all-app total remain
+visible, and resource sampling and history retention are independent of these display rules.
 
-Expanded service headers keep the service name and runtime badges on the left, with the stacked CPU/RAM block
-beside the health and runtime statuses on the right. A thin horizontal separator divides adjacent
-service sections. These per-service totals include all owned
-child processes. The apps Frame header shows the
+Manage retains service names, health/runtime statuses and stacked CPU/RAM readings. Per-service
+totals include all owned child processes. The apps Frame header shows the
 all-app total, excluding Core, aligned above the per-app resource column, while Core has its own resource cell. Clicking any cell opens
 CPU/RAM history and recent average CPU in a popover using ReUI Frame and the shadcn Chart/Popover
 primitives recommended by the ReUI registry. Frame owns the single outer border; the popover
 wrapper has no border and matches Frame's corner radius, retaining an opaque backdrop.
 
 CPU graphs share a scale of at least 100%, rounded up to the next 100% from retained fleet/Core
-peaks. RAM is numeric in rows and charted in the popover. A subtle activity dot requires at least
+peaks. RAM has its own row sparkline and detailed popover chart. An elevated-CPU hint requires at least
 ten baseline points and three consecutive readings above twice that baseline, at least ten percent
 CPU, and at least five percentage points above baseline. The resource button includes this hint
 in its accessible name; the visual dot is decorative. It is an activity hint, not an error.
@@ -148,10 +147,11 @@ Responsive rows retain values and actions without horizontal scrolling.
   confirmed stopped apps have zero load.
 - Shell tests cover per-service/app/fleet sums, Core exclusion, unavailable/stale values, history
   merging, common CPU scaling and sustained-activity thresholds.
-- Dashboard verification covers empty resource cells and hidden expanded-service resource controls
-  for starting, stopping, stopped, unknown and updating apps, including retained samples. Running
-  apps retain their displays with healthy or degraded health; stopped/exited services stay hidden.
-  Core and fleet totals retain their displays.
+- Dashboard verification covers empty resource cells for starting, stopping, stopped, unknown and
+  updating apps, including retained samples. Running apps retain their displays with healthy or
+  degraded health; Manage hides stopped/exited service readings. Core and fleet totals retain their
+  displays. Resource popovers act independently of app-row navigation to Manage; no app service
+  expander is required to inspect per-service resources.
 - Build Core, Shell and Telemetry; run their affected tests. Live macOS verification covers source
   Core restart/adoption, local and Docker values, SSE changes, service totals, chart popovers,
   narrow Dashboard containers, and arrival of the same metrics in Telemetry. Windows/Linux native

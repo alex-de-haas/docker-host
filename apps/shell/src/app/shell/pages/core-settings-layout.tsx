@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
+import { Frame, FrameHeader, FramePanel } from "@/components/reui/frame";
+import { FieldGroup } from "@/components/ui/field";
 import type { CoreSettingItem } from "../types";
 import { INGRESS_SETTINGS_GROUP } from "../ingress";
-import { cn } from "@/lib/utils";
 
 // Shell owns the layout of known Core settings. Core remains authoritative for values, types,
 // descriptions and defaults. Unknown keys stay editable when Core is newer than this Shell.
@@ -42,53 +43,21 @@ export function CoreSettingsLayout({ items, renderField }: {
   const byKey = new Map(items.map((item) => [item.key, item]));
   const ingress = items.filter(item => item.group === INGRESS_SETTINGS_GROUP);
   const extra = items.filter((item) => !knownKeys.has(item.key) && item.group !== INGRESS_SETTINGS_GROUP);
-  return (
-    <div className="space-y-4">
-      {sessions.some((session) => session.keys.some((key) => byKey.has(key))) && (
-        <section className="rounded-lg border p-4" aria-label="Sessions">
-          <h4 className="mb-3 text-sm font-medium">Sessions</h4>
-          <div className="grid gap-5 lg:grid-cols-3">
-            {sessions.map((session) => (
-              session.keys.some((key) => byKey.has(key)) && (
-                <fieldset key={session.title} className="min-w-0 space-y-3">
-                  <legend className="mb-2 text-xs text-muted-foreground">{session.title}</legend>
-                  {session.keys.map((key) => {
-                    const item = byKey.get(key);
-                    return item ? renderField(item) : null;
-                  })}
-                </fieldset>
-              )
-            ))}
-          </div>
-        </section>
-      )}
-      <div className="grid gap-4 lg:grid-cols-2">
-        {sections.map((section) => (
-          section.fields.some((field) => byKey.has(field.key)) && (
-            <section key={section.title} className={cn("min-w-0 rounded-lg border p-4", section.title === "Connection" && "lg:col-span-2")} aria-label={section.title}>
-              <h4 className="mb-3 text-sm font-medium">{section.title}</h4>
-              <div className={section.title === "Connection" ? "grid gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]" : "space-y-3"}>
-                {section.fields.map((field) => {
-                  const item = byKey.get(field.key);
-                  return item ? renderField(item, "label" in field ? field.label : undefined) : null;
-                })}
-              </div>
-            </section>
-          )
-        ))}
-      </div>
-      {ingress.length > 0 && (
-        <section className="rounded-lg border p-4" aria-label="Public ingress">
-          <h4 className="mb-3 text-sm font-medium">Public ingress</h4>
-          <div className="grid gap-4 lg:grid-cols-2">{ingress.map(item => renderField(item))}</div>
-        </section>
-      )}
-      {extra.length > 0 && (
-        <section className="rounded-lg border p-4" aria-label="Additional settings">
-          <h4 className="mb-3 text-sm font-medium">Additional settings</h4>
-          <div className="grid gap-4 lg:grid-cols-2">{extra.map((item) => renderField(item))}</div>
-        </section>
-      )}
-    </div>
-  );
+  const group = (title: string, fields: ReactNode) => <section key={title} className="min-w-0" aria-label={title}>
+    <Frame>
+      <FrameHeader><h3 className="text-sm font-medium">{title}</h3></FrameHeader>
+      <FramePanel><FieldGroup className="gap-5">{fields}</FieldGroup></FramePanel>
+    </Frame>
+  </section>;
+  return <div className="flex min-w-0 flex-col gap-4">
+    {sessions.some(session => session.keys.some(key => byKey.has(key))) && group("Sessions", sessions.map(session => session.keys.some(key => byKey.has(key)) ? <div key={session.title} className="flex flex-col gap-4">
+      <h4 className="text-sm font-medium text-muted-foreground">{session.title}</h4>
+      <FieldGroup className="gap-4">{session.keys.map(key => { const item = byKey.get(key); return item ? renderField(item) : null; })}</FieldGroup>
+    </div> : null))}
+    {sections.map(section => section.fields.some(field => byKey.has(field.key)) ? group(section.title, section.fields.map(field => {
+      const item = byKey.get(field.key); return item ? renderField(item, "label" in field ? field.label : undefined) : null;
+    })) : null)}
+    {ingress.length > 0 && group("Public ingress", ingress.map(item => renderField(item)))}
+    {extra.length > 0 && group("Additional settings", extra.map(item => renderField(item)))}
+  </div>;
 }

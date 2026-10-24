@@ -318,7 +318,7 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
                     {
                         RequireHead(w, input);
                         if (record.Observation.State != "merged" || record.Outcome is not null && !resumedCorrection) throw new PublicationException("corrective_invalid", "A corrective PR requires a merged PR in an unfinished session.");
-                        record = record with { History = [.. record.History, new(record.Number.Value, record.Url!, record.Observation.Head, record.Observation.MergeCommit)], Number = null, Url = null, PublishedHead = null, Observation = null, Branch = w.Branch + "-corrective-" + input.RequestId, Outcome = null, CompletedAt = null, CleanupRequested = false };
+                        record = record with { History = [.. record.History, new(record.Number.Value, record.Url!, record.Observation.Head, record.Observation.MergeCommit, record.Observation with { Reviews = null })], Number = null, Url = null, PublishedHead = null, Observation = null, Branch = w.Branch + "-corrective-" + input.RequestId, Outcome = null, CompletedAt = null, CleanupRequested = false };
                     }
                     else if (kind == "complete")
                     {

@@ -2,9 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Check, Copy } from "lucide-react";
+import { HostyEmptySlots, HostyLoader } from "../../../../../../shared/web/hosty-states";
 import { createSourceConnectionsApi, type SourceProfile, type SourceConnection, type SourceSend } from "../source/source-connections";
 import { SourcePermissionHelp, isSourcePermissionError } from "../source/source-permission-help";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -108,9 +110,9 @@ export function SourceProviders({ coreOrigin, sendCsrfJson }: { coreOrigin: stri
   const configured = profile?.providers.find(p => p.id === provider)?.authenticationMethods.includes("device");
   return <section className="flex max-w-2xl flex-col gap-6" aria-label="Source connections">
     <div><h2 className="text-lg font-medium">Source connections</h2><p className="text-sm text-muted-foreground">Your GitHub connections for repositories and pull requests.</p></div>
-    {error && !adding && <div className="space-y-3"><p role="alert" className="text-sm text-destructive">{error}</p>{permissionMissing && <SourcePermissionHelp coreOrigin={coreOrigin} />}</div>}
+    {error && !adding && <div className="space-y-3"><p role="alert" className="text-sm text-destructive-foreground">{error}</p>{permissionMissing && <SourcePermissionHelp coreOrigin={coreOrigin} />}</div>}
     {notice && <p role="status" className="text-sm">{notice}</p>}
-    {!profile && !error && <p>Loading source providers…</p>}
+    {!profile && !error && <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><HostyLoader className="size-5" label={null} />Loading source providers…</p>}
     {profile && <>
       <form className="flex flex-col gap-3 rounded-lg border p-4" onSubmit={event => { event.preventDefault(); void saveIdentity(); }}>
         <p className="text-sm text-muted-foreground">Git author (optional). Leave both empty to use a verified email from the selected provider account.</p>
@@ -123,7 +125,7 @@ export function SourceProviders({ coreOrigin, sendCsrfJson }: { coreOrigin: stri
         <div className="flex items-center justify-between"><h3 className="font-medium">Connected accounts</h3>
           <DialogTrigger asChild><Button variant="outline" disabled={busy}>Add connection</Button></DialogTrigger></div>
         <p className="text-sm text-muted-foreground">Connect several accounts, including different accounts of the same provider. Connections belong to you and do not change how you sign in to Hosty.</p>
-        {!profile.connections.length && <p className="text-sm text-muted-foreground">No connected accounts yet.</p>}
+        {!profile.connections.length && <p className="flex flex-col items-center gap-3 rounded-lg border py-6 text-sm text-muted-foreground"><HostyEmptySlots className="size-12" />No connected accounts yet.</p>}
         {profile.connections.map(connection => <ConnectionCard key={connection.id} connection={connection} busy={busy} update={update} />)}
       </div>
       <DialogContent className="max-h-[90dvh] overflow-y-auto" showCloseButton={!busy}>
@@ -152,7 +154,7 @@ export function SourceProviders({ coreOrigin, sendCsrfJson }: { coreOrigin: stri
             <p className="text-sm text-muted-foreground">Provider sign-in is not configured on this host. You can connect with a personal access token.</p>
             <Button type="button" variant="outline" disabled={busy} onClick={() => { setMethod("pat"); setAdvanced(true); }}>Use a personal access token</Button>
           </div>}
-          {method === "device" && provider === "github" && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={privateRepositories} onChange={e => setPrivateRepositories(e.target.checked)} />Request access to private repositories too</label>}
+          {method === "device" && provider === "github" && <label className="flex items-center gap-2 text-sm"><Checkbox checked={privateRepositories} onCheckedChange={value => setPrivateRepositories(value === true)} />Request access to private repositories too</label>}
           <Collapsible open={advanced} onOpenChange={setAdvanced} className="flex flex-col gap-3">
             <CollapsibleTrigger asChild><Button type="button" variant="ghost" className="self-start" disabled={busy}>Additional options</Button></CollapsibleTrigger>
             <CollapsibleContent>

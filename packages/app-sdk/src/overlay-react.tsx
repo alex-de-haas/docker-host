@@ -8,6 +8,7 @@ import { APP_SESSION_ENDED, APP_SESSION_RESTORED, APP_ACTIVITY_RENEWED, acceptAp
 import { buildCoreOpenUrl, readRecoveryParams } from "./index";
 import { permissionReviewUrl, requestPermissionReview, type PermissionNoticeState } from "./permissions";
 import type { UiChromeOverrides, UiRouterAdapter } from "./ui-types";
+import { SdkBrand, SdkChromeStyles, SdkLoader } from "./sdk-chrome";
 import { HostyUiRoot } from "./ui-react";
 
 type Setup = "ready" | "missing" | "unsupported" | "unavailable" | "incompatible";
@@ -44,6 +45,13 @@ export function HostyOverlay({ children, probePath = "/api/hosty/session", appCo
 }) {
   const actor = useRef<string | null>(null);
   const changingActor = useRef(false);
+  const restoration = useRef({ established: false, ready: false, announced: false });
+  const announceRestoration = useRef(() => {
+    const state = restoration.current;
+    if (!state.established || state.ready || state.announced || changingActor.current) return;
+    state.announced = true;
+    window.dispatchEvent(new CustomEvent(APP_SESSION_RESTORED, { detail: { userId: actor.current } }));
+  }).current;
   const [session, setSession] = useState<Snapshot | null>(null);
   const [reviewing, setReviewing] = useState(false);
   const renewedAwaitingReadiness = useRef(false);
@@ -63,7 +71,7 @@ export function HostyOverlay({ children, probePath = "/api/hosty/session", appCo
     const next = snapshot(body);
     if (renewedAwaitingReadiness.current && next && sessionReady(next) && next.userId === actor.current && !changingActor.current) {
       renewedAwaitingReadiness.current = false;
-      window.dispatchEvent(new CustomEvent(APP_SESSION_RESTORED, { detail: { userId: next.userId } }));
+      announceRestoration();
       window.dispatchEvent(new Event(APP_ACTIVITY_RENEWED));
     }
     return body;
@@ -73,7 +81,7 @@ export function HostyOverlay({ children, probePath = "/api/hosty/session", appCo
     if (!next || changingActor.current || next.userId !== actor.current) return false;
     renewedAwaitingReadiness.current = !sessionReady(next);
     if (renewedAwaitingReadiness.current) return false;
-    window.dispatchEvent(new CustomEvent(APP_SESSION_RESTORED, { detail: { userId: next.userId } }));
+    announceRestoration();
     return true;
   }).current;
   const activity = useAppActivity(identity.activity ? { ...identity.activity, probePath, appCodePath, validateSession: validate } : null);
@@ -82,6 +90,16 @@ export function HostyOverlay({ children, probePath = "/api/hosty/session", appCo
   const ready = identity.ui.kind === "active" && sessionReady(session) && !activity.needed && !activity.pending && !changingActor.current;
   const mounted = useRef(false);
   if (ready) mounted.current = true;
+  useLayoutEffect(() => {
+    const state = restoration.current;
+    if (!ready) {
+      if (state.ready) state.announced = false;
+      state.ready = false;
+      return;
+    }
+    announceRestoration();
+    state.established = true; state.ready = true;
+  }, [ready, announceRestoration]);
 
   useEffect(() => {
     if (session?.setup === "ready") setReviewing(false);
@@ -154,7 +172,7 @@ export function HostyOverlay({ children, probePath = "/api/hosty/session", appCo
   const localOffline = (identity.ui.kind === "unavailable" || (identity.ui.kind === "active" && session?.setup === "unavailable"))
     && localContent !== undefined;
   return <>
-    {localOffline && <div data-hosty-local-content><p role="status">Hosty is unavailable. Local content remains available.</p>{localContent}</div>}
+    {localOffline && <div data-hosty-local-content><div data-hosty-sdk className="hosty-overlay-offline" role="status"><SdkChromeStyles /><style>{styles}</style><SdkBrand /><span>Hosty is unavailable. Local content remains available.</span><button type="button" className="hosty-sdk-button" onClick={() => { void refreshRef.current(); }}>Retry</button></div>{localContent}</div>}
     <div data-hosty-content hidden={!ready} inert={!ready} style={ready ? { display: "contents" } : { display: "none" }}>
       <HostyUiRoot chrome={chrome} navigation={navigation} uiPath={uiPath} panelLayout={panelLayout} active={ready}>{mounted.current ? children : null}</HostyUiRoot>
     </div>
@@ -207,61 +225,43 @@ function OverlaySurface({ pending, title, message, action, actionLabel, reviewUr
     return () => { if (element.open && typeof element.close === "function") element.close(); };
   }, [portal]);
   const content = <>
-    <style>{styles}</style>
-    <dialog ref={dialog} className="hosty-overlay-dialog" aria-label="Hosty access" tabIndex={-1}
+    <SdkChromeStyles /><style>{styles}</style>
+    <dialog ref={dialog} data-hosty-sdk className="hosty-overlay-dialog" aria-label="Hosty access" tabIndex={-1}
       onCancel={event => event.preventDefault()} data-hosty-activity-control>
       <section className="hosty-overlay-card" aria-live="polite" aria-busy={pending}>
         {pending ? <div className="hosty-overlay-loading" role="status" aria-label={title}>
-          {showProgress && <><span className="hosty-overlay-spinner" /><p>{message}</p></>}
+          {showProgress && <><SdkBrand /><SdkLoader /><h1>{title}</h1><p>{message}</p></>}
         </div> : <>
-          <span className="hosty-overlay-brand">
-            <span className="hosty-overlay-brand-mark">
-              <svg viewBox="0 0 100 100" aria-hidden="true" focusable="false" fill="none"
-                stroke="currentColor" strokeWidth={6} strokeLinecap="round" strokeLinejoin="round">
-                <path d="M25 36 V64 M75 36 V64 M25 50 H39 M61 50 H75" />
-                <rect x="17" y="17" width="16" height="16" rx="4.5" />
-                <rect x="67" y="17" width="16" height="16" rx="4.5" />
-                <rect x="17" y="67" width="16" height="16" rx="4.5" />
-                <rect x="67" y="67" width="16" height="16" rx="4.5" />
-                <rect x="42" y="42" width="16" height="16" rx="4.5" />
-              </svg>
-            </span>
-            <span>Hosty</span>
-          </span>
+          <SdkBrand />
           <h1>{title}</h1><p>{message}</p>
-          {action && <button type="button" onClick={action}>{actionLabel}</button>}
-          {reviewUrl && <a href={reviewUrl} target="_blank" rel="noopener noreferrer">Open Core permissions</a>}
+          {action && <button type="button" className="hosty-sdk-button hosty-sdk-primary" onClick={action}>{actionLabel}</button>}
+          {reviewUrl && <a className="hosty-overlay-review" href={reviewUrl} target="_blank" rel="noopener noreferrer">Open Core permissions</a>}
         </>}
       </section>
     </dialog>
   </>;
-  return portal ? createPortal(content, portal) : <div className="hosty-overlay-boot" role="status" aria-label="Connecting to Hosty"><style>{styles}</style></div>;
+  return portal ? createPortal(content, portal) : <div data-hosty-sdk className="hosty-overlay-boot" role="status" aria-label="Connecting to Hosty"><SdkChromeStyles /><style>{styles}</style></div>;
 }
 
 const styles = `
-.hosty-overlay-boot,.hosty-overlay-dialog{--hosty-bg:#f8f9fb;--hosty-fg:#20242c;--hosty-muted:#606875;--hosty-border:#e0e4eb;color-scheme:light}
-html.dark .hosty-overlay-dialog,html[data-hosty-theme=dark] .hosty-overlay-dialog,html.dark .hosty-overlay-boot{--hosty-bg:#14171c;--hosty-fg:#f0f2f5;--hosty-muted:#a2aab7;--hosty-border:#323843;color-scheme:dark}
-.hosty-overlay-boot{position:fixed;inset:0;background:var(--hosty-bg);z-index:2147483647}
+.hosty-overlay-boot{position:fixed;inset:0;background:var(--hs-bg);z-index:2147483647}
 html[data-hosty-overlay-blocked] body>:not([data-hosty-overlay-portal]){visibility:hidden!important}
-html[data-hosty-overlay-blocked],html[data-hosty-overlay-blocked] body{background:#f8f9fb!important}
-html.dark[data-hosty-overlay-blocked],html.dark[data-hosty-overlay-blocked] body{background:#14171c!important}
+html[data-hosty-overlay-blocked],html[data-hosty-overlay-blocked] body{background:#F6F8FB!important}
+html.dark[data-hosty-overlay-blocked],html.dark[data-hosty-overlay-blocked] body,html[data-hosty-theme=dark][data-hosty-overlay-blocked],html[data-hosty-theme=dark][data-hosty-overlay-blocked] body{background:#0F1B2D!important}
 html[data-hosty-launch=embedded][data-hosty-overlay-blocked],html[data-hosty-launch=embedded][data-hosty-overlay-blocked] body{background:transparent!important}
-.hosty-overlay-dialog{position:fixed;inset:0;width:100%;height:100%;max-width:none;max-height:none;box-sizing:border-box;margin:0;padding:24px;border:0;background:var(--hosty-bg);color:var(--hosty-fg);font:400 14px/1.55 system-ui,sans-serif;outline:0}
+.hosty-overlay-dialog{position:fixed;inset:0;width:100%;height:100%;max-width:none;max-height:none;margin:0;padding:24px;border:0;background:var(--hs-bg);outline:0}
 .hosty-overlay-dialog[open]{display:grid;place-items:center}
 .hosty-overlay-dialog::backdrop{background:transparent}
 html[data-hosty-launch=embedded] .hosty-overlay-dialog,html[data-hosty-launch=embedded] .hosty-overlay-boot{background:transparent}
-.hosty-overlay-card{width:min(100%,360px);text-align:center;animation:hosty-overlay-enter 160ms ease-out}
-.hosty-overlay-brand{display:flex;align-items:center;justify-content:center;gap:8px;color:var(--hosty-fg);font-size:14px;font-weight:600;text-transform:uppercase;margin-bottom:22px}
-.hosty-overlay-brand-mark{display:flex;align-items:center;justify-content:center;width:20px;height:20px;flex-shrink:0}
-.hosty-overlay-brand-mark svg{width:24px;height:24px;flex-shrink:0}
-.hosty-overlay-card h1{font:600 22px/1.3 system-ui,sans-serif;letter-spacing:-.025em;margin:0 0 12px;color:var(--hosty-fg)}
-.hosty-overlay-card p{margin:0 0 24px;color:var(--hosty-muted)}
-.hosty-overlay-card button{appearance:none;border:1px solid var(--hosty-border);border-radius:9px;background:var(--hosty-fg);color:var(--hosty-bg);padding:10px 18px;font:600 14px/1.4 system-ui,sans-serif;cursor:pointer}
-.hosty-overlay-card button:focus-visible,.hosty-overlay-card a:focus-visible{outline:2px solid var(--hosty-muted);outline-offset:4px}
-.hosty-overlay-card a{display:block;color:var(--hosty-muted);font-size:13px;margin-top:18px;text-decoration:underline}
-.hosty-overlay-loading{min-height:100px;color:var(--hosty-muted)}
-.hosty-overlay-spinner{display:inline-block;width:20px;height:20px;margin:0 0 16px;border:2px solid var(--hosty-border);border-top-color:var(--hosty-muted);border-radius:50%;animation:hosty-overlay-spin .8s linear infinite}
-@keyframes hosty-overlay-spin{to{transform:rotate(360deg)}}
-@keyframes hosty-overlay-enter{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:translateY(0)}}
-@media(prefers-reduced-motion:reduce){.hosty-overlay-card,.hosty-overlay-spinner{animation:none}}
+.hosty-overlay-card{box-sizing:border-box;width:min(100%,360px);padding:24px;border:1px solid var(--hs-border);border-radius:14px;background:var(--hs-card);box-shadow:0 14px 34px -8px #0F1B2D3D;text-align:left;overflow-wrap:anywhere;animation:hosty-overlay-enter 160ms ease-out}
+.hosty-overlay-card .hosty-sdk-brand{margin-bottom:16px}
+.hosty-overlay-card h1{font:600 20px/26px var(--hs-font);letter-spacing:-.02em;margin:0 0 10px;color:var(--hs-fg)}
+.hosty-overlay-card p{font:400 14px/22px var(--hs-font);margin:0 0 20px;color:var(--hs-muted)}
+.hosty-overlay-card .hosty-sdk-button{width:100%}
+.hosty-overlay-review{display:inline-block;color:var(--hs-info);font-size:13px;margin-top:16px;text-decoration:underline;text-underline-offset:3px}
+.hosty-overlay-loading{min-height:64px}.hosty-overlay-loading .hosty-sdk-loader{margin:0 0 16px}.hosty-overlay-loading p{margin-bottom:0}
+.hosty-overlay-offline{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:8px;padding:12px 16px;border:1px solid var(--hs-border);border-radius:10px;background:var(--hs-card);box-shadow:0 4px 14px -4px #0F1B2D29}.hosty-overlay-offline>span:not(.hosty-sdk-brand){flex:1;min-width:180px}
+@keyframes hosty-overlay-enter{from{opacity:0}to{opacity:1}}
+@media(max-width:480px){.hosty-overlay-dialog{padding:16px}.hosty-overlay-card{padding:20px}.hosty-overlay-card h1{font-size:18px;line-height:24px}}
+@media(prefers-reduced-motion:reduce){.hosty-overlay-card{animation:none}}
 `;

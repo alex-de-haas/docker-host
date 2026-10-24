@@ -3,6 +3,9 @@ import { mkdir, readFile, readdir, rename, open, unlink } from "node:fs/promises
 import path from "node:path";
 import { MAX_EVENT_BYTES, REPLAY_MS, WorkerApiError, safeIdentity, terminal, type WorkerEvent, type WorkerReceipt, type WorkerRunRequest } from "./contracts.js";
 import type { HarnessEvent } from "../harness/adapter.js";
+import { sanitizeToolResult } from "../harness/tool-result.js";
+import { sanitizeCommandResult } from "../harness/command-result.js";
+import { sanitizeWorkerCommandFrame, sanitizeWorkerCommandReceipt } from "./command-events.js";
 
 type StoredRun = { version: 1; hash: string; receipt: WorkerReceipt; events: WorkerEvent[]; bytes: number; replayExpired?: boolean; controls: Record<string, { hash: string; applied: boolean }> };
 export const digest = (value: unknown): string => createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -24,6 +27,13 @@ export class WorkerJournal {
     try {
       const record = JSON.parse(await readFile(this.file(id), "utf8")) as StoredRun;
       if (record.version !== 1 || record.receipt.runId !== id || !Array.isArray(record.events) || !record.controls) throw new Error("Invalid worker journal record.");
+      // Normalize retained command metadata and bounded tool output before replay; discard envelope fields.
+      record.events = record.events.flatMap(frame => {
+        const normalized = sanitizeWorkerCommandFrame(frame);
+        return normalized ? [normalized] : [];
+      });
+      record.receipt = sanitizeWorkerCommandReceipt(record.receipt);
+      record.bytes = record.events.reduce((bytes, frame) => bytes + Buffer.byteLength(JSON.stringify(frame)), 0);
       if (terminal(record.receipt.state) && Date.now() - Date.parse(record.receipt.updatedAt) > this.replayMs) {
         record.events = []; record.bytes = 0; record.replayExpired = true;
       }
@@ -88,7 +98,12 @@ export class WorkerJournal {
     if (error) record.receipt.error = error;
     await this.save(record); return record.receipt;
   }
-  async append(id: string, event: HarnessEvent): Promise<WorkerEvent> {
+  async append(id: string, event: HarnessEvent): Promise<WorkerEvent | null> {
+    if (event.type === "command_result" || event.type === "tool_result") {
+      const normalized = event.type === "tool_result" ? sanitizeToolResult(event) : sanitizeCommandResult(event);
+      if (!normalized) return null;
+      event = normalized;
+    }
     // Match coordinator transcript privacy before any durable Worker copy is written.
     if ((event.type === "approval_request" || event.type === "tool_use")
       && ["hosty:development: environment_setup", "mcp__hosty-workspaces__environment_setup"].includes(event.toolName)

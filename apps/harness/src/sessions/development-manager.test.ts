@@ -28,6 +28,20 @@ beforeEach(async () => {
 afterEach(async () => { await manager.shutdown(); vi.restoreAllMocks(); await rm(dir, { recursive: true, force: true }); });
 const finish = async (id: string) => { starts.at(-1)!.onEvent({ type: "result", status: "success" }); await vi.waitFor(async () => expect((await manager.getSession(id))?.status).toBe("idle")); };
 describe("development session coordination", () => {
+  it("persists exact source bindings from both adapters so restored sessions cannot reinterpret edit paths", async () => {
+    const bound = { ...tree, workspaceId: "b".repeat(64), repository: "https://github.com/example/notes" };
+    vi.mocked(client.call).mockImplementation(async (_id, _token, action) => action === "list" ? { workspaces: [bound] } : bound);
+    const session = await manager.createSession({ createdBy: "admin", appIds: ["notes"] });
+    await manager.workspaceAction(session.id, "prepare", { appId: "notes" }, "token", "admin");
+    await manager.postMessage(session.id, "edit", "token");
+    starts.at(-1)!.onEvent({ type: "tool_use", toolName: "Edit", cwd: "/cache/session", input: { file_path: "/owned/worktree/src/index.ts", old_string: "a", new_string: "b" } });
+    starts.at(-1)!.onEvent({ type: "tool_use", toolName: "FileChange", cwd: "/owned/worktree", input: { changes: [{ path: "src/index.ts", kind: "update", diff: "@@ -1 +1 @@\n-a\n+b" }] } });
+    await vi.waitFor(async () => expect((await store.readEvents(session.id)).filter(e => e.type === "tool_use")).toHaveLength(2));
+    const edits = (await store.readEvents(session.id)).filter(e => e.type === "tool_use");
+    for (const event of edits) expect(event.fileEdits).toEqual([expect.objectContaining({ path: "src/index.ts", review: { sessionId: session.id, workspaceId: bound.workspaceId, worktreeId: bound.id, repository: bound.repository, path: "src/index.ts" } })]);
+    await finish(session.id); await manager.shutdown(); manager = build();
+    expect((await store.readEvents(session.id)).filter(e => e.type === "tool_use")).toEqual(edits);
+  });
   it("persists app-creation activity and emits the same timestamp with observed state", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     try {

@@ -1,7 +1,6 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { AvailableAppsPage } from "./pages/available-apps-page";
 import { DashboardPage } from "./pages/dashboard-page";
 import { SettingsPage } from "./pages/settings-page";
 import { useShellActions, useShellState } from "./shell-context";
@@ -9,22 +8,12 @@ import { isHostSettingsTab, isNonAdminHostSettingsTab } from "./shell-routes";
 
 function AdminShellRoute({ children }: { children: ReactNode }) {
   const shell = useShellState();
-  return shell.canManageApps ? children : <ShellAvailableAppsRoute />;
+  return shell.canManageApps ? children : null;
 }
 
-export function ShellAvailableAppsRoute() {
+export function ShellHomeRoute() {
   const shell = useShellState();
-  const shellActions = useShellActions();
-
-  return (
-    <AvailableAppsPage
-      apps={shell.uiApps}
-      loading={shell.state.loading}
-      busyAction={shell.busyAction}
-      onLaunchApp={shellActions.launchAppPage}
-      getStandaloneHref={shellActions.getStandaloneAppHref}
-    />
-  );
+  return shell.canManageApps ? <ShellDashboardRoute /> : null;
 }
 
 export function ShellDashboardRoute() {
@@ -46,7 +35,6 @@ export function ShellDashboardRoute() {
         busyAction={shell.busyAction}
         pendingAppActions={shell.pendingAppActions}
         updateCheck={shell.state.updateCheck ?? null}
-        updateStatusInvalidations={shell.updateStatusInvalidations}
         onRefresh={() => void shellActions.refresh()}
         onInstall={shellActions.openInstallDialog}
         onAction={shellActions.runAppAction}
@@ -64,7 +52,7 @@ export function ShellSettingsRoute() {
   const shell = useShellState();
   const shellActions = useShellActions();
 
-  if (!shell.canManageApps && (!isHostSettingsTab(shell.settingsTab) || !isNonAdminHostSettingsTab(shell.settingsTab))) return <ShellAvailableAppsRoute />;
+  if (!shell.canManageApps && (!isHostSettingsTab(shell.settingsTab) || !isNonAdminHostSettingsTab(shell.settingsTab))) return null;
   return (
       <SettingsPage
         assistantSelection={shell.assistantSelection}
@@ -86,8 +74,10 @@ export function ShellSettingsRoute() {
         sendCsrfJson={shellActions.sendCsrfJson}
         coreSettings={shell.coreSettings}
         coreSettingsError={shell.coreSettingsError}
+        coreStatus={shell.state.status}
         onSaveCoreSettings={shellActions.saveCoreSettings}
         globalMounts={shell.globalMounts}
+        globalMountsStatus={shell.globalMountsStatus}
         apps={shell.state.apps}
         onRefresh={shellActions.refresh}
         canManageApps={shell.canManageApps}
@@ -99,6 +89,11 @@ export function ShellSettingsRoute() {
 
 export function ShellWorkspaceRoute() {
   // Active workspace URLs are rendered by the persistent Shell layout from query state.
-  // A bare /workspace route falls back here while the client-side route normalization runs.
-  return <ShellAvailableAppsRoute />;
+  // A bare /workspace route has no content while client-side route normalization runs.
+  return null;
+}
+
+export function ShellAppDetailsRoute() {
+  // The persistent Shell layout renders authorized app details or their unavailable state.
+  return null;
 }

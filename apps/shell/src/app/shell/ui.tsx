@@ -2,9 +2,10 @@
 
 import type { ReactNode } from "react";
 import { Check, CircleAlert, Copy, LoaderCircle, TriangleAlert } from "lucide-react";
-import type { LucideIcon } from "lucide-react";
+import { HostyEmptySlots, HostyLoader } from "../../../../../shared/web/hosty-states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -15,7 +16,7 @@ export function PageHeader({ title, description, actions }: { title: string; des
   return (
     <section className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
       <div className="min-w-0 space-y-1">
-        <h1 className="truncate text-xl font-semibold leading-7">{title}</h1>
+        <h1 className="break-words text-xl font-semibold leading-7">{title}</h1>
         {description && <p className="text-sm text-muted-foreground">{description}</p>}
       </div>
       {actions && <div className="flex max-w-full shrink-0 flex-wrap items-center gap-2 sm:justify-end">{actions}</div>}
@@ -25,7 +26,7 @@ export function PageHeader({ title, description, actions }: { title: string; des
 
 export function IconButton({ title, children, onClick, disabled, destructive }: { title: string; children: ReactNode; onClick: () => void; disabled?: boolean; destructive?: boolean }) {
   return (
-    <Button type="button" variant="ghost" size="icon-sm" title={title} aria-label={title} disabled={disabled} onClick={onClick} className={cn(destructive && "text-destructive hover:text-destructive")}>
+    <Button type="button" variant="ghost" size="icon-sm" title={title} aria-label={title} disabled={disabled} onClick={onClick} className={cn(destructive && "text-destructive-foreground hover:text-destructive-foreground")}>
       {children}
     </Button>
   );
@@ -34,14 +35,14 @@ export function IconButton({ title, children, onClick, disabled, destructive }: 
 export function CheckboxRow({ label, checked, disabled, onChange }: { label: string; checked: boolean; disabled?: boolean; onChange: (checked: boolean) => void }) {
   return (
     <label className="flex items-center gap-2 text-sm">
-      <input type="checkbox" checked={checked} disabled={disabled} onChange={(event) => onChange(event.target.checked)} />
+      <Checkbox checked={checked} disabled={disabled} onCheckedChange={value => onChange(value === true)} />
       {label}
     </label>
   );
 }
 
 export function InlineError({ message }: { message: string }) {
-  return <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">{message}</div>;
+  return <div className="rounded-md border border-destructive/30 bg-destructive-soft px-3 py-2 text-sm text-destructive-foreground">{message}</div>;
 }
 
 // One shape for every "something is wrong here" block, so a failed start, an unbound port, and a stale
@@ -55,8 +56,8 @@ export function Alert({ severity, title, detail }: { severity: AlertSeverity; ti
       className={cn(
         "flex items-start gap-2 rounded-md border px-3 py-2 text-xs",
         severity === "error"
-          ? "border-destructive/30 bg-destructive/10 text-destructive"
-          : "border-amber-500/30 bg-amber-500/10 text-amber-900 dark:text-amber-200",
+          ? "border-destructive/30 bg-destructive-soft text-destructive-foreground"
+          : "border-warning/30 bg-warning-soft text-warning-foreground",
       )}
     >
       {/* Decorative: the title and detail already carry the meaning, and the severity is conveyed by them
@@ -70,10 +71,10 @@ export function Alert({ severity, title, detail }: { severity: AlertSeverity; ti
   );
 }
 
-export function EmptyState({ icon: Icon, title, description, iconClassName }: { icon: LucideIcon; title: string; description?: string; iconClassName?: string }) {
+export function EmptyState({ title, description, loading = false }: { title: string; description?: string; loading?: boolean }) {
   return (
-    <div className="flex min-h-32 flex-col items-center justify-center rounded-lg border bg-card p-6 text-center">
-      <Icon className={cn("mb-3 h-6 w-6 text-muted-foreground", iconClassName)} />
+    <div role={loading ? "status" : undefined} aria-busy={loading || undefined} className="flex min-h-32 flex-col items-center justify-center rounded-lg border bg-card p-6 text-center">
+      {loading ? <HostyLoader className="mb-3 size-8" label={null} /> : <HostyEmptySlots className="mb-3 size-12" />}
       <div className="font-medium">{title}</div>
       {description && <div className="mt-1 text-sm text-muted-foreground">{description}</div>}
     </div>
@@ -89,47 +90,20 @@ export function StatusBadge({ value, health, compact = false }: { value: string;
   }
 
   const normalized = value.toLowerCase();
-  // "healthy" is matched exactly so it does not also light up on "unhealthy" (substring match).
-  // A composed value ("running · degraded") takes its tone from the health half: attention and
-  // transitional are tested before `running` so the health word wins when both are present.
-  const attention = normalized.includes("error") || normalized.includes("failed") || normalized.includes("unknown") || normalized.includes("offline") || normalized.includes("unhealthy") || normalized.includes("degraded");
-  const running = !attention && !normalized.includes("starting") && !normalized.includes("stopping") && !normalized.includes("restarting") &&
-    (normalized.includes("running") || normalized.includes("ok") || normalized.includes("ready") || normalized === "healthy");
-  // A transitional state is neither good news nor bad news, so it gets its own tone and a pulsing dot
-  // rather than the neutral grey a terminal "stopped" gets — the point is that something is happening.
-  // Container health also reports "starting" (HEALTHCHECK pending), which reads correctly here too, so
-  // this branch serves the service rows as well as the app row. `running` is tested first because
-  // "healthy"/"running" always win when both could match.
-  const transitional = !running && (normalized.includes("starting") || normalized.includes("stopping") || normalized.includes("restarting"));
-  if (compact) {
-    return (
-      <TooltipProvider delayDuration={150}>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span
-              role="img"
-              aria-label={value}
-              tabIndex={0}
-              className="inline-flex size-6 shrink-0 items-center justify-center rounded-sm align-middle outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              {transitional ? (
-                <LoaderCircle aria-hidden className="size-3.5 animate-spin text-sky-500 motion-reduce:animate-none" />
-              ) : (
-                <span aria-hidden className={cn("size-2 rounded-full", running ? "bg-emerald-500" : attention ? "bg-amber-500" : "bg-muted-foreground")} />
-              )}
-            </span>
-          </TooltipTrigger>
-          <TooltipContent sideOffset={4}>{value}</TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
-    );
-  }
-  return (
-    <Badge variant="outline" className={cn("gap-1.5", (running || attention || transitional) && "border-transparent", running && "bg-emerald-500/10 text-emerald-700", attention && "bg-amber-500/10 text-amber-700", transitional && "bg-sky-500/10 text-sky-700 dark:text-sky-300")}>
-      <span className={cn("h-2 w-2 rounded-full", running ? "bg-emerald-500" : attention ? "bg-amber-500" : transitional ? "animate-pulse bg-sky-500" : "bg-muted-foreground")} />
-      {value}
-    </Badge>
-  );
+  const failed = /error|failed|unhealthy|offline/.test(normalized);
+  const attention = /degraded|unknown|configuration|approval/.test(normalized);
+  const transitional = !failed && /starting|stopping|restarting|updating|preparing/.test(normalized);
+  const running = !failed && !attention && !transitional && /running|ready|healthy|^ok$/.test(normalized);
+  const tone = failed ? "text-destructive-foreground" : attention ? "text-warning-foreground" : transitional ? "text-info-foreground" : running ? "text-success-foreground" : "text-muted-foreground";
+  const glyph = failed ? <CircleAlert aria-hidden className="size-3.5 shrink-0" />
+    : attention ? <TriangleAlert aria-hidden className="size-3.5 shrink-0" />
+    : transitional ? <LoaderCircle aria-hidden className="size-3.5 shrink-0 animate-spin motion-reduce:animate-none" />
+    : <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-current" />;
+  if (compact) return <TooltipProvider delayDuration={150}><Tooltip>
+    <TooltipTrigger asChild><span role="img" aria-label={value} tabIndex={0} className={cn("inline-flex size-6 items-center justify-center rounded-sm", tone)}>{glyph}</span></TooltipTrigger>
+    <TooltipContent>{value}</TooltipContent>
+  </Tooltip></TooltipProvider>;
+  return <span className={cn("inline-flex items-center gap-2 text-sm", tone)}>{glyph}<span>{value.charAt(0).toUpperCase() + value.slice(1)}</span></span>;
 }
 
 export function RoleBadge({ role, disabled }: { role: "host.admin" | "host.user"; disabled?: boolean }) {

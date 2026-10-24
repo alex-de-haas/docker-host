@@ -175,7 +175,10 @@ export function evaluateGate(plan, needs) {
 
 /** Values are fixed keys and one-line JSON; changed filenames cannot inject GitHub outputs. */
 export function planOutputs(plan) {
-  const result = { plan: JSON.stringify(plan) };
+  // Full per-path reasons stay in the classification log. Outputs also flow through
+  // toJSON(needs) into the gate environment, where large strings prevent process startup.
+  const { version, components, profiles, required } = plan;
+  const result = { plan: JSON.stringify({ version, components, profiles, required, reasons: {} }) };
   for (const job of ALL_JOBS) result[job.replaceAll("-", "_")] = String(plan.required.includes(job));
   result.workflows = result.actionlint;
   return result;

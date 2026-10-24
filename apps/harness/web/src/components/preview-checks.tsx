@@ -1,5 +1,9 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import { MoreHorizontal } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { HostyLoader } from "../../../../../shared/web/hosty-states";
 import { developmentRequest } from "@/lib/development-api";
 type Check = { id: string; service: string; digest?: string; state: string; message?: string;
   recipe: { command: string[]; cwd: string; timeoutSeconds: number };
@@ -7,8 +11,8 @@ type Check = { id: string; service: string; digest?: string; state: string; mess
 type Checks = { state: string; message?: string; checks: Check[]; readiness?: { status: string }; readinessError?: string; observedAt?: string };
 type Reply<T> = { status: number; body: T & { message?: string } };
 
-export function PreviewChecks({ workspaceId, environmentId, appId, refresh }: {
-  workspaceId: string; environmentId: string; appId: string; refresh: () => void;
+export function PreviewChecks({ workspaceId, environmentId, appId, refresh, compact = false }: {
+  workspaceId: string; environmentId: string; appId: string; refresh: () => void; compact?: boolean;
 }) {
   const path = `/${workspaceId}/previews/${environmentId}/${encodeURIComponent(appId)}`;
   const [checks, setChecks] = useState<Checks | null>(null), [opened, setOpened] = useState(false);
@@ -59,21 +63,28 @@ export function PreviewChecks({ workspaceId, environmentId, appId, refresh }: {
     finally { setBusy(false); }
   }
   return <div className="space-y-2" aria-label="Preview actions">
-    <div className="flex flex-wrap gap-3">
-      <button type="button" className="underline" disabled={busy} onClick={() => { setOpened(true); setCheckRevision(n => n + 1); refresh(); }}>Check preview</button>
-      <button type="button" className="underline" disabled={busy} onClick={() => void restart()}>Restart app</button>
-      <button type="button" className="underline" disabled={busy} onClick={() => void showLogs()}>Show service logs</button>
-      {opened && <button type="button" className="underline" disabled={busy} onClick={() => setOpened(false)}>Hide checks</button>}
-    </div>
-    {busy && <p role="status">Working… Source and sandbox data are retained.</p>}
-    {error && <p role="alert" className="text-destructive">{error}</p>}
+    {compact ? <DropdownMenu><DropdownMenuTrigger asChild><Button size="sm" variant="ghost" aria-label={`${appId} preview actions`} disabled={busy}><MoreHorizontal className="size-3.5" />App actions</Button></DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem disabled={busy} onSelect={() => { setOpened(true); setCheckRevision(n => n + 1); refresh(); }}>Check preview</DropdownMenuItem>
+        <DropdownMenuItem disabled={busy} onSelect={() => void restart()}>Restart app</DropdownMenuItem>
+        <DropdownMenuItem disabled={busy} onSelect={() => void showLogs()}>Show service logs</DropdownMenuItem>
+        {opened && <DropdownMenuItem disabled={busy} onSelect={() => setOpened(false)}>Hide checks</DropdownMenuItem>}
+      </DropdownMenuContent>
+    </DropdownMenu> : <div className="flex flex-wrap gap-2">
+      <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => { setOpened(true); setCheckRevision(n => n + 1); refresh(); }}>Check preview</Button>
+      <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => void restart()}>Restart app</Button>
+      <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => void showLogs()}>Show service logs</Button>
+      {opened && <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={() => setOpened(false)}>Hide checks</Button>}
+    </div>}
+    {busy && <p role="status" className="flex items-center gap-2"><HostyLoader label={null} className="size-3.5" />Working… Source and sandbox data are retained.</p>}
+    {error && <p role="alert" className="text-destructive-foreground">{error}</p>}
     {logs !== null && <details open><summary>Service logs snapshot · last 80 lines per service</summary><pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all">{logs}</pre></details>}
     {opened && <div className="space-y-2 rounded border p-2">
       <p>Optional checks. Readiness and browser verification are separate.</p>
       {checks && <p>Readiness: {checks.readiness?.status ?? "unknown"}{checks.observedAt ? ` · ${new Date(checks.observedAt).toLocaleTimeString()}` : ""}</p>}
       {checks?.readinessError && <p role="status">{checks.readinessError}</p>}
       {checks?.message && <p>{checks.message}</p>}
-      {!checks && !error && <p>Reading check recipes…</p>}
+      {!checks && !error && !busy && <p role="status" className="flex items-center gap-2"><HostyLoader label={null} className="size-3.5 shrink-0" />Reading check recipes…</p>}
       {checks?.checks.map(check => <div key={check.id} className="space-y-1 border-t pt-2">
         <p className="font-medium">{check.id} · {check.state.replaceAll("_", " ")}</p>
         <p>Service: {check.service} · Folder: {check.recipe.cwd} · Timeout: {check.recipe.timeoutSeconds}s</p>
@@ -82,7 +93,7 @@ export function PreviewChecks({ workspaceId, environmentId, appId, refresh }: {
         {check.message && <p role="status">{check.message}</p>}
         {check.result && <details><summary>Last result: {check.result.state.replaceAll("_", " ")}{check.result.exitCode != null ? ` · exit ${check.result.exitCode}` : ""} · {new Date(check.result.at).toLocaleTimeString()}</summary>
           <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all">{check.result.output || "No command output."}</pre></details>}
-        <button type="button" className="underline" disabled={busy || !check.digest} onClick={() => void run(check)}>Run reviewed check</button>
+        <Button type="button" variant="outline" size="sm" disabled={busy || !check.digest} onClick={() => void run(check)}>Run reviewed check</Button>
       </div>)}
     </div>}
   </div>;

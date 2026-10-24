@@ -50,6 +50,33 @@ internal static class CoreRestartEndpoints
                 }),
                 requireCsrf: true, cancellationToken: cancellationToken));
 
+        app.MapPost("/api/core/stop", (HttpRequest request, CoreStopRequest input, UserDirectoryStore users,
+            IClock clock, CoreDevelopmentService development, CoreShutdownOptions shutdownOptions,
+            IHostApplicationLifetime lifetime, AuditStore audit, CancellationToken cancellationToken) =>
+            CoreSessionAuthorization.RequireAdminSessionAsync(request, users, clock,
+                () => HandleAsync(async () =>
+                {
+                    var actor = await CoreSessionAuthorization.TryResolveSessionAsync(request, users, clock, cancellationToken);
+                    var outcome = "failed";
+                    try
+                    {
+                        var admission = await development.PrepareStopAsync(input, cancellationToken);
+                        outcome = "accepted";
+                        return new CoreStopAcceptedResult(new("accepted", development.Instance, KeepApps: true),
+                            admission, shutdownOptions, lifetime);
+                    }
+                    finally
+                    {
+                        try
+                        {
+                            await audit.AppendAsync(new AuditRecord($"audit_{Guid.NewGuid():N}", "core.lifecycle.stop", "core",
+                                "hosty-core", outcome, actor?.Id, clock.UtcNow,
+                                new Dictionary<string, string> { ["via"] = "http", ["operation"] = "stop" }), CancellationToken.None);
+                        }
+                        catch (Exception ex) { Console.Error.WriteLine($"[audit] Core stop audit failed: {ex.Message}"); }
+                    }
+                }), requireCsrf: true, cancellationToken: cancellationToken));
+
         app.MapGet("/api/core/operations/{id}", (string id, HttpRequest request, UserDirectoryStore users,
             IClock clock, CoreDevelopmentService development, CancellationToken cancellationToken) =>
             CoreSessionAuthorization.RequireAdminSessionAsync(request, users, clock,

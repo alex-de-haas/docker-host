@@ -30,6 +30,7 @@ it("observes Claude thinking and executing tools without mistaking a proposal or
   const run = new ClaudeHarnessAdapter().start({ sessionId: "test", cwd: "/tmp", onEvent: event => events.push(event) });
   run.send("test");
   await vi.waitFor(() => expect(events.at(-1)?.type).toBe("result"));
+  expect(events.find(e => e.type === "tool_use")).toMatchObject({ cwd: "/tmp" });
   const activity = events.filter(e => e.type === "activity").map(e => e.activity);
   expect(activity.map(a => [a.phase, a.tool?.toolName ?? null, a.toolCount])).toEqual([
     ["working", null, 0], ["thinking", null, 0], ["working", null, 0],

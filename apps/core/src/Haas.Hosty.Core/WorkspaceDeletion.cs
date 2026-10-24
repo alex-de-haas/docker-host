@@ -161,6 +161,7 @@ internal sealed partial class DevelopmentWorkspaceService
                 {
                     DeleteMetadata(System.IO.Path.Combine(Root, "publications", tree.Id + ".json"));
                     DeleteMetadata(System.IO.Path.Combine(Root, "publications", "external", tree.Id + ".json"));
+                    DeleteMetadata(System.IO.Path.Combine(Root, "publications", "review-operations", tree.Id + ".json"));
                     DeleteMetadata(RecordPath(tree.Id));
                     observationState?.Remove(tree.Id);
                     return Task.FromResult(true);
@@ -171,6 +172,7 @@ internal sealed partial class DevelopmentWorkspaceService
                 var job = await JsonStorage.ReadAsync<WorkspaceCleanupJob>(path, ct);
                 if (job?.WorkspaceId == id && job.UserId == owner.UserId) DeleteMetadata(path);
             }
+            DeleteMetadata(MetadataPath(owner));
             DeleteMetadata(WorkflowPath(owner));
             DeleteMetadata(DeletionPath(id)); // Last durable evidence; successful Delete retains nothing.
             return true;

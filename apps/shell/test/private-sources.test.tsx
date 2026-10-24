@@ -70,3 +70,31 @@ it("a selected manifest starts Core preparation directly without a Shell questio
   expect(document.body.textContent).not.toContain("Manifest connection");
   expect(window.open).not.toHaveBeenCalled();
 });
+
+it("keeps a private-account draft mounted across hidden presentation tabs and reads only when active", async () => {
+  await act(async () => root.render(<PrivateSourceConnections appId="example.private" active={false} />));
+  expect(read).not.toHaveBeenCalled();
+  await act(async () => root.render(<PrivateSourceConnections appId="example.private" active />));
+  await choose("Git source connection", "Public / no connection");
+  await act(async () => root.render(<PrivateSourceConnections appId="example.private" active={false} />));
+  expect(read).toHaveBeenCalledTimes(2);
+  await act(async () => root.render(<PrivateSourceConnections appId="example.private" active />));
+  expect(document.querySelector('[aria-label="Git source connection"]')?.textContent).toContain("Public / no connection");
+  expect(send).not.toHaveBeenCalled(); expect(button("Review source update").disabled).toBe(false);
+});
+
+it("freezes retained source choices during revalidation and revoked reads, then recovers the draft", async () => {
+  await act(async () => root.render(<PrivateSourceConnections appId="example.private" active />));
+  await choose("Git source connection", "Public / no connection");
+  await act(async () => root.render(<PrivateSourceConnections appId="example.private" active={false} />));
+  let complete!: (value: Response) => void;
+  read.mockImplementationOnce(() => new Promise<Response>(resolve => { complete = resolve; }));
+  await act(async () => root.render(<PrivateSourceConnections appId="example.private" active />));
+  expect(button("Review source update").disabled).toBe(true);
+  expect(document.querySelector<HTMLButtonElement>('[aria-label="Git source connection"]')!.disabled).toBe(true);
+  await act(async () => complete(Response.json({ message: "Source access revoked" }, { status: 403 })));
+  expect(container.textContent).toContain("Source access revoked"); expect(button("Review source update").disabled).toBe(true);
+  await act(async () => button("Retry connections").click());
+  expect(document.querySelector('[aria-label="Git source connection"]')?.textContent).toContain("Public / no connection");
+  expect(button("Review source update").disabled).toBe(false); expect(send).not.toHaveBeenCalled();
+});

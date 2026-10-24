@@ -18,7 +18,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <head>
         {/* Ahead of any body markup, so chrome a shell already renders is never painted, and the
             first paint is already in the shell's theme. */}
-        <script dangerouslySetInnerHTML={{ __html: chromeBootstrapScript() }} /><script dangerouslySetInnerHTML={{ __html: launchModeBootstrapScript }} />
+        <script dangerouslySetInnerHTML={{ __html: chromeBootstrapScript({ navigation: "hide" }) }} /><script dangerouslySetInnerHTML={{ __html: launchModeBootstrapScript }} />
         <script dangerouslySetInnerHTML={{ __html: themeBootstrapScript }} />
       </head>
       <body>

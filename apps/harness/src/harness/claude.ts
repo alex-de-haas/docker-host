@@ -1,5 +1,7 @@
 import { ContextUsageReader, claudeContextUsage } from "./context-usage.js";
+import { toolResult, shouldRetainToolOutput } from "./tool-result.js";
 import { randomUUID } from "node:crypto";
+import { claudeCommandResult, commandToolUseId, CommandCallHistory } from "./command-result.js";
 import { ActivityTracker, activeTool, type ActiveTool } from "./activity.js";
 import type {
   HarnessAdapter,
@@ -46,6 +48,7 @@ const ASK_USER_QUESTION = "AskUserQuestion";
  * two fields read here are documented as optional on every version this adapter has run against.
  */
 interface ApprovalContext {
+  toolUseID?: string;
   title?: string;
   decisionReason?: string;
 }
@@ -104,6 +107,7 @@ export class ClaudeHarnessAdapter implements HarnessAdapter {
 
 interface PendingApproval {
   toolName: string;
+  toolUseId?: string;
   resolve: (response: unknown) => void;
 }
 
@@ -126,6 +130,14 @@ class ClaudeRun implements HarnessRun {
   private contextReader: ContextUsageReader | null = null;
   private stopped = false;
   private turnActive = false;
+  private readonly commandRun = randomUUID();
+  private commandTurn = 0;
+  private readonly commandCalls = new Map<string, { id: string; rawId: string }>();
+  private readonly toolCalls = new Map<string, { id: string; rawId: string; name: string }>();
+  private readonly commandHistory = new CommandCallHistory();
+  private readonly deniedToolCalls = new Set<string>();
+  private ambiguousCommandDenial = false;
+  private ambiguousToolDenial = false;
   private readonly proposedTools = new Map<string, ActiveTool>();
   private readonly completedTools = new Set<string>();
   private readonly activity = new ActivityTracker(activity => {
@@ -142,6 +154,12 @@ class ClaudeRun implements HarnessRun {
 
   send(text: string): void {
     this.turnActive = true;
+    this.commandTurn++;
+    this.commandCalls.clear();
+    this.toolCalls.clear();
+    this.deniedToolCalls.clear();
+    this.ambiguousCommandDenial = false;
+    this.ambiguousToolDenial = false;
     this.proposedTools.clear();
     this.activity.reset();
     this.input.push({ type: "user", message: { role: "user", content: text } });
@@ -154,6 +172,13 @@ class ClaudeRun implements HarnessRun {
     }
 
     this.pending.delete(approvalId);
+    if (decision === "deny") {
+      if (pending.toolUseId && this.deniedToolCalls.size < 2048) this.deniedToolCalls.add(pending.toolUseId);
+      else {
+        this.ambiguousToolDenial = true;
+        if (pending.toolName === "Bash") this.ambiguousCommandDenial = true;
+      }
+    }
     pending.resolve(
       decision === "allow"
         ? { behavior: "allow", updatedInput: undefined }
@@ -356,7 +381,7 @@ class ClaudeRun implements HarnessRun {
 
     return new Promise((resolve) => {
       const approvalId = randomUUID();
-      this.pending.set(approvalId, { toolName, resolve });
+      this.pending.set(approvalId, { toolName, resolve, ...(context?.toolUseID ? { toolUseId: context.toolUseID } : {}) });
       this.options.onEvent({
         type: "approval_request",
         approvalId,
@@ -385,8 +410,33 @@ class ClaudeRun implements HarnessRun {
     // User tool-result blocks, unlike assistant tool-use proposals, establish completion.
     if (type === "user") {
       const content = (message.message as { content?: unknown } | undefined)?.content;
+      const resultBlocks = Array.isArray(content) ? content.filter(block => block && block.type === "tool_result") : [];
       if (Array.isArray(content)) for (const block of content) {
         if (block.type === "tool_result" && typeof block.tool_use_id === "string") {
+          const key = JSON.stringify([message.parent_tool_use_id ?? "main", block.tool_use_id]);
+          const command = this.commandCalls.get(key);
+          if (this.turnActive && !message.isReplay && command && !this.deniedToolCalls.has(command.rawId)) {
+            const result = claudeCommandResult(command.id, block,
+              !this.ambiguousCommandDenial && resultBlocks.length === 1 ? message.tool_use_result : undefined);
+            if (result) this.options.onEvent(result);
+          }
+          const tool = this.toolCalls.get(key);
+          if (this.turnActive && !message.isReplay && tool && !this.ambiguousToolDenial
+              && !this.deniedToolCalls.has(tool.rawId) && shouldRetainToolOutput(tool.name)) {
+            // Only the matched block is display content; the SDK's structured envelope can carry
+            // private provider metadata and is ambiguous when several results share a message.
+            const structured = resultBlocks.length === 1 && message.tool_use_result && typeof message.tool_use_result === "object"
+              ? message.tool_use_result as Record<string, unknown> : {};
+            const deferred = structured.detachedToolCall === true || structured.backgroundedByUser === true
+              || typeof structured.backgroundTaskId === "string";
+            const status = command
+              ? claudeCommandResult(command.id, block, resultBlocks.length === 1 ? message.tool_use_result : undefined)?.status ?? "unknown"
+              : block.is_error === true ? "failed" : deferred ? "unknown"
+                : block.is_error === false || block.is_error === undefined ? "completed" : "unknown";
+            this.options.onEvent(toolResult(tool.id, status, block.content));
+          }
+          this.commandCalls.delete(key);
+          this.toolCalls.delete(key);
           this.activity.finish(block.tool_use_id);
           this.proposedTools.delete(block.tool_use_id);
           this.completedTools.add(block.tool_use_id);
@@ -441,10 +491,22 @@ class ClaudeRun implements HarnessRun {
             if (block.name === ASK_USER_QUESTION) {
               continue;
             }
+            let toolUseId: string | undefined;
+            if (this.turnActive && !message.isReplay) {
+              const parent = typeof message.parent_tool_use_id === "string" ? message.parent_tool_use_id : "main";
+              const key = JSON.stringify([parent, block.id]);
+              toolUseId = commandToolUseId(this.commandRun, this.commandTurn, block.id, parent);
+              if (toolUseId && !this.commandHistory.seenOrRecord(key) && this.toolCalls.size < 2048) {
+                this.toolCalls.set(key, { id: toolUseId, rawId: String(block.id), name: String(block.name ?? "unknown") });
+                if (block.name === "Bash") this.commandCalls.set(key, { id: toolUseId, rawId: String(block.id) });
+              } else toolUseId = undefined;
+            }
             this.options.onEvent({
               type: "tool_use",
+              ...(toolUseId ? { toolUseId } : {}),
               toolName: String(block.name ?? "unknown"),
               input: block.input,
+              cwd: this.options.cwd,
             });
           }
         }
@@ -455,6 +517,8 @@ class ClaudeRun implements HarnessRun {
     if (type === "result") {
       this.activity.reset();
       this.turnActive = false;
+      this.commandCalls.clear();
+      this.toolCalls.clear();
       this.proposedTools.clear();
       const usage = message.usage as Record<string, unknown> | undefined;
       if (typeof message.session_id === "string") {

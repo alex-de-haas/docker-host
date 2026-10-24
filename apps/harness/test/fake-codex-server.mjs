@@ -60,8 +60,10 @@ if (argv[0] === "login" && argv[1] === "--with-api-key") {
 function runAppServer() {
 let buffer = "";
 let pendingApprovalId = null;
+let pendingApprovalScope = { itemId: "exec-1", turnId: "turn-1" };
 let currentTurnText = "";
 let activeThreadId = "thread-fake-1";
+let proposalTurn = 0;
 
 process.stdin.on("data", (chunk) => {
   buffer += chunk.toString();
@@ -112,7 +114,9 @@ function handle(msg) {
     send({
       jsonrpc: "2.0",
       method: "item/completed",
-      params: { item: { type: "fileChange", id: "exec-1", changes: [{ path: "/tmp/x", kind: { type: "add" } }] } },
+      params: { threadId: activeThreadId, turnId: pendingApprovalScope.turnId, item: {
+        type: "fileChange", id: pendingApprovalScope.itemId, status: "completed", changes: [{ path: "/tmp/x", kind: { type: "add" } }],
+      } },
     });
     const allowed = decision === "accept";
     send({
@@ -120,7 +124,7 @@ function handle(msg) {
       method: "item/completed",
       params: { item: { type: "agentMessage", id: "msg-1", text: allowed ? "written" : "skipped" } },
     });
-    send({ jsonrpc: "2.0", method: "turn/completed", params: { threadId: "t1", turn: { id: "turn-1" } } });
+    send({ jsonrpc: "2.0", method: "turn/completed", params: { threadId: activeThreadId, turn: { id: pendingApprovalScope.turnId } } });
     return;
   }
 
@@ -207,13 +211,64 @@ function handle(msg) {
       return;
     }
 
+    if (currentTurnText.startsWith("file-proposal ")) {
+      const scenario = currentTurnText.slice("file-proposal ".length);
+      const turnId = `proposal-turn-${++proposalTurn}`;
+      const changes = [{ path: "/tmp/x", kind: { type: "update" }, diff: "@@ -1 +1 @@\n-old\n+new\n" }];
+      const item = (id = "exec-1", proposalChanges = changes, threadId = activeThreadId, proposalTurnId = turnId) =>
+        send({ method: "item/started", params: { threadId, turnId: proposalTurnId,
+          item: { type: "fileChange", id, status: "inProgress", changes: proposalChanges } } });
+      send({ method: "turn/started", params: { threadId: activeThreadId, turn: { id: turnId } } });
+      if (scenario === "retain-before-terminal") {
+        for (let i = 0; i < 128; i++) item(`retained-${i}`);
+        send({ method: "turn/completed", params: { threadId: activeThreadId, turn: { id: turnId, status: "completed" } } });
+        return;
+      }
+      if (scenario === "wrong-thread") item("exec-1", changes, "other-thread");
+      else if (scenario === "wrong-turn") item("exec-1", changes, activeThreadId, "previous-turn");
+      else if (scenario === "wrong-item") item("other-item");
+      else if (scenario === "unscoped-item") send({ method: "item/started", params: { item: { type: "fileChange", id: "exec-1", status: "inProgress", changes } } });
+      else if (scenario.startsWith("bounded-count")) {
+        for (let i = 0; i < 129; i++) item(`bounded-${i}`);
+      } else if (scenario === "bounded-bytes") {
+        for (let i = 0; i < 40; i++) item(`bounded-${i}`, [{ ...changes[0], diff: "x".repeat(20_000) }]);
+      } else if (scenario === "oversized") item("exec-1", [{ ...changes[0], diff: "x".repeat(512 * 1024) }]);
+      else if (scenario !== "missing") item();
+      if (scenario.startsWith("completed")) {
+        send({ method: "item/completed", params: { threadId: activeThreadId, turnId,
+          item: { type: "fileChange", id: "exec-1", status: "completed", changes } } });
+        if (scenario === "completed-restarted") item();
+      }
+      pendingApprovalId = 9000;
+      const params = { threadId: scenario === "wrong-request-thread" ? "other-thread" : activeThreadId,
+        turnId: scenario === "wrong-request-turn" ? "previous-turn" : turnId,
+        itemId: scenario === "bounded-count-first" ? "bounded-0" : scenario === "bounded-count" ? "bounded-128" : scenario === "bounded-bytes" ? "bounded-39" : "exec-1",
+        reason: null, grantRoot: null };
+      pendingApprovalScope = { itemId: params.itemId, turnId };
+      if (scenario === "unscoped-request") { delete params.threadId; delete params.turnId; }
+      send({ id: pendingApprovalId, method: "item/fileChange/requestApproval", params });
+      if (scenario === "consumed-restarted") {
+        item();
+        pendingApprovalId = 9001;
+        send({ id: pendingApprovalId, method: "item/fileChange/requestApproval", params });
+      }
+      return;
+    }
+
     if (currentTurnText.includes("write")) {
+      pendingApprovalScope = { itemId: "exec-1", turnId: "turn-1" };
+      send({ method: "turn/started", params: { threadId: activeThreadId, turn: { id: "turn-1" } } });
+      // Real v2 requests identify the proposal item; only the preceding item carries its patch.
+      send({ method: "item/started", params: { threadId: activeThreadId, turnId: "turn-1", item: {
+        type: "fileChange", id: "exec-1", status: "inProgress",
+        changes: [{ path: "/tmp/x", kind: { type: "update" }, diff: "@@ -1 +1 @@\n-old\n+new\n" }],
+      } } });
       pendingApprovalId = 9000;
       send({
         jsonrpc: "2.0",
         id: pendingApprovalId,
         method: "item/fileChange/requestApproval",
-        params: { threadId: "thread-fake-1", itemId: "exec-1", changes: [{ path: "/tmp/x" }], reason: null },
+        params: { threadId: activeThreadId, turnId: "turn-1", itemId: "exec-1", reason: null, grantRoot: null },
       });
       return;
     }

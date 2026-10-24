@@ -68,7 +68,15 @@ internal sealed partial class WorkspaceActivationService(CoreDataPaths paths, Wo
             if (input.Authority is not null) await access!.ValidateAsync(input.Authority, coreRow is not null, ct);
             var rows = selected.Where(p => p.Kind == "app").ToArray();
             var ids = rows.Select(p => p.Id).Order(StringComparer.Ordinal).ToArray();
+            using var coreAdmission = coreRow is not null ? CoreLaunchFiles.Lock(paths.DataRoot) : null;
             var state = await core.GetAsync(ct);
+            if (coreRow is not null)
+            {
+                WorkspaceCoreLaunchContinuation.Reconcile(paths.DataRoot, state.Launch);
+                if (WorkspaceCoreLaunchContinuation.PendingGenerations(paths.DataRoot).Any())
+                    throw Error("core_restart_pending", "Recover the retained Core restart before switching workspaces. Current Core was not stopped.");
+                WorkspaceActivationHandover.ReconcileReplacements(paths.DataRoot);
+            }
             var activation = prior ?? new WorkspaceRuntimeActivation(input.RequestId, workspaceId, input.UserId, fingerprint,
                 plan.CoreInstance, plan.CoreSourceRevision, coreRow?.WorktreeId, coreRow?.SourcePath, state.Launch, ids, "preparing",
                 Authority: input.Authority, PreparationFingerprint: preparationFingerprint);
@@ -77,8 +85,29 @@ internal sealed partial class WorkspaceActivationService(CoreDataPaths paths, Wo
             if (coreRow is not null)
             {
                 await ValidateCoreTreeAsync(activation, ct);
-                if (WorkspaceRuntimeFiles.List(paths.DataRoot).Any(a => a.Id != activation.Id && a.CoreProject is not null && !a.CoreReturned && a.Phase is not ("returned" or "cancelled")))
-                    throw Error("core_owned", "Another activation owns Core. Return it before switching again.");
+                var owners = WorkspaceRuntimeFiles.List(paths.DataRoot).Where(a => a.Id != activation.Id &&
+                    a.CoreProject is not null && !a.CoreReturned && a.Phase is not ("returned" or "cancelled") &&
+                    (a.Phase != "preparing" || a.CoreReserved)).ToArray();
+                if (owners.Length != 0)
+                {
+                    var previous = owners.Length == 1 ? owners[0] : null;
+                    var previousHelper = previous is null ? null : WorkspaceActivationSupervisor.Read(paths.DataRoot, previous.Id);
+                    if (previous is not { Phase: "active", ActivatedCore: not null, CoreReserved: true, CoreSupersededBy: null } || previous.ActivatedCore != state.Launch ||
+                        !WorkspaceActivationHandover.IsCandidate(previous, state.Launch) ||
+                        previous.Returns?.Any(r => r.State == "pending") == true ||
+                        WorkspaceActivationSupervisor.Pending(previousHelper) && WorkspaceActivationSupervisor.Alive(previousHelper!) ||
+                        previous.CoreProject == activation.CoreProject)
+                        throw Error("core_owned", "The current Core activation is not ready for a direct switch. Reconcile its retained operation first.");
+                    if (prior is not null && prior.ReplacesCoreActivationId != previous.Id)
+                        throw Error("core_changed", "The reviewed previous activation changed. Preserve the retained request for recovery.");
+                    var baseline = previous.CoreReturnTarget ?? WorkspaceActivationReturn.ImmediateTarget(previous);
+                    if (baseline.Executable is null || baseline.ExecutableHash is null ||
+                        WorkspaceActivationReturn.ExecutableHash(baseline.Executable) != baseline.ExecutableHash)
+                        throw Error("core_return_unavailable", "The captured Return executable is unavailable or changed. Current Core remains running.");
+                    activation = activation with { ReplacesCoreActivationId = previous.Id, CoreReturnTarget = baseline };
+                }
+                else if (prior?.ReplacesCoreActivationId is not null)
+                    throw Error("core_changed", "The reviewed previous activation no longer owns Core. No runtime was changed.");
             }
             return await lifecycle.WithActivationAppLocksAsync(ids, async () =>
             {
@@ -232,6 +261,17 @@ internal sealed partial class WorkspaceActivationService(CoreDataPaths paths, Wo
     {
         var plan = await planner.PlanAsync(workspaceId, userId, input, ct);
         var stamps = new List<string>();
+        if (plan.Participants.Any(p => p.Selected && p.Kind == "core"))
+            foreach (var owner in WorkspaceRuntimeFiles.List(paths.DataRoot).Where(a => a.CoreProject is not null &&
+                !a.CoreReturned && a.Phase is not ("returned" or "cancelled") && (a.Phase != "preparing" || a.CoreReserved))
+                .OrderBy(a => a.Id, StringComparer.Ordinal))
+            {
+                // The reviewed handover includes the exact current ownership and captured Return
+                // executable, not merely the destination project and process-start identity.
+                stamps.Add("core-owner:" + CoreJson.Text(owner));
+                var baseline = owner.CoreReturnTarget ?? WorkspaceActivationReturn.ImmediateTarget(owner);
+                stamps.Add("core-baseline:" + WorkspaceActivationReturn.ExecutableHash(baseline.Executable));
+            }
         foreach (var id in plan.Participants.Where(p => p.Selected).Select(p => p.WorktreeId!).Distinct().Order(StringComparer.Ordinal))
             stamps.Add(id + ":" + (await workspaces.ObserveAsync(id, null, ct)).SourceStamp);
         foreach (var app in plan.Participants.Where(p => p.Selected && p.Kind == "app").OrderBy(p => p.Id, StringComparer.Ordinal))

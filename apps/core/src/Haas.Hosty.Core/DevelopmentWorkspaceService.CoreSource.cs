@@ -7,13 +7,23 @@ internal sealed record CoreWorkspacePrepare(string RequestId, string TaskId, str
 
 internal sealed partial class DevelopmentWorkspaceService
 {
-    internal async Task RequireCoreSourceAsync(DevelopmentWorkspace tree, string userId, CancellationToken ct)
+    internal async Task RequireCoreSourceAsync(DevelopmentWorkspace tree, string userId, CancellationToken ct, UserProviderConnection? heldConnection = null)
     {
         if (tree.Core is null || coreDevelopment is null) return;
         var source = await coreDevelopment.SourceSettingsAsync(ct);
         if (source.ConnectionId is not null && source.RepositoryUrl is not null
             && LogicalRepositoryIdentity(tree.Repository) == LogicalRepositoryIdentity(source.RepositoryUrl))
-            _ = await coreDevelopment.SourceGrantAsync(source, userId, ct);
+            _ = await coreDevelopment.SourceGrantAsync(source, userId, ct, heldConnection);
+    }
+
+    internal void ValidateHeldSourceGrant(SourceReadGrant grant, UserProviderConnection connection)
+        => (privateSources ?? throw PrivateSourceService.Denied()).ValidateWithConnection(new(Git: grant), connection);
+
+    private async Task ValidateSourceGrantAsync(SourceReadGrant grant, CancellationToken ct, UserProviderConnection? heldConnection)
+    {
+        var access = privateSources ?? throw PrivateSourceService.Denied();
+        if (heldConnection is null) await access.ValidateAsync(new(Git: grant), ct);
+        else access.ValidateWithConnection(new(Git: grant), heldConnection);
     }
 
     // Caller must have explicit Core configuration authority; ordinary prepare_workspace never enters here.

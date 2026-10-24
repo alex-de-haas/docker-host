@@ -1,40 +1,65 @@
 "use client";
-import { CheckCircle2, CircleHelp, Clock3, XCircle } from "lucide-react";
+import { useState, useSyncExternalStore } from "react";
+import { CheckCircle2, CircleHelp, Clock3, XCircle, X, MinusCircle } from "lucide-react";
 import type { PullRequest } from "@/lib/development-api";
 import { checkResult } from "@/lib/pull-request-checks";
+import { checkCounts } from "@/lib/pull-request-presentation";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverDescription, PopoverHeader, PopoverTitle, PopoverTrigger } from "@/components/ui/popover";
 
 const indicators = {
-  passed: { Icon: CheckCircle2, color: "text-success" },
-  failed: { Icon: XCircle, color: "text-destructive" },
-  pending: { Icon: Clock3, color: "text-warning" },
+  passed: { Icon: CheckCircle2, color: "text-success-foreground" },
+  failed: { Icon: XCircle, color: "text-destructive-foreground" },
+  pending: { Icon: Clock3, color: "text-info-foreground" },
   unknown: { Icon: CircleHelp, color: "text-muted-foreground" },
 };
 
-export function PullRequestChecks({ pr, stale, label }: { pr: PullRequest; stale: boolean; label: string }) {
+const phoneQuery = "(max-width: 599px)";
+const readPhone = () => window.matchMedia?.(phoneQuery).matches ?? false;
+const subscribePhone = (notify: () => void) => {
+  const media = window.matchMedia?.(phoneQuery); media?.addEventListener("change", notify);
+  return () => media?.removeEventListener("change", notify);
+};
+const serverPhone = () => false;
+export function PullRequestChecks({ pr, stale, label, segmented = false }: { pr: PullRequest; stale: boolean; label: string; segmented?: boolean }) {
+  const phone = useSyncExternalStore(subscribePhone, readPhone, serverPhone);
+  const [expanded, setExpanded] = useState(false);
   const checks = pr.unavailable ? undefined : pr.observation?.checks;
   const completed = checks?.filter(check => checkResult(check.state).completed).length ?? 0;
   const summary = checks ? `${completed}/${checks.length}` : "unknown";
-  return <Popover>
-    <PopoverTrigger asChild><Button type="button" variant="link" size="sm" className="h-auto p-0"
-      aria-label={`${label}: CI ${summary}, show checks`} title="Completed checks / total checks">CI {summary}</Button></PopoverTrigger>
-    <PopoverContent align="start" collisionPadding={12} aria-label={`${label}: CI checks`}
-      className="flex max-h-[min(24rem,var(--radix-popover-content-available-height))] w-[min(24rem,calc(100vw-2rem))] flex-col gap-3 overflow-y-auto">
-      <PopoverHeader><PopoverTitle>CI checks</PopoverTitle><PopoverDescription>{label}{checks ? ` · ${completed}/${checks.length} completed` : ""}</PopoverDescription></PopoverHeader>
+  const counts = checkCounts(pr), cached = stale || !!pr.historical;
+  const triggerContent = segmented ? <span className="flex min-w-0 flex-1 flex-col gap-2"><span className="flex items-center justify-between gap-2 text-xs"><span>CI {summary}</span><span className="text-muted-foreground">Show checks</span></span><span className="flex h-1.5 w-full gap-0.5 overflow-hidden rounded-full" aria-hidden>
+    {checks?.length ? checks.map((check, index) => { const kind = checkResult(check.state).kind, skipped = ["SKIPPED", "NEUTRAL"].includes(check.state.toUpperCase()); return <span key={`${index}:${check.name}`} className={cn("min-w-px flex-1", cached || skipped ? "bg-muted-foreground/30" : kind === "passed" ? "bg-success-foreground" : kind === "failed" ? "bg-destructive" : kind === "pending" ? "bg-info-foreground" : "bg-muted-foreground/30")} />; }) : <span className="flex-1 bg-muted-foreground/20" />}
+  </span><span className="text-left text-xs font-normal text-muted-foreground">{checks ? `${counts.passed} passed · ${counts.pending} in progress · ${counts.skipped} skipped${counts.failed ? ` · ${counts.failed} failed` : ""}${counts.unknown ? ` · ${counts.unknown} unknown` : ""}` : "Check results unavailable"}</span></span> : <>CI {summary}</>;
+  const triggerClass = segmented ? "h-auto w-full justify-start p-0 hover:bg-transparent" : "h-auto p-0";
+  const content = <>
       {stale && <p className="text-xs text-muted-foreground">These results are outdated or have not been observed yet.</p>}
-      {(pr.unavailable || pr.observation?.error) && <p className="text-xs text-destructive">{pr.unavailable || pr.observation?.error}</p>}
+      {(pr.unavailable || pr.observation?.error) && <p className="text-xs text-destructive-foreground">{pr.unavailable || pr.observation?.error}</p>}
       {!checks ? <p className="text-sm text-muted-foreground">Check results are unavailable.</p> : checks.length === 0
         ? <p className="text-sm text-muted-foreground">No CI checks reported.</p>
         : <ul className="flex flex-col gap-2 text-sm">{checks.map((check, index) => {
-          const result = checkResult(check.state), { Icon, color } = indicators[result.kind];
+          const result = checkResult(check.state), skipped = ["SKIPPED", "NEUTRAL"].includes(check.state.toUpperCase());
+          const { Icon: StatusIcon, color } = indicators[result.kind], Icon = skipped ? MinusCircle : StatusIcon;
           return <li key={`${index}:${check.name}`} className="flex items-start gap-2">
-            <Icon aria-hidden="true" className={cn("mt-0.5 size-4 shrink-0", color)} />
-            <span className="min-w-0 flex-1 break-words">{check.name}</span>
+            <Icon aria-hidden="true" className={cn("mt-0.5 size-4 shrink-0", cached || skipped ? "text-muted-foreground" : color)} />
+            <span className="min-w-0 flex-1 wrap-anywhere">{check.name}</span>
             <span className="shrink-0 text-xs text-muted-foreground">{result.label}</span>
           </li>;
         })}</ul>}
+  </>;
+  if (phone) return <div className="inline-block w-full">
+    <Button variant={segmented ? "ghost" : "link"} size="sm" className={triggerClass} aria-label={`${label}: CI ${summary}, show checks`} aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>{triggerContent}</Button>
+    {expanded && <div role="region" aria-label={`${label}: CI checks`} className="mt-2 block space-y-2 rounded-md border bg-background p-3">{content}<Button size="sm" variant="ghost" onClick={() => setExpanded(false)}>Hide checks</Button></div>}
+  </div>;
+  return <Popover open={expanded} onOpenChange={setExpanded}>
+    <PopoverTrigger asChild><Button type="button" variant={segmented ? "ghost" : "link"} size="sm" className={triggerClass}
+      aria-label={`${label}: CI ${summary}, show checks`} title="Completed checks / total checks">{triggerContent}</Button></PopoverTrigger>
+    <PopoverContent side="left" sideOffset={12} align="start" collisionPadding={12} aria-label={`${label}: CI checks`}
+      className="flex max-h-[min(24rem,var(--radix-popover-content-available-height))] w-[min(24rem,calc(100vw-2rem))] flex-col gap-3 overflow-y-auto">
+      <div className="flex items-start gap-2"><PopoverHeader className="min-w-0 flex-1"><PopoverTitle>CI checks</PopoverTitle><PopoverDescription>{label}{checks ? ` · ${completed}/${checks.length} completed` : ""}</PopoverDescription></PopoverHeader><Button type="button" size="icon-sm" variant="ghost" aria-label="Close CI checks" onClick={() => setExpanded(false)}><X className="size-3.5" /></Button></div>
+      {content}
+
     </PopoverContent>
   </Popover>;
 }

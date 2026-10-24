@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getRuntime, updateMarketplaceSettings } from "@/lib/runtime";
+import { getRuntime, MarketplaceSettingsConflictError, updateMarketplaceSettings } from "@/lib/runtime";
 import { authorizeMarketplaceRequest, marketplaceAuthorizationError } from "@/lib/route-auth";
 export const dynamic = "force-dynamic";
 export async function GET(request: Request) {
@@ -17,5 +17,9 @@ export async function PUT(request: Request) {
     const input = await request.json();
     if (typeof input.sourceUrl !== "string" || typeof input.expectedSourceUrl !== "string") throw new Error("Catalog address is required.");
     return NextResponse.json(updateMarketplaceSettings(input.sourceUrl, input.expectedSourceUrl));
-  } catch (error) { return NextResponse.json({ message: error instanceof Error ? error.message : "Could not save settings." }, { status: 400 }); }
+  } catch (error) {
+    if (error instanceof MarketplaceSettingsConflictError)
+      return NextResponse.json({ code: error.code, message: error.message }, { status: 409 });
+    return NextResponse.json({ message: error instanceof Error ? error.message : "Could not save settings." }, { status: 400 });
+  }
 }

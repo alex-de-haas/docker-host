@@ -12,6 +12,19 @@ internal sealed partial class WorkspaceActivationService
                 a.Phase.StartsWith("return-", StringComparison.Ordinal) ? a.Returns!.Last().Request.Core : a.CoreProject is not null && !a.CoreReturned, ct);
         if (a.CoreProject is not null && a.PreparedExecutable is null && a.Phase is "prepared" or "applying" or "apps-active")
             await ValidateCoreTreeAsync(a, ct);
+        if (a is { Phase: "active", CoreProject: not null, CoreReturned: false })
+        {
+            // Same-target CLI rebuilds may run while native writers hold an activity lease. They
+            // still require the retained source authority and registered repository/project binding.
+            var tree = await workspaces.ObserveAsync(a.CoreWorktreeId!, null, ct);
+            var source = await core.SourceSettingsAsync(ct);
+            if (tree.Owner.UserId != a.UserId || tree.WorkspaceId != a.WorkspaceId || tree.State != "active" ||
+                source.Revision != a.CoreSourceRevision || source.RepositoryUrl is null ||
+                core.NormalizeRepository(source.RepositoryUrl) != core.NormalizeRepository(tree.Repository) ||
+                CoreDevelopmentService.Project(tree.Path, source.ProjectPath) != a.CoreProject)
+                throw Error("core_source_changed", "The active Core source authority changed. No replacement was admitted.");
+            _ = await core.SourceGrantAsync(source, a.UserId, ct);
+        }
         return a;
     }
 
@@ -21,6 +34,7 @@ internal sealed partial class WorkspaceActivationService
         try
         {
             using var admission = CoreLaunchFiles.Lock(paths.DataRoot);
+            if (input.Core) WorkspaceCoreLaunchContinuation.Reconcile(paths.DataRoot, (await core.GetAsync(ct)).Launch);
             return WorkspaceActivationReturn.Prepare(paths.DataRoot, id, input, actor);
         }
         finally { gate.Release(); }

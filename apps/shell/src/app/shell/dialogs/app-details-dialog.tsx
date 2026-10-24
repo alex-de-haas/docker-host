@@ -1,22 +1,33 @@
 "use client";
 
-import { fetchCore } from "../core-transport.js";
-
 import { AppPermissions } from "./app-permissions";
+import { ConsoleLogsPanel } from "./app-console-logs";
+import { AppUpdatesPanel } from "./app-updates-panel";
+import { HostyLoader } from "../../../../../../shared/web/hosty-states";
 import { PrivateSourceConnections } from "./private-source-connections";
 
 import { SourceChangesButton } from "../source/source-changes";
 import type { FormEvent } from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Archive, Database, FileText, FolderGit2, HardDrive, Info, LoaderCircle, Lock, Plus, Radio, RefreshCw, Rss, Settings, Sparkles, Trash2, TriangleAlert, Upload } from "lucide-react";
-import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ChevronRight, Boxes, Ellipsis, Play, Square, ExternalLink, Archive, FileText, FolderGit2, HardDrive, Info, LoaderCircle, Lock, Plus, Radio, RefreshCw, Rss, Settings, Sparkles, Trash2, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { AppIcon } from "../app-icon";
+import { resolveAssetSrc } from "../app-helpers";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Field, FieldLabel } from "@/components/ui/field";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Badge } from "@/components/ui/badge";
+import { AppLaunchSummary } from "../pages/app-launch-summary";
+import { AppNetworkSummary } from "../pages/app-network-summary";
+import Link from "next/link";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { detailTitle, formatBytes, isAppAutostartEnabled } from "../app-helpers";
-import { getAppFeeds, isAuthRequiredRedirectError, readCoreError, redirectToCoreLoginIfAuthRequired } from "../core-api";
+import { getAppFeeds, isAuthRequiredRedirectError } from "../core-api";
 import {
   buildPublicOriginGroups,
   isPublicOriginSettingKey,
@@ -32,17 +43,15 @@ import type {
   CoreBackupCleanupPlan,
   CoreGlobalMount,
   CoreMountSlot,
-  CoreRemovalImpact,
+  CoreUpdatePlan,
   DetailPanelState,
   DetailView,
-  LogsResponse,
-  LogsServiceSegment,
   MountBindingInput,
-  RemoveOptions,
   SettingsTab,
 } from "../types";
-import { CheckboxRow, EmptyState, IconButton, InlineError } from "../ui";
+import { Alert, CheckboxRow, EmptyState, IconButton, InlineError, StatusBadge } from "../ui";
 import { isAppIdle, isAppUp } from "../runtime-states";
+import { appReadinessProblem, collectAppProblems } from "../app-problems";
 import type { ManagedPublicOriginReason } from "../use-managed-public-origins";
 import { useManagedPublicOrigins } from "../use-managed-public-origins";
 
@@ -52,6 +61,7 @@ export function AppDetailsDialog({
   onTabChange,
   view,
   settingsTab,
+  serviceRevision,
   coreOrigin,
   globalMounts,
   canManageApps,
@@ -70,16 +80,20 @@ export function AppDetailsDialog({
   onConfigureSource,
   onClearSource,
   onSetFeed,
-  onRemove,
-  onLoadRemovalImpact,
   onRevealSetting,
   onAskAssistant,
+  onManageAction, onOpenApp, onShowLogs, onShowRemoval, onCheckUpdate, onUpdate,
 }: {
   app: CoreApp;
+  onCheckUpdate?: (app: CoreApp) => Promise<CoreUpdatePlan>;
+  onUpdate?: (app: CoreApp) => void;
   page?: boolean;
+  onManageAction?: (action: "start" | "restart" | "stop") => void;
+  onOpenApp?: () => void; onShowLogs?: () => void; onShowRemoval?: () => void;
   onTabChange?: (tab: SettingsTab) => void;
-  view: DetailView;
+  view: Exclude<DetailView, "remove">;
   settingsTab?: SettingsTab;
+  serviceRevision?: number;
   coreOrigin: string;
   globalMounts: CoreGlobalMount[];
   canManageApps: boolean;
@@ -95,53 +109,57 @@ export function AppDetailsDialog({
   onDeleteBackup: (app: CoreApp, backup: CoreBackup) => void;
   onPreviewBackupCleanup: (app: CoreApp) => void;
   onApplyBackupCleanup: (app: CoreApp, plan: CoreBackupCleanupPlan) => void;
-  onConfigure: (app: CoreApp, settings: Record<string, string | null>, autostart?: boolean) => void;
+  onConfigure: (app: CoreApp, settings: Record<string, string | null>, autostart?: boolean) => void | boolean | Promise<boolean | void>;
   onConfigureMounts: (app: CoreApp, mounts: MountBindingInput[]) => void;
   onConfigureSource: (app: CoreApp, path: string) => void;
   onClearSource: (app: CoreApp) => void;
   onSetFeed: (app: CoreApp, feedId: string) => void;
-  onRemove: (app: CoreApp, options: RemoveOptions) => void;
-  // Advisory "what does this affect" preview, loaded when the remove view opens.
-  onLoadRemovalImpact?: (appId: string) => Promise<CoreRemovalImpact | null>;
   // Fetches one setting's stored value on the operator's explicit reveal click (admin-gated in Core).
   onRevealSetting?: (app: CoreApp, key: string) => Promise<string | null>;
   // Opens the assistant panel seeded with this app + view as context. Undefined when no ai-gateway
   // provider is installed (or the viewer is not an admin), which leaves no trace of the feature.
   onAskAssistant?: () => void;
 }) {
-  // Every verb is available for system apps, removal included: "system" governs who may see and reach
-  // an app, never whether it can be uninstalled. The remove panel explains the consequences instead.
-  const canRemoveApp = canManageApps;
   const canConfigureApp = canManageApps;
 
   if (page) return <section className="flex min-h-[32rem] flex-col gap-5">
-    <header className="flex items-center justify-between gap-3"><div><h1 className="text-xl font-semibold">Manage {app.displayName}</h1><p className="text-sm text-muted-foreground">{app.id}</p></div>
-      <Button variant="outline" onClick={onClose}>Back to Dashboard</Button></header>
+    <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1 text-sm text-muted-foreground"><Button asChild variant="ghost" size="sm"><Link href={canManageApps ? "/dashboard" : "/"}>{canManageApps ? "Dashboard" : "Home"}</Link></Button><ChevronRight className="size-3.5 shrink-0" aria-hidden /><span className="truncate" aria-current="page">{app.displayName}</span></nav>
+    <header className="flex flex-wrap items-center justify-between gap-4">
+      <div className="flex min-w-0 items-center gap-3"><AppIcon src={resolveAssetSrc(coreOrigin, app.iconUrl)} name={app.icon} fallback={Boxes} className="size-12 rounded-xl" />
+        <div className="min-w-0 space-y-1.5"><h1 className="break-words text-2xl font-semibold tracking-tight">{app.displayName}</h1><div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"><span className="font-mono">{app.version}</span><Badge variant="outline">{app.selectedRuntime || "Runtime unavailable"}</Badge><StatusBadge value={app.runtimeState || app.operationStatus} health={isAppUp(app.runtimeState) ? app.health?.status : null} /></div><p className="break-all font-mono text-xs text-muted-foreground">{app.id}</p></div></div>
+      <div className="flex flex-wrap items-center gap-2">
+        {onOpenApp && <Button variant="outline" size="sm" onClick={onOpenApp}><ExternalLink className="size-4" />Open app</Button>}
+        {onManageAction && <><Button variant="outline" size="sm" disabled={!!busyAction} onClick={() => onManageAction(isAppUp(app.runtimeState) ? "restart" : "start")}>{isAppUp(app.runtimeState) ? <RefreshCw className="size-4" /> : <Play className="size-4" />}{isAppUp(app.runtimeState) ? "Restart" : "Start"}</Button>
+          {isAppUp(app.runtimeState) && <Button variant="outline" size="sm" disabled={!!busyAction} onClick={() => onManageAction("stop")}><Square className="size-4" />Stop</Button>}</>}
+        <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label="More app actions"><Ellipsis /></Button></DropdownMenuTrigger>
+          <DropdownMenuContent align="end">{onShowLogs && <DropdownMenuItem onSelect={onShowLogs}>Logs</DropdownMenuItem>}{onAskAssistant && <DropdownMenuItem onSelect={onAskAssistant}>Ask assistant</DropdownMenuItem>}{canManageApps && onShowRemoval && <DropdownMenuItem onSelect={onShowRemoval}>Remove app…</DropdownMenuItem>}</DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    </header>
+    {app.restartRequired && <p role="status" className="rounded-lg border border-brand-strong/30 bg-brand-soft px-4 py-3 text-sm">Configuration changed. Restart this app explicitly to apply it to running services.</p>}
     {detail.error && <InlineError message={detail.error} />}
-    {canConfigureApp ? <SettingsDialog app={app} busyAction={busyAction} canManageApps={canConfigureApp} globalMounts={globalMounts} initialTab={settingsTab} onTabChange={onTabChange} coreOrigin={coreOrigin} onSetFeed={onSetFeed} onConfigure={onConfigure} onConfigureMounts={onConfigureMounts} onConfigureSource={onConfigureSource} onClearSource={onClearSource} onRevealSetting={onRevealSetting}
+    {collectAppProblems(app).map(problem => <Alert key={problem.title} severity={problem.severity} title={problem.title} detail={problem.detail} />)}
+    {appReadinessProblem(app) && onShowLogs && <Button type="button" variant="outline" size="sm" className="self-start" onClick={onShowLogs}><FileText className="size-4" />Open console logs</Button>}
+    {canConfigureApp ? <SettingsDialog app={app} serviceRevision={serviceRevision} isShell={isShell} onCheckUpdate={onCheckUpdate} onUpdate={onUpdate} busyAction={busyAction} canManageApps={canConfigureApp} globalMounts={globalMounts} initialTab={settingsTab} onTabChange={onTabChange} coreOrigin={coreOrigin} onSetFeed={onSetFeed} onConfigure={onConfigure} onConfigureMounts={onConfigureMounts} onConfigureSource={onConfigureSource} onClearSource={onClearSource} onRevealSetting={onRevealSetting}
       backups={app.capabilities.includes("backup") ? <BackupsPanel app={app} detail={detail} busyAction={busyAction} onRefresh={onRefreshBackups} onCreateBackup={onCreateBackup} onRestoreBackup={onRestoreBackup} onDeleteBackup={onDeleteBackup} onPreviewCleanup={onPreviewBackupCleanup} onApplyCleanup={onApplyBackupCleanup} /> : undefined} />
-      : <InlineError message="You do not have permission to manage this application." />}
+      : settingsTab === "logs" && app.capabilities.includes("logs") ? <Tabs value="logs" className="min-w-0 gap-5"><TabsList variant="line" aria-label="App details"><TabsTrigger value="logs">Logs</TabsTrigger></TabsList><TabsContent value="logs"><ConsoleLogsPanel key={app.id} app={app} coreOrigin={coreOrigin} /></TabsContent></Tabs>
+        : <InlineError message="You do not have permission to manage this application." />}
   </section>;
 
-  const SurfaceDialog = view === "remove" ? AlertDialog : Dialog;
-  const SurfaceDialogContent = view === "remove" ? AlertDialogContent : DialogContent;
-  const SurfaceDialogHeader = view === "remove" ? AlertDialogHeader : DialogHeader;
-  const SurfaceDialogTitle = view === "remove" ? AlertDialogTitle : DialogTitle;
-  const SurfaceDialogDescription = view === "remove" ? AlertDialogDescription : DialogDescription;
   return (
-    <SurfaceDialog open onOpenChange={(open) => { if (!open && busyAction !== `${app.id}:remove`) onClose(); }}>
-      <SurfaceDialogContent className={view === "logs" ? "w-[calc(100%-2rem)] sm:max-w-7xl" : "sm:max-w-3xl"}>
-        <SurfaceDialogHeader>
-          <SurfaceDialogTitle className="flex items-center gap-2">
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className={view === "logs" ? "w-[calc(100%-2rem)] sm:max-w-7xl" : "sm:max-w-3xl"}>
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
             <span className="min-w-0 truncate">{detailTitle(view)} · {app.displayName}</span>
             {onAskAssistant && (
               <Button type="button" variant="outline" size="sm" className="mr-6 ml-auto" onClick={onAskAssistant}>
                 <Sparkles /> Ask assistant
               </Button>
             )}
-          </SurfaceDialogTitle>
-          <SurfaceDialogDescription>{app.id}</SurfaceDialogDescription>
-        </SurfaceDialogHeader>
+          </DialogTitle>
+          <DialogDescription>{app.id}</DialogDescription>
+        </DialogHeader>
         {detail.error && <InlineError message={detail.error} />}
         {view === "backups" && (canManageApps ? (
           <BackupsPanel
@@ -161,6 +179,10 @@ export function AppDetailsDialog({
         {view === "settings" && (canConfigureApp ? (
           <SettingsDialog
             app={app}
+            serviceRevision={serviceRevision}
+            isShell={isShell}
+            onCheckUpdate={onCheckUpdate}
+            onUpdate={onUpdate}
             busyAction={busyAction}
             canManageApps={canConfigureApp}
             globalMounts={globalMounts}
@@ -176,112 +198,9 @@ export function AppDetailsDialog({
         ) : (
           <InlineError message="You do not have permission to manage app settings." />
         ))}
-        {view === "remove" && (
-          <RemovePanel
-            app={app}
-            busyAction={busyAction}
-            canRemove={canRemoveApp}
-            isShell={isShell}
-            onRemove={onRemove}
-            onLoadImpact={onLoadRemovalImpact}
-          />
-        )}
         {view === "logs" && <ConsoleLogsPanel key={app.id} app={app} coreOrigin={coreOrigin} />}
-      </SurfaceDialogContent>
-    </SurfaceDialog>
-  );
-}
-
-type ConsoleLogsState = { loading: boolean; error: string | null; text: string; services: LogsServiceSegment[] };
-
-async function fetchConsoleLogs(coreOrigin: string, appId: string, signal?: AbortSignal): Promise<LogsResponse> {
-  const response = await fetchCore(`${coreOrigin}/api/apps/${encodeURIComponent(appId)}/logs?tail=200`, {
-    credentials: "include",
-    signal,
-  });
-  redirectToCoreLoginIfAuthRequired(response, coreOrigin);
-  if (!response.ok) {
-    throw new Error(await readCoreError(response));
-  }
-  return (await response.json()) as LogsResponse;
-}
-
-// Per-app console logs (docker logs) tail, opened from the Installed Apps actions menu. Served
-// on-demand by Core, so it works even when the telemetry backend is off — deliberately distinct from
-// the structured OTLP-logs stream in the Observability section. Multi-service apps get a tab per service.
-// Keyed by app id, so switching apps remounts it in the loading state.
-function ConsoleLogsPanel({ app, coreOrigin }: { app: CoreApp; coreOrigin: string }) {
-  const [state, setState] = useState<ConsoleLogsState>({ loading: true, error: null, text: "", services: [] });
-  const [activeService, setActiveService] = useState<string | null>(null);
-
-  // State is written only in the promise callbacks; callers that reload set `loading` themselves.
-  const loadLogs = useCallback((signal?: AbortSignal) =>
-    fetchConsoleLogs(coreOrigin, app.id, signal).then((payload) => {
-      const services = payload.services ?? [];
-      setState({ loading: false, error: null, text: payload.text || "", services });
-      setActiveService((current) =>
-        current && services.some((segment) => segment.service === current) ? current : services[0]?.service ?? null,
-      );
-    }, (error: unknown) => {
-      // A superseded request (dialog closed) aborts — leave the newer request's state.
-      if (error instanceof DOMException && error.name === "AbortError") {
-        return;
-      }
-      if (isAuthRequiredRedirectError(error)) {
-        return;
-      }
-      setState({
-        loading: false,
-        error: error instanceof Error ? error.message : "Console logs are unavailable.",
-        text: "",
-        services: [],
-      });
-    }), [app.id, coreOrigin]);
-
-  // Abort an in-flight fetch when the app changes or the dialog closes, so a slow response for a
-  // previous app can never overwrite the current one's logs.
-  useEffect(() => {
-    const controller = new AbortController();
-    void loadLogs(controller.signal);
-    return () => controller.abort();
-  }, [loadLogs]);
-
-  const hasTabs = state.services.length > 1;
-  const activeSegment = state.services.find((segment) => segment.service === activeService) ?? state.services[0];
-  const body = state.loading
-    ? "Loading logs"
-    : state.services.length > 0
-      ? activeSegment?.text || "No logs"
-      : state.text || "No logs";
-
-  return (
-    <DialogBody className="flex min-h-0 flex-col gap-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <Button variant="outline" size="sm" onClick={() => { setState((current) => ({ ...current, loading: true, error: null })); void loadLogs(); }} disabled={state.loading}>
-          <RefreshCw className={cn("h-4 w-4", state.loading && "animate-spin")} />
-          Refresh
-        </Button>
-        {hasTabs &&
-          state.services.map((segment) => (
-            <Button
-              key={segment.service}
-              variant={segment.service === activeService ? "secondary" : "ghost"}
-              size="sm"
-              onClick={() => setActiveService(segment.service)}
-            >
-              {segment.service}
-            </Button>
-          ))}
-      </div>
-      {state.error && (
-        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">
-          {state.error}
-        </div>
-      )}
-      <pre className="min-h-[20rem] min-w-0 max-w-full flex-1 overflow-auto rounded-md bg-zinc-950 p-4 font-mono text-xs leading-relaxed text-zinc-50">
-        {body}
-      </pre>
-    </DialogBody>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -316,13 +235,14 @@ function BackupsPanel({
 
   return (
     <DialogBody className="space-y-4">
+      <section className="rounded-xl border bg-card px-4 py-4" aria-label="Backup coverage"><h3 className="text-sm font-medium">App data</h3><p className="mt-1 text-sm text-muted-foreground">Backups include only this app’s primary data directory. Cache, attached host folders and additional storage mappings are excluded.</p></section>
       <div className="flex flex-wrap gap-2">
         <Button onClick={() => onCreateBackup(app)} disabled={busyAction === `${app.id}:backup`}>
-          {busyAction === `${app.id}:backup` ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Archive className="h-4 w-4" />}
+          {busyAction === `${app.id}:backup` ? <LoaderCircle className="h-4 w-4 animate-spin motion-reduce:animate-none" /> : <Archive className="h-4 w-4" />}
           Create backup
         </Button>
         <Button variant="outline" onClick={() => onRefresh(app, false)} disabled={detail.loading}>
-          <RefreshCw className={cn("h-4 w-4", detail.loading && "animate-spin")} />
+          <RefreshCw className={cn("h-4 w-4", detail.loading && "animate-spin motion-reduce:animate-none")} />
           Refresh
         </Button>
         <Button variant="outline" onClick={() => onPreviewCleanup(app)} disabled={busyAction === `${app.id}:backup-cleanup-plan`}>
@@ -351,9 +271,9 @@ function BackupsPanel({
         </div>
       )}
       {detail.loading ? (
-        <EmptyState icon={LoaderCircle} title="Loading backups" iconClassName="animate-spin" />
+        <EmptyState loading title="Loading backups" />
       ) : backups.length === 0 ? (
-        <EmptyState icon={Database} title="No backups" />
+        <EmptyState title="No backups" />
       ) : (
         <Table>
           <TableHeader>
@@ -393,10 +313,12 @@ function BackupsPanel({
 
 const SETTINGS_TABS: { id: SettingsTab; label: string }[] = [
   { id: "app", label: "Launch" },
-  { id: "permissions", label: "Permissions" },
-  { id: "publicOrigins", label: "Network" },
+  { id: "logs", label: "Logs" },
+  { id: "parameters", label: "Parameters" },
   { id: "mounts", label: "Folders" },
-  { id: "source", label: "Source & updates" },
+  { id: "publicOrigins", label: "Network" },
+  { id: "permissions", label: "Permissions" },
+  { id: "source", label: "Updates" },
   { id: "backups", label: "Backups" },
 ];
 
@@ -405,6 +327,10 @@ const SETTINGS_TABS: { id: SettingsTab; label: string }[] = [
 // public origins share one settings form (one configure endpoint); mounts saves separately.
 function SettingsDialog({
   app,
+  serviceRevision,
+  isShell,
+  onCheckUpdate,
+  onUpdate,
   busyAction,
   canManageApps,
   globalMounts,
@@ -420,6 +346,10 @@ function SettingsDialog({
   onRevealSetting,
 }: {
   app: CoreApp;
+  serviceRevision?: number;
+  isShell: boolean;
+  onCheckUpdate?: (app: CoreApp) => Promise<CoreUpdatePlan>;
+  onUpdate?: (app: CoreApp) => void;
   busyAction: string | null;
   canManageApps: boolean;
   globalMounts: CoreGlobalMount[];
@@ -428,20 +358,23 @@ function SettingsDialog({
   backups?: React.ReactNode;
   coreOrigin: string;
   onSetFeed: (app: CoreApp, feedId: string) => void;
-  onConfigure: (app: CoreApp, settings: Record<string, string | null>, autostart?: boolean) => void;
+  onConfigure: (app: CoreApp, settings: Record<string, string | null>, autostart?: boolean) => void | boolean | Promise<boolean | void>;
   onConfigureMounts: (app: CoreApp, mounts: MountBindingInput[]) => void;
   onConfigureSource: (app: CoreApp, path: string) => void;
   onClearSource: (app: CoreApp) => void;
   onRevealSetting?: (app: CoreApp, key: string) => Promise<string | null>;
 }) {
   const settings = app.settings || [];
-  const hasPublicOrigins = settings.some((setting) => isPublicOriginSettingKey(setting.key));
-  const hasMounts = (app.mounts?.length ?? 0) > 0;
+  const hasPublicOrigins = settings.some((setting) => isPublicOriginSettingKey(setting.key)) || !!app.endpoints?.length;
+  const hasMounts = true;
   const hasSource = Boolean(app.supportsSource) || canManageApps;
   const availableTabs = SETTINGS_TABS.filter((tab) => {
     switch (tab.id) {
+      case "logs":
+        return app.capabilities.includes("logs");
       case "backups":
         return !!backups;
+      case "parameters":
       case "app":
         return true;
       case "permissions":
@@ -456,50 +389,65 @@ function SettingsDialog({
   });
   const defaultTab: SettingsTab = initialTab && availableTabs.some((tab) => tab.id === initialTab) ? initialTab : "app";
   const [active, setActive] = useState<SettingsTab>(defaultTab);
+  const tabStrip = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const strip = tabStrip.current;
+    if (!strip) return;
+    const revealSelectedTab = () => {
+      const selected = strip.querySelector<HTMLElement>('[role="tab"][data-state="active"]');
+      if (!selected) return;
+      const viewport = strip.getBoundingClientRect();
+      const trigger = selected.getBoundingClientRect();
+      const delta = trigger.left < viewport.left ? trigger.left - viewport.left : trigger.right > viewport.right ? trigger.right - viewport.right : 0;
+      if (delta) strip.scrollLeft += delta;
+    };
+    revealSelectedTab();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(revealSelectedTab);
+    observer?.observe(strip);
+    if (!observer) window.addEventListener("resize", revealSelectedTab);
+    return () => { observer?.disconnect(); window.removeEventListener("resize", revealSelectedTab); };
+  }, [active, availableTabs.length]);
 
   // Reset the active tab while rendering when the app or requested tab changes.
   const resetSignature = `${app.id}|${initialTab ?? ""}`;
   const [prevReset, setPrevReset] = useState<string | null>(null);
-  if (prevReset !== resetSignature) {
+  if (prevReset !== resetSignature || !availableTabs.some(tab => tab.id === active)) {
     setPrevReset(resetSignature);
     setActive(defaultTab);
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3">
+    <Tabs value={active} onValueChange={value => { setActive(value as SettingsTab); onTabChange?.(value as SettingsTab); }} className="min-h-0 flex-1 gap-5">
       {availableTabs.length > 1 && (
-        <div className="flex flex-wrap gap-1 border-b">
+        <div ref={tabStrip} data-slot="manage-tab-strip" className="max-w-full overflow-x-auto border-b pb-1"><TabsList variant="line" aria-label="Manage application">
           {availableTabs.map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => { setActive(tab.id); onTabChange?.(tab.id); }}
-              className={cn(
-                "-mb-px border-b-2 px-3 py-2 text-sm transition-colors",
-                active === tab.id ? "border-foreground font-medium text-foreground" : "border-transparent text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {tab.label}
-            </button>
+            <TabsTrigger key={tab.id} value={tab.id} className="px-3">{tab.label}</TabsTrigger>
           ))}
-        </div>
+        </TabsList></div>
       )}
+      <TabsContent value={active} className="flex min-h-0 flex-1 flex-col gap-4">
+      {active === "logs" && app.capabilities.includes("logs") && <ConsoleLogsPanel key={app.id} app={app} coreOrigin={coreOrigin} />}
       {canManageApps && <div className={cn("min-h-0 overflow-y-auto", active !== "permissions" && "hidden")}><AppPermissions key={app.id} app={app} active={active === "permissions"} /></div>}
       {backups && <div className={cn("flex min-h-0 flex-1 flex-col", active !== "backups" && "hidden")}>{backups}</div>}
       {/* All forms stay mounted (toggled with hidden) so drafts survive tab switches. */}
-      <div className={cn("flex min-h-0 flex-1 flex-col", active !== "app" && active !== "publicOrigins" && "hidden")}>
+      <div className={cn("flex min-h-0 flex-1 flex-col", active !== "app" && active !== "parameters" && active !== "publicOrigins" && "hidden")}>
         <SettingsForm
+          key={app.id}
           app={app}
-          section={active === "publicOrigins" ? "publicOrigins" : "app"}
+          section={active === "publicOrigins" ? "publicOrigins" : active === "parameters" ? "parameters" : "app"}
           busyAction={busyAction}
           canManageApps={canManageApps}
           onConfigure={onConfigure}
           onRevealSetting={onRevealSetting}
+          coreOrigin={coreOrigin}
+          launchVisible={active === "app"}
+          serviceRevision={serviceRevision}
         />
       </div>
       {hasMounts && (
         <div className={cn("flex min-h-0 flex-1 flex-col", active !== "mounts" && "hidden")}>
           <MountsForm
+            key={app.id}
             app={app}
             busyAction={busyAction}
             canManageApps={canManageApps}
@@ -509,19 +457,22 @@ function SettingsDialog({
         </div>
       )}
       {hasSource && (
-        <div className={cn("flex min-h-0 flex-1 flex-col", active !== "source" && "hidden")}>
-          {active === "source" && <FeedSection app={app} coreOrigin={coreOrigin} busyAction={busyAction} canManageApps={canManageApps} onSetFeed={onSetFeed} />}
+        <div className={cn("flex min-h-0 flex-1 flex-col gap-5", active !== "source" && "hidden")}>
+          <AppUpdatesPanel key={`${app.id}|${app.version}|${app.selectedRuntime}|${app.followedFeedId}`} app={app} coreOrigin={coreOrigin} active={active === "source"} isShell={isShell} busyAction={busyAction} onCheckUpdate={onCheckUpdate} onUpdate={onUpdate} />
+          <FeedSection key={`feed:${app.id}`} app={app} active={active === "source"} coreOrigin={coreOrigin} busyAction={busyAction} canManageApps={canManageApps} onSetFeed={onSetFeed} />
           {app.supportsSource && <SourceForm
+            key={app.id}
             app={app}
             busyAction={busyAction}
             canManageApps={canManageApps}
             onConfigureSource={onConfigureSource}
             onClearSource={onClearSource}
           />}
-          {canManageApps && active === "source" && <PrivateSourceConnections appId={app.id} />}
+          {canManageApps && <PrivateSourceConnections key={`source-connections:${app.id}`} appId={app.id} active={active === "source"} />}
         </div>
       )}
-    </div>
+      </TabsContent>
+    </Tabs>
   );
 }
 
@@ -533,6 +484,16 @@ const MANAGED_ORIGIN_HINTS: Record<ManagedPublicOriginReason, string> = {
 // Shown for an origin the operator owns. It is theirs to set, just not from here.
 const OPERATOR_ORIGIN_HINT = "Yours to set, from the public-origin control on the endpoint.";
 
+const sameDraft = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
+function reconcileSavedDraft<T>(draft: Record<string, T>, previous: Record<string, T>, next: Record<string, T>): Record<string, T> {
+  return Object.fromEntries(Object.entries(next).map(([key, value]) => [key,
+    key in previous && key in draft && !sameDraft(draft[key], previous[key]) ? draft[key] : value]));
+}
+function hasDraftConflict<T>(draft: Record<string, T>, previous: Record<string, T>, next: Record<string, T>) {
+  return Object.keys(next).some(key => key in previous && key in draft && !sameDraft(draft[key], previous[key])
+    && !sameDraft(next[key], previous[key]) && !sameDraft(draft[key], next[key]));
+}
+
 function SettingsForm({
   app,
   section,
@@ -540,12 +501,18 @@ function SettingsForm({
   canManageApps,
   onConfigure,
   onRevealSetting,
+  coreOrigin,
+  launchVisible,
+  serviceRevision,
 }: {
   app: CoreApp;
-  section: "app" | "publicOrigins";
+  coreOrigin: string;
+  launchVisible: boolean;
+  serviceRevision?: number;
+  section: "app" | "parameters" | "publicOrigins";
   busyAction: string | null;
   canManageApps: boolean;
-  onConfigure: (app: CoreApp, settings: Record<string, string | null>, autostart?: boolean) => void;
+  onConfigure: (app: CoreApp, settings: Record<string, string | null>, autostart?: boolean) => void | boolean | Promise<boolean | void>;
   onRevealSetting?: (app: CoreApp, key: string) => Promise<string | null>;
 }) {
   const settings = app.settings || [];
@@ -555,59 +522,90 @@ function SettingsForm({
   // either way, and the field says why rather than failing on save.
   const managedPublicOrigins = useManagedPublicOrigins(app, publicOriginSettings.length > 0);
   const publicOriginGroups = buildPublicOriginGroups(app, publicOriginSettings);
-  // A secret's `value` is always masked to null, so hasValue is the only part of its summary that
-  // moves when one is set or cleared -- without it the form would stay dirty across a saved delete.
-  const settingsSignature = settings
-    .map((setting) => [setting.key, setting.type, setting.secret ? "1" : "0", setting.required ? "1" : "0", setting.hasValue ? "1" : "0", setting.value ?? ""].join("\u0000"))
-    .join("\u0001");
-  const [draft, setDraft] = useState<AppSettingsDraft>({});
-  const [autostartDraft, setAutostartDraft] = useState(isAppAutostartEnabled(app));
-
-  // Reset the draft while rendering when the app identity or its settings change, not in an effect.
-  // https://react.dev/learn/you-might-not-need-an-effect
-  const resetSignature = `${app.id}\u0001${app.autostart}\u0001${settingsSignature}`;
-  const [prevResetSignature, setPrevResetSignature] = useState<string | null>(null);
-  if (prevResetSignature !== resetSignature) {
-    setPrevResetSignature(resetSignature);
-    setDraft(buildAppSettingsDraft(settings));
-    setAutostartDraft(isAppAutostartEnabled(app));
+  const saved = buildAppSettingsDraft(appSettings);
+  const settingsSignature = JSON.stringify(appSettings.map(setting => [setting.key, setting.type, setting.secret, setting.required, setting.hasValue, setting.value]));
+  const [draft, setDraft] = useState<AppSettingsDraft>(saved);
+  const [baseline, setBaseline] = useState({ signature: settingsSignature, values: saved });
+  const [savedChanged, setSavedChanged] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const edits = useRef<Record<string, number>>({});
+  const submission = useRef({ revision: 0 });
+  const mounted = useRef(true);
+  useEffect(() => {
+    const request = submission.current;
+    mounted.current = true;
+    return () => { mounted.current = false; ++request.revision; };
+  }, []);
+  if (baseline.signature !== settingsSignature) {
+    const next = reconcileSavedDraft(draft, baseline.values, saved);
+    setBaseline({ signature: settingsSignature, values: saved });
+    setDraft(next);
+    if (hasDraftConflict(draft, baseline.values, saved)) setSavedChanged(true);
+    else if (sameDraft(next, saved)) setSavedChanged(false);
+  }
+  const autostart = isAppAutostartEnabled(app);
+  const [autostartDraft, setAutostartDraft] = useState(autostart);
+  const [previousAutostart, setPreviousAutostart] = useState(autostart);
+  if (previousAutostart !== autostart) {
+    setPreviousAutostart(autostart);
+    if (autostartDraft === previousAutostart) setAutostartDraft(autostart);
   }
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    // Browser addresses are edited by the endpoint control with its own stale-address check.
-    // Resending hidden/read-only values here turns an ordinary save into an unreviewed rename.
-    onConfigure(app, buildAppSettingsPayload(appSettings, draft), autostartDraft);
+    const request = ++submission.current.revision;
+    const sent = { ...draft }, revisions = { ...edits.current };
+    const secrets = section === "parameters" ? appSettings.filter(setting => setting.secret && sent[setting.key] !== null && sent[setting.key] !== undefined) : [];
+    setSaveError(null);
+    // Browser addresses keep their own reviewed control. Only an explicit accepted receipt can
+    // retire a submitted secret: masked summaries cannot confirm its replacement value.
+    try {
+      const result = onConfigure(app, section === "parameters" ? buildAppSettingsPayload(appSettings, sent) : {}, section === "app" ? autostartDraft : undefined);
+      void Promise.resolve(result).then(accepted => {
+        if (!mounted.current || request !== submission.current.revision || accepted !== true) return;
+        setDraft(current => {
+          const next = { ...current };
+          for (const setting of secrets) if ((edits.current[setting.key] ?? 0) === (revisions[setting.key] ?? 0) && current[setting.key] === sent[setting.key]) next[setting.key] = null;
+          return next;
+        });
+      }, cause => { if (mounted.current && request === submission.current.revision) setSaveError(cause instanceof Error ? cause.message : "Could not save settings."); });
+    } catch (cause) { setSaveError(cause instanceof Error ? cause.message : "Could not save settings."); }
   };
 
   return (
     <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col gap-4">
       <DialogBody className="space-y-4">
-        {section === "app" ? (
+        {section !== "publicOrigins" ? (
           <>
-            <div className="rounded-md border bg-muted/30 p-3">
-              <CheckboxRow label="Start at Core startup" checked={autostartDraft} disabled={!canManageApps} onChange={setAutostartDraft} />
-            </div>
-            {appSettings.length > 0 ? (
-              <div className="space-y-3">
+            {section === "app" && <>
+              <section className="overflow-hidden rounded-xl border bg-card" aria-label="Launch preferences">
+                <div className="grid gap-3 border-b px-4 py-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]"><div><p className="text-sm font-medium">Start with host</p><p className="mt-1 text-xs text-muted-foreground">The same startup preference as the Dashboard.</p></div><CheckboxRow label="Start at Core startup" checked={autostartDraft} disabled={!canManageApps} onChange={setAutostartDraft} /></div>
+                <div className="grid gap-3 px-4 py-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]"><p className="text-sm font-medium">Runtime</p><div className="min-w-0 space-y-2"><Badge variant="outline">{app.selectedRuntime || "Not reported"}</Badge><p className="text-xs text-muted-foreground">Runtime and source can be changed from this app’s More menu on the Dashboard.</p><Button asChild variant="outline" size="sm"><Link href="/dashboard">Open Dashboard</Link></Button></div></div>
+              </section>
+              {launchVisible && <AppLaunchSummary app={app} coreOrigin={coreOrigin} serviceRevision={serviceRevision} />}
+            </>}
+            {section === "parameters" && (appSettings.length > 0 ? (
+              <div className="divide-y overflow-hidden rounded-xl border bg-card [&>div]:px-4 [&>div]:py-4">
                 {appSettings.map((setting) => (
                   <SettingInput
-                    key={setting.key}
+                    key={`${setting.key}:${setting.secret}:${setting.hasValue}`}
+                    descriptionMode="inline"
                     setting={setting}
                     value={draft[setting.key] ?? null}
                     disabled={!canManageApps}
-                    onChange={(value) => setDraft((current) => ({ ...current, [setting.key]: value }))}
+                    onChange={(value) => { edits.current[setting.key] = (edits.current[setting.key] ?? 0) + 1; setDraft((current) => ({ ...current, [setting.key]: value })); }}
                     onReveal={onRevealSetting && setting.secret ? () => onRevealSetting(app, setting.key) : undefined}
                   />
                 ))}
               </div>
             ) : (
               <p className="text-sm text-muted-foreground">This app has no additional launch parameters.</p>
-            )}
+            ))}
           </>
         ) : (
           <div className="space-y-4">
-            {publicOriginGroups.map((group) => (
+            <AppNetworkSummary app={app} />
+            {publicOriginGroups.map((group) => ({ ...group, items: group.items.filter(item => !item.endpoint?.public) })).filter(group => group.items.length).map((group) => (
               <div key={group.service} className="space-y-2">
                 <h3 className="text-sm font-medium">{group.service}</h3>
                 <div className="space-y-2">
@@ -625,7 +623,7 @@ function SettingsForm({
                         <PublicOriginInput
                           setting={setting}
                           endpoint={endpoint}
-                          value={endpoint?.browserOrigin ?? draft[setting.key] ?? ""}
+                          value={endpoint?.browserOrigin ?? setting.value ?? ""}
                           disabled
                           onChange={() => {}}
                         />
@@ -641,20 +639,22 @@ function SettingsForm({
           </div>
         )}
       </DialogBody>
+      {saveError && <InlineError message={saveError} />}
+      {section === "parameters" && savedChanged && <p role="status" className="text-xs text-warning-foreground">Saved parameters changed. Your unsaved edits are retained; review them before saving.</p>}
+      {section !== "publicOrigins" && <><p className="text-xs text-muted-foreground">Save applies configuration. Start or restart the app explicitly to apply it to running services.</p>
       <DialogFooter>
+        <Button type="button" variant="outline" disabled={busyAction === `${app.id}:configure`} onClick={() => { if (section === "parameters") { ++submission.current.revision; setDraft(buildAppSettingsDraft(appSettings)); setSavedChanged(false); setSaveError(null); } else setAutostartDraft(isAppAutostartEnabled(app)); }}>Discard</Button>
         <Button type="submit" disabled={!canManageApps || busyAction === `${app.id}:configure`}>
-          {busyAction === `${app.id}:configure` ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Settings className="h-4 w-4" />}
+          {busyAction === `${app.id}:configure` ? <LoaderCircle className="h-4 w-4 animate-spin motion-reduce:animate-none" /> : <Settings className="h-4 w-4" />}
           Save settings
         </Button>
-      </DialogFooter>
+      </DialogFooter></>}
     </form>
   );
 }
 
 type MountRow = { source: "global" | "local"; globalMountName: string; label: string; hostPath: string };
 
-const MOUNT_CONTROL_CLASS =
-  "flex h-9 rounded-md border border-input bg-transparent px-2 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
 
 function mountRowsFromSlots(slots: CoreMountSlot[]): Record<string, MountRow[]> {
   return Object.fromEntries(slots.map((slot) => [
@@ -685,13 +685,16 @@ function MountsForm({
   const slotsSignature = JSON.stringify(
     slots.map((slot) => [slot.key, slot.bindings.map((binding) => [binding.source ?? "local", binding.globalMountName ?? "", binding.label, binding.hostPath])]),
   );
-  // Rows reset when the app or its saved mounts change (not on every render, so edits survive).
-  const rowsKey = `${app.id}\n${slotsSignature}`;
-  const [rows, setRows] = useState<Record<string, MountRow[]>>(() => mountRowsFromSlots(slots));
-  const [loadedRowsKey, setLoadedRowsKey] = useState(rowsKey);
-  if (loadedRowsKey !== rowsKey) {
-    setLoadedRowsKey(rowsKey);
-    setRows(mountRowsFromSlots(slots));
+  const savedRows = mountRowsFromSlots(slots);
+  const [rows, setRows] = useState<Record<string, MountRow[]>>(savedRows);
+  const [baseline, setBaseline] = useState({ signature: slotsSignature, rows: savedRows });
+  const [savedChanged, setSavedChanged] = useState(false);
+  if (baseline.signature !== slotsSignature) {
+    const next = reconcileSavedDraft(rows, baseline.rows, savedRows);
+    setBaseline({ signature: slotsSignature, rows: savedRows });
+    setRows(next);
+    if (hasDraftConflict(rows, baseline.rows, savedRows)) setSavedChanged(true);
+    else if (sameDraft(next, savedRows)) setSavedChanged(false);
   }
 
   const globalByName = useMemo(() => new Map(globalMounts.map((mount) => [mount.name, mount])), [globalMounts]);
@@ -715,10 +718,6 @@ function MountsForm({
   const removeRow = (key: string, index: number) => {
     setRows((current) => ({ ...current, [key]: (current[key] ?? []).filter((_, rowIndex) => rowIndex !== index) }));
   };
-
-  if (slots.length === 0 && managed.length === 0) {
-    return <EmptyState icon={HardDrive} title="No external storage" description="This app does not declare any external mount slots." />;
-  }
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -746,9 +745,11 @@ function MountsForm({
   return (
     <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col gap-4">
       <DialogBody className="space-y-4">
-        <p className="text-sm text-muted-foreground">
+        <section className="overflow-hidden rounded-xl border bg-card" aria-label="Primary app data"><div className="flex flex-wrap items-center justify-between gap-3 border-b bg-muted/25 px-4 py-3"><h3 className="text-sm font-medium">App data</h3><Badge variant="outline">{app.capabilities.includes("backup") ? "Included in backups" : "No backup capability"}</Badge></div><div className="space-y-1 px-4 py-4"><p className="text-sm text-muted-foreground">Hosty keeps this app’s primary data separately from attached host folders.</p><p className="text-xs text-muted-foreground">Size unavailable</p></div></section>
+        {slots.length === 0 && managed.length === 0 && <p className="rounded-xl border px-4 py-5 text-sm text-muted-foreground">This app does not declare any external mount slots.</p>}
+        {(slots.length > 0 || managed.length > 0) && <p className="text-sm text-muted-foreground">
           Global mounts come from Shared mounts — label and path are fixed. Local paths bind a host folder directly; they must be absolute and outside the Hosty data root. External folders are never backed up or deleted by Hosty.
-        </p>
+        </p>}
         {managed.map(slot => <div key={slot.key} className="space-y-1 rounded-md border p-3">
           <p className="text-sm font-medium">Managed workspaces · {slot.service ?? "all services"}</p>
           <p className="text-sm text-muted-foreground">Core supplies its worktree collection automatically ({slot.mode}). Repository metadata is read-only. This exposes sibling worktrees; active work still requires a workspace lease.</p>
@@ -772,42 +773,17 @@ function MountsForm({
               ) : (
                 <div className="space-y-2">
                   {slotRows.map((row, index) => (
-                    <div key={index} className="flex items-center gap-2">
-                      <select
-                        aria-label={`${slot.key} source`}
-                        className={cn(MOUNT_CONTROL_CLASS, "w-28")}
-                        value={row.source}
-                        disabled={!canManageApps}
-                        onChange={(event) =>
-                          updateRow(
-                            slot.key,
-                            index,
-                            event.target.value === "global"
-                              ? { source: "global", globalMountName: row.globalMountName || globalMounts[0]?.name || "" }
-                              : { source: "local" },
-                          )
-                        }
-                      >
-                        <option value="global" disabled={globalMounts.length === 0}>Global</option>
-                        <option value="local">Local</option>
-                      </select>
+                    <div key={index} className="flex min-w-0 flex-wrap items-center gap-2">
+                      <Select value={row.source} disabled={!canManageApps} onValueChange={value => updateRow(slot.key, index, value === "global" ? { source: "global", globalMountName: row.globalMountName || globalMounts[0]?.name || "" } : { source: "local" })}>
+                        <SelectTrigger aria-label={`${slot.key} source`} className="w-28"><SelectValue /></SelectTrigger>
+                        <SelectContent><SelectItem value="global" disabled={globalMounts.length === 0}>Global</SelectItem><SelectItem value="local">Local</SelectItem></SelectContent>
+                      </Select>
                       {row.source === "global" ? (
                         <>
-                          <select
-                            aria-label={`${slot.key} shared mount`}
-                            className={cn(MOUNT_CONTROL_CLASS, "w-44")}
-                            value={row.globalMountName}
-                            disabled={!canManageApps || globalMounts.length === 0}
-                            onChange={(event) => updateRow(slot.key, index, { globalMountName: event.target.value })}
-                          >
-                            {globalMounts.length === 0 ? (
-                              <option value="">No shared mounts</option>
-                            ) : (
-                              globalMounts.map((mount) => (
-                                <option key={mount.name} value={mount.name}>{mount.name}</option>
-                              ))
-                            )}
-                          </select>
+                          <Select value={row.globalMountName} disabled={!canManageApps || globalMounts.length === 0} onValueChange={value => updateRow(slot.key, index, { globalMountName: value })}>
+                            <SelectTrigger aria-label={`${slot.key} shared mount`} className="w-44"><SelectValue placeholder="No shared mounts" /></SelectTrigger>
+                            <SelectContent>{globalMounts.map(mount => <SelectItem key={mount.name} value={mount.name}>{mount.name}</SelectItem>)}</SelectContent>
+                          </Select>
                           <div className="flex h-9 flex-1 items-center gap-1.5 rounded-md border bg-muted/40 px-3 text-muted-foreground">
                             <Lock className="h-3.5 w-3.5 shrink-0" />
                             <span className="truncate font-mono text-xs">{globalByName.get(row.globalMountName)?.hostPath ?? "—"}</span>
@@ -818,7 +794,7 @@ function MountsForm({
                           <Input
                             aria-label={`${slot.key} label`}
                             placeholder="label"
-                            className="w-44"
+                            className="min-w-0 flex-1 basis-36 sm:w-44 sm:flex-none"
                             value={row.label}
                             disabled={!canManageApps}
                             onChange={(event) => updateRow(slot.key, index, { label: event.target.value })}
@@ -826,7 +802,7 @@ function MountsForm({
                           <Input
                             aria-label={`${slot.key} host path`}
                             placeholder="/srv/path"
-                            className="flex-1 font-mono text-xs"
+                            className="min-w-0 flex-1 basis-48 font-mono text-xs"
                             value={row.hostPath}
                             disabled={!canManageApps}
                             onChange={(event) => updateRow(slot.key, index, { hostPath: event.target.value })}
@@ -850,12 +826,13 @@ function MountsForm({
           );
         })}
       </DialogBody>
-      <DialogFooter>
-        <Button type="submit" disabled={busy || !canManageApps || slots.length === 0}>
-          {busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <HardDrive className="h-4 w-4" />}
+      {savedChanged && <p role="status" className="text-xs text-warning-foreground">Saved folders changed. Your unsaved paths are retained; review them before saving.</p>}
+      {slots.length > 0 && <DialogFooter>
+        <Button type="submit" disabled={busy || !canManageApps}>
+          {busy ? <LoaderCircle className="h-4 w-4 animate-spin motion-reduce:animate-none" /> : <HardDrive className="h-4 w-4" />}
           Save mounts
         </Button>
-      </DialogFooter>
+      </DialogFooter>}
     </form>
   );
 }
@@ -881,14 +858,16 @@ function SourceForm({
   const [mode, setMode] = useState<"standard" | "custom">(overridePath ? "custom" : "standard");
   const [pathDraft, setPathDraft] = useState(overridePath);
 
-  // Reset while rendering when the app identity or its stored override changes, not in an effect.
-  // https://react.dev/learn/you-might-not-need-an-effect
-  const resetSignature = `${app.id}\u0001${overridePath}`;
-  const [prevReset, setPrevReset] = useState<string | null>(null);
-  if (prevReset !== resetSignature) {
-    setPrevReset(resetSignature);
-    setMode(overridePath ? "custom" : "standard");
-    setPathDraft(overridePath);
+  const [previousOverride, setPreviousOverride] = useState(overridePath);
+  const [savedChanged, setSavedChanged] = useState(false);
+  if (previousOverride !== overridePath) {
+    setPreviousOverride(overridePath);
+    const selected = mode === "custom" ? pathDraft.trim() : "";
+    if (selected === previousOverride || selected === overridePath) {
+      setMode(overridePath ? "custom" : "standard");
+      setPathDraft(overridePath);
+      setSavedChanged(false);
+    } else setSavedChanged(true);
   }
 
   const busy = busyAction === `${app.id}:source`;
@@ -912,10 +891,10 @@ function SourceForm({
   };
 
   return (
-    <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col gap-4">
-      <DialogBody className="space-y-4">
+    <form onSubmit={submit} className="flex min-h-0 max-w-[920px] flex-1 flex-col gap-4 rounded-xl border p-4">
+      <div className="space-y-4">
         <div className="space-y-2">
-          <div className="text-sm font-medium">Development profiles</div>
+          <h3 className="text-sm font-medium">Source</h3>
           {canManageApps && <SourceChangesButton app={app} />}
           <p className="text-sm text-muted-foreground">
             {sourceRuntimes.length > 0
@@ -924,60 +903,46 @@ function SourceForm({
           </p>
 
         </div>
-        <div className="flex items-start gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-sm">
-          <Radio className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+        <div className="flex items-start gap-2 rounded-md border border-info-foreground/20 bg-info-soft px-3 py-2 text-sm">
+          <Radio className="mt-0.5 h-4 w-4 shrink-0 text-info-foreground" />
           <p className="text-muted-foreground">
             Development profiles run from the selected source folder and adopt manifest edits on restart. Hot reload depends on the profile commands. A local folder without a Git baseline is not an immutable release.
           </p>
         </div>
-        <div className="space-y-2">
-          <label className={cn("flex cursor-pointer items-start gap-3 rounded-md border p-3", mode === "standard" && "border-foreground")}>
-            <input
-              type="radio"
-              name={modeName}
-              className="mt-1"
-              checked={mode === "standard"}
-              disabled={!canManageApps}
-              onChange={() => setMode("standard")}
-            />
-            <div className="min-w-0 space-y-0.5">
-              <div className="text-sm font-medium">Standard Hosty source</div>
-              <div className="text-xs text-muted-foreground">
+        <RadioGroup name={modeName} aria-label="Source folder" value={mode} disabled={!canManageApps} onValueChange={value => setMode(value as "standard" | "custom")}>
+          <label htmlFor={`${modeName}-standard`} className={cn("flex cursor-pointer items-start gap-3 rounded-md border p-3", mode === "standard" && "border-foreground")}>
+            <RadioGroupItem id={`${modeName}-standard`} value="standard" className="mt-1" aria-labelledby={`${modeName}-standard-label`} aria-describedby={`${modeName}-standard-description`} />
+            <div className="flex min-w-0 flex-col gap-1">
+              <span id={`${modeName}-standard-label`} className="text-sm font-medium">Standard Hosty source</span>
+              <span id={`${modeName}-standard-description`} className="text-xs text-muted-foreground">
                 Use the source Core recorded when the app was installed
-                {app.sourceManagedPath ? (
-                  <> · <code className="font-mono">{app.sourceManagedPath}</code></>
-                ) : null}
-                .
+                {app.sourceManagedPath ? <> · <code className="font-mono">{app.sourceManagedPath}</code></> : null}.
+              </span>
+            </div>
+          </label>
+          <div className={cn("flex min-w-0 flex-col gap-3 rounded-md border p-3", mode === "custom" && "border-foreground")}>
+            <label htmlFor={`${modeName}-custom`} className="flex cursor-pointer items-start gap-3">
+              <RadioGroupItem id={`${modeName}-custom`} value="custom" className="mt-1" aria-labelledby={`${modeName}-custom-label`} aria-describedby={`${modeName}-custom-description`} />
+              <div className="flex min-w-0 flex-col gap-1">
+                <span id={`${modeName}-custom-label`} className="text-sm font-medium">Custom source folder</span>
+                <span id={`${modeName}-custom-description`} className="text-xs text-muted-foreground">Point this app at a repository folder on the host.</span>
               </div>
-            </div>
-          </label>
-          <label className={cn("flex cursor-pointer items-start gap-3 rounded-md border p-3", mode === "custom" && "border-foreground")}>
-            <input
-              type="radio"
-              name={modeName}
-              className="mt-1"
-              checked={mode === "custom"}
-              disabled={!canManageApps}
-              onChange={() => setMode("custom")}
-            />
-            <div className="min-w-0 flex-1 space-y-1.5">
-              <div className="text-sm font-medium">Custom source folder</div>
-              <div className="text-xs text-muted-foreground">Point this app at a repository folder on the host.</div>
-              <Input
-                id={inputId}
-                placeholder="/srv/apps/my-app"
-                className="font-mono text-xs"
-                value={pathDraft}
-                disabled={!canManageApps || mode !== "custom"}
-                onChange={(event) => setPathDraft(event.target.value)}
-              />
-            </div>
-          </label>
-        </div>
-      </DialogBody>
+            </label>
+            <Field><FieldLabel htmlFor={inputId} className="sr-only">Repository folder on this host</FieldLabel><Input
+              id={inputId}
+              placeholder="/srv/apps/my-app"
+              className="font-mono text-xs"
+              value={pathDraft}
+              disabled={!canManageApps || mode !== "custom"}
+              onChange={(event) => setPathDraft(event.target.value)}
+            /></Field>
+          </div>
+        </RadioGroup>
+      </div>
+      {savedChanged && <p role="status" className="text-xs text-warning-foreground">Saved source changed. Your unsaved folder is retained; review it before saving.</p>}
       <DialogFooter>
         <Button type="submit" disabled={!canManageApps || busy || customInvalid || !dirty}>
-          {busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <FolderGit2 className="h-4 w-4" />}
+          {busy ? <LoaderCircle className="h-4 w-4 animate-spin motion-reduce:animate-none" /> : <FolderGit2 className="h-4 w-4" />}
           Save source
         </Button>
       </DialogFooter>
@@ -985,254 +950,65 @@ function SourceForm({
   );
 }
 
-function FeedSection({
-  app,
-  coreOrigin,
-  canManageApps,
-  busyAction,
-  onSetFeed,
-}: {
-  app: CoreApp;
-  coreOrigin: string;
-  canManageApps: boolean;
-  busyAction: string | null;
-  onSetFeed: (app: CoreApp, feedId: string) => void;
+function FeedSection({ app, coreOrigin, canManageApps, busyAction, onSetFeed, active }: {
+  app: CoreApp; coreOrigin: string; canManageApps: boolean; busyAction: string | null;
+  onSetFeed: (app: CoreApp, feedId: string) => void; active: boolean;
 }) {
   const [feedState, setFeedState] = useState<CoreAppFeedsResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [reload, setReload] = useState(0);
+  const [wasActive, setWasActive] = useState(active);
+  const [activation, setActivation] = useState(0);
+  if (active !== wasActive) { setWasActive(active); if (active) setActivation(value => value + 1); }
+  const readKey = `${app.followedFeedId ?? ""}|${reload}|${activation}`;
+  const [settledKey, setSettledKey] = useState<string | null>(null);
+  const validating = active && settledKey !== readKey;
+  const [feedChanged, setFeedChanged] = useState(false);
   const feeds = feedState?.feeds ?? null;
   const followed = feedState ? (feedState.followedFeedId ?? null) : (app.followedFeedId ?? null);
   const [selected, setSelected] = useState<string>(followed ?? "");
-
   useEffect(() => {
-    // Abort the in-flight fetch on unmount or app change so a stale response can't overwrite newer
-    // state while the installed app summary refreshes.
+    if (!active) return;
     const controller = new AbortController();
-    (async () => {
-      try {
-        setFeedState(await getAppFeeds(coreOrigin, app.id, controller.signal));
-      } catch (error) {
-        if (error instanceof Error && error.name === "AbortError") {
-          return;
-        }
-        // A direct-manifest install has no FeedsUrl; Core reports no feed surface for it.
-        setFeedState(null);
-      }
-    })();
-    return () => {
-      controller.abort();
-    };
-  }, [coreOrigin, app.followedFeedId, app.id]);
-
-  // Track the record when a save lands (the app prop refreshes with the new followed feed) — the
-  // render-time reset pattern SettingsDialog uses, which the set-state-in-effect lint rule prefers.
+    void getAppFeeds(coreOrigin, app.id, controller.signal).then(payload => {
+      if (!controller.signal.aborted) { setFeedState(payload); setError(null); setSettledKey(readKey); }
+    }).catch((cause: unknown) => {
+      if (!controller.signal.aborted && !isAuthRequiredRedirectError(cause)) { setError(cause instanceof Error ? cause.message : "Update feeds are unavailable."); setSettledKey(readKey); }
+    });
+    return () => controller.abort();
+  }, [active, coreOrigin, app.followedFeedId, app.id, readKey]);
   const [prevFollowed, setPrevFollowed] = useState<string | null>(followed);
   if (prevFollowed !== followed) {
     setPrevFollowed(followed);
-    setSelected(followed ?? "");
+    // A pristine choice follows confirmed state; our own successful save confirms the draft.
+    // A concurrent different choice keeps the draft and makes the changed confirmation explicit.
+    if (selected === (prevFollowed ?? "") || selected === (followed ?? "")) { setSelected(followed ?? ""); setFeedChanged(false); }
+    else setFeedChanged(true);
   }
-
-  if (!feeds || feeds.length === 0) {
-    return null;
-  }
-
-  const followedMissing = followed !== null && !feeds.some((feed) => feed.id === followed);
+  const followedMissing = followed !== null && !!feeds && !feeds.some(feed => feed.id === followed);
   const busy = busyAction === `${app.id}:feed`;
-
-  return (
-    <div className="space-y-3 rounded-md border p-4">
-      <div className="flex items-center gap-2">
-        <Rss className="h-4 w-4 text-muted-foreground" />
-        <h3 className="text-sm font-medium">Update feed</h3>
-      </div>
-      {followed === null && (
-        <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
-          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
-          <span>No feed set — feed updates are not detected for this app. Choose a feed to follow.</span>
-        </div>
-      )}
-      {followedMissing && (
-        <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
-          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
-          <span>The followed feed &lsquo;{followed}&rsquo; is no longer declared by the app. Choose another feed.</span>
-        </div>
-      )}
-      <div className="flex items-center gap-2">
-        <select
-          value={selected}
-          onChange={(event) => setSelected(event.target.value)}
-          disabled={!canManageApps || busy}
-          className="h-9 min-w-0 flex-1 rounded-md border bg-background px-3 text-sm"
-          aria-label="Update feed"
-        >
-          {/* Clearing is a first-class action (the endpoint accepts a blank feedId), so a followed app
-              offers "None"; an unfollowed one just prompts for a choice. */}
-          {followed === null ? <option value="">Choose a feed…</option> : <option value="">None (stop following)</option>}
-          {followedMissing && <option value={followed}>{followed} (missing)</option>}
-          {feeds.map((feed) => (
-            <option key={feed.id} value={feed.id}>
-              {feed.id}
-              {feed.default && feeds.length > 1 ? " (default)" : ""}
-            </option>
-          ))}
-        </select>
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => onSetFeed(app, selected)}
-          disabled={!canManageApps || busy || selected === followed || (followed === null && selected.length === 0)}
-        >
-          {busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Rss className="h-4 w-4" />}
-          {selected.length === 0 && followed !== null ? "Stop following" : "Follow feed"}
-        </Button>
+  const unavailable = validating || !!error;
+  // Radix Select reserves empty values; the UI-only sentinel never reaches Core and cannot collide.
+  let emptyValue = "__hosty_no_feed__";
+  while (feeds?.some(feed => feed.id === emptyValue)) emptyValue += "_";
+  return <section className="max-w-[920px] space-y-3" aria-label="Update feed settings">
+    <div className="flex flex-wrap items-start gap-x-4 gap-y-3 border-b py-3">
+      <h3 className="w-full shrink-0 text-sm text-muted-foreground sm:w-44">Update feed</h3>
+      <div className="min-w-0 flex-1 space-y-3">
+        {validating && !error && <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><HostyLoader label={null} className="size-5" />{feedState ? "Refreshing update feeds…" : "Loading update feeds…"}</p>}
+        {error && <div className="space-y-2"><p role="alert" className="break-words text-sm text-destructive-foreground">{error}</p><Button type="button" variant="outline" size="sm" onClick={() => { setError(null); setReload(value => value + 1); }}>Retry feeds</Button></div>}
+        {feedState && feeds?.length === 0 && <p className="text-sm text-muted-foreground">No update feeds are declared for this app.</p>}
+        {feedState?.feedsUrl && <p className="break-all font-mono text-xs text-muted-foreground">{feedState.feedsUrl}</p>}
+        {feedState && <p className="text-xs text-muted-foreground">Confirmed feed: {followed ?? "None"}{unavailable ? " (last observed)" : ""}</p>}
+        {feedChanged && <p role="status" className="rounded-lg bg-warning-soft px-3 py-2 text-xs text-warning-foreground">The confirmed feed changed. Your unsaved selection is retained; review it before following.</p>}
+        {!!feeds?.length && <>
+          {(followed === null || followedMissing) && <p className="rounded-lg bg-warning-soft px-3 py-2 text-xs text-warning-foreground">{followedMissing ? `The followed feed ‘${followed}’ is no longer declared by the app. Choose another feed.` : "No feed set — feed updates are not detected for this app. Choose a feed to follow."}</p>}
+          <div className="flex flex-wrap items-center gap-2"><Select value={selected || emptyValue} onValueChange={value => { setSelected(value === emptyValue ? "" : value); setFeedChanged(false); }} disabled={!canManageApps || busy || unavailable}>
+            <SelectTrigger aria-label="Update feed" className="w-full min-w-0 sm:w-64"><SelectValue /></SelectTrigger>
+            <SelectContent position="popper"><SelectItem value={emptyValue}>{followed === null ? "Choose a feed…" : "None (stop following)"}</SelectItem>{followedMissing && <SelectItem value={followed}>{followed} (missing)</SelectItem>}{feeds.map(feed => <SelectItem key={feed.id} value={feed.id}>{feed.id}{feed.default && feeds.length > 1 ? " (default)" : ""}</SelectItem>)}</SelectContent>
+          </Select><Button type="button" size="sm" variant="outline" onClick={() => onSetFeed(app, selected)} disabled={!canManageApps || busy || unavailable || selected === followed || (followed === null && selected.length === 0)}>{busy ? <HostyLoader label={null} className="size-4" /> : <Rss className="size-4" />}{selected.length === 0 && followed !== null ? "Stop following" : "Follow feed"}</Button></div>
+        </>}
       </div>
     </div>
-  );
-}
-
-// The confirmation surface for an uninstall. Its warnings are computed, never authored per app: Core
-// reports which installed apps declare a dependency on this one and who consumes the platform
-// capabilities it provides, so a third-party app that took over a first-party role reads the same way.
-// See docs/features/removable-system-apps/.
-function RemovePanel({
-  app,
-  busyAction,
-  canRemove,
-  isShell,
-  onRemove,
-  onLoadImpact,
-}: {
-  app: CoreApp;
-  busyAction: string | null;
-  canRemove: boolean;
-  isShell: boolean;
-  onRemove: (app: CoreApp, options: RemoveOptions) => void;
-  onLoadImpact?: (appId: string) => Promise<CoreRemovalImpact | null>;
-}) {
-  const [options, setOptions] = useState<RemoveOptions>({
-    deleteData: false,
-    deleteBackups: false,
-    deleteSource: false,
-    ignoreRuntimeErrors: false,
-  });
-  // Starts loading when a loader is wired at all, so the state never has to be set synchronously
-  // from the effect.
-  const [impactState, setImpactState] = useState<{ loading: boolean; impact: CoreRemovalImpact | null }>(() => ({
-    loading: Boolean(onLoadImpact),
-    impact: null,
-  }));
-
-  useEffect(() => {
-    if (!onLoadImpact) {
-      return;
-    }
-
-    let active = true;
-    void onLoadImpact(app.id)
-      .then((result) => {
-        if (active) {
-          setImpactState({ loading: false, impact: result });
-        }
-      })
-      // An unavailable preview must not stand between the operator and the uninstall they asked for;
-      // the panel simply shows no impact section.
-      .catch(() => {
-        if (active) {
-          setImpactState({ loading: false, impact: null });
-        }
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [app.id, onLoadImpact]);
-
-  const dependents = impactState.impact?.dependents ?? [];
-  const consumers = (impactState.impact?.capabilities ?? []).flatMap((capability) =>
-    capability.consumers.map((consumer) => ({ slot: capability.slot, ...consumer })),
-  );
-  const publicOrigins = impactState.impact?.publicOrigins ?? [];
-
-  return (
-    <div className="flex min-h-0 flex-1 flex-col gap-4">
-      <DialogBody className="space-y-4">
-        <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-          Runtime state is always removed. Choose optional cleanup below, then confirm removal in Hosty Core.
-        </div>
-
-        {isShell && (
-          <div className="space-y-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
-            <p className="flex items-start gap-2">
-              <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
-              <span>
-                This is the Shell serving the page you are on. Removing it takes this web UI with it — the host and its apps keep
-                running, and everything stays reachable from the terminal.
-              </span>
-            </p>
-            <p className="pl-6">
-              Reinstall with <code className="rounded bg-muted px-1">hosty setup --with {app.id}</code>.
-            </p>
-          </div>
-        )}
-
-        {impactState.loading && (
-          <p className="flex items-center gap-2 text-xs text-muted-foreground">
-            <LoaderCircle className="size-3.5 animate-spin" aria-hidden /> Checking what this affects…
-          </p>
-        )}
-
-        {(dependents.length > 0 || consumers.length > 0) && (
-          <div className="space-y-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
-            <p className="font-medium">Other apps depend on this one</p>
-            <ul className="space-y-1">
-              {dependents.map((dependent) => (
-                <li key={`dependent-${dependent.appId}`}>
-                  <span className="font-medium">{dependent.displayName}</span>
-                  {dependent.required ? " requires it" : " uses it"}
-                  {dependent.aliases.length > 0 && ` (${dependent.aliases.join(", ")})`}
-                  {dependent.runtimeState === "running"
-                    ? " — running now, and loses the connection at its next start."
-                    : " — loses the connection when it next starts."}
-                </li>
-              ))}
-              {consumers.map((consumer) => (
-                <li key={`consumer-${consumer.slot}-${consumer.appId}`}>
-                  <span className="font-medium">{consumer.displayName}</span> uses the {consumer.slot} this app provides; it keeps
-                  running, and what it sends goes nowhere.
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-        {publicOrigins.length > 0 && (
-          <div className="space-y-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
-            <p className="font-medium">Published addresses that go offline</p>
-            <ul className="space-y-1">
-              {publicOrigins.map((origin) => (
-                <li key={`public-origin-${origin.endpointKey}`}>
-                  <span className="font-mono">https://{origin.hostname}</span>
-                  {origin.ownershipState === "adopted"
-                    ? " — the tunnel route is removed; the DNS record stays, because Hosty did not create it."
-                    : " — the tunnel route and its DNS record are removed."}
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        <div className="space-y-2">
-          <CheckboxRow label="Delete app data" checked={options.deleteData} disabled={!canRemove} onChange={(checked) => setOptions((current) => ({ ...current, deleteData: checked }))} />
-          <CheckboxRow label="Delete backups" checked={options.deleteBackups} disabled={!canRemove} onChange={(checked) => setOptions((current) => ({ ...current, deleteBackups: checked }))} />
-          <CheckboxRow label="Delete source checkout" checked={options.deleteSource} disabled={!canRemove} onChange={(checked) => setOptions((current) => ({ ...current, deleteSource: checked }))} />
-          <CheckboxRow label="Ignore runtime errors" checked={options.ignoreRuntimeErrors} disabled={!canRemove} onChange={(checked) => setOptions((current) => ({ ...current, ignoreRuntimeErrors: checked }))} />
-        </div>
-      </DialogBody>
-      <AlertDialogFooter>
-        <AlertDialogCancel disabled={busyAction === `${app.id}:remove`}>Cancel</AlertDialogCancel>
-        <Button variant="destructive" onClick={() => onRemove(app, options)} disabled={!canRemove || busyAction === `${app.id}:remove`}>
-          {busyAction === `${app.id}:remove` ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-          Review removal in Core
-        </Button>
-      </AlertDialogFooter>
-    </div>
-  );
+  </section>;
 }

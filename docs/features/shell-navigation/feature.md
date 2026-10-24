@@ -1,15 +1,16 @@
 ---
 created: 2026-07-30
-updated: 2026-10-20
-summary: Shell's three destinations, Dashboard, Settings and Apps, with the route table and the sidebar.
+updated: 2026-10-23
+summary: Shell routes, role-specific home, sidebar app launchers and phone navigation.
 components: [apps/shell]
 ---
 
 # Shell Navigation
 
-The browser Shell has three top-level destinations: **Dashboard**, the host you manage; **Settings**,
-the host you configure; and **Apps**, the apps you use. This document owns the route table and the
-sidebar; [Core App Shell](../core-app-shell/feature.md) owns what the Shell *is*, and
+The browser Shell provides **Dashboard** for host administration and **Settings** for host and
+personal configuration. Apps open directly from the sidebar rather than a separate app catalog.
+The neutral root resolves to Dashboard for administrators and empty Home content for ordinary users.
+This document owns the route table and the sidebar; [Core App Shell](../core-app-shell/feature.md) owns what the Shell *is*, and
 [Shell Access And System Apps](../shell-access-and-system-apps/feature.md) owns who sees what.
 
 The same information architecture is being applied to the native client — see
@@ -17,9 +18,10 @@ The same information architecture is being applied to the native client — see
 
 ## The line the structure draws
 
-**Facts about the host go to Dashboard; editable configuration goes to Settings.** Core's version,
-origins, data root and a waiting update are not the same surface as Core's settings, which is why they
-sit on different pages rather than one of them being an oversight.
+**Dashboard summarizes runtime state and actions; Settings holds host details and configuration.**
+Core's version, status, resources, update and runtime/workspace actions remain on Dashboard. Its
+listen address, public origin, data root, runtime host and ingress mode are read-only Core information
+in Settings > Host > Updates, alongside the host settings without becoming editable fields.
 
 ## Routes
 
@@ -29,19 +31,21 @@ mounted while the operator moves between routes.
 
 | URL | Renders |
 |---|---|
-| `/`, `/dashboard` | Dashboard: the Core row, app counts, installed-apps table |
+| `/` | Neutral Home: administrators render Dashboard and resolve to `/dashboard`; ordinary users retain empty content with a Hosty title |
+| `/dashboard` | Administrator Dashboard: the Core row, app counts, installed-apps table |
 | `/settings?tab=profile\|general\|ingress\|mounts` | Settings, one addressable group per surface |
 | `/settings?tab=security&section=users\|tokens\|connections\|policies` | Security and its selected inner tab |
 | `/settings?tab=harness&section=agents\|shell` | Harness and its selected inner tab |
-| `/apps` | The apps overview — every UI-capable app this session may open |
+| `/apps` | Redirect-only alias to `/`, retaining query parameters; no app catalog renders |
 | `/workspace?app=<id>&path=<app-path>` | An app's UI, embedded |
 | `/installed-apps` | Dashboard, then the URL is replaced with `/dashboard` |
 | `/users` | Settings, then the URL is replaced with `/settings?tab=security&section=users` |
 | `/system-apps/<id>?path=<p>` | The workspace, then the URL is replaced with `/workspace?app=<id>&path=<p>` |
 
-The last three still resolve because they were documented and bookmarkable. Their route files exist so
-Next.js serves them rather than 404ing before the client can canonicalize; each redirect target is
-itself canonical, which is what makes the replacement terminate.
+Legacy URLs remain addressable because they were documented and bookmarkable. Their route files
+let Next.js redirect or serve the new surface for client canonicalization instead of returning 404.
+Canonicalization and role authorization terminate at `/`, `/dashboard`, Settings or the requested
+app workspace/details route without redirect loops.
 
 A settings group and its inner tab travel in `tab` and `section` query parameters, so both survive
 refresh, Back and copied links. Legacy flat links such as `?tab=tokens` and `?tab=agents` still open
@@ -69,8 +73,8 @@ Two groups:
 
 - **Host** — Dashboard for administrators; Settings contains administrator sections and the viewer's own Profile and Access tokens sections.
 - **Apps** — every UI-capable app the session can see, ordinary and system alike, a system app marked
-  by a badge. The Shell itself is excluded: opening it inside itself resolves back to Dashboard, so a
-  row for it could only be a dead end.
+  by a badge. The Shell itself is excluded: opening it inside itself resolves to the viewer's
+  role-specific home, so a row for it could only be a dead end.
 
 There is no System group. The gate it expressed is Core's: `GET /api/apps` filters per user through
 `AppAccessPolicy`: administrators have implicit access, and other users see only explicitly
@@ -94,10 +98,14 @@ rail or 280px expanded sidebar, keeping their left edges aligned.
 The compact rail is 60px wide, centering these icons and the 28px account avatar on the
 same axis. The account trigger retains a 36px click target.
 
-The **Apps heading is a link to `/apps`**: the heading is the overview, the rows are the shortcuts.
-Collapsed, the sidebar renders no headings, so the rail carries an equivalent control with its own
-icon — deliberately not the one app rows fall back to, which an icon-less app would be
-indistinguishable from.
+The **Apps heading is plain text**. There is no heading link, compact All apps icon or separate
+catalog destination. Expanded and compact navigation retain the existing app rows and their direct
+launch, page-selection, standalone-open and guarded Start controls.
+
+On phones, **Apps** in the bottom navigation opens the sidebar rather than navigating to a page.
+It first collapses the tool workspace so the full-width tool sheet cannot cover the app choices.
+The current document, app workspace and retained tool frames stay mounted; selecting an app closes
+the sidebar and uses the existing launch flow.
 
 Collapsed, an app row is only its icon, so a running app with more than one page makes that icon a
 flyout trigger instead of a direct launcher: a menu beside the rail lists the app's pages and the
@@ -108,8 +116,7 @@ hover open never takes focus and a hover close never returns it to the trigger �
 rail must not pull focus out of the embedded app. A single-page app and an app that is not running
 keep the plain icon behavior: direct launch, or the disabled state tooltip.
 
-The compact Settings menu shares this hover behavior, including delayed opening, focus preservation
-and click-to-pin. Expanded app page lists place their vertical guide beneath the parent app icon.
+Settings has a single direct navigation button in compact and expanded modes. Expanded app page lists place their vertical guide beneath the parent app icon.
 
 A row opens by the readiness of the service that serves its primary page, not by the app's state
 ([App Readiness](../app-readiness/feature.md)): while that service is still inside its readiness
@@ -145,54 +152,116 @@ version and carries the update button, and Settings is a row in the Host group a
 
 ## Dashboard
 
-App and Core console log dialogs use a wide layout, up to 1280px while retaining the dialog's
-viewport margins on smaller screens, to fit longer log lines.
+Core console logs retain a wide dialog, up to 1280px with viewport margins on smaller screens.
+Runtime-app console logs use the capability-gated Logs tab after Launch in App Details. Dashboard
+Logs and More > Console logs, readiness links and update-notification Open logs navigate to the
+same `/apps/<app-id>?section=logs` destination. There is no runtime-app log popup.
+The viewer retains its 200-line tail, explicit Refresh, per-service selection, aggregate fallback
+and visible empty/error states. Only the selected Logs tab reads output; exit and app/user/Core
+scope changes abort stale requests, while mounted configuration forms retain their drafts.
+
+The logs-only Shell route retains entry for an authenticated user's visible assigned app with the
+logs capability, without admitting other Manage sections or management controls. Core's existing
+administrator requirement for console-log data still applies; the viewer displays any refusal
+without adding grants.
 
 Dashboard sits in a rounded workspace frame with compact page padding: 16px vertically and
 12px horizontally, increasing to 16px horizontally on larger screens. Core appears first
 in a headerless [ReUI Frame](https://reui.io/docs/components/radix/frame), with a separate card-colored
 FramePanel. Core and installed apps use the default Frame variant, providing a thin muted surround.
-The installed-apps Frame header aligns the all-app CPU/RAM total with the resource column and
-icon-only actions with the actions column. Check updates uses a circled arrow, Update all (when
-available) uses a download arrow with the update count in its tooltip, and Install App uses a plus.
-All three actions have accessible names and tooltips. Search and clickable app counts occupy the remaining space. The app list and its loading/empty states sit in the nested FramePanel. The groups wrap on narrow screens. The visible page title stays in the Shell top
-bar; the content keeps a screen-reader heading without repeating the title or introductory description.
+The Apps heading carries text filters with counts and the primary Install app action. The Frame
+header holds search, the filtered app count, aggregate CPU/RAM aligned above app resources, and App
+actions. Update all is also a contextual shortcut when applicable. Check updates stays in App actions.
+The list and loading/empty states occupy the nested FramePanel. The page title remains in the top bar.
 
-Core has no Platform badge. System apps carry a small cog icon, and the active Shell app carries
-a panels icon. Hovering or focusing either icon opens a tooltip explaining its role; app descriptions
-are not displayed in Dashboard rows.
+Core has no Platform badge. System apps carry a cog role icon and the active Shell a panels icon,
+with explanatory tooltips. Runtime app rows and navigation use Core-resolved manifest icon assets;
+Core keeps its inline brand mark. No app-ID lookup overrides an app's supplied icon URL.
 
-Core and app rows share a container-based responsive layout: the available Dashboard width,
-including space taken by either sidebar, determines the arrangement. Identity and version/source
-share the flexible space, while runtime, status, resources, and actions have compact widths. The
-status column reserves 64px for its dot/spinner and optional manual-start marker. Below 1240px,
-action shortcuts are hidden; each row retains its complete actions menu. Runtime remains beside
-version/source until the Dashboard is narrower than 960px, when the two form a tight stack beside
-the app identity. Each stack aligns around its shared boundary rather than spreading across the row.
-Runtime labels and switch arrows stay on one line. Core and apps show `workspace` for registered
-workspaces, `source` for ordinary source folders, or the package runtime name (`release` for Core).
-There is no secondary source label or dev-mode icon. Long package profile keys truncate with their
-full value available on hover, keeping the switch arrow visible.
-Only below 560px does app identity occupy its own line; below 400px, status and resources get their own row.
-Long names and branches truncate, badges and source change counts wrap, and both lists fit without
-horizontal scrolling. Expanded endpoint details also respond to the Dashboard width. App details
-sit directly on the expanded row background, without an additional bordered, padded outer card,
-matching Core's expanded section.
+Core and app rows have four shared columns: flexible identity, 188px status, 144px resources and
+136px actions. Identity contains the name, then the release version or only the active workspace
+or branch name and the runtime. Dashboard rows omit the Manual start marker; autostart remains
+configurable in More and Manage > Launch. This entire second metadata line is
+monospaced. Core source text has the same muted `text-xs` treatment as apps. The source name
+has a dotted underline and a decorative hammer for a workspace or Git branch icon for source,
+without a type prefix, background highlight or extra padding. Development rows omit the workspace/source
+pseudo-runtime words and their separator; package versions retain their concrete production runtime
+or profile name. Runtime/source
+selection is inside More > Runtime / workspace. Internal development recipe names remain hidden. Source details are
+available through hover, keyboard focus and a click/touch popover; installed package versions and
+observed Git changes remain accessible there. Core and source/workspace apps also show the existing
+`SourceChangeSummary` after the workspace or branch name on the same second metadata line,
+separated by a dot: available additions/deletions followed by the count labelled `files`, with a `+`
+suffix for truncation. Narrow widths wrap naturally without a forced third line. Missing line totals
+are omitted, and failed or unavailable inspection never fabricates counts. This visible summary keeps the complete hover/focus/click details intact.
+App-owned focus uses one thin, visible 2 px lime (`#A3E635`) outline or ring in both themes,
+without an extra halo or ink edge. The theme bridge preserves lime on Harness and Marketplace
+controls inside the SDK host. Grouped inputs use only the parent lime outline, or red when invalid;
+invalid borders remain red. SDK-owned rail and chooser controls retain their existing styling.
 
-Resource cells show CPU with a small shared-scale sparkline and RAM beside status. Core is separate
-from the all-app total in the installed-apps header; expanded services expose their own readings.
-Stopped apps keep an empty resource cell; their expanded services, as well as individually stopped
-or exited services, hide resource controls. Transitional app states retain their resource display.
-Clicking any resource cell opens a ReUI-framed popover with five-minute CPU/RAM charts. The Shell
-uses the ReUI registry's recommended shadcn Chart and Popover primitives. The data comes from Core's
-bounded RAM history through the administrator API and shared SSE, independently of Telemetry;
-see [Runtime resource usage](../runtime-resource-usage/feature.md).
+For administrators, clicking noninteractive runtime app-row space opens standalone App Details at
+`/apps/<app-id>`, outside Settings, with a `Dashboard / <app name>` breadcrumb linking to
+`/dashboard`. This replaces the former More > Manage application destination. The app name is a
+native Manage link for keyboard access and opening another tab; the table row gains no extra tab
+stop. App rows have no service expander or inline expanded services/network panel, and More omits the duplicate Manage entry. Embedded buttons, menus,
+version/source disclosures and resource popovers retain their own behavior. Modified/nonprimary
+clicks and text selection do not activate row navigation. Service state, health,
+image revisions, resources and endpoint controls remain available in Manage. Core has no expander
+or expanded panel; its host facts and address copy buttons remain in Settings > Host > Updates.
 
-Core's actions menu offers Restart, Console logs, Source settings, and Update when available.
-It uses the same administrator, busy, and manageable-state guards as the existing shortcuts.
+Pending Starting, Stopping and Restarting labels appear in the main status column, without repeating
+the verb beneath the app name. Configuration information remains visible; the Restart required
+badge gives way to lifecycle progress while that app is starting, stopping or restarting.
 
-Failed update checks appear as a warning beside the app name and as an alert in its expanded
-details, even when its services are healthy and action shortcuts are hidden. Fleet-check error
+Each administrator app row has one contextual action. A pending lifecycle operation occupies the
+slot with disabled progress. Otherwise a reported restart requirement selects the visible
+Restart button ahead of configuration, an update offer or runtime-health diagnostics. Next,
+a running app with observed degraded or unhealthy service health offers Logs when supported.
+Configure and Update follow, then Start or Stop according to the runtime state. Missing, unknown
+or startup health does not count as failure; update, manifest, permission and previous-operation
+alerts do not select Logs. An app without logs retains its applicable lifecycle or setup/update
+action. Ordinary users retain their existing Logs shortcut and never gain Stop or Restart.
+More keeps supported actions and their existing permission and busy guards.
+
+Core uses the same single contextual slot: disabled progress for a pending operation, Restart when
+Core reports a pending change, Logs for a factual degraded, unhealthy or failed Core status, and
+otherwise Stop. Source/Git inspection, configuration and update-check warnings do not substitute
+for runtime health. Core's Restart required badge sits beside its title; there is no repeated
+inline restart warning or separate restart icon. Stop reviews the fresh Core instance and confirms
+that APIs and management go offline while runtime applications remain running. Its accepted receipt
+does not prove process exit; a lost response remains unconfirmed and is not replayed automatically.
+The local Hosty CLI starts Core again. See [Core development mode](../core-dev-target/feature.md#stopping-core-without-stopping-apps).
+
+Below 820px of Dashboard container width, identity/actions and status/resources occupy separate
+rows. Below 440px the contextual shortcut moves entirely into More, Install becomes an icon with
+an accessible name, and all Core/app resource cells and aggregate toolbar CPU/RAM values and
+graphs are hidden instead of occupying a third line. Resource presentation at 440px and wider is
+unchanged. Names truncate and source labels retain their full disclosure. App service and endpoint details use Manage rather than expanding
+inside the table. The Sandboxes header wraps its creation and refresh
+actions on narrow containers.
+
+When visible, resource cells show separate CPU and RAM values and sparklines over the retained
+five-minute history. Stopped apps display a dash and expose no stale resource button. Manage's stopped services hide resource controls. Clicking a live cell opens the
+existing ReUI-framed CPU/RAM history popover. The administrator API and shared SSE supply Core's
+bounded history independently of Telemetry; see [Runtime resource usage](../runtime-resource-usage/feature.md).
+
+Core's actions menu offers Runtime / workspace, Restart, Stop Core, Console logs, Source settings,
+and Update when available. Stop Core uses the same confirmation and busy/instance guards as the
+contextual button, so it remains reachable when narrow containers hide that button. The runtime submenu lists Release and eligible existing named workspaces rather than
+a generic Source/main option. Core-only review excludes all apps. An active Core workspace switches
+directly to another freshly reviewed workspace, retaining the original captured Return target.
+Release selection explicitly reviews current-data compatibility with that baseline; a source/dev
+baseline requires a separate factual Release continuation. Return can restore a previous source
+build, so it is not labelled Release. Release completion follows a new factual Release launch.
+The review/recovery dialog stays mounted outside More and retains original requests across closure,
+reconnect and remount. Actor/Core scope changes cancel obsolete queued requests and stale reads.
+Source settings and factual source/IDE state remain separate. Existing administrator, busy and
+manageable-state guards apply without removing retained recovery controls.
+
+Failed update checks appear on the problem icon after the app name, with the full error in its
+hover/keyboard tooltip, and in Manage diagnostics, even when services are healthy and
+action shortcuts are hidden. App-version hover contains revision/build information only; its wrapper
+has no native update-error title. Fleet-check error
 toasts name the affected apps and include the stored error; a single-app failure also supplies
 that app's context to the toast's assistant action.
 
@@ -218,17 +287,21 @@ installed-app rows; Core and host-wide update controls remain available.
 
 Below the toolbar, in order:
 
-1. A **Core row** — a separate, expandable table row above the installed-apps table. Collapsed it
-   shows the name, component id, Core's version, status, and update icon beside the version when an
-   update is available. Version and status align with the app columns below; console logs use the
-   same icon control as app logs. Logs and a shortcut to the sidebar's Settings destination sit at
-   the right edge of the row. Host and app settings controls share the gear icon throughout Shell.
-   Expanded it shows two URLs — the address Core
-   listens on and its public origin, each copyable and openable — then data root, runtime host, and
-   ingress mode. Core stays outside the app counts: it cannot be installed or removed. It carries
+1. A **Core row** — a separate summary table row above the installed-apps table, without an
+   expander or inline detail panel. It shows the name, Core's version/source, runtime,
+   status, resources and available update. Its columns align with the app rows below. Its single
+   contextual action follows pending, Restart, factual-problem Logs and Stop priority. More retains
+   Core's runtime/workspace, restart, Stop Core, console logs, update and separate Source settings actions.
+   Read-only Core information is in Settings > Host > Updates: listen address and public origin
+   retain copy buttons, followed by data root, runtime host and ingress mode. The block reuses the
+   existing Shell status without extra requests or polling and does not reset configuration drafts.
+   Missing status or fields show Unavailable; a known status without a public origin shows Not
+   configured. Core stays outside the app counts: it cannot be installed or removed. It carries
    nothing about Shell, whose own app row already describes it.
-2. The **installed-apps table**, with per-row lifecycle controls, runtime switching, update
-   affordances, the expandable per-service panel, and the install and details dialogs.
+2. The **installed-apps table**, with per-row lifecycle controls, runtime switching and update
+   affordances. Activating a row opens the existing Manage/App Details view; the app service expander
+   and duplicate More > Manage application entry are absent. Service/network details and controls
+   remain in Manage, while embedded row controls retain their own actions.
 
 Both tables use the same column widths and visually hidden column headers, retaining native table
 semantics for assistive technology. Rows reflow within narrow workspaces without horizontal scrolling.
@@ -246,9 +319,14 @@ even if the release-status endpoint is still unavailable.
 
 Core records a private settings-and-mounts fingerprint after a successful app start or restart.
 `restartRequired` in lifecycle summaries compares it with current setting values and resolved external
-mounts while the app is running. Dashboard shows `Restart required` beneath the app name, with an
-administrator-only Restart action disabled during lifecycle operations. It never restarts automatically.
-The attention filter includes these apps.
+mounts while the app is running. Dashboard runtime-app rows show `Restart required` as a yellow warning
+badge in the title row after role and problem icons, without a third identity-row warning or link.
+The visible Restart button replaces the normal contextual shortcut in the actions column; there
+is no second restart icon beside it. It calls the same restart handler without opening App Details
+or triggering row navigation. A configuration requirement, update offer or runtime-health error
+does not displace Restart. The action retains administrator control and busy/lifecycle guards:
+an active lifecycle verb replaces it with disabled progress, while an update or another same-app
+action disables it. It never restarts automatically. The attention filter includes these apps.
 
 The fingerprint survives Core restarts and covers inline bindings, shared assignments, library host
 paths, and effective read-only modes. Applied paths are the canonical paths passed to the runtime;
@@ -262,14 +340,24 @@ Older running records acquire their baseline immediately before a settings/bindi
 library edit. Changes already made under an older Core cannot be reconstructed; the next successful
 start establishes a known applied snapshot. Source and Docker runtimes share the same comparison.
 
+## Application removal
+
+Administrators open Uninstall from Dashboard or App Details; ordinary users do not gain removal
+controls. Uninstall uses Core's approval flow without a preliminary Shell options dialog.
+Core owns cleanup choices, impact, runtime-state and active-Shell warnings and source-safety review.
+Shell reserves the popup in the click, retains a blocked-popup link and original-request recovery,
+and reports success only after Core confirms execution. Denial leaves the app and selection intact;
+failures remain visible. See [trusted confirmation](../app-installation-sdk/feature.md#trusted-confirmation).
+
 ## Settings
 
-Settings groups live in the expandable sidebar item, or its compact flyout. Built-in groups
-and app-owned pages share that navigation, with exactly one app-named entry per application. The selected group
-appears beside Settings in the top strip. Harness and Security expose their inner sections in a
-horizontal tab bar; it scrolls within the content on narrow screens. App settings occupy the
-full workspace through an iframe; their content padding and modal overlays belong to the app.
-Native host sections retain a screen-reader heading without a duplicate visible title. The Users section
+Settings groups live inside the Settings page: My profile, Host, Users & security, Shell and Apps.
+The Apps group lists individual apps only when they declare an app-owned `ui.settings` surface;
+there is no general App settings entry or duplicate installed-app catalog. Shell's sidebar has one
+Settings button. Each destination has a visible title, description and line tabs. App-owned settings
+retain full-height iframe embedding, app-owned internal navigation and a link to standalone App
+Details. Existing app-settings bookmarks still select that declared settings surface. Former
+`/settings?tab=apps` canonicalizes to Dashboard with normal role authorization. The Users section
 also omits its repeated User Management title and description. The invitation button sits beside
 search inside the Users section, with no separate refresh button. Users and Pending Invitations
 have no outer border, shadow, separate background, or former card padding; table row separators remain visible.
@@ -303,12 +391,27 @@ One route with addressable host sections and app pages:
 - Each app settings entry exposes its manifest-declared `ui.settings`. Internal tabs belong to the app.
   See [App UI Surfaces](../app-ui-surfaces/feature.md) for compatibility and routing.
 
-Per-app settings stay in the app details dialog. They describe an app, not the host.
+Host-managed per-app configuration lives in standalone App Details at
+`/apps/<app-id>?section=<section>`. Dashboard row/name links and app log/notification links select
+this canonical destination. Legacy `/settings?tab=manage:<app-id>&section=<section>` bookmarks
+migrate to the same app and section. The administrator's native Dashboard breadcrumb returns to
+`/dashboard`; the retained ordinary-user logs-only page has a Home breadcrumb linking to `/` and
+exposes no management controls. These host-managed controls stay separate from app-owned Settings pages.
 
 ## Landing
 
-Dashboard is the administrator's home. `/apps` is the landing for everyone else and the redirect
-target for an unauthorized management route.
+`/` is a neutral entry. Administrators render Dashboard and resolve to `/dashboard`. Ordinary users
+remain at `/` with a Hosty title and empty main content, including when launchable apps exist. They
+open apps from navigation and retain their personal Profile and Tokens & devices settings. A
+forbidden management route redirects to this neutral Home without rendering Dashboard, host settings
+or a replacement app catalog. Bare workspace and app-details route children also render no fallback
+catalog; their authorized content belongs to the persistent Shell layout.
+
+The retired `/apps` page only redirects to `/` and preserves its query parameters. Role authorization
+redirects retain `assistantSession`, `assistantApp` and `assistantPanel` so a pending assistant handoff
+survives the move to Home or Dashboard. A root URL with a query also survives the Core login
+continuation; a clean root retains the ordinary empty continuation. Successful panel placement
+consumes the handoff parameters, while pending or failed placement retains them.
 
 ## Outside the Shell
 
@@ -319,18 +422,24 @@ theme bridges — depends on the Shell **origin** alone.
 - `ControlIdentityEndpoints.BuildShellWorkspaceUrl` builds the `--mode shell` link for
   `hosty apps open`. It targets `/workspace?app=<id>&path=/`.
 - `UserManagementEndpoints` returns a Shell-relative `redirectPath` after an invitation is accepted:
-  `/` for an administrator, `/apps` for a user.
+  `/` for an administrator, the retained `/apps` alias for a user, which redirects to neutral `/`.
 
-Dashboard update feedback follows Core's app stages and expires a success label after 30 seconds.
-The indicator and stage message sit directly below the installed app version, in the space vacated
-by the available version during an update. Long messages wrap within the version column; the update
-button keeps its position beside the version block, and runtime status stays in its own column.
-Version tooltips include the last successful update-check time; failed checks retain found updates
-and are excluded from bulk apply. Core updates use live status and release checks for completion,
+Dashboard update progress follows Core's active app stages. The indicator and stage message sit
+beneath the current runtime/health status in the Status column, including for source/workspace apps.
+Long messages wrap there, leaving version/runtime metadata together. The primary status uses
+Core's runtime state and applicable health, without inferring lifecycle from an operation label;
+an absent runtime observation shows Unknown. Pending start/stop/restart verbs appear once in the
+main status. Update phases `stopping` and `starting` show only Updating below it, without a service
+suffix. Other supported phases retain their specific update label and optional reported service. Terminal outcomes add
+no row label or expiry timer. Existing completion, error and readiness toasts remain; problem icons
+and Manage retain diagnostics.
+Version tooltips contain revision/build details; full update-check errors remain on the after-name
+problem icon and in Manage diagnostics. Failed checks retain found updates and are excluded from
+bulk apply. Core updates use live status and release checks for completion,
 with reconnecting, verifying and unconfirmed states instead of a fixed completion delay.
 
 The client authorization redirect uses the same section-aware policy as rendering: ordinary users
-stay on their Profile and Access tokens pages, while host and app administration sections redirect to Apps.
+stay on their Profile and Tokens & devices pages, while host and app administration sections redirect to `/`.
 The check also runs when only the settings query parameter changes.
 
 Administrators have an always-visible Permissions tab in each app's settings panel. It displays
@@ -343,21 +452,86 @@ disabled optional permissions are not a problem. See [App permission management]
 
 ## Testing Expectations
 
-- Check both lists with a wide workspace, an expanded right panel, and narrow content widths.
+- Check Dashboard Core and installed-app rows with a wide workspace, an expanded right panel, and narrow content widths.
   Runtime/version stacking and shortcut visibility follow container width, not viewport width.
-  Names, statuses, menus and expanded details remain reachable without horizontal scrolling.
+  Verify the 820px row reflow and both sides of the 440px threshold: all Core/app/aggregate CPU/RAM
+  values and graphs are hidden below 440px, without a third resource line, and existing resources
+  remain at 440px and wider. Names, statuses, menus, Manage app details and Settings Core information
+  remain reachable without horizontal scrolling.
+  The full version/source and runtime metadata line is monospaced. No Dashboard row displays a Manual start marker. Source
+  labels show the workspace or branch name after a decorative hammer or Git branch icon, with a
+  dotted underline and no type prefix, highlight or extra padding; Core matches app rows' muted text-xs styling.
+  The same second line retains factual source-change counts after a dot for Core and source/workspace
+  apps, using `files` and a `+` truncation suffix, with natural narrow wrapping and no zero-filled
+  missing line totals or invented counts after errors. Development rows omit pseudo-runtime words
+  and their separators; production runtime names stay unchanged. Hover, keyboard and click/touch retain source details,
+  and app-owned focus has one visible 2 px lime (`#A3E635`) outline or ring in both themes,
+  including inside the SDK host, without a halo or ink edge. Retain red invalid/error treatment
+  and parent-only grouped focus; check SDK-owned rail and chooser controls separately.
+- Navigation tests retain direct app launch, page selection and standalone links in expanded and
+  compact modes, without an interactive Apps heading, All apps icon or app overview cards. Retain
+  administrator-only Uninstall in Dashboard and App Details. Verify direct Core removal review,
+  all cleanup choices, popup fallback, denial/errors, source safety and same-request recovery without
+  an intermediate Shell popup or premature success.
+- Verify revision/build-only app-version hover and the full update-check error on the problem icon,
+  without a native error title on the version wrapper; retain Manage diagnostics and error toasts.
+- Administrator row clicks and keyboard activation of the native app-name link open standalone
+  `/apps/<app-id>` App Details. The link supports opening another tab; the row has no extra tab stop.
+  The Dashboard breadcrumb returns to `/dashboard`; legacy Manage bookmarks preserve their app and
+  section during migration. Settings Apps lists only declared `ui.settings` surfaces, preserving
+  normal identity, access, stopped-app readiness and full-height embedding without a duplicate catalog.
+  Embedded buttons, menus,
+  source/version disclosures and resource popovers do not also navigate. Runtime app expanders and
+  the duplicate Manage menu item are absent. Core also has no expander; its five host facts and
+  address copy controls remain in Settings > Host > Updates, with unavailable states, administrator
+  access and unsaved drafts preserved. All Manage service/network facts and controls remain reachable.
 - Verify Core and app menus retain their actions and permission/busy guards in compact mode.
+  Runtime / workspace names both selectors; app source/branch capabilities remain. Core lists
+  eligible existing named workspaces and Release, excludes all app participants, and requires a
+  fresh Core-only review before direct workspace handover. Verify retained request IDs, scope
+  cancellation, unknown receipts, explicit baseline compatibility and factual Release readiness.
+  App shortcuts cover one contextual button with disabled pending progress before Restart, then
+  running degraded/unhealthy Logs, Configure, Update and Start/Stop. Verify Restart wins over
+  configuration, update and runtime-health/previous-operation errors; genuine runtime Logs wins
+  over configuration/update only with the logs capability. Missing, unknown or startup health and
+  unrelated update/manifest/permission/operation diagnostics do not select Logs. No-logs apps retain
+  working Start/Stop controls; ordinary users retain Logs without lifecycle authority.
+- Runtime-app restart-required coverage checks the title-row secondary badge after role/problem
+  icons, no third identity-row warning/link, and visible Restart as the only contextual button.
+  Verify the existing restart handler, no row navigation, administrator control, disabled update or
+  same-app work, lifecycle progress replacing the badge/button, duplicate protection, queued-app
+  progress and explicit retry after a failure.
+- Core coverage checks its title-row Restart required badge and single contextual button:
+  pending progress, Restart, factual degraded/unhealthy/failed status Logs, then Stop. Source/Git,
+  update-check and configuration warnings do not select Logs. Console logs and Stop Core remain
+  available in More when narrow layouts hide the contextual button. Stop checks a fresh instance,
+  requires destructive confirmation, preserves runtime apps and explains local CLI startup.
+  Denial or a scope change before dispatch submits nothing; duplicate clicks submit once and
+  obsolete continuations are ignored. A 202 accepted receipt is not exit proof, and connection loss or an invalid receipt
+  stays unconfirmed without automatic replay or false success.
+- Verify both Dashboard log entries, readiness/update-notification actions and direct URLs select
+  App Details Logs without a modal. Check capability/visible-app boundaries, ordinary-user logs-only
+  navigation with the `/` Home breadcrumb and no management controls, existing Core refusal, selected-only loading, Refresh,
+  service selection, empty/errors, exit/scope aborts and retained drafts. Core logs remain a dialog.
 
 
-- Route parsing covers each destination, the legacy paths, an unrecognized path, and a missing or
-  unrecognized settings tab.
-- Canonicalization is pinned for all three legacy paths, including that `/system-apps/<id>?path=/x`
-  keeps `/x`, and that every redirect target is itself canonical so the effect cannot loop.
+- Route parsing covers neutral `/`, Dashboard, Settings, workspace carriers, legacy paths, an
+  unrecognized path, and a missing or unrecognized settings tab. Administrator home resolves to
+  Dashboard; ordinary home stays empty even with launchable apps. Direct unauthorized Dashboard
+  and host/app settings routes render no protected content or replacement catalog while redirecting.
+  Personal Profile and Tokens & devices remain available.
+- Canonicalization covers legacy paths and settings destinations, including that
+  `/system-apps/<id>?path=/x` keeps `/x`, Manage bookmarks preserve the section on `/apps/<app-id>`,
+  removed `/apps` is redirect-only, and removed `tab=apps` returns to the role-authorized
+  Dashboard/Home. Check both roles through every redirect chain without loops. Root, alias and
+  authorization redirects preserve assistant handoffs; root-with-query login preserves the same
+  request, clean root stays unchanged, and encoded handoff values cannot change the redirect origin.
 - Builders and the parser are tested against each other, so a change to one cannot silently diverge.
 - The `--mode shell` link shape is pinned by a Core test. It was unpinned for a long time, and for all
   of it the command emitted a URL the Shell has never served.
-- Visual verification covers the merged Dashboard, host settings tabs, the collapsed sidebar
-  reaching `/apps`, and each legacy path landing on its canonical URL.
+- Visual verification covers the merged Dashboard, host settings tabs, direct app navigation from
+  the collapsed sidebar, the neutral ordinary-user Home, and each legacy path landing on its
+  role-authorized canonical URL.
 - Grouped settings verification covers canonical and legacy links, Back and reload, inner-tab
   selection, ordinary-user access and scoped saves for General, Users and Policies.
 - Core form verification covers desktop and narrow layouts, units, draft edits, default resets,
@@ -374,7 +548,9 @@ disabled optional permissions are not a problem. See [App permission management]
 - Browser verification covers selected filters, reset to all, zero attention visibility, and the
   empty-filter recovery control when a selected category becomes empty.
 - Phone navigation verification covers the default icon rail, overlay expansion, backdrop and Escape
-  dismissal, and restoration of the desktop preference after resizing.
+  dismissal, and restoration of the desktop preference after resizing. Apps opens the sidebar
+  without changing the route or clearing the document/workspace, collapses an expanded tool sheet
+  before revealing navigation, and retains the same tool frames.
 
 - Core status refresh coverage includes old/new versions across a restart, temporary network and
   HTTP failures, browser-cache bypass, and cancellation before a response is applied.
@@ -382,5 +558,8 @@ disabled optional permissions are not a problem. See [App permission management]
 - Dashboard search tests cover name/ID matching, case/whitespace, filter combinations, update-check
   failures, and restart-required attention state. Duration tests cover exact decompositions and invalid drafts.
 - Lifecycle tests cover restart-required persistence across Core recreation, no-op configuration, reverts,
-  successful/failed starts, legacy baselines, and effective shared mount changes. Browser checks cover
+  successful/failed starts, legacy baselines, and effective shared mount changes. Pending lifecycle
+  verbs appear only in the main status, configuration information remains, and pending lifecycle
+  progress replaces the restart-required badge and contextual action.
+  Browser checks cover
   compact empty invitations, card alignment, search reset, and duration equivalents.

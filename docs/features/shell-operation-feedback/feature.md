@@ -1,6 +1,6 @@
 ---
 created: 2026-09-25
-updated: 2026-10-12
+updated: 2026-10-22
 summary: Shell separates confirmations, transient operation results and persistent diagnostics.
 components: [apps/shell]
 ---
@@ -11,9 +11,16 @@ Shell separates explicit decisions, transient operation results, and persistent 
 
 ## Confirmations
 
-Alert Dialog replaces browser confirmation prompts for Core update, Shell stop/restart, backup restoration/deletion/cleanup, and user disabling/deletion. Existing credential revocation, app removal, source discard and Cloudflare disconnect confirmations also use Alert Dialog. Shared mount deletion names the mount and explains the consequences of forcing deletion while bindings exist.
+Alert Dialog replaces browser confirmation prompts for Core update, Shell stop/restart, backup restoration/deletion/cleanup, and user disabling/deletion. Existing credential revocation, source discard and Cloudflare disconnect confirmations also use Alert Dialog. Shared mount deletion names the mount and explains the consequences of forcing deletion while bindings exist.
 
 Dialogs preserve the original operation permissions, reviewed plans, removal options, and destructive consequences. Cancel receives initial focus; Escape cancels an idle decision. The shared confirmation adapter restores focus to its opener, rejects overlapping requests, and cancels on scope change or unmount. Detailed asynchronous confirmation surfaces retain their busy/error handling. No lifecycle operation is executed merely by opening a dialog.
+
+App removal opens Core's isolated approval directly from Dashboard, Manage or the administrator's
+Apps Uninstall action. There is no preliminary Shell options/confirmation dialog. Core owns cleanup
+choices, impact, runtime-state and Shell-availability warnings, source protection and the final
+decision. Shell reserves the popup in the initiating gesture and retains the original request through
+uncertain submit/status recovery; denial leaves the app/selection intact and only confirmed Core
+execution reports successful removal.
 
 Core confirmation windows for reviewed updates, removals and host-path changes do not create a
 duplicate prompt toast. A fallback link appears only when the popup could not open. Opening that
@@ -23,10 +30,10 @@ reminder and does not authorize or cancel work already accepted by Core.
 
 ## Notifications
 
-Dashboard lifecycle actions show inline progress beside the app name immediately after activation
+Dashboard lifecycle actions show progress in the primary Status column immediately after activation
 (after confirmation for Shell itself), including time spent waiting in Shell's serialized CSRF
 request queue or Core preflight. The row displays Restarting, Starting or Stopping with a spinner;
-Core's starting/stopping state takes precedence once available. Progress replaces the Restart
+Core's actual starting/stopping runtime state takes precedence once available. Progress replaces the Restart
 required shortcut until the operation settles. Configuration required still opens app settings.
 
 Pending actions are tracked per app, so activating another app or an unrelated action cannot erase
@@ -38,16 +45,28 @@ operations initiated by other clients. Local pending state does not survive a pa
 
 The shared Sonner surface appears at the top center, 56px below the window edge (16px on mobile), with a desktop width of 420px and responsive mobile gutters. Success, information, warning and error states have distinct icons and semantic theme colors. Ordinary notifications retain Sonner's actions and dismissal behavior.
 
-Dashboard-wide operation error/warning banners are absent. Request errors appear as toasts, and repeated Core warnings are announced only when newly observed. An app action failure refreshes app diagnostics without also writing a persistent global error. Persistent app/service diagnostics remain in expanded rows; form validation and unavailable embedded-workspace explanations remain at their point of use.
+Dashboard-wide operation error/warning banners are absent. Request errors appear as toasts, and repeated Core warnings are announced only when newly observed. An app action failure refreshes app diagnostics without also writing a persistent global error. Persistent app/service diagnostics remain in Manage, reached through app-row activation; form validation and unavailable embedded-workspace explanations remain at their point of use.
+
+Dashboard places active update progress beneath the current runtime/health status in the Status
+column. Version/runtime metadata carries no update-stage message. The primary status uses Core's
+runtime state and applicable health; it never derives lifecycle from an update operation label.
+Missing runtime observations show Unknown. Active update phases `stopping` and `starting` show
+only Updating below the primary status, without a service suffix. Update queued, Preparing update,
+Creating backup, Installing, Downloading and Checking readiness retain their specific labels and
+optional reported service. Terminal outcomes add no row message or timer. Existing success, error and readiness toasts remain, and problem icons
+and Manage retain diagnostics.
 
 Reviewed and routine app updates report their terminal result from Core's app-state stream. An
 installed update that fails readiness produces a warning with the affected service states and an
 Open logs action, instead of an unconditional success toast. Repeated snapshots and page reloads
 do not replay an existing result. The persistent warning distinguishes installation completion
-from app readiness and from a separate available update. Its row label opens app details, where
-console logs are one click away. Running unhealthy/degraded apps also appear in the attention
+from app readiness and from a separate available update. Problem icons and Manage/App Details
+retain the persistent diagnostics without a terminal update label in the row.
+The Open logs notification action and readiness log action select the same addressable Logs tab
+as Dashboard Logs and More > Console logs, without opening a runtime-app log popup. Existing
+capability and Core authorization checks remain unchanged. Running unhealthy/degraded apps also appear in the attention
 filter and retain these diagnostics after another lifecycle operation. A healthy observation
-clears the readiness warning, including a stale needs-attention update label.
+clears the readiness warning.
 
 Error toasts include a scrollable full description, Copy, and a dismiss button. They remain for 20 seconds by default; Sonner pauses expiration during interaction. Copy includes the title, description and known app ID, and reports clipboard failure locally without removing the error. No Undo action is presented for operations that lack undo support.
 
@@ -72,11 +91,21 @@ failures, instead of replacing the cause with only an HTTP status.
 
 ## Testing Expectations
 
+- Verify actual Running/Starting/Stopping/Stopped and applicable health remain primary during
+  updates, with Unknown for missing runtime observations. Update stopping/starting phases show only
+  Updating beneath them; other phases retain their label and optional service. Verify no terminal
+  row messages or expiry timers, and retained success/error/readiness toasts and diagnostics.
 - Verify immediate lifecycle progress before server state changes, duplicate activation suppression,
   two apps waiting in the CSRF queue, server-driven stages, failure/retry and confirmation cancellation.
 - Confirm cancellation, Escape, initial/restored focus, overlapping prompts, and unmount cancellation. Never trigger a real destructive action merely to smoke-test a dialog.
+- Verify administrator-only Apps Uninstall and direct Core removal review from existing entries,
+  retained Open/Standalone, cleanup choices and warnings, blocked-popup fallback, denial/errors,
+  source-safety refusal and same-request recovery without an intermediate Shell dialog.
 - Verify copy includes full diagnostics; clipboard rejection leaves the error visible. Verify absent/stopped Gateway and concurrent/retried handoff behavior.
 - Verify app-context capability negotiation and identical idempotency keys across uncertain session-creation retries.
 - Verify readiness warnings, log actions, terminal success/failure notifications, missed intermediate snapshots, no duplicate notifications after refresh, and clearing diagnostics after recovery.
+  Readiness and update-notification Open logs actions select the app's Logs section, matching both
+  Dashboard entries and preserving the existing capability/authorization boundaries; Core logs
+  still open their own dialog.
 - Harness tests cover durable drafts, authenticated preparation, complete uploads, unchanged retry outcomes and one execution identity.
 - Run Shell tests/lint/build and Gateway tests/web lint/build. Verify the toast position and confirmation cancellation through Core-managed Shell. Retain contextual diagnostics when removing global banners.

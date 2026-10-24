@@ -35,6 +35,7 @@ describe("chat action cards", () => {
       <TranscriptEvent event={approval} decision={decision} answers={null} denyReason onDecide={onDecide} onAnswer={vi.fn()} />,
     ));
     await render(null);
+    await click(button("Deny…"));
     await type(container.querySelector("input")!, "Use the safe directory");
     await click(button("Deny"));
     expect(container.querySelector('[role="alert"]')?.textContent).toContain("Connection lost");
@@ -46,6 +47,22 @@ describe("chat action cards", () => {
     await render({ decision: "deny", message: "Use the safe directory" });
     expect(container.textContent).toContain("Denied");
     expect(container.querySelector("input")).toBeNull();
+  });
+
+
+  it("opens an optional denial reason without submitting and permits only an explicit one-time allow", async () => {
+    const decide = vi.fn().mockResolvedValue(undefined);
+    await act(async () => root.render(<TranscriptEvent event={approval} decision={null} answers={null} denyReason onDecide={decide} onAnswer={vi.fn()} />));
+    expect(container.querySelector("input")).toBeNull(); expect(button("Allow once")).toBeDefined();
+    await click(button("Deny…")); expect(decide).not.toHaveBeenCalled(); expect(container.querySelector("input")).not.toBeNull();
+    await type(container.querySelector("input")!, "Retained explanation"); await click(button("Cancel denial"));
+    expect(decide).not.toHaveBeenCalled(); await click(button("Deny…")); expect(container.querySelector("input")?.value).toBe("Retained explanation");
+    await click(button("Allow once")); expect(decide).toHaveBeenCalledExactlyOnceWith("a", "allow", undefined);
+  });
+  it("keeps immediate Deny when the provider cannot deliver a reason", async () => {
+    const decide = vi.fn().mockResolvedValue(undefined);
+    await act(async () => root.render(<TranscriptEvent event={approval} decision={null} answers={null} denyReason={false} onDecide={decide} onAnswer={vi.fn()} />));
+    expect(button("Deny…")).toBeUndefined(); await click(button("Deny")); expect(decide).toHaveBeenCalledExactlyOnceWith("a", "deny", undefined);
   });
 
   it("replays cancellation without reviving old controls or cancelling a later turn", async () => {
@@ -61,7 +78,7 @@ describe("chat action cards", () => {
       <TranscriptEvent event={approval} decision={decisions.get("a")!} answers={null} denyReason onDecide={vi.fn()} onAnswer={vi.fn()} />,
     ));
     expect(container.textContent).toContain("Cancelled");
-    expect(button("Allow")).toBeUndefined();
+    expect(button("Allow once")).toBeUndefined();
     expect(button("Deny")).toBeUndefined();
     expect(container.querySelector("input")).toBeNull();
     events.push({ seq: 4, ts: "", type: "approval_decision", approvalId: "a", decision: "deny", message: "Cancelled by operator" });

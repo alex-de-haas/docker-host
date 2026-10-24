@@ -1,7 +1,7 @@
 ---
 status: In Progress
 created: 2026-07-12
-updated: 2026-10-19
+updated: 2026-10-23
 summary: Remaining acceptance checks for Core development mode on Windows, Linux and real agent harnesses.
 components: [apps/core, apps/cli]
 ---
@@ -24,6 +24,12 @@ The separately approved [workspace activation](../workspace-live-activation/feat
 configurable Core repository URL/ref/project, build identity and coordinated app/Core switching
 with Return. It reuses this feature's launch generations and durable restart mechanism. It does
 not complete the cross-platform/provider acceptance below or change the existing launch behavior.
+The owner-approved 2026-10-22 Dashboard selector adoption is tracked by D7 in the
+[design-system plan](../design-system/plan.md#core-runtime-and-workspace-selector-owner-direction-2026-10-22).
+The owner-approved 2026-10-23 direct Core switching update belongs to
+[workspace activation](../workspace-live-activation/feature.md), including same-target restart
+ownership continuity and the Dashboard confirmation/progress. It keeps Source settings and
+factual source/IDE state and does not complete these cross-platform/provider acceptance checks.
 
 ## Deliverables
 

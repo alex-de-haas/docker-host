@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { HostyLoader } from "../../../../../../shared/web/hosty-states";
 import { fetchCore } from "../core-transport";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -37,9 +38,9 @@ export function UserProfilePage({ coreOrigin, sendCsrfJson, onSaved }: { coreOri
   }
   return <section className="flex max-w-2xl flex-col gap-6" aria-label="Your profile">
     <h2 className="text-lg font-medium">Your profile</h2>
-    {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+    {error && <p role="alert" className="text-sm text-destructive-foreground">{error}</p>}
     {notice && <p role="status" className="text-sm">{notice}</p>}
-    {!profile && !error && <p>Loading profile…</p>}
+    {!profile && !error && <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><HostyLoader className="size-5" label={null} />Loading profile…</p>}
     {profile && <form className="flex flex-col gap-3 rounded-lg border p-4" onSubmit={event => { event.preventDefault(); void save(); }}>
       <p className="text-sm text-muted-foreground">{profile.email}</p>
       <Label htmlFor="profile-name">Display name</Label>

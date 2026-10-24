@@ -1,4 +1,5 @@
 "use client";
+import { SdkChromeStyles } from "./sdk-chrome";
 import { createContext, useEffect, useLayoutEffect, useSyncExternalStore } from "react";
 import { HostyAppFrame, type HostyAppFrameProps } from "./ui-frame";
 import { createPortal } from "react-dom";
@@ -76,7 +77,7 @@ export function HostyPresentationLayer({ layer, host, active }: { layer: UiFrame
         outbound={viewport?.outbound && panelKey(viewport.outbound.target.panel) === tool.key
           && (viewport.outbound.presentationId ? viewport.outbound.presentationId === tool.presentationId
             : workspace?.selectedId === tool.presentationId && viewport.outbound.target.route === tool.currentRoute) ? viewport.outbound : null} />
-        : <div className="hosty-panel-notice" role="status">This tool is unavailable ({tool.resolved.state}).</div>}
+        : <div data-hosty-sdk className="hosty-panel-notice" role="status"><SdkChromeStyles />This tool is unavailable ({tool.resolved.state}).</div>}
       {viewport?.drawer && <span tabIndex={0} aria-hidden="true" className="hosty-panel-focus-guard" onFocus={() => focusControls(false)} />}
     </>, container, tool.presentationId);
   })}</>;

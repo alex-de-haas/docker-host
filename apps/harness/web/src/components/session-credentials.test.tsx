@@ -58,3 +58,24 @@ it("refreshes only the newly selected conversation after switching chats", async
   expect(appFetch).toHaveBeenCalledTimes(3);
   expect(appFetch).toHaveBeenLastCalledWith("/api/sessions/second/credentials", expect.anything());
 });
+
+it("keeps credential retry focused and preserves the composer draft until access recovers", async () => {
+  vi.mocked(appFetch).mockResolvedValueOnce(Response.json({}, { status: 503 }));
+  await act(async () => root.render(<><textarea defaultValue="Unsent draft" /><SessionCredentials sessionId="chat" /></>));
+  const draft = node.querySelector("textarea")!;
+  const retryButton = node.querySelector<HTMLButtonElement>("button")!;
+  let complete!: (response: Response) => void;
+  vi.mocked(appFetch).mockImplementationOnce(() => new Promise(resolve => { complete = resolve; }));
+  await act(async () => { retryButton.focus(); retryButton.click(); });
+  expect(document.activeElement).toBe(retryButton);
+  expect(node.querySelector("textarea")).toBe(draft);
+  expect(draft.value).toBe("Unsent draft");
+  expect(appFetch).toHaveBeenLastCalledWith("/api/sessions/chat/credentials", expect.objectContaining({ method: "POST", body: "{}" }));
+  await act(async () => complete(Response.json({}, { status: 503 })));
+  expect(document.activeElement).toBe(retryButton);
+  expect(node.querySelector('[role="alert"]')?.textContent).toContain("Could not refresh");
+  await act(async () => retryButton.click());
+  expect(node.querySelector("aside")).toBeNull();
+  expect(node.querySelector("textarea")).toBe(draft);
+  expect(draft.value).toBe("Unsent draft");
+});

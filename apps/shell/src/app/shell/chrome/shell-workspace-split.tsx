@@ -5,10 +5,13 @@ import { useGroupRef, usePanelRef } from "react-resizable-panels";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { PANEL_RAIL_WIDTH, DEFAULT_RIGHT_PANEL_WIDTH, RIGHT_PANEL_WIDTH_PREF_KEY, WORKSPACE_PANEL_GAP, panelWidthBounds } from "./panel-width";
 
-export function ShellWorkspaceSplit({ children, panel, expanded, initialPanelWidth, onWidthChange, showPanel = true }: {
+export function ShellWorkspaceSplit({ children, panel, expanded, initialPanelWidth, onWidthChange, showPanel = true, railSize = PANEL_RAIL_WIDTH, pageMinimum, keepPanelVisible = false }: {
   children: ReactNode;
   panel: ReactNode;
   showPanel?: boolean;
+  railSize?: number;
+  pageMinimum?: number;
+  keepPanelVisible?: boolean;
   expanded: boolean;
   initialPanelWidth: number;
   onWidthChange?: (width: number) => void;
@@ -19,8 +22,8 @@ export function ShellWorkspaceSplit({ children, panel, expanded, initialPanelWid
   const [preferredWidth, setPreferredWidth] = useState(initialPanelWidth);
   const [groupWidth, setGroupWidth] = useState(0);
   const visible = Boolean(panel) && showPanel;
-  const bounds = panelWidthBounds(groupWidth);
-  const railWidth = groupWidth > 0 ? Math.min(PANEL_RAIL_WIDTH, Math.max(0, groupWidth - WORKSPACE_PANEL_GAP)) : PANEL_RAIL_WIDTH;
+  const bounds = panelWidthBounds(groupWidth, pageMinimum, railSize);
+  const railWidth = groupWidth > 0 ? Math.min(railSize, Math.max(0, groupWidth - WORKSPACE_PANEL_GAP)) : railSize;
 
   useEffect(() => {
     const element = groupRef.current;
@@ -37,11 +40,11 @@ export function ShellWorkspaceSplit({ children, panel, expanded, initialPanelWid
     // Let the library apply the newly measured pixel constraints before issuing a resize.
     const frame = requestAnimationFrame(() => {
       if (groupApi.current?.getLayout()["right-panel"] !== undefined) {
-        panelRef.current?.resize(expanded ? preferredWidth + PANEL_RAIL_WIDTH : railWidth);
+        panelRef.current?.resize(expanded ? preferredWidth + railSize : railWidth);
       }
     });
     return () => cancelAnimationFrame(frame);
-  }, [groupApi, groupWidth, panelRef, preferredWidth, visible, expanded, railWidth]);
+  }, [groupApi, groupWidth, panelRef, preferredWidth, visible, expanded, railWidth, railSize]);
 
   const rememberWidth = (width: number) => {
     const rounded = Math.round(width);
@@ -51,7 +54,7 @@ export function ShellWorkspaceSplit({ children, panel, expanded, initialPanelWid
   };
 
   return (
-    <div className="h-full min-h-0 min-w-0 pr-3 pb-3">
+    <div className="h-full min-h-0 min-w-0 pr-3 pb-3 max-[599px]:p-0">
     <ResizablePanelGroup id="shell-workspace" orientation="horizontal" elementRef={groupRef} groupRef={groupApi}
       className="min-h-0 min-w-0"
       onLayoutChanged={(layout, { isUserInteraction }) => {
@@ -59,7 +62,7 @@ export function ShellWorkspaceSplit({ children, panel, expanded, initialPanelWid
         if (visible && expanded && isUserInteraction && groupRef.current && layout["right-panel"] !== undefined) {
           // Use the completed layout: the imperative panel ref can still expose the previous size
           // during this callback, especially for a single keyboard resize step.
-          rememberWidth((groupRef.current.clientWidth - WORKSPACE_PANEL_GAP) * layout["right-panel"] / 100 - PANEL_RAIL_WIDTH);
+          rememberWidth((groupRef.current.clientWidth - WORKSPACE_PANEL_GAP) * layout["right-panel"] / 100 - railSize);
         }
       }}>
       <ResizablePanel id="workspace" minSize={visible && expanded ? bounds.workspaceMin : 0}
@@ -72,12 +75,12 @@ export function ShellWorkspaceSplit({ children, panel, expanded, initialPanelWid
           className="shrink-0 bg-transparent after:inset-y-auto after:h-8 after:rounded-full after:bg-transparent hover:after:bg-border focus-visible:after:bg-ring active:after:bg-ring"
           title="Drag to resize. Double-click to reset width."
           disableDoubleClick onDoubleClick={() => {
-            panelRef.current?.resize(DEFAULT_RIGHT_PANEL_WIDTH + PANEL_RAIL_WIDTH);
+            panelRef.current?.resize(DEFAULT_RIGHT_PANEL_WIDTH + railSize);
             rememberWidth(DEFAULT_RIGHT_PANEL_WIDTH);
           }} />
-        <ResizablePanel id="right-panel" hidden={!visible} panelRef={panelRef} defaultSize={!visible ? 0 : expanded ? preferredWidth + PANEL_RAIL_WIDTH : railWidth}
+        <ResizablePanel id="right-panel" hidden={!visible && !keepPanelVisible} panelRef={panelRef} defaultSize={!visible ? 0 : expanded ? preferredWidth + railSize : railWidth}
           minSize={!visible ? 0 : expanded ? bounds.panelMin : railWidth} maxSize={!visible ? 0 : expanded ? groupWidth > 0 ? bounds.panelMax : "100%" : railWidth}
-          style={{ overflow: "hidden" }} className="rounded-xl border bg-background shadow-xs"
+          style={{ overflow: visible ? "hidden" : "visible" }} className={visible ? "rounded-xl border bg-background shadow-xs" : ""}
           groupResizeBehavior="preserve-pixel-size">
           {panel}
         </ResizablePanel>

@@ -8,7 +8,7 @@ vi.mock("@/lib/assistant-api", () => ({ workspaceAction: vi.fn(), getSession: vi
 const draft = { name: "Draft notes", appId: "local.draft-notes", description: "Keep me", authorName: "Draft Author", authorEmail: "draft@example.test", consent: false, prompt: "Build a notebook" };
 let root: Root, host: HTMLDivElement, session: AssistantSession;
 const change = vi.fn();
-const button = (name: string) => [...document.querySelectorAll("button")].find(b => b.textContent === name)!;
+const button = (name: string) => [...document.querySelectorAll("button")].find(b => b.getAttribute("aria-label") === name || b.textContent === name)!;
 const input = (id: string) => document.getElementById("create-app-" + id) as HTMLInputElement;
 const click = async (element: HTMLElement) => act(async () => element.click());
 const render = async () => act(async () => root.render(<CreateApp session={session} busy={false} onChange={change} />));
@@ -105,7 +105,7 @@ describe("local app creation form", () => {
     session = { ...session, appCreations: [{ state: "observed", input: { requestId, appId: draft.appId, name: draft.name,
       authorName: draft.authorName, authorEmail: draft.authorEmail, bootstrapCommit: true }, prompt: draft.prompt }],
       handoffDispatch: { id: requestId, state: "queued" } };
-    await render(); await click(button("Recover"));
+    await render(); await click(button("Create app")); await click(button("Recover"));
     expect(input("author").value).toBe(draft.authorName); expect(input("author").disabled).toBe(true);
     expect(input("prompt").value).toBe(draft.prompt); expect(input("prompt").disabled).toBe(true);
     await click(button("Continue creation"));

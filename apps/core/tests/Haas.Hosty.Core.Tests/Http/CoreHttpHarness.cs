@@ -37,6 +37,8 @@ public sealed class CoreHttpHarness : IAsyncDisposable
 
     public HttpClient CreateClient() => app.GetTestClient();
 
+    internal Task StopAsync() => app.StopAsync();
+
     /// <summary>Boots the pipeline. Pass a clock to control time — used by tests that need a token to
     /// expire; omitted everywhere else, so the default stays the real clock.</summary>
     internal static async Task<CoreHttpHarness> StartAsync(IClock? clock = null, Action<IServiceCollection>? configure = null,

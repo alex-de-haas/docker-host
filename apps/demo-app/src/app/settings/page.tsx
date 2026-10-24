@@ -80,7 +80,7 @@ export default async function SettingsPage() {
       </section>
 
       <section className="flex flex-col gap-4" aria-label="Storage settings">
-        <div className="min-w-0 space-y-1">
+        <div className="flex min-w-0 flex-col gap-1">
           <h2 className="text-xl font-semibold leading-7">Storage probes</h2>
           <p className="text-sm text-muted-foreground">
             Current mount availability and visible entries.

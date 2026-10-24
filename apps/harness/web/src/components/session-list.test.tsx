@@ -31,3 +31,18 @@ it("shows each session's saved context with bounded icons and preserves row navi
     expect(onPick).toHaveBeenCalledWith(selected);
   } finally { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); }
 });
+
+it("keeps the embedded history waiting label and session action with a decorative decision shape", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const container = document.createElement("div"); document.body.append(container); const root = createRoot(container);
+  const waiting = { id: "waiting", title: "Needs review", status: "awaiting_question", createdAt: "2026-10-23T12:00:00Z" } as AssistantSession;
+  const onPick = vi.fn();
+  try {
+    await act(async () => root.render(<SessionList sessions={[waiting]} activeId={waiting.id} onPick={onPick} onRename={vi.fn()} onDelete={vi.fn()} />));
+    const glyph = container.querySelector('.lucide-diamond')!;
+    expect(glyph).not.toBeNull(); expect(glyph.getAttribute("aria-hidden")).toBe("true");
+    expect(container.textContent).toContain("waiting for you");
+    await act(async () => (glyph.closest("button") as HTMLButtonElement).click());
+    expect(onPick).toHaveBeenCalledExactlyOnceWith(waiting);
+  } finally { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); }
+});

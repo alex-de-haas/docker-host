@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mock = vi.hoisted(() => ({ fetch: vi.fn() }));
-vi.mock("@hosty-sdk/app/browser-auth", () => ({ appFetch: mock.fetch }));
+vi.mock("./event-stream", () => ({ openEventStream: mock.fetch }));
 import { subscribeWorkspaceEvents } from "./workspace-events";
 
 describe("shared workspace event stream", () => {
@@ -72,6 +72,22 @@ describe("shared workspace event stream", () => {
     mock.fetch.mockImplementation(supported);
     await vi.advanceTimersByTimeAsync(30_000); emit("stream.ready"); await vi.advanceTimersByTimeAsync(200);
     expect(sync).toHaveBeenCalledTimes(2); expect(refreshed).toHaveBeenCalledTimes(2);
+  });
+
+  it("retains snapshot compatibility after unsupported socket hints and probes without periodic reads", async () => {
+    const sync = vi.fn(async () => {}), unavailable = vi.fn();
+    cleanup.push(subscribeWorkspaceEvents("/legacy-socket", sync, unavailable));
+    await vi.advanceTimersByTimeAsync(0); emit("stream.unsupported"); await vi.advanceTimersByTimeAsync(200);
+    expect(sync).toHaveBeenCalledTimes(1); expect(unavailable).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(30_000); emit("stream.unsupported"); await vi.advanceTimersByTimeAsync(200);
+    expect(mock.fetch).toHaveBeenCalledTimes(2); expect(sync).toHaveBeenCalledTimes(1);
+    expect(unavailable).not.toHaveBeenCalled();
+    const entered = vi.fn(async () => {});
+    cleanup.push(subscribeWorkspaceEvents("/legacy-socket", entered, unavailable));
+    await vi.advanceTimersByTimeAsync(0); expect(entered).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(30_000); emit("stream.ready"); await vi.advanceTimersByTimeAsync(200);
+    expect(sync).toHaveBeenCalledTimes(2); expect(entered).toHaveBeenCalledTimes(2);
+    expect(mock.fetch).toHaveBeenCalledTimes(3); expect(unavailable).not.toHaveBeenCalled();
   });
 
   it("never treats a forbidden stream as legacy compatibility", async () => {
