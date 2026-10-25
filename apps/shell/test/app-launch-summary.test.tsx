@@ -160,3 +160,25 @@ it("hands an expired session to the existing login flow instead of reporting it 
     expect([...container.querySelectorAll("button")].find(button => button.textContent === "Refresh services")?.disabled).toBe(false);
   } finally { window.removeEventListener(APP_SESSION_ENDED, ended); }
 });
+
+
+it("keeps the service loader until both reads settle and never presents a failed read as empty", async () => {
+  let resolveHealth!: (value: Response) => void, resolveUpdate!: (value: Response) => void;
+  healthReply = () => new Promise<Response>(done => { resolveHealth = done; });
+  updateReply = () => new Promise<Response>(done => { resolveUpdate = done; });
+  await render(app);
+  expect(container.querySelector('[role="status"]')?.textContent).toBe("Loading service observations…");
+  expect(container.querySelector('[role="status"] .hosty-grid-loader')).not.toBeNull();
+  expect(container.textContent).not.toContain("No service observations");
+  await act(async () => resolveHealth(Response.json({ services: [] })));
+  expect(container.textContent).toContain("Loading service observations");
+  await act(async () => resolveUpdate(Response.json({ message: "Registry unavailable" }, { status: 503 })));
+  expect(container.textContent).toContain("Registry unavailable");
+  expect(container.textContent).toContain("Service observations could not be confirmed");
+  expect(container.querySelector('.hosty-empty-slots')).toBeNull();
+  healthReply = async () => Response.json({ services: [] }); updateReply = healthReply;
+  await act(async () => [...container.querySelectorAll('button')].find(node => node.textContent === "Refresh services")!.click());
+  expect(container.textContent).toContain("No service observations are available");
+  expect(container.querySelector('.hosty-empty-slots')).not.toBeNull();
+  expect(container.textContent).not.toContain("Registry unavailable");
+});

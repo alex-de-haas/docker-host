@@ -1,6 +1,6 @@
 ---
 created: 2026-10-18
-updated: 2026-10-21
+updated: 2026-10-25
 summary: Core-owned execution selection runs installed packages or registered workspace manifests on ordinary app data, with scoped access review and recoverable lifecycle operations.
 components: [apps/core, apps/cli, apps/harness, apps/shell]
 ---
@@ -78,7 +78,14 @@ package-runtime baseline. Switching workspace A to workspace B does not create a
 stack. Explicitly selecting another package runtime changes the baseline. Package return does not
 restore an old manifest, data archive, settings snapshot or revoked grants. Current source edits,
 worktrees, caches and ordinary app data survive. There is no mandatory generic data-compatibility
-acknowledgement in the unified switching contract.
+acknowledgement in the unified switching contract. Package selection clears captured workspace
+source overrides, including unavailable paths in an interrupted return, while locally created apps
+keep their canonical Git source binding. Legacy Return still restores its exact captured source.
+Neither path deletes or recreates workspace directories. Interrupted package returns validate the
+normalized source binding, so the dev-mode Return API can retry its original request after a failed
+package start while still rejecting unrelated source changes. The stopped checkpoint also accepts
+the exact captured runtime/source until that projection completes, including recovery from failed
+workspace entry before backup.
 
 Runtime discovery reads profile declarations without admitting the default recipe. Selecting a
 package validates the chosen destination before stopping the current runtime; unrelated runtime
@@ -173,6 +180,13 @@ record substitutes for observed runtime readiness and browser verification.
 - Break the installed default development recipe and live source JSON, then list runtime choices
   and return to a valid package with current data and source edits intact. Reject an invalid
   destination before Stop. Cover explicit and inferred destinations and legacy Return with Stop.
+- Remove a captured pre-development override, then select the installed package or retry its
+  interrupted return. Preserve data and workspace edits, clear the stale override, retain canonical
+  local-Git bindings and complete the original receipt without duplicate lifecycle effects. Retry a
+  failed package start through the dev-mode Return API with both existing and missing captured
+  overrides; accept the normalized binding and reject unrelated source changes. Interrupt Return
+  before source projection after an entry backup failure; accept the captured binding only at the
+  stopped checkpoint and reject it after the return binding is recorded.
 - Verify package Docker -> workspace A -> workspace B -> package Docker, explicit package baseline
   changes, healthy interruption recovery and ownership-aware group Return.
 - Retain legacy version-only compatibility, strict raw recipe checks and correct applied workspace
