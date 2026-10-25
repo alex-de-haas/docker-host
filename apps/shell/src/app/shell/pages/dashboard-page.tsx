@@ -356,10 +356,11 @@ function CoreSection({
   const corePhase = stopping.phase || development.phase;
   const phaseNeedsAttention = coreOperationNeedsAttention(corePhase);
   const updateStatus = coreUpdateFeedback(coreUpdating, coreUpdate?.clientPhase);
-  const actionTone = stopping.busy || development.busy || runtime.busy
+  const runtimeNeedsAttention = runtime.needsAttention && !stopping.busy && !development.busy && !coreUpdating;
+  const actionTone = runtimeNeedsAttention ? "attention" : stopping.busy || development.busy || runtime.busy
     ? phaseNeedsAttention ? "attention" : "working" : updateStatus?.tone ?? "working";
   const CoreActionIcon = actionTone === "attention" ? TriangleAlert : actionTone === "success" ? Check : LoaderCircle;
-  const coreActionLabel = actionTone === "attention" ? "Needs confirmation" : actionTone === "success" ? "Updated"
+  const coreActionLabel = runtimeNeedsAttention ? "Check switch" : actionTone === "attention" ? "Needs confirmation" : actionTone === "success" ? "Updated"
     : stopping.busy ? "Stopping…" : development.busy ? "Restarting…" : runtime.busy ? "Switching…" : "Updating…";
   const showRestartRequired = Boolean(development.state?.restartRequired && !development.busy && !stopping.busy);
   const needsDiagnostics = ["degraded", "unhealthy", "failed"].includes(status?.status ?? "");
@@ -399,7 +400,7 @@ function CoreSection({
                   {canManageApps && (
                     <>
                       <div className="dashboard-context-action">
-                        {coreBusy ? <Button variant="outline" size="sm" disabled><CoreActionIcon data-icon="inline-start" className={actionTone === "working" ? "animate-spin motion-reduce:animate-none" : undefined} aria-hidden />{coreActionLabel}</Button>
+                        {coreBusy ? <Button variant="outline" size="sm" disabled={!runtimeNeedsAttention} onClick={runtimeNeedsAttention ? runtime.showRecovery : undefined}><CoreActionIcon data-icon="inline-start" className={actionTone === "working" ? "animate-spin motion-reduce:animate-none" : undefined} aria-hidden />{coreActionLabel}</Button>
                           : showRestartRequired ? <Button variant="outline" size="sm" disabled={!development.state?.manageable} onClick={() => void development.restart()}>Restart</Button>
                           : needsDiagnostics ? <Button variant="outline" size="sm" onClick={() => setLogsOpen(true)}>Logs</Button>
                           : showUpdate ? <Button variant="outline" size="sm" aria-label="Update Core" onClick={onUpdateCore}>Update</Button>
