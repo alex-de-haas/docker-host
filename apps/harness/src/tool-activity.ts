@@ -13,7 +13,8 @@ export function aggregateToolActivity(sessions: SessionToolActivity[]): Map<stri
   }
   return new Map([...groups].map(([userId, group]) => {
     const failed = group.filter(s => s.status === "failed").length;
-    const waiting = group.filter(s => s.status === "awaiting_approval" || s.status === "awaiting_question")
+    const waiting = group.filter(s => s.status === "awaiting_approval" || s.status === "awaiting_question"
+      || s.status === "running" && s.pending > 0)
       .reduce((count, s) => count + Math.max(1, s.pending), 0);
     const working = group.filter(s => s.status === "running").length;
     const value: ToolActivityValue = failed ? { state: "failed", count: Math.min(failed, 9999) }

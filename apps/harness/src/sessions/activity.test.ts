@@ -6,6 +6,7 @@ import { SessionStore, type StoredEvent } from "./store.js";
 import { SessionManager } from "./manager.js";
 import { FakeHarnessAdapter } from "../harness/fake.js";
 import type { HarnessEvent, HarnessRun, HarnessStartOptions } from "../harness/adapter.js";
+import { aggregateToolActivity } from "../tool-activity.js";
 import { AuditReporter } from "../audit.js";
 
 class ManualAdapter extends FakeHarnessAdapter {
@@ -141,4 +142,25 @@ it("does not revive an orphaned native run merely because its conversation is op
   const view = await manager.subscribe(id, 0, () => {});
   view.unsubscribe();
   expect((await manager.toolActivitySnapshot())[0]).toMatchObject({ status: "failed" });
+});
+
+it.each([
+  ["approval", "approval"], ["question", "question"],
+  ["approval", "question"], ["question", "approval"],
+])("keeps tool attention after resolving one of two decisions (%s then %s)", async (first, second) => {
+  const types = [first, second];
+  for (const [index, type] of types.entries()) {
+    if (type === "approval") adapter.emit({ type: "approval_request", approvalId: `decision-${index}`, toolName: "Command", input: {} });
+    else adapter.emit({ type: "question_request", questionId: `decision-${index}`,
+      questions: [{ question: "Which?", header: "Choice", multiSelect: false, options: [{ label: "A", description: "First" }] }] });
+  }
+  const activity = async () => aggregateToolActivity(await manager.toolActivitySnapshot()).get("admin");
+  await vi.waitFor(async () => expect(await activity()).toEqual({ state: "needs-you", count: 2 }));
+  for (const [index, type] of types.entries()) {
+    const resolved = type === "approval"
+      ? await manager.resolveApproval(id, `decision-${index}`, "allow")
+      : await manager.resolveQuestion(id, `decision-${index}`, { "Which?": "A" });
+    expect(resolved).toBe(true);
+    expect(await activity()).toEqual(index === 0 ? { state: "needs-you", count: 1 } : { state: "working", count: 1 });
+  }
 });
