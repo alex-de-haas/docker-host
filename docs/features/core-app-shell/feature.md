@@ -1,6 +1,6 @@
 ---
 created: 2026-05-19
-updated: 2026-10-23
+updated: 2026-10-25
 summary: Shell is the Core-managed browser UI app that authenticates users and embeds app pages.
 components: [apps/shell]
 ---
@@ -183,8 +183,11 @@ same destination. Logs is a capability-gated tab after Launch, with the existing
 tail, Refresh, per-service selection and aggregate fallback. It reads only while selected and
 aborts obsolete app/scope requests, preserving mounted configuration drafts. Core's Logs shortcut
 and dialog are unchanged. The entire second metadata line — package
-version or source name and runtime — is monospaced; available app updates
-read current → new. App-version hover shows revision/build information only. A failed update check
+version or source name and runtime — is monospaced; available Core and app updates
+read current → new. Core offers Update as its contextual action after Restart and diagnostic Logs,
+with the same action retained in More. Routine target versions are Info blue; app updates requiring
+Core confirmation use Attention amber for the target version and Update action. The action also
+exposes an accessible review label and keeps the existing Core approval flow. App-version hover shows revision/build information only. A failed update check
 keeps its full diagnostic tooltip on the problem icon after the name and diagnostics in Manage,
 without a duplicate native error title on the version wrapper. Error, warning and permission-problem
 icons use the shared shadcn Tooltip on hover and keyboard focus rather than browser-native titles.

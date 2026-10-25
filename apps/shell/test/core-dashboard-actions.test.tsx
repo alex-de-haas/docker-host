@@ -5,7 +5,7 @@ import { DashboardPage } from "../src/app/shell/pages/dashboard-page";
 import type { CoreDevelopment } from "../src/app/shell/core-development";
 import type { CoreStatus, CoreUpdateStatus } from "../src/app/shell/types";
 
-const fixture = vi.hoisted(() => ({ restart: vi.fn(), stop: vi.fn(), logs: vi.fn(), developmentBusy: false, runtimeBusy: false, stopBusy: false, phase: null as string | null }));
+const fixture = vi.hoisted(() => ({ restart: vi.fn(), stop: vi.fn(), update: vi.fn(), logs: vi.fn(), developmentBusy: false, runtimeBusy: false, stopBusy: false, phase: null as string | null }));
 let development: CoreDevelopment;
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
 vi.mock("../src/app/shell/workspace-sources", () => ({ useWorkspaceSources: () => [], coreWorkspaceSource: () => undefined }));
@@ -23,12 +23,12 @@ const primary = () => container.querySelector<HTMLButtonElement>('[data-testid="
 async function render() {
   await act(async () => root.render(<DashboardPage coreOrigin="https://core.test" apps={[]} status={status} coreUpdate={coreUpdate} coreUpdating={coreUpdating}
     canManageApps={admin} loading={false} busyAction={null} pendingAppActions={{}} updateCheck={null} shellAppId="shell.app"
-    onUpdateCore={() => {}} onRefresh={() => {}} onInstall={() => {}} onAction={() => {}} onSwitchRuntime={() => {}}
+    onUpdateCore={fixture.update} onRefresh={() => {}} onInstall={() => {}} onAction={() => {}} onSwitchRuntime={() => {}}
     onUpdateApp={() => {}} onCheckUpdates={() => {}} onUpdateAll={() => {}} onOpenPanel={() => {}} />));
 }
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  fixture.restart.mockReset(); fixture.stop.mockReset();
+  fixture.restart.mockReset(); fixture.stop.mockReset(); fixture.update.mockReset();
   fixture.developmentBusy = false; fixture.runtimeBusy = false; fixture.stopBusy = false; fixture.phase = null;
   development = { launch: { mode: "dev", projectPath: "/tree/Core.csproj", generationPath: "/output", processId: 1, startedAt: "before" }, instance: "1:before", manageable: true,
     source: { overridePath: null, revision: "source" }, managedPath: "/source", sourcePath: "/tree", selectedProjectPath: "/tree/Core.csproj",
@@ -82,11 +82,13 @@ it("retains guarded Stop in More when the narrow contextual shortcut is hidden",
   await act(async () => item.click()); expect(fixture.stop).toHaveBeenCalledOnce();
 });
 
-it("blocks metadata Update during an accepted or unconfirmed stop", async () => {
+it("blocks contextual Update during an accepted or unconfirmed stop", async () => {
   development.launch.mode = "release"; fixture.stopBusy = true;
   coreUpdate = { currentVersion: "1.0.0", updateAvailable: true, releaseTag: "next", checkedAt: "now" };
   await render();
-  expect(container.querySelector<HTMLButtonElement>('[aria-label="Update Core"]')?.disabled).toBe(true);
+  expect(container.querySelector('[aria-label="Update Core"]')).toBeNull();
+  expect(primary()?.disabled).toBe(true);
+  await act(async () => primary()!.click()); expect(fixture.update).not.toHaveBeenCalled();
   expect(container.querySelector<HTMLButtonElement>('[aria-label="More actions for Hosty Core"]')?.disabled).toBe(true);
 });
 
@@ -128,4 +130,17 @@ it.each(["Waiting for confirmation", "Stop not confirmed"])("keeps %s static and
   expect(primary()?.textContent).toBe("Needs confirmation");
   expect(primary()?.querySelector('.animate-spin')).toBeNull();
   expect(primary()?.disabled).toBe(true);
+});
+
+it("offers the package update through the contextual action while preserving lifecycle priorities", async () => {
+  development.launch.mode = "release"; status.version = "1.0.0";
+  coreUpdate = { currentVersion: "1.0.0", availableVersion: "1.1.0", updateAvailable: true, releaseTag: "main", checkedAt: "now" };
+  await render();
+  expect(primary()?.textContent).toBe("Update");
+  expect(container.querySelector('.dashboard-identity button')).toBeNull();
+  await act(async () => primary()!.click()); expect(fixture.update).toHaveBeenCalledOnce();
+  status.status = "degraded"; await render(); expect(primary()?.textContent).toBe("Logs");
+  development.restartRequired = true; await render(); expect(primary()?.textContent).toBe("Restart");
+  development.restartRequired = false; status.status = "running"; development.launch.mode = "dev";
+  await render(); expect(primary()?.textContent).toBe("Stop");
 });
