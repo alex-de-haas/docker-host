@@ -392,23 +392,9 @@ function CoreSection({
                       <span className="truncate font-medium">Hosty Core</span>
                       {showRestartRequired && <Badge variant="secondary" className="border-warning/30 bg-warning-soft text-warning-foreground" title="Core source or configuration changed. Restart to apply it.">Restart required</Badge>}
                     </div>
-                <div className="mt-1 flex min-w-0 items-center gap-1.5">
-                  {dev ? <CoreGitCell state={development.state} workspace={workspace} /> : <CoreVersionBlock status={status} coreUpdate={coreUpdate} />}
-                  {showUpdate && (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-sm"
-                      className="shrink-0 text-info-foreground hover:bg-sky-500/10 hover:text-info-foreground dark:text-sky-400 dark:hover:text-sky-400"
-                      title={coreUpdating ? "Updating Core…" : "Update Core"}
-                      aria-label={coreUpdating ? "Updating Core…" : "Update Core"}
-                      disabled={coreBusy}
-                      onClick={onUpdateCore}
-                    >
-                      {coreUpdating && updateStatus?.tone === "working" ? <LoaderCircle className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden /> : <ArrowUpCircle className="h-4 w-4" aria-hidden />}
-                    </Button>
-                  )}
-                </div>
+                    <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5 font-mono text-xs text-muted-foreground">
+                      {dev ? <CoreGitCell state={development.state} workspace={workspace} /> : <CoreVersionBlock status={status} coreUpdate={coreUpdate} />}
+                    </div>
 
                   </div>
                 </div>
@@ -428,6 +414,7 @@ function CoreSection({
                         {coreBusy ? <Button variant="outline" size="sm" disabled><CoreActionIcon data-icon="inline-start" className={actionTone === "working" ? "animate-spin motion-reduce:animate-none" : undefined} aria-hidden />{coreActionLabel}</Button>
                           : showRestartRequired ? <Button variant="outline" size="sm" disabled={!development.state?.manageable} onClick={() => void development.restart()}>Restart</Button>
                           : needsDiagnostics ? <Button variant="outline" size="sm" onClick={() => setLogsOpen(true)}>Logs</Button>
+                          : showUpdate ? <Button variant="outline" size="sm" aria-label="Update Core" onClick={onUpdateCore}>Update</Button>
                           : <Button variant="outline" size="sm" disabled={!status || !development.state?.manageable} onClick={() => void stopping.stop()}>Stop</Button>}
                       </div>
                       <DropdownMenu>
@@ -590,8 +577,8 @@ function InstalledAppRow({
   // every other runtime app (docs/features/runtime-app-update/feature.md).
   const canUpdate = canManageApps && appSupportsReviewedUpdate(app);
   // The row's update affordance renders from the fleet-check verdict on the app summary (plan-first
-  // updates), as one icon among the other row actions: blue applies the cached plan straight away,
-  // amber opens Core confirmation for changes requiring consent. Progress is operationStatus — server
+  // updates): blue marks a routine candidate and amber marks a plan requiring consent.
+  // Its contextual action retains the plan/apply flow. Progress is operationStatus — server
   // state, so it survives reloads and shows for every admin.
   const updating = app.operationStatus === "updating";
   const verdict = canUpdate && !updating ? app.updateCheck : null;
@@ -674,7 +661,11 @@ function InstalledAppRow({
               : showRestartRequired && canControl ? <Button variant="outline" size="sm" disabled={lifecycleDisabled || Boolean(busyAction?.startsWith(`${app.id}:`))} onClick={() => onAction(app, "restart")}>Restart</Button>
               : running && canViewLogs && needsDiagnostics ? <Button variant="outline" size="sm" onClick={() => onOpenPanel(app, "logs")}>Logs</Button>
               : configurationRequired && canConfigure ? <Button variant="outline" size="sm" onClick={() => onOpenPanel(app, "settings", { settingsTab: app.configurationReadiness?.mounts.length && !app.configurationReadiness?.missingSettings.length ? "mounts" : "app" })}>Configure</Button>
-              : updateVisible ? <Button variant="outline" size="sm" disabled={isBusy("update")} onClick={() => needsReview ? onOpenPanel(app, "update") : onUpdateApp(app)}>Update</Button>
+              : updateVisible ? <Button variant="outline" size="sm" disabled={isBusy("update")}
+                className={needsReview ? "border-warning/40 text-warning-foreground hover:bg-warning-soft hover:text-warning-foreground" : undefined}
+                aria-label={needsReview ? "Review update in Core" : undefined}
+                title={needsReview ? "Core confirmation required" : undefined}
+                onClick={() => needsReview ? onOpenPanel(app, "update") : onUpdateApp(app)}>Update</Button>
               : !running && canControl ? <Button variant="outline" size="sm" disabled={lifecycleDisabled || isBusy("start")} onClick={() => onAction(app, "start")}>Start</Button>
               : canViewLogs && !canControl ? <Button variant="outline" size="sm" onClick={() => onOpenPanel(app, "logs")}>Logs</Button>
               : running && canControl ? <Button variant="outline" size="sm" disabled={lifecycleDisabled || isBusy("stop")} onClick={() => onAction(app, "stop")}>Stop</Button> : null}
@@ -713,12 +704,12 @@ function AppUpdateFeedback({ app }: { app: CoreApp }) {
   return <OperationStatus>{label}</OperationStatus>;
 }
 
-// Core's version, and — when an update is offered — the version the channel publishes under it, in the
+// Core's version, and — when an update is offered — the version the channel publishes beside it, in the
 // same shape the app rows use. That includes a rebuild of the version already installed, which on a
 // rolling channel is the ordinary case: the line answers "which version would I get", and the tooltip
 // title separates "New build of 0.97.0" from "Update to 0.98.0". Core's own check is a binary-hash
 // comparison, so it can name a version only when the release carries the marker; an older release
-// leaves the installed version beside the update icon to say the rest.
+// leaves the installed version beside the contextual Update action.
 //
 // The tooltips name the release channel, and only that. Unlike an app row there is no revision to
 // show — no hash of the published binary is exposed to a client — and `checkedAt` is deliberately left
@@ -733,26 +724,23 @@ function CoreVersionBlock({ status, coreUpdate }: { status: CoreStatus | null; c
 
   return (
     <TooltipProvider delayDuration={150}>
-      <div className="space-y-0.5 text-xs leading-tight text-muted-foreground">
-        <div>
+      <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+        <VersionLine
+          value={status.version}
+          title={`Installed ${status.version}`}
+          revisions={channel}
+          empty="Core has not checked its release channel yet."
+        />
+        {available && <>
+          <span aria-hidden="true">→</span>
           <VersionLine
-            value={status.version}
-            title={`Installed ${status.version}`}
+            value={available}
+            className="text-info-foreground"
+            title={available === status.version ? `New build of ${available}` : `Update to ${available}`}
             revisions={channel}
             empty="Core has not checked its release channel yet."
           />
-        </div>
-        {available && (
-          <div>
-            <VersionLine
-              value={available}
-              className="text-info-foreground decoration-sky-600/50 dark:text-sky-400 dark:decoration-sky-400/50"
-              title={available === status.version ? `New build of ${available}` : `Update to ${available}`}
-              revisions={channel}
-              empty="Core has not checked its release channel yet."
-            />
-          </div>
-        )}
+        </>}
       </div>
     </TooltipProvider>
   );
@@ -770,7 +758,7 @@ function AppVersionCell({ app, workspace, verdict, updateVisible }: {
     <div className="min-w-0 text-xs">
       <div className="flex min-w-0 flex-wrap items-center gap-1.5">
         <VersionLine value={app.version} title={`Installed ${app.version}`} revisions={collectInstalledRevisions(app)} empty="No pinned revision recorded for this build." />
-        {available && <><span aria-hidden="true">→</span><VersionLine value={available} className="text-info-foreground" title={`Update to ${available}`} revisions={collectTargetRevisions(verdict)} empty="This update changes the app's manifest, not a compiled artifact." /></>}
+        {available && <><span aria-hidden="true">→</span><VersionLine value={available} className={verdict?.requiresReview ? "text-warning-foreground" : "text-info-foreground"} title={`Update to ${available}`} revisions={collectTargetRevisions(verdict)} empty="This update changes the app's manifest, not a compiled artifact." /></>}
       </div>
     </div>
   </TooltipProvider>;
