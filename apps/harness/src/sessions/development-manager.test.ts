@@ -21,6 +21,7 @@ beforeEach(async () => {
   dir = await mkdtemp(path.join(os.tmpdir(), "hosty-development-test-")); store = new SessionStore(dir, path.join(dir, "cache"));
   directory = new ProviderDirectory(null, null, "hosty.harness"); vi.spyOn(directory, "readApps").mockResolvedValue([{ id: "notes", displayName: "Notes", runtimeState: "stopped" }]);
   client = new DevelopmentClient("http://core.test", "hosty.harness", "service");
+  vi.spyOn(client, "activity").mockResolvedValue({ workspaceId: null, revision: null, stopRequested: false, state: "unbound" });
   vi.spyOn(client, "retention").mockResolvedValue({ kind: "workspace", workflow: { state: "in-progress", revision: 0 }, resourcesFinished: true });
   vi.spyOn(client, "call").mockImplementation(async (_id, _token, action) => action === "list" ? { workspaces: [tree] } : tree);
   starts = []; sent = []; manager = build();
@@ -78,7 +79,7 @@ describe("development session coordination", () => {
     vi.mocked(client.call).mockRejectedValueOnce(new Error("response lost"));
     await expect(manager.newBuildingSession("admin", "token", input)).rejects.toThrow("response lost");
     const original = (await store.listRecords())[0]!;
-    await expect(manager.deleteSession(original.id, "admin", "token")).rejects.toThrow("Complete and delete");
+    await expect(manager.deleteSession(original.id, "admin", "token")).rejects.toThrow("Recover this session");
     await manager.shutdown(); manager = build();
     const resumed = await manager.newBuildingSession("admin", "token", input);
     expect(resumed.id).toBe(original.id);
@@ -312,7 +313,7 @@ describe("development session coordination", () => {
     expect(sent[0]).toContain(tree.path);
     await expect(manager.workspaceAction(record.id, "cleanup", { workspaceId: tree.id }, "token", "admin")).rejects.toThrow();
     await finish(record.id);
-    expect(client.call).toHaveBeenCalledWith(record.id, "token", "release-lease", expect.objectContaining({ workspaceId: tree.id }));
+    expect(client.activity).toHaveBeenCalledWith(record.id, "token", expect.objectContaining({ stopped: true }));
     await manager.shutdown(); manager = build();
     await manager.postMessage(record.id, "resume", "fresh-token");
     expect(client.call).toHaveBeenCalledWith(record.id, "fresh-token", "list", {});
@@ -392,7 +393,7 @@ it("uses app identity for source operations without creating a cross-app credent
   await manager.workspaceAction(record.id, "status", { workspaceId: tree.id });
   expect(client.call).toHaveBeenCalledWith(record.id, "hostyg_own", "status", expect.objectContaining({ workspaceId: tree.id }));
   await finish(record.id);
-  expect(client.call).toHaveBeenCalledWith(record.id, "hostyg_own", "release-lease", expect.anything());
+  expect(client.activity).toHaveBeenCalledWith(record.id, "hostyg_own", expect.objectContaining({ stopped: true }));
   expect(JSON.stringify(await store.readRecord(record.id))).not.toContain("hostyg_own");
   await manager.postMessage(record.id, "continue from a legacy client", "fresh-delegation");
   expect(client.call).toHaveBeenCalledWith(record.id, "fresh-delegation", "list", {});
@@ -417,7 +418,7 @@ it("retains a development conversation until Core confirms deletion", async () =
   const record = await manager.createSession({ createdBy: "admin", appIds: ["notes"] });
   await manager.workspaceAction(record.id, "prepare", { appId: "notes" }, "token", "admin");
   vi.mocked(client.call).mockResolvedValue({ state: "completed" });
-  await expect(manager.deleteSession(record.id, "admin", "token")).rejects.toThrow("Complete and delete");
+  await expect(manager.deleteSession(record.id, "admin", "token")).rejects.toThrow("Recover this session");
   expect(await store.readRecord(record.id)).not.toBeNull();
   vi.mocked(client.call).mockResolvedValue({ state: "deleted" });
   vi.mocked(client.retention).mockResolvedValue({ kind: "workspace", workflow: { state: "deleted", revision: 2 }, resourcesFinished: true });
@@ -454,16 +455,16 @@ it.each([false, true])("retains native source leases on close without descendant
   const input = { requestId: "568b93d2-cfe6-4d50-a39a-409a1e8a16b5", expectedRevision: 0 };
   const route = `/${workspaceId}/workflow/close`;
   const inspection = vi.spyOn(client, "inspection").mockImplementation(async (_credential, path, body) => {
-    if (!path) return { workspaces: [{ id: workspaceId, owner: { kind: "assistant", appId: "hosty.harness", reference: record.id } }] };
+    if (path?.endsWith("/participants")) return { sessions: [{ appId: "hosty.harness", userId: "admin", sessionId: record.id, attached: true, currentInstallation: true }] };
     expect(body).toEqual(input);
-    if (path.endsWith("close-confirm")) throw new Error("Execution stop is unconfirmed: activity lease retained");
+    if (path?.endsWith("close-confirm")) throw new Error("Execution stop is unconfirmed: activity lease retained");
     return { closure: "closing", operations: [{ id: input.requestId, state: "pending" }] };
   });
-  await expect(manager.inspectWorkspaces("fresh", route, input, "admin")).rejects.toThrow("activity lease retained");
-  await expect(manager.inspectWorkspaces("fresh", route, input, "admin")).rejects.toThrow("activity lease retained");
-  expect(stop).toHaveBeenCalledTimes(1);
+  await expect(manager.inspectWorkspaces("fresh", route, input, "admin")).rejects.toThrow("could not be confirmed");
+  await expect(manager.inspectWorkspaces("fresh", route, input, "admin")).rejects.toThrow("could not be confirmed");
+  expect(stop).not.toHaveBeenCalled();
   expect(vi.mocked(client.call).mock.calls.some(call => call[2] === "release-lease")).toBe(false);
-  expect(inspection).toHaveBeenCalledWith("fresh", route + "-confirm", input);
+  expect(inspection).not.toHaveBeenCalledWith("fresh", route + "-confirm", input);
   expect((await store.readRecord(record.id))?.developmentLease).toBe(record.developmentLease);
 });
 
@@ -531,9 +532,8 @@ it("retains both repositories across context removal, cancellation and restart w
   expect((await manager.getSession(record.id))!.developmentWorkspaces?.map(w => w.id)).toEqual([tree.id, second.id]);
   expect(sent.at(-1)).toContain(second.path);
   await finish(record.id);
-  for (const w of [tree, second])
-    expect(client.call).toHaveBeenCalledWith(record.id, "fresh-token", "release-lease", expect.objectContaining({ workspaceId: w.id }));
-  await expect(manager.deleteSession(record.id, "admin", "fresh-token")).rejects.toMatchObject({ code: "workspace_retained" });
+  expect(client.activity).toHaveBeenCalledWith(record.id, "fresh-token", expect.objectContaining({ stopped: true }));
+  await expect(manager.deleteSession(record.id, "admin", "fresh-token")).rejects.toMatchObject({ code: "workspace_unclassified" });
   expect(await readFile(attachment, "utf8")).toBe("Reference material, not source");
 });
 
@@ -592,4 +592,79 @@ it("does not dispatch queued activation after policy revocation", async () => {
   await finish(record.id);
   await vi.waitFor(async () => expect((await store.readRecord(record.id))!.workspaceActivation?.state).toBe("blocked"));
   expect(client.call).not.toHaveBeenCalledWith(record.id, expect.anything(), "activation-apply", expect.anything());
+});
+
+
+describe("shared workspace session boundaries", () => {
+  const workspaceId = "b".repeat(64);
+  const requestId = "12345678-1234-4234-8234-123456789abc";
+  it("recovers new-session attachment after response loss without dispatch or changed initial selection", async () => {
+    const inspection = vi.spyOn(client, "inspection").mockResolvedValue({ workspaces: [{ id: workspaceId, worktrees: [{ apps: [{ appId: "notes" }] }] }] });
+    let lost = true;
+    vi.mocked(client.call).mockImplementation(async (_id, _token, action) => {
+      if (action === "attach") { if (lost) { lost = false; throw new Error("response lost"); } return { workspace: { id: workspaceId, revision: 3 } }; }
+      return { workspaces: [tree] };
+    });
+    const input = { workspaceId, requestId, expectedRevision: 2 };
+    await expect(manager.newWorkspaceSession("member", "member-token", input)).rejects.toThrow("response lost");
+    const initial = (await store.listRecords())[0]!;
+    await manager.shutdown(); manager = build();
+    inspection.mockResolvedValue({ workspaces: [{ id: workspaceId, worktrees: [{ apps: [{ appId: "later-app" }] }] }] });
+    const recovered = await manager.newWorkspaceSession("member", "member-token", input);
+    expect(recovered.id).toBe(initial.id);
+    expect(recovered.appIds).toEqual(["notes"]);
+    expect(recovered.workspaceAssociation).toEqual({ id: workspaceId, revision: 3 });
+    expect(await store.listRecords()).toHaveLength(1);
+    expect(starts).toHaveLength(0); expect(sent).toHaveLength(0);
+    const attachments = vi.mocked(client.call).mock.calls.filter(c => c[2] === "attach");
+    expect(attachments[0]).toEqual(attachments[1]);
+    expect(await store.readEvents(initial.id)).not.toEqual(expect.arrayContaining([expect.objectContaining({ type: "user_message" })]));
+  });
+
+  it("stops only a revoked user's execution and acknowledges its lease with that user's credential", async () => {
+    const owner = await manager.createSession({ createdBy: "owner", appIds: ["notes"] });
+    const member = await manager.createSession({ createdBy: "member", appIds: ["notes"] });
+    for (const record of [owner, member]) {
+      await manager.workspaceAction(record.id, "prepare", { appId: "notes" }, record.createdBy + "-token", record.createdBy);
+      await manager.postMessage(record.id, "edit independently", record.createdBy + "-token");
+    }
+    const ownerLease = (await store.readRecord(owner.id))!.developmentLease;
+    const memberLease = (await store.readRecord(member.id))!.developmentLease;
+    expect(ownerLease).not.toBe(memberLease);
+    vi.spyOn(client, "inspection").mockResolvedValue({ sessions: [owner, member].map(record => ({ appId: "hosty.harness", userId: record.createdBy, sessionId: record.id, attached: true, currentInstallation: true })) });
+    await manager.inspectWorkspaces("owner-token", `/${workspaceId}/participants/revoke`, { requestId, expectedRevision: 3, userId: "member" }, "owner");
+    expect((await manager.getSession(owner.id))!.status).toBe("running");
+    expect((await store.readRecord(owner.id))!.developmentLease).toBe(ownerLease);
+    expect((await store.readRecord(member.id))!.developmentLease).toBeUndefined();
+    expect(client.activity).toHaveBeenCalledWith(member.id, "member-token", expect.objectContaining({ stopped: true, leaseId: memberLease }));
+    expect(vi.mocked(client.activity).mock.calls.some(([id, credential]) => id === member.id && credential === "owner-token")).toBe(false);
+    await manager.cancelSession(owner.id);
+  });
+
+  it("retains the lease when native execution cannot prove exit", async () => {
+    vi.spyOn(adapter, "start").mockImplementation(options => { starts.push(options); return { send: () => {}, stop: async () => {}, interrupt: async () => {}, setMcpServers: async () => true, resolveApproval: () => false, resolveQuestion: () => false }; });
+    const session = await manager.createSession({ createdBy: "member", appIds: ["notes"] });
+    await manager.workspaceAction(session.id, "prepare", { appId: "notes" }, "member-token", "member");
+    await manager.postMessage(session.id, "edit", "member-token");
+    const lease = (await store.readRecord(session.id))!.developmentLease;
+    await expect(manager.cancelSession(session.id)).rejects.toThrow("exit cannot be confirmed");
+    expect((await store.readRecord(session.id))!.developmentLease).toBe(lease);
+    expect(client.activity).not.toHaveBeenCalledWith(session.id, expect.anything(), expect.objectContaining({ stopped: true }));
+  });
+});
+
+it("publishes failed outcomes only after native exit and preserves failure on rename", async () => {
+  const record = await manager.createSession({ createdBy: "admin", appIds: ["notes"] });
+  await manager.workspaceAction(record.id, "prepare", { appId: "notes" }, "token", "admin");
+  await manager.postMessage(record.id, "test", "token");
+  starts.at(-1)!.onEvent({ type: "error", message: "test failure" });
+  await vi.waitFor(async () => expect((await manager.getSession(record.id))?.status).toBe("failed"));
+  expect(client.activity).toHaveBeenCalledWith(record.id, "token", expect.objectContaining({ status: "failed", stopped: true, sequence: expect.any(Number) }));
+  await manager.renameSession(record.id, "Failed review", "token");
+  expect(vi.mocked(client.activity).mock.lastCall?.[2]).toMatchObject({ status: "failed", title: "Failed review" });
+  await manager.postMessage(record.id, "retry", "token");
+  await finish(record.id);
+  const reports = vi.mocked(client.activity).mock.calls.map(call => call[2]);
+  expect(reports.at(-1)).toMatchObject({ status: "idle", stopped: true });
+  expect(reports.map(r => r.sequence)).toEqual([...reports.map(r => r.sequence)].sort((a, b) => a! - b!));
 });

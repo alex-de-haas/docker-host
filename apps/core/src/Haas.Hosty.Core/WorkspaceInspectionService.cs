@@ -9,7 +9,7 @@ internal sealed partial class WorkspaceInspectionService(DevelopmentWorkspaceSer
 {
     private readonly ConcurrentDictionary<string, (string Key, InspectionCommit[] Commits, bool Truncated, AppSourceFile[] Changes, string? Error)> details = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim[] detailGates = Enumerable.Range(0, 64).Select(_ => new SemaphoreSlim(1, 1)).ToArray();
-    public async Task<WorkspaceInventory> ListAsync(string userId, CancellationToken ct, bool ownedOnly = false)
+    public async Task<WorkspaceInventory> ListAsync(string userId, CancellationToken ct, bool ownedOnly = false, string callerAppId = "")
     {
         var installed = await apps.ListAppRecordsAsync(ct);
         var allowed = new List<DevelopmentWorkspace>();
@@ -39,7 +39,12 @@ internal sealed partial class WorkspaceInspectionService(DevelopmentWorkspaceSer
             var first = group.First();
             var owner = first.Owner;
             var assistant = installed.FirstOrDefault(a => a.Id == owner.AppId && a.InstalledAt == owner.Installation);
-            var destination = owner.IsExternal ? new WorkspaceDestination(null, null) : BrowserDestination(assistant, first.SessionPath);
+            var participation = owner.IsExternal ? null : await workspaces.ParticipationAsync(group.Key, userId, ct);
+            var participants = participation is null ? null : await WorkspaceParticipationEndpoints.Project(participation, userId, callerAppId, users, apps, ct);
+            var ownSession = participants?.Sessions.FirstOrDefault(s => s.Attached && s.CanOpen);
+            var destination = owner.IsExternal ? new WorkspaceDestination(null, null)
+                : ownSession is null ? new WorkspaceDestination(null, "No accessible conversation is attached.")
+                : BrowserDestination(installed.FirstOrDefault(a => a.Id == ownSession.AppId), ownSession.ViewerPath);
             var projection = new InspectionOwner(owner.IsExternal ? "external" : "assistant",
                 owner.External?.Label ?? assistant?.DisplayName ?? owner.AppId, owner.SessionId,
                 owner.IsExternal ? null : owner.AppId, destination.Url, destination.Unavailable);
@@ -52,10 +57,23 @@ internal sealed partial class WorkspaceInspectionService(DevelopmentWorkspaceSer
                 workflow = workflow with { State = "deleting", Closure = "closed", Operations = [.. (workflow.Operations ?? []).Where(o => o.Id != discard.Command.RequestId),
                     new(discard.Command.RequestId, "discard", discard.Command.ExpectedRevision, "pending", discard.Error)] };
             var metadata = await workspaces.MetadataAsync(owner, ct);
-            result.Add(new(group.Key, state, projection, children) { Name = first.Name ?? "Workspace", Workflow = workflow,
+            result.Add(new(group.Key, state, projection, children) { Name = first.Name ?? "Workspace", Workflow = workflow, Participation = participants,
                 UpdatedAt = group.Select(w => w.UpdatedAt ?? w.Observation?.At).Append(workflow.UpdatedAt ?? workflow.CompletedAt).Append(metadata.UpdatedAt).Max() });
         }
         return new(result.ToArray(), clock.UtcNow);
+    }
+
+    internal async Task<WorkspaceOwner> ReadOwnerAsync(string workspaceId, string userId, CancellationToken ct)
+    {
+        var trees = (await workspaces.ListAsync(null, true, ct)).Workspaces.Where(t => t.WorkspaceId == workspaceId).ToArray();
+        if (trees.Length == 0) throw DevelopmentWorkspaceService.Error("not_found", "Workspace not found.");
+        var installed = await apps.ListAppRecordsAsync(ct);
+        foreach (var tree in trees)
+        {
+            try { await RequireSourceAsync(tree, userId, installed, ct); return tree.Owner; }
+            catch (AppLifecycleException) { }
+        }
+        throw DevelopmentWorkspaceService.Error("forbidden", "Workspace access is no longer available.");
     }
 
     internal async Task<WorkspaceOwner> WorkflowOwnerAsync(string workspaceId, string userId, CancellationToken ct)
@@ -91,6 +109,9 @@ internal sealed partial class WorkspaceInspectionService(DevelopmentWorkspaceSer
 
     private async Task RequireSourceAsync(DevelopmentWorkspace tree, string userId, IReadOnlyList<AppRecord> installed, CancellationToken ct)
     {
+        if (!tree.Owner.IsExternal && await workspaces.ReadParticipationAsync(tree.WorkspaceId, ct) is null && tree.Owner.UserId != userId)
+            throw DevelopmentWorkspaceService.Error("forbidden", "The workspace owner must explicitly share its source.");
+        if (await workspaces.RequireParticipationSourceAsync(tree, userId, ct)) return;
         await workspaces.RequireCoreSourceAsync(tree, userId, ct);
         var repository = workspaces.LogicalRepositoryIdentity(tree.Repository);
         if (tree.SourceGrant is not null)
@@ -289,6 +310,18 @@ internal sealed partial class WorkspaceInspectionService(DevelopmentWorkspaceSer
             return new(null, "The destination must stay on the application's browser origin.");
         return new(uri.AbsoluteUri, null);
     }
+    internal async Task<WorkspaceDestination> SessionDestinationAsync(DevelopmentWorkspace tree, WorkspaceOwner actor, CancellationToken ct)
+    {
+        await workspaces.RequireSessionAccessAsync(tree, actor, ct);
+        var state = await workspaces.ReadParticipationAsync(tree.WorkspaceId, ct);
+        if (state is null) return await DestinationAsync(tree, ct);
+        var binding = state.Sessions.FirstOrDefault(s => s.DetachedAt is null && s.Session.SameIdentity(actor));
+        var app = await apps.GetAppAsync(actor.AppId, ct);
+        if (binding is null || app?.InstalledAt != actor.Installation)
+            return new(null, "No accessible conversation is attached.");
+        return BrowserDestination(app, binding.ViewerPath);
+    }
+
     public async Task<WorkspaceDestination> DestinationAsync(DevelopmentWorkspace tree, CancellationToken ct)
     {
         if (tree.Owner.IsExternal)

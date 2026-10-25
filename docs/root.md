@@ -77,7 +77,7 @@ Plans: 14 In Progress · 1 Blocked · 42 Draft · 7 On Hold.
 - [Assistant App Context](features/assistant-app-context/feature.md) — Administrators attach up to 16 installed apps to an assistant session as shared context for Claude and Codex.
 - [Assistant MCP Approval Rules](features/assistant-approval-rules/feature.md) — A shared per-tool MCP policy for Claude and Codex with Ask, Run unprompted and Disabled controls. · [plan](features/assistant-approval-rules/plan.md): Draft, 0/8, updated 2026-10-18
 - [Assistant Attachments](features/assistant-attachments/feature.md) — Files attached in the assistant composer land in the session's working directory and are recorded in the transcript.
-- [Shared Assistant Development Sessions](features/assistant-development-sessions/plan.md) — Umbrella for assistant sessions that own a conversation, its source workspaces, tests and pull requests. · Draft, 0/3, updated 2026-10-20
+- [Shared Assistant Development Sessions](features/assistant-development-sessions/plan.md) — Umbrella for assistant sessions that own a conversation, its source workspaces, tests and pull requests. · Draft, 0/3, updated 2026-10-25
 - [Assistant Entry Points](features/assistant-entry-points/feature.md) — The assistant docks as a Shell panel reachable from every page, and apps can hand it context without driving it. · [plan](features/assistant-entry-points/plan.md): In Progress, 4/6, updated 2026-09-27
 - [Assistant Execution Authorization](features/assistant-execution-authorization/plan.md) — Deferred execution-scoped credentials for assistant and external-agent source operations, independently of the workspace viewer. · Draft, 0/3, updated 2026-10-20
 - [External Agent Session Context](features/assistant-external-session-context/plan.md) — Let an authenticated local external agent read a Hosty session, work in its registered folders and save a report back. · Draft, 0/3, updated 2026-10-07
@@ -85,9 +85,9 @@ Plans: 14 In Progress · 1 Blocked · 42 Draft · 7 On Hold.
 - [Assistant Provider Permissions](features/assistant-provider-permissions/feature.md) — Apps request the assistant role with provides, and Core records administrator-confirmed roles.
 - [Agent Host And Session Containment](features/assistant-runtime-containment/plan.md) — Remaining per-session execution isolation, scoped access and verified shutdown; the shared Docker worker is implemented and verified separately. · Draft, 0/10, updated 2026-10-20
 - [Assistant Session Autonomy](features/assistant-session-autonomy/feature.md) — A per-chat Normal or Autonomous mode that controls whether native commands and file changes ask for approval.
-- [Assistant Session Workspaces](features/assistant-session-workspaces/feature.md) — Session-owned logical workspaces group repository worktrees with compatible Git operations and a separately authorized inspection API.
+- [Assistant Session Workspaces](features/assistant-session-workspaces/feature.md) — Logical workspaces group repository worktrees with explicit session membership, compatible Git operations and an authorized inspection API.
 - [Shared Docker Agent Runtime](features/assistant-shared-docker-runtime/feature.md) — Harness runs declared API and Worker services over authenticated HTTP and SSE, with shared Core-owned source access and native model and reasoning-effort selection. · [plan](features/assistant-shared-docker-runtime/plan.md): In Progress, 10/12, updated 2026-10-21
-- [Shared Assistant History And Provider Switching](features/assistant-shared-history/plan.md) — Durable session events and cross-provider context so one conversation can switch between Claude and Codex. · Draft, 0/6, updated 2026-10-09
+- [Shared Assistant History And Provider Switching](features/assistant-shared-history/plan.md) — Durable session events and cross-provider context so one conversation can switch between Claude and Codex. · Draft, 0/6, updated 2026-10-25
 - [Assistant Timeline And Tool Analysis](features/assistant-timeline-analysis/plan.md) — A session timeline for analysing how agents work and which MCP tools would help them. · Draft, 0/3, updated 2026-09-26
 - [Audit Log — A Bounded, Append-Ordered Trail](features/audit-log/feature.md) — Core's bounded audit trail records security and lifecycle events, constrains exported metadata and searches retained history with explicit limits.
 - [Auth And Gateway Model](features/auth-gateway/feature.md) — Core owns user authentication, app assignments, identity issuance and scoped directory access, while apps own their sessions.
@@ -132,7 +132,7 @@ Plans: 14 In Progress · 1 Blocked · 42 Draft · 7 On Hold.
 - [Global (Shared) Host-Path Mounts](features/global-mounts/feature.md) — A host-level library of shared host folders that apps attach by reference.
 - [Harness Context Usage](features/harness-context-usage/feature.md) — Current context-window usage for Claude and Codex conversations, with durable replay and a compact composer indicator.
 - [Harness Development UI](features/harness-development-ui/feature.md) — Harness combines conversation navigation, multi-repository workspace details, sandbox previews and verified lifecycle actions.
-- [Harness Session Retention](features/harness-session-retention/feature.md) — Harness applies independent chat and completed-workspace retention, preserves unfinished work, and recovers coordinated cleanup with stable operation IDs.
+- [Harness Session Retention](features/harness-session-retention/feature.md) — Harness expires reconciled chats, protects attached development sessions and recovers previously accepted cleanup without deleting shared source implicitly.
 - [Host Networking](features/host-networking/feature.md) — A docker service can run with network host to share the host network namespace, for peer-to-peer workloads the bridge NAT throttles.
 - [Hosty App SDK](features/hosty-app-sdk/feature.md) — The shared app-side Host integration published as an npm package and a NuGet package. · [plan](features/hosty-app-sdk/plan.md): In Progress, 1/7, updated 2026-10-08
 - [Hosty App Skill](features/hosty-app-skill/feature.md) — The repository ships hosty-app-skill, an agent skill for creating, wrapping, updating and validating Hosty runtime apps.
@@ -190,6 +190,7 @@ Plans: 14 In Progress · 1 Blocked · 42 Draft · 7 On Hold.
 - [Workspace Event Observation](features/workspace-event-observation/feature.md) — Core observes workspace changes through filesystem and mutation events, while Harness consumes authorized SSE updates.
 - [Workspace Lifecycle Controls](features/workspace-lifecycle-controls/feature.md) — Core coordinates workspace pause, verified completion, conservative deletion and separately confirmed physical removal of unwanted unfinished work.
 - [Core Source And Workspace Activation](features/workspace-live-activation/feature.md) — Select named app workspaces or installed package runtimes with scoped access review, retained package choices and recoverable Core-owned transitions.
+- [Multiple Sessions In A Shared Workspace](features/workspace-sessions/feature.md) — Explicitly shared workspaces support concurrent private sessions, scoped source access, attributable activity and independent conversation lifetimes.
 - [Workspaces App Retirement](features/workspaces-app/feature.md) — Retirement of the standalone Workspaces app; Core workspace inspection and Harness agent sandbox workflows remain available.
 
 <!-- docs-index:end -->

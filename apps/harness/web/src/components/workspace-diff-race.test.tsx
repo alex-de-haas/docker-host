@@ -38,7 +38,7 @@ it.each([
   });
   try {
     await act(async () => root.render(<WorkspaceDetails workspace={w} title="Race" refresh={() => {}} />));
-    await act(async () => [...container.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent?.startsWith("Session changes"))!.click());
+    await act(async () => [...container.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent?.startsWith("Workspace changes"))!.click());
     await act(async () => {
       document.querySelector<HTMLButtonElement>('[aria-label="Diff scope"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     });

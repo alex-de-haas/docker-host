@@ -1,6 +1,6 @@
 ---
 created: 2026-10-20
-updated: 2026-10-24
+updated: 2026-10-25
 summary: Affected component CI, explicit local integration checks and publication of verified main revisions.
 components: [.github, scripts]
 ---
@@ -52,6 +52,7 @@ npm run test:integration -- activation
 npm run test:integration -- windows
 npm run test:integration -- transport
 npm run test:integration -- worker
+npm run test:integration -- sessions
 npm run test:integration -- whisper
 ```
 
@@ -67,6 +68,7 @@ GitHub Actions. Its small command-construction tests remain in the CI policy job
 | windows | Requires Windows, Git and .NET; runs the focused process/path/document/storage Core tests and CLI shared-receipt tests. Other operating systems receive an explicit refusal. |
 | transport | Requires .NET, Python and Docker; builds Core and runs its isolated real-Docker listener/transport fixture. |
 | worker | Requires Docker; builds the worker image named by the current manifest and runs its process/mount/control fixtures. |
+| sessions | Requires .NET, Git, Python and Docker; builds Core/CLI and both Harness images, then runs multi-user workspace acceptance in a parent-managed child Core with separate password-authenticated users and data. |
 | whisper | Requires .NET; explicitly enables only NativeSpeechTests, including pinned-model download and real CPU inference. `HOSTY_WHISPER_TEST_CACHE` can reuse a verified cache. |
 
 The launcher uses `python3` on Unix and `python` on Windows. Existing fixture entry points
@@ -145,6 +147,11 @@ CPU inference passes its Russian speech, silence, capacity and cancellation chec
 Windows acceptance is not run because the local host is macOS; launcher tests cover its
 command selection and refusal on unsupported hosts. Local results do not establish Windows
 or Linux native readiness. Hosted validation is reported separately in the pull request.
+
+The `sessions` local integration suite builds Core/CLI and Docker Harness, then exercises explicit
+workspace sharing, private conversations, independent session deletion and source retention with
+three invited/password-authenticated users in a parent-managed child Core. See
+[workspace sessions](../workspace-sessions/feature.md#testing-expectations).
 
 ## Testing Expectations
 

@@ -1,6 +1,6 @@
 ---
 created: 2026-10-23
-updated: 2026-10-23
+updated: 2026-10-25
 ---
 
 # Ideas
@@ -719,6 +719,11 @@ addition to any feature plan.
 **Moved from the vision on 2026-10-23.** The vision keeps decision 52's direction: workspaces are
 optional, sessions are independent, and their association is a separate relationship. This section
 keeps the details that still need design.
+
+The [Multiple Sessions In A Shared Workspace feature](features/workspace-sessions/feature.md)
+implements the approved 2026-10-25 scope of explicit administrator membership, concurrent internal
+sessions, independent source identity and lifecycle/retention compatibility. Shared materials,
+broader team roles and knowledge lifetimes remain exploration here.
 
 | Resource | Intended lifetime and relationship |
 | --- | --- |

@@ -9,10 +9,11 @@ const cli = 'apps/cli/src/Haas.Hosty.Cli/Haas.Hosty.Cli.csproj';
 const coreTests = 'apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj';
 const cliTests = 'apps/cli/tests/Haas.Hosty.Cli.Tests/Haas.Hosty.Cli.Tests.csproj';
 const windowsFilter = 'FullyQualifiedName~WindowsProcessControlTests|FullyQualifiedName~StopAsync_OnWindowsKillsAdoptedJobDescendantAfterShellExited|FullyQualifiedName~CoreDevelopmentTests|FullyQualifiedName~ExplicitStop|FullyQualifiedName~SourceDocuments_ReferenceMetadataSupportsLfAndCrLf|FullyQualifiedName~WorkspaceGit_|FullyQualifiedName~JsonStorageTests';
-export const suites = Object.freeze(['activation', 'windows', 'transport', 'worker', 'whisper']);
+export const suites = Object.freeze(['activation', 'sessions', 'windows', 'transport', 'worker', 'whisper']);
 const usage = 'Usage: npm run test:integration -- <' + suites.join('|') + '> [--dry-run]\n'
   + 'Runs one explicitly selected local suite. Builds its fixtures first; no automatic retries.\n'
   + 'activation: .NET, Git, Python, Docker; isolated managed Core Return and recovery\n'
+  + 'sessions: .NET, Git, Python, Docker; shared workspaces with isolated users and Harness\n'
   + 'windows: Windows and .NET; focused process, path and shared receipt tests\n'
   + 'transport: .NET, Python, Docker; isolated Core/container network checks\n'
   + 'worker: Docker; builds the manifest-matching worker image and checks its lifecycle\n'
@@ -36,6 +37,16 @@ export function suitePlan(suite, { platform = process.platform, node = process.e
         command(python, ['scripts/check-workspace-activation.py', '.', 'return', '--managed']),
         command(python, ['scripts/check-workspace-activation.py', '.', 'auto', '--managed']),
       ] };
+    case 'sessions': {
+      const manifest = readManifest();
+      const images = ['api', 'worker'].map(key => manifest.services.find(service => service.key === key).runtimes.docker.image);
+      return { prerequisites: [dotnet, command('git', ['--version']), pythonCheck, docker], steps: [
+        build(core), build(cli),
+        command('docker', ['build', '-f', 'apps/harness/Dockerfile', '-t', images[0], '.']),
+        command('docker', ['build', '-f', 'apps/harness/worker/Dockerfile', '-t', images[1], '.']),
+        command(python, ['scripts/check-workspace-activation.py', '.', 'sessions', '--managed']),
+      ] };
+    }
     case 'windows':
       return { prerequisites: [dotnet, command('git', ['--version'])], steps: [
         command('dotnet', ['test', coreTests, '--filter', windowsFilter]),

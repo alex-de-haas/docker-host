@@ -30,9 +30,12 @@ internal sealed partial class DevelopmentWorkspaceService
     internal async Task<T> WithResourceContextAsync<T>(SandboxActor actor, SandboxContext? context,
         Func<Task<T>> action, CancellationToken ct, bool cleanup = false)
     {
-        var tree = (await ListAsync(null, true, ct)).Workspaces.FirstOrDefault(w => w.Owner.UserId == actor.UserId &&
-            (context?.WorkspaceId == w.WorkspaceId || !w.Owner.IsExternal && context?.SessionId == w.Owner.SessionId
-                && actor.AppId == w.Owner.AppId && actor.Installation == w.Owner.Installation));
+        var associated = actor.AppId is not null && actor.Installation is not null && context?.SessionId is not null
+            ? await SessionParticipationAsync(new(actor.AppId, actor.Installation.Value, actor.UserId, context.SessionId), ct) : null;
+        var tree = (await ListAsync(null, true, ct)).Workspaces.FirstOrDefault(w =>
+            context?.WorkspaceId == w.WorkspaceId || associated?.Id == w.WorkspaceId ||
+            w.Owner.UserId == actor.UserId && !w.Owner.IsExternal && context?.SessionId == w.Owner.SessionId
+                && actor.AppId == w.Owner.AppId && actor.Installation == w.Owner.Installation);
         if (tree is null && context?.WorkspaceId is null) return await action();
         var workspaceId = tree?.WorkspaceId ?? context!.WorkspaceId!;
         Id(workspaceId);
@@ -41,7 +44,11 @@ internal sealed partial class DevelopmentWorkspaceService
             if (!cleanup)
             {
                 if (tree is null) throw Error("not_found", "Workspace no longer exists.");
-                await Read(tree.Id, tree.Owner, ct);
+                if (!await RequireParticipationSourceAsync(tree, actor.UserId, ct))
+                {
+                    if (tree.Owner.UserId != actor.UserId) throw Error("forbidden", "The workspace owner must share its source first.");
+                    await Read(tree.Id, tree.Owner, ct);
+                }
             }
             var workflow = tree is null ? new WorkspaceWorkflow() : await WorkflowAsync(tree.Owner, ct);
             if (!cleanup && (workflow.Closure is not null || workflow.State is "deferred" or "deleting" or "deleted"
@@ -183,7 +190,7 @@ internal sealed partial class DevelopmentWorkspaceService
                     {
                         foreach (var original in trees)
                         {
-                            var w = await Read(original.Id, owner, ct);
+                            var w = await Read(original.Id, null, ct);
                             if (w.State == "released") continue;
                             await CheckConsumers(w, ct);
                             var releaseId = "workflow-" + input.RequestId;

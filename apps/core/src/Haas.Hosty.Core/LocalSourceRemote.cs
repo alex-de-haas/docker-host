@@ -38,8 +38,9 @@ internal sealed partial class DevelopmentWorkspaceService
     public async Task<LocalRemoteStatus> RemoteStatusAsync(string id, WorkspaceOwner owner, string appId, CancellationToken ct)
     {
         var tree = await Read(id, owner, ct);
+        if (tree.Owner.UserId != owner.UserId) throw Error("connection_required", "Remote source configuration belongs to its reviewing user. Use your own publication connection.");
         await RequireLocalRemoteApp(tree, appId, ct);
-        return await Locked(Hash(OwnerIdentity(owner)), () => Locked("repository-admission:" + tree.RepositoryId, async () =>
+        return await Locked(Hash(OwnerIdentity(tree.Owner)), () => Locked("repository-admission:" + tree.RepositoryId, async () =>
         {
             var w = await Read(id, owner, ct);
             return RemoteStatus(w, await RequireLocalRemoteApp(w, appId, ct, validateGrant: false), w.Operations.LastOrDefault(o => o.RemoteCommand?.AppId == appId));
@@ -52,25 +53,29 @@ internal sealed partial class DevelopmentWorkspaceService
         if (kind is not ("connect" or "fetch" or "push-base") || string.IsNullOrWhiteSpace(input.AppId) || input.AppId.Length > 63)
             throw Error("request_invalid", "Supply a local app and a supported remote operation.");
         var tree = await Read(id, owner, ct);
+        if (tree.Owner.UserId != owner.UserId) throw Error("connection_required", "Remote source configuration belongs to its reviewing user. Use your own publication connection.");
         var app = await RequireLocalRemoteApp(tree, input.AppId, ct);
         var grant = kind == "connect"
             ? await RemoteGit.BindAsync(owner.UserId, input.ConnectionId ?? "", input.Repository ?? "", false, ct)
             : app.SourceState!.Remote?.Grant ?? throw Error("remote_required", "Connect an existing repository first.");
-        // The same order as publication: connection, then app/workspace/repository admission.
-        return await RemoteGit.WithConnectionAsync(grant, connection => RemoteCommandLocked(id, owner, kind, input, connection, ct), ct);
+        return await RemoteCommandLocked(id, owner, kind, input, grant, ct);
     }
 
-    private async Task<LocalRemoteStatus> RemoteCommandLocked(string id, WorkspaceOwner owner, string kind, LocalRemoteCommand input, UserProviderConnection connection, CancellationToken ct)
+    private async Task<LocalRemoteStatus> RemoteCommandLocked(string id, WorkspaceOwner owner, string kind, LocalRemoteCommand input, SourceReadGrant admittedGrant, CancellationToken ct)
     {
         RequestId(input.RequestId);
         if (kind is not ("connect" or "fetch" or "push-base") || string.IsNullOrWhiteSpace(input.AppId) || input.AppId.Length > 63)
             throw Error("request_invalid", "Supply a local app and a supported remote operation.");
         var tree = await Read(id, owner, ct);
+        if (tree.Owner.UserId != owner.UserId) throw Error("connection_required", "Remote source configuration belongs to its reviewing user. Use your own publication connection.");
         var appGate = apps.OperationLock(input.AppId);
         await appGate.WaitAsync(ct);
         try
         {
-            return await Locked(Hash(OwnerIdentity(owner)), () => Locked("repository-admission:" + tree.RepositoryId, async () =>
+            // Match preparation: app, membership, owner, repository, then provider connection.
+            return await Locked("workspace-participation", () => Locked(Hash(OwnerIdentity(tree.Owner)),
+                () => Locked("repository-admission:" + tree.RepositoryId,
+                () => RemoteGit.WithConnectionAsync(admittedGrant, async connection =>
             {
                 var w = await Read(id, owner, ct);
                 var app = await RequireLocalRemoteApp(w, input.AppId, ct, validateGrant: false);
@@ -82,7 +87,7 @@ internal sealed partial class DevelopmentWorkspaceService
                 if (prior is not null && (prior.Kind != "remote-" + kind || prior.Fingerprint != fingerprint))
                     throw Error("request_conflict", "This request ID belongs to different arguments.");
                 if (prior?.State == "succeeded") return RemoteStatus(w, app, prior);
-                await RequireOpenWorkflow(owner, ct);
+                await RequireOpenWorkflow(tree.Owner, ct);
                 if (w.State != "active") throw Error("not_active", "Resume the retained workspace before changing its remote.");
                 if (w.Operations.Any(o => o.Id != input.RequestId && o.State is "pending" or "unknown"))
                     throw Error("operation_pending", "Recover the previous operation first.");
@@ -143,7 +148,7 @@ internal sealed partial class DevelopmentWorkspaceService
                     await Save(Put(w, op with { State = op.ResultHead is null || ex is AppLifecycleException { Code: "workspace_remote_exists" } ? "failed" : "pending", Error = "Remote operation was not confirmed. Retry the original request after checking the connection." }));
                     throw;
                 }
-            }, ct), ct);
+            }, ct), ct), ct), ct);
         }
         finally { appGate.Release(); }
     }
@@ -175,6 +180,15 @@ internal sealed partial class DevelopmentWorkspaceService
         var counts = (await Git(w.Path, ["rev-list", "--left-right", "--count", "HEAD..." + head], ct)).StandardOutput.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
         return new(clock.UtcNow, "observed", remote.Repository, remote.TargetBranch, head,
             int.Parse(counts[0], System.Globalization.CultureInfo.InvariantCulture), int.Parse(counts[1], System.Globalization.CultureInfo.InvariantCulture), related);
+    }
+
+    private async Task<string> ReviewedUpstreamForActorAsync(DevelopmentWorkspace tree, WorkspaceOwner? actor, WorkspaceCommand input, CancellationToken ct)
+    {
+        var remote = await PublicationRemoteAsync(tree, ct, validateGrant: false)
+            ?? throw Error("remote_required", "Connect an existing repository first.");
+        if (actor is not null && remote.Grant.OwnerId != actor.UserId)
+            throw Error("connection_required", "This remote belongs to another user. Use your own authorized publication connection.");
+        return await RemoteGit.WithConnectionAsync(remote.Grant, connection => ReviewedUpstream(tree, input, ct, connection), ct);
     }
 
     private async Task<string> ReviewedUpstream(DevelopmentWorkspace w, WorkspaceCommand input, CancellationToken ct, UserProviderConnection connection)
