@@ -1,5 +1,7 @@
 "use client";
 
+import { PanelPreferencesProvider } from "./shell/chrome/panel-preferences";
+
 import { isAppAutostartEnabled } from "./shell/app-helpers";
 import { InlineError } from "./shell/ui";
 import { getManageAppHref } from "./shell/shell-routes";
@@ -2351,9 +2353,9 @@ export function ShellClient({
   return (
     <ShellActionsContext.Provider value={shellActionsContextValue}>
       <ShellStateContext.Provider value={shellStateContextValue}>
+      <PanelPreferencesProvider coreOrigin={coreOrigin} userId={activeUserId} assistantAppId={assistantGateway?.appId}>
       <div className="shell-viewport flex h-dvh flex-col overflow-hidden bg-sidebar">
         <ShellTopStrip
-          assistantAppId={assistantGateway?.appId}
           title={stripTitle}
           subtitle={stripSubtitle}
           leftRailExpanded={!effectiveSidebarCompact}
@@ -2362,7 +2364,6 @@ export function ShellClient({
           // Null while no installed app declares a panel surface: there is no rail to toggle, and a
           // control for chrome that does not exist is worse than no control.
           rightRailExpanded={appPanelTabs.length > 0 ? rightPanelOpen : null}
-          onToggleRightRail={() => setPanelOpen(!rightPanelOpen)}
           showNotifications={Boolean(activeUser)}
           onBrandClick={() => {
             setMobileSidebarOpen(false);
@@ -2506,6 +2507,7 @@ export function ShellClient({
           : undefined,
         ask: askErrorAssistant,
       }}><Toaster /></AssistantFeedbackContext.Provider>
+      </PanelPreferencesProvider>
       </ShellStateContext.Provider>
     </ShellActionsContext.Provider>
   );

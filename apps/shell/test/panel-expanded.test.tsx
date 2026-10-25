@@ -9,7 +9,10 @@ import { ShellPanelWorkspace } from "../src/app/shell/chrome/shell-panel-workspa
 import { usePanelExpanded } from "../src/app/shell/chrome/use-panel-expanded";
 import { ShellMobileTabs } from "../src/app/shell/chrome/shell-mobile-tabs";
 import { ShellTopStrip } from "../src/app/shell/chrome/shell-top-strip";
+import { toggleAssistantPanel } from "../src/app/shell/assistant/assistant-client";
 import { useAssistantSessionLink } from "../src/app/shell/assistant/use-assistant-session-link";
+import { PanelPreferencesProvider, panelPreferenceKey } from "../src/app/shell/chrome/panel-preferences";
+import { panelKey } from "@hosty-sdk/app/ui/types";
 import { RIGHT_PANEL_OPEN_PREF_KEY } from "../src/app/shell/shell-routes";
 
 vi.mock("@hosty-sdk/app/browser-auth", () => ({ appFetch: (...args: Parameters<typeof fetch>) => fetch(...args) }));
@@ -29,17 +32,17 @@ function Shell({ initialOpen, link }: { initialOpen: boolean | null; link: boole
   useEffect(() => { host = panelHost; }, [panelHost]);
   const expanded = usePanelExpanded(panelHost, initialOpen, link);
   useAssistantSessionLink({ host: panelHost, appId: "assistant", assistantIds: ["assistant"], sessionId: link ? "existing" : null, userId: "alice", onOpened: () => {} });
-  return <>
+  return <PanelPreferencesProvider coreOrigin={bootstrap.coreOrigin} userId="alice" assistantAppId="assistant">
     <ShellTopStrip title="Plans" navigationWidth={60} leftRailExpanded={false} onToggleLeftRail={() => {}}
-      rightRailExpanded={expanded} onToggleRightRail={() => panelHost?.setExpanded(!expanded)} showNotifications={false} onBrandClick={() => {}} />
+      rightRailExpanded={expanded} showNotifications={false} onBrandClick={() => {}} />
     <ShellMobileTabs active="dashboard" canManage onNavigate={() => {}} onOpenApps={() => {}} />
     <ShellPanelWorkspace onExpandedChange={persisted}><div>Document<input aria-label="Document draft" defaultValue="" /></div></ShellPanelWorkspace>
-  </>;
+  </PanelPreferencesProvider>;
 }
 async function render(initialOpen: boolean | null, link = false) {
   await act(async () => root.render(<HostyUiRoot panelLayout="slot"><Shell initialOpen={initialOpen} link={link} /></HostyUiRoot>));
 }
-const toggle = (open: boolean) => container.querySelector<HTMLButtonElement>(`button[aria-label="${open ? "Hide" : "Show"} the panel"]`)!;
+const toggle = (open: boolean) => container.querySelector<HTMLButtonElement>(`button[aria-label="Open assistant — assistant"][aria-pressed="${open}"]`)!;
 beforeEach(() => {
   catalog = panels; host = null; catalogGate = null; resolutionGate = null; refused = false; persisted.mockReset(); localStorage.clear();
   document.cookie = `${RIGHT_PANEL_OPEN_PREF_KEY}=; max-age=0; path=/`;
@@ -70,7 +73,8 @@ it("shows the real collapsed state during a delayed/refused session link and ope
   let release!: () => void;
   catalogGate = new Promise(resolve => { release = resolve; }); refused = true;
   await render(true, true);
-  expect(toggle(false)?.getAttribute("aria-pressed")).toBe("false");
+  expect(container.querySelector('[aria-label="Tools"]')).not.toBeNull();
+  expect(toggle(false)).toBeNull();
   await act(async () => { release(); await host!.refresh(); });
   expect(host!.getSnapshot().selected).toBeNull();
   expect(persisted).not.toHaveBeenCalled();
@@ -125,7 +129,7 @@ it("performs one resolution for the first top-strip opening after catalog discov
   await act(async () => release());
   expect(select).toHaveBeenCalledTimes(1);
   expect(requests()).toHaveLength(1);
-  expect(host!.getSnapshot().selected).toEqual(panels[0].panel);
+  expect(host!.getSnapshot().selected).toEqual(panels[1].panel);
   expect(container.querySelector("aside")?.hidden).toBe(false);
 });
 
@@ -348,4 +352,68 @@ it("closes the portaled Open views menu before Escape dismisses the narrow tool 
     expect(host!.getSnapshot().expanded).toBe(false);
     expect([...container.querySelectorAll('iframe[title="assistant"]')]).toEqual(frames);
   } finally { Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth }); }
+});
+
+const pinLabel = (name: string) => `Pin ${name} — ${name} to top bar`;
+async function openTools() {
+  await act(async () => container.querySelector<HTMLElement>('header [aria-label="Tools"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })));
+}
+async function pinWithKeyboard(name: string) {
+  const pin = document.querySelector<HTMLElement>(`[role="menuitemcheckbox"][aria-label="${pinLabel(name)}"]`)!;
+  expect(pin).not.toBeNull();
+  await act(async () => pin.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+}
+it("unpins all launchers through Tools without closing retained views and restores a pin without opening it", async () => {
+  HTMLElement.prototype.scrollIntoView = vi.fn(); await render(false);
+  await act(async () => { await host!.selectPanel(panels[1].panel); });
+  const frame = container.querySelector('iframe[title="assistant"]');
+  await openTools(); await pinWithKeyboard("assistant");
+  expect(document.querySelector('[role="menu"]')).not.toBeNull();
+  expect(container.querySelectorAll('[data-pinned-tools] button')).toHaveLength(0);
+  expect(container.querySelector('iframe[title="assistant"]')).toBe(frame); expect(host!.getSnapshot().expanded).toBe(true);
+  const requests = vi.mocked(fetch).mock.calls.length;
+  await pinWithKeyboard("notes");
+  expect(container.querySelector('button[aria-label="Open notes — notes"]')).not.toBeNull();
+  expect(vi.mocked(fetch).mock.calls).toHaveLength(requests); expect(host!.getSnapshot().selected).toEqual(panels[1].panel);
+});
+it("opens an unpinned target from Tools and a session link without silently pinning it or selecting another assistant", async () => {
+  localStorage.setItem(panelPreferenceKey(bootstrap.coreOrigin, "alice"), JSON.stringify({ version: 1, pins: { [panelKey(panels[1].panel)]: false } }));
+  HTMLElement.prototype.scrollIntoView = vi.fn(); await render(true);
+  expect(host!.getSnapshot().selected).toBeNull();
+  await openTools();
+  const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(item => item.textContent === "assistantassistant")!;
+  await act(async () => item.click());
+  expect(host!.getSnapshot().selected).toEqual(panels[1].panel); expect(container.querySelectorAll('[data-pinned-tools] button')).toHaveLength(0);
+  await act(async () => host!.collapseWorkspace("default"));
+  await render(false, true);
+  expect(host!.getSnapshot().selected).toEqual(panels[1].panel); expect(host!.getSnapshot().expanded).toBe(true);
+  expect(container.querySelectorAll('[data-pinned-tools] button')).toHaveLength(0);
+});
+it("removes inaccessible launchers, preserves an explicit panel pin through metadata updates and ignores old installations", async () => {
+  localStorage.setItem(panelPreferenceKey(bootstrap.coreOrigin, "alice"), JSON.stringify({ version: 1, pins: { [panelKey(panels[0].panel)]: true } }));
+  await render(false); expect(container.querySelector('button[aria-label="Open notes — notes"]')).not.toBeNull();
+  catalog = [panels[1]]; await act(async () => host!.refresh()); expect(container.querySelector('button[aria-label="Open notes — notes"]')).toBeNull();
+  catalog = [{ ...panels[0], label: "Renamed", route: "/new" }, panels[1]]; await act(async () => host!.refresh()); expect(container.querySelector('button[aria-label="Open notes — Renamed"]')).not.toBeNull();
+  catalog = [{ ...panels[0], panel: { ...panels[0].panel, installationId: "notes-2" } }, panels[1]]; await act(async () => host!.refresh()); expect(container.querySelector('button[aria-label="Open notes — notes"]')).toBeNull();
+});
+it("keeps unpinned assistant attention in Tools and honors its keyboard shortcut without changing pins", async () => {
+  localStorage.setItem(panelPreferenceKey(bootstrap.coreOrigin, "alice"), JSON.stringify({ version: 1, pins: { [panelKey(panels[1].panel)]: false } }));
+  HTMLElement.prototype.scrollIntoView = vi.fn(); await render(false);
+  await act(async () => { await toggleAssistantPanel(host!, "assistant"); });
+  expect(host!.getSnapshot().selected).toEqual(panels[1].panel);
+  const frame = container.querySelector('iframe[title="assistant"]');
+  await act(async () => { host!.collapseWorkspace("default"); host!.setAttention(panels[1].panel, 3); });
+  expect(container.querySelector('header [aria-label="Tools"]')?.textContent).toContain("3");
+  await openTools(); expect(document.querySelector('[aria-label="Needs attention"]')).not.toBeNull();
+  expect(document.querySelector(`[role="menuitemcheckbox"][aria-label="${pinLabel("assistant")}"]`)?.getAttribute("aria-checked")).toBe("false");
+  expect(container.querySelectorAll('[data-pinned-tools] button')).toHaveLength(0); expect(container.querySelector('iframe[title="assistant"]')).toBe(frame);
+});
+it("does not turn a pin action into an automatic open when restoring an all-unpinned workspace", async () => {
+  localStorage.setItem(panelPreferenceKey(bootstrap.coreOrigin, "alice"), JSON.stringify({ version: 1, pins: { [panelKey(panels[1].panel)]: false } }));
+  HTMLElement.prototype.scrollIntoView = vi.fn(); await render(true);
+  expect(host!.getSnapshot().selected).toBeNull();
+  await openTools(); await pinWithKeyboard("notes");
+  expect(container.querySelector('button[aria-label="Open notes — notes"]')).not.toBeNull();
+  expect(host!.getSnapshot().selected).toBeNull();
+  await act(async () => host!.refresh()); expect(host!.getSnapshot().selected).toBeNull();
 });

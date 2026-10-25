@@ -1,6 +1,6 @@
 ---
 created: 2026-10-10
-updated: 2026-10-12
+updated: 2026-10-25
 summary: Shared SDK panels compose app-owned tools beside documents in Shell and standalone, with verified peers and pinned presentation targets.
 components: [packages/app-sdk, apps/core, apps/shell, apps/plans, apps/harness, apps/demo-app]
 ---
@@ -259,8 +259,8 @@ host retain their legacy load-based delivery.
 
 [Default applications](../default-applications/plan.md) owns selection policy before a new operation;
 it does not reselect finalized results. [Replaceable UI clients](../replaceable-ui-clients/plan.md)
-owns full client roles/navigation and consumes this host protocol. [Panel visibility](../app-ui-surfaces/plan.md)
-owns persisted hide/restore preferences. [Embedding restrictions](../app-embedding-restrictions/plan.md)
+owns full client roles/navigation and consumes this host protocol. [Panel visibility](../app-ui-surfaces/feature.md#shells-chrome)
+owns Shell's persisted pin preferences. [Embedding restrictions](../app-embedding-restrictions/plan.md)
 remains On Hold: a designated standalone embedder is distinct from a full UI client, and this
 feature does not confer that deferred designation. Current CSP refusal has explicit recovery.
 
