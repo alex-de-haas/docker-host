@@ -1,5 +1,5 @@
 import { ToolActivityReporter } from "@hosty-sdk/app/tool-activity/server";
-import { startHarnessToolActivity } from "./tool-activity.js";
+import { startHarnessToolActivity, ToolActivityOwners } from "./tool-activity.js";
 import path from "node:path";
 import { WorkerClient } from "./worker/client.js";
 import { RemoteConnections } from "./worker/connections.js";
@@ -74,9 +74,11 @@ const manager: SessionManager = new SessionManager(
 );
 
 // Older Core launches have no installation identity; activity becomes available after an app restart.
+const toolActivityOwners = new ToolActivityOwners(config.dataDir);
 const stopToolActivity = config.coreOrigin && config.serviceToken && process.env.HOSTY_APP_INSTALLATION_ID
   ? startHarnessToolActivity(manager, new ToolActivityReporter({ coreOrigin: config.coreOrigin,
-    serviceToken: config.serviceToken, appId: config.appId }))
+    serviceToken: config.serviceToken, appId: config.appId,
+    onReported: (userId, panelId, value) => toolActivityOwners.acknowledge(userId, panelId, value) }), toolActivityOwners)
   : async () => {};
 
 // Retention: once at boot, then daily. The manager reconciles Core resources and completion

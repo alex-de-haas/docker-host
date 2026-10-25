@@ -68,9 +68,16 @@ therefore does not depend on an open frame or a producer SSE connection. An ackn
 removed from the reporter cache. `dispose()` cancels requests, stops its timer and drops retained
 values; it does not clear persistent attention in Core on behalf of an unfinished run.
 
+An optional `onReported(userId, panelId, value)` callback acknowledges the current successful report.
+Rejected acknowledgements retry; updates arriving while an acknowledgement runs remain queued.
+
 Harness reports its declared `assistant` panel for each session owner. Its server observes session
 transitions and deletion without browser subscribers, aggregates failed sessions before pending
 approvals/questions before running sessions, and clears the aggregate when nothing remains.
+Before reporting, Harness atomically records owners of non-idle activity in its app data. Startup
+reconciles that journal with the session snapshot, retrying idle for deleted owners even after a
+failed clear and a process restart. Only an acknowledged idle removes an absent owner from the
+journal; a concurrent new active snapshot preserves that owner.
 Counts describe failed sessions, pending decisions or running sessions within the winning state.
 Native runs orphaned by a Harness restart are not renewed as working presence. Existing worker
 recovery supplies the retained worker session state. The helper runs only with a complete managed
@@ -102,7 +109,8 @@ do not select, remount or close panels; unsent drafts and pin choices remain int
 - Test reporter retries, renewal, restart re-report, shutdown and an update arriving during an
   in-flight clear.
 - Test Harness aggregation and real SessionManager approval, question, failure and deletion events
-  without frame subscriptions.
+  without frame subscriptions, plus a failed deletion clear followed by restart and renewal during
+  acknowledgement.
 - Test Shell's tool counts, severity priority, actor changes, disconnected state, delayed reads,
   visibility recovery and retained drafts.
 - In a managed local Core, use normal setup/login and separate test data. Verify unopened panels

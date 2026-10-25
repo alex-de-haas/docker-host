@@ -1,5 +1,9 @@
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { ToolActivityReporter } from "@hosty-sdk/app/tool-activity/server";
 import { afterEach, expect, it, vi } from "vitest";
-import { aggregateToolActivity, startHarnessToolActivity, type SessionToolActivity } from "./tool-activity.js";
+import { aggregateToolActivity, startHarnessToolActivity, ToolActivityOwners, type SessionToolActivity } from "./tool-activity.js";
 
 afterEach(() => vi.useRealTimers());
 
@@ -49,4 +53,62 @@ it("retries failed reads without a browser event and processes a change during a
   await vi.advanceTimersByTimeAsync(1001);
   expect(reporter.set).toHaveBeenLastCalledWith("one", "assistant", { state: "working", count: 1 });
   await stop();
+});
+
+it("recovers a deleted owner's failed clear after restart and removes acknowledged owners", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "harness-tool-activity-"));
+  const stops: (() => Promise<void>)[] = [];
+  let sessions: SessionToolActivity[] = [{ userId: "one", status: "awaiting_question", pending: 1 }];
+  let notify!: () => void, failClear = false, coreState = "idle";
+  const source = { subscribeToolActivity: (listener: () => void) => { notify = listener; return () => {}; },
+    toolActivitySnapshot: async () => sessions };
+  const fetcher = vi.fn(async (_url: unknown, init?: RequestInit) => {
+    const body = JSON.parse(init!.body as string);
+    if (body.state !== "idle")
+      expect(JSON.parse(await readFile(path.join(root, "tool-activity-owners.json"), "utf8"))).toContain(body.userId);
+    if (body.state === "idle" && failClear) throw new Error("offline");
+    coreState = body.state;
+    return new Response("{}");
+  });
+  vi.stubGlobal("fetch", fetcher);
+  const start = () => {
+    const owners = new ToolActivityOwners(root);
+    const reporter = new ToolActivityReporter({ appId: "test.app", installationId: "one", serviceToken: "test",
+      coreOrigin: "http://core.test", onReported: (userId, panelId, value) => owners.acknowledge(userId, panelId, value) });
+    const stop = startHarnessToolActivity(source, reporter, owners);
+    stops.push(stop);
+    return stop;
+  };
+  try {
+    const stopFirst = start();
+    await vi.waitFor(() => expect(coreState).toBe("needs-you"));
+    expect(JSON.parse(await readFile(path.join(root, "tool-activity-owners.json"), "utf8"))).toEqual(["one"]);
+    failClear = true; sessions = []; notify();
+    await vi.waitFor(() => expect(fetcher.mock.calls.some(([, init]) => JSON.parse(init!.body as string).state === "idle")).toBe(true));
+    await stopFirst();
+    expect(coreState).toBe("needs-you");
+    failClear = false;
+    const stopSecond = start();
+    await vi.waitFor(() => expect(coreState).toBe("idle"));
+    await vi.waitFor(async () => expect(JSON.parse(await readFile(path.join(root, "tool-activity-owners.json"), "utf8"))).toEqual([]));
+    await stopSecond();
+    expect(await new ToolActivityOwners(root).reconcile(new Map())).toEqual(new Set());
+  } finally {
+    for (const stop of stops) await stop();
+    vi.unstubAllGlobals();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it("does not forget a renewed owner when an earlier clear acknowledgement arrives", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "harness-tool-activity-"));
+  try {
+    const owners = new ToolActivityOwners(root);
+    await owners.reconcile(new Map([["one", { state: "failed" }]]));
+    await owners.reconcile(new Map());
+    const clearing = owners.acknowledge("one", "assistant", { state: "idle" });
+    const renewed = owners.reconcile(new Map([["one", { state: "needs-you" }]]));
+    await Promise.all([clearing, renewed]);
+    expect(await new ToolActivityOwners(root).reconcile(new Map())).toEqual(new Set(["one"]));
+  } finally { await rm(root, { recursive: true, force: true }); }
 });

@@ -5,6 +5,8 @@ export type ToolActivityValue = { state: ToolActivityState; count?: number; labe
 export type ToolActivityReporterOptions = ProviderServerOptions & {
   installationId?: string;
   onError?: (error: Error) => void;
+  /** Acknowledges the current value; rejection keeps it queued for retry. */
+  onReported?: (userId: string, panelId: string, value: ToolActivityValue) => void | Promise<void>;
 };
 type Entry = { userId: string; panelId: string; value: ToolActivityValue; due: number };
 
@@ -66,6 +68,8 @@ export class ToolActivityReporter {
         await response.body?.cancel();
         if (!response.ok) throw new Error(`Tool activity report failed (${response.status}).`);
         // A newer value may have arrived during this request; never acknowledge or delete it.
+        if (this.entries.get(key) !== entry) continue;
+        await this.options.onReported?.(entry.userId, entry.panelId, { ...entry.value });
         if (this.entries.get(key) !== entry) continue;
         if (entry.value.state === "idle") this.entries.delete(key);
         else entry.due = Date.now() + Math.min(20_000, (entry.value.ttlSeconds ?? 60) * 1000 / 3);

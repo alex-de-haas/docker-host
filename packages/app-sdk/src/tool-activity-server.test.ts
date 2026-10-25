@@ -63,3 +63,41 @@ it("keeps users and panels separate and bounds unsupported input", async () => {
   await vi.advanceTimersByTimeAsync(60_000);
   expect(bodies()).toHaveLength(count);
 });
+
+it("retries a failed durable acknowledgement before forgetting an idle clear", async () => {
+  const acknowledge = vi.fn().mockRejectedValueOnce(new Error("disk unavailable")).mockResolvedValue(undefined);
+  reporter = new ToolActivityReporter({ ...options, onReported: acknowledge });
+  reporter.set("one", "assistant", { state: "idle" });
+  await reporter.flush();
+  expect(acknowledge).toHaveBeenCalledOnce();
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(acknowledge).toHaveBeenCalledTimes(2);
+  const count = bodies().length;
+  await vi.advanceTimersByTimeAsync(20_000);
+  expect(bodies()).toHaveLength(count);
+});
+
+it("retains a new state while a successful clear acknowledgement is in flight", async () => {
+  let finish!: () => void;
+  const acknowledge = vi.fn().mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
+  reporter = new ToolActivityReporter({ ...options, onReported: acknowledge });
+  reporter.set("one", "assistant", { state: "idle" });
+  await vi.advanceTimersByTimeAsync(1);
+  reporter.set("one", "assistant", { state: "needs-you", count: 1 });
+  finish();
+  await reporter.flush();
+  await vi.advanceTimersByTimeAsync(250);
+  expect(bodies().at(-1)).toMatchObject({ state: "needs-you", count: 1 });
+  expect(acknowledge).toHaveBeenLastCalledWith("one", "assistant", { state: "needs-you", count: 1 });
+});
+
+it("does not acknowledge a rejected Core report", async () => {
+  vi.mocked(fetch).mockResolvedValueOnce(new Response("denied", { status: 403 }));
+  const acknowledge = vi.fn();
+  reporter = new ToolActivityReporter({ ...options, onReported: acknowledge });
+  reporter.set("one", "assistant", { state: "idle" });
+  await reporter.flush();
+  expect(acknowledge).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(acknowledge).toHaveBeenCalledOnce();
+});
