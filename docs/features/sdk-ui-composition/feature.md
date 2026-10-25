@@ -1,6 +1,6 @@
 ---
 created: 2026-10-11
-updated: 2026-10-23
+updated: 2026-10-25
 summary: Explicit navigation and tool policy, manifest navigation, and retained tool instances shared by Shell, desktop hosts and standalone apps.
 components: [packages/app-sdk, apps/core, apps/shell, apps/plans, apps/demo-app, apps/harness, apps/marketplace, apps/telemetry-ui, apps/shell-swift]
 ---
@@ -293,7 +293,7 @@ visibility use deprecated; remove old launch-based CSS when adopting composition
 
 [Default applications](../default-applications/plan.md) owns provider choice, not presentation.
 [Replaceable UI clients](../replaceable-ui-clients/plan.md) owns client eligibility and launch
-routing. [Panel visibility](../app-ui-surfaces/plan.md) owns persisted declaration preferences.
+routing. [Panel visibility](../app-ui-surfaces/feature.md#shells-chrome) owns persisted declaration preferences.
 None of those features is required to use this contract. The fixture is not a production desktop
 shell, and this API does not add context to an existing assistant conversation.
 

@@ -423,6 +423,52 @@ describe("panel host authority and replay", () => {
     expect(await h.openSurface(target, { placement: "side", requestId })).toMatchObject({ status: "opened" });
     expect(h.getSnapshot().expanded).toBe(true);
   });
+  it.each([false, true])("cancels only a pending host selection and preserves retained tools (retained: %s)", async retained => {
+    const h = await start();
+    if (retained) { await h.selectPanel(panel); h.collapseWorkspace("default"); }
+    const existing = h.getSnapshot().tools.map(tool => tool.presentationId);
+    let release!: () => void, entered!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const waiting = new Promise<void>(resolve => { entered = resolve; });
+    const previous = fetcher.getMockImplementation()!;
+    let delay = true;
+    fetcher.mockImplementation(async (path: string, ...args: unknown[]) => {
+      if (delay && path.endsWith("panels/resolve")) { delay = false; entered(); await gate; }
+      return previous(path, ...args);
+    });
+    const controller = new AbortController();
+    const pending = h.selectPanel(panel, "default", controller.signal); await waiting;
+    // A later explicit selection stays valid even when the older operation is cancelled.
+    const explicit = h.selectPanel(panel);
+    controller.abort(); release();
+    expect(await pending).toMatchObject({ status: "blocked", code: "presentation_cancelled" });
+    expect((await explicit).status).toBe("opened");
+    expect(h.getSnapshot().selected).toEqual(panel);
+    expect(h.getSnapshot().expanded).toBe(true);
+    expect(h.getSnapshot().tools).toHaveLength(1);
+    if (retained) expect(h.getSnapshot().tools.map(tool => tool.presentationId)).toEqual(existing);
+  });
+  it("refuses an already-cancelled host selection without resolving a panel", async () => {
+    const h = await start(), controller = new AbortController(); controller.abort(); fetcher.mockClear();
+    expect(await h.selectPanel(panel, "default", controller.signal)).toMatchObject({ status: "blocked", code: "presentation_cancelled" });
+    expect(fetcher).not.toHaveBeenCalled(); expect(h.getSnapshot().tools).toHaveLength(0);
+  });
+  it("cancels a host selection during renderer work and releases its provisional tool", async () => {
+    host = createUiHost(); const h = host;
+    let entered!: () => void;
+    const waiting = new Promise<void>(resolve => { entered = resolve; });
+    const release = vi.fn();
+    h.registerWorkspace({ workspaceId: "default", renderer: {
+      present: async (_tool, signal) => { entered(); return new Promise(resolve => signal.addEventListener("abort", () => resolve("unavailable"), { once: true })); },
+      release, focus() {}, collapse() {}, showToolPicker: async () => "accepted",
+    } });
+    await h.refresh();
+    const controller = new AbortController(), pending = h.selectPanel(panel, "default", controller.signal);
+    await waiting; controller.abort();
+    expect(await pending).toMatchObject({ status: "blocked", code: "presentation_cancelled" });
+    expect(release).toHaveBeenCalledTimes(1); expect(h.getSnapshot().tools).toHaveLength(0);
+    expect(h.getSnapshot().selected).toBeNull();
+  });
   it("keeps the newer tool selected when an earlier resolution finishes last", async () => {
     const h = await start();
     let release!: () => void, entered!: () => void;

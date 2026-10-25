@@ -112,8 +112,8 @@ Three roles stay distinct:
 
 The Shell handoff need not synchronize a whole conversation. AHP remains under
 evaluation for full session clients, including Swift; protocol adoption does not decide where
-authoritative storage lives. User-controlled hiding/restoring of app panel entries is tracked
-separately in [app UI surfaces](../app-ui-surfaces/plan.md), without uninstalling the backend.
+authoritative storage lives. User-controlled pinning of app panel launchers is implemented
+in [app UI surfaces](../app-ui-surfaces/feature.md#shells-chrome), without uninstalling the backend.
 
 ## Workspace Terminology Clarification (Owner Decision, 2026-10-09)
 
