@@ -149,6 +149,8 @@ it.each([400, 409].flatMap(status => ["update_plan_expired", "update_plan_stale"
     ]);
     expect(callsTo("/api/apps/routine.app/update/plan")).toHaveLength(1);
     expect(callsTo("/api/installations")).toHaveLength(0);
+    expect(fixture.toast.info).not.toHaveBeenCalled();
+    expect(fixture.toast.success).not.toHaveBeenCalled();
     expect(fixture.toast.error).not.toHaveBeenCalled();
   },
 );
@@ -171,7 +173,7 @@ it("reclassifies a refreshed routine candidate and opens Core review instead of 
   expect(attempts).toBe(1);
   expect(callsTo("/api/installations").map(([, init]) => JSON.parse(init.body))).toEqual([{ updateAppId: target.id, planDigest: "review-digest" }]);
   expect(fixture.showConfirmation).toHaveBeenCalledWith(null, expect.objectContaining({ id: "review", status: "pending" }));
-  expect(fixture.toast.info).toHaveBeenCalledWith("Update cancelled", expect.anything());
+  expect(fixture.toast.info).not.toHaveBeenCalled();
   expect(fixture.toast.error).not.toHaveBeenCalled();
 });
 
@@ -585,6 +587,8 @@ it("shows immediate restart progress and keeps each queued app busy without subm
   await act(async () => { second.resolve(Response.json({ status: "restarted" })); await otherAction; });
   expect(shell.pendingAppActions).toEqual({});
   expect(appRow(other.id).querySelector('[role="status"]')).toBeNull();
+  expect(fixture.toast.info).not.toHaveBeenCalled();
+  expect(fixture.toast.success).not.toHaveBeenCalled();
 });
 
 it("uses server lifecycle stages in the row, including for operations started by another client", async () => {
@@ -655,7 +659,8 @@ it("switches directly to a package without planning or compatibility confirmatio
   expect(JSON.parse(callsTo("/api/apps/routine.app/execution-target")[0][1].body)).toMatchObject({ kind: "package", runtime: "docker" });
   expect(callsTo("/api/apps/routine.app/dev-mode/plan")).toHaveLength(0);
   expect(fixture.confirm).not.toHaveBeenCalled();
-  expect(fixture.toast.success).toHaveBeenCalledWith("Runtime switched", expect.objectContaining({ description: "Routine app" }));
+  expect(fixture.toast.success).not.toHaveBeenCalled();
+  expect(fixture.toast.info).not.toHaveBeenCalled();
 });
 
 it("retains one request while Shell is switching and recovers its lost response by reading Core", async () => {
@@ -1205,7 +1210,8 @@ it.each([false, true])("keeps explicit update checks guarded and retryable after
   if (fails) expect(fixture.toast.error).toHaveBeenCalledWith("Update check failed", {
     description: "Routine app: Feed is unavailable", appId: target.id,
   });
-  else expect(fixture.toast.success).toHaveBeenCalledWith("Update available", { description: target.displayName });
+  expect(fixture.toast.success).not.toHaveBeenCalled();
+  expect(fixture.toast.info).not.toHaveBeenCalled();
   await act(async () => check.click());
   expect(callsTo(`/api/apps/${target.id}/update-status`, "GET")).toHaveLength(2);
   expect(fixture.router.push).not.toHaveBeenCalled();

@@ -156,7 +156,7 @@ health composed into a running status and missing runtime observations shown as 
 phases `stopping` and `starting` use only Updating below that status, without a service suffix.
 Other supported phases retain Update queued, Preparing update, Creating backup, Installing,
 Downloading or Checking readiness, with the reported service when present.
-Terminal update outcomes add no row message or expiry timer. Existing success, failure and readiness
+Terminal update outcomes add no row message or expiry timer. Only failure and readiness-problem
 toasts remain; problem icons and Manage retain diagnostics. Separate configuration and Restart
 required information remains visible. Dashboard rows do not display a Manual start marker. Autostart
 remains configurable in More and Manage > Launch.

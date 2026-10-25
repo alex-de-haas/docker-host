@@ -29,8 +29,6 @@ export function useAppUpdateNotifications(apps: readonly CoreApp[], openLogs: (a
       } else if (progress.stage === "failed" || progress.stage === "interrupted") {
         toast.error(`${app.displayName}: update ${progress.stage}`, { id, appId: app.id,
           description: app.lastError ?? "The update did not finish. Open console logs to investigate." });
-      } else if (progress.stage === "completed") {
-        toast.success("App updated", { id, description: app.displayName });
       }
     }
     previous.current = next;
