@@ -5,12 +5,12 @@ import { DashboardPage } from "../src/app/shell/pages/dashboard-page";
 import type { CoreDevelopment } from "../src/app/shell/core-development";
 import type { CoreStatus, CoreUpdateStatus } from "../src/app/shell/types";
 
-const fixture = vi.hoisted(() => ({ restart: vi.fn(), stop: vi.fn(), update: vi.fn(), logs: vi.fn(), developmentBusy: false, runtimeBusy: false, stopBusy: false, phase: null as string | null }));
+const fixture = vi.hoisted(() => ({ restart: vi.fn(), stop: vi.fn(), update: vi.fn(), logs: vi.fn(), developmentBusy: false, runtimeBusy: false, runtimeAttention: false, recover: vi.fn(), stopBusy: false, phase: null as string | null }));
 let development: CoreDevelopment;
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
 vi.mock("../src/app/shell/workspace-sources", () => ({ useWorkspaceSources: () => [], coreWorkspaceSource: () => undefined }));
 vi.mock("../src/app/shell/core-development", () => ({ useCoreDevelopment: () => ({ state: development, busy: fixture.developmentBusy, phase: null, restart: fixture.restart, refresh: vi.fn() }), CoreGitCell: () => <span>Source</span> }));
-vi.mock("../src/app/shell/core-workspace-control", () => ({ useCoreWorkspaceControl: () => ({ busy: fixture.runtimeBusy, control: null, dialog: null }) }));
+vi.mock("../src/app/shell/core-workspace-control", () => ({ useCoreWorkspaceControl: () => ({ busy: fixture.runtimeBusy, needsAttention: fixture.runtimeAttention, showRecovery: fixture.recover, control: null, dialog: null }) }));
 vi.mock("../src/app/shell/core-stop", () => ({ useCoreStop: () => ({ busy: fixture.stopBusy, phase: fixture.phase, stop: fixture.stop, dialog: null }) }));
 vi.mock("../src/app/shell/resources/resource-usage", () => ({ ResourceUsageProvider: ({ children }: { children: ReactNode }) => children, ResourceUsage: () => null }));
 vi.mock("../src/app/shell/pages/dashboard-sandboxes", () => ({ DashboardSandboxes: () => null }));
@@ -29,7 +29,7 @@ async function render() {
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   fixture.restart.mockReset(); fixture.stop.mockReset(); fixture.update.mockReset();
-  fixture.developmentBusy = false; fixture.runtimeBusy = false; fixture.stopBusy = false; fixture.phase = null;
+  fixture.developmentBusy = false; fixture.runtimeBusy = false; fixture.runtimeAttention = false; fixture.recover.mockReset(); fixture.stopBusy = false; fixture.phase = null;
   development = { launch: { mode: "dev", projectPath: "/tree/Core.csproj", generationPath: "/output", processId: 1, startedAt: "before" }, instance: "1:before", manageable: true,
     source: { overridePath: null, revision: "source" }, managedPath: "/source", sourcePath: "/tree", selectedProjectPath: "/tree/Core.csproj",
     restartRequired: false, branch: "main", commit: null, changedFiles: 0, additions: 0, deletions: 0, gitError: null };
@@ -143,4 +143,22 @@ it("offers the package update through the contextual action while preserving lif
   development.restartRequired = true; await render(); expect(primary()?.textContent).toBe("Restart");
   development.restartRequired = false; status.status = "running"; development.launch.mode = "dev";
   await render(); expect(primary()?.textContent).toBe("Stop");
+});
+
+it("replaces a stalled switch spinner with an enabled recovery action while guarding Core lifecycle", async () => {
+  fixture.runtimeBusy = true; fixture.runtimeAttention = true;
+  await render();
+  expect(primary()?.textContent).toBe("Check switch");
+  expect(primary()?.disabled).toBe(false);
+  expect(primary()?.querySelector(".animate-spin")).toBeNull();
+  expect(primary()?.querySelector(".lucide-triangle-alert")).not.toBeNull();
+  await act(async () => primary()!.click());
+  expect(fixture.recover).toHaveBeenCalledOnce();
+  expect(fixture.restart).not.toHaveBeenCalled(); expect(fixture.stop).not.toHaveBeenCalled();
+  const more = container.querySelector<HTMLButtonElement>('[aria-label="More actions for Hosty Core"]')!;
+  await act(async () => more.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+  for (const label of ["Restart Core", "Stop Core"]) {
+    const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(node => node.textContent === label)!;
+    expect(item.hasAttribute("data-disabled")).toBe(true);
+  }
 });

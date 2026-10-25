@@ -1,6 +1,6 @@
 ---
 created: 2026-10-19
-updated: 2026-10-23
+updated: 2026-10-25
 summary: Select named app workspaces or installed package runtimes with scoped access review, retained package choices and recoverable Core-owned transitions.
 components: [apps/core, apps/cli, apps/shell, apps/harness, shared]
 ---
@@ -438,6 +438,18 @@ selection keeps current-data compatibility acceptance for baseline Return; an al
 Release baseline needs no second restart. Original UUIDs and useful recovery actions remain
 internal to that friendly presentation.
 
+Status refusals show their error immediately; temporary connectivity/server failures show reconnect
+progress for the first two failed checks, then expose the error and Check progress. Dashboard shows
+a static Check switch action that opens recovery while keeping competing Core lifecycle actions
+guarded. A successful status read clears the warning. Missing Release receipts remain recoverable
+and do not count as proof of completion.
+
+A workspace_not_found response offers Dismiss saved switch. Dismissal reads a fresh Core execution
+catalog and removes only the browser journal if neither the workspace nor its activation remains
+listed. Catalog failures, retained owners, intervening successful status reads and user/origin
+changes preserve the original journal. Dismissal does not restart, cancel, Return or replay an
+operation, and reports that Core and applications were not changed.
+
 Original requests are retained by user/Core origin across menu closure, reconnect and remount. Core Source exposes
 repository URL, ref, relative project and optional source connection alongside the running build and
 update origin. Unsaved source fields retain their opening revision; background status cannot overwrite them.
@@ -549,6 +561,12 @@ on subsequent GETs, without changing persisted Git observations, dirty source, r
 activation records or snapshots. Finish removes the child, its processes and test data.
 
 ## Testing Expectations
+
+- Shell recovery covers deleted-workspace journals, explicit status refusals, sustained outages and
+  recovery, missing Release receipts, fresh-catalog dismissal guards and delayed responses across
+  successful status reads or actor/origin changes. Dashboard exposes a static recovery action while
+  retaining lifecycle guards.
+
 
 - Verify URL/ref/project validation, canonical GitHub matching, fork distinction, stale revisions,
   dirty legacy migration, clone failure cleanup and offline source reuse without reset.

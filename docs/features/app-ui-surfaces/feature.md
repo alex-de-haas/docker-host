@@ -225,7 +225,7 @@ and local drafts.
 ## Local Verification
 
 The 2026-10-25 panel-pinning change completes visibility-plan deliverables D1–D5 and changes only
-Shell, from 0.113.0 to 0.114.0. `npm run shell:test` passes 206 logic tests and 753 component tests;
+Shell, from 0.113.2 to 0.114.0. `npm run shell:test` passes 206 logic tests and 765 component tests after integrating current main;
 `npm run shell:build` succeeds. `npm run shell:lint` has no errors and three existing warnings.
 Core and CLI build successfully for the local fixture; their implementation is unchanged.
 
