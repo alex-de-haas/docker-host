@@ -37,7 +37,7 @@ it("shows each repository and honestly missing CI; opens a repository-specific d
   await act(async () => root.render(<WorkspaceDetails workspace={w} title="Multi-repo change" refresh={() => {}} />));
   expect(container.querySelector('[aria-label^="Expand one #1"]')).not.toBeNull(); expect(container.querySelector('[aria-label^="Expand two #1"]')).not.toBeNull(); expect(container.textContent).toContain("CI unknown");
   expect(container.querySelector('[aria-label="Sandbox previews"]')).toBeNull();
-  const changes = [...container.querySelectorAll("button")].filter(b => b.textContent?.startsWith("Session changes"));
+  const changes = [...container.querySelectorAll("button")].filter(b => b.textContent?.startsWith("Workspace changes"));
   expect(changes).toHaveLength(2);
   await act(async () => changes[1].click());
   expect(developmentRequest).toHaveBeenCalledWith(expect.stringContaining("/workspace/worktrees/two/diff?"), undefined, expect.any(AbortSignal));
@@ -103,7 +103,7 @@ it("retains each repository's file and scope after closing its diff", async () =
   }
   replies(w);
   await act(async () => root.render(<WorkspaceDetails workspace={w} title="Remember diff" refresh={() => {}} />));
-  const changes = [...container.querySelectorAll("button")].filter(b => b.textContent?.startsWith("Session changes"));
+  const changes = [...container.querySelectorAll("button")].filter(b => b.textContent?.startsWith("Workspace changes"));
   await act(async () => changes[0].click());
   await act(async () => [...document.querySelectorAll('[aria-label="Changed files"] button')].find(b => b.textContent?.startsWith("details.txt"))!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
   await act(async () => {
@@ -525,7 +525,7 @@ it("shows completion progress through the action and refusal check without prema
   expect(container.querySelector('[role="alert"]')?.textContent).toContain(message);
   expect(container.textContent).not.toContain("Completing workspace…");
   expect([...container.querySelectorAll("button")].some(button => button.textContent === "Retry action" || button.textContent === "Dismiss")).toBe(false);
-  expect(container.textContent).toContain("Pause this workspace, then confirm that the external agent and its commands have stopped.");
+  expect(container.textContent).toContain("Pause this workspace, then confirm that all agent executions and their commands have stopped.");
   expect([...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Pause workspace")?.disabled).toBe(false);
   await act(async () => container.querySelector('[aria-label="Workspace actions"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
   for (const label of ["Complete workspace", "Pause workspace", "Discard and remove workspace…"]) {

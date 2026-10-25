@@ -64,7 +64,7 @@ describe("gateway", () => {
   let restoreEnv: () => void;
 
   it("recovers an admitted message through an actor-bound uncached receipt without resending", async () => {
-    const session = await manager.createSession({ createdBy: "legacy-owner" });
+    const session = await manager.createSession({ createdBy: "user_admin" });
     const clientRequestId = randomUUID();
     const payload = { text: "receipt fixture", attachments: [], appContextRevision: 0, selectionRevision: 0, withoutAppDetails: false, clientRequestId };
     const send = () => call(`/api/sessions/${session.id}/messages`, { method: "POST", body: JSON.stringify(payload) });
@@ -86,7 +86,7 @@ describe("gateway", () => {
       [`/api/sessions/${session.id}/messages`, { method: "POST", body: JSON.stringify(payload) }],
     ] as const) {
       const response = await fetch(origin + route, { ...init, headers: other });
-      expect(response.status).toBe(403); expect(await response.json()).toMatchObject({ code: "message_request_forbidden" });
+      expect(response.status).toBe(404); expect(await response.json()).toMatchObject({ code: "session_not_found" });
     }
     expect((await call(`/api/sessions/${session.id}/messages/${clientRequestId}`, {}, null)).status).toBe(401);
   });
@@ -107,7 +107,7 @@ describe("gateway", () => {
       method: "PUT", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ autonomy: "autonomous" }),
     });
     expect((await set("hosty_provider.synthetic")).status).toBe(401);
-    expect((await set(mintToken("host.admin", "hosty.harness", "other"))).status).toBe(403);
+    expect((await set(mintToken("host.admin", "hosty.harness", "other"))).status).toBe(404);
     expect((await set(mintToken("host.user"))).status).toBe(401);
     const result = await set(mintToken("host.admin"));
     expect(result.status).toBe(200);
@@ -452,12 +452,13 @@ describe("gateway", () => {
     );
     const record = await reporting.createSession({ createdBy: "user_author" });
 
-    await reporting.deleteSession(record.id, "user_deleter");
+    await expect(reporting.deleteSession(record.id, "user_deleter")).rejects.toMatchObject({ status: 404 });
+    await reporting.deleteSession(record.id, "user_author");
 
     const deletion = reports.find((entry) => entry.action === "ai_session_deleted");
     // Both, deliberately: the transcript is unrecoverable afterwards, and "who removed it" is a
     // different question from "whose session was it".
-    expect(deletion?.details).toMatchObject({ sessionId: record.id, deletedBy: "user_deleter", createdBy: "user_author" });
+    expect(deletion?.details).toMatchObject({ sessionId: record.id, deletedBy: "user_author", createdBy: "user_author" });
   });
 
   it("releases a subscription that finishes after its browser connection closes", async () => {
@@ -1176,7 +1177,7 @@ describe("gateway", () => {
       expect((await call(route(own.id), { method: "POST", body: "{}" })).status).toBe(401);
       expect((await fetch(origin + route(own.id), { method: "POST", headers, body: "{}" })).status).toBe(403);
       expect(refresh).not.toHaveBeenCalled();
-      expect((await fetch(origin + route(foreign.id), { method: "POST", headers: { ...headers, origin }, body: "{}" })).status).toBe(403);
+      expect((await fetch(origin + route(foreign.id), { method: "POST", headers: { ...headers, origin }, body: "{}" })).status).toBe(404);
       const result = await fetch(origin + route(own.id), { method: "POST", headers: { ...headers, origin }, body: "{}" });
       expect(result.status).toBe(200);
       expect(result.headers.get("cache-control")).toBe("no-store");

@@ -73,7 +73,7 @@ export class EventStreamTransport {
       return;
     }
     const session = await this.manager.getSession(target.sessionId);
-    if (!session) failure(404, "session_not_found", "Session not found.");
+    if (!session || session.createdBy !== actor.userId) failure(404, "session_not_found", "Session not found.");
     if (session!.handoffPending) failure(409, "handoff_pending", "Finalize or cancel the prepared handoff first.");
   }
   async issue(body: unknown, request: IncomingMessage, actor: AdminActor) {

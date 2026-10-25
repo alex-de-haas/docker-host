@@ -70,7 +70,7 @@ internal sealed partial class PublicationService
             input.DiffSide is not ("LEFT" or "RIGHT") || input.Line is not > 0 || input.StartLine is <= 0 ||
             input.StartLine > input.Line))
             throw new PublicationException("comment_invalid", "Select an ordered range on one side of the published PR diff.");
-        var current = await workspaces.Read(tree.Id, tree.Owner, ct);
+        var current = await workspaces.Read(tree.Id, null, ct);
         var binding = await RequireReviewBindingAsync(current, userId, input.PullRequestUrl, ct, input.ConnectionId);
         var fingerprint = DevelopmentWorkspaceService.Hash(CoreJson.Text(input));
         var journal = await JsonStorage.ReadAsync<PublicationReviewJournal>(ReviewJournalPath(tree.Id), ct)

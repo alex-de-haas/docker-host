@@ -78,13 +78,13 @@ internal sealed partial class PublicationService
     internal async Task<Dictionary<string, string>> MergedWorkspaceHeadsAsync(WorkspaceOwner owner, CancellationToken ct)
     {
         var result = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var tree in (await workspaces.ListAsync(owner, true, ct)).Workspaces)
+        foreach (var tree in (await workspaces.ListAsync(null, true, ct)).Workspaces.Where(t => t.Owner.SameIdentity(owner)))
         {
             if (!owner.IsExternal)
             {
                 var record = await Read(tree.Id, ct);
                 if (record is null) continue;
-                record = await ObserveAsync(tree.Id, owner, ct);
+                record = await ObserveAsync(tree.Id, null, ct);
                 if (record.Observation is { State: "merged", Complete: true, Head: { } head } && head == record.PublishedHead)
                     result[tree.Id] = head;
                 continue;

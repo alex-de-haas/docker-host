@@ -162,7 +162,7 @@ export function GatewaySettings({
             </Field>
             <Field>
               <FieldLabel htmlFor="workspace-retention">Completed workspace retention (days)</FieldLabel>
-              <FieldDescription>After explicit Core-verified completion or later conversation activity. Leave empty for Off. Unfinished and deferred workspaces never expire. Core rechecks all repositories before deleting worktrees, owned previews and the conversation. Background source cleanup requires the reviewed apps.workspaces.cleanup permission.</FieldDescription>
+              <FieldDescription>This saved legacy limit is retained for compatibility. Chats attached to a workspace stay protected, including completed workspaces. Detach or delete a stopped chat explicitly; shared source is retained. Previously accepted cleanup requests are recovered with their original identifiers.</FieldDescription>
               <Input id="workspace-retention" type="number" min={1} max={3650} step={1} placeholder="Off" value={completedDays} onChange={event => setCompletedDays(event.target.value)} />
             </Field>
             <div><Button size="sm" disabled={busy || [ordinaryDays, completedDays].some(value => value !== "" && (!Number.isInteger(Number(value)) || Number(value) < 1 || Number(value) > 3650))}

@@ -1,6 +1,6 @@
 ---
 created: 2026-10-16
-updated: 2026-10-24
+updated: 2026-10-25
 summary: Core coordinates workspace pause, verified completion, conservative deletion and separately confirmed physical removal of unwanted unfinished work.
 components: [apps/core, apps/harness]
 ---
@@ -9,7 +9,7 @@ components: [apps/core, apps/harness]
 
 ## Status Authority
 
-Core persists a workflow record for each retained logical owner: `in-progress`, `deferred`,
+Core persists a workflow record for each retained logical workspace: `in-progress`, `deferred`,
 `completed` or `deleting`. The transitional `deleted` state lasts until final metadata cleanup. The record includes a revision, transition actor, completion time and exact
 per-worktree heads, plus operation receipts. It is separate from worktree allocation state and agent
 activity. A new empty or fully merged workspace remains in progress until an explicit request.
@@ -35,9 +35,9 @@ The inspection surface exposes GET `/{workspaceId}/workflow`, GET `/{workspaceId
 `/api/internal/apps/{appId}/workspace-inspection`. Requests use the existing service bearer and active
 administrator app identity. Reads require reviewed workspace inspection permission. Management
 uses full source authority, same-user ownership and source authorization for every child;
-permission to inspect another owner's public source is not permission to close it.
+contributor membership does not authorize closing the whole workspace.
 
-The owning assistant session has equivalent workflow routes beneath its existing workspace API.
+Attached sessions of the owning user have equivalent workflow routes beneath its existing workspace API.
 Commands carry a UUID `requestId` and `expectedRevision`. Replaying a completed request returns its
 current durable outcome; uncertain requests must retain their original identity and arguments.
 
@@ -54,8 +54,8 @@ source operations remains possible. Existing previews remain available; their in
 and source-consumer checks still govern physical cleanup.
 
 The operator's Harness `POST /api/development-workspaces/{id}/workflow/pause` first calls Core's
-`pause` admission endpoint. It resolves the workspace owner from Core, checks the local conversation's
-user and its current-installation workspace association, then serializes cancellation with new turns.
+`pause` admission endpoint. It resolves current participant bindings from Core and cancels each current-installation local
+execution through that session's own credential, serialized with new turns.
 The existing shared Docker worker verifies container removal before releasing its persistent worker
 lease and all recovered worktree leases. Only then does `pause-confirm` acknowledge `closed`.
 No new process supervisor or per-session Docker container is introduced.
@@ -76,7 +76,7 @@ being acknowledged until that earlier operation is resolved. Replaying a success
 cancelling the new run. Terminal session events refresh worker availability in the chat, so recovered
 Docker health does not remain stale until a page reload.
 
-External agents, older assistant installations and other sessions are not impersonated or stopped.
+External agents and older assistant installations are not impersonated. Unrelated sessions are not stopped.
 Their outstanding source operations and leases block acknowledgement. Since the shared worker can
 see the shared source area, another session's active worker lease also blocks confirmation; this
 coordinator never releases it. This is a stop/admission lifecycle, not a per-workspace filesystem
@@ -125,15 +125,15 @@ actions use the same pause fence, with their original receipt kinds and revision
 Old deferred records display as paused without a destructive migration. Completion stays independent
 of pause, so a completed-and-closed record still displays its verified completion.
 
-## Abandoned External Leases
+## Abandoned Activity Leases
 
 Activity leases are durable source protections, not heartbeats or proof of a live agent. They do not
 expire by age. An external client that exits without releasing its lease leaves a blocker; a later
 OAuth principal does not inherit authority to release that owner's lease.
 
 Harness keeps lease identifiers and worktree paths in collapsed **Activity diagnostics**. The
-operator first requests Pause, fencing new managed work. If external activity blocks it, **Confirm
-work has stopped** asks once whether the external agent and its commands have exited. Harness
+operator first requests Pause, fencing new managed work. If activity claims block it, **Confirm
+work has stopped** asks once whether the identified agents and their commands have exited. Harness
 recovers the reviewed leases and automatically retries the original action. Known ordinary app
 consumers appear separately with their names and application management links when Shell is
 available. The confirmation stays disabled while known application or sandbox source consumers
@@ -142,7 +142,7 @@ Core independently rechecks known consumers; confirmation does not terminate pro
 
 The POST `/{workspaceId}/worktrees/{id}/recover-lease` inspection route requires the existing full
 source grant and active administrator app identity, same-user ownership, source access to every
-repository, an external owner and closing/closed admission. It rejects stale/unavailable HEAD,
+repository and closing/closed admission. It supports internal shared workspaces and external owners. It rejects stale/unavailable HEAD,
 pending or unknown source operations, active known consumers and unverified native service ownership.
 It never uses lease age or revoked OAuth as evidence of process exit. Arbitrary native execution is
 not exhaustively discoverable, so operator verification remains necessary.
@@ -178,7 +178,7 @@ and ordinary application data.
 
 Workspace-scoped POST `/{workspaceId}/environments/{id}/{start|stop|finish}` and
 `/{workspaceId}/sandboxes/{id}/{start|stop|dispose}` routes use the existing inspection identity,
-same-user workspace/source authorization, matching resource context and the reviewed resource
+current workspace/source authorization, the acting user's own resource context and the reviewed resource
 management permission. Fresh or retryable starts also require the calling app's current
 `apps.sources.full` grant; observing a successful receipt and stopping/removing resources remain
 available without that grant. They reuse the existing lifecycle engines. Closed workspaces reject fresh
@@ -252,12 +252,12 @@ cache file.
 Deleting a workspace does not delete published PRs or shared repository caches. Independently owned
 child-environment/sandbox lifecycle records, shared-worker generation receipts and audit events keep
 their own retention contracts. Harness can remove its conversation afterwards as an explicit option.
-Manual chat deletion refuses tracked unfinished workspace/resource cleanup and pending resource
-operations. Unfinished-work discard uses its own reviewed admission and receipt before reaching final metadata cleanup.
+Manual chat deletion detaches only that chat while preserving shared source. It refuses unfinished
+session-resource cleanup and pending resource operations. Unfinished-work discard uses its own reviewed admission and receipt before reaching final metadata cleanup.
 
-[Harness retention](../harness-session-retention/feature.md) uses this coordinator for separately
-configured completed-workspace expiry. Background cleanup requires its reviewed optional permission
-in addition to source/resource authority. Unfinished/deferred work, active/waiting sessions and
+[Harness retention](../harness-session-retention/feature.md) protects attached chats and uses this
+coordinator only to recover already accepted legacy cleanup. That recovery requires its reviewed
+optional permission in addition to source/resource authority. Unfinished/deferred work, active/waiting sessions and
 unresolved resource state remain protected. Retention cannot substitute age for verified completion.
 
 A corrective publication after a completed cycle requires a successful Resume after the latest

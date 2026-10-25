@@ -1,7 +1,7 @@
 ---
 created: 2026-10-16
-updated: 2026-10-20
-summary: Harness applies independent chat and completed-workspace retention, preserves unfinished work, and recovers coordinated cleanup with stable operation IDs.
+updated: 2026-10-25
+summary: Harness expires reconciled chats, protects attached development sessions and recovers previously accepted cleanup without deleting shared source implicitly.
 components: [apps/harness, apps/core]
 ---
 
@@ -27,42 +27,43 @@ queued completion, unresolved handoffs and resource operations prevent expiry. S
 with live resources remain protected until explicit Finish; terminal resource ownership is reconciled
 before ordinary-chat expiry. A lack of currently displayed worktrees is not proof of an ordinary chat.
 
-Development expiry requires an explicit, Core-verified completion transition. Core checks clean
-source and current-head integration for every repository under the
-[workspace lifecycle contract](../workspace-lifecycle-controls/feature.md). A closed PR, green CI,
-one merged repository or inactivity cannot complete work. In-progress, deferred and unknown work
-never expires, even when its source is already merged. The deadline starts at the later of verified
-completion and conversation activity. Resume clears completion; newly observed edits remain fenced and fail fresh cleanup checks.
-Core checks again immediately before deleting source. Missing evidence or Core failure preserves work.
+Attached development sessions are protected from automatic expiry, including sessions in completed
+workspaces. Manual detach/delete preserves their workspace source. A detached chat uses ordinary-chat
+retention only after Core positively reconciles its session-specific resources. This conservative
+migration preserves configured durations without enabling more destructive cleanup.
+
+The completed-workspace duration remains readable for histories whose workspace was explicitly
+removed and for recovery of previously accepted legacy cleanup. An inactivity deadline never starts
+a new shared-source deletion. Workspace completion/deletion remains an independent explicit action
+under the [workspace lifecycle contract](../workspace-lifecycle-controls/feature.md).
 
 ## Authorization, Cleanup And Recovery
 
 Core exposes POST `/api/internal/apps/{appId}/sessions/{sessionId}/retention` for an installed,
 confirmed assistant's service identity. The original session owner must still be an enabled
-administrator. Core resolves the workspace and resources from the installation, owner and session;
+administrator. Core resolves the current association or detached history and session resources from the installation, user and session;
 the caller cannot submit an arbitrary workspace ID. Retained source owned by an earlier installation
 blocks classification until reconciled. A pending deletion journal from any installation also blocks
 workspace-absence confirmation, even after all worktree records are gone; unrelated app/user/session
 journals do not block it. Unreadable ownership evidence never authorizes conversation removal.
 No browser credential is saved for scheduled execution.
 
-Background source cleanup additionally requires the explicitly reviewed optional
+Recovery of an already accepted legacy background source cleanup additionally requires the explicitly reviewed optional
 `apps.workspaces.cleanup` permission and existing full source authority. Existing sandbox/environment
 management permissions still apply. Turning on a duration does not silently grant these permissions.
 A missing grant produces a visible blocked outcome with source and conversation retained.
 
-Harness saves the cleanup UUID and expected workflow revision before requesting deletion. The
+Harness retains the cleanup UUID and expected workflow revision for an already accepted legacy deletion. The
 existing Core coordinator journals owned sandbox Finish, checks source consumers and releases eligible
 worktrees. Harness removes the conversation and session cache only after confirmed resource cleanup.
 Errors preserve a retryable record, including the original operation identity. A restart or lost
 response does not authorize a replacement request. Native execution must stop successfully before
 local removal. Published PRs and other assistants' conversations are not deleted.
 
-Manual conversation removal also reconciles Core ownership; unfinished source, live resources and
-pending operations block it. Complete/Delete workspace remains the explicit path for development
-work. Retention never invokes unfinished-work discard or cancels unknown external processes. Core
-removes workspace records and the temporary deletion journal after successful Delete, while shared
-repositories retain their separate ownership. Harness keeps no hidden archive of a deleted conversation.
+Manual conversation removal stops its execution, detaches that session and removes its history/cache.
+Dirty workspace source and other conversations remain. Live session resources and pending operations
+still require reconciliation. Retention never invokes unfinished-work discard or cancels unknown
+external processes. Harness keeps no hidden archive of a deleted conversation.
 
 Core returns an explicit `workspaceAbsent` confirmation after checking stored worktree evidence and
 any unfinished deletion journal. Harness combines this with its local workspace history to reconcile
@@ -72,6 +73,10 @@ time when available, otherwise conversation activity. Older Core responses witho
 keep ambiguous history blocked; an empty displayed list alone never authorizes deletion.
 
 ## Acceptance (2026-10-16)
+
+This historical acceptance predates shared workspaces. The current attached-session protection and
+manual-detach behavior above supersede its automatic completed-workspace deletion scenario; current
+coverage is recorded in [workspace sessions acceptance](../workspace-sessions/feature.md#acceptance-2026-10-25).
 
 The D5 acceptance uses the working tree based on `9964fa1814c2cbe2b8a7f3fd495303ef37620e07`,
 Core 0.137.0 and Harness 0.55.0. A disposable Core uses normal setup/password authentication and a

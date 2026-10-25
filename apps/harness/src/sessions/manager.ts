@@ -81,6 +81,7 @@ interface LiveSession {
   workspaceCredential: string | null;
   credentialRefreshPending?: boolean;
   refreshTimer: NodeJS.Timeout | null;
+  workspaceActivityTimer?: NodeJS.Timeout;
   /**
    * Harness-facing names of app tools that may run without an approval card: an app the operator
    * marked trusted, crossed with the tools that app declares read-only. Empty until proven otherwise,
@@ -282,36 +283,34 @@ export class SessionManager {
   async inspectWorkspaces(credential: string, path = "", body?: Record<string, unknown>, userId?: string): Promise<unknown> {
     if (!this.development) throw new AppContextError(503, "workspaces_unavailable", "Workspace inspection requires Core.");
     const close = path.match(/^\/([a-f0-9]{64})\/workflow\/(?:pause|close)$/);
-    if (!close || !body) return this.development.inspection(credential, path, body);
-    if (!userId) throw new AppContextError(401, "workspace_credentials_required", "An authenticated operator is required to pause work.");
-    // Persist Core admission before touching execution. The receipt also survives a lost response
-    // or either service restarting; never cancel a later run when replaying a completed receipt.
-    const admitted = await this.development.inspection(credential, path, body) as {
-      operations?: { id: string; state: string }[];
+    const revoke = path.match(/^\/([a-f0-9]{64})\/participants\/revoke$/);
+    if ((!close && !revoke) || !body) return this.development.inspection(credential, path, body);
+    if (!userId) throw new AppContextError(401, "workspace_credentials_required", "An authenticated operator is required.");
+    // Core fences new admission first. Each native execution is stopped using its own
+    // retained identity; an owner's browser credential never impersonates a participant.
+    const admitted = await this.development.inspection(credential, path, body) as { operations?: { id: string; state: string }[] };
+    if (close && admitted.operations?.some(o => o.id === body.requestId && o.state === "succeeded")) return admitted;
+    await this.stopWorkspaceExecutions((close ?? revoke)![1]!, credential, revoke ? String(body.userId) : undefined);
+    return this.development.inspection(credential, close ? path + "-confirm" : path, body);
+  }
+
+  private async stopWorkspaceExecutions(workspaceId: string, credential: string, revokedUser?: string, lockedSessionId?: string): Promise<void> {
+    const state = await this.development!.inspection(credential, `/${workspaceId}/participants`) as {
+      sessions: { appId: string; userId: string; sessionId: string; attached: boolean; currentInstallation: boolean }[];
     };
-    if (admitted.operations?.some(o => o.id === body.requestId && o.state === "succeeded")) return admitted;
-    const inventory = await this.development.inspection(credential) as { workspaces: {
-      id: string; owner: { kind: string; appId?: string; reference: string };
-    }[] };
-    const owner = inventory.workspaces.find(w => w.id === close[1])?.owner;
-    if (owner?.kind === "assistant" && this.development.ownsApplication(owner.appId ?? "")) {
-      const record = await this.store.readRecord(owner.reference);
-      if (record?.createdBy === userId) await this.serialize(record.id, async () => {
-        // An old installation can have the same app/session ID. Core's current-installation
-        // association, not the display label, decides whether this Harness owns its execution.
-        const trees = await this.development!.call(record.id, credential, "list", {}) as { workspaces: DevelopmentWorkspace[] };
-        if (!trees.workspaces.some(w => w.workspaceId === close[1])) return;
-        const session = await this.requireLive(record.id);
-        session.workspaceCredential = credential;
+    const failures: string[] = [];
+    for (const binding of state.sessions.filter(s => s.attached && s.currentInstallation && this.development!.ownsApplication(s.appId) && (!revokedUser || s.userId === revokedUser))) {
+      const stop = async () => {
+        const record = await this.store.readRecord(binding.sessionId);
+        if (!record || record.createdBy !== binding.userId) return;
+        const live = await this.requireLive(record.id);
+        if (!record.workerRun && !live.run && !record.developmentLease) return;
         try { await this.cancelSessionLocked(record.id); }
-        catch {
-          throw new AppContextError(503, "workspace_stop_unconfirmed", "Execution stop or lease release could not be confirmed. Source and the pause request are retained. Restore Docker/Core access, then retry the original action.");
-        }
-      });
+        catch { failures.push(record.id); }
+      };
+      if (binding.sessionId === lockedSessionId) await stop(); else await this.serialize(binding.sessionId, stop);
     }
-    // External or unavailable owners are never impersonated. Core retains their activity leases
-    // and the pending close until the owning execution has actually released them.
-    return this.development.inspection(credential, path + "-confirm", body);
+    if (failures.length) throw new AppContextError(503, "workspace_stop_unconfirmed", "One or more execution stops or lease releases could not be confirmed. Source and request IDs are retained. Restore the owning session's authorization or worker access, then retry.");
   }
 
   async workspaceAction(id: string, action: DevelopmentAction, input: Record<string, unknown>, credential?: string, userId?: string, dispatchGuard?: () => Promise<void>): Promise<unknown> {
@@ -323,8 +322,37 @@ export class SessionManager {
       if (!this.development?.available) throw new AppContextError(503, "workspaces_unavailable", "Workspaces require a Core-managed assistant.");
       const token = credential ?? session.workspaceCredential ?? session.credential;
       if (!token) throw new AppContextError(401, "workspace_credentials_required", "Refresh the session's Hosty credentials before using workspaces.");
-      if (!["execution-select", "execution-status", "rename", "activation-plan", "activation-apply", "activation-status", "activation-list", "activation-cancel", "activation-resume", "activation-return", "app-dev-logs", "app-dev-status", "app-dev-plan", "app-dev-apply", "merge-upstream", "remote-status", "remote-connect", "remote-fetch", "remote-push-base", "pr-push", "app-local-status", "app-local-accept", "app-local-use", "app-creation-guide", "app-create", "app-creation-status", "app-creation-capabilities", "workflow-status", "workflow-complete", "workflow-resume", "workflow-pause", "workflow-defer", "workflow-delete", "list", "prepare", "status", "diff", "viewer", "commit", "refresh", "merge", "abort-merge", "cleanup", "references", "pr-resolve-review", "pr-commit", "pr-list", "pr-connections", "pr-status", "pr-configure", "pr-publish", "pr-link", "pr-ready", "pr-merge", "pr-complete", "pr-corrective"].includes(action))
+      if (!["association", "attach", "detach", "participants", "commit-review", "execution-select", "execution-status", "rename", "activation-plan", "activation-apply", "activation-status", "activation-list", "activation-cancel", "activation-resume", "activation-return", "app-dev-logs", "app-dev-status", "app-dev-plan", "app-dev-apply", "merge-upstream", "remote-status", "remote-connect", "remote-fetch", "remote-push-base", "pr-push", "app-local-status", "app-local-accept", "app-local-use", "app-creation-guide", "app-create", "app-creation-status", "app-creation-capabilities", "workflow-status", "workflow-complete", "workflow-resume", "workflow-pause", "workflow-defer", "workflow-delete", "list", "prepare", "status", "diff", "viewer", "commit", "refresh", "merge", "abort-merge", "cleanup", "references", "pr-resolve-review", "pr-commit", "pr-list", "pr-connections", "pr-status", "pr-configure", "pr-publish", "pr-link", "pr-ready", "pr-merge", "pr-complete", "pr-corrective"].includes(action))
         throw new AppContextError(400, "workspace_action_invalid", "Unknown workspace action.");
+      if (action === "attach" || action === "detach") {
+        if (!userId) throw new AppContextError(403, "workspace_operator_required", "Attach and detach are explicit user actions.");
+        if (["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) throw new SessionBusyError();
+        if (session.record.mcpPendingApprovals?.length || session.record.coreEnvironmentOperations?.some(o => o.state === "pending") || session.record.sandboxOperations?.some(o => o.state === "pending"))
+          throw new AppContextError(409, "workspace_session_busy", "Reconcile pending approvals and resource operations first.");
+        session.workspaceCredential = token;
+        await this.finishExecution(session);
+        if (session.run) throw new AppContextError(409, "workspace_stop_unconfirmed", "Confirm native execution exit before changing its source.");
+        if (typeof input.requestId !== "string" || !Number.isSafeInteger(input.expectedRevision))
+          throw new AppContextError(400, "workspace_request_invalid", "Supply a requestId and the reviewed participation revision.");
+        const prior = session.record.associationRequests?.find(r => r.id === input.requestId);
+        if (prior && (prior.action !== action || prior.input.workspaceId !== input.workspaceId || prior.input.expectedRevision !== input.expectedRevision))
+          throw new AppContextError(409, "workspace_request_conflict", "Reuse the original association arguments.");
+        const command = prior?.input ?? { ...input, title: session.record.title || "Untitled session", viewerPath: `/assistant?session=${encodeURIComponent(id)}` };
+        if (!prior) {
+          session.record.associationRequests = [...session.record.associationRequests ?? [], { id: input.requestId, action, input: command, state: "pending" }];
+          await this.store.saveRecord(session.record);
+        }
+        const alreadyAcknowledged = prior?.state === "succeeded";
+        const result = await this.development.call(id, token, action, command) as { workspace: { id: string; revision: number } | null };
+        session.record.associationRequests!.find(r => r.id === input.requestId)!.state = "succeeded";
+        session.record.workspaceAssociation = result.workspace && { id: result.workspace.id, revision: result.workspace.revision };
+        session.record.developmentWorkspaces = result.workspace ? (await this.development.call(id, token, "list", {}) as { workspaces: DevelopmentWorkspace[] }).workspaces : [];
+        // The next provider run gets fresh native context; a receipt replay does not reset it again.
+        if (!alreadyAcknowledged) session.record.harnessSessionId = null;
+        session.record.updatedAt = new Date().toISOString();
+        await this.store.saveRecord(session.record);
+        return result;
+      }
       if (["execution-select", "activation-apply", "activation-return", "activation-resume"].includes(action) && ["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) {
         if (userId) throw new SessionBusyError();
         if (!dispatchGuard) throw new AppContextError(403, "activation_review_required", "Activation requires the tool policy's reviewed dispatch.");
@@ -357,7 +385,9 @@ export class SessionManager {
         const admitted = await this.development.call(id, token, action, input) as { operations?: { id: string; state: string }[] };
         if (admitted.operations?.some(o => o.id === input.requestId && o.state === "succeeded")) return admitted;
         session.workspaceCredential = token;
-        await this.cancelSessionLocked(id);
+        const association = await this.development.call(id, token, "association", {}) as { workspace: { id: string } | null };
+        if (association.workspace) await this.stopWorkspaceExecutions(association.workspace.id, token, undefined, id);
+        else await this.cancelSessionLocked(id);
         return this.development.call(id, token, "workflow-pause-confirm", input);
       }
       if (["cleanup", "workflow-complete", "workflow-defer", "workflow-delete"].includes(action) && ["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) throw new SessionBusyError();
@@ -372,11 +402,15 @@ export class SessionManager {
             session.record.developmentPreparationNames = [...session.record.developmentPreparationNames ?? [],
               { requestId: input.requestId, name: fallback }];
         }
-        session.record.developmentLease ??= randomUUID();
+        if (!session.record.developmentLease) {
+          session.record.developmentLease = randomUUID();
+          session.record.developmentLeaseState = ["running", "awaiting_approval", "awaiting_question"].includes(session.record.status) ? "admitting" : "stopped";
+        }
         await this.store.saveRecord(session.record);
         input = { ...input, name, sessionPath: `/assistant?session=${encodeURIComponent(id)}`,
           leaseId: ["running", "awaiting_approval", "awaiting_question"].includes(session.record.status) ? session.record.developmentLease : undefined };
       }
+      if (action === "prepare") this.scheduleWorkspaceActivity(session);
       if (action === "pr-commit") {
         const binding = session.record.connectionId && this.connections ? await this.connections.binding(session.record.connectionId) : null;
         const agent = binding?.harnessKind ?? this.adapter.name.toLowerCase();
@@ -571,21 +605,61 @@ export class SessionManager {
     return result;
   }
 
-  private async leaseWorkspaces(session: LiveSession, acquire: boolean): Promise<void> {
+  private async leaseWorkspaces(session: LiveSession, acquire: boolean, outcome = session.record.status): Promise<void> {
     if (!this.development || !session.record.developmentLease) return;
     const credential = session.workspaceCredential ?? session.credential;
     if (!credential) throw new AppContextError(401, "workspace_credentials_required", "Refresh Hosty credentials before continuing development.");
-    // A prepare response can be lost after Core allocated the tree. Recover associations before
-    // both acquisition and release, including cancellation after a Harness restart.
+    if (!acquire) {
+      // Called only after verified execution exit. Revoked membership cannot prevent the
+      // authenticated session releasing its own exact lease; another user's identity is never used.
+      await this.reportWorkspaceActivity(session, credential, { status: outcome === "failed" ? "failed" : "idle", leaseId: session.record.developmentLease, stopped: true, title: session.record.title ?? undefined });
+      delete session.record.developmentLease;
+      delete session.record.developmentLeaseState;
+      if (session.workspaceActivityTimer) clearTimeout(session.workspaceActivityTimer);
+      session.workspaceActivityTimer = undefined;
+      await this.store.saveRecord(session.record);
+      return;
+    }
+    session.record.developmentLeaseState = "admitting";
+    await this.store.saveRecord(session.record);
     const result = await this.development.call(session.record.id, credential, "list", {}) as { workspaces: DevelopmentWorkspace[] };
     session.record.developmentWorkspaces = result.workspaces;
-    const workspaces = session.record.developmentWorkspaces?.filter(w => w.state === "active") ?? [];
     await this.store.saveRecord(session.record);
-    for (const workspace of workspaces) {
-      await this.development.call(session.record.id, credential, acquire ? "lease" : "release-lease", {
+    for (const workspace of result.workspaces.filter(w => w.state === "active")) {
+      await this.development.call(session.record.id, credential, "lease", {
         workspaceId: workspace.id, requestId: randomUUID(), leaseId: session.record.developmentLease,
       });
     }
+    this.scheduleWorkspaceActivity(session);
+  }
+
+  private async reportWorkspaceActivity(session: LiveSession, credential: string, input: Parameters<DevelopmentClient["activity"]>[2]) {
+    session.record.workspaceActivitySequence = (session.record.workspaceActivitySequence ?? 0) + 1;
+    await this.store.saveRecord(session.record);
+    return this.development!.activity(session.record.id, credential, { ...input, sequence: session.record.workspaceActivitySequence });
+  }
+
+  private scheduleWorkspaceActivity(session: LiveSession): void {
+    if (session.workspaceActivityTimer || !this.development?.available || !session.record.developmentLease || this.stopping) return;
+    session.workspaceActivityTimer = setTimeout(() => {
+      session.workspaceActivityTimer = undefined;
+      void this.serialize(session.record.id, async () => {
+        if (this.stopping || !session.record.developmentLease || !["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) return;
+        try {
+          const credential = session.workspaceCredential ?? session.credential;
+          if (!credential) throw new Error("Workspace credentials are unavailable.");
+          const result = await this.reportWorkspaceActivity(session, credential, {
+            status: session.record.status, leaseId: session.record.developmentLease, title: session.record.title ?? undefined,
+          });
+          if (result.stopRequested) throw new Error("Workspace access or execution admission changed.");
+          this.scheduleWorkspaceActivity(session);
+        } catch {
+          await this.append(session.record.id, { type: "notice", message: "Workspace authority could not be confirmed. Stopping this execution; unconfirmed leases remain visible for recovery." });
+          await this.cancelSessionLocked(session.record.id);
+        }
+      }).catch(error => console.warn("[workspaces] Execution stop requires recovery:", error));
+    }, 10_000);
+    session.workspaceActivityTimer.unref?.();
   }
 
   /**
@@ -604,6 +678,24 @@ export class SessionManager {
 
     const issued = await this.exchange.exchange(session.credential, appId, sessionId);
     return issued ? { token: issued.token, expiresAtMs: new Date(issued.expiresAt).getTime() } : null;
+  }
+
+  async newWorkspaceSession(userId: string, credential: string, input: { workspaceId: string; requestId: string; expectedRevision: number }): Promise<SessionRecord> {
+    if (!/^[a-f0-9]{64}$/.test(input.workspaceId ?? "") || !/^[0-9a-f-]{36}$/i.test(input.requestId ?? "") || !Number.isSafeInteger(input.expectedRevision))
+      throw new AppContextError(400, "workspace_request_invalid", "Supply the reviewed workspace, revision and request ID.");
+    if (!this.development) throw new AppContextError(503, "workspaces_unavailable", "Workspace access requires Core.");
+    return this.serialize("workspace-session:" + userId + ":" + input.requestId, async () => {
+      const inventory = await this.development!.inspection(credential) as { workspaces: { id: string; worktrees: { apps: { appId: string }[] }[] }[] };
+      const workspace = inventory.workspaces.find(w => w.id === input.workspaceId);
+      if (!workspace) throw new AppContextError(404, "workspace_missing", "Workspace not found.");
+      const existing = (await this.store.listRecords()).find(r => r.createdBy === userId && r.creationRequest?.id === input.requestId);
+      if (existing && existing.context?.workspace !== input.workspaceId)
+        throw new AppContextError(409, "creation_conflict", "Reuse the original workspace for this session request.");
+      const record = existing ?? await this.createSession({ createdBy: userId, clientRequestId: input.requestId, title: "New session",
+        appIds: [...new Set(workspace.worktrees.flatMap(t => t.apps.map(a => a.appId)))], context: { workspace: input.workspaceId } });
+      await this.workspaceAction(record.id, "attach", input, credential, userId);
+      return (await this.getSession(record.id))!;
+    });
   }
 
   async newBuildingSession(userId: string, credential: string, input: { appId: string; requestId: string; expectedLocalHead: string }): Promise<SessionRecord> {
@@ -968,13 +1060,35 @@ export class SessionManager {
         return false;
       }
 
-      const snapshot = await this.retentionSnapshot(record);
-      if (snapshot.kind === "workspace" && snapshot.workflow?.state !== "deleted")
-        throw new AppContextError(409, "workspace_retained", "Complete and delete the workspace before deleting this conversation. Unfinished source is retained.");
-      if (!snapshot.resourcesFinished || snapshot.kind === "chat" && hasResourceHistory(record))
-        throw new AppContextError(409, "resource_retained", "Finish and reconcile retained resources before deleting this conversation.");
-      if (record.coreEnvironmentOperations?.some(o => o.state === "pending") || record.sandboxOperations?.some(o => o.state === "pending"))
+      if (record.createdBy !== deletedBy) throw new AppContextError(404, "session_not_found", "Session not found.");
+      const live = await this.requireLive(id);
+      if (credential) live.workspaceCredential = credential;
+      await this.cancelSessionLocked(id);
+      let snapshot = await this.retentionSnapshot(record);
+      if (!snapshot.resourcesFinished)
+        throw new AppContextError(409, "resource_retained", "Finish this session's sandbox resources before deleting its conversation.");
+      if (record.coreEnvironmentOperations?.some(o => o.state === "pending") || record.sandboxOperations?.some(o => o.state === "pending") || record.associationRequests?.some(o => o.state === "pending" && o.action !== "detach"))
         throw new AppContextError(409, "resource_operation_pending", "Recover outstanding operations before deleting this conversation.");
+      if (snapshot.kind === "workspace" && snapshot.workflow?.state !== "deleted") {
+        const token = credential ?? live.workspaceCredential ?? live.credential;
+        if (!token || !this.development) throw new AppContextError(401, "workspace_credentials_required", "Refresh Hosty credentials before detaching this conversation.");
+        const association = await this.development.activity(id, token, { status: "idle", stopped: true });
+        if (!association.workspaceId || association.revision === null) throw new AppContextError(409, "workspace_unclassified", "Recover this session's workspace association before deletion.");
+        // Retain the exact request for uncertain detach recovery; never delete source here.
+        let pending = record.associationRequests?.find(r => r.action === "detach" && r.state === "pending");
+        if (!pending) {
+          const requestId = randomUUID();
+          pending = { id: requestId, action: "detach", input: { requestId, workspaceId: association.workspaceId, expectedRevision: association.revision }, state: "pending" };
+          record.associationRequests = [...record.associationRequests ?? [], pending];
+          await this.store.saveRecord(record);
+        }
+        await this.development.call(id, token, "detach", pending.input);
+        pending.state = "succeeded"; record.workspaceAssociation = null; record.developmentWorkspaces = [];
+        await this.store.saveRecord(record);
+        snapshot = await this.retentionSnapshot(record);
+      }
+      if (snapshot.kind === "chat" && hasResourceHistory(record) && !snapshot.sessionDetached)
+        throw new AppContextError(409, "resource_retained", "Reconcile retained resource history before deleting the conversation.");
       return this.removeSessionRecord(record, deletedBy);
     });
   }
@@ -1058,10 +1172,10 @@ export class SessionManager {
    * Renames a session. An empty title clears the name and returns it to `auto`, so the next message
    * derives one again — an emptied box is a decision, not a session pinned to the empty string.
    *
-   * The title stays in the gateway's own store: it is derived from transcript text, and transcript
-   * content does not reach Core (decision 2026-08-08 — Core audits lifecycle and approvals only).
+   * Attached sessions disclose their bounded title and activity to workspace participants.
+   * The transcript and approval contents remain private in Harness.
    */
-  async renameSession(id: string, title: unknown): Promise<SessionRecord | null> {
+  async renameSession(id: string, title: unknown, credential?: string): Promise<SessionRecord | null> {
     return this.serialize(id, async () => {
       const record = this.live.get(id)?.record ?? (await this.store.readRecord(id));
       if (!record) {
@@ -1072,6 +1186,20 @@ export class SessionManager {
       record.titleSource = normalized ? "operator" : "auto";
       record.updatedAt = new Date().toISOString();
       await this.store.saveRecord(record);
+      const live = this.live.get(id);
+      const token = credential ?? live?.workspaceCredential ?? live?.credential;
+      if (token && this.development?.available && (record.workspaceAssociation || record.developmentWorkspaces?.length)) {
+        const status = ["running", "awaiting_approval", "awaiting_question"].includes(record.status) ? record.status
+          : record.developmentLease && record.developmentLeaseState !== "stopped" ? "unknown" : record.status === "failed" ? "failed" : "idle";
+        // A metadata refresh never acknowledges process exit or releases an activity lease.
+        // The local title remains saved if Core is temporarily unavailable.
+        try {
+          record.workspaceActivitySequence = (record.workspaceActivitySequence ?? 0) + 1;
+          await this.store.saveRecord(record);
+          await this.development.activity(id, token, { status, sequence: record.workspaceActivitySequence, leaseId: record.developmentLease ?? undefined, title: normalized ?? "Untitled session" });
+        }
+        catch { /* The next authenticated activity update reconciles the participant title. */ }
+      }
       return record;
     });
   }
@@ -1102,11 +1230,22 @@ export class SessionManager {
     throw new WorkerError("runtime_selected_by_core", "Select Docker or Local through Core's application runtime controls.", 409);
   }
 
-  private async finishExecution(session: LiveSession, retainActivationReview = false, preserveWorkerRun = false): Promise<void> {
-    if (!this.worker) return;
+  private async finishExecution(session: LiveSession, retainActivationReview = false, preserveWorkerRun = false, outcome = session.record.status): Promise<void> {
+    if (!this.worker && !session.record.developmentLease) return;
+    if (!session.run && !this.worker && session.record.developmentLease && session.record.developmentLeaseState !== "stopped") {
+      const credential = session.workspaceCredential ?? session.credential;
+      if (!credential || !this.development) throw new WorkerError("exit_unconfirmed", "The previous native execution cannot be verified. Source leases remain held.", 503);
+      const current = await this.development.call(session.record.id, credential, "list", {}) as { workspaces: DevelopmentWorkspace[] };
+      if (!Array.isArray(current.workspaces) || current.workspaces.some(w => w.leases?.includes(session.record.developmentLease!)))
+        throw new WorkerError("exit_unconfirmed", "The previous native execution cannot be verified. Source leases remain held.", 503);
+      session.record.developmentLeaseState = "stopped";
+      await this.store.saveRecord(session.record);
+    }
     if (session.run) {
       if (!session.run.stopAndWait) throw new WorkerError("exit_unconfirmed", "Execution exit cannot be confirmed. Source leases remain held.", 503);
       await session.run.stopAndWait();
+      session.record.developmentLeaseState = "stopped";
+      await this.store.saveRecord(session.record);
       if (!preserveWorkerRun) session.run = null;
     }
     if (!preserveWorkerRun) {
@@ -1118,7 +1257,7 @@ export class SessionManager {
     this.proxy?.unregister(session.record.id);
     if (retainActivationReview) this.developmentMcp.disconnect(session.record.id);
     else this.developmentMcp.unregister(session.record.id);
-    await this.leaseWorkspaces(session, false);
+    await this.leaseWorkspaces(session, false, outcome);
   }
 
   private messageRequest(value: unknown): string {
@@ -1249,6 +1388,10 @@ export class SessionManager {
           // "the operator saying anything at all" restores nothing for up to three minutes.
           session.credential = credential;
           session.mcpAuthorizationNotice = false;
+        }
+        if (!session.record.developmentLease && (session.record.developmentWorkspaces?.length || session.record.workspaceAssociation)) {
+          session.record.developmentLease = randomUUID();
+          await this.store.saveRecord(session.record);
         }
         await this.leaseWorkspaces(session, true);
         if (session.run) await this.refreshMcpServers(session);
@@ -1787,7 +1930,7 @@ export class SessionManager {
 
   private async cancelSessionLocked(id: string): Promise<void> {
     const session = await this.requireLive(id);
-    if (this.worker) await this.finishExecution(session);
+    if (this.worker || session.record.developmentLease) await this.finishExecution(session);
     session.runEpoch = undefined;
     this.setActivity(session, null);
     if (session.run) {
@@ -1855,6 +1998,12 @@ export class SessionManager {
     this.mcpPolicy.close();
     this.stopping = true;
     for (const session of this.live.values()) {
+      if (session.workspaceActivityTimer) clearTimeout(session.workspaceActivityTimer);
+      session.workspaceActivityTimer = undefined;
+      if (!this.worker && session.record.developmentLease && session.run?.stopAndWait) {
+        try { await this.finishExecution(session); }
+        catch { /* Preserve the exact lease and stopped/unknown evidence for recovery. */ }
+      }
       if (this.worker && session.run?.detach) {
         await session.run.detach(); session.run = null;
         // Coordinator restart keeps the persisted run and specific source leases for reattachment.
@@ -2137,7 +2286,7 @@ export class SessionManager {
         if (!persisted) await this.append(id, { ...event });
         // The run is dead: drop it so the next message starts a fresh harness (resuming the
         // captured harness session when possible) instead of feeding a terminated input stream.
-        if (this.worker) await this.finishExecution(session, false, event.workerRunId !== undefined);
+        if (this.worker || session.record.developmentLease) await this.finishExecution(session, false, event.workerRunId !== undefined, "failed");
         const failedRun = session.run;
         if (event.workerRunId === undefined) session.run = null;
         session.pendingApprovals.clear();
@@ -2286,7 +2435,7 @@ export class SessionManager {
     }
 
     if (this.worker && !["running", "awaiting_approval", "awaiting_question"].includes(status)) {
-      try { await this.finishExecution(session, status === "idle" && session.record.workspaceActivation?.state === "queued", preserveWorkerRun); }
+      try { await this.finishExecution(session, status === "idle" && session.record.workspaceActivation?.state === "queued", preserveWorkerRun, status); }
       catch (error) {
         await this.append(id, { type: "notice", message: "Execution exit or worktree lease release is unconfirmed. Keep source leases and retry Stop after checking the worker service." });
         throw error;
@@ -2298,6 +2447,8 @@ export class SessionManager {
       try {
         if (!session.run?.stopAndWait) throw new Error("This native adapter cannot confirm process exit for activation. Stop it explicitly before dispatch.");
         await session.run.stopAndWait(); session.run = null;
+        session.record.developmentLeaseState = "stopped";
+        await this.store.saveRecord(session.record);
       } catch (error) {
         session.record.workspaceActivation = { ...session.record.workspaceActivation, state: "blocked", error: error instanceof Error ? error.message : String(error) };
         await this.store.saveRecord(session.record);
@@ -2305,13 +2456,19 @@ export class SessionManager {
         return; // Retain the running state and activity lease until explicit recovery confirms exit.
       }
     }
-    if (status === "idle") {
-      await this.leaseWorkspaces(session, false).catch(error => console.warn("[workspaces] Lease retained; release through Core after verifying the agent stopped:", error));
-    }
+    if (status === "idle" && session.record.developmentLease && !this.worker) await this.finishExecution(session);
     session.record.status = status;
+    if (["running", "awaiting_approval", "awaiting_question"].includes(status)) this.scheduleWorkspaceActivity(session);
     if (!["running", "awaiting_approval", "awaiting_question"].includes(status)) this.setActivity(session, null);
     session.record.updatedAt = new Date().toISOString();
     await this.store.saveRecord(session.record);
+    if (["running", "awaiting_approval", "awaiting_question"].includes(status) && session.record.developmentLease && this.development?.available) {
+      const credential = session.workspaceCredential ?? session.credential;
+      if (credential) {
+        try { await this.reportWorkspaceActivity(session, credential, { status, leaseId: session.record.developmentLease, title: session.record.title ?? undefined }); }
+        catch { /* The activity timer verifies authority and requests stop if recovery fails. */ }
+      }
+    }
 
     if (session.record.workspaceActivation?.state === "queued" && !["running", "awaiting_approval", "awaiting_question"].includes(status)) {
       const queued = session.record.workspaceActivation;

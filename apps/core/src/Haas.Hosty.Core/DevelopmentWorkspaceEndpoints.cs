@@ -25,6 +25,8 @@ internal static class DevelopmentWorkspaceEndpoints
     public static void Map(WebApplication app)
     {
         WorkspaceNameEndpoints.Map(app);
+        WorkspaceParticipationEndpoints.Map(app);
+        WorkspaceSessionActivityEndpoints.Map(app);
         var routes = app.MapGroup("").AddEndpointFilter(async (context, next) =>
         {
             context.HttpContext.Response.Headers.CacheControl = "no-store";
@@ -33,16 +35,17 @@ internal static class DevelopmentWorkspaceEndpoints
         const string internalRoot = "/api/internal/apps/{appId}/sessions/{sessionId}/workspaces";
         routes.MapGet(internalRoot, async (string appId, string sessionId, HttpRequest request,
             WorkspaceAuthorization auth, DevelopmentWorkspaceService workspaces, CancellationToken ct) =>
-            await Handle(async () => await workspaces.ListAsync(await auth.RequireAsync(request, appId, sessionId, ct), true, ct)));
+            await Handle(async () => await workspaces.SessionListAsync(await auth.RequireAsync(request, appId, sessionId, ct), ct)));
         routes.MapGet(internalRoot + "/workflow", async (string appId, string sessionId, HttpRequest request,
             WorkspaceAuthorization auth, DevelopmentWorkspaceService workspaces, CancellationToken ct) =>
-            await Handle(async () => await workspaces.WorkflowAsync(await auth.RequireAsync(request, appId, sessionId, ct), ct)));
+            await Handle(async () => await workspaces.WorkflowAsync(await workspaces.SessionResourceOwnerAsync(await auth.RequireAsync(request, appId, sessionId, ct), ct), ct)));
         routes.MapPost(internalRoot + "/workflow/{kind}", async (string appId, string sessionId, string kind,
             WorkspaceWorkflowCommand input, HttpRequest request, WorkspaceAuthorization auth,
             DevelopmentWorkspaceService workspaces, PublicationService publications, WorkspaceCleanupService cleanup, CancellationToken ct) =>
             await Handle(async () =>
             {
-                var owner = await auth.RequireAsync(request, appId, sessionId, ct);
+                var actor = await auth.RequireAsync(request, appId, sessionId, ct);
+                var owner = await workspaces.SessionResourceOwnerAsync(actor, ct, ownerOnly: true);
                 if (kind == "delete")
                 {
                     return await cleanup.DeleteAsync(DevelopmentWorkspaceService.WorkspaceIdFor(owner), owner.UserId, appId, input, ct);
@@ -57,15 +60,22 @@ internal static class DevelopmentWorkspaceEndpoints
                 var owner = await auth.RequireAsync(request, appId, sessionId, ct);
                 var result = await workspaces.PrepareAsync(owner, input, ct);
                 await Audit(audit, clock, owner.UserId, result, input.RequestId, "prepare", ct);
-                return result;
+                return await workspaces.SessionProjectionAsync(result, owner, ct);
             }));
         routes.MapGet(internalRoot + "/{id}", async (string appId, string sessionId, string id, HttpRequest request,
             WorkspaceAuthorization auth, DevelopmentWorkspaceService workspaces, CancellationToken ct) =>
-            await Handle(async () => await workspaces.ObserveAsync(id, await auth.RequireAsync(request, appId, sessionId, ct), ct)));
+            await Handle(async () =>
+            {
+                var actor = await auth.RequireAsync(request, appId, sessionId, ct);
+                return await workspaces.SessionProjectionAsync(await workspaces.ObserveAsync(id, actor, ct), actor, ct);
+            }));
         routes.MapGet(internalRoot + "/{id}/viewer", async (string appId, string sessionId, string id, HttpRequest request,
             WorkspaceAuthorization auth, DevelopmentWorkspaceService workspaces, WorkspaceInspectionService inspection, CancellationToken ct) =>
-            await Handle(async () => await inspection.DestinationAsync(await workspaces.Read(id,
-                await auth.RequireAsync(request, appId, sessionId, ct), ct), ct)));
+            await Handle(async () =>
+            {
+                var actor = await auth.RequireAsync(request, appId, sessionId, ct);
+                return await inspection.SessionDestinationAsync(await workspaces.Read(id, actor, ct), actor, ct);
+            }));
         routes.MapGet(internalRoot + "/{id}/remote", async (string appId, string sessionId, string id, string? sourceAppId, HttpRequest request,
             WorkspaceAuthorization auth, DevelopmentWorkspaceService workspaces, CancellationToken ct) =>
             await Handle(async () =>
@@ -84,6 +94,10 @@ internal static class DevelopmentWorkspaceEndpoints
                 await Audit(audit, clock, owner.UserId, await workspaces.Read(id, owner, ct), input.RequestId, "remote-" + kind, ct);
                 return result;
             }));
+        routes.MapPost(internalRoot + "/{id}/commit-review", async (string appId, string sessionId, string id,
+            WorkspaceCommitReviewRequest input, HttpRequest request, WorkspaceAuthorization auth,
+            DevelopmentWorkspaceService workspaces, CancellationToken ct) =>
+            await Handle(async () => await workspaces.PrepareCommitReviewAsync(id, await auth.RequireAsync(request, appId, sessionId, ct), input, ct)));
         routes.MapPost(internalRoot + "/{id}/diff", async (string appId, string sessionId, string id, HttpRequest request, WorkspaceDiffRequest input,
             WorkspaceAuthorization auth, DevelopmentWorkspaceService workspaces, CancellationToken ct) =>
             await Handle(async () => await workspaces.DiffAsync(id, await auth.RequireAsync(request, appId, sessionId, ct), input, ct)));
@@ -94,26 +108,57 @@ internal static class DevelopmentWorkspaceEndpoints
                 var owner = await auth.RequireAsync(request, appId, sessionId, ct);
                 var result = await workspaces.CommandAsync(id, owner, kind, input, ct);
                 await Audit(audit, clock, owner.UserId, result, input.RequestId, kind, ct);
-                return result;
+                return await workspaces.SessionProjectionAsync(result, owner, ct);
             }));
         routes.MapGet("/api/development/workspaces", async (HttpRequest request, UserDirectoryStore users, IClock clock,
-            DevelopmentWorkspaceService workspaces, CancellationToken ct) =>
+            DevelopmentWorkspaceService workspaces, WorkspaceInspectionService inspection, CancellationToken ct) =>
             await CoreSessionAuthorization.RequireAdminSessionAsync(request, users, clock,
-                () => Handle(() => workspaces.ListAsync(null, false, ct)), cancellationToken: ct));
+                () => Handle(async () =>
+                {
+                    var actor = await CoreSessionAuthorization.TryResolveSessionAsync(request, users, clock, ct);
+                    var allowed = new List<DevelopmentWorkspace>();
+                    foreach (var tree in (await workspaces.ListAsync(null, false, ct)).Workspaces)
+                    {
+                        try { await inspection.RequireAsync(tree.WorkspaceId, tree.Id, actor!.Id, ct); allowed.Add(DevelopmentWorkspaceService.UserProjection(tree, actor.Id)); }
+                        catch (AppLifecycleException) { }
+                    }
+                    return new WorkspaceList(allowed.ToArray());
+                }), cancellationToken: ct));
         routes.MapGet("/api/development/workspaces/{id}", async (string id, HttpRequest request, UserDirectoryStore users, IClock clock,
-            DevelopmentWorkspaceService workspaces, CancellationToken ct) =>
+            DevelopmentWorkspaceService workspaces, WorkspaceInspectionService inspection, CancellationToken ct) =>
             await CoreSessionAuthorization.RequireAdminSessionAsync(request, users, clock,
-                () => Handle(() => workspaces.ObserveAsync(id, null, ct)), cancellationToken: ct));
+                () => Handle(async () =>
+                {
+                    var actor = await CoreSessionAuthorization.TryResolveSessionAsync(request, users, clock, ct);
+                    var tree = await workspaces.Read(id, null, ct);
+                    await inspection.RequireAsync(tree.WorkspaceId, id, actor!.Id, ct);
+                    var observed = await workspaces.ObserveAsync(id, null, ct);
+                    await inspection.RequireAsync(tree.WorkspaceId, id, actor.Id, ct);
+                    return DevelopmentWorkspaceService.UserProjection(observed, actor.Id);
+                }), cancellationToken: ct));
         routes.MapPost("/api/development/workspaces/{id}/diff", async (string id, HttpRequest request, WorkspaceDiffRequest input,
-            UserDirectoryStore users, IClock clock, DevelopmentWorkspaceService workspaces, CancellationToken ct) =>
+            UserDirectoryStore users, IClock clock, DevelopmentWorkspaceService workspaces, WorkspaceInspectionService inspection, CancellationToken ct) =>
             await CoreSessionAuthorization.RequireAdminBrowserAsync(request, users, clock,
-                _ => Handle(() => workspaces.DiffAsync(id, null, input, ct)), ct));
+                actor => Handle(async () =>
+                {
+                    var tree = await workspaces.Read(id, null, ct);
+                    return await inspection.DiffAsync(tree.WorkspaceId, id, actor.Id, input, ct);
+                }), ct));
         routes.MapPost("/api/development/workspaces/{id}/operations/{kind}", async (string id, string kind, HttpRequest request,
             WorkspaceCommand input, UserDirectoryStore users, IClock clock, DevelopmentWorkspaceService workspaces, AuditStore audit, CancellationToken ct) =>
             await CoreSessionAuthorization.RequireAdminBrowserAsync(request, users, clock, user => Handle(async () =>
             {
-                var result = await workspaces.CommandAsync(id, null, kind, input, ct);
-                await Audit(audit, clock, user.Id, result, input.RequestId, kind, ct); return result;
+                var tree = await workspaces.Read(id, null, ct);
+                if (tree.Owner.UserId != user.Id)
+                    throw DevelopmentWorkspaceService.Error("forbidden", "Workspace operations require the owning operator or an attached session.");
+                if (tree.Owner.IsExternal) await workspaces.RequireExternalSourceAsync(tree, ct);
+                else await workspaces.RequireParticipationSourceAsync(tree, user.Id, ct);
+                // Browser-prepared Core source uses an explicit operator principal. It may
+                // release its own preparation lease; it cannot impersonate an assistant or MCP grant.
+                var actor = tree.Owner.External?.PrincipalId == "operator:" + user.Id ? tree.Owner : null;
+                var result = await workspaces.CommandAsync(id, actor, kind, input, ct);
+                await Audit(audit, clock, user.Id, result, input.RequestId, kind, ct);
+                return DevelopmentWorkspaceService.UserProjection(result, user.Id);
             }), ct));
     }
     private static Task Audit(AuditStore audit, IClock clock, string user, DevelopmentWorkspace w, string request, string kind, CancellationToken ct)

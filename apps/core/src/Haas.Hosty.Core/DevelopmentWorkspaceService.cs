@@ -12,7 +12,7 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
     LocalCommandProcessRegistry? processes = null, ILogger<DevelopmentWorkspaceService>? logger = null,
     IDockerCommandRunner? docker = null, ISourceGitAccess? privateSources = null,
     SourceRepositoryFetchCoordinator? fetches = null, CoreDevelopmentService? coreDevelopment = null,
-    WorkspaceObservationState? observationState = null)
+    WorkspaceObservationState? observationState = null, UserDirectoryStore? participantUsers = null)
 {
     private readonly ConcurrentDictionary<string, SemaphoreSlim> gates = new(StringComparer.Ordinal);
     internal SourceRepositoryFetchCoordinator Fetches { get; } = fetches ?? new(clock);
@@ -82,8 +82,7 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
         // Records predating persistent sandbox consumers can contain an omitted or null field.
         // Normalize only that optional addition; unknown lease/operation activity must still fail.
         w = w with { SandboxConsumers = w.SandboxConsumers ?? [] };
-        if (owner is not null && !w.Owner.SameIdentity(owner))
-            throw Error("forbidden", "This workspace belongs to another assistant installation, external grant, user or task.");
+        if (owner is not null) await RequireSessionAccessAsync(w, owner, ct);
         if (w.Path != WorkPath(id) || w.RepositoryId != Hash(w.Repository) || w.Branch != "hosty/session/" + id)
             throw Error("ownership_invalid", "Workspace ownership metadata is inconsistent.");
         if (owner?.IsExternal == true) await RequireExternalSourceAsync(w, ct);
@@ -100,7 +99,7 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
                 try
                 {
                     var w = await Read(System.IO.Path.GetFileNameWithoutExtension(file), null, ct);
-                    if ((owner is null || w.Owner.SameIdentity(owner)) && (includeReleased || w.State != "released"))
+                    if ((owner is null || await SessionCanReadAsync(w, owner, ct)) && (includeReleased || w.State != "released"))
                     {
                         if (owner?.IsExternal == true) await RequireExternalSourceAsync(w, ct);
                         found.Add(w);
@@ -120,7 +119,18 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
         // Match source selection and local acceptance lock order: app, owner, repository.
         var gate = apps.OperationLock(input.AppId ?? "");
         await gate.WaitAsync(ct);
-        try { return await PrepareCoreAsync(owner, input, ct); }
+        try
+        {
+            if (owner.IsExternal) return await PrepareCoreAsync(owner, input, ct);
+            return await Locked("workspace-participation", async () =>
+            {
+                var associated = await PrepareAssociatedAsync(owner, input, ct);
+                if (associated is not null) return associated;
+                var prepared = await PrepareCoreAsync(owner, input, ct);
+                await ActivatePreparedParticipationAsync(prepared, input, ct);
+                return prepared;
+            }, ct);
+        }
         finally { gate.Release(); }
     }
 
@@ -167,9 +177,11 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
                 throw PrivateSourceService.Denied("The Git source changed. Select and review its connection again.");
             var repository = await CanonicalRepository(declaredRepository, core is null ? source?.LocalOverridePath : null, ct);
             var fingerprint = Hash(CoreJson.Text(input) + (core is null ? "" : "\ncore:" + core.Revision));
-            DevelopmentWorkspace Bind(DevelopmentWorkspace tree) => app is not null ? Attach(tree, app, input.LeaseId)
-                : tree with { Core = new(core!.Revision, core.ProjectPath),
-                    Leases = tree.Leases.Append(input.LeaseId!).Distinct().ToArray() };
+            DevelopmentWorkspace Bind(DevelopmentWorkspace tree)
+            {
+                var bound = app is not null ? Attach(tree, app, null) : tree with { Core = new(core!.Revision, core.ProjectPath) };
+                return input.LeaseId is null ? bound : ClaimLease(bound, owner, input.LeaseId);
+            }
             var repositoryId = Hash(repository);
             return await Locked("repository-admission:" + repositoryId, async () =>
             {
@@ -437,17 +449,10 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
         }, ct), ct);
     }
 
-    public async Task<DevelopmentWorkspace> CommandAsync(string id, WorkspaceOwner? owner, string kind, WorkspaceCommand input, CancellationToken ct)
-    {
-        if (kind == "merge-upstream")
-        {
-            var tree = await Read(id, owner, ct);
-            var remote = await PublicationRemoteAsync(tree, ct) ?? throw Error("remote_required", "Connect an existing repository first.");
-            return await RemoteGit.WithConnectionAsync(remote.Grant, connection => CommandCoreAsync(id, owner, kind, input, ct, connection), ct);
-        }
-        return await CommandCoreAsync(id, owner, kind, input, ct);
-    }
-    private async Task<DevelopmentWorkspace> CommandCoreAsync(string id, WorkspaceOwner? owner, string kind, WorkspaceCommand input, CancellationToken ct, UserProviderConnection? connection = null)
+    public Task<DevelopmentWorkspace> CommandAsync(string id, WorkspaceOwner? owner, string kind, WorkspaceCommand input, CancellationToken ct)
+        => Locked("workspace-participation", () => CommandCoreAsync(id, owner, kind, input, ct), ct);
+
+    private async Task<DevelopmentWorkspace> CommandCoreAsync(string id, WorkspaceOwner? owner, string kind, WorkspaceCommand input, CancellationToken ct)
     {
         var workspace = await Read(id, owner, ct);
         return await Locked(Hash(OwnerIdentity(workspace.Owner)), () => Locked("repository-admission:" + workspace.RepositoryId, async () =>
@@ -458,11 +463,17 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
             var old = w.Operations.FirstOrDefault(o => o.Id == input.RequestId);
             if (old is not null)
             {
-                if (old.Kind != kind || old.Fingerprint != fingerprint) throw Error("request_conflict", "This request ID was used for a different operation.");
+                if (old.Kind != kind || old.Fingerprint != fingerprint || old.Actor is not null && (owner is null || !old.Actor.SameIdentity(owner)) || old.Actor is null && owner is not null && !w.Owner.SameIdentity(owner)) throw Error("request_conflict", "This request ID was used for a different operation.");
                 if (old.State != "pending") return w;
                 return await Recover(w, old, ct);
             }
-            if (kind is "merge" or "merge-upstream" or "abort-merge" or "cleanup") await RequireDevConsumerIdleAsync(w, ct);
+            if (kind == "cleanup") await RequireWorkspaceOwnerAsync(w, owner, ct);
+            if (kind is "merge" or "merge-upstream" or "abort-merge" or "cleanup")
+            {
+                if (w.Leases.Any(id => owner is null || w.LeaseClaims?.Any(c => c.Id == id && c.Session.SameIdentity(owner)) != true))
+                    throw Error("other_writers", "Stop other source writers and reconcile unknown leases before changing the working tree.");
+                await RequireDevConsumerIdleAsync(w, ct);
+            }
             if (kind == "lease") await RequireDevConsumerIdleAsync(w, ct, writer: true);
             if (kind is not ("release-lease" or "refresh")) await RequireOpenWorkflow(w.Owner, ct);
             if (w.State != "active") throw Error("not_active", "The workspace is not active.");
@@ -471,7 +482,7 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
             w = await Observe(w, ct);
             if (w.Observation?.State != "ok") throw Error("unavailable", "Refresh workspace state before retrying.");
             if (input.ExpectedHead is not null && input.ExpectedHead != w.Observation.Head) throw Error("stale_head", "Workspace HEAD changed; review the current state.");
-            var op = new WorkspaceOperation(input.RequestId, kind, fingerprint, "pending", w.Observation.Head, Command: input);
+            var op = new WorkspaceOperation(input.RequestId, kind, fingerprint, "pending", w.Observation.Head, Command: input, Actor: owner);
             w = w with { Operations = [.. w.Operations, op] };
             await Save(w);
             try
@@ -481,12 +492,14 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
                     case "lease":
                         await RequireSourceInstallationAsync(w, ct);
                         if (!Guid.TryParse(input.LeaseId, out _)) throw Error("lease_invalid", "Lease ID must be a UUID.");
-                        w = w with { Leases = w.Leases.Append(input.LeaseId!).Distinct().ToArray() }; break;
+                        w = ClaimLease(w, owner ?? w.Owner, input.LeaseId!); break;
                     case "release-lease":
                         if (!Guid.TryParse(input.LeaseId, out _)) throw Error("lease_invalid", "Lease ID must be a UUID.");
-                        w = w with { Leases = w.Leases.Where(l => l != input.LeaseId).ToArray() }; break;
+                        RequireLeaseOwner(w, owner, input.LeaseId!);
+                        w = w with { Leases = w.Leases.Where(l => l != input.LeaseId).ToArray(),
+                            LeaseClaims = w.LeaseClaims?.Where(c => c.Id != input.LeaseId).ToArray() }; break;
                     case "refresh":
-                        await Fetch(RepoPath(w.RepositoryId), w.Repository, w.TargetBranch, ct, await WorkspaceGrantAsync(w, ct)); break;
+                        await Fetch(RepoPath(w.RepositoryId), w.Repository, w.TargetBranch, ct, await ActingSourceGrantAsync(w, owner, input.ConnectionId, ct)); break;
                     case "references":
                         var urls = input.PullRequests ?? [];
                         if (urls.Length > 100 || urls.Any(u => u is null || u.Length > 2048 || !Uri.TryCreate(u, UriKind.Absolute, out var uri) || uri.Scheme != "https" || !string.IsNullOrEmpty(uri.UserInfo)))
@@ -497,20 +510,28 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
                         if (w.Observation.Conflict) throw Error("conflict", "Resolve the pending merge with an explicit external workflow or abort it first.");
                         if (input.Paths is not { Length: > 0 and <= 256 } || input.Paths.Any(p => string.IsNullOrWhiteSpace(p) || !CoreDataPaths.TryResolveContainedRelativePath(w.Path, p, out _)))
                             throw Error("paths_invalid", "Select up to 256 repository-relative paths.");
+                        if (await ReadParticipationAsync(w.WorkspaceId, ct) is { } participation &&
+                            (participation.Members.Length > 1 || participation.Sessions.Length > 1))
+                        {
+                            foreach (var path in ReviewPaths(w, input.Paths))
+                                if (File.Exists(System.IO.Path.Combine(w.Path, path)))
+                                    await AppSourceService.RequireRegularFileAsync(System.IO.Path.Combine(w.Path, path), ct);
+                        }
                         var index = System.IO.Path.Combine(Root, "indexes", input.RequestId + ".index");
                         Directory.CreateDirectory(System.IO.Path.GetDirectoryName(index)!);
                         try
                         {
                             await Git(w.Path, ["read-tree", op.BeforeHead!], ct, index: index);
-                            await Git(w.Path, ["add", "--", .. input.Paths], ct, index: index);
+                            await Git(w.Path, ["--literal-pathspecs", "add", "--", .. input.Paths], ct, index: index);
                             var tree = (await Git(w.Path, ["write-tree"], ct, index: index)).StandardOutput.Trim();
+                            await ValidateCommitReviewAsync(w, owner, input, tree, ct);
                             var parentTree = (await Git(w.Path, ["rev-parse", op.BeforeHead + "^{tree}"], ct)).StandardOutput.Trim();
                             if (tree == parentTree) throw Error("no_changes", "Selected paths have no changes to commit.");
                             var result = await Git(w.Path, ["commit-tree", tree, "-p", op.BeforeHead!, "-m", input.Message!], ct, author: input);
                             op = op with { ResultHead = result.StandardOutput.Trim() };
                             w = Put(w, op); await Save(w); // The exact object is durable before advancing a ref.
                             await Git(w.Path, ["update-ref", "refs/heads/" + w.Branch, op.ResultHead!, op.BeforeHead!], ct);
-                            await Git(w.Path, ["reset", "--quiet", "HEAD", "--", .. input.Paths], ct);
+                            await Git(w.Path, ["--literal-pathspecs", "reset", "--quiet", "HEAD", "--", .. input.Paths], ct);
                         }
                         finally { File.Delete(index); }
                         break;
@@ -518,7 +539,7 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
                     case "merge-upstream":
                         RequireHead(input); ValidateAuthor(input);
                         if (w.Observation.Local!.Files.Count > 0 || w.Observation.Conflict) throw Error("dirty", "Commit or explicitly resolve existing changes before integrating target updates.");
-                        var target = kind == "merge-upstream" ? await ReviewedUpstream(w, input, ct, connection!) : await Fetch(RepoPath(w.RepositoryId), w.Repository, w.TargetBranch, ct, await WorkspaceGrantAsync(w, ct));
+                        var target = kind == "merge-upstream" ? await ReviewedUpstreamForActorAsync(w, owner, input, ct) : await Fetch(RepoPath(w.RepositoryId), w.Repository, w.TargetBranch, ct, await ActingSourceGrantAsync(w, owner, input.ConnectionId, ct));
                         op = op with { ResultHead = target }; w = Put(w, op); await Save(w);
                         var merged = await Git(w.Path, ["merge", "--no-edit", "--no-ff", .. (kind == "merge-upstream" && input.AllowUnrelatedHistories == true ? new[] { "--allow-unrelated-histories" } : []), "-m", input.Message!, target], ct, true, author: input);
                         if (merged.ExitCode != 0)
@@ -554,19 +575,23 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
             }
         }, ct), ct);
     }
-    internal Task<bool> WithPublicationAdmissionAsync(WorkspaceOwner owner, Func<WorkspaceWorkflow, Task> admit, CancellationToken ct)
-        => Locked(Hash(OwnerIdentity(owner)), async () =>
+    internal async Task<bool> WithPublicationAdmissionAsync(WorkspaceOwner owner, Func<WorkspaceWorkflow, Task> admit, CancellationToken ct)
+    {
+        var allocation = await SessionResourceOwnerAsync(owner, ct);
+        return await Locked("workspace-participation", () => Locked(Hash(OwnerIdentity(allocation)), async () =>
         {
             // Persist the publication receipt before Close can change admission state.
-            await admit(await WorkflowAsync(owner, ct));
+            await SessionResourceOwnerAsync(owner, ct);
+            await admit(await WorkflowAsync(allocation, ct));
             return true;
-        }, ct);
+        }, ct), ct);
+    }
     internal async Task<T> WithPublicationAsync<T>(string id, WorkspaceOwner owner, string head, Func<DevelopmentWorkspace, Task<T>> action, CancellationToken ct)
     {
         var tree = await Read(id, owner, ct);
-        return await Locked(Hash(OwnerIdentity(owner)), () => Locked("repository-admission:" + tree.RepositoryId, async () =>
+        return await Locked("workspace-participation", () => Locked(Hash(OwnerIdentity(tree.Owner)), () => Locked("repository-admission:" + tree.RepositoryId, async () =>
         {
-            await RequireOpenWorkflow(owner, ct);
+            await RequireOpenWorkflow(tree.Owner, ct);
             var w = await Observe(await Read(id, owner, ct), ct);
             await RequireSourceInstallationAsync(w, ct);
             await ValidateTree(w, ct);
@@ -574,19 +599,24 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
                 w.Observation is not { State: "ok", Conflict: false, Local: { Files.Count: 0, Truncated: false } } || w.Observation.Head != head)
                 throw Error("stale_head", "Publication requires the current clean workspace head and no unresolved operations.");
             return await action(w);
-        }, ct), ct);
+        }, ct), ct), ct);
     }
-    internal Task<bool> AddPublicationReferenceAsync(string id, WorkspaceOwner owner, string url, CancellationToken ct)
-        => Locked(Hash(OwnerIdentity(owner)), async () =>
+    internal async Task<bool> AddPublicationReferenceAsync(string id, WorkspaceOwner owner, string url, CancellationToken ct)
+    {
+        var tree = await Read(id, owner, ct);
+        return await Locked("workspace-participation", () => Locked(Hash(OwnerIdentity(tree.Owner)), async () =>
         {
             var w = await Read(id, owner, ct);
             await Save(w with { PullRequests = w.PullRequests.Append(url).Distinct().ToArray() }); return true;
-        }, ct);
+        }, ct), ct);
+    }
     // Only PublicationService calls this after persisting and revalidating the chosen completion outcome.
     internal Task<DevelopmentWorkspace> ReleasePublishedAsync(string id, WorkspaceOwner owner, string publishedHead, CancellationToken ct)
         => Locked(Hash(OwnerIdentity(owner)), async () =>
         {
             var w = await Read(id, owner, ct);
+            if (await ReadParticipationAsync(w.WorkspaceId, ct) is { } participation && (participation.Members.Length > 1 || participation.Sessions.Length > 1))
+                throw Error("in_use", "Shared workspace source requires explicit workspace cleanup.");
             if (w.State == "released") return w;
             if (w.State == "releasing" && w.Operations.LastOrDefault(o => o.Id == "publication-cleanup") is { } pending)
             {
@@ -836,7 +866,7 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
             var core = await coreDevelopment.SourceSettingsAsync(ct);
             if (core.RepositoryUrl is not null && LogicalRepositoryIdentity(tree.Repository) == LogicalRepositoryIdentity(core.RepositoryUrl))
             {
-                _ = await coreDevelopment.SourceGrantAsync(core, tree.Owner.UserId, ct);
+                _ = await coreDevelopment.SourceGrantAsync(core, tree.Owner.UserId, ct, localOnly: true);
                 return;
             }
         }
@@ -845,7 +875,7 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
         throw Error("source_app_missing", "The source installation was removed or replaced. Retained files are unchanged; restore the source binding before starting new work.");
     }
 
-    internal async Task<SourceReadGrant?> WorkspaceGrantAsync(DevelopmentWorkspace workspace, CancellationToken ct, UserProviderConnection? heldConnection = null)
+    internal async Task<SourceReadGrant?> WorkspaceGrantAsync(DevelopmentWorkspace workspace, CancellationToken ct, UserProviderConnection? heldConnection = null, bool localOnly = false)
     {
         if (workspace.SourceGrant is null) return null;
         foreach (var binding in workspace.Apps)
@@ -856,7 +886,7 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
             {
                 if (grant.OwnerId != workspace.Owner.UserId || grant.Repository != LogicalRepositoryIdentity(workspace.Repository))
                     throw PrivateSourceService.Denied("The source app's reviewed Git connection changed; this workspace cannot reuse its former connection.");
-                await ValidateSourceGrantAsync(grant, ct, heldConnection);
+                await ValidateSourceGrantAsync(grant, ct, heldConnection, localOnly);
                 return grant;
             }
             // A reviewed switch to public access must also stop old workspaces using the grant.
@@ -866,9 +896,9 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
         {
             var source = await coreDevelopment.SourceSettingsAsync(ct);
             if (source.RepositoryUrl is not null && LogicalRepositoryIdentity(source.RepositoryUrl) == LogicalRepositoryIdentity(workspace.Repository))
-                return await coreDevelopment.SourceGrantAsync(source, workspace.Owner.UserId, ct, heldConnection);
+                return await coreDevelopment.SourceGrantAsync(source, workspace.Owner.UserId, ct, heldConnection, localOnly);
         }
-        await ValidateSourceGrantAsync(workspace.SourceGrant, ct, heldConnection);
+        await ValidateSourceGrantAsync(workspace.SourceGrant, ct, heldConnection, localOnly);
         return workspace.SourceGrant;
     }
 

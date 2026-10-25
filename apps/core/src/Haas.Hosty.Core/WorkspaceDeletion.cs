@@ -172,6 +172,7 @@ internal sealed partial class DevelopmentWorkspaceService
                 var job = await JsonStorage.ReadAsync<WorkspaceCleanupJob>(path, ct);
                 if (job?.WorkspaceId == id && job.UserId == owner.UserId) DeleteMetadata(path);
             }
+            await RetireParticipationAsync(id, ct);
             DeleteMetadata(MetadataPath(owner));
             DeleteMetadata(WorkflowPath(owner));
             DeleteMetadata(DeletionPath(id)); // Last durable evidence; successful Delete retains nothing.
@@ -193,8 +194,8 @@ internal sealed partial class WorkspaceCleanupService
 {
     private async Task RequireFinishedResourcesAsync(string workspaceId, WorkspaceOwner? owner, CancellationToken ct)
     {
-        bool Matches(SandboxActor actor, SandboxContext? context) => owner is null
-            ? context?.WorkspaceId == workspaceId : Belongs(actor, context, owner, workspaceId);
+        bool Matches(SandboxActor actor, SandboxContext? context) => context?.WorkspaceId == workspaceId ||
+            owner is not null && Belongs(actor, context, owner, workspaceId);
         foreach (var child in (await environments.ListAsync(ct)).Where(e => Matches(e.Owner, e.Request.Context)))
             if (child.State != "finished" || DevelopmentWorkspaceService.PathEntryExists(environments.Root(child.Id)))
                 throw DevelopmentWorkspaceService.Error("cleanup_pending", "Workspace child Core cleanup is not finished.");

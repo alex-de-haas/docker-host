@@ -8,7 +8,7 @@ namespace Haas.Hosty.Core.Tests;
 public sealed partial class CoreLifecycleServiceTests
 {
     [Fact]
-    public async Task ExecutionInventory_PublicForeignWorkspaceIsInspectableButNotSelectableAndCurrentStaysNamed()
+    public async Task ExecutionInventory_ExplicitlySharedWorkspaceIsInspectableButRuntimeAuthorityStaysSeparate()
     {
         var (f, owner, workspaces, owned, _, _) = await LocalHandoffFixture();
         await AddManifestPackageRuntime(f, owned);
@@ -18,6 +18,10 @@ public sealed partial class CoreLifecycleServiceTests
         await File.WriteAllTextAsync(Path.Combine(foreign.Path, "manifest.json"),
             await File.ReadAllTextAsync(Path.Combine(owned.Path, "manifest.json")));
         var inspection = new WorkspaceInspectionService(workspaces, f.Apps, f.Clock);
+        Assert.DoesNotContain((await inspection.ListAsync(owner.UserId, default)).Workspaces, w => w.Id == foreign.WorkspaceId);
+        var membership = await workspaces.ParticipationAsync(foreign.WorkspaceId, foreignOwner.UserId, default);
+        await workspaces.ChangeMemberAsync(foreign.WorkspaceId, foreignOwner.UserId, "grant",
+            new(Guid.NewGuid().ToString(), membership.Revision, owner.UserId, [foreign.Id]), default);
         Assert.Contains((await inspection.ListAsync(owner.UserId, default)).Workspaces, w => w.Id == foreign.WorkspaceId);
         await using var host = await CoreHttpHarness.StartAsync(f.Clock);
         using var service = new AppExecutionTargetService(f.Paths, f.Apps, f.Service, workspaces, inspection,

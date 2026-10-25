@@ -388,7 +388,8 @@ it("updates the host destination when selecting another full-page session and pr
   await act(async () => root.render(<AssistantConversation fullPage />));
   const pick = [...container.querySelectorAll("button")].find(b => b.textContent?.startsWith("Other conversation"))!;
   await act(async () => pick.click());
-  expect(ui.navigate).toHaveBeenCalledWith("development", expect.objectContaining({ placement: "main", search: "?session=next-session" }));
+  expect(ui.navigate).not.toHaveBeenCalled();
+  expect(ui.reportSurfaceState).toHaveBeenCalledWith({ route: "/development?session=next-session", state: "ready" });
   expect(input().value).toBe("Keep next draft");
   expect(api.createSession).not.toHaveBeenCalled(); expect(api.postMessage).not.toHaveBeenCalled();
 });
@@ -515,7 +516,7 @@ it.each(["deleted", "retained", "unavailable"])("reconciles a lost non-active de
   }
 });
 
-const navigationTitles = () => [...container.querySelectorAll('nav[aria-label="Sessions"] button > span[title]')].map(node => node.textContent);
+const navigationTitles = () => [...container.querySelectorAll('nav[aria-label="Workspaces and chats"] button span.block[title]')].map(node => node.textContent);
 const renderActivityOrder = async () => {
   record = { ...record, appIds: ["one"], appContextRevision: 1, updatedAt: "2026-10-18T10:00:00Z" };
   const newer = { ...record, id: "newer", title: "Newer conversation", updatedAt: "2026-10-18T11:00:00Z" };
@@ -572,17 +573,17 @@ it("refreshes non-selected running sessions through waiting and completion witho
     await act(async () => emit({ type: "session_status", seq: 2, ts: "2026-10-18T11:30:00Z", status: "running" }));
     await act(async () => refresh([record, { ...other, status: "awaiting_approval", updatedAt: "2026-10-18T12:00:00Z" }]));
     expect(navigationTitles()).toEqual(["Background work", "Conversation"]);
-    expect(container.querySelector('[aria-label="Waiting for you"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Needs attention: 1"]')).not.toBeNull();
     vi.mocked(api.listSessions).mockResolvedValue([record, { ...other, status: "idle", updatedAt: "2026-10-18T13:00:00Z" }]);
     await act(async () => { vi.advanceTimersByTime(5000); });
-    expect(container.querySelector('[aria-label="Waiting for you"]')).toBeNull();
+    expect(container.querySelector('[aria-label="Needs attention: 1"]')).toBeNull();
     const calls = vi.mocked(api.listSessions).mock.calls.length;
     await act(async () => { vi.advanceTimersByTime(15000); });
     expect(api.listSessions).toHaveBeenCalledTimes(calls);
     vi.mocked(api.listSessions).mockResolvedValue([record, { ...other, status: "running", updatedAt: "2026-10-18T14:00:00Z" }]);
     await act(async () => { vi.advanceTimersByTime(15000); });
     expect(api.listSessions).toHaveBeenCalledTimes(calls + 1);
-    expect(container.querySelector('[aria-label="Agent running"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Working: 1"]')).not.toBeNull();
     await act(async () => { vi.advanceTimersByTime(5000); });
     expect(api.listSessions).toHaveBeenCalledTimes(calls + 2);
     expect(input().value).toBe("My retained draft");

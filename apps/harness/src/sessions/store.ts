@@ -38,6 +38,9 @@ export interface SessionRecord {
   autonomy?: SessionAutonomy;
   developmentWorkspaces?: import("./development.js").DevelopmentWorkspace[];
   developmentLease?: string;
+  developmentLeaseState?: "admitting" | "stopped";
+  workspaceAssociation?: { id: string; revision: number } | null;
+  associationRequests?: { id: string; action: "attach" | "detach"; input: Record<string, unknown>; state: "pending" | "succeeded" }[];
   /** Freeze omitted prepare names before dispatch so a mutable conversation title cannot change replay. */
   developmentPreparationNames?: { requestId: string; name?: string }[];
   workspaceActivation?: { action: "execution-select" | "activation-apply" | "activation-return" | "activation-resume"; input: Record<string, unknown>; state: "queued" | "blocked" | "dispatched"; error?: string };
@@ -78,6 +81,7 @@ export interface SessionRecord {
   createdBy: string;
   harnessSessionId: string | null;
   lastEventSeq: number;
+  workspaceActivitySequence?: number;
 }
 
 /** A dispatch receipt is admission evidence, not a promise that the model completed successfully. */

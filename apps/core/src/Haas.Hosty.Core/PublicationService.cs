@@ -43,7 +43,15 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
             try
             {
                 var record = await Read(Path.GetFileNameWithoutExtension(file), ct);
-                if (record is not null && (owner is null || record.Owner == owner)) list.Add(record);
+                if (record is not null && (owner is null || record.Owner.UserId == owner.UserId && record.Owner.AppId == owner.AppId && record.Owner.Installation == owner.Installation))
+                {
+                    if (owner is not null)
+                    {
+                        try { await workspaces.Read(record.WorkspaceId, owner, ct); }
+                        catch (AppLifecycleException) { continue; }
+                    }
+                    list.Add(owner is null ? record : ProjectSession(record, owner));
+                }
             }
             catch (JsonException) { /* A damaged record does not hide other operations. */ }
         }
@@ -64,15 +72,25 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
     public Task<PublicationRecord> ObserveAsync(string id, WorkspaceOwner? owner, CancellationToken ct) => Locked(async () =>
     {
         var r = await Read(id, ct) ?? throw new PublicationException("not_found", "Publication not found.");
-        if (owner is not null && r.Owner != owner) throw new PublicationException("forbidden", "Publication belongs to another session.");
-        return await Observe(r, ct);
+        if (owner is not null)
+        {
+            await workspaces.Read(id, owner, ct);
+            if (r.Owner.UserId != owner.UserId || r.Owner.AppId != owner.AppId || r.Owner.Installation != owner.Installation)
+                throw new PublicationException("connection_required", "This publication uses another user's private connection.");
+        }
+        var result = await Observe(r, ct);
+        return owner is null ? result : ProjectSession(result, owner);
     }, ct);
+    private static PublicationRecord ProjectSession(PublicationRecord record, WorkspaceOwner actor)
+        => record with { Operations = record.Operations.Where(o => o.Actor?.SameIdentity(actor) == true || o.Actor is null && record.Owner.SameIdentity(actor)).ToArray() };
+
     private async Task<PublicationRecord> Observe(PublicationRecord r, CancellationToken ct)
     {
         if (!await workspaces.CanObservePublicationAsync(r.WorkspaceId, ct)) return r;
         try
         {
             await RequireOwner(r.Owner, ct);
+            await workspaces.RequireParticipationSourceAsync(await workspaces.Read(r.WorkspaceId, null, ct), r.Owner.UserId, ct);
             r = await connections.UseForSourceAsync(r.Owner.UserId, r.ConnectionId, async c =>
             {
                 var provider = Publication(c.Provider);
@@ -134,7 +152,8 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
     }
     private async Task RequireSessionCompletion(PublicationRecord current, PublicationCommand input, CancellationToken ct)
     {
-        foreach (var workspace in (await workspaces.ListAsync(current.Owner, true, ct)).Workspaces)
+        var allocation = (await workspaces.Read(current.WorkspaceId, null, ct)).Owner;
+        foreach (var workspace in (await workspaces.ListAsync(null, true, ct)).Workspaces.Where(w => w.Owner.SameIdentity(allocation)))
         {
             if (workspace.Id == current.WorkspaceId) continue;
             var other = await Read(workspace.Id, ct);
@@ -156,19 +175,22 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
             throw new PublicationException("request_invalid", "Supply a UUID requestId and a supported publication operation.");
         await RequireOwner(owner, ct);
         var w = await workspaces.ObserveAsync(id, owner, ct);
-        var remote = await workspaces.PublicationRemoteAsync(w, ct);
+        var remote = await workspaces.PublicationRemoteAsync(w, ct, validateGrant: owner.UserId == w.Owner.UserId);
         var r = await Read(id, ct);
-        if (r is not null && r.Owner != owner) throw new PublicationException("forbidden", "Publication belongs to another session.");
+        if (input.Cleanup && await workspaces.ReadParticipationAsync(w.WorkspaceId, ct) is { } shared && (shared.Members.Length > 1 || shared.Sessions.Length > 1))
+            throw new PublicationException("workspace_cleanup_required", "Complete publication without source cleanup. Delete the shared workspace explicitly after all participants finish.");
+        if (r is not null && (r.Owner.UserId != owner.UserId || r.Owner.AppId != owner.AppId || r.Owner.Installation != owner.Installation))
+            throw new PublicationException("connection_required", "This publication uses another user's connection. Its credential and operation receipts are private.");
         if (remote is not null && r is not null && (Publication(r.Provider).NormalizeRepository(remote.Repository) != r.Repository ||
             remote.TargetBranch != r.TargetBranch || remote.Grant.ConnectionId != r.ConnectionId))
             throw new PublicationException("remote_changed", "The publication no longer matches the reviewed local source remote.");
         var fingerprint = DevelopmentWorkspaceService.Hash(CoreJson.Text(input));
         var previous = r?.Operations.FirstOrDefault(o => o.Id == input.RequestId);
-        if (previous is not null && (previous.Kind != kind || previous.Fingerprint != fingerprint)) throw new PublicationException("request_conflict", "The request ID belongs to different arguments.");
+        if (previous is not null && (previous.Kind != kind || previous.Fingerprint != fingerprint || previous.Actor is not null && !previous.Actor.SameIdentity(owner))) throw new PublicationException("request_conflict", "The request ID belongs to different arguments.");
         if (previous is { State: "succeeded" })
         {
             if (r!.Url is not null) await workspaces.AddPublicationReferenceAsync(id, owner, r.Url, ct);
-            return r;
+            return ProjectSession(r, owner);
         }
         if (r?.Operations.Any(o => o.Id != input.RequestId && o.State == "pending") == true) throw new PublicationException("operation_pending", "Recover the previous operation with its original request ID first.");
         if (r is null)
@@ -183,7 +205,7 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
             throw new PublicationException("connection_conflict", "Use the source connection reviewed when attaching this remote.");
         if (input.ConnectionId is not null && input.ConnectionId != r.ConnectionId) throw new PublicationException("connection_conflict", "This publication is bound to another connection.");
         var record = r;
-        var workflow = await workspaces.WorkflowAsync(owner, ct);
+        var workflow = await workspaces.WorkflowAsync(w.Owner, ct);
         if ((workflow.Closure is not null || workflow.State == "deferred") && previous is null)
             throw new PublicationException("workspace_closed", "Resume retained workspace source before starting a new publication operation.");
         var lastTransition = workflow.Operations?.LastOrDefault(o => o.State == "succeeded" && o.Kind is "complete" or "resume");
@@ -199,140 +221,155 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
         if (kind is "publish" or "merge") await Dependencies(record, ct, true);
         if (kind == "complete" && input.Outcome != "abandoned") await RequireSessionCompletion(record, input, ct);
         var journaled = previous is not null;
+        // Never hold a provider connection while waiting for workspace admission. Source
+        // preparation/fetch holds workspace admission before consuming that same connection.
+        // Each remote effect revalidates the acting user's connection under its own lease.
+        Task<T> UseConnection<T>(Func<UserProviderConnection, Task<T>> action)
+            => connections.UseForSourceAsync(owner.UserId, record.ConnectionId, async connection =>
+            {
+                if (connection.Provider != record.Provider)
+                    throw new PublicationException("provider_mismatch", "Choose a connection for this repository provider.");
+                return await action(connection);
+            }, ct);
+        async Task UseConnectionAction(Func<UserProviderConnection, Task> action)
+            => await UseConnection(async connection => { await action(connection); return true; });
         try
         {
-            record = await connections.UseForSourceAsync(owner.UserId, r.ConnectionId, async c =>
+            await UseConnection(_ => Task.FromResult(true));
+            var provider = Publication(record.Provider);
+            var op = previous is null ? new PublicationOperation(input.RequestId, kind, fingerprint, "pending", input, Actor: owner) : previous with { State = "pending", Error = null };
+            record = record with { Operations = [.. record.Operations.Where(o => o.Id != op.Id), op] };
+            await workspaces.WithPublicationAdmissionAsync(owner, async current =>
             {
-                if (c.Provider != record.Provider) throw new PublicationException("provider_mismatch", "Choose a connection for this repository provider.");
-                var provider = Publication(c.Provider);
-                var op = previous is null ? new PublicationOperation(input.RequestId, kind, fingerprint, "pending", input) : previous with { State = "pending", Error = null };
-                record = record with { Operations = [.. record.Operations.Where(o => o.Id != op.Id), op] };
-                await workspaces.WithPublicationAdmissionAsync(owner, async current =>
-                {
-                    if (current.Closure is not null && previous is null)
-                        throw new PublicationException("workspace_closed", "Resume retained workspace source before starting a new publication operation.");
-                    await Save(record);
-                }, ct);
-                journaled = true;
-                if (kind == "configure")
-                {
-                    if (record.Number is not null || record.PublishedHead is not null) throw new PublicationException("policy_locked", "Configure completion policy before publication.");
-                    var policy = input.Policy ?? new PublicationPolicy([], [], []); ValidatePolicy(policy);
-                    if ((input.Dependencies?.Length ?? 0) > 20) throw new PublicationException("dependency_limit", "At most twenty publication dependencies are supported.");
-                    record = record with { Policy = policy, Dependencies = input.Dependencies ?? [] };
-                    record = record with { HeadRepository = await provider.DestinationAsync(c, record.Repository, input.Fork, ct) };
-                }
-                else if (kind == "commit")
-                {
-                    var user = (await users.ReadAsync(ct)).Users.Single(u => u.Id == owner.UserId && !u.Disabled);
-                    var identity = previous?.Author ?? user.GitIdentity ?? await provider.IdentityAsync(c, ct);
-                    var contributors = input.Contributors ?? [];
-                    if (contributors.Length > 20 || contributors.Any(v => string.IsNullOrWhiteSpace(v) || v.Length > 300 || v.Any(char.IsControl) || !v.Contains('<') || !v.EndsWith('>')))
-                        throw new PublicationException("attribution_invalid", "Supply recorded contributor names and no-reply emails.");
-                    var message = input.Message ?? "";
-                    foreach (var contributor in contributors)
-                        if (!message.Split('\n').Any(line => line.Trim().Equals("Co-Authored-By: " + contributor, StringComparison.OrdinalIgnoreCase)))
-                            message += "\n\nCo-Authored-By: " + contributor;
-                    record = record with { Contributors = record.Contributors.Concat(contributors).Distinct().ToArray(),
-                        Operations = record.Operations.Select(o => o.Id == input.RequestId ? o with { Author = identity } : o).ToArray() };
-                    await Save(record);
-                    var committed = await workspaces.CommandAsync(id, owner, "commit", new(input.RequestId, input.ExpectedHead, message, input.Paths, identity.Name, identity.Email), ct);
-                    if (committed.Operations.LastOrDefault(o => o.Id == input.RequestId)?.State != "succeeded")
-                        throw new PublicationException("commit_uncertain", "Inspect the workspace commit operation before retrying.");
-                }
-                else if (kind == "push")
-                {
-                    RequireHead(w, input);
-                    await workspaces.WithPublicationAsync(id, owner, input.ExpectedHead!, async current =>
-                    {
-                        await workspaces.RequireRemotePublicationAsync(current, record.Repository, record.TargetBranch, record.ConnectionId, provider.NormalizeRepository, ct, c);
-                        await provider.PushAsync(c, current, record.HeadRepository, record.Branch, input.ExpectedHead!, ct);
-                        return true;
-                    }, ct);
-                    record = record with { PublishedHead = input.ExpectedHead }; await Save(record);
-                }
-                else if (kind == "publish")
-                {
-                    RequireHead(w, input);
-                    if (record.Outcome is not null) throw new PublicationException("completed", "This publication has completed; start a new session for new work.");
-                    if (string.IsNullOrWhiteSpace(input.Title) || input.Title.Length > 250 || (input.Body?.Length ?? 0) > 60000) throw new PublicationException("description_invalid", "Provide a title and a bounded PR description.");
-                    if (record.Number is not null)
-                    {
-                        var existing = await provider.ObserveAsync(c, record, ct);
-                        if (existing.State != "open") throw new PublicationException("pr_closed", "Use a corrective operation for a merged PR; do not modify a closed contribution.");
-                    }
-                    // Workspace serialization fences managed commit/cleanup while credentials are in use.
-                    await workspaces.WithPublicationAsync(id, owner, input.ExpectedHead!, async current =>
-                    {
-                        await workspaces.RequireRemotePublicationAsync(current, record.Repository, record.TargetBranch, record.ConnectionId, provider.NormalizeRepository, ct, c);
-                        await provider.PushAsync(c, current, record.HeadRepository, record.Branch, input.ExpectedHead!, ct);
-                        return true;
-                    }, ct);
-                    record = record with { PublishedHead = input.ExpectedHead }; await Save(record);
-                    var found = record.Number is null ? await provider.FindAsync(c, record, ct) : null;
-                    if (found is not null) record = Link(record, found);
-                    record = Link(record, await provider.PublishAsync(c, record, input, ct));
-                    if (!input.Draft) await provider.ReadyAsync(c, record, ct);
-                }
-                else if (kind == "link")
-                {
-                    if (input.Number is not > 0) throw new PublicationException("pr_required", "A concrete PR number is required.");
-                    var candidate = Link(record, new(input.Number.Value, provider.PullRequestUrl(record.Repository, input.Number.Value), null, null));
-                    candidate = candidate with { Observation = await provider.ObserveAsync(c, candidate, ct) };
-                    if (candidate.Observation.Head != w.Observation?.Head) throw new PublicationException("head_mismatch", "The linked PR head differs from the workspace HEAD.");
-                    record = candidate with { PublishedHead = candidate.Observation.Head };
-                }
-                else if (kind == "complete" && input.Outcome == "abandoned" && record.Number is null)
-                {
-                    RequireHead(w, input);
-                    if (input.Cleanup) throw new PublicationException("unpublished_cleanup", "Unpublished work has no remote recovery reference. Record abandonment without cleanup and use explicit workspace cleanup separately.");
-                    record = record with { Outcome = "abandoned", CompletedAt = clock.UtcNow };
-                }
-                else
-                {
-                    if (record.Number is null) throw new PublicationException("pr_required", "Publish or link a PR first.");
-                    record = record with { Observation = await provider.ObserveAsync(c, record, ct) };
-                    if (kind == "resolve-review")
-                    {
-                        RequireHead(w, input);
-                        if (string.IsNullOrWhiteSpace(input.ThreadId) || input.ThreadId.Length > 200) throw new PublicationException("review_required", "Select a concrete addressed review thread.");
-                        await provider.ResolveReviewAsync(c, record, input.ThreadId, input.ExpectedHead!, ct);
-                    }
-                    else if (kind == "ready")
-                    {
-                        RequireHead(w, input);
-                        if (record.Observation.State != "open" || record.Observation.Head != input.ExpectedHead) throw new PublicationException("stale_head", "Refresh the current open PR head.");
-                        await provider.ReadyAsync(c, record, ct);
-                    }
-                    else if (kind == "merge")
-                    {
-                        if (previous is not null && record.Observation is { State: "merged" } && record.Observation.Head == input.ExpectedHead) { /* Recovered remote merge. */ }
-                        else
-                        {
-                            RequireHead(w, input);
-                            RequireMerge(record.Observation, input.ExpectedHead!);
-                            await provider.MergeAsync(c, record, input.ExpectedHead!, input.MergeMethod ?? "merge", ct);
-                        }
-                    }
-                    else if (kind == "corrective")
-                    {
-                        RequireHead(w, input);
-                        if (record.Observation.State != "merged" || record.Outcome is not null && !resumedCorrection) throw new PublicationException("corrective_invalid", "A corrective PR requires a merged PR in an unfinished session.");
-                        record = record with { History = [.. record.History, new(record.Number.Value, record.Url!, record.Observation.Head, record.Observation.MergeCommit, record.Observation with { Reviews = null })], Number = null, Url = null, PublishedHead = null, Observation = null, Branch = w.Branch + "-corrective-" + input.RequestId, Outcome = null, CompletedAt = null, CleanupRequested = false };
-                    }
-                    else if (kind == "complete")
-                    {
-                        RequireHead(w, input);
-                        if (record.Observation.Head != input.ExpectedHead || record.PublishedHead != input.ExpectedHead) throw new PublicationException("unpublished", "The current workspace head is not the published PR head.");
-                        if (input.Outcome == "merged" && record.Observation is not { State: "merged", Complete: true } ||
-                            input.Outcome == "submitted" && record.Observation.State != "open" || input.Outcome is not ("merged" or "submitted" or "abandoned"))
-                            throw new PublicationException("completion_blocked", "Choose an outcome supported by current PR and configured release evidence.");
-                        record = record with { Outcome = input.Outcome, CompletedAt = clock.UtcNow, CleanupRequested = input.Cleanup };
-                    }
-                }
-                record = record with { Operations = record.Operations.Select(o => o.Id == input.RequestId ? o with { State = "succeeded", Error = null } : o).ToArray() };
-                await Save(record); return record;
+                if (current.Closure is not null && previous is null)
+                    throw new PublicationException("workspace_closed", "Resume retained workspace source before starting a new publication operation.");
+                await Save(record);
             }, ct);
+            journaled = true;
+            if (kind == "configure")
+            {
+                if (record.Number is not null || record.PublishedHead is not null) throw new PublicationException("policy_locked", "Configure completion policy before publication.");
+                var policy = input.Policy ?? new PublicationPolicy([], [], []); ValidatePolicy(policy);
+                if ((input.Dependencies?.Length ?? 0) > 20) throw new PublicationException("dependency_limit", "At most twenty publication dependencies are supported.");
+                record = record with { Policy = policy, Dependencies = input.Dependencies ?? [] };
+                record = record with { HeadRepository = await UseConnection(c => provider.DestinationAsync(c, record.Repository, input.Fork, ct)) };
+            }
+            else if (kind == "commit")
+            {
+                var user = (await users.ReadAsync(ct)).Users.Single(u => u.Id == owner.UserId && !u.Disabled);
+                var identity = previous?.Author ?? user.GitIdentity ?? await UseConnection(c => provider.IdentityAsync(c, ct));
+                var contributors = input.Contributors ?? [];
+                if (contributors.Length > 20 || contributors.Any(v => string.IsNullOrWhiteSpace(v) || v.Length > 300 || v.Any(char.IsControl) || !v.Contains('<') || !v.EndsWith('>')))
+                    throw new PublicationException("attribution_invalid", "Supply recorded contributor names and no-reply emails.");
+                var message = input.Message ?? "";
+                foreach (var contributor in contributors)
+                    if (!message.Split('\n').Any(line => line.Trim().Equals("Co-Authored-By: " + contributor, StringComparison.OrdinalIgnoreCase)))
+                        message += "\n\nCo-Authored-By: " + contributor;
+                record = record with { Contributors = record.Contributors.Concat(contributors).Distinct().ToArray(),
+                    Operations = record.Operations.Select(o => o.Id == input.RequestId ? o with { Author = identity } : o).ToArray() };
+                await Save(record);
+                var committed = await workspaces.CommandAsync(id, owner, "commit", new(input.RequestId, input.ExpectedHead, message, input.Paths, identity.Name, identity.Email, ReviewId: input.ReviewId), ct);
+                if (committed.Operations.LastOrDefault(o => o.Id == input.RequestId)?.State != "succeeded")
+                    throw new PublicationException("commit_uncertain", "Inspect the workspace commit operation before retrying.");
+            }
+            else if (kind == "push")
+            {
+                RequireHead(w, input);
+                await workspaces.WithPublicationAsync(id, owner, input.ExpectedHead!, async current =>
+                {
+                    await UseConnectionAction(async c =>
+                    {
+                        await workspaces.RequireRemotePublicationAsync(current, record.Repository, record.TargetBranch, record.ConnectionId, provider.NormalizeRepository, ct, c);
+                        await provider.PushAsync(c, current, record.HeadRepository, record.Branch, input.ExpectedHead!, ct);
+                    });
+                    return true;
+                }, ct);
+                record = record with { PublishedHead = input.ExpectedHead }; await Save(record);
+            }
+            else if (kind == "publish")
+            {
+                RequireHead(w, input);
+                if (record.Outcome is not null) throw new PublicationException("completed", "This publication has completed; start a new session for new work.");
+                if (string.IsNullOrWhiteSpace(input.Title) || input.Title.Length > 250 || (input.Body?.Length ?? 0) > 60000) throw new PublicationException("description_invalid", "Provide a title and a bounded PR description.");
+                if (record.Number is not null)
+                {
+                    var existing = await UseConnection(c => provider.ObserveAsync(c, record, ct));
+                    if (existing.State != "open") throw new PublicationException("pr_closed", "Use a corrective operation for a merged PR; do not modify a closed contribution.");
+                }
+                // Workspace serialization fences managed commit/cleanup while credentials are in use.
+                await workspaces.WithPublicationAsync(id, owner, input.ExpectedHead!, async current =>
+                {
+                    await UseConnectionAction(async c =>
+                    {
+                        await workspaces.RequireRemotePublicationAsync(current, record.Repository, record.TargetBranch, record.ConnectionId, provider.NormalizeRepository, ct, c);
+                        await provider.PushAsync(c, current, record.HeadRepository, record.Branch, input.ExpectedHead!, ct);
+                    });
+                    return true;
+                }, ct);
+                record = record with { PublishedHead = input.ExpectedHead }; await Save(record);
+                var found = record.Number is null ? await UseConnection(c => provider.FindAsync(c, record, ct)) : null;
+                if (found is not null) record = Link(record, found);
+                record = Link(record, await UseConnection(c => provider.PublishAsync(c, record, input, ct)));
+                if (!input.Draft) await UseConnectionAction(c => provider.ReadyAsync(c, record, ct));
+            }
+            else if (kind == "link")
+            {
+                if (input.Number is not > 0) throw new PublicationException("pr_required", "A concrete PR number is required.");
+                var candidate = Link(record, new(input.Number.Value, provider.PullRequestUrl(record.Repository, input.Number.Value), null, null));
+                candidate = candidate with { Observation = await UseConnection(c => provider.ObserveAsync(c, candidate, ct)) };
+                if (candidate.Observation.Head != w.Observation?.Head) throw new PublicationException("head_mismatch", "The linked PR head differs from the workspace HEAD.");
+                record = candidate with { PublishedHead = candidate.Observation.Head };
+            }
+            else if (kind == "complete" && input.Outcome == "abandoned" && record.Number is null)
+            {
+                RequireHead(w, input);
+                if (input.Cleanup) throw new PublicationException("unpublished_cleanup", "Unpublished work has no remote recovery reference. Record abandonment without cleanup and use explicit workspace cleanup separately.");
+                record = record with { Outcome = "abandoned", CompletedAt = clock.UtcNow };
+            }
+            else
+            {
+                if (record.Number is null) throw new PublicationException("pr_required", "Publish or link a PR first.");
+                record = record with { Observation = await UseConnection(c => provider.ObserveAsync(c, record, ct)) };
+                if (kind == "resolve-review")
+                {
+                    RequireHead(w, input);
+                    if (string.IsNullOrWhiteSpace(input.ThreadId) || input.ThreadId.Length > 200) throw new PublicationException("review_required", "Select a concrete addressed review thread.");
+                    await UseConnectionAction(c => provider.ResolveReviewAsync(c, record, input.ThreadId, input.ExpectedHead!, ct));
+                }
+                else if (kind == "ready")
+                {
+                    RequireHead(w, input);
+                    if (record.Observation.State != "open" || record.Observation.Head != input.ExpectedHead) throw new PublicationException("stale_head", "Refresh the current open PR head.");
+                    await UseConnectionAction(c => provider.ReadyAsync(c, record, ct));
+                }
+                else if (kind == "merge")
+                {
+                    if (previous is not null && record.Observation is { State: "merged" } && record.Observation.Head == input.ExpectedHead) { /* Recovered remote merge. */ }
+                    else
+                    {
+                        RequireHead(w, input);
+                        RequireMerge(record.Observation, input.ExpectedHead!);
+                        await UseConnectionAction(c => provider.MergeAsync(c, record, input.ExpectedHead!, input.MergeMethod ?? "merge", ct));
+                    }
+                }
+                else if (kind == "corrective")
+                {
+                    RequireHead(w, input);
+                    if (record.Observation.State != "merged" || record.Outcome is not null && !resumedCorrection) throw new PublicationException("corrective_invalid", "A corrective PR requires a merged PR in an unfinished session.");
+                    record = record with { History = [.. record.History, new(record.Number.Value, record.Url!, record.Observation.Head, record.Observation.MergeCommit, record.Observation with { Reviews = null })], Number = null, Url = null, PublishedHead = null, Observation = null, Branch = w.Branch + "-corrective-" + input.RequestId, Outcome = null, CompletedAt = null, CleanupRequested = false };
+                }
+                else if (kind == "complete")
+                {
+                    RequireHead(w, input);
+                    if (record.Observation.Head != input.ExpectedHead || record.PublishedHead != input.ExpectedHead) throw new PublicationException("unpublished", "The current workspace head is not the published PR head.");
+                    if (input.Outcome == "merged" && record.Observation is not { State: "merged", Complete: true } ||
+                        input.Outcome == "submitted" && record.Observation.State != "open" || input.Outcome is not ("merged" or "submitted" or "abandoned"))
+                        throw new PublicationException("completion_blocked", "Choose an outcome supported by current PR and configured release evidence.");
+                    record = record with { Outcome = input.Outcome, CompletedAt = clock.UtcNow, CleanupRequested = input.Cleanup };
+                }
+            }
+            record = record with { Operations = record.Operations.Select(o => o.Id == input.RequestId ? o with { State = "succeeded", Error = null } : o).ToArray() };
+            await Save(record);
         }
         catch (Exception ex) when (ex is PublicationException or UserConnectionException or HttpRequestException or IOException or OperationCanceledException or AppLifecycleException)
         {
@@ -345,7 +382,7 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
         if (record.Url is not null) await workspaces.AddPublicationReferenceAsync(id, owner, record.Url, ct);
         await audit.AppendAsync(new("audit_" + Guid.NewGuid().ToString("N"), "development.publication." + kind, "workspace", id, "succeeded", owner.UserId, clock.UtcNow,
             new Dictionary<string, string> { ["requestId"] = input.RequestId }), ct);
-        return await Observe(record, ct);
+        return ProjectSession(await Observe(record, ct), owner);
     }, ct);
     private static void RequireHead(DevelopmentWorkspace w, PublicationCommand input)
     {
