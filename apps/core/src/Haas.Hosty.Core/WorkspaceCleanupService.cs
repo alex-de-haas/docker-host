@@ -25,9 +25,9 @@ internal sealed partial class WorkspaceCleanupService(CoreDataPaths paths, Works
     }
     public async Task<WorkspacePreviews> PreviewsAsync(string workspaceId, string userId, string appId, CancellationToken ct)
     {
-        var owner = await inspection.WorkflowOwnerAsync(workspaceId, userId, ct);
-        var children = (await environments.ListAsync(ct)).Where(e => Belongs(e.Owner, e.Request.Context, owner, workspaceId) && e.State != "finished").ToArray();
-        var instances = (await sandboxes.ListAsync(ct)).Where(s => Belongs(s.Owner, s.Request.Context, owner, workspaceId) && s.State != "disposed").ToArray();
+        var owner = await inspection.ReadOwnerAsync(workspaceId, userId, ct);
+        var children = (await environments.ListAsync(ct)).Where(e => Belongs(e.Owner, e.Request.Context, owner with { UserId = userId }, workspaceId) && e.State != "finished").ToArray();
+        var instances = (await sandboxes.ListAsync(ct)).Where(s => Belongs(s.Owner, s.Request.Context, owner with { UserId = userId }, workspaceId) && s.State != "disposed").ToArray();
         if (children.Length > 0) await RequirePermission(appId, CoreAppPermissions.CoreEnvironmentsRead, ct);
         if (instances.Length > 0) await RequirePermission(appId, CoreAppPermissions.SandboxesRead, ct);
         var applications = new Dictionary<string, CoreEnvironmentApplications>();
@@ -47,11 +47,11 @@ internal sealed partial class WorkspaceCleanupService(CoreDataPaths paths, Works
     public async Task<CoreEnvironmentApiResponse> PreviewActionAsync(string workspaceId, string userId, string caller,
         string environmentId, string targetApp, string action, PreviewCheckRun? input, CancellationToken ct)
     {
-        var owner = await inspection.WorkflowOwnerAsync(workspaceId, userId, ct);
+        var owner = await inspection.ReadOwnerAsync(workspaceId, userId, ct);
         var readOnly = action is "checks" or "logs";
         await RequirePermission(caller, readOnly ? CoreAppPermissions.CoreEnvironmentsRead : CoreAppPermissions.CoreEnvironmentsManage, ct);
         var child = await environments.ReadAsync(environmentId, ct);
-        if (child is null || !Belongs(child.Owner, child.Request.Context, owner, workspaceId))
+        if (child is null || !Belongs(child.Owner, child.Request.Context, owner with { UserId = userId }, workspaceId))
             throw new SandboxException("environment_not_found", "This sandbox does not belong to the selected workspace.", 404);
         if (action is not ("checks" or "run" or "restart" or "logs")) throw new SandboxException("preview_action_invalid", "Unknown preview action.", 400);
         var path = "/api/apps/" + Uri.EscapeDataString(targetApp) + (action == "logs" ? "/logs?tail=80" : action == "restart" ? "/restart" : "/preview-checks" + (action == "run" ? "/run" : ""));

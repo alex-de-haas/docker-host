@@ -37,7 +37,7 @@ internal static class WorkspaceInspectionEndpoints
             WorkspaceInspectionStream.RunAsync(appId, request, response, auth, service, events, lifetime, ct));
         routes.MapGet("", async (string appId, HttpRequest request, WorkspaceInspectionAuthorization auth,
             WorkspaceInspectionService service, CancellationToken ct) =>
-            await Handle(async () => await service.ListAsync(await auth.RequireAsync(request, appId, ct), ct)));
+            await Handle(async () => await service.ListAsync(await auth.RequireAsync(request, appId, ct), ct, callerAppId: appId)));
         routes.MapGet("/local-apps", async (string appId, HttpRequest request, WorkspaceInspectionAuthorization auth,
             CoreLifecycleService lifecycle, DevelopmentWorkspaceService workspaces, CancellationToken ct) =>
             await Handle(async () => await lifecycle.ReadLocalBuildingAppsAsync(await auth.RequireAsync(request, appId, ct), workspaces, ct)));

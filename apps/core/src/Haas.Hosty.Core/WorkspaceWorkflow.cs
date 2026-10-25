@@ -30,9 +30,14 @@ internal sealed partial class DevelopmentWorkspaceService
     internal async Task<T> WithResourceContextAsync<T>(SandboxActor actor, SandboxContext? context,
         Func<Task<T>> action, CancellationToken ct, bool cleanup = false)
     {
-        var tree = (await ListAsync(null, true, ct)).Workspaces.FirstOrDefault(w => w.Owner.UserId == actor.UserId &&
-            (context?.WorkspaceId == w.WorkspaceId || !w.Owner.IsExternal && context?.SessionId == w.Owner.SessionId
-                && actor.AppId == w.Owner.AppId && actor.Installation == w.Owner.Installation));
+        var associated = actor.AppId is not null && actor.Installation is not null && context?.SessionId is not null
+            ? await SessionParticipationAsync(new(actor.AppId, actor.Installation.Value, actor.UserId, context.SessionId), ct) : null;
+        var selectedWorkspace = context?.WorkspaceId ?? associated?.Id;
+        var candidates = (await ListAsync(null, true, ct)).Workspaces.Where(w => selectedWorkspace is not null
+            ? selectedWorkspace == w.WorkspaceId
+            : w.Owner.UserId == actor.UserId && !w.Owner.IsExternal && context?.SessionId == w.Owner.SessionId
+                && actor.AppId == w.Owner.AppId && actor.Installation == w.Owner.Installation).ToArray();
+        var tree = candidates.FirstOrDefault();
         if (tree is null && context?.WorkspaceId is null) return await action();
         var workspaceId = tree?.WorkspaceId ?? context!.WorkspaceId!;
         Id(workspaceId);
@@ -41,7 +46,15 @@ internal sealed partial class DevelopmentWorkspaceService
             if (!cleanup)
             {
                 if (tree is null) throw Error("not_found", "Workspace no longer exists.");
-                await Read(tree.Id, tree.Owner, ct);
+                var participation = await ReadParticipationAsync(workspaceId, ct);
+                if (participation is not null && RequireMember(participation, actor.UserId) is { Role: not "owner" } member)
+                    tree = candidates.FirstOrDefault(w => member.WorktreeIds.Contains(w.Id))
+                        ?? throw Error("forbidden", "No repository in this workspace is shared with the acting user.");
+                if (!await RequireParticipationSourceAsync(tree, actor.UserId, ct))
+                {
+                    if (tree.Owner.UserId != actor.UserId) throw Error("forbidden", "The workspace owner must share its source first.");
+                    await Read(tree.Id, tree.Owner, ct);
+                }
             }
             var workflow = tree is null ? new WorkspaceWorkflow() : await WorkflowAsync(tree.Owner, ct);
             if (!cleanup && (workflow.Closure is not null || workflow.State is "deferred" or "deleting" or "deleted"
@@ -50,6 +63,15 @@ internal sealed partial class DevelopmentWorkspaceService
             return await action();
         }, ct);
     }
+    internal Task<WorkspaceWorkflow> SessionWorkflowAsync(WorkspaceOwner actor, CancellationToken ct)
+        => Locked("workspace-participation", async () =>
+        {
+            // Detaching the creator removes its conversation's workflow association, but does
+            // not change the retained allocation owner or grant access to its former source.
+            if (await SessionDetachedAsync(actor, ct)) return new WorkspaceWorkflow();
+            return await WorkflowAsync(await SessionResourceOwnerAsync(actor, ct), ct);
+        }, ct);
+
     private string WorkflowPath(WorkspaceOwner owner) => System.IO.Path.Combine(Root, "workflows", Hash(OwnerIdentity(owner)) + ".json");
     internal async Task<WorkspaceWorkflow> WorkflowAsync(WorkspaceOwner owner, CancellationToken ct)
         => await JsonStorage.ReadAsync<WorkspaceWorkflow>(WorkflowPath(owner), ct) ?? new();
@@ -183,7 +205,7 @@ internal sealed partial class DevelopmentWorkspaceService
                     {
                         foreach (var original in trees)
                         {
-                            var w = await Read(original.Id, owner, ct);
+                            var w = await Read(original.Id, null, ct);
                             if (w.State == "released") continue;
                             await CheckConsumers(w, ct);
                             var releaseId = "workflow-" + input.RequestId;

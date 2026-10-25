@@ -1,5 +1,7 @@
 "use client";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
+import type { WorkspaceSessionActions } from "@/lib/use-workspace-session-actions";
+import { WorkspaceSessions } from "./workspace-sessions";
 import { WorkspaceReview, type ReviewChoice } from "./workspace-review";
 import { FileDiff, FolderGit2, GitBranch, MoreHorizontal, Pencil, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -19,7 +21,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { HostyLoader } from "../../../../../shared/web/hosty-states";
 import { ContextAppIcon } from "@/components/context-app-icon";
-import type { ContextApp } from "@/lib/assistant-api";
+import type { AssistantSession, ContextApp } from "@/lib/assistant-api";
 
 type PendingAction = { kind: string; requestId: string; expectedRevision: number };
 const actionProgress: Record<string, string> = {
@@ -33,10 +35,13 @@ function readPendingAction(workspaceId: string): PendingAction | null {
     return value && ["complete", "resume", "pause", "defer", "delete", "close"].includes(value.kind) && typeof value.requestId === "string" && Number.isSafeInteger(value.expectedRevision) ? value : null;
   } catch { return null; }
 }
-export function WorkspaceDetails({ workspace, title, sessionId, running, refresh, deleteConversation, onReview, appMetadata = [] }: {
+export function WorkspaceDetails({ workspace, title, sessionId, running, refresh, deleteConversation, onReview, onSessionSelected, sessionActions, appMetadata = [] }: {
   workspace: DevelopmentWorkspace; title: string; sessionId?: string; running?: boolean; appMetadata?: readonly ContextApp[];
+  sessionActions?: WorkspaceSessionActions;
+  onSessionSelected?: (session: AssistantSession) => void;
   refresh: () => void; deleteConversation?: () => Promise<void>; onReview?: (tree: Worktree, choice?: ReviewChoice) => void;
 }) {
+  const canManage = workspace.participation?.role !== "contributor";
   const [trees, setTrees] = useState<Worktree[]>(() => workspace.worktrees.map(t => ({ ...t, sessionChanges: undefined })));
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState("");
@@ -108,7 +113,7 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
     }
     finally { executing.current = false; setBusy(false); }
   };
-  const externalClose = workspace.owner.kind === "external" && !!pending && ["pause", "close", "defer"].includes(pending.kind) && state.closure === "closing" && trees.some(t => t.leases.length > 0);
+  const externalClose = canManage && !!pending && ["pause", "close", "defer"].includes(pending.kind) && state.closure === "closing" && trees.some(t => t.leases.length > 0);
   const currentDiff = trees.find(t => t.id === diffTree);
   return <aside aria-label="Workspace details" className="h-full overflow-y-auto">
     <div className="border-b p-4">
@@ -118,7 +123,7 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
       <div className="min-w-0 flex-1"><WorkspaceName key={workspace.id} workspace={workspace} fallback={title} refresh={refresh} />
         {state.completedAt && <p className="mt-1 text-xs text-muted-foreground">Completed {new Date(state.completedAt).toLocaleDateString()}</p>}</div>
       <Button size="icon-sm" variant="ghost" aria-label="Refresh workspace" onClick={() => { setDetailRefresh(n => n + 1); refresh(); }}><RefreshCw className="size-3.5" /></Button>
-      <DropdownMenu><DropdownMenuTrigger asChild><Button size="icon-sm" variant="ghost" aria-label="Workspace actions"><MoreHorizontal /></Button></DropdownMenuTrigger>
+      {canManage && <DropdownMenu><DropdownMenuTrigger asChild><Button size="icon-sm" variant="ghost" aria-label="Workspace actions"><MoreHorizontal /></Button></DropdownMenuTrigger>
         <DropdownMenuContent align="end">
           <DropdownMenuItem disabled={busy || recovering || !!discardOperation || !!pending || running || !["in-progress", "deferred"].includes(state.state)} onSelect={() => void run("complete")}>Complete workspace</DropdownMenuItem>
           <DropdownMenuItem disabled={busy || recovering || !!discardOperation || !!pending || !workflowIsActive(state)} onSelect={() => void run("pause")}>Pause workspace</DropdownMenuItem>
@@ -126,27 +131,28 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
           <DropdownMenuItem disabled={busy || recovering || !!discardOperation || !!pending || running || !["completed", "deleting"].includes(state.state)} onSelect={() => setConfirmDelete(true)}>Delete workspace…</DropdownMenuItem>
           <DropdownMenuItem disabled={busy || recovering || (!!operation && !discardOperation) || state.state === "deleted"} onSelect={() => setConfirmDiscard(true)}>{discardOperation ? "Recover workspace removal…" : "Discard and remove workspace…"}</DropdownMenuItem>
         </DropdownMenuContent>
-      </DropdownMenu>
+      </DropdownMenu>}
       </div>
       <WorkspaceObservation trees={trees} now={now} />
     </div>
     <div className="space-y-4 p-4">
+      {workspace.participation && <WorkspaceSessions actions={sessionActions} workspace={workspace} sessionId={sessionId} running={running} refresh={refresh} onSelect={onSessionSelected} />}
       {workspace.owner.kind === "external" && <p className="text-xs text-muted-foreground">External work: {workspace.owner.label}. Conversation and agent activity are not synchronized.</p>}
-      {running && <p className="text-xs text-muted-foreground">The agent is running. Pause workspace stops its owned execution and preserves unfinished changes.</p>}
+      {running && <p className="text-xs text-muted-foreground">An agent is running. Pause workspace fences all participants and waits for confirmed execution stops.</p>}
       {(state.closure || state.state === "deferred") && !["deleting", "deleted"].includes(state.state) && <p role="status" className="text-xs text-muted-foreground">{state.closure === "closing" ? "Pausing: new development work is blocked while execution stop is verified." : "Paused: source, previews and conversation are retained. Resume to continue development."}</p>}
       {(!externalClose || loadError) && (error || loadError || operation?.error) && <p role="alert" className="text-sm text-destructive-foreground">{error || loadError || operation?.error}</p>}
       {discardOperation && <div className="space-y-2 text-xs"><p>Workspace removal is pending. Recover the original confirmed request.</p><Button variant="outline" size="sm" disabled={busy || recovering} onClick={() => setConfirmDiscard(true)}>Recover removal</Button></div>}
       {busy && <p role="status" className="flex items-center gap-2 text-xs text-muted-foreground"><HostyLoader label={null} className="size-4" />{actionProgress[pending?.kind ?? ""] ?? "Updating workspace…"}</p>}
-      {leaseRefusal && !busy && !recovering && !pending && workspace.owner.kind === "external" && workflowIsActive(state) && trees.some(tree => tree.leases.length) && <div className="space-y-2 text-xs">
-        <p>Pause this workspace, then confirm that the external agent and its commands have stopped. Source files are retained.</p>
+      {leaseRefusal && !busy && !recovering && !pending && canManage && workflowIsActive(state) && trees.some(tree => tree.leases.length) && <div className="space-y-2 text-xs">
+        <p>Pause this workspace, then confirm that all agent executions and their commands have stopped. Source files are retained.</p>
         <Button variant="outline" size="sm" onClick={() => void run("pause")}>Pause workspace</Button>
       </div>}
       {pending && !busy && !externalClose && <div className="space-y-2 text-xs"><p>{operation?.state === "pending" ? "Pending action" : "Action outcome unconfirmed"}: {["close", "defer"].includes(pending.kind) ? "pause" : pending.kind}. Retry uses the original request.</p>
         <Button variant="outline" size="sm" disabled={busy || recovering} onClick={() => void run(pending.kind, true)}>Retry action</Button>
         {!operation && state.state !== "deleting" && state.closure !== "closing" && <Button variant="ghost" size="sm" disabled={busy || recovering} onClick={() => { setPending(null); try { localStorage.removeItem(`hosty.workspace.action.${workspace.id}`); } catch {} }}>Dismiss</Button>}
       </div>}
-      {state.state === "completed" && <Button variant="outline" size="sm" disabled={busy || recovering || !!discardOperation || !!pending || running} onClick={() => setConfirmDelete(true)}>Delete workspace…</Button>}
-      {workspace.owner.kind === "external" && <WorkspaceLeaseRecovery key={`lease:${workspace.id}`} workspaceId={workspace.id}
+      {canManage && state.state === "completed" && <Button variant="outline" size="sm" disabled={busy || recovering || !!discardOperation || !!pending || running} onClick={() => setConfirmDelete(true)}>Delete workspace…</Button>}
+      {canManage && <WorkspaceLeaseRecovery key={`lease:${workspace.id}`} workspaceId={workspace.id}
         trees={trees} closure={state.closure} closeRequest={!!pending && ["pause", "close", "defer"].includes(pending.kind) ? pending : null}
         disabled={busy || !!running} refresh={() => { setDetailRefresh(n => n + 1); refresh(); }} onBusyChange={setRecovering} onClosed={result => {
           setLocalResult({ base: workspace.workflow, value: result }); setPending(null); setError("");
@@ -166,7 +172,7 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
             ? <>Observed <time dateTime={tree.observation.at}>{new Date(tree.observation.at).toLocaleString()}</time>{tree.observationHealth === "watching" ? " · Watching" : tree.observationHealth === "paused" ? " · Paused" : tree.observationHealth === "pending" ? " · Updating" : " · Observation recovering"}</>
             : "Observation unavailable"}</p>
           <Button type="button" variant="ghost" disabled={tree.state !== "active"} onClick={event => { diffTrigger.current = event.currentTarget; if (onReview) onReview(tree); else setDiffTree(tree.id); }} className="h-auto w-full min-w-0 flex-wrap justify-start gap-2 rounded-lg border bg-muted/40 px-2.5 py-2.5 text-left text-xs">
-            <FileDiff className="size-3.5" />Session changes {totals ? <><span className="ml-auto font-mono font-normal tabular-nums text-success-foreground">+{totals.additions}</span><span className="font-mono font-normal tabular-nums text-destructive-foreground">−{totals.deletions}</span></> : <span className="ml-auto text-xs text-muted-foreground">Statistics unavailable</span>}
+            <FileDiff className="size-3.5" />Workspace changes {totals ? <><span className="ml-auto font-mono font-normal tabular-nums text-success-foreground">+{totals.additions}</span><span className="font-mono font-normal tabular-nums text-destructive-foreground">−{totals.deletions}</span></> : <span className="ml-auto text-xs text-muted-foreground">Statistics unavailable</span>}
             <span className="text-xs font-normal tabular-nums text-muted-foreground">{known ? `(${files.length} ${files.length === 1 ? "file" : "files"})` : ""}</span>
           </Button>
           {sessionId && tree.apps.filter(app => app.localGit).map(app => <div key={app.appId} className="flex flex-col gap-2">
@@ -226,6 +232,7 @@ function WorkspaceName({ workspace, fallback, refresh }: { workspace: Developmen
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(false); }
   };
+  if (workspace.participation?.role === "contributor") return <h2 className="text-sm font-medium">{name}</h2>;
   return editing ? <form className="space-y-2" onSubmit={event => { event.preventDefault(); void rename(); }}>
     <label className="sr-only" htmlFor={`workspace-name-${workspace.id}`}>Workspace name</label>
     <Input id={`workspace-name-${workspace.id}`} autoFocus maxLength={120} value={draft} disabled={busy}

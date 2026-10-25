@@ -29,7 +29,9 @@ public sealed partial class CoreLifecycleServiceTests
         if (scenario == "symlink") { File.Delete(project); File.CreateSymbolicLink(project, outside); }
         var input = new CoreEnvironmentCreate(Guid.NewGuid().ToString(), "Source", "source", project,
             new(SessionId: scenario == "other-session" ? "other-session" : owner.SessionId), scenario == "unattached" ? [] : [tree.Id]);
-        await Assert.ThrowsAsync<SandboxException>(() => service.CreateAsync(actor, input, default));
+        var error = await Assert.ThrowsAsync<SandboxException>(() => service.CreateAsync(actor, input, default));
+        Assert.Equal(403, error.Status);
+        Assert.Equal(scenario == "other-session" ? "environment_worktree_forbidden" : "environment_project_forbidden", error.Code);
         Assert.Empty((await service.ListAsync(actor, default)).Environments);
     }
 

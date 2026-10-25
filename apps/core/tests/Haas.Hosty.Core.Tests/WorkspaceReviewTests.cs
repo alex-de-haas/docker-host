@@ -105,6 +105,11 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.True(diff.LocalRangesComplete);
         Assert.Equal(new WorkspaceReviewLineRange(1, 1), Assert.Single(diff.LocalRanges));
         Assert.Equal("local replacement\n", await File.ReadAllTextAsync(Path.Combine(tree.Path, "README.md")));
+        await Assert.ThrowsAsync<AppLifecycleException>(() => inspection.ReviewAsync(tree.WorkspaceId, tree.Id,
+            "another-admin", "pull-request", url, default));
+        var membership = await fixture.Workspaces.ParticipationAsync(tree.WorkspaceId, "admin", default);
+        await fixture.Workspaces.ChangeMemberAsync(tree.WorkspaceId, "admin", "grant",
+            new(Guid.NewGuid().ToString(), membership.Revision, "another-admin", [tree.Id]), default);
         await Assert.ThrowsAsync<PublicationException>(() => inspection.ReviewAsync(tree.WorkspaceId, tree.Id,
             "another-admin", "pull-request", url, default));
         await Assert.ThrowsAsync<PublicationException>(() => inspection.ReviewAsync(tree.WorkspaceId, tree.Id,

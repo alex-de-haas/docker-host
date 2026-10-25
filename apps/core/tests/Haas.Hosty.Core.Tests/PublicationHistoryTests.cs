@@ -50,9 +50,14 @@ public sealed partial class CoreLifecycleServiceTests
         await JsonStorage.WriteAsync(Path.Combine(f.F.Paths.CoreRoot, "development/publications", f.W.Id + ".json"), record);
         if (scenario == "revoked") await f.Users.UpdateAsync(s => s with { ProviderConnections = [] });
         if (scenario == "different-repository") f.Provider.RepositoryOverride = "different/repo";
-        var detail = await inspection.ReadAsync(f.W.WorkspaceId, f.W.Id, scenario == "different-user" ? "another-admin" : "admin", default);
-        if (scenario == "different-user") Assert.Empty(detail.PullRequests);
-        else
+        if (scenario == "different-user")
+        {
+            var denied = await Assert.ThrowsAsync<AppLifecycleException>(() => inspection.ReadAsync(f.W.WorkspaceId, f.W.Id, "another-admin", default));
+            Assert.Equal("workspace_forbidden", denied.Code);
+            return;
+        }
+        var detail = await inspection.ReadAsync(f.W.WorkspaceId, f.W.Id, "admin", default);
+        if (scenario != "different-user")
         {
             var previous = Assert.Single(detail.PullRequests);
             Assert.True(previous.Historical);

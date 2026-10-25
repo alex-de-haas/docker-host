@@ -17,7 +17,7 @@ it("lists each conversation once across app contexts in activity order without g
   for (const row of rows) await act(async () => (row as HTMLButtonElement).click());
   expect(onPick.mock.calls).toEqual([[multi]]);
   expect([...container.querySelectorAll("h2")].map(n=>n.textContent)).toEqual([]);
-  expect(container.querySelectorAll('[aria-label="Agent running"]')).toHaveLength(1);
+  expect(container.querySelectorAll('[aria-label="Working: 1"]')).toHaveLength(1);
 });
 it("does not invent line counts when evidence is missing or double count binary files", () => {
   expect(changeTotals([{ path: "missing", status: "M" }])).toBeNull();
@@ -80,49 +80,41 @@ it("combines search and state filters without changing session identity or order
   const older = { ...disposable, id: "older", title: "Older task", status: "awaiting_approval", appIds: [], createdAt: "2026-10-18" };
   const newer = { ...older, id: "newer", title: "Newer task", createdAt: "2026-10-20" };
   const running = { ...older, id: "working", title: "Working task", status: "running" };
-  const pick = vi.fn(), external = vi.fn();
-  await act(async () => root.render(<DevelopmentNavigation sessions={[older, running, newer]} workspaces={[]} onPick={pick} onNew={vi.fn()} onDelete={vi.fn()} externalCount={3} onExternal={external} />));
-  const waiting = [...container.querySelectorAll<HTMLButtonElement>('button[aria-pressed]')].find(button => button.textContent?.startsWith("Needs you"))!;
+  const pick = vi.fn();
+  await act(async () => root.render(<DevelopmentNavigation sessions={[older, running, newer]} workspaces={[]} onPick={pick} onNew={vi.fn()} onDelete={vi.fn()} />));
+  const waiting = [...container.querySelectorAll<HTMLButtonElement>('button[aria-pressed]')].find(button => button.textContent?.startsWith("Needs attention"))!;
   await act(async () => waiting.click());
   expect(container.textContent).not.toContain("Working task");
   const rows = [...container.querySelectorAll<HTMLButtonElement>('button')].filter(button => button.textContent?.includes("task") && !button.getAttribute("aria-label")?.startsWith("Delete"));
-  expect(rows.map(button => button.textContent?.split("Needs you")[0])).toEqual(["Newer task", "Older task"]);
-  const search = container.querySelector<HTMLInputElement>('[aria-label="Search sessions"]')!;
+  expect(rows.map(button => button.querySelector("span.block")?.textContent)).toEqual(["Newer task", "Older task"]);
+  const search = container.querySelector<HTMLInputElement>('[aria-label="Search workspaces and chats"]')!;
   await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(search, "Older"); search.dispatchEvent(new Event("input", { bubbles: true })); });
   expect(container.textContent).not.toContain("Newer task");
   await act(async () => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent?.startsWith("Older task"))!.click());
   expect(pick).toHaveBeenCalledWith(older);
-  await act(async () => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent?.startsWith("External workspaces"))!.click());
-  expect(external).toHaveBeenCalledOnce();
+
 });
 
-it("uses the owned workspace name while retaining original-title and application search, identity and deletion", async () => {
-  const session = { id: "work", title: "Original conversation", status: "idle", appIds: ["notes.app", "other.app"],
-    contextApps: [{ id: "notes.app", displayName: "Notebook", available: true }], createdAt: "2026-10-22" } as AssistantSession;
-  const workspace = { id: "workspace", name: "Review changes", owner: { kind: "assistant", appId: "hosty.harness", reference: session.id, label: "Owned work" }, workflow: { state: "in-progress", revision: 0 }, worktrees: [] } as unknown as DevelopmentWorkspace;
-  const onPick = vi.fn();
-  const render = (workspaces = [workspace]) => act(async () => root.render(<DevelopmentNavigation sessions={[session]} activeId={session.id} workspaces={workspaces} onPick={onPick} onNew={vi.fn()} onDelete={vi.fn()} />));
+it("groups attached chats under their workspace and keeps external and sessionless workspaces in the same list", async () => {
+  const session = { ...disposable, id: "attached", title: "Implementation" };
+  const workspace = { id: "workspace", name: "Shared project", state: "active", owner: { kind: "assistant", appId: "hosty.harness", reference: session.id, label: "Owned" }, workflow: { state: "in-progress", revision: 0 }, worktrees: [] } as DevelopmentWorkspace;
+  const external = { ...workspace, id: "external", name: "External checkout", owner: { kind: "external", reference: "task", label: "Codex" } };
+  const empty = { ...workspace, id: "empty", name: "Retained source", owner: { ...workspace.owner, reference: "deleted" } };
+  const pick = vi.fn();
+  const render = (spaces = [workspace, external, empty]) => act(async () => root.render(<DevelopmentNavigation sessions={[session, disposable]} workspaces={spaces} activeId={session.id} onWorkspace={pick} onPick={vi.fn()} onNew={vi.fn()} onDelete={vi.fn()} />));
   await render();
-  const row = () => container.querySelector<HTMLButtonElement>('[aria-current="page"]')!;
-  expect(row().textContent).toBe("Review changes");
-  expect(container.querySelector('[aria-label="Delete Review changes"]')).not.toBeNull();
-  expect(container.textContent).not.toContain("Idle");
-  const search = container.querySelector<HTMLInputElement>('[aria-label="Search sessions"]')!;
-  for (const query of ["Review changes", "Original conversation", "Notebook", "other.app"]) {
-    await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(search, query); search.dispatchEvent(new Event("input", { bubbles: true })); });
-    expect(row().textContent).toBe("Review changes");
-  }
-  await act(async () => row().click()); expect(onPick).toHaveBeenCalledWith(session);
-  await render([{ ...workspace, name: "Renamed workspace" }]);
-  expect(row().textContent).toBe("Renamed workspace");
-  await click("Delete Renamed workspace");
-  expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Delete the session “Renamed workspace”');
-  await click("Keep session");
-  await render([{ ...workspace, name: " " }]); expect(row().textContent).toBe("Owned work");
-  await render([{ ...workspace, name: "", owner: { ...workspace.owner, label: "" } }]); expect(row().textContent).toBe("Original conversation");
-  await render([{ ...workspace, owner: { ...workspace.owner, reference: "another-session" } }]); expect(row().textContent).toBe("Original conversation");
-  await render([{ ...workspace, owner: { ...workspace.owner, appId: "another-owner" } }]); expect(row().textContent).toBe("Original conversation");
-  await render([{ ...workspace, workflow: { ...workspace.workflow, state: "deleted" } }]); expect(row().textContent).toBe("Original conversation");
+  expect(container.textContent).toContain("Shared project"); expect(container.textContent).toContain("External checkout"); expect(container.textContent).toContain("Retained source");
+  expect(container.textContent).not.toContain("Implementation");
+  expect(container.querySelector('[aria-label="Delete Implementation"]')).toBeNull();
+  await act(async () => container.querySelector<HTMLButtonElement>('[aria-current="page"]')!.click());
+  expect(pick).toHaveBeenCalledWith(workspace, undefined);
+  const search = container.querySelector<HTMLInputElement>('[aria-label="Search workspaces and chats"]')!;
+  await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(search, "Implementation"); search.dispatchEvent(new Event("input", { bubbles: true })); });
+  await act(async () => container.querySelector<HTMLButtonElement>('[aria-current="page"]')!.click());
+  expect(pick).toHaveBeenLastCalledWith(workspace, session);
+  await render([{ ...workspace, workflow: { state: "deleted", revision: 1 } }]);
+  expect(container.textContent).toContain("Implementation");
+  expect(container.querySelector('[aria-label="Delete Implementation"]')).not.toBeNull();
 });
 
 it("keeps decorative status shapes, factual chip counts and each filter's existing session projection", async () => {
@@ -132,7 +124,7 @@ it("keeps decorative status shapes, factual chip counts and each filter's existi
   const render = (records = sessions) => act(async () => root.render(<DevelopmentNavigation sessions={records} workspaces={[]} onPick={pick} onNew={vi.fn()} onDelete={vi.fn()} />));
   await render();
   const filters = () => [...container.querySelectorAll<HTMLButtonElement>('[aria-pressed]')];
-  expect(filters().map(node => node.textContent)).toEqual(["All6", "Needs you2", "Working1", "Failed1"]);
+  expect(filters().map(node => node.textContent)).toEqual(["All6", "Needs attention2", "Working1", "Failed1"]);
   for (const filter of filters()) {
     const glyph = filter.querySelector("svg")!;
     expect(glyph).not.toBeNull();
@@ -143,12 +135,12 @@ it("keeps decorative status shapes, factual chip counts and each filter's existi
     await act(async () => filter.click());
     expect(filter.getAttribute("aria-pressed")).toBe("true");
     expect(pick).not.toHaveBeenCalled();
-    const visible = [...container.querySelectorAll<HTMLButtonElement>("button")].filter(node => /^Session \d$/.test(node.textContent ?? ""));
-    expect(visible.map(node => node.textContent).sort()).toEqual(expected[index]);
+    const visible = [...container.querySelectorAll<HTMLButtonElement>("button")].filter(node => /^Session \d$/.test(node.querySelector("span.block")?.textContent ?? ""));
+    expect(visible.map(node => node.querySelector("span.block")?.textContent).sort()).toEqual(expected[index]);
   }
   await render(sessions.slice(0, -1));
-  expect(filters().map(node => node.textContent)).toEqual(["All5", "Needs you2", "Working1", "Failed0"]);
+  expect(filters().map(node => node.textContent)).toEqual(["All5", "Needs attention2", "Working1", "Failed0"]);
   expect(filters()[3].getAttribute("aria-pressed")).toBe("true");
-  expect(container.textContent).toContain("No sessions match this search and filter.");
+  expect(container.textContent).toContain("No workspaces or chats match this search and filter.");
   expect(pick).not.toHaveBeenCalled();
 });

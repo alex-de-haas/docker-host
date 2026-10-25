@@ -383,6 +383,10 @@ async function route(
   }
 
   if (method === "GET" && url.pathname === "/api/health") {
+    const healthSession = url.searchParams.get("sessionId");
+    if (healthSession && (await manager.getSession(healthSession))?.createdBy !== actor.userId) {
+      sendJson(response, 404, { code: "session_not_found", message: "Session not found." }); return;
+    }
     const health = url.searchParams.get("sessionId") ? await manager.sessionHealth(url.searchParams.get("sessionId")!)
       : connections ? await connections.summary() : { name: adapter.name, capabilities: { ...adapter.capabilities, appContext: true }, ...await adapter.probe() };
     // Capabilities travel with health because the client needs them to decide what to render: a
@@ -597,7 +601,7 @@ async function route(
   }
 
   if (url.pathname === "/api/sessions" && method === "GET") {
-    const records = await manager.listSessions();
+    const records = (await manager.listSessions()).filter(record => record.createdBy === actor.userId);
     const roster = records.some(record => record.appIds?.length)
       ? await readContextApps(providers).catch(() => null) : [];
     sendJson(response, 200, { sessions: records.map(record => ({
@@ -611,6 +615,14 @@ async function route(
         roster === null && record.appIds?.length ? "unavailable" : "ok"),
     })) });
     return;
+  }
+
+  if (url.pathname === "/api/workspace-sessions" && method === "POST") {
+    const credential = actor.via === "app-session" ? readAppCredential(request) : null;
+    if (!credential) throw new AppContextError(401, "reauth_required", "Open Harness through Core to join a workspace.");
+    const body = await readJson(request);
+    sendJson(response, 200, await manager.newWorkspaceSession(actor.userId, credential, {
+      workspaceId: body.workspaceId as string, requestId: body.requestId as string, expectedRevision: body.expectedRevision as number })); return;
   }
 
   if (url.pathname === "/api/building-sessions" && method === "POST") {
@@ -645,14 +657,14 @@ async function route(
       method === "POST" ? await readJson(request) : undefined)); return;
   }
 
-  const inspection = url.pathname.match(/^\/api\/development-workspaces(\/local-apps|\/[a-f0-9]{64}(?:\/name|\/execution-target(?:\/[a-f0-9-]{36})?|\/discard\/(?:plan|apply|status)|\/activation\/(?:plan|apply|list|status|cancel|resume|return)|\/(?:environments|sandboxes)\/[a-f0-9]{32}\/(?:start|stop|finish|dispose)|\/previews(?:\/[a-f0-9]{32}\/[a-zA-Z0-9._-]+\/(?:checks|run|restart|logs))?|\/worktrees\/[a-f0-9]{64}(?:\/(?:diff|recover-lease|review(?:\/diff)?|reviews\/(?:reply|resolve|comment)))?|\/workflow(?:\/(?:complete|resume|pause|defer|delete|close))?)?)?$/);
+  const inspection = url.pathname.match(/^\/api\/development-workspaces(\/local-apps|\/[a-f0-9]{64}(?:\/participants(?:\/(?:grant|revoke))?|\/name|\/execution-target(?:\/[a-f0-9-]{36})?|\/discard\/(?:plan|apply|status)|\/activation\/(?:plan|apply|list|status|cancel|resume|return)|\/(?:environments|sandboxes)\/[a-f0-9]{32}\/(?:start|stop|finish|dispose)|\/previews(?:\/[a-f0-9]{32}\/[a-zA-Z0-9._-]+\/(?:checks|run|restart|logs))?|\/worktrees\/[a-f0-9]{64}(?:\/(?:diff|recover-lease|review(?:\/diff)?|reviews\/(?:reply|resolve|comment)))?|\/workflow(?:\/(?:complete|resume|pause|defer|delete|close))?)?)?$/);
   if (inspection && (method === "GET" || method === "POST")) {
     const credential = actor.via === "app-session" ? readAppCredential(request) : null;
     if (!credential) throw new AppContextError(401, "reauth_required", "Open Harness through Core to inspect workspaces.");
     const discard = /\/discard\/(plan|apply|status)$/.exec(inspection[1] ?? "");
     if (discard && method !== (discard[1] === "apply" ? "POST" : "GET"))
       throw new AppContextError(405, "workspace_method_invalid", "Removal review and status require GET; removal apply requires POST.");
-    if (method === "POST" && !/\/(?:name|execution-target|discard\/apply|activation\/(?:plan|apply|list|status|cancel|resume|return)|(?:environments|sandboxes)\/[a-f0-9]{32}\/(?:start|stop|finish|dispose)|worktrees\/[a-f0-9]{64}\/(?:recover-lease|reviews\/(?:reply|resolve|comment))|workflow\/(?:complete|resume|pause|defer|delete|close)|previews\/[a-f0-9]{32}\/[a-zA-Z0-9._-]+\/(?:checks|run|restart|logs))$/.test(inspection[1] ?? ""))
+    if (method === "POST" && !/\/(?:participants\/(?:grant|revoke)|name|execution-target|discard\/apply|activation\/(?:plan|apply|list|status|cancel|resume|return)|(?:environments|sandboxes)\/[a-f0-9]{32}\/(?:start|stop|finish|dispose)|worktrees\/[a-f0-9]{64}\/(?:recover-lease|reviews\/(?:reply|resolve|comment))|workflow\/(?:complete|resume|pause|defer|delete|close)|previews\/[a-f0-9]{32}\/[a-zA-Z0-9._-]+\/(?:checks|run|restart|logs))$/.test(inspection[1] ?? ""))
       throw new AppContextError(400, "workspace_action_invalid", "Choose a workspace lifecycle action.");
     if (method === "GET" && /\/reviews\/(?:reply|resolve|comment)$/.test(inspection[1] ?? ""))
       throw new AppContextError(405, "workspace_method_invalid", "Review actions require POST.");
@@ -672,6 +684,10 @@ async function route(
   }
 
   const sessionId = sessionMatch[1]!;
+  const ownedSession = await manager.getSession(sessionId);
+  if (!ownedSession || ownedSession.createdBy !== actor.userId) {
+    sendJson(response, 404, { code: "session_not_found", message: "Session not found." }); return;
+  }
   if (sessionMatch[2] === "/workspaces" && method === "POST") {
     const body = await readJson(request, 256 * 1024);
     const action = body.action;
@@ -749,7 +765,7 @@ async function route(
       sendJson(response, 400, { code: "invalid_request", message: "A title string is required." });
       return;
     }
-    const record = await manager.renameSession(sessionId, body.title);
+    const record = await manager.renameSession(sessionId, body.title, actor.via === "app-session" ? readAppCredential(request) ?? undefined : undefined);
     if (!record) {
       sendJson(response, 404, { code: "session_not_found", message: "Session not found." });
       return;
@@ -759,7 +775,7 @@ async function route(
   }
 
   if (rest === "" && method === "DELETE") {
-    const deleted = await manager.deleteSession(sessionId, actor.userId, await delegationCredential(request, false));
+    const deleted = await manager.deleteSession(sessionId, actor.userId, (actor.via === "app-session" ? readAppCredential(request) : await delegationCredential(request, false)) ?? undefined);
     if (!deleted) {
       sendJson(response, 404, { code: "session_not_found", message: "Session not found." });
       return;

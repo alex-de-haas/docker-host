@@ -68,12 +68,12 @@ it.each([true, false])("retains drafts and returns Ask to the conversation from 
 });
 it("opens an external PR in its own workspace without enabling Ask in an unrelated session", async () => {
   await act(async () => root.render(<AssistantConversation fullPage />));
-  await act(async () => button("External workspaces").click()); await act(async () => button("Review PR in external-workspace").click());
+  await act(async () => button("external-workspace").click()); await act(async () => button("Review PR in external-workspace").click());
   expect(container.querySelector('[aria-label="Mock workspace review"]')?.textContent).toContain("external-workspace / external-workspace-tree / pr:https://github.com/example/external-workspace/pull/7");
   expect(button("Ask from review").disabled).toBe(true); expect(api.postMessage).not.toHaveBeenCalled();
   await act(async () => button("Back to session").click());
   expect(container.querySelector('[aria-label="Mock workspace review"]')).toBeNull();
-  expect(container.querySelector('nav[aria-label="External workspaces"] button[aria-current="page"]')?.textContent).toContain("external-workspace");
+  expect(container.querySelector('nav[aria-label="Workspaces and chats"] button[aria-current="page"]')?.textContent).toContain("external-workspace");
 });
 
 it("opens persisted transcript edits in their exact tree and session scope while retaining the prior PR choice and composer", async () => {
@@ -197,4 +197,46 @@ it("disables Ask from an already open review when its workspace closes", async (
   await act(async () => root.render(<AssistantConversation fullPage />));
   await act(async () => button("Back to session").click());
   expect(messageField()?.value).toBe("Keep this draft");
+});
+
+it("switches workspace tabs with independent drafts and excludes other users' chats", async () => {
+  const records = [{ id: "session-one", title: "Implementation", status: "idle", createdAt: "2026-10-25" }, { id: "session-two", title: "Review", status: "idle", createdAt: "2026-10-25" }, { id: "solo", title: "Standalone", status: "idle", createdAt: "2026-10-25" }];
+  vi.mocked(api.listSessions).mockResolvedValue(records);
+  vi.mocked(api.getSession).mockImplementation(async id => records.find(r => r.id === id)!);
+  const shared = workspace("shared", "assistant");
+  shared.participation = { id: "shared", revision: 1, role: "owner", viewerUserId: "me", members: [], eligibleUsers: [], sessions: [
+    ...records.slice(0, 2).map(r => ({ appId: "hosty.harness", userId: "me", sessionId: r.id, title: r.title, attached: true, canOpen: true, viewerPath: `/development?session=${r.id}`, status: "idle", activityAt: null })),
+    { appId: "hosty.harness", userId: "someone-else", sessionId: "private", title: "Private review", attached: true, canOpen: false, viewerPath: null, status: "failed", activityAt: null },
+  ] };
+  controls.workspaces = [shared, workspace("external", "external")];
+  await act(async () => root.render(<AssistantConversation fullPage />));
+  const tabs = () => [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+  expect(tabs().map(t => t.textContent)).toEqual(["Implementation", "Review"]);
+  expect(container.querySelectorAll('nav button[aria-current="page"]')).toHaveLength(1);
+  const input = () => container.querySelector<HTMLTextAreaElement>('[aria-label="Message"]')!;
+  const draft = async (text: string) => act(async () => { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(input(), text); input().dispatchEvent(new Event("input", { bubbles: true })); });
+  await draft("Implementation draft");
+  await act(async () => tabs()[1].click()); await draft("Review draft");
+  expect(window.location.search).toBe("?session=session-two");
+  await act(async () => tabs()[0].click()); expect(input().value).toBe("Implementation draft");
+  await act(async () => button("external").click());
+  expect(container.querySelector('[aria-label="Message composer"]')).toBeNull(); expect(tabs()).toHaveLength(0);
+  expect(window.location.search).toBe("?workspace=external");
+  await act(async () => [...container.querySelectorAll<HTMLButtonElement>("nav button")].find(b => b.textContent?.startsWith("shared"))!.click());
+  expect(input().value).toBe("Implementation draft");
+  await act(async () => tabs()[1].click()); expect(input().value).toBe("Review draft");
+  await act(async () => button("Standalone").click());
+  expect(tabs()).toHaveLength(0); expect(container.querySelector('[aria-label="Workspace draft shared"]')).toBeNull();
+  expect(api.createSession).not.toHaveBeenCalled(); expect(api.postMessage).not.toHaveBeenCalled();
+});
+it.each(["external", "empty"])("restores a %s workspace route without creating or reopening an unrelated conversation", async kind => {
+  const target = workspace(kind, kind === "external" ? "external" : "assistant"); target.owner.reference = "missing";
+  controls.workspaces = [target];
+  window.history.replaceState({}, "", `/development?workspace=${kind}`);
+  await act(async () => root.render(<AssistantConversation fullPage />));
+  expect(container.querySelector('[aria-label="Message composer"]')).toBeNull();
+  expect(container.querySelector('[role="tab"]')).toBeNull();
+  expect(container.querySelector('[aria-label="New session in workspace"]')).toBeNull();
+  expect(api.createSession).not.toHaveBeenCalled(); expect(api.postMessage).not.toHaveBeenCalled();
+  expect(controls.ui.reportSurfaceState).toHaveBeenCalledWith(expect.objectContaining({ route: `/development?workspace=${kind}`, state: "ready" }));
 });

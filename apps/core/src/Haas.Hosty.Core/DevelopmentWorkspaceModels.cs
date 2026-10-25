@@ -32,11 +32,14 @@ internal sealed record WorkspaceCommand(string RequestId, string? ExpectedHead =
     string[]? Paths = null, string? AuthorName = null, string? AuthorEmail = null, string? LeaseId = null,
     string[]? PullRequests = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ExpectedRemoteHead = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? AllowUnrelatedHistories = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? AllowUnrelatedHistories = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ReviewId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ConnectionId = null);
 internal sealed record WorkspaceDiffRequest(string Path, string View = "session");
 internal sealed record WorkspaceOperation(string Id, string Kind, string Fingerprint, string State,
     string? BeforeHead = null, string? ResultHead = null, string? Error = null, WorkspaceCommand? Command = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] LocalRemoteCommand? RemoteCommand = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] LocalRemoteCommand? RemoteCommand = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] WorkspaceOwner? Actor = null);
 internal sealed record WorkspaceObservation(DateTimeOffset At, string State, string? Head = null,
     string? TargetHead = null, int? Ahead = null, int? Behind = null, bool Conflict = false,
     AppSourceStatus? Local = null, string[]? SessionFiles = null, string? Error = null);
@@ -64,6 +67,8 @@ internal sealed record DevelopmentWorkspace
     public WorkspaceApp[] Apps { get; init; } = [];
     public WorkspaceOperation[] Operations { get; init; } = [];
     public string[] Leases { get; init; } = [];
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public WorkspaceLeaseClaim[]? LeaseClaims { get; init; }
     // Only Core resource owners can release persistent consumer references.
     public string[] SandboxConsumers { get; init; } = [];
     public string[] PullRequests { get; init; } = [];

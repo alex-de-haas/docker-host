@@ -1,6 +1,6 @@
 ---
 created: 2026-10-16
-updated: 2026-10-24
+updated: 2026-10-25
 summary: Harness combines conversation navigation, multi-repository workspace details, sandbox previews and verified lifecycle actions.
 components: [apps/harness, apps/core, apps/shell, packages/app-sdk]
 ---
@@ -70,6 +70,14 @@ available; other browsers retain guarded storage checks rather than an absolute 
 cross-document intent-creation guarantee. The server's one-dispatch guarantee applies to each
 retained UUID in either case. Late results cannot clear another request's draft or recovery action.
 
+## Shared Workspace Sessions
+
+[Workspace participation](../workspace-sessions/feature.md) provides session tabs with a creation plus, idle-session
+attachment/detachment, activity and owner-only source sharing in workspace details. Other users'
+conversations have no private links. Creating or attaching a session sends no provider message.
+Source details label their diff Workspace changes. Existing drafts and approvals remain scoped to
+the selected conversation. Participation updates use the shared workspace observation transport.
+
 ## Navigation And Conversation
 
 Harness exposes `/development` as its entrypoint and a Shell navigation entry. `/assistant` remains
@@ -78,16 +86,21 @@ streaming, provider, question, approval, app-context and attachment APIs. Plans 
 [Workspaces app is retired](../workspaces-app/feature.md). Child Core creation and test-account setup
 remain available through Harness's development tools; its former operator creation form is removed.
 
-The full page places a flat session list on the left, conversation in the center and workspace
-context on the right. Each session appears once regardless of its application context. A session
-with an owned, retained Core workspace shows its workspace name with a hammer; other sessions
-show their conversation title. Rows use one line without idle/completed text or workspace/PR suffixes.
-Running work has a circular indicator on the right; waiting and failed sessions retain their
-accessible diamond and alert icons. Icon-only Create app, Continue building and New session
-buttons sit to the right of the Sessions heading and count, in that order, with accessible names
-and tooltips. Search matches displayed workspace names, original session titles
-and application context, and All, Needs you, Working and Failed chips filter the same flat list. There is no separate application selector. The footer opens External workspaces with its count. Rename is also available in the conversation header and uses the existing session-title editor. Desktop sessions/workspace columns measure
-264/344 px; the transcript and composer are capped at 760 px. The workspace toggle hides its retained
+The full page places one workspace-and-unattached-chat list on the left. Internal workspaces show
+accessible conversation tabs above the center chat and details on the right; external workspaces
+leave the center empty. Attached chats do not duplicate the workspace row. Other users' disclosed
+activity contributes to independent Working, Needs attention and Failed counts, without exposing
+private chat tabs. Unknown/stopping metadata has a separate indication. The participant panel keeps
+sharing and attachment controls; its session names are informational rather than duplicate navigation.
+
+Create app, Continue building and New session actions accompany the list. Global New session creates
+an unattached chat; the plus after workspace tabs creates a chat in that workspace. Search matches
+workspace names, disclosed session titles and app context; All, Needs attention, Working and Failed
+chips filter the unified list. Sessionless workspaces offer explicit creation; selecting a row never
+creates a conversation automatically. Rename remains in the conversation header. Desktop navigation
+and workspace columns measure 264/344 px; transcript and composer are capped at 760 px. Tabs scroll
+horizontally with a reachable plus, and arrow/Home/End keys select tabs. Workspace details use the
+existing mobile dialog. The workspace toggle hides its retained
 column. Codex file-change approval input correlates the proposed patch from the exact active native thread,
 turn and item before persistence. Retention is bounded and proposals are consumed once; stale,
 completed, oversized or unavailable proposals cannot become another approval's patch. No patch is
@@ -97,10 +110,11 @@ leaves the worktree clean and releases the owned activity lease after confirmed 
 
 Pending approvals/questions have a pinned Review action that scrolls and focuses their card;
 active work has a pinned activity line and Stop. Repository summaries use bordered cards. Search and activity chips change navigation without
-changing conversation identity. Sessions and external workspaces are ordered by most recent activity, with
+changing conversation identity. Workspaces and unattached chats are ordered by most recent activity, with
 stable ID ordering for equal or unavailable dates. Waiting sessions keep their indicators without
 being pinned above newer work. Sessions fall back to their creation date on older records; Core
-aggregates workspace activity across its repositories and workflow. Status polling, reconnects and
+aggregates workspace activity across its repositories and workflow; participant state/title changes
+also affect ordering, while heartbeat observation times do not. Status polling, reconnects and
 opening details do not count as new activity. Autonomy, provider and app-context changes update
 the list immediately and persist across reloads, using the same activity timestamp in the record
 and its change event; replayed events and late responses cannot regress its activity timestamp. Reordering keeps the selected conversation/workspace.
@@ -122,7 +136,7 @@ change current controls or signal stream readiness before the authoritative snap
 persists its context-change time before emitting the corresponding event. Provider/autonomy events apply their settings immediately, even if reconciliation
 fails; a fetch superseded by a later settings event cannot replace that event.
 Each row offers Delete session with confirmation. It reuses the existing session deletion API,
-including unfinished-workspace protection, and keeps failures visible for retry without navigating
+including verified execution stop, independent workspace detachment and resource protection, and keeps failures visible for retry without navigating
 away from the current conversation. Deleting the selected session clears its draft and route selection;
 deleting another session preserves the selected conversation. A terminal deletion event detaches
 the session immediately, including when a locally initiated DELETE loses its HTTP response.
@@ -436,10 +450,11 @@ sandbox. The [creation feature](../app-prototype-workspaces/feature.md#optional-
 owns the runtime recipe, serialization and recovery contract.
 
 
-External workspaces have a separate tab using Core's existing typed external ownership and the same
-summary/diff components. The 264 px navigation column uses the same compact 36 px rows as the
-session list: a hammer, one truncated display name with its full title, and the accent selection
-fill. Rows omit the external task reference; selection remains bound to workspace IDs. There is no
+External workspaces share the unified workspace/chat list, using Core's typed external ownership
+and the same summary/diff components. The 264 px navigation column uses compact 36 px rows:
+the same hammer for every workspace, one truncated display name with its full title, and the accent
+selection fill. External workspaces have no distinct icon, secondary label or tooltip in the list. Rows omit the external task reference; selection remains bound to
+workspace IDs. There is no
 fabricated Harness conversation or imported transcript. Its selection is independent of the
 conversation and draft. External agent execution is not inferred
 from a workspace or lease. The panel explicitly distinguishes external work from synchronized

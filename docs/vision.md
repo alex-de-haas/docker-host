@@ -1,6 +1,6 @@
 ---
 created: 2026-08-19
-updated: 2026-10-24
+updated: 2026-10-25
 ---
 
 # Hosty Platform Vision
@@ -856,6 +856,11 @@ participate, with separate session names, purposes and local conversational cont
 an agent session can remain a convenient default: create the workspace and attach that session.
 Creating another session in the same workspace should not require transferring a single conversation
 between agents. A workspace may also exist without a session, and a session without a workspace.
+
+The [Multiple Sessions In A Shared Workspace feature](features/workspace-sessions/feature.md) implements
+the approved 2026-10-25 scope: explicit administrator sharing, concurrent private sessions and
+independent workspace lifetimes. Broader roles, shared materials and knowledge lifetimes remain
+separate design questions; this direction grants no implementation authority for them.
 
 Treat their association as a separate relationship. A session may detach or survive deletion of a
 workspace; removing one session need not remove shared work. Workspace resources should not be kept

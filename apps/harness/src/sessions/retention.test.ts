@@ -34,17 +34,13 @@ it("expires at the boundary, removes cache and informs a subscribed conversation
   await expect(readFile(path.join(cache!, "draft"))).rejects.toThrow();
   expect(await manager.getSession(record.id)).toBeNull();
 });
-it("starts from completion, extends for conversation activity and uses independent Off policies", async () => {
+it("protects attached completed workspaces and expires detached chats through the ordinary policy", async () => {
   const record = await old(); vi.mocked(core.retention).mockResolvedValue(completed);
-  expect((await manager.sessionRetention(record.id, now)).dueAt).toBe(now.toISOString());
-  record.updatedAt = "2030-01-09T00:00:00Z";
-  expect((await manager.sessionRetention(record.id, now)).dueAt).toBe("2030-01-16T00:00:00.000Z");
-  await settings.update({ retention: { ordinaryDays: 2, completedWorkspaceDays: null } });
+  expect((await manager.sessionRetention(record.id, now)).state).toBe("protected");
   expect(await manager.sweepRetention(now)).toEqual([]);
-  expect((await manager.sessionRetention(record.id, now)).state).toBe("off");
-  await settings.update({ retention: { ordinaryDays: null, completedWorkspaceDays: 7 } });
-  vi.mocked(core.retention).mockResolvedValue({ kind: "chat", workflow: null, resourcesFinished: true });
-  expect((await manager.sessionRetention(record.id, now)).state).toBe("off");
+  expect(vi.mocked(core.retention).mock.calls.every(call => !call[2])).toBe(true);
+  vi.mocked(core.retention).mockResolvedValue({ kind: "chat", workflow: null, resourcesFinished: true, sessionDetached: true });
+  expect(await manager.sweepRetention(now)).toEqual([record.id]);
 });
 it.each(["in-progress", "deferred", "unknown"])("never expires %s work even with no cached worktrees", async state => {
   const record = await old(); vi.mocked(core.retention).mockResolvedValue({ ...completed, workflow: { state, revision: 4 } });
@@ -77,8 +73,8 @@ it("preserves legacy resource history, unavailable Core and malformed completion
   expect(await manager.sweepRetention(now)).toEqual([]);
 });
 it("replays the exact cleanup identity after a lost response and restart", async () => {
-  const record = await old();
-  vi.mocked(core.retention).mockImplementation(async (_id, _user, cleanup) => { if (cleanup) throw new Error("response lost after Finish"); return completed; });
+  const record = await old({ retentionCleanup: { requestId: "legacy-cleanup", expectedRevision: 3 } });
+  vi.mocked(core.retention).mockImplementation(async (_id, _user, cleanup) => { if (cleanup) throw new Error("response lost after Finish"); return { ...completed, workflow: { ...completed.workflow!, state: "deleting" } }; });
   expect(await manager.sweepRetention(now)).toEqual([]);
   const command = (await store.readRecord(record.id))!.retentionCleanup!;
   expect(command.expectedRevision).toBe(3);
@@ -92,8 +88,8 @@ it("replays the exact cleanup identity after a lost response and restart", async
   expect(core.retention).toHaveBeenLastCalledWith(record.id, "admin", command);
 });
 it("preserves a dirty/reopened workspace when Core rejects deletion and releases only the local intent", async () => {
-  const record = await old();
-  vi.mocked(core.retention).mockImplementation(async (_id, _user, cleanup) => { if (cleanup) throw new Error("workspace dirty"); return completed; });
+  const record = await old({ retentionCleanup: { requestId: "legacy-cleanup", expectedRevision: 3 } });
+  vi.mocked(core.retention).mockImplementation(async (_id, _user, cleanup) => { if (cleanup) throw new Error("workspace dirty"); return { ...completed, workflow: { ...completed.workflow!, state: "deleting" } }; });
   expect(await manager.sweepRetention(now)).toEqual([]);
   expect(record.retentionCleanup).toBeDefined();
   vi.mocked(core.retention).mockResolvedValue({ ...completed, workflow: { state: "in-progress", revision: 4 } });
@@ -134,8 +130,8 @@ it("retains an allocated app when Core has not reconciled its workspace and expi
 
 
 it("reconciles a fully removed workspace after a lost Delete response and Harness restart", async () => {
-  const record = await old();
-  vi.mocked(core.retention).mockImplementation(async (_id, _user, cleanup) => { if (cleanup) throw new Error("response lost"); return completed; });
+  const record = await old({ retentionCleanup: { requestId: "legacy-cleanup", expectedRevision: 3 } });
+  vi.mocked(core.retention).mockImplementation(async (_id, _user, cleanup) => { if (cleanup) throw new Error("response lost"); return { ...completed, workflow: { ...completed.workflow!, state: "deleting" } }; });
   expect(await manager.sweepRetention(now)).toEqual([]);
   expect((await store.readRecord(record.id))!.retentionCleanup).toBeDefined();
   await manager.shutdown(); manager = build();

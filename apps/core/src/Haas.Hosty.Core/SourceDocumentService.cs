@@ -127,7 +127,7 @@ internal sealed partial class SourceDocumentService(AppRegistryStore apps,
         var isPrivate = binding.Apps.Any(a => a.PrivateSources?.Git is not null);
         foreach (var workspace in binding.Workspaces.Where(w => w.SourceGrant is not null))
         {
-            try { isPrivate |= await workspaces.WorkspaceGrantAsync(workspace, ct) is not null; }
+            try { isPrivate |= await workspaces.WorkspaceGrantAsync(workspace, ct, localOnly: true) is not null; }
             catch (AppLifecycleException) { isPrivate = true; }
         }
         if (!isPrivate) return null;
@@ -152,10 +152,30 @@ internal sealed partial class SourceDocumentService(AppRegistryStore apps,
         throw Error("forbidden", "This private repository needs an installed-app or effective workspace Git grant owned by the acting administrator.");
     }
 
+    private async Task<bool> SharedPrivateWorkspaceAsync(Binding binding, DevelopmentWorkspace tree, string userId, CancellationToken ct)
+    {
+        if (tree.Owner.IsExternal || await workspaces.ReadParticipationAsync(tree.WorkspaceId, ct) is null) return false;
+        // Membership authorizes the bounded checkout, but cannot turn an anonymous/public
+        // repository cache into a durable private-source grant after public access disappears.
+        await RequireWorkspaceAsync(binding, tree.Id, userId, ct);
+        return tree.SourceGrant is not null || binding.Apps.Any(app => app.PrivateSources?.Git is not null &&
+            tree.Apps.Any(a => a.AppId == app.Id && a.Installation == app.InstalledAt));
+    }
+
     private async Task<DevelopmentWorkspace> RequireWorkspaceAsync(Binding binding, string? id, string userId, CancellationToken ct)
     {
         var workspace = binding.Workspaces.FirstOrDefault(w => w.Id == id)
             ?? throw Error("not_found", "Workspace does not belong to this repository entry.");
+        if (!workspace.Owner.IsExternal && await workspaces.ReadParticipationAsync(workspace.WorkspaceId, ct) is not null)
+        {
+            try { await workspaces.RequireParticipationSourceAsync(workspace, userId, ct); }
+            catch (AppLifecycleException ex) { throw Error("forbidden", ex.Message); }
+            if (workspace.State != "active") throw Error("unavailable", "Workspace source is no longer active.");
+            await workspaces.ValidateTree(workspace, ct);
+            return workspace;
+        }
+        if (!workspace.Owner.IsExternal && workspace.Owner.UserId != userId)
+            throw Error("forbidden", "The owner must explicitly share this workspace.");
         if (binding.Entry.State != "available") throw Error("unavailable", binding.Entry.Error ?? "Repository is unavailable.");
         var grant = await GrantAsync(binding, userId, ct);
         if (grant is null && !workspaces.Fetches.HasPublicProof(binding.Entry.Repository, binding.Entry.Branch,
@@ -230,7 +250,6 @@ internal sealed partial class SourceDocumentService(AppRegistryStore apps,
     {
         if (documentPath is not null) RequirePath(documentPath);
         var binding = await RequireBindingAsync(repositoryId, ct);
-        var grant = await GrantAsync(binding, userId, ct);
         if (version == "target")
         {
             binding = await EnsureTargetAsync(binding, userId, refresh, ct);
@@ -238,13 +257,25 @@ internal sealed partial class SourceDocumentService(AppRegistryStore apps,
             var docs = await ImmutableDocumentsAsync(workspaces.RepositoryPath(binding.Entry.Repository), commit, ct, documentPath);
             return new(binding.Entry.Id, version, null, commit, CopyDocuments(docs));
         }
-        if (grant is null) binding = await EnsureTargetAsync(binding, userId, refresh, ct);
+        var candidate = binding.Workspaces.FirstOrDefault(w => w.Id == workspaceId);
+        var sharedPrivate = candidate is not null && await SharedPrivateWorkspaceAsync(binding, candidate, userId, ct);
+        if (!sharedPrivate && await GrantAsync(binding, userId, ct) is null)
+            binding = await EnsureTargetAsync(binding, userId, refresh, ct);
         var workspace = await RequireWorkspaceAsync(binding, workspaceId, userId, ct);
+        if (version == "worktree")
+        {
+            var documents = await ListWorktreeAsync(workspace, ct, documentPath: documentPath);
+            await RequireWorkspaceAsync(binding, workspaceId, userId, ct);
+            return new(repositoryId, version, workspace.Id, null, documents);
+        }
         var target = await CurrentTargetAsync(binding.Entry, ct) ?? throw Error("unavailable", "Tracked branch has no fetched commit.");
         var baseCommit = await MergeBaseAsync(workspace, target, ct);
-        if (version == "base") return new(repositoryId, version, workspace.Id, baseCommit,
-            CopyDocuments(await ImmutableDocumentsAsync(workspaces.RepositoryPath(workspace.Repository), baseCommit, ct, documentPath)));
-        if (version == "worktree") return new(repositoryId, version, workspace.Id, null, await ListWorktreeAsync(workspace, ct, documentPath: documentPath));
+        if (version == "base")
+        {
+            var documents = CopyDocuments(await ImmutableDocumentsAsync(workspaces.RepositoryPath(workspace.Repository), baseCommit, ct, documentPath));
+            await RequireWorkspaceAsync(binding, workspaceId, userId, ct);
+            return new(repositoryId, version, workspace.Id, baseCommit, documents);
+        }
         throw Error("invalid", "Choose target, base or worktree document version.");
     }
 
@@ -255,7 +286,9 @@ internal sealed partial class SourceDocumentService(AppRegistryStore apps,
         if (binding.Entry.State != "available") throw Error("unavailable", binding.Entry.Error ?? "Repository is unavailable.");
         // Workspace versions stay readable through their current private grant even when the
         // remote is unavailable. Public access still requires anonymous proof before local reads.
-        if (input.Version == "target" || await GrantAsync(binding, userId, ct) is null)
+        var candidate = binding.Workspaces.FirstOrDefault(w => w.Id == input.WorkspaceId);
+        var sharedLocal = input.Version != "target" && candidate is not null && await SharedPrivateWorkspaceAsync(binding, candidate, userId, ct);
+        if (input.Version == "target" || !sharedLocal && await GrantAsync(binding, userId, ct) is null)
             binding = await EnsureTargetAsync(binding, userId, false, ct);
         var root = workspaces.RepositoryPath(binding.Entry.Repository);
         string? commit;
@@ -267,8 +300,9 @@ internal sealed partial class SourceDocumentService(AppRegistryStore apps,
             bytes = await ReadWorktreeBytesAsync(workspace, input.Path, ct);
             var sha = await BlobShaAsync(root, bytes, ct);
             if (sha != input.ExpectedSha) throw Error("conflict", "Worktree document changed; list its current version again.");
-            return new(input.Path, sha, Text(bytes), null, input.Version, workspace.Id,
-                await ReferencesAsync(Text(bytes), input.Path, null, workspace, ct));
+            var localReferences = await ReferencesAsync(Text(bytes), input.Path, null, workspace, ct);
+            await RequireWorkspaceAsync(binding, input.WorkspaceId, userId, ct);
+            return new(input.Path, sha, Text(bytes), null, input.Version, workspace.Id, localReferences);
         }
         if (string.IsNullOrWhiteSpace(input.Commit)) throw Error("invalid", "A target or base read requires its listed commit.");
         if (input.Version == "target") commit = await CurrentTargetAsync(binding.Entry, ct);
@@ -524,7 +558,10 @@ internal sealed partial class SourceDocumentService(AppRegistryStore apps,
             if (repositoryId is not null && repositoryId != binding.Entry.Id) continue;
             foreach (var workspace in binding.Workspaces)
             {
-                var (url, urlError) = await SessionUrlAsync(workspace, ct);
+                try { await RequireWorkspaceAsync(binding, workspace.Id, userId, ct); }
+                catch (AppLifecycleException ex) when (ex.Code == "source_document_unavailable") { /* Retain authorized source with unavailable status below. */ }
+                catch (AppLifecycleException) { continue; }
+                var (url, urlError) = await SessionUrlAsync(workspace, userId, ct);
                 string? baseCommit = null, target = null, error = null;
                 SourceDocumentChange[]? changes = null;
                 try
@@ -564,9 +601,22 @@ internal sealed partial class SourceDocumentService(AppRegistryStore apps,
         return result.ToArray();
     }
 
-    private async Task<(string? Url, string? Error)> SessionUrlAsync(DevelopmentWorkspace workspace, CancellationToken ct)
+    private async Task<(string? Url, string? Error)> SessionUrlAsync(DevelopmentWorkspace workspace, string userId, CancellationToken ct)
     {
         if (workspace.Owner.IsExternal) return (null, null);
+        var participation = await workspaces.ReadParticipationAsync(workspace.WorkspaceId, ct);
+        if (participation is not null)
+        {
+            foreach (var binding in participation.Sessions.Where(b => b.DetachedAt is null && b.Session.UserId == userId))
+            {
+                var app = await apps.GetAppAsync(binding.Session.AppId, ct);
+                if (app?.InstalledAt != binding.Session.Installation) continue;
+                var destination = WorkspaceInspectionService.BrowserDestination(app, binding.ViewerPath);
+                return (destination.Url, destination.Unavailable);
+            }
+            return (null, "No accessible conversation is attached.");
+        }
+        if (workspace.Owner.UserId != userId) return (null, "This conversation is private.");
         var assistant = await apps.GetAppAsync(workspace.Owner.AppId, ct);
         if (assistant is null || assistant.InstalledAt != workspace.Owner.Installation)
             return (null, "The owning assistant installation was removed or replaced.");

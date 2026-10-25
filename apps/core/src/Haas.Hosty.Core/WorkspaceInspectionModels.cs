@@ -4,6 +4,7 @@ namespace Haas.Hosty.Core;
 internal sealed record WorkspaceInventory(InspectedWorkspace[] Workspaces, DateTimeOffset ObservedAt);
 internal sealed record InspectedWorkspace(string Id, string State, InspectionOwner Owner, InspectedWorktree[] Worktrees)
 {
+    public WorkspaceParticipationView? Participation { get; init; }
     public string Name { get; init; } = "Workspace";
     public WorkspaceWorkflow Workflow { get; init; } = new();
     public DateTimeOffset? UpdatedAt { get; init; }

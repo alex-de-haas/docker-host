@@ -25,7 +25,7 @@ internal sealed class SandboxInputs(AppRegistryStore apps, AppManifestService ma
                 throw new SandboxException("sandbox_source_forbidden", "The creating app's source authority was revoked.", 403);
         }
         var tree = await workspaces.Read(id, null, ct);
-        if (tree.Owner.UserId != instance.Owner.UserId || tree.State != "active")
+        if ((!await workspaces.RequireParticipationSourceAsync(tree, instance.Owner.UserId, ct) && tree.Owner.UserId != instance.Owner.UserId) || tree.State != "active")
             throw new SandboxException("sandbox_source_forbidden", "The bound source is unavailable.", 403);
         await workspaces.WorkspaceGrantAsync(tree, ct);
         var app = await apps.GetAppAsync(instance.Input.AppId, ct);
@@ -57,13 +57,14 @@ internal sealed class SandboxInputs(AppRegistryStore apps, AppManifestService ma
                         throw new SandboxException("sandbox_source_forbidden", "Worktree input requires reviewed source authority.", 403);
                 }
                 var tree = await workspaces.Read(request.Source.WorktreeId, null, ct);
-                if (tree.Owner.UserId != actor.UserId || tree.State != "active"
+                var sharedSource = await workspaces.RequireParticipationSourceAsync(tree, actor.UserId, ct);
+                if ((!sharedSource && tree.Owner.UserId != actor.UserId) || tree.State != "active"
                     || (request.Context?.WorkspaceId is { } workspace && workspace != tree.WorkspaceId))
                     throw new SandboxException("sandbox_source_forbidden", "The source binding is unavailable to this owner.", 403);
                 var binding = tree.Apps.SingleOrDefault(a => a.AppId == target.Id && a.Installation == target.InstalledAt)
                     ?? throw new SandboxException("sandbox_source_forbidden", "The app is not bound to this worktree.", 403);
                 var grant = await workspaces.WorkspaceGrantAsync(tree, ct);
-                if (grant is not null && grant.OwnerId != actor.UserId)
+                if (!sharedSource && grant is not null && grant.OwnerId != actor.UserId)
                     throw new SandboxException("sandbox_source_forbidden", "The source grant belongs to another user.", 403);
                 if (target.PrivateSources is { } sources) await privateSources.ValidateAsync(sources, ct);
                 await workspaces.ValidateTree(tree, ct);

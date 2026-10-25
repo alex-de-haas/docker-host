@@ -19,7 +19,7 @@ import { SessionProvider } from "@/components/session-provider";
 import { AppMentionInput, type AppMentionInputHandle } from "@/components/app-mention-input";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { AppContextPicker, type AppContextPickerHandle } from "@/components/app-context-picker";
-import { ArrowLeft, History, Loader2, MessageSquarePlus, Paperclip, Plus, Blocks, Send, Sparkles, Square, PanelRight, Diamond, Pencil, Hammer } from "lucide-react";
+import { ArrowLeft, History, Loader2, MessageSquarePlus, Paperclip, Plus, Blocks, Send, Sparkles, Square, PanelRight, Diamond, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Alert, InlineError, StatusBadge } from "@/components/status";
@@ -32,14 +32,17 @@ import {
 import { transcriptItems } from "@/lib/transcript-items";
 import { resolveTranscriptReview, type TranscriptReviewReference } from "@/lib/transcript-edits";
 import { InputGroup, InputGroupAddon } from "@/components/ui/input-group";
+import { WorkspaceSessionTabs } from "./workspace-session-tabs";
+import { useWorkspaceSessionActions } from "@/lib/use-workspace-session-actions";
+import { rememberWorkspaceSession, rememberedWorkspaceSession, workspaceSessionIds } from "@/lib/workspace-navigation";
 import { DevelopmentNavigation } from "@/components/development-navigation";
 import { CreateApp } from "@/components/create-app";
 import { SessionRetention } from "@/components/session-retention";
 import { RetainedWorkspacePane, useNarrowWorkspace } from "@/components/retained-workspace-pane";
 import { WorkspaceReview, type ReviewChoice } from "@/components/workspace-review";
-import type { Worktree } from "@/lib/development-api";
+import type { DevelopmentWorkspace, Worktree } from "@/lib/development-api";
 import { WorkspaceDetails } from "@/components/workspace-details";
-import { orderWorkspaces, useDevelopmentInventory, workflowIsActive } from "@/lib/development-api";
+import { useDevelopmentInventory, workflowIsActive } from "@/lib/development-api";
 import { SessionList, SessionTitleInput } from "@/components/session-list";
 import { hasMessageContent, indexAttachments, takeChosenFiles, takePastedImages } from "@/lib/attachments";
 import { approvalDecisions, cancelledQuestions, ToolActivity, TranscriptEvent } from "@/components/transcript";
@@ -147,6 +150,8 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   // Chosen but not yet sent. Uploaded only when the message goes, so a file picked and then
   // reconsidered never reaches the gateway.
   const [pending, setPending] = useState<File[]>([]);
+  const pendingBySession = useRef(new Map<string, File[]>());
+  useEffect(() => { if (session) pendingBySession.current.set(session.id, pending); }, [session, pending]);
   const [uploadingFile, setUploadingFile] = useState<File | null>(null);
   const [failedUpload, setFailedUpload] = useState<File | null>(null);
   // Fetched once: the roster changes when apps are installed, not between messages, and a failed
@@ -169,11 +174,11 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const [ready, setReady] = useState(false);
   const inventory = useDevelopmentInventory(ready);
   useSessionListRefresh(fullPage && ready, sessions, session?.id, setSessions);
-  const [tab, setTab] = useState("sessions");
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
+  const [workspaceToResolve, setWorkspaceToResolve] = useState<string | null>(null);
   const [workspaceVisible, setWorkspaceVisible] = useState(true);
   const decisionCard = useRef<HTMLDivElement | null>(null);
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
-  const [externalId, setExternalId] = useState("");
   const [mobileDetails, setMobileDetails] = useState(false);
   const narrowWorkspace = useNarrowWorkspace();
   const workspaceModal = narrowWorkspace && mobileDetails;
@@ -200,11 +205,16 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     if (reviewOpener.current?.isConnected && reviewOpener.current.getClientRects().length) reviewOpener.current.focus();
     else (composerRef.current ?? conversationRef.current)?.focus();
   }); };
-  const sessionWorkspace = inventory.workspaces.find(w => w.owner.kind === "assistant" && w.owner.appId === "hosty.harness" && w.owner.reference === session?.id);
-  const workspace = sessionWorkspace?.workflow.state === "deleted" ? undefined : sessionWorkspace;
+  const sessionWorkspace = inventory.workspaces.find(w => w.participation ? w.participation.sessions.some(binding => binding.attached && binding.canOpen && binding.sessionId === session?.id) : w.owner.kind === "assistant" && w.owner.appId === "hosty.harness" && w.owner.reference === session?.id);
+  const selectedWorkspace = selectedWorkspaceId ? inventory.workspaces.find(w => w.id === selectedWorkspaceId) : sessionWorkspace;
+  const workspace = selectedWorkspace?.workflow.state === "deleted" ? undefined : selectedWorkspace;
+  const chatVisible = !fullPage || !selectedWorkspaceId || !!workspace && workspace.owner.kind !== "external" && !!session && workspaceSessionIds(workspace).includes(session.id);
+  useEffect(() => {
+    if (workspace && session && chatVisible) rememberWorkspaceSession(workspace, session.id);
+  }, [workspace, session, chatVisible]);
   const observedWorkspaceFence = !!sessionWorkspace && (!!sessionWorkspace.workflow.closure || ["completed", "deferred", "deleting", "deleted"].includes(sessionWorkspace.workflow.state));
   const observedWorkspaceActive = !!sessionWorkspace && workflowIsActive(sessionWorkspace.workflow);
-  const workspaceSessionId = sessionWorkspace?.owner.reference;
+  const workspaceSessionId = sessionWorkspace ? session?.id : undefined;
   const [fencedWorkspaceSessions, setFencedWorkspaceSessions] = useState<Set<string>>(() => new Set());
   if (workspaceSessionId && (observedWorkspaceFence || observedWorkspaceActive) && fencedWorkspaceSessions.has(workspaceSessionId) !== observedWorkspaceFence) {
     const next = new Set(fencedWorkspaceSessions);
@@ -216,9 +226,6 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const composerBlocked = workspaceReadOnly || inventory.loading;
   const composerBlockedRef = useRef(composerBlocked);
   useEffect(() => { composerBlockedRef.current = composerBlocked; }, [composerBlocked]);
-  const external = orderWorkspaces(inventory.workspaces.filter(w => w.owner.kind === "external" && w.workflow.state !== "deleted"));
-  const selectedExternal = external.find(w => w.id === externalId) ?? external[0];
-  if (selectedExternal && externalId !== selectedExternal.id) setExternalId(selectedExternal.id);
   const activeSessionId = useRef<string | null>(null);
   const streamAbortRef = useRef<AbortController | null>(null);
   // Reach the current deletion handler from the stream without stale state.
@@ -252,9 +259,8 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     // Whatever was left unsent in this session, put back in the box. Per session, so switching away
     // and back returns your own half-written sentence rather than someone else's.
     setInput(readDraft(record.id, retainedSend?.draftText ?? record.handoffDraft?.text ?? ""));
-    // Files are not a draft: a selection made for one session must not follow the operator into
-    // the next and be uploaded there.
-    setPending([]);
+    // Keep unsent files scoped to their conversation during tab switches in this browser.
+    setPending(pendingBySession.current.get(record.id) ?? []);
     const savedFiles = readDraftAttachments(record.id) ?? record.handoffDraft?.attachments ?? [];
     const recoveredFiles = [...new Map([...savedFiles, ...(retainedSend?.attachments ?? [])].map(file => [file.name, file])).values()];
     setUploaded(recoveredFiles);
@@ -364,21 +370,23 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   }, [onSessionChange]);
 
   // A full-page selection is also a navigation: Shell must restore that exact session on reload.
-  const navigateSelection = useCallback(async (sessionId: string | null) => {
+  const navigateSelection = useCallback(async (sessionId: string | null, workspaceId?: string | null) => {
     if (!fullPage) return;
-    const search = sessionId ? `?session=${encodeURIComponent(sessionId)}` : "";
-    const entry = ui.getNavigation().entries.find(item => item.route?.split("?")[0] === "/development");
-    if (entry) {
-      const result = await ui.navigate(entry.key, { requestId: crypto.randomUUID(), placement: "main", search });
-      if (result.status === "accepted") return;
-    }
     const route = new URL(window.location.href);
+    route.searchParams.delete("workspace");
+    if (!sessionId && workspaceId) route.searchParams.set("workspace", workspaceId);
     if (sessionId) route.searchParams.set("session", sessionId);
     else route.searchParams.delete("session");
-    window.history.replaceState(window.history.state, "", route);
+    if (route.href !== window.location.href) window.history.pushState(window.history.state, "", route);
+    // Report an in-place selection to the host; opening a main surface reloads this document.
+    for (const key of ["hosty_launch", "hosty_theme", "hosty_theme_preference"]) route.searchParams.delete(key);
+    ui.reportSurfaceState({ route: `${route.pathname}${route.search}${route.hash}`, state: "ready" });
   }, [fullPage, ui]);
   const selectedRoute = useRef<string | null>(null);
-  const pickSession = (record: AssistantSession) => {
+  const sessionTabFocus = useRef<string | null>(null);
+  const pickSession = (record: AssistantSession, keepTabFocus = false) => {
+    sessionTabFocus.current = keepTabFocus ? record.id : null;
+    setSelectedWorkspaceId(null); setWorkspaceToResolve(null);
     selectedRoute.current = fullPage ? record.id : null;
     requestedSessionRef.current = record.id;
     setSurfaceSessionId(null);
@@ -386,12 +394,64 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     setMobileSessions(false); setMobileDetails(false); setReview(null);
   };
 
+  const clearActiveConversation = useCallback(() => {
+    streamAbortRef.current?.abort(); activeSessionId.current = null;
+    requestedSessionRef.current = null; selectedRoute.current = null;
+    setRequestedSessionId(null); setSurfaceSessionId(null); setSession(null);
+    setStatus("idle"); setEvents([]); setStreamed(""); setInput(""); setPending([]); setUploaded([]);
+    setPendingSend(null); setError(null);
+  }, []);
+  const pickWorkspace = (target: DevelopmentWorkspace, matched?: AssistantSession) => {
+    const record = matched ?? rememberedWorkspaceSession(target, sessions);
+    setMobileSessions(false); setMobileDetails(false); setReview(null); setWorkspaceVisible(true);
+    if (record && target.owner.kind !== "external") pickSession(record);
+    else {
+      clearActiveConversation(); setSelectedWorkspaceId(target.id); setWorkspaceToResolve(null);
+      void navigateSelection(null, target.id);
+    }
+  };
+  const workspaceActions = useWorkspaceSessionActions(workspace, inventory.refresh, record => {
+    setSessions(current => [record, ...current.filter(s => s.id !== record.id)]); pickSession(record);
+  });
+  useEffect(() => {
+    if (!fullPage) return;
+    const onPop = () => {
+      clearActiveConversation();
+      const params = new URLSearchParams(window.location.search);
+      const id = params.get("session"), target = params.get("workspace");
+      setSelectedWorkspaceId(target); setWorkspaceToResolve(target); setMobileSessions(!id && !target);
+      if (id) { requestedSessionRef.current = id; setRequestedSessionId(id); }
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [fullPage, clearActiveConversation]);
+  useEffect(() => {
+    if (!workspaceToResolve || !ready || inventory.loading || inventory.error) return;
+    const target = inventory.workspaces.find(w => w.id === workspaceToResolve && w.workflow.state !== "deleted");
+    let cancelled = false;
+    void listSessions().then(records => {
+      if (cancelled) return;
+      setWorkspaceToResolve(null);
+      if (!target) { setError("This workspace is unavailable."); return; }
+      setSessions(records);
+      const record = rememberedWorkspaceSession(target, records);
+      if (record && target.owner.kind !== "external") {
+        requestedSessionRef.current = record.id; setRequestedSessionId(record.id);
+      }
+      const route = new URL(window.location.href);
+      for (const key of ["hosty_launch", "hosty_theme", "hosty_theme_preference"]) route.searchParams.delete(key);
+      ui.reportSurfaceState({ route: `${route.pathname}${route.search}${route.hash}`, state: "ready" });
+    }).catch(cause => { if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause)); });
+    return () => { cancelled = true; };
+  }, [workspaceToResolve, ready, inventory.loading, inventory.error, inventory.workspaces, ui]);
+
   const startNew = useCallback(async () => {
     setError(null);
     try {
       const record = await createSession({});
       setSessions((current) => [record, ...current]);
       setHistoryOpen(false);
+      setSelectedWorkspaceId(null); setWorkspaceToResolve(null);
       attach(record); setReview(null); setMobileSessions(false);
       await navigateSelection(record.id);
       return record;
@@ -406,7 +466,10 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     let cancelled = false;
     void (async () => {
       try {
-        const requested = new URLSearchParams(window.location.search).get("session");
+        const params = new URLSearchParams(window.location.search);
+        const requestedWorkspace = fullPage ? params.get("workspace") : null;
+        if (requestedWorkspace) { setSelectedWorkspaceId(requestedWorkspace); setWorkspaceToResolve(requestedWorkspace); setMobileSessions(false); }
+        const requested = params.get("session");
         if (requested && /^[a-zA-Z0-9-]+$/.test(requested)) {
           requestedSessionRef.current = requested;
           setRequestedSessionId(requested); setMobileSessions(false);
@@ -445,7 +508,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
           return;
         }
 
-        if (requestedSessionRef.current) return;
+        if (requestedSessionRef.current || requestedWorkspace) return;
         setShowSessions(restoreHistory);
 
         if (previous) {
@@ -454,7 +517,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
         }
 
         // Deleting the last session leaves an empty history, including after a reload.
-        if (restoreHistory) return;
+        if (restoreHistory || fullPage) return;
 
         // Created because nothing was stored — and added to the list, or "Recent sessions" would
         // say there are none while one is open, and switching away would strand it.
@@ -479,7 +542,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
       cancelled = true;
       streamAbortRef.current?.abort();
     };
-  }, [attach]);
+  }, [attach, fullPage]);
 
   /**
    * An "ask the assistant" handed in by the embedder.
@@ -560,6 +623,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
         await navigateSelection(record.id);
         if (cancelled) return;
       }
+      setSelectedWorkspaceId(null);
       attach(record);
       // A repeated delivery/reload must not append the same error or replace an operator's draft.
       if (draft?.sessionId === record.id && !readDraft(record.id)) {
@@ -571,7 +635,9 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
       setHistoryOpen(false);
       requestedSessionRef.current = null;
       setRequestedSessionId(null);
-      composerRef.current?.focus();
+      if (sessionTabFocus.current === record.id) {
+        document.getElementById(`workspace-tab-${record.id}`)?.focus(); sessionTabFocus.current = null;
+      } else composerRef.current?.focus();
     }).catch(cause => {
       if (!cancelled) { requestedSessionRef.current = null; setError(cause instanceof Error ? cause.message : String(cause)); setRequestedSessionId(null); }
     });
@@ -778,13 +844,15 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     setSurfaceSessionId(null);
     setMobileDetails(false);
     setHistoryOpen(!fullPage);
-    void navigateSelection(null).catch(cause => setError(cause instanceof Error ? cause.message : String(cause)));
+    if (workspace) setSelectedWorkspaceId(workspace.id);
+    void inventory.refresh();
+    void navigateSelection(null, workspace?.id).catch(cause => setError(cause instanceof Error ? cause.message : String(cause)));
     try {
       window.localStorage.removeItem(SESSION_STORAGE_KEY);
     } catch {
       // An obsolete stored id is harmless: reattachment resolves it through the API.
     }
-  }, [setHistoryOpen, fullPage, navigateSelection]);
+  }, [setHistoryOpen, fullPage, navigateSelection, workspace, inventory]);
 
   const remove = useCallback(async (sessionId: string) => {
     setError(null);
@@ -878,31 +946,24 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
 
   return (
     <div className={`harness-conversation flex h-dvh min-h-0 min-w-0 flex-col overflow-hidden ${review ? "harness-review-active" : ""}`}>
-      {fullPage && !review && <header inert={workspaceModal} className={`${tab === "external" ? "flex" : "flex min-[900px]:hidden"} flex-wrap shrink-0 items-center gap-1 border-b px-3 py-2`}>
-        <Button size="sm" variant={tab === "sessions" ? "secondary" : "ghost"} onClick={() => setTab("sessions")}>Sessions</Button>
-        <Button size="sm" variant={tab === "external" ? "secondary" : "ghost"} onClick={() => setTab("external")}>External workspaces</Button>
-        {tab === "sessions" && <Button className="ml-auto md:hidden" size="sm" variant="ghost" onClick={() => { setMobileSessions(v => !v); setMobileDetails(false); }}>Session list</Button>}
-        {tab === "sessions" && workspace && <Button className="min-[900px]:hidden" size="sm" variant="outline" onClick={() => { setMobileDetails(v => !v); setMobileSessions(false); }}>Workspace details</Button>}
+      {fullPage && !review && <header inert={workspaceModal} className="flex min-[900px]:hidden shrink-0 items-center gap-2 border-b px-3 py-2">
+        <Button className="md:hidden" size="sm" variant="ghost" onClick={() => { setMobileSessions(v => !v); setMobileDetails(false); }}>Workspaces and chats</Button>
+        {workspace && <Button className="ml-auto" size="sm" variant="outline" onClick={() => { setMobileDetails(v => !v); setMobileSessions(false); }}>Workspace details</Button>}
       </header>}
       {fullPage && inventory.error && <p role="alert" className="border-b px-4 py-2 text-sm text-destructive-foreground">{inventory.error}</p>}
-      {fullPage && tab === "external" && <div className={`${review ? "hidden" : "grid"} min-h-0 flex-1 grid-cols-1 overflow-auto md:grid-cols-[264px_1fr]`}>
-        <nav aria-label="External workspaces" className="min-w-0 border-r py-2">{external.map(w => {
-          const label = w.name?.trim() || w.owner.label?.trim() || "Workspace";
-          return <div key={w.id} className={`mx-1 flex items-center rounded-md hover:bg-muted ${selectedExternal?.id === w.id ? "bg-accent" : ""}`}>
-            <Button variant="ghost" type="button" aria-current={selectedExternal?.id === w.id ? "page" : undefined}
-              onClick={() => setExternalId(w.id)} className="h-9 w-full min-w-0 justify-start gap-2 rounded-md px-3 text-left">
-              <Hammer className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-              <span className="min-w-0 flex-1 truncate text-sm font-normal" title={label}>{label}</span>
-            </Button>
-          </div>;
-        })}{!external.length && <p className="p-3 text-sm text-muted-foreground">No external workspaces available.</p>}</nav>
-        {selectedExternal && <WorkspaceDetails key={selectedExternal.id} workspace={selectedExternal} appMetadata={appIconMetadata} title={selectedExternal.name || selectedExternal.owner.label} refresh={inventory.refresh} onReview={(tree, choice) => openReview(selectedExternal.id, tree, undefined, choice)} />}
-      </div>}
-      <div className={`${fullPage && tab !== "sessions" && !review ? "hidden" : "flex"} min-h-0 flex-1`}>
-      {fullPage && <div inert={workspaceModal} className={`${review ? "hidden" : mobileSessions ? "block md:block" : "hidden md:block"} w-full shrink-0 border-r md:w-[264px]`}><DevelopmentNavigation sessions={listedSessions} activeId={session?.id} workspaces={inventory.workspaces}
-        createAppAction={createAppAction} externalCount={external.length} onExternal={() => setTab("external")} onNew={() => { setMobileSessions(false); void startNew(); }} onPick={pickSession} onDelete={remove} /></div>}
+      <div className="flex min-h-0 flex-1">
+      {fullPage && <div inert={workspaceModal} className={`${review ? "hidden" : mobileSessions ? "block md:block" : "hidden md:block"} w-full shrink-0 border-r md:w-[264px]`}><DevelopmentNavigation sessions={listedSessions} activeId={session?.id} activeWorkspaceId={workspace?.id} workspaces={inventory.workspaces}
+        createAppAction={createAppAction} onWorkspace={pickWorkspace} onNew={() => { setMobileSessions(false); void startNew(); }} onPick={pickSession} onDelete={remove} /></div>}
       <main ref={conversationRef} tabIndex={-1} inert={workspaceModal} className={`${review ? "hidden" : fullPage && mobileSessions ? "hidden md:flex" : "flex"} min-h-0 min-w-0 flex-1 flex-col`}>
 
+      {fullPage && workspace && <WorkspaceSessionTabs workspace={workspace} sessions={listedSessions} activeId={chatVisible ? session?.id : undefined} onPick={record => pickSession(record, true)} actions={workspaceActions} />}
+      {fullPage && !chatVisible ? <div className="min-h-0 flex-1" aria-label="Workspace center">
+        {workspace && workspace.owner.kind !== "external" && <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-sm text-muted-foreground">
+          <p>No accessible chats in this workspace.</p>
+          <Button variant="outline" disabled={workspaceActions.busy || workspaceActions.retry || !workspace.participation || !workflowIsActive(workspace.workflow)} onClick={() => void workspaceActions.command("new")}>New session in workspace</Button>
+        </div>}
+        {error && <p role="alert" className="p-3 text-sm text-destructive-foreground">{error}</p>}
+      </div> : <div id="workspace-chat" role={fullPage && workspace ? "tabpanel" : undefined} aria-labelledby={fullPage && workspace && session ? `workspace-tab-${session.id}` : undefined} className="flex min-h-0 flex-1 flex-col">
       <header className="flex flex-wrap shrink-0 items-center gap-2 border-b px-3 py-2">
         {showSessions ? (
           <>
@@ -1166,9 +1227,10 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
           </>}
         </>
       )}
+      </div>}
       </main>
       {fullPage && workspace && <RetainedWorkspacePane open={mobileDetails} visible={workspaceVisible} reviewing={!!review} onClose={() => setMobileDetails(false)}>
-        <WorkspaceDetails key={workspace.id} workspace={workspace} appMetadata={appIconMetadata} title={workspace.name || session?.title || "Workspace"} sessionId={session?.id} running={running} refresh={inventory.refresh} deleteConversation={session ? () => remove(session.id) : undefined} onReview={(tree, choice) => openReview(workspace.id, tree, session?.id, choice)} />
+        <WorkspaceDetails sessionActions={workspaceActions} key={workspace.id} workspace={workspace} onSessionSelected={record => { setSessions(current => [record, ...current.filter(s => s.id !== record.id)]); pickSession(record); }} appMetadata={appIconMetadata} title={workspace.name || session?.title || "Workspace"} sessionId={session?.id} running={running} refresh={inventory.refresh} deleteConversation={session ? () => remove(session.id) : undefined} onReview={(tree, choice) => openReview(workspace.id, tree, session?.id, choice)} />
       </RetainedWorkspacePane>}
       {review && <WorkspaceReview key={`${review.workspaceId}:${review.tree.id}`} workspaceId={review.workspaceId} tree={review.tree}
         choice={review.transcriptChoice ?? reviewChoices[review.tree.id] ?? { view: "session", path: "" }} onChoice={choice => {

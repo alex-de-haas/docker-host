@@ -7,7 +7,8 @@ internal sealed record PublicationArtifact(string? Tag = null, string? Asset = n
 internal sealed record PublicationCommand(string RequestId, string? ExpectedHead = null, string? ConnectionId = null,
     string? Title = null, string? Body = null, bool Draft = true, bool Fork = false, int? Number = null,
     string? MergeMethod = null, string? Outcome = null, bool Cleanup = false,
-    PublicationPolicy? Policy = null, string[]? Dependencies = null, string? Message = null, string[]? Paths = null, string[]? Contributors = null, string? ThreadId = null);
+    PublicationPolicy? Policy = null, string[]? Dependencies = null, string? Message = null, string[]? Paths = null, string[]? Contributors = null, string? ThreadId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ReviewId = null);
 internal sealed record PublicationReviewComment(string Id, string Body, string? AuthorLogin = null,
     string? AuthorKind = null, DateTimeOffset? CreatedAt = null, string? Url = null, long? DatabaseId = null);
 internal sealed record PublicationReview(string Id, string? Path, int? Line, bool Resolved, string[] Comments,
@@ -40,7 +41,8 @@ internal sealed record PublicationObservation(DateTimeOffset At, string State, s
     PublicationCheck[]? Checks = null, string? Error = null, PublicationReview[]? Reviews = null,
     string? Title = null, int? CommentCount = null, string? BaseHead = null, DateTimeOffset? MergedAt = null);
 internal sealed record PublicationOperation(string Id, string Kind, string Fingerprint, string State,
-    PublicationCommand Input, string? Error = null, PublicationIdentity? Author = null);
+    PublicationCommand Input, string? Error = null, PublicationIdentity? Author = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] WorkspaceOwner? Actor = null);
 internal sealed record PublicationRecord
 {
     public string Provider { get; init; } = "github";

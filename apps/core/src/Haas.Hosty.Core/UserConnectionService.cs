@@ -6,6 +6,18 @@ internal sealed class UserConnectionService(UserDirectoryStore users, SourceProv
 {
     internal SourceProviderRegistry Providers => providers;
 
+    // Local source admission reads current authority without consuming or refreshing credentials.
+    // In particular a participant must never rotate the sharing owner's provider token.
+    internal async Task<SourceReadGrant> LocalSourceReferenceAsync(string userId, string id, string repository, CancellationToken ct)
+    {
+        var connection = RequireConnection(await users.ReadAsync(ct), userId, id);
+        if (connection.Status != "connected" || connection.ExpiresAt <= clock.UtcNow)
+            throw PrivateSourceService.Denied("The source owner's connection is unavailable or expired.");
+        var provider = providers.ForUrl(repository);
+        if (provider.Descriptor.Id != connection.Provider) throw PrivateSourceService.Denied();
+        return new(userId, id, connection.Provider, connection.AccountName, connection.Label, provider.NormalizeRepository(repository));
+    }
+
     // Serialize one owner's refresh rotation and disconnect without holding up another user's I/O.
     // Persistence still fences user deletion inside the auth store's atomic mutation.
     private readonly ConcurrentDictionary<string, SemaphoreSlim> userGates = new(StringComparer.Ordinal);
