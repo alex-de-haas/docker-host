@@ -32,10 +32,12 @@ internal sealed partial class DevelopmentWorkspaceService
     {
         var associated = actor.AppId is not null && actor.Installation is not null && context?.SessionId is not null
             ? await SessionParticipationAsync(new(actor.AppId, actor.Installation.Value, actor.UserId, context.SessionId), ct) : null;
-        var tree = (await ListAsync(null, true, ct)).Workspaces.FirstOrDefault(w =>
-            context?.WorkspaceId == w.WorkspaceId || associated?.Id == w.WorkspaceId ||
-            w.Owner.UserId == actor.UserId && !w.Owner.IsExternal && context?.SessionId == w.Owner.SessionId
-                && actor.AppId == w.Owner.AppId && actor.Installation == w.Owner.Installation);
+        var selectedWorkspace = context?.WorkspaceId ?? associated?.Id;
+        var candidates = (await ListAsync(null, true, ct)).Workspaces.Where(w => selectedWorkspace is not null
+            ? selectedWorkspace == w.WorkspaceId
+            : w.Owner.UserId == actor.UserId && !w.Owner.IsExternal && context?.SessionId == w.Owner.SessionId
+                && actor.AppId == w.Owner.AppId && actor.Installation == w.Owner.Installation).ToArray();
+        var tree = candidates.FirstOrDefault();
         if (tree is null && context?.WorkspaceId is null) return await action();
         var workspaceId = tree?.WorkspaceId ?? context!.WorkspaceId!;
         Id(workspaceId);
@@ -44,6 +46,10 @@ internal sealed partial class DevelopmentWorkspaceService
             if (!cleanup)
             {
                 if (tree is null) throw Error("not_found", "Workspace no longer exists.");
+                var participation = await ReadParticipationAsync(workspaceId, ct);
+                if (participation is not null && RequireMember(participation, actor.UserId) is { Role: not "owner" } member)
+                    tree = candidates.FirstOrDefault(w => member.WorktreeIds.Contains(w.Id))
+                        ?? throw Error("forbidden", "No repository in this workspace is shared with the acting user.");
                 if (!await RequireParticipationSourceAsync(tree, actor.UserId, ct))
                 {
                     if (tree.Owner.UserId != actor.UserId) throw Error("forbidden", "The workspace owner must share its source first.");

@@ -40,6 +40,11 @@ import type { McpProxy, MintedToken } from "../mcp/proxy.js";
  */
 const DRAIN_DEADLINE_MS = 2_000;
 
+function isWorktreeBinding(value: unknown): value is DevelopmentWorkspace {
+  return !!value && typeof value === "object" && "id" in value && typeof value.id === "string"
+    && "path" in value && typeof value.path === "string" && value.path.length > 0;
+}
+
 // Owns session lifecycle: one harness run per live session, an append-only event log with a
 // monotonic seq (the SSE reattach cursor), and status transitions driven by harness events.
 // Deltas fan out live but are not persisted — the final assistant_text is the transcript record.
@@ -477,10 +482,10 @@ export class SessionManager {
         return created;
       }
       const result = await this.development.call(id, token, action, input);
-      if (!action.startsWith("remote-") && !action.startsWith("app-") && action !== "diff" && action !== "viewer" && !action.startsWith("pr-") && !action.startsWith("workflow-")) {
-        const workspaces = action === "list" ? (result as { workspaces: DevelopmentWorkspace[] }).workspaces : [result as DevelopmentWorkspace];
-        const known = new Map((session.record.developmentWorkspaces ?? []).map(w => [w.id, w]));
-        for (const w of workspaces) known.set(w.id, w);
+      if (["list", "prepare", "status", "commit", "refresh", "merge", "merge-upstream", "abort-merge", "cleanup", "references"].includes(action)) {
+        const workspaces = action === "list" ? (result as { workspaces: unknown[] }).workspaces : [result];
+        const known = new Map((session.record.developmentWorkspaces ?? []).filter(isWorktreeBinding).map(w => [w.id, w]));
+        for (const w of workspaces.filter(isWorktreeBinding)) known.set(w.id, w);
         session.record.developmentWorkspaces = [...known.values()];
         await this.store.saveRecord(session.record);
       }
@@ -1262,7 +1267,12 @@ export class SessionManager {
       const credential = session.workspaceCredential ?? session.credential;
       if (!credential || !this.development) throw new WorkerError("exit_unconfirmed", "The previous native execution cannot be verified. Source leases remain held.", 503);
       const current = await this.development.call(session.record.id, credential, "list", {}) as { workspaces: DevelopmentWorkspace[] };
-      if (!Array.isArray(current.workspaces) || current.workspaces.some(w => w.leases?.includes(session.record.developmentLease!)))
+      const retained = session.record.developmentWorkspaces ?? [];
+      // Listings are filtered by current source authority. Missing or incomplete worktrees
+      // cannot prove that an execution lease was reconciled after a native process was lost.
+      if (!retained.length || !Array.isArray(current.workspaces)
+        || retained.some(previous => !current.workspaces.some(w => w.id === previous.id && Array.isArray(w.leases) && !w.leases.includes(session.record.developmentLease!)))
+        || current.workspaces.some(w => w.leases?.includes(session.record.developmentLease!)))
         throw new WorkerError("exit_unconfirmed", "The previous native execution cannot be verified. Source leases remain held.", 503);
       session.record.developmentLeaseState = "stopped";
       await this.store.saveRecord(session.record);
@@ -2089,12 +2099,19 @@ export class SessionManager {
   }
 
   private async reconcileRuntime(record: SessionRecord): Promise<void> {
-    if (this.executionMode === undefined || record.executionMode === this.executionMode) return;
-    // developmentLease is a reusable operation identity, retained even after Core releases it.
-    // Only a persisted worker generation requires its old mode for recovery. Preserve source
-    // associations and lease IDs while adopting the installed profile.
-    record.executionMode = this.executionMode;
-    await this.store.saveRecord(record);
+    let changed = false;
+    // Older records may contain participation or commit-review metadata in the source cache.
+    // Remove only non-worktree entries; lease identities remain conservative recovery evidence.
+    const bindings = record.developmentWorkspaces?.filter(isWorktreeBinding);
+    if (bindings && bindings.length !== record.developmentWorkspaces!.length) {
+      record.developmentWorkspaces = bindings;
+      changed = true;
+    }
+    if (this.executionMode !== undefined && record.executionMode !== this.executionMode) {
+      record.executionMode = this.executionMode;
+      changed = true;
+    }
+    if (changed) await this.store.saveRecord(record);
   }
 
   private async requireLive(id: string): Promise<LiveSession> {

@@ -274,6 +274,15 @@ Core checks successful receipt replay before evaluating the current binding.
 Deletion retries a refused detach with a fresh membership revision. Environment source admission
 continues to return the sandbox API's forbidden error for an unattached session.
 
+Native recovery requires explicit lease-free records for every retained worktree; an empty,
+filtered, incomplete or unavailable listing cannot acknowledge process exit. Partial repository
+sharing resolves resource context through a granted worktree, while every requested source remains
+independently authorized. An explicit workspace context takes precedence over session association.
+
+Only source-tree responses populate persisted source bindings. Participation, commit-review,
+association and activation metadata remain separate; restoring older records removes metadata-only
+entries while retaining native lease evidence. File-edit rendering tolerates such historical entries.
+
 ## Testing Expectations
 
 - Core coverage includes real temporary Git stores, migration/reallocation, membership revision and

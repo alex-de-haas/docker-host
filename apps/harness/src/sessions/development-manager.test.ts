@@ -44,6 +44,33 @@ describe("development session coordination", () => {
     await finish(session.id); await manager.shutdown(); manager = build();
     expect((await store.readEvents(session.id)).filter(e => e.type === "tool_use")).toEqual(edits);
   });
+  it.each(["participants", "commit-review", "association", "rename", "activation-plan"] as const)("keeps %s metadata out of source bindings and persists the next native edit", async action => {
+    const bound = { ...tree, workspaceId: "b".repeat(64), repository: "https://github.com/example/notes" };
+    const metadata = { id: "metadata-receipt", sessions: [], paths: ["src/file.ts"] };
+    vi.mocked(client.call).mockImplementation(async (_id, _token, name) => name === action ? metadata : name === "list" ? { workspaces: [bound] } : bound);
+    const record = await manager.createSession({ createdBy: "admin", appIds: ["notes"] });
+    await manager.workspaceAction(record.id, "prepare", { appId: "notes" }, "token", "admin");
+    await manager.postMessage(record.id, "Edit source", "token");
+    expect(await manager.workspaceAction(record.id, action, { workspaceId: bound.id }, "token", "admin")).toEqual(metadata);
+    expect((await store.readRecord(record.id))!.developmentWorkspaces).toEqual([bound]);
+    starts.at(-1)!.onEvent({ type: "tool_use", toolName: "Edit", input: { file_path: "/owned/worktree/src/file.ts", old_string: "old", new_string: "new" } });
+    await vi.waitFor(async () => expect((await store.readEvents(record.id)).filter(e => e.type === "tool_use")).toHaveLength(1));
+    const edit = (await store.readEvents(record.id)).find(e => e.type === "tool_use")!;
+    expect(edit.fileEdits).toEqual([expect.objectContaining({ review: expect.objectContaining({ worktreeId: bound.id, path: "src/file.ts" }) })]);
+    await finish(record.id);
+  });
+
+  it("repairs historical metadata-only source entries on restart without discarding native lease evidence", async () => {
+    const record = await manager.createSession({ createdBy: "admin" });
+    await manager.shutdown();
+    const lease = "13d19bb9-0b2e-4e3d-af17-691f7680f009";
+    Object.assign(record, { developmentWorkspaces: [tree, { id: "metadata" }], developmentLease: lease, developmentLeaseState: "admitting" });
+    await store.saveRecord(record); manager = build();
+    vi.mocked(client.call).mockResolvedValue({ workspaces: [] });
+    await expect(manager.deleteSession(record.id, "admin", "token")).rejects.toMatchObject({ code: "exit_unconfirmed" });
+    expect(await store.readRecord(record.id)).toMatchObject({ developmentWorkspaces: [tree], developmentLease: lease, developmentLeaseState: "admitting" });
+  });
+
   it("persists app-creation activity and emits the same timestamp with observed state", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     try {
@@ -725,6 +752,36 @@ describe("shared workspace session boundaries", () => {
     expect(client.activity).toHaveBeenCalledWith(member.id, "member-token", expect.objectContaining({ stopped: true, leaseId: memberLease }));
     expect(vi.mocked(client.activity).mock.calls.some(([id, credential]) => id === member.id && credential === "owner-token")).toBe(false);
     await manager.cancelSession(owner.id);
+  });
+
+  it.each(["empty", "partial", "missing-leases", "missing-history"])("retains an unknown native lease when recovery evidence is %s", async evidence => {
+    const record = await manager.createSession({ createdBy: "member" });
+    await manager.shutdown();
+    const second = { ...tree, id: "c".repeat(64) };
+    const lease = "13d19bb9-0b2e-4e3d-af17-691f7680f009";
+    Object.assign(record, { developmentLease: lease, developmentLeaseState: "admitting", status: "running",
+      developmentWorkspaces: evidence === "missing-history" ? [] : [tree, second] });
+    await store.saveRecord(record); manager = build();
+    const visible = evidence === "empty" ? [] : evidence === "partial" ? [tree]
+      : evidence === "missing-leases" ? [{ ...tree, leases: undefined }, second] : [tree, second];
+    vi.mocked(client.call).mockResolvedValue({ workspaces: visible });
+    vi.mocked(client.activity).mockClear();
+    await expect(manager.deleteSession(record.id, "member", "fresh-token")).rejects.toMatchObject({ code: "exit_unconfirmed" });
+    expect(await store.readRecord(record.id)).toMatchObject({ developmentLease: lease, developmentLeaseState: "admitting" });
+    expect(client.activity).not.toHaveBeenCalledWith(record.id, expect.anything(), expect.objectContaining({ stopped: true }));
+  });
+
+  it("recovers a native lease only when Core returns every retained worktree without that lease", async () => {
+    const record = await manager.createSession({ createdBy: "member" });
+    await manager.shutdown();
+    const second = { ...tree, id: "c".repeat(64) };
+    Object.assign(record, { developmentLease: "13d19bb9-0b2e-4e3d-af17-691f7680f009", developmentLeaseState: "admitting",
+      developmentWorkspaces: [tree, second] });
+    await store.saveRecord(record); manager = build();
+    vi.mocked(client.call).mockResolvedValue({ workspaces: [tree, second] });
+    vi.mocked(client.retention).mockResolvedValue({ kind: "chat", workflow: null, resourcesFinished: true, sessionDetached: true });
+    await expect(manager.deleteSession(record.id, "member", "fresh-token")).resolves.toBe(true);
+    expect(await store.readRecord(record.id)).toBeNull();
   });
 
   it("retains the lease when native execution cannot prove exit", async () => {

@@ -196,6 +196,46 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.Equal("shared edit", await File.ReadAllTextAsync(Path.Combine(tree.Path, "README.md")));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WorkspaceParticipation_ResourceContextUsesTheGrantedRepository(bool explicitWorkspace)
+    {
+        var (f, _) = await SourceFixtureAsync();
+        var service = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock);
+        var owner = WorkspaceTestOwner(f);
+        var first = await service.PrepareAsync(owner, WorkspaceRequest(), default);
+        var app = (await f.Apps.GetAppAsync(SourceTestApp))!;
+        var repository = await CreateGitRepositoryAsync(Path.Combine(f.Root, "other-repository"));
+        await f.Apps.UpsertAppAsync(app with { Id = "example.other", SourceState = app.SourceState! with { Repository = repository, LocalOverridePath = repository } });
+        await service.PrepareAsync(owner, WorkspaceRequest() with { AppId = "example.other" }, default);
+        var trees = (await service.ListAsync(null, true, default)).Workspaces;
+        Assert.Equal(2, trees.Length);
+        var shared = trees[1]; var unshared = trees[0];
+        var member = owner with { UserId = "colleague", SessionId = "partial-source" };
+        var participation = await service.ParticipationAsync(first.WorkspaceId, owner.UserId, default);
+        participation = await service.ChangeMemberAsync(participation.Id, owner.UserId, "grant",
+            new(Guid.NewGuid().ToString(), participation.Revision, member.UserId, [shared.Id]), default);
+        await service.ChangeSessionAsync(participation.Id, member, "attach",
+            new(Guid.NewGuid().ToString(), participation.Revision, "Partial source", "/chat/partial-source"), default);
+        var actor = new SandboxActor(member.UserId, member.AppId, member.Installation);
+        var context = new SandboxContext(WorkspaceId: explicitWorkspace ? first.WorkspaceId : null, SessionId: member.SessionId);
+        var project = Path.Combine(shared.Path, "Core.csproj"); await File.WriteAllTextAsync(project, "<Project />");
+        var environments = new CoreEnvironmentService(new(f.Paths), new SourceGuardRuntime(), f.Clock, service);
+        var child = await environments.CreateAsync(actor, new(Guid.NewGuid().ToString(), "Partial source", "source", project, context, [shared.Id]), default);
+        Assert.Equal("stopped", child.State);
+        var denied = await Assert.ThrowsAsync<SandboxException>(() => environments.CreateAsync(actor,
+            new(Guid.NewGuid().ToString(), "Unshared source", "source", project, context, [unshared.Id]), default));
+        Assert.Equal("environment_worktree_forbidden", denied.Code);
+        var wrongContext = await Assert.ThrowsAsync<AppLifecycleException>(() => environments.CreateAsync(actor,
+            new(Guid.NewGuid().ToString(), "Missing workspace", Context: context with { WorkspaceId = new string('f', 64) }), default));
+        Assert.Equal("workspace_not_found", wrongContext.Code);
+        var sandboxes = new SandboxService(new(f.Paths), new ResourceControlInputs(shared.Path), new ResourceControlSandboxRuntime(), f.Clock, workspaces: service);
+        var plan = await sandboxes.PlanAsync(actor, new(shared.Apps[0].AppId, "sandbox", new("worktree", shared.Id), Context: context), default);
+        var sandbox = await sandboxes.PrepareAsync(actor, new(Guid.NewGuid().ToString(), plan.Id, plan.Digest), default);
+        Assert.Equal("prepared", sandbox.State);
+    }
+
     [Fact]
     public async Task WorkspaceParticipation_ParallelLeasesCannotBeReleasedByOtherSessionAndRevokeRetainsStopEvidence()
     {
