@@ -1,6 +1,6 @@
 ---
 created: 2026-08-19
-updated: 2026-10-22
+updated: 2026-10-25
 summary: Apps declare where their pages belong, such as settings, panels or navigation, and Shell places them.
 components: [apps/shell, apps/core]
 ---
@@ -19,7 +19,7 @@ Chosen by **who the page is for and what it changes**, not by whether it looks l
 | --- | --- | --- | --- |
 | `ui.navigation` | any | users | the shell's sidebar |
 | `ui.settings` | at most one | administrators | one app-named entry under Settings |
-| `ui.panels` | any | users | icons on Shell's right panel |
+| `ui.panels` | any | users | Shell Tools catalog and optional pinned top-strip launchers |
 
 Litmus tests: *would a `host.user` ever legitimately open it?* → sidebar or panel. *Does it change
 behaviour rather than produce and consume content?* → settings.
@@ -109,9 +109,33 @@ consent. The remaining consent mechanism and chat/tool acceptance are tracked in
 ## Shell's Chrome
 
 Shell has a left navigation rail, a 48 px top strip and a retained tool workspace.
-The top strip provides Assistant and a ReUI Tools menu beside notifications and theme. Tools lists
-actor-accessible panels in catalog order with app names, availability and observed attention;
-All tools opens the existing picker, including authorized app startup and catalog refresh.
+The top strip provides pinned panel launchers and a ReUI Tools menu beside notifications and theme.
+Tools lists every actor-accessible panel in catalog order with its app name, availability and
+observed attention. Each row has separate opening and pin actions; Enter or Space on the pin keeps
+the menu open. All tools opens the searchable picker, including authorized app startup, catalog
+refresh and the same pin controls on mobile. Unpinned and overflowed tools remain reachable here,
+including when every launcher is unpinned.
+
+The current assistant starts pinned by default. Explicit choices are stored in this browser's
+local storage, scoped by Core origin and signed-in user, using the SDK's
+`{ appId, installationId, panelId }` key. The versioned data contains only boolean overrides.
+Choices survive metadata updates and temporary catalog removal; a replacement installation gets
+a new identity. Invalid storage falls back to defaults. Storage denial or quota failures retain
+in-memory choices and show a warning. Other tabs on the same origin observe storage changes;
+other browsers and standalone hosts do not share these Shell preferences.
+
+Pinned buttons show icons and labels while their measured width fits the available strip space.
+They switch together to icons with accessible names and tooltips when labels no longer fit. If
+even icons overflow, only the fitting prefix appears; Tools still contains the complete catalog.
+Growing the available space restores buttons and labels without changing the saved selection.
+
+Unpinning changes only the launcher: it keeps retained frames, drafts, conversations, backend
+sessions and running apps intact. Explicit menu opens, assistant shortcuts, session links and
+finalized handoffs resolve their intended target without changing pins or selecting another
+provider. Attention remains in Tools and its aggregate count. Restoring an expanded layout with
+no retained selection chooses only a pinned, available panel; an all-unpinned catalog stays closed
+until an explicit open. Changing a pin cancels a pending automatic restore, including delayed target resolution or presentation, and does not open a tool. The cancellation is scoped to that restore and preserves retained views and later explicit selections.
+SDK enabled/launcher policies remain independent of pin preferences.
 
 The document and open tool body share a resizable area. A tool header provides its title,
 Open separately, Hide and a menu containing End this tool view. Hide collapses the workspace while
@@ -198,6 +222,24 @@ matches. Clearing a failed search keeps the picker open. Phone tool sheets use t
 viewport height as Shell dialogs; hiding and crossing the phone breakpoint retain mounted frames
 and local drafts.
 
+## Local Verification
+
+The 2026-10-25 panel-pinning change completes visibility-plan deliverables D1–D5 and releases
+Shell 0.114.0 from 0.113.2, with SDK 0.34.2 from 0.34.1 for scoped restore cancellation. `npm run shell:test` passes 206 logic tests and 767 component tests after integrating current main;
+`npm run shell:build` succeeds. `npm run shell:lint` has no errors and three existing warnings.
+`npm run sdk:test` passes 699 tests and the SDK build succeeds. Delayed-resolution regressions cover local and cross-tab unpinning; SDK regressions cover retained views, newer explicit selections and renderer cancellation. Core and CLI build successfully for the local fixture; their implementation is unchanged.
+
+Browser acceptance uses a parent-managed source child Core on macOS with locally built Docker
+Shell and a 12-panel fixture. Normal setup/password login and reviewed invitation/app assignments
+exercise two isolated users. Their independent pins survive reload, sign-out/sign-in and a reviewed
+Shell image update. Keyboard pinning, all-unpinned recovery, explicit opening and retained textarea
+drafts pass. A fresh all-unpinned expanded-layout restore remains closed when a launcher is pinned. Checks at 1280, 700 and 390 px cover labels, icon overflow, mobile picker access and
+absence of horizontal page overflow; light and dark menu styling are inspected. Geometry tests
+also cover growing space and complete icon overflow. Session-link and assistant-shortcut behavior
+use isolated SDK component tests; the browser fixture has no live assistant provider credentials.
+The disposable sandbox is finished through its parent after verification; ordinary host data and
+apps are separate from this test.
+
 ## Testing Expectations
 
 - Shell: `npm test --workspace apps/shell` includes both pure rules and the jsdom rail
@@ -212,9 +254,13 @@ and local drafts.
 - Verify icons survive manifest normalization, storage and summary projection; several
   panels from one app keep distinct icons, labels and keys. Missing/unknown icons render
   a visible fallback with a tooltip.
-- Verify persistent collapsed rail, icon activation, keyboard focus navigation, top toggle,
-  selection fallback and no-panel state. Collapsing preserves an unsent draft and the same
-  iframe; fresh collapsed loads must not open a frame. Hidden content is inert.
+- Verify per-user/per-Core pin isolation, reload and cross-tab persistence, malformed/denied storage,
+  independent panels from one app, metadata changes, temporary removal and reinstall identities.
+- Verify keyboard pin/unpin, separate opening actions, all-unpinned recovery, mobile picker pins,
+  label/icon fitting and overflow recovery. Pin changes and resizing preserve retained iframe identity.
+- Verify explicit session links, assistant shortcuts and attention for unpinned panels without
+  preference changes or provider substitution. Collapsing preserves an unsent draft and the same
+  iframe; fresh collapsed or all-unpinned loads must not open a frame. Hidden content is inert.
 
 - Each declaring app contributes exactly one app-named Settings entry in compact and expanded
   navigation; non-declaring apps contribute none. There is no duplicate installed-app settings

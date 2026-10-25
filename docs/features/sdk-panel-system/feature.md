@@ -1,6 +1,6 @@
 ---
 created: 2026-10-10
-updated: 2026-10-12
+updated: 2026-10-25
 summary: Shared SDK panels compose app-owned tools beside documents in Shell and standalone, with verified peers and pinned presentation targets.
 components: [packages/app-sdk, apps/core, apps/shell, apps/plans, apps/harness, apps/demo-app]
 ---
@@ -105,8 +105,13 @@ Request IDs are caller-generated UUIDs, distinct from handoff IDs. Presentation 
 SDK-created retained instances. The host keeps a bounded window-local ledger scoped to source
 document and orders selection per destination workspace. Matching replay
 revalidates authority and reuses the frame; conflicting payloads fail. Status rechecks the target.
-An aborted/timed-out wait is uncertain, not cancellation; retry/status uses the same ID. Message
-size and concurrent-request limits bound work. Core restart requires no browser-lease restoration.
+An aborted/timed-out protocol wait is uncertain, not cancellation; retry/status uses the same ID.
+The host's local `selectPanel(ref, workspaceId, signal)` accepts a separate optional cancellation
+signal for host-owned selections such as layout restoration. Aborting it before presentation
+returns `presentation_cancelled`, cancels pending renderer work and leaves retained views and
+newer selections intact. Signalled selections keep their operation pending until it settles;
+protocol wait timeouts do not detach ownership of the automatic restore.
+Message size and concurrent-request limits bound work. Core restart requires no browser-lease restoration.
 Immediate validation, conflict and concurrency refusals reach the embedded caller through the same
 response path as successful placement. The child reserves a request ID and target before asynchronous
 verification, coalesces identical in-flight calls and rejects conflicting targets locally. Status
@@ -259,8 +264,8 @@ host retain their legacy load-based delivery.
 
 [Default applications](../default-applications/plan.md) owns selection policy before a new operation;
 it does not reselect finalized results. [Replaceable UI clients](../replaceable-ui-clients/plan.md)
-owns full client roles/navigation and consumes this host protocol. [Panel visibility](../app-ui-surfaces/plan.md)
-owns persisted hide/restore preferences. [Embedding restrictions](../app-embedding-restrictions/plan.md)
+owns full client roles/navigation and consumes this host protocol. [Panel visibility](../app-ui-surfaces/feature.md#shells-chrome)
+owns Shell's persisted pin preferences. [Embedding restrictions](../app-embedding-restrictions/plan.md)
 remains On Hold: a designated standalone embedder is distinct from a full UI client, and this
 feature does not confer that deferred designation. Current CSP refusal has explicit recovery.
 

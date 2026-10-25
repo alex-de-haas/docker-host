@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import { ExternalLink, PanelsTopLeft, Ellipsis, ArrowLeft, X } from "lucide-react";
+import { ExternalLink, PanelsTopLeft, Ellipsis, ArrowLeft, X, Pin } from "lucide-react";
 import { HostyAppFrame, useHostyUiHost, useHostyChrome, type HostyAppFrameProps } from "@hosty-sdk/app/ui/react";
 import type { UiHostSnapshot, UiWorkspaceRenderer } from "@hosty-sdk/app/ui/host";
 import { panelKey, type PanelTarget, type UiPanel } from "@hosty-sdk/app/ui/types";
@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { HostyEmptySlots, HostyLoader } from "../../../../../../shared/web/hosty-states";
 import { AppIcon } from "../app-icon";
+import { usePanelPreferences } from "./panel-preferences";
 import { ShellWorkspaceSplit } from "./shell-workspace-split";
 
 const empty: UiHostSnapshot = { bootstrap: null, catalog: [], tools: [], selected: null, expanded: false, width: 360, error: null };
@@ -54,6 +55,15 @@ export function ShellPanelWorkspace({ children, initialWidth = 360, pageMinimum 
   const frames = useRef(new Map<string, HTMLDivElement>());
   const opener = useRef<HTMLElement | null>(null);
   const bodyId = useId();
+  const panelPreferences = usePanelPreferences();
+  const latestPins = useRef(panelPreferences);
+  const restorePinned = useRef<(() => void) | null>(null);
+  const pendingRestore = useRef<AbortController | null>(null);
+  useEffect(() => {
+    latestPins.current = panelPreferences;
+    if (!panelPreferences.restoreAllowed) pendingRestore.current?.abort();
+    restorePinned.current?.();
+  }, [panelPreferences]);
   const preferences = useRef(onExpandedChange);
   useEffect(() => { preferences.current = onExpandedChange; }, [onExpandedChange]);
 
@@ -81,13 +91,20 @@ export function ShellPanelWorkspace({ children, initialWidth = 360, pageMinimum 
       const current = host.getSnapshot(), slot = current.workspaces?.find(w => w.workspaceId === "default");
       if (!slot?.expanded) { attempted = null; return; }
       if (!live || opening || slot.selectedId || attempted === current.catalog) return;
-      const first = current.catalog.find(p => p.available); if (!first) return;
+      if (!latestPins.current.restoreAllowed) return;
+      const first = current.catalog.find(p => p.available && latestPins.current.isPinned(p)); if (!first) return;
       attempted = current.catalog; opening = true;
-      void host.selectPanel(first.panel).finally(() => { opening = false; restore(); });
+      const controller = new AbortController(); pendingRestore.current = controller;
+      void host.selectPanel(first.panel, "default", controller.signal).finally(() => {
+        if (pendingRestore.current === controller) pendingRestore.current = null;
+        opening = false; restore();
+      });
     };
+    restorePinned.current = restore;
     const stop = host.subscribeSnapshot(restore); restore();
     return () => {
-      live = false; stop();
+      live = false; pendingRestore.current?.abort(); pendingRestore.current = null;
+      restorePinned.current = null; stop();
       for (const item of host.getSnapshot().tools.filter(t => t.workspaceId === "default")) host.closePresentation(item.presentationId);
       unregister();
     };
@@ -216,6 +233,7 @@ export function ShellPanelWorkspace({ children, initialWidth = 360, pageMinimum 
     <Dialog open={picker && toolsEnabled} onOpenChange={open => { setPicker(open); if (open) window.dispatchEvent(new CustomEvent("hosty:ui:modal", { detail: "picker:default" })); }}>
       <DialogContent><DialogHeader><DialogTitle>All tools</DialogTitle><DialogDescription>Open a tool and keep its current conversation or draft.</DialogDescription></DialogHeader>
         {(error || state.error) && <Alert role="status"><AlertDescription>{error ?? state.error?.message}</AlertDescription></Alert>}
+        {panelPreferences.error && <p role="status" className="text-sm text-warning-foreground">{panelPreferences.error}</p>}
         <Input className="shrink-0" aria-label="Search tools" placeholder="Search tools and apps" value={query} onChange={event => setQuery(event.target.value)} />
         {!state.bootstrap && !state.error && !state.catalog.length ? <p role="status" className="flex items-center gap-2 py-4 text-sm text-muted-foreground"><HostyLoader label={null} className="size-6" />Loading tools…</p>
           : !matchingTools.length && (!state.error || state.catalog.length > 0) && <div role="status" className="flex flex-col items-center gap-2 rounded-lg border bg-card px-4 py-5 text-center"><HostyEmptySlots className="size-12" /><p className="text-sm font-medium">{state.catalog.length ? "No tools match your search" : "No tools are available for your account."}</p>{state.catalog.length > 0 && <Button variant="outline" size="sm" onClick={() => setQuery("")}>Clear search</Button>}</div>}
@@ -223,6 +241,10 @@ export function ShellPanelWorkspace({ children, initialWidth = 360, pageMinimum 
           <h3 className="text-xs font-medium text-muted-foreground">{group.appName}</h3>
           <div className="grid grid-cols-2 gap-2 min-[400px]:grid-cols-4">{group.items.map(item => <div key={panelKey(item.panel)} className="flex min-w-0 flex-col gap-2">
             <Button variant="outline" aria-pressed={tool?.key === panelKey(item.panel)} className={cn("h-auto w-full min-w-0 flex-1 flex-col justify-start px-2 py-3", tool?.key === panelKey(item.panel) && "border-brand-strong bg-brand-soft")} onClick={() => void select(item)}><AppIcon src={null} name={item.icon} fallback={PanelsTopLeft} className="size-4" /><span className="flex min-w-0 flex-col items-start"><span className="w-full truncate">{item.label}</span><span className="w-full truncate text-xs text-muted-foreground">{item.appName}{!item.available && ` · ${item.state}`}</span></span></Button>
+            <Button variant="ghost" size="sm" role="checkbox" aria-checked={panelPreferences.isPinned(item)} disabled={!panelPreferences.ready}
+              aria-label={`Pin ${item.appName} — ${item.label} to top bar`} onClick={() => panelPreferences.setPinned(item, !panelPreferences.isPinned(item))}>
+              <Pin className={cn("size-4", panelPreferences.isPinned(item) && "fill-current")} />{panelPreferences.isPinned(item) ? "Pinned" : "Pin"}
+            </Button>
             {!item.available && item.canStart && onStartApp && <Button variant="outline" onClick={() => void Promise.resolve(onStartApp(item.panel.appId)).then(() => host?.refresh())}>Start app</Button>}
           </div>)}</div>
         </section>)}</div>
