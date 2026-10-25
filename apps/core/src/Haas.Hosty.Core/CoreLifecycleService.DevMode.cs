@@ -428,8 +428,11 @@ internal sealed partial class CoreLifecycleService
                 configuration == op.ReturnConfigurationHash);
         if (app.InstalledAt != op.Installation || app.DevModeId != op.Id || !configurationMatches)
             throw DevError("binding_changed", "Installation, settings or mounts changed. A stale return cannot overwrite a newer operator choice.");
+        // Return projects the normalized package binding before Start; retries validate that same
+        // binding, while entry still recognizes the source captured before workspace activation.
+        var previousSource = op.Phase.StartsWith("return-", StringComparison.Ordinal) ? ReturnDevSource(op) : op.PreviousSource;
         var previous = app.SelectedRuntime == (op.PackageReturn ? op.PackageRuntime ?? op.PreviousRuntime : op.PreviousRuntime) &&
-            app.SourceState?.LocalOverridePath == op.PreviousSource?.LocalOverridePath;
+            app.SourceState?.LocalOverridePath == previousSource?.LocalOverridePath;
         var live = app.SelectedRuntime == op.TargetRuntime && app.SourceState?.LocalOverridePath == op.SourcePath;
         // A crash after source persistence but before the profile write is a known intermediate state.
         var binding = op.Phase == "backed-up" && app.SelectedRuntime == op.PreviousRuntime && app.SourceState?.LocalOverridePath == op.SourcePath;

@@ -57,6 +57,64 @@ public sealed partial class CoreLifecycleServiceTests
     }
 
     [Theory]
+    [InlineData("git", false)]
+    [InlineData("git", true)]
+    [InlineData("local-git", false)]
+    [InlineData("local-git", true)]
+    public async Task ExecutionTargets_DevReturnRetryAcceptsNormalizedSourceAfterFailedPackageStart(string sourceType, bool capturedSourceExists)
+    {
+        var (f, owner, _, tree, _, _) = await LocalHandoffFixture();
+        await AddManifestPackageRuntime(f, tree);
+        await f.Service.StartAsync("test.created");
+        await f.Service.ExecuteTargetAsync(await ExecutionRequest(f, owner, "workspace", tree), default);
+        var app = (await f.Apps.GetAppAsync("test.created"))!;
+        var operation = (await AppDevStore.ReadAsync(f.Paths, app, default))!;
+        var captured = Path.Combine(f.Paths.CoreRoot, "development", "captured-override");
+        if (capturedSourceExists) Directory.CreateDirectory(captured);
+        await AppDevStore.SaveAsync(f.Paths, operation with { PreviousSource = operation.PreviousSource! with
+            { Type = sourceType, LocalOverridePath = captured, OverrideCommit = "captured-head" } }, default);
+        var data = Path.Combine(f.Paths.AppsRoot, app.Id, "data", "sentinel");
+        var edit = Path.Combine(tree.Path, "uncommitted.txt");
+        await File.WriteAllTextAsync(data, "current ordinary data");
+        await File.WriteAllTextAsync(edit, "keep workspace edits");
+        var actor = DevActor(owner);
+        var request = DevRequest("return");
+        request = request with { PlanDigest = (await f.Service.PlanDevModeAsync(app.Id, request, actor)).PlanDigest };
+        f.Adapter.StartContextProbe = (_, _) => throw new AppLifecycleException("fixture_start_failed", "Interrupted package start");
+        Assert.Equal("fixture_start_failed", (await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            f.Service.ApplyDevModeAsync(app.Id, request, actor))).Code);
+        var failed = await f.Service.GetDevModeAsync(app.Id);
+        Assert.Equal("return-starting", failed.Phase);
+        Assert.Equal("pending", Assert.Single(failed.Receipts.Where(r => r.RequestId == request.RequestId)).State);
+        var source = (await f.Apps.GetAppAsync(app.Id))!.SourceState!;
+        Assert.Equal(sourceType == "local-git" ? f.Paths.ResolveManagedCheckoutPath(app.Id) : null, source.LocalOverridePath);
+        Assert.Null(source.OverrideCommit);
+        f.Adapter.StartContextProbe = null;
+        var recovered = f.RecreateService();
+        // Normalization must not let a retry accept an unrelated operator-selected source.
+        await f.Apps.UpdateAppAsync(app.Id, a => a with { SourceState = source with { LocalOverridePath = captured + "-other" } });
+        Assert.Equal("dev_binding_changed", (await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            recovered.ApplyDevModeAsync(app.Id, request, actor))).Code);
+        await f.Apps.UpdateAppAsync(app.Id, a => a with { SourceState = source });
+        await recovered.PlanDevModeAsync(app.Id, request, actor);
+        var starts = f.Adapter.StartCount;
+        var stops = f.Adapter.StopCount;
+        var result = await recovered.ApplyDevModeAsync(app.Id, request, actor);
+        Assert.Equal("returned", result.Phase);
+        Assert.Equal("docker", result.App.SelectedRuntime);
+        Assert.Equal("running", result.App.RuntimeState);
+        Assert.Equal("succeeded", Assert.Single(result.Receipts.Where(r => r.RequestId == request.RequestId)).State);
+        Assert.Equal("current ordinary data", await File.ReadAllTextAsync(data));
+        Assert.Equal("keep workspace edits", await File.ReadAllTextAsync(edit));
+        Assert.Equal(capturedSourceExists, Directory.Exists(captured));
+        Assert.Equal(starts + 1, f.Adapter.StartCount);
+        Assert.Equal(stops + 1, f.Adapter.StopCount);
+        await recovered.ApplyDevModeAsync(app.Id, request, actor);
+        Assert.Equal(starts + 1, f.Adapter.StartCount);
+        Assert.Equal(stops + 1, f.Adapter.StopCount);
+    }
+
+    [Theory]
     [InlineData("return-bound", false, "alternate")]
     [InlineData("return-starting", false, "alternate")]
     [InlineData("return-starting", true, "alternate")]
