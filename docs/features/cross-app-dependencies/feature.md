@@ -1,6 +1,6 @@
 ---
 created: 2026-06-22
-updated: 2026-10-16
+updated: 2026-10-25
 summary: Apps declare dependencies on other installed apps, Core injects their URLs and reports their state.
 components: [apps/core, apps/shell]
 ---
@@ -24,11 +24,11 @@ authentication** in this model.
 ## Non-goals
 
 - **Auto-install / auto-start.** Core does not install a missing dependency or start a stopped one.
-  It only reports the state (see Dependency State). Auto-orchestration may come later.
+  Each provider still follows its own lifecycle and autostart preference.
 - **App-to-app authorization.** Declaring (or not declaring) a dependency does not grant or deny
   access at the network layer; it only drives discovery + the reported state.
-- **Dependency-ordered startup across apps.** Autostart order is unchanged; the reported state covers
-  the "provider not up yet" case.
+
+Required dependencies gate startup through [Dependency-Ordered Startup](../dependency-ordered-autostart/feature.md).
 
 ## Manifest
 
@@ -90,8 +90,8 @@ endpoint reads `resolved: false` while the provider is absent. `running` is the 
 fact and stays exactly that; `healthy` is whether the provider services behind the wired endpoints
 answer, read per service from the provider's last health reading
 ([App Readiness](../app-readiness/feature.md)) so a dead sidecar on the provider is not an outage
-here; and `ready` is the computed `running && healthy` a dependent waits on. Deciding what deserves attention
-belongs to the client, which is what lets one projection serve both the required and optional cases.
+here; and `ready` requires `running`, `healthy`, and resolved URLs for all requested endpoints.
+Deciding what deserves attention belongs to the client, which is what lets one projection serve both the required and optional cases.
 Shell hides dependency problem icons and expanded-row alerts when the consumer app is stopped.
 The provider state remains available from Core, and the consumer's other diagnostics remain visible.
 For consumers in other runtime states, Shell derives its Installed Apps problem icons from it:
@@ -106,7 +106,8 @@ For consumers in other runtime states, Shell derives its Installed Apps problem 
 | running, `healthy: false` | warning icon — the provider is up but its service is not confirmed to answer |
 
 A stopped dependency reports the stop only, not also its (necessarily) unresolved endpoints — two
-icons for one cause. The start is **not** blocked; this replaces auto-install/auto-start.
+icons for one cause. A required provider that is not ready holds the consumer in `waiting`; optional
+providers never gate startup. Stop cancels the pending start.
 
 This state supersedes the start-time notifications Core used to publish. Those re-fired on every
 start (the notification dedupe only matches *unread* records) and nothing ever retracted them once

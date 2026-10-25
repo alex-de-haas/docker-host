@@ -1009,6 +1009,9 @@ internal sealed partial class CoreLifecycleService(
             }
 
             await EnsureRequiredSettingsConfiguredAsync(app, cancellationToken);
+            // A repeated start/adoption must not turn an existing runtime into a fictitious wait.
+            if (!wasUp && await DeferDependencyStartAsync(app, cancellationToken, preserveOperationStatus) is { } waiting)
+                return waiting;
             // A reserved port that is still busy means two different things, and treating them alike was
             // the defect. On a cold start nothing of ours holds it, so it is a genuine conflict and the
             // structured, reassign-able error is exactly right. On the start half of a stop->start pair it
@@ -1155,6 +1158,7 @@ internal sealed partial class CoreLifecycleService(
                 // Health is meaningful only while the app is up; a stopped app must not keep its last
                 // `healthy` (the observation skips non-up apps, so nothing else would clear it).
                 Health = null,
+                LaunchProgress = null,
                 OperationStatus = "stopped",
                 LastOperation = "stop",
                 LastError = null,
@@ -1491,6 +1495,8 @@ internal sealed partial class CoreLifecycleService(
             }, cancellationToken);
             stopAttempted = true;
             _ = await stopAdapter.StopAsync(stopContext, cancellationToken);
+            if (await DeferDependencyStartAsync(app, cancellationToken, preserveOperationStatus) is { } waiting)
+                return waiting;
             _ = await apps.UpdateAppAsync(appId, current => current with
             {
                 RuntimeState = AppRuntimeStates.Starting,
@@ -2516,7 +2522,8 @@ internal sealed partial class CoreLifecycleService(
             ? null : current);
         events?.PublishAppEvent(CoreEventHub.AppUpdateCheckChanged, appId);
         var configurationRequired = (await GetConfigurationReadinessAsync(document.App, cancellationToken)).Required;
-        var shouldRestart = wasRunning && !configurationRequired;
+        // A reviewed graph repair must retain a pending start just as it retains a running app.
+        var shouldRestart = (wasRunning || app.RuntimeState == AppRuntimeStates.Waiting) && !configurationRequired;
         if (shouldRestart)
         {
             await SetUpdateProgressAsync(appId, "preparing", null, cancellationToken);
@@ -2526,7 +2533,9 @@ internal sealed partial class CoreLifecycleService(
         var finished = await apps.UpdateAppAsync(appId, current => current with
         {
             // Keep the terminal status older Shell self-update waiters recognize.
-            OperationStatus = shouldRestart ? "started" : "updated", LastOperation = "update", LastError = null,
+            OperationStatus = current.RuntimeState == AppRuntimeStates.Waiting ? "waiting" : shouldRestart ? "started" : "updated",
+            LastOperation = "update",
+            LastError = current.RuntimeState == AppRuntimeStates.Waiting ? current.LastError : null,
             UpdateProgress = new AppUpdateProgress(shouldRestart && current.Health?.Status != "healthy" ? "needs-attention" : "completed", clock.UtcNow),
         }, cancellationToken);
         return new AppLifecycleResponse(await BuildAppSummaryAsync(finished.App, cancellationToken), backup, "updated");
@@ -3618,78 +3627,29 @@ internal sealed partial class CoreLifecycleService(
     public async Task<IReadOnlyList<AppBackgroundLifecycleResult>> StartAutostartAppsAsync(CancellationToken cancellationToken = default)
     {
         var results = new List<AppBackgroundLifecycleResult>();
-        var records = await apps.ListAppRecordsAsync(cancellationToken);
-        // Capability start-priority is a hard barrier between tiers, not a sort key: the telemetry
-        // collector is the OTLP sink other apps point at, so its endpoint URL must be resolved and
-        // persisted before a lower tier's start-time env injection reads it (see
-        // ResolveTelemetryEndpointAsync). Tiers therefore run strictly in sequence.
-        // Within each capability priority, queue system apps first so Shell gets an early start
-        // opportunity, but do not wait for all system apps to finish before starting ordinary apps.
-        // A slow local-command setup (such as Hosty Harness's build) must occupy only its own slot.
-        // Use the installed role rather than a first-party id.
-        //
-        // Within a tier the apps are independent — each start holds only its own app's operation lock,
-        // the port allocator serializes on its own gate, and every failure is captured per app by
-        // RunBackgroundLifecycleActionAsync — so they run concurrently. Serially, boot took the SUM of
-        // every app's start (image pull, source checkout, port-release wait); one slow pull delayed
-        // every app behind it. Free slots immediately take the next queued app, even while a slower
-        // start remains in flight. Stops were parallelized for the same reason (StopRuntimeAppsAsync).
-        //
-        // NOTE: cross-app dependency order is still not honoured here — it never was (autostart has
-        // never consulted the dependency graph, so a consumer sorting before its provider already
-        // started first and came up against an address nothing was listening on yet). What changes is
-        // that the alphabetical accident which sometimes ordered a pair correctly is gone; both now
-        // start together. Fixing it properly is dependency-ordered-autostart's `waiting` state.
-        var tiers = records
-            .Where(app =>
-                string.Equals(app.Kind, "runtime", StringComparison.Ordinal) &&
-                (app.Autostart ?? true) && localProcesses?.HasApp(app.Id) != true)
-            .GroupBy(app => PlatformCapabilities.StartPriority(app.Provides))
-            .OrderByDescending(tier => tier.Key);
-
-        foreach (var tier in tiers)
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            var tasks = new List<Task<AppBackgroundLifecycleResult>>();
-            var active = new List<Task<AppBackgroundLifecycleResult>>(MaxConcurrentAutostarts);
-            // One dispatcher admits apps in order; semaphore waiter fairness is not a queue contract.
-            // System role is a queue preference, not another barrier. WhenAll preserves submission
-            // order in the results regardless of which starts finish first.
-            try
+            var records = await apps.ListAppRecordsAsync(cancellationToken);
+            var admitted = new HashSet<string>(StringComparer.Ordinal);
+            // Preserve capability barriers. A blocked consumer does not hold its tier open, so a
+            // provider in a later tier can start; only already-admitted tiers may resume before boot ends.
+            var tiers = records.Where(app => app.Kind == "runtime" && (app.Autostart ?? true) &&
+                    localProcesses?.HasApp(app.Id) != true)
+                .GroupBy(app => PlatformCapabilities.StartPriority(app.Provides))
+                .OrderByDescending(tier => tier.Key);
+            foreach (var tier in tiers)
             {
-                foreach (var app in tier.OrderByDescending(app => app.System).ThenBy(app => app.Id, StringComparer.Ordinal))
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    if ((await GetConfigurationReadinessAsync(app, cancellationToken)).Required)
-                    {
-                        results.Add(new(app.Id, "autostart", Succeeded: true, ErrorCode: null, Message: "configuration-required"));
-                        continue;
-                    }
-                    if (active.Count == MaxConcurrentAutostarts)
-                    {
-                        var completed = await Task.WhenAny(active).WaitAsync(cancellationToken);
-                        active.Remove(completed);
-                    }
-
-                    cancellationToken.ThrowIfCancellationRequested();
-                    var task = RunBackgroundLifecycleActionAsync(
-                        app.Id,
-                        "autostart",
-                        async () => await StartAsync(app.Id, cancellationToken),
-                        cancellationToken);
-                    tasks.Add(task);
-                    active.Add(task);
-                }
+                cancellationToken.ThrowIfCancellationRequested();
+                admitted.UnionWith(tier.Select(app => app.Id));
+                results.AddRange(await ScheduleDependencyStartsAsync(tier, "autostart", false, cancellationToken));
+                await ResumeWaitingAppsAsync(cancellationToken, admitted);
             }
-            finally
-            {
-                // Cancellation can interrupt dispatch with starts still active. Always drain every
-                // admitted task, including adapter cleanup, before disposing the boot operation.
-                results.AddRange(await Task.WhenAll(tasks));
-            }
+            return results;
         }
-
-        return results;
+        finally
+        {
+            dependencyStartupReady.TrySetResult();
+        }
     }
 
     public async Task<IReadOnlyList<AppBackgroundLifecycleResult>> StopAutostartDisabledAppsAsync(CancellationToken cancellationToken = default)
@@ -4100,7 +4060,7 @@ internal sealed partial class CoreLifecycleService(
                 running,
                 endpoints,
                 Healthy: healthy,
-                Ready: running && healthy));
+                Ready: running && healthy && endpoints.All(endpoint => endpoint.Resolved)));
         }
 
         return summaries;
@@ -4218,6 +4178,8 @@ internal sealed partial class CoreLifecycleService(
         {
             await apps.UpdateAppAsync(appId, current => current with
             {
+                RuntimeState = operation == "dependency-start" && current.RuntimeState == AppRuntimeStates.Waiting
+                    ? AppRuntimeStates.Stopped : current.RuntimeState,
                 OperationStatus = "failed",
                 LastOperation = operation,
                 LastError = message,
@@ -6700,6 +6662,7 @@ internal sealed partial class CoreLifecycleService(
         // to advance instead of the app silently falling out of supervision after one tick.
         if (!string.Equals(app.Kind, "runtime", StringComparison.Ordinal) ||
             string.IsNullOrWhiteSpace(app.ManifestPath) ||
+            app.RuntimeState == AppRuntimeStates.Waiting ||
             (!AppRuntimeStates.IsUp(app.RuntimeState) && !supervised))
         {
             return null;

@@ -62,7 +62,7 @@ internal static class ConsoleUi
                 => $"[green]{escaped}[/]",
             "error" or "failed" or "faulted" or "unhealthy" or "crashed"
                 => $"[red]{escaped}[/]",
-            "starting" or "pending" or "updating" or "restarting" or "degraded" or "stopping"
+            "waiting" or "starting" or "pending" or "updating" or "restarting" or "degraded" or "stopping"
                 => $"[yellow]{escaped}[/]",
             "stopped" or "inactive" or "exited" or "disabled" or "none" or "unknown"
                 => $"[grey]{escaped}[/]",

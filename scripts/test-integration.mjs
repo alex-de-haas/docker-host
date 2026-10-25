@@ -9,10 +9,11 @@ const cli = 'apps/cli/src/Haas.Hosty.Cli/Haas.Hosty.Cli.csproj';
 const coreTests = 'apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj';
 const cliTests = 'apps/cli/tests/Haas.Hosty.Cli.Tests/Haas.Hosty.Cli.Tests.csproj';
 const windowsFilter = 'FullyQualifiedName~WindowsProcessControlTests|FullyQualifiedName~StopAsync_OnWindowsKillsAdoptedJobDescendantAfterShellExited|FullyQualifiedName~CoreDevelopmentTests|FullyQualifiedName~ExplicitStop|FullyQualifiedName~SourceDocuments_ReferenceMetadataSupportsLfAndCrLf|FullyQualifiedName~WorkspaceGit_|FullyQualifiedName~JsonStorageTests';
-export const suites = Object.freeze(['activation', 'windows', 'transport', 'worker', 'whisper']);
+export const suites = Object.freeze(['activation', 'dependencies', 'windows', 'transport', 'worker', 'whisper']);
 const usage = 'Usage: npm run test:integration -- <' + suites.join('|') + '> [--dry-run]\n'
   + 'Runs one explicitly selected local suite. Builds its fixtures first; no automatic retries.\n'
   + 'activation: .NET, Git, Python, Docker; isolated managed Core Return and recovery\n'
+  + 'dependencies: .NET, Python, Docker; dependency startup in an isolated managed Core\n'
   + 'windows: Windows and .NET; focused process, path and shared receipt tests\n'
   + 'transport: .NET, Python, Docker; isolated Core/container network checks\n'
   + 'worker: Docker; builds the manifest-matching worker image and checks its lifecycle\n'
@@ -35,6 +36,10 @@ export function suitePlan(suite, { platform = process.platform, node = process.e
         build(core), build(cli),
         command(python, ['scripts/check-workspace-activation.py', '.', 'return', '--managed']),
         command(python, ['scripts/check-workspace-activation.py', '.', 'auto', '--managed']),
+      ] };
+    case 'dependencies':
+      return { prerequisites: [dotnet, pythonCheck, docker], steps: [build(core), build(cli),
+        command(python, ['scripts/check-dependency-startup.py', '.']),
       ] };
     case 'windows':
       return { prerequisites: [dotnet, command('git', ['--version'])], steps: [

@@ -3295,7 +3295,7 @@ public sealed partial class CoreLifecycleServiceTests
         var localAdapter = new RecordingRuntimeAdapter("localCommand");
         var fixture = await LifecycleFixture.CreateAsync(localRuntimeAdapter: localAdapter);
         await fixture.Service.InstallAsync(new AppInstallRequest(
-            await fixture.WriteLocalCommandManifestAsync(id: systemAppId), System: true));
+            await fixture.WriteLocalCommandManifestAsync(id: systemAppId, includeDependency: false), System: true));
         var ordinaryIds = Enumerable.Range(0, 6).Select(i => $"com.example.app{i}").ToArray();
         foreach (var id in ordinaryIds)
         {
@@ -4900,7 +4900,7 @@ public sealed partial class CoreLifecycleServiceTests
         var fixture = await LifecycleFixture.CreateAsync();
         var overridePath = Path.Combine(fixture.Root, "local-app");
         Directory.CreateDirectory(overridePath);
-        var manifest = await fixture.WriteLocalCommandManifestAsync();
+        var manifest = await fixture.WriteLocalCommandManifestAsync(includeDependency: false);
         await fixture.Service.InstallAsync(new AppInstallRequest(manifest, SelectedRuntime: "dev"));
         _ = await fixture.Sources.SetLocalOverrideAsync("com.example.local", new AppSourceOverrideRequest(overridePath));
 
@@ -4934,7 +4934,7 @@ public sealed partial class CoreLifecycleServiceTests
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-        var manifest = await fixture.WriteLocalCommandManifestAsync(localPort: port);
+        var manifest = await fixture.WriteLocalCommandManifestAsync(localPort: port, includeDependency: false);
         await fixture.Service.InstallAsync(new AppInstallRequest(manifest, SelectedRuntime: "dev"));
 
         var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
@@ -4952,7 +4952,7 @@ public sealed partial class CoreLifecycleServiceTests
     public async Task StartAsync_LocalCommandRejectsExplicitPortZero()
     {
         var fixture = await LifecycleFixture.CreateAsync();
-        var manifest = await fixture.WriteLocalCommandManifestAsync(localPort: 0);
+        var manifest = await fixture.WriteLocalCommandManifestAsync(localPort: 0, includeDependency: false);
         await fixture.Service.InstallAsync(new AppInstallRequest(manifest, SelectedRuntime: "dev"));
 
         var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
@@ -7530,7 +7530,7 @@ public sealed partial class CoreLifecycleServiceTests
             return path;
         }
 
-        public async Task<string> WriteLocalCommandManifestAsync(int? localPort = null, string version = "1.0.0", string id = "com.example.local")
+        public async Task<string> WriteLocalCommandManifestAsync(int? localPort = null, string version = "1.0.0", string id = "com.example.local", bool includeDependency = true)
         {
             var path = Path.Combine(Root, "local-command.json");
             var localPortJson = localPort is null
@@ -7583,6 +7583,12 @@ public sealed partial class CoreLifecycleServiceTests
                   }
                 }
                 """);
+            if (!includeDependency)
+            {
+                var manifest = System.Text.Json.Nodes.JsonNode.Parse(await File.ReadAllTextAsync(path))!.AsObject();
+                manifest.Remove("dependencies");
+                await File.WriteAllTextAsync(path, manifest.ToJsonString());
+            }
             return path;
         }
 
@@ -7869,7 +7875,8 @@ public sealed partial class CoreLifecycleServiceTests
             Dependencies: [],
             Endpoints: [new AppEndpointContract("default", "tcp", "http://127.0.0.1:6379", Public: false)],
             InstalledAt: DateTimeOffset.UtcNow,
-            UpdatedAt: DateTimeOffset.UtcNow);
+            UpdatedAt: DateTimeOffset.UtcNow)
+        { Health = new("healthy", [], DateTimeOffset.UtcNow) };
 
     private static string JsonEscape(string value)
         => value.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal);

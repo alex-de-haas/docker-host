@@ -559,6 +559,9 @@ internal static class AppRuntimeStates
     /// <summary>Down, and nothing is operating on it.</summary>
     public const string Stopped = "stopped";
 
+    /// <summary>A requested start is deferred until required providers are ready; Stop cancels it.</summary>
+    public const string Waiting = "waiting";
+
     /// <summary>Observed but not classifiable — e.g. a partial multi-service outage.</summary>
     public const string Unknown = "unknown";
 

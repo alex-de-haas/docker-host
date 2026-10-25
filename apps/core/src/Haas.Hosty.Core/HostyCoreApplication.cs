@@ -224,6 +224,7 @@ internal static class HostyCoreApplication
         builder.Services.AddHostedService<CloudflareProviderMigration>();
         builder.Services.AddHostedService<AppPermissionMigration>();
         builder.Services.AddHostedService<RuntimeAppSupervisorService>();
+        builder.Services.AddHostedService<DependencyStartupService>();
         builder.Services.AddHostedService<AppBackupRetentionScheduler>();
         builder.Services.AddHostedService<NotificationRetentionScheduler>();
         builder.Services.AddHostedService<UserRetentionScheduler>();
