@@ -436,7 +436,12 @@ internal sealed partial class CoreLifecycleService
         var live = app.SelectedRuntime == op.TargetRuntime && app.SourceState?.LocalOverridePath == op.SourcePath;
         // A crash after source persistence but before the profile write is a known intermediate state.
         var binding = op.Phase == "backed-up" && app.SelectedRuntime == op.PreviousRuntime && app.SourceState?.LocalOverridePath == op.SourcePath;
-        if (!previous && !live && !binding) throw DevError("binding_changed", "The runtime or source binding changed outside this operation. Retain the current selection and inspect it.");
+        // Stop can be journaled before Return projects source, including an entry that failed at
+        // backup. Only this checkpoint may still carry the exact pre-entry runtime/source binding.
+        var unprojectedReturn = op.Phase == "return-stopped" && app.SelectedRuntime == op.PreviousRuntime &&
+            app.SourceState?.LocalOverridePath == op.PreviousSource?.LocalOverridePath;
+        if (!previous && !live && !binding && !unprojectedReturn)
+            throw DevError("binding_changed", "The runtime or source binding changed outside this operation. Retain the current selection and inspect it.");
     }
 
     private async Task<RuntimeAppManifestSelection> ValidateLiveDevManifestAsync(AppDevOperation op, CancellationToken ct)
