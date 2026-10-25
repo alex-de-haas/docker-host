@@ -1,6 +1,6 @@
 ---
 created: 2026-10-18
-updated: 2026-10-21
+updated: 2026-10-24
 summary: Core-owned execution selection runs installed packages or registered workspace manifests on ordinary app data, with scoped access review and recoverable lifecycle operations.
 components: [apps/core, apps/cli, apps/harness, apps/shell]
 ---
@@ -78,7 +78,10 @@ package-runtime baseline. Switching workspace A to workspace B does not create a
 stack. Explicitly selecting another package runtime changes the baseline. Package return does not
 restore an old manifest, data archive, settings snapshot or revoked grants. Current source edits,
 worktrees, caches and ordinary app data survive. There is no mandatory generic data-compatibility
-acknowledgement in the unified switching contract.
+acknowledgement in the unified switching contract. Package selection clears captured workspace
+source overrides, including unavailable paths in an interrupted return, while locally created apps
+keep their canonical Git source binding. Legacy Return still restores its exact captured source.
+Neither path deletes or recreates workspace directories.
 
 Runtime discovery reads profile declarations without admitting the default recipe. Selecting a
 package validates the chosen destination before stopping the current runtime; unrelated runtime
@@ -173,6 +176,9 @@ record substitutes for observed runtime readiness and browser verification.
 - Break the installed default development recipe and live source JSON, then list runtime choices
   and return to a valid package with current data and source edits intact. Reject an invalid
   destination before Stop. Cover explicit and inferred destinations and legacy Return with Stop.
+- Remove a captured pre-development override, then select the installed package or retry its
+  interrupted return. Preserve data and workspace edits, clear the stale override, retain canonical
+  local-Git bindings and complete the original receipt without duplicate lifecycle effects.
 - Verify package Docker -> workspace A -> workspace B -> package Docker, explicit package baseline
   changes, healthy interruption recovery and ownership-aware group Return.
 - Retain legacy version-only compatibility, strict raw recipe checks and correct applied workspace

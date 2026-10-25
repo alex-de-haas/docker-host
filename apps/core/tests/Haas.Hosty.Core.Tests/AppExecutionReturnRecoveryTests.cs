@@ -6,6 +6,57 @@ namespace Haas.Hosty.Core.Tests;
 public sealed partial class CoreLifecycleServiceTests
 {
     [Theory]
+    [InlineData("git", false)]
+    [InlineData("git", true)]
+    [InlineData("local-git", false)]
+    [InlineData("local-git", true)]
+    public async Task ExecutionTargets_PackageReturnDropsStaleCapturedOverride(string sourceType, bool interrupted)
+    {
+        var (f, owner, _, tree, _, _) = await LocalHandoffFixture();
+        await AddManifestPackageRuntime(f, tree);
+        await f.Service.StartAsync("test.created");
+        await f.Service.ExecuteTargetAsync(await ExecutionRequest(f, owner, "workspace", tree), default);
+        var app = (await f.Apps.GetAppAsync("test.created"))!;
+        var operation = (await AppDevStore.ReadAsync(f.Paths, app, default))!;
+        var missing = Path.Combine(f.Paths.CoreRoot, "development", "removed-workspace");
+        var previous = operation.PreviousSource! with { Type = sourceType, LocalOverridePath = missing, OverrideCommit = "old-workspace-head" };
+        // Older operations may retain an override that was removed after workspace entry.
+        await AppDevStore.SaveAsync(f.Paths, operation with { PreviousSource = previous }, default);
+        var data = Path.Combine(f.Paths.AppsRoot, app.Id, "data", "sentinel");
+        await File.WriteAllTextAsync(data, "current ordinary data");
+        var edit = Path.Combine(tree.Path, "uncommitted.txt");
+        await File.WriteAllTextAsync(edit, "keep workspace edits");
+        var request = await ExecutionRequest(f, owner, "package", runtime: "docker");
+        if (interrupted)
+        {
+            await f.Service.StopAsync(app.Id);
+            await AppDevStore.SaveAsync(f.Paths, operation with { PreviousSource = previous,
+                PackageReturn = true, PackageRuntime = "docker", Phase = "return-stopped" }, default);
+            request = request with { Phase = "switching" };
+            await AppExecutionStore.SaveAsync(f.Paths, request, default);
+        }
+
+        var recovered = f.RecreateService();
+        var result = await recovered.ExecuteTargetAsync(request, default);
+        Assert.Equal("completed", result.State);
+        app = (await f.Apps.GetAppAsync(app.Id))!;
+        Assert.Equal("docker", app.SelectedRuntime);
+        Assert.Equal("running", app.RuntimeState);
+        Assert.Equal(sourceType == "local-git" ? f.Paths.ResolveManagedCheckoutPath(app.Id) : null, app.SourceState!.LocalOverridePath);
+        Assert.Null(app.SourceState.OverrideCommit);
+        Assert.Equal(previous.Commit, app.SourceState.Commit);
+        Assert.Equal("returned", (await recovered.GetDevModeAsync(app.Id)).Phase);
+        Assert.Equal("current ordinary data", await File.ReadAllTextAsync(data));
+        Assert.Equal("keep workspace edits", await File.ReadAllTextAsync(edit));
+        Assert.False(Directory.Exists(missing));
+        var starts = f.Adapter.StartCount;
+        var stops = f.Adapter.StopCount;
+        Assert.Equal("completed", (await recovered.ExecuteTargetAsync(result, default)).State);
+        Assert.Equal(starts, f.Adapter.StartCount);
+        Assert.Equal(stops, f.Adapter.StopCount);
+    }
+
+    [Theory]
     [InlineData("return-bound", false, "alternate")]
     [InlineData("return-starting", false, "alternate")]
     [InlineData("return-starting", true, "alternate")]

@@ -327,6 +327,17 @@ internal sealed partial class CoreLifecycleService
         return selection;
     }
 
+    private AppSourceState? ReturnDevSource(AppDevOperation operation)
+    {
+        var source = operation.PreviousSource;
+        if (!operation.PackageReturn || source is null) return source;
+        // Package selection drops historical workspace overrides without deleting their source.
+        // Locally created apps keep their canonical Git binding, just like clearing an override.
+        var packagePath = source.Type == "local-git" ? paths.ResolveManagedCheckoutPath(operation.AppId) : null;
+        return source.LocalOverridePath == packagePath ? source : source with
+        { LocalOverridePath = packagePath, OverrideCommit = null, UpdatedAt = clock.UtcNow };
+    }
+
     private async Task<AppDevOperation> ReturnDevAsync(AppDevOperation op, string requestId, bool acceptDataChanges, CancellationToken ct)
     {
         if (op.Phase == "returned") return op;
@@ -346,7 +357,7 @@ internal sealed partial class CoreLifecycleService
             // for legacy recovery. Current settings, source edits and permission revocations survive.
             if (!op.PackageReturn) await manifests.SaveManifestCopyAsync(previous, GetAppRoot(op.AppId), ct);
             var restored = BuildAppRecord(previous, app.ManifestPath!, app.ManifestUrl, app.System, app) with
-            { InstallManifestPath = app.InstallManifestPath, SourceState = op.PreviousSource,
+            { InstallManifestPath = app.InstallManifestPath, SourceState = ReturnDevSource(op),
                 ArtifactLocks = op.PackageReturn ? null : op.PreviousArtifacts, DevModeId = op.Id,
                 GrantedCorePermissions = op.ExecutionManifest is null ? app.GrantedCorePermissions :
                     DevelopmentBaseGrants(app, op).Intersect(previous.Manifest.CorePermissions.Concat(previous.Manifest.OptionalCorePermissions), StringComparer.Ordinal).ToArray(),
