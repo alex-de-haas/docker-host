@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-26
-updated: 2026-10-09
+updated: 2026-10-25
 summary: Durable session events and cross-provider context so one conversation can switch between Claude and Codex.
 components: [apps/harness]
 ---
@@ -48,6 +48,13 @@ not a fundamental impossibility. Finish/cancel and reconcile the previous turn b
 The same session-owned workspace survives switching and may contain multiple worktrees; see the
 [workspace model](../assistant-session-workspaces/feature.md). Closing development does not erase the
 conversation, and clarification chat does not silently reopen source access.
+
+The owner clarification of 2026-10-25 adds a separate collaboration path: explicitly shared
+workspaces with several concurrent sessions belonging to different users. The
+[workspace sessions feature](../workspace-sessions/feature.md) implements that model and supersedes the
+exclusive-session workspace assumption above. It does not share transcripts or require
+D3-D5 provider switching; the one-active-turn rule here concerns a single conversation,
+not all sessions participating in one workspace.
 
 Review reusable implementations before designing a new agent transport. The current
 [VS Code handoff documentation](https://code.visualstudio.com/docs/agents/run/agent-harnesses#hand-off-a-session)

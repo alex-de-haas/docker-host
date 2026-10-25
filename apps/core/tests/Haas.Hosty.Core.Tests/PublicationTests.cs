@@ -120,9 +120,14 @@ public sealed partial class CoreLifecycleServiceTests
             ReviewResolved = true;
             if (LoseReviewResolution) throw new HttpRequestException("Resolution response lost.");
         }
-        public Task<PublicationIdentity> IdentityAsync(UserProviderConnection c, CancellationToken ct) => Task.FromResult(new PublicationIdentity("Verified Author", "verified@example.test"));
+        public Func<Task>? BeforeIdentity;
+        public async Task<PublicationIdentity> IdentityAsync(UserProviderConnection c, CancellationToken ct)
+        {
+            if (BeforeIdentity is not null) await BeforeIdentity();
+            return new("Verified Author", "verified@example.test");
+        }
     }
-    private static async Task<(LifecycleFixture F, DevelopmentWorkspaceService Workspaces, PublicationService Service, PublicationProviderFixture Provider, DevelopmentWorkspace W, UserDirectoryStore Users)> PublicationFixture()
+    private static async Task<(LifecycleFixture F, DevelopmentWorkspaceService Workspaces, PublicationService Service, PublicationProviderFixture Provider, DevelopmentWorkspace W, UserDirectoryStore Users, UserConnectionService Connections)> PublicationFixture()
     {
         var (f, _) = await SourceFixtureAsync();
         var owner = WorkspaceTestOwner(f);
@@ -139,8 +144,34 @@ public sealed partial class CoreLifecycleServiceTests
         // Seed the configured provider binding; local Git fixtures intentionally use an offline origin.
         await JsonStorage.WriteAsync(Path.Combine(f.Paths.CoreRoot, "development", "publications", w.Id + ".json"), new PublicationRecord {
             WorkspaceId = w.Id, Owner = owner, Repository = "owner/repo", HeadRepository = "owner/repo", ConnectionId = "connection", Branch = w.Branch, TargetBranch = "main" });
-        return (f, workspaces, service, provider, w, users);
+        return (f, workspaces, service, provider, w, users, connections);
     }
+    [Fact]
+    public async Task Publication_CommitDoesNotHoldConnectionWhileWaitingForConcurrentWorkspaceAdmission()
+    {
+        var f = await PublicationFixture();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task? concurrent = null;
+        f.Provider.BeforeIdentity = async () =>
+        {
+            // A source admission holds the workspace gate before acquiring this user's Git
+            // connection. Commit must relinquish its identity lookup lease before waiting on it.
+            concurrent = f.Workspaces.WithPublicationAdmissionAsync(f.W.Owner, async _ =>
+            {
+                entered.SetResult();
+                await f.Connections.UseForSourceAsync(f.W.Owner.UserId, "connection", _ => Task.FromResult(true), timeout.Token);
+            }, timeout.Token);
+            await entered.Task.WaitAsync(timeout.Token);
+        };
+        await File.WriteAllTextAsync(Path.Combine(f.W.Path, "README.md"), "concurrent publication");
+        var result = await f.Service.CommandAsync(f.W.Id, f.W.Owner, "commit", new(Guid.NewGuid().ToString(),
+            f.W.OriginalBase, Message: "test: concurrent commit", Paths: ["README.md"]), timeout.Token);
+        await concurrent!;
+        Assert.Equal("succeeded", Assert.Single(result.Operations).State);
+        Assert.Equal("concurrent publication", (await RunGitAsync(f.W.Path, ["show", "HEAD:README.md"])).Trim());
+    }
+
     [Fact]
     public async Task Publication_LostCreateResponseRecoversWithoutAnotherPrAndRejectsChangedRequest()
     {
@@ -195,7 +226,7 @@ public sealed partial class CoreLifecycleServiceTests
     public async Task Publication_RevokedConnectionAndDifferentSessionCannotObserveOrMutate()
     {
         var f = await PublicationFixture();
-        await Assert.ThrowsAsync<PublicationException>(() => f.Service.ObserveAsync(f.W.Id, f.W.Owner with { SessionId = "other" }, default));
+        await Assert.ThrowsAsync<AppLifecycleException>(() => f.Service.ObserveAsync(f.W.Id, f.W.Owner with { SessionId = "other" }, default));
         await f.Users.UpdateAsync(s => s with { ProviderConnections = [] });
         var unavailable = await f.Service.ObserveAsync(f.W.Id, f.W.Owner, default);
         Assert.Equal("unavailable", unavailable.Observation!.State);

@@ -1,6 +1,6 @@
 ---
 created: 2026-10-07
-updated: 2026-10-23
+updated: 2026-10-25
 summary: Local external agents use authorized Core-owned worktrees, separate plan progress, and read-only pull request tracking through Harness and Core.
 components: [apps/core, apps/plans]
 ---
@@ -52,8 +52,8 @@ owners. Tracked-branch progress and each workspace's progress remain independent
 uncommitted plan edits. Observation errors stay visible with their evidence time. Existing assistant
 links and older payloads without external metadata retain their original presentation.
 
-[Harness Development](../harness-development-ui/feature.md) displays external owners in its External
-workspaces view. Core aggregates repositories sharing one external principal/user/task reference.
+[Harness Development](../harness-development-ui/feature.md) includes external workspaces in its
+unified workspace-and-chat list, with the same workspace icon. Core aggregates repositories sharing one external principal/user/task reference.
 The legacy worktree ID stays unchanged; `workspaceId` identifies its logical group. The standalone
 [Workspaces app is retired](../workspaces-app/feature.md); Core inspection records and source APIs remain.
 Shell provides ordinary app navigation and has no workspace source access.

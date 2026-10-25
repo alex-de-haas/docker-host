@@ -36,12 +36,37 @@ public sealed partial class CoreLifecycleServiceTests
             restarted.ChangeWorkflowAsync(owner, "admin", "complete", new(Guid.NewGuid().ToString(), 1), new Dictionary<string, string>(), default))).Code);
     }
 
+    [Fact]
+    public async Task LeaseRecovery_InternalOwnerRecoversOnlyConfirmedClaimAfterPause()
+    {
+        var (f, _) = await SourceFixtureAsync();
+        var service = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock);
+        var owner = WorkspaceTestOwner(f);
+        var lease = Guid.NewGuid().ToString();
+        var tree = await service.PrepareAsync(owner, WorkspaceRequest() with { LeaseId = lease }, default);
+        var state = await service.ParticipationAsync(tree.WorkspaceId, owner.UserId, default);
+        var other = owner with { UserId = "contributor", SessionId = "parallel" };
+        state = await service.ChangeMemberAsync(state.Id, owner.UserId, "grant", new(Guid.NewGuid().ToString(), state.Revision, other.UserId, [tree.Id]), default);
+        await service.ChangeSessionAsync(state.Id, other, "attach", new(Guid.NewGuid().ToString(), state.Revision, "Parallel", "/parallel"), default);
+        var otherLease = Guid.NewGuid().ToString();
+        await service.CommandAsync(tree.Id, other, "lease", new(Guid.NewGuid().ToString(), LeaseId: otherLease), default);
+        var inspection = new WorkspaceInspectionService(service, f.Apps, f.Clock);
+        var request = new WorkspaceLeaseRecovery(Guid.NewGuid().ToString(), tree.OriginalBase, otherLease, true);
+        await Assert.ThrowsAsync<AppLifecycleException>(() => inspection.RecoverLeaseAsync(tree.WorkspaceId, tree.Id, other.UserId, request, default));
+        await Assert.ThrowsAsync<AppLifecycleException>(() => inspection.RecoverLeaseAsync(tree.WorkspaceId, tree.Id, owner.UserId, request, default));
+        await service.ChangeWorkflowAsync(owner, owner.UserId, "close", new(Guid.NewGuid().ToString(), 0), new Dictionary<string, string>(), default, prepareOnly: true);
+        await Assert.ThrowsAsync<AppLifecycleException>(() => inspection.RecoverLeaseAsync(tree.WorkspaceId, tree.Id, owner.UserId, request with { ConsumerExitConfirmed = false }, default));
+        var result = await inspection.RecoverLeaseAsync(tree.WorkspaceId, tree.Id, owner.UserId, request, default);
+        Assert.Equal([lease], result.Leases);
+        Assert.DoesNotContain((await service.Read(tree.Id, null, default)).LeaseClaims!, c => c.Id == otherLease);
+        Assert.Equal([lease], (await inspection.RecoverLeaseAsync(tree.WorkspaceId, tree.Id, owner.UserId, request, default)).Leases);
+    }
+
     [Theory]
     [InlineData("unconfirmed", "workspace_exit_unconfirmed")]
     [InlineData("open", "workspace_close_required")]
     [InlineData("stale", "workspace_stale_head")]
     [InlineData("other-user", "workspace_forbidden")]
-    [InlineData("assistant", "workspace_forbidden")]
     [InlineData("sandbox", "workspace_in_use")]
     [InlineData("source", "workspace_in_use")]
     [InlineData("native", "workspace_in_use")]

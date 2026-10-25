@@ -23,3 +23,9 @@ it("refuses traversal, prefix collisions, ambiguous nested descriptors, deleted 
   expect(transcriptFileEdits("Edit", { file_path: "/trees/one/file.ts" }, "s", [{ ...trees[0]!, state: "deleted" }])[0]?.review).toBeUndefined();
   expect(transcriptFileEdits("FileChange", { changes: Array.from({ length: 500 }, () => ({ path: "/trees/one/file.ts" })) }, "s", trees)).toHaveLength(200);
 });
+
+it("ignores historical metadata-only cache entries while preserving real source review bindings", () => {
+  const bindings = [tree("one", "/trees/one"), { id: "review-receipt", paths: ["file.ts"] }, null] as DevelopmentWorkspace[];
+  const edit = transcriptFileEdits("Edit", { file_path: "/trees/one/file.ts", old_string: "a", new_string: "b" }, "s", bindings);
+  expect(edit[0]?.review).toMatchObject({ worktreeId: "one", path: "file.ts" });
+});

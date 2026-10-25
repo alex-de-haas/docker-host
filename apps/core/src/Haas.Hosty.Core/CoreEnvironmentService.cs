@@ -216,9 +216,13 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
         {
             if (workspaces is null) throw new SandboxException("environment_worktrees_unavailable", "Worktrees are unavailable.", 409);
             var tree = await workspaces.Read(treeId, null, ct);
-            if (actor.AppId is not null && (tree.Owner.AppId != actor.AppId || tree.Owner.Installation != actor.Installation
-                || tree.Owner.UserId != actor.UserId || tree.Owner.SessionId != input.Context?.SessionId))
-                throw new SandboxException("environment_worktree_forbidden", "Select a worktree owned by this session.", 403);
+            if (actor.AppId is not null)
+            {
+                if (!await workspaces.SessionCanReadAsync(tree, new(actor.AppId, actor.Installation ?? default, actor.UserId, input.Context?.SessionId ?? ""), ct))
+                    throw new SandboxException("environment_worktree_forbidden", "Select a worktree attached to this session and shared with its user.", 403);
+            }
+            else if (!await workspaces.RequireParticipationSourceAsync(tree, actor.UserId, ct) && tree.Owner.UserId != actor.UserId)
+                throw new SandboxException("environment_worktree_forbidden", "Select source shared with the acting user.", 403);
             if (tree.State != "active") throw new SandboxException("environment_worktree_unavailable", "The worktree is not active.", 409);
             trees.Add(tree);
         }

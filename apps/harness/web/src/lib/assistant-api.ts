@@ -102,6 +102,9 @@ export async function listSessions(): Promise<AssistantSession[]> {
   return body.sessions ?? [];
 }
 
+export async function createWorkspaceSession(input: { workspaceId: string; requestId: string; expectedRevision: number }): Promise<AssistantSession> {
+  return (await call("/workspace-sessions", { method: "POST", body: JSON.stringify(input) })).json();
+}
 export async function createSession(input: { connectionId?: string; title?: string; context?: Record<string, string>; appIds?: string[]; clientRequestId?: string } = {}): Promise<AssistantSession> {
   return (await call("/sessions", { method: "POST", body: JSON.stringify(input) })).json() as Promise<AssistantSession>;
 }

@@ -4,7 +4,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { main, suitePlan, suites } from './test-integration.mjs';
 
-const manifest = () => ({ services: [{ key: 'worker', runtimes: { docker: { image: 'example/worker:1.2.3' } } }] });
+const manifest = () => ({ services: [{ key: 'api', runtimes: { docker: { image: 'example/harness:1.2.3' } } }, { key: 'worker', runtimes: { docker: { image: 'example/worker:1.2.3' } } }] });
 const options = { platform: 'darwin', env: {}, log() {}, readManifest: manifest };
 
 test('help, invalid input and dry-run never start processes', () => {

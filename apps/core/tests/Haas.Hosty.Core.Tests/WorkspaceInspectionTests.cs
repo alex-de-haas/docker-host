@@ -121,6 +121,9 @@ public sealed partial class CoreLifecycleServiceTests
         var observed = Assert.Single(detail.PullRequests, p => p.Observation is not null);
         Assert.Equal("SUCCESS", Assert.Single(observed.Observation!.Checks!).State);
         Assert.Null(observed.Observation.Reviews);
+        await Assert.ThrowsAsync<AppLifecycleException>(() => inspection.ReadAsync(f.W.WorkspaceId, f.W.Id, "another-admin", default));
+        var membership = await f.Workspaces.ParticipationAsync(f.W.WorkspaceId, "admin", default);
+        await f.Workspaces.ChangeMemberAsync(f.W.WorkspaceId, "admin", "grant", new(Guid.NewGuid().ToString(), membership.Revision, "another-admin", [f.W.Id]), default);
         Assert.Empty((await inspection.ReadAsync(f.W.WorkspaceId, f.W.Id, "another-admin", default)).PullRequests);
         await JsonStorage.WriteAsync(path, record with { PublishedHead = "changed" });
         Assert.All((await inspection.ReadAsync(f.W.WorkspaceId, f.W.Id, "admin", default)).PullRequests, p => Assert.Null(p.Observation));

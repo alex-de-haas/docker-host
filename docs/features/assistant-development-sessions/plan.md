@@ -123,6 +123,12 @@ records; the [workspace model](../assistant-session-workspaces/feature.md) owns 
 compatibility. Sessions and context remain assistant-owned, with successive agent execution inside
 the same session. Workspaces does not become a provider or a second conversation engine.
 
+Vision decision 52 and the owner clarification of 2026-10-25 supersede exclusive session
+ownership. The [workspace sessions feature](../workspace-sessions/feature.md) provides independent
+workspace identity, explicit user membership, concurrent private sessions and their lifecycle
+migration. Provider switching within a conversation remains independent and is not required for
+sessions to share source; its unbuilt deliverables remain here.
+
 The standalone [Workspaces app is retired](../workspaces-app/feature.md). Harness displays
 workspace changes and PR observations through the existing Core inspection contract. Testing and browser execution use the independent Core Sandbox feature under acceptance; plan associations
 and implementation handoffs stay deferred. Source allocation starts with authorized edits, not

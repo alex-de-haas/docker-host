@@ -393,7 +393,8 @@ internal sealed partial class DevelopmentWorkspaceService
             {
                 foreach (var snapshot in snapshots)
                 {
-                    var tree = await Read(snapshot.Id, owner, ct);
+                    var tree = await Read(snapshot.Id, owner.IsExternal ? owner : null, ct);
+                    if (!tree.Owner.SameIdentity(owner)) throw Error("forbidden", "The discard allocation owner changed.");
                     await CheckDiscardConsumers(tree, [], ct);
                     if (tree.Operations.Any(o => (o.State is "pending" or "unknown") && o.Id != "discard-" + input.RequestId))
                         throw Error("operation_pending", "An unrelated source operation blocks removal.");
@@ -410,7 +411,8 @@ internal sealed partial class DevelopmentWorkspaceService
                 }
                 foreach (var snapshot in snapshots)
                 {
-                    var tree = await Read(snapshot.Id, owner, ct);
+                    var tree = await Read(snapshot.Id, owner.IsExternal ? owner : null, ct);
+                    if (!tree.Owner.SameIdentity(owner)) throw Error("forbidden", "The discard allocation owner changed.");
                     if (tree.State != "released")
                     {
                         var reviewed = plan.Trees.Single(t => t.Id == tree.Id);

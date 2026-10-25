@@ -5,16 +5,17 @@ internal sealed record WorkspaceLeaseRecovery(string RequestId, string ExpectedH
 
 internal sealed partial class DevelopmentWorkspaceService
 {
-    // Operator recovery is separate from the external principal's ordinary lease-release API.
+    // Operator recovery is separate from a session or external principal's ordinary lease-release API.
     // Closing admission fences new managed work; native execution still requires human verification.
     internal async Task<DevelopmentWorkspace> RecoverExternalLeaseAsync(string id, WorkspaceOwner owner,
         string actor, WorkspaceLeaseRecovery input, CancellationToken ct)
         => await Locked(Hash(OwnerIdentity(owner)), async () =>
         {
             RequestId(input.RequestId);
-            var tree = await Read(id, owner, ct);
-            if (!owner.IsExternal || owner.UserId != actor)
-                throw Error("forbidden", "Only the external workspace's operator can recover its activity lease.");
+            var tree = await Read(id, owner.IsExternal ? owner : null, ct);
+            if (!tree.Owner.SameIdentity(owner) || owner.UserId != actor)
+                throw Error("forbidden", "Only the workspace's owning operator can recover an activity lease.");
+            if (!owner.IsExternal) await RequireParticipationSourceAsync(tree, actor, ct);
             var fingerprint = Hash(actor + "\n" + CoreJson.Text(input));
             var prior = tree.Operations.FirstOrDefault(o => o.Id == input.RequestId);
             if (prior is not null)
@@ -24,7 +25,7 @@ internal sealed partial class DevelopmentWorkspaceService
                 return tree;
             }
             if (!input.ConsumerExitConfirmed)
-                throw Error("exit_unconfirmed", "Verify that the external agent and all native consumers have exited before recovering its lease.");
+                throw Error("exit_unconfirmed", "Verify that the agent executions and all native consumers have exited before recovering its lease.");
             if (!Guid.TryParse(input.LeaseId, out _) || !tree.Leases.Contains(input.LeaseId))
                 throw Error("lease_invalid", "The selected activity lease is no longer present. Refresh this workspace.");
             var workflow = await WorkflowAsync(owner, ct);
@@ -45,8 +46,9 @@ internal sealed partial class DevelopmentWorkspaceService
                 await CheckConsumers(tree with { Leases = [] }, ct);
                 var receipt = new WorkspaceOperation(input.RequestId, "recover-lease", fingerprint, "succeeded",
                     tree.Observation.Head, tree.Observation.Head, Command: new(input.RequestId, input.ExpectedHead,
-                        Message: "Operator " + actor + " confirmed external consumer exit.", LeaseId: input.LeaseId));
+                        Message: "Operator " + actor + " confirmed consumer exit.", LeaseId: input.LeaseId));
                 tree = tree with { Leases = tree.Leases.Where(l => l != input.LeaseId).ToArray(),
+                    LeaseClaims = tree.LeaseClaims?.Where(c => c.Id != input.LeaseId).ToArray(),
                     Operations = [.. tree.Operations, receipt] };
                 // One atomic record write commits both the release and its replay receipt.
                 await Save(tree);
