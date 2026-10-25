@@ -2729,6 +2729,8 @@ public sealed partial class CoreLifecycleServiceTests
     [Theory]
     [InlineData("RETIRED_SETTING")]
     [InlineData("HOSTY_CUSTOM_SETTING")]
+    [InlineData("HOSTY_HARNESS_RETENTION_DAYS")]
+    [InlineData("HOSTY_MARKETPLACE_SOURCE_URL")]
     public async Task CreateUpdatePlanAsync_RemovedAppSettingStillRequiresReview(string key)
     {
         var fixture = await LifecycleFixture.CreateAsync();
