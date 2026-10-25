@@ -181,6 +181,7 @@ const toolProperties = {
   allowUnrelatedHistories: { type: "boolean" },
   bootstrapCommit: { type: "boolean" },
   iconPng: { type: "string", maxLength: 174764, description: "Optional base64 PNG, at most 128 KiB and 1024×1024 pixels." },
+  reviewId: { type: "string", description: "Selected-file receipt id returned by commit_review; required for shared-workspace commit and pr_commit." },
   expectedRevision: { type: "integer" },
   draft: { type: "boolean" }, fork: { type: "boolean" }, cleanup: { type: "boolean" }, number: { type: "integer" },
   dependencies: { type: "array", items: { type: "string" } },

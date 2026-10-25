@@ -263,6 +263,13 @@ The fresh checkout's full Harness run passes 1,595 tests; its sole failure lacks
 export. After building that export, all 63 gateway tests pass. No runtime workaround is introduced.
 Documentation/version validation and the integration dispatcher's 10 tests pass.
 
+Review regression coverage verifies selected-file `reviewId` transport for both commit tools,
+ordinary chat workflow reads after creator detachment without restoring source access, and durable
+attach/detach refusal recovery. Definitive refusals stop blocking chat retention/deletion; uncertain
+responses retain their exact request. A later authorization refusal does not erase that uncertainty.
+Deletion retries a refused detach with a fresh membership revision. Environment source admission
+continues to return the sandbox API's forbidden error for an unattached session.
+
 ## Testing Expectations
 
 - Core coverage includes real temporary Git stores, migration/reallocation, membership revision and

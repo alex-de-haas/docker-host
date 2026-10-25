@@ -82,6 +82,12 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.Equal(owner.UserId, Assert.Single(state.Members, m => m.Role == "owner").UserId);
         Assert.True(Directory.Exists(tree.Path));
         Assert.Equal(tree.OriginalBase, (await RunGitAsync(tree.Path, ["rev-parse", "HEAD"])).Trim());
+        await service.ChangeWorkflowAsync(owner, owner.UserId, "defer", new(Guid.NewGuid().ToString(), 0), new Dictionary<string, string>(), default);
+        Assert.Equal("closed", (await service.SessionWorkflowAsync(colleague, default)).Closure);
+        Assert.Equal(new WorkspaceWorkflow(), await service.SessionWorkflowAsync(owner, default));
+        await Assert.ThrowsAsync<AppLifecycleException>(() => service.Read(tree.Id, owner, default));
+        await Assert.ThrowsAsync<AppLifecycleException>(() => service.PrepareAsync(owner, WorkspaceRequest(), default));
+        await Assert.ThrowsAsync<AppLifecycleException>(() => service.SessionResourceOwnerAsync(owner, default, ownerOnly: true));
     }
 
     [Fact]

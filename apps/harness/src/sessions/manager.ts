@@ -343,12 +343,13 @@ export class SessionManager {
           await this.store.saveRecord(session.record);
         }
         const alreadyAcknowledged = prior?.state === "succeeded";
-        const result = await this.development.call(id, token, action, command) as { workspace: { id: string; revision: number } | null };
-        session.record.associationRequests!.find(r => r.id === input.requestId)!.state = "succeeded";
+        const receipt = session.record.associationRequests!.find(r => r.id === input.requestId)!;
+        const result = await this.callAssociation(session.record, token, receipt, prior?.state === "pending");
         session.record.workspaceAssociation = result.workspace && { id: result.workspace.id, revision: result.workspace.revision };
-        session.record.developmentWorkspaces = result.workspace ? (await this.development.call(id, token, "list", {}) as { workspaces: DevelopmentWorkspace[] }).workspaces : [];
-        // The next provider run gets fresh native context; a receipt replay does not reset it again.
+        // The next provider run gets fresh native context even if the source listing needs a retry.
         if (!alreadyAcknowledged) session.record.harnessSessionId = null;
+        await this.store.saveRecord(session.record);
+        session.record.developmentWorkspaces = result.workspace ? (await this.development.call(id, token, "list", {}) as { workspaces: DevelopmentWorkspace[] }).workspaces : [];
         session.record.updatedAt = new Date().toISOString();
         await this.store.saveRecord(session.record);
         return result;
@@ -1055,13 +1056,14 @@ export class SessionManager {
    */
   async deleteSession(id: string, deletedBy: string, credential?: string): Promise<boolean> {
     return this.serialize(id, async () => {
-      const record = this.live.get(id)?.record ?? (await this.store.readRecord(id));
+      let record = this.live.get(id)?.record ?? (await this.store.readRecord(id));
       if (!record) {
         return false;
       }
 
       if (record.createdBy !== deletedBy) throw new AppContextError(404, "session_not_found", "Session not found.");
       const live = await this.requireLive(id);
+      record = live.record;
       if (credential) live.workspaceCredential = credential;
       await this.cancelSessionLocked(id);
       let snapshot = await this.retentionSnapshot(record);
@@ -1076,14 +1078,15 @@ export class SessionManager {
         if (!association.workspaceId || association.revision === null) throw new AppContextError(409, "workspace_unclassified", "Recover this session's workspace association before deletion.");
         // Retain the exact request for uncertain detach recovery; never delete source here.
         let pending = record.associationRequests?.find(r => r.action === "detach" && r.state === "pending");
+        const recovering = !!pending;
         if (!pending) {
           const requestId = randomUUID();
           pending = { id: requestId, action: "detach", input: { requestId, workspaceId: association.workspaceId, expectedRevision: association.revision }, state: "pending" };
           record.associationRequests = [...record.associationRequests ?? [], pending];
           await this.store.saveRecord(record);
         }
-        await this.development.call(id, token, "detach", pending.input);
-        pending.state = "succeeded"; record.workspaceAssociation = null; record.developmentWorkspaces = [];
+        await this.callAssociation(record, token, pending, recovering);
+        record.workspaceAssociation = null; record.developmentWorkspaces = [];
         await this.store.saveRecord(record);
         snapshot = await this.retentionSnapshot(record);
       }
@@ -1091,6 +1094,29 @@ export class SessionManager {
         throw new AppContextError(409, "resource_retained", "Reconcile retained resource history before deleting the conversation.");
       return this.removeSessionRecord(record, deletedBy);
     });
+  }
+
+  private async callAssociation(record: SessionRecord, token: string,
+    receipt: NonNullable<SessionRecord["associationRequests"]>[number], recovering: boolean): Promise<{ workspace: { id: string; revision: number } | null }> {
+    const acknowledged = receipt.state === "succeeded";
+    if (!acknowledged) {
+      receipt.state = "pending";
+      await this.store.saveRecord(record);
+    }
+    let result: { workspace: { id: string; revision: number } | null };
+    try { result = await this.development!.call(record.id, token, receipt.action, receipt.input) as typeof result; }
+    catch (error) {
+      // A fresh 4xx refusal is final. A later auth refusal cannot disprove an earlier
+      // uncertain success; Core checks receipt replay before reporting a revision conflict.
+      if (!acknowledged && error instanceof AppContextError && error.status >= 400 && error.status < 500
+        && ![408, 429].includes(error.status) && (!recovering || error.code === "workspace_revision_conflict")) {
+        receipt.state = "rejected";
+        await this.store.saveRecord(record);
+      }
+      throw error;
+    }
+    receipt.state = "succeeded";
+    return result;
   }
 
   private async removeSessionRecord(record: SessionRecord, deletedBy: string): Promise<boolean> {

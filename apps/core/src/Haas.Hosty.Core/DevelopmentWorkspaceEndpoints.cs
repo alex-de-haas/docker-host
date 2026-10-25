@@ -38,7 +38,7 @@ internal static class DevelopmentWorkspaceEndpoints
             await Handle(async () => await workspaces.SessionListAsync(await auth.RequireAsync(request, appId, sessionId, ct), ct)));
         routes.MapGet(internalRoot + "/workflow", async (string appId, string sessionId, HttpRequest request,
             WorkspaceAuthorization auth, DevelopmentWorkspaceService workspaces, CancellationToken ct) =>
-            await Handle(async () => await workspaces.WorkflowAsync(await workspaces.SessionResourceOwnerAsync(await auth.RequireAsync(request, appId, sessionId, ct), ct), ct)));
+            await Handle(async () => await workspaces.SessionWorkflowAsync(await auth.RequireAsync(request, appId, sessionId, ct), ct)));
         routes.MapPost(internalRoot + "/workflow/{kind}", async (string appId, string sessionId, string kind,
             WorkspaceWorkflowCommand input, HttpRequest request, WorkspaceAuthorization auth,
             DevelopmentWorkspaceService workspaces, PublicationService publications, WorkspaceCleanupService cleanup, CancellationToken ct) =>

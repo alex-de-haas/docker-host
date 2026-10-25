@@ -57,6 +57,15 @@ internal sealed partial class DevelopmentWorkspaceService
             return await action();
         }, ct);
     }
+    internal Task<WorkspaceWorkflow> SessionWorkflowAsync(WorkspaceOwner actor, CancellationToken ct)
+        => Locked("workspace-participation", async () =>
+        {
+            // Detaching the creator removes its conversation's workflow association, but does
+            // not change the retained allocation owner or grant access to its former source.
+            if (await SessionDetachedAsync(actor, ct)) return new WorkspaceWorkflow();
+            return await WorkflowAsync(await SessionResourceOwnerAsync(actor, ct), ct);
+        }, ct);
+
     private string WorkflowPath(WorkspaceOwner owner) => System.IO.Path.Combine(Root, "workflows", Hash(OwnerIdentity(owner)) + ".json");
     internal async Task<WorkspaceWorkflow> WorkflowAsync(WorkspaceOwner owner, CancellationToken ct)
         => await JsonStorage.ReadAsync<WorkspaceWorkflow>(WorkflowPath(owner), ct) ?? new();

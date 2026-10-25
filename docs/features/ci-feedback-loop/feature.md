@@ -31,6 +31,11 @@ bounded gate contract: version, selected components/profiles, required jobs and 
 object. This keeps both `CI_PLAN` and the copied `needs` environment small for large changesets,
 while the aggregate still validates every required result and rejects failed unexpected jobs.
 
+The CI .NET setup steps read the exact SDK version from `global.json` and pass it as the
+`actions/setup-dotnet` version input. Installation therefore uses the repository's declared SDK
+instead of resolving the rolling latest channel; the local SDK roll-forward policy remains intact.
+This avoids an unavailable latest SDK blocking every .NET check before compilation.
+
 Core's managed build/unit suite and NativeAOT publication are independent jobs. A production Core source/configuration/dependency change selects NativeAOT; isolated unit-test edits do not require it. The AOT script retains its cold Release compile and zero-new-warning check.
 
 ## Local Integration Checks

@@ -67,6 +67,15 @@ public sealed class WorkspaceSharingHttpTests
         Assert.Equal(HttpStatusCode.OK, (await owner.PostAsJsonAsync(participants + "/revoke", new WorkspaceMemberCommand(Guid.NewGuid().ToString(), state.Revision, "member"), CoreJson.TypeInfo<WorkspaceMemberCommand>())).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await member.GetAsync(api + "/sessions/second/workspaces/" + tree.Id)).StatusCode);
         Assert.Contains(lease, (await host.Services.GetRequiredService<DevelopmentWorkspaceService>().Read(tree.Id, null, default)).Leases);
+        Assert.Equal(HttpStatusCode.OK, (await owner.PostAsJsonAsync(api + "/sessions/first/workspace-activity",
+            new { status = "idle", leaseId = lease, stopped = true })).StatusCode);
+        state = (await owner.GetFromJsonAsync(participants, CoreJson.TypeInfo<WorkspaceParticipationView>()))!;
+        Assert.Equal(HttpStatusCode.OK, (await owner.PostAsJsonAsync(api + "/sessions/first/workspace-association/" + tree.WorkspaceId + "/detach",
+            new WorkspaceSessionCommand(Guid.NewGuid().ToString(), state.Revision), CoreJson.TypeInfo<WorkspaceSessionCommand>())).StatusCode);
+        var detachedWorkflow = await owner.GetAsync(api + "/sessions/first/workspaces/workflow");
+        Assert.Equal(HttpStatusCode.OK, detachedWorkflow.StatusCode);
+        Assert.Equal(new WorkspaceWorkflow(), await detachedWorkflow.Content.ReadFromJsonAsync(CoreJson.TypeInfo<WorkspaceWorkflow>()));
+        Assert.Equal(HttpStatusCode.Forbidden, (await owner.GetAsync(api + "/sessions/first/workspaces/" + tree.Id)).StatusCode);
         Assert.DoesNotContain(await apps.ListAppRecordsAsync(), a => a.Id.StartsWith("hosty.", StringComparison.Ordinal));
 
         async Task<HttpClient> Client(string user)

@@ -9,6 +9,7 @@ import { DevelopmentClient, type DevelopmentAction } from "./development.js";
 import { ProviderDirectory } from "../settings/providers.js";
 import { AuditReporter } from "../audit.js";
 import { AppContextError } from "./app-context.js";
+import { retentionBusy } from "./retention.js";
 import type { HarnessAdapter, HarnessStartOptions } from "../harness/adapter.js";
 let dir: string, manager: SessionManager, store: SessionStore, client: DevelopmentClient;
 let starts: HarnessStartOptions[], sent: string[];
@@ -619,6 +620,78 @@ describe("shared workspace session boundaries", () => {
     const attachments = vi.mocked(client.call).mock.calls.filter(c => c[2] === "attach");
     expect(attachments[0]).toEqual(attachments[1]);
     expect(await store.readEvents(initial.id)).not.toEqual(expect.arrayContaining([expect.objectContaining({ type: "user_message" })]));
+  });
+
+  it("persists fresh provider context when an acknowledged attach cannot list source yet", async () => {
+    const record = await manager.createSession({ createdBy: "member" });
+    record.harnessSessionId = "old-native-context";
+    await store.saveRecord(record);
+    await manager.shutdown(); manager = build();
+    const input = { workspaceId, requestId, expectedRevision: 2 };
+    vi.mocked(client.call).mockImplementation(async (_id, _token, action) => {
+      if (action === "attach") return { workspace: { id: workspaceId, revision: 3 } };
+      throw new AppContextError(503, "unavailable", "List unavailable");
+    });
+    await expect(manager.workspaceAction(record.id, "attach", input, "token", "member")).rejects.toThrow("List unavailable");
+    expect(await store.readRecord(record.id)).toMatchObject({ harnessSessionId: null,
+      workspaceAssociation: { id: workspaceId, revision: 3 }, associationRequests: [{ state: "succeeded" }] });
+  });
+
+  it.each([403, 409])("keeps a new chat deletable after a definitive attach refusal (%s)", async status => {
+    vi.spyOn(client, "inspection").mockResolvedValue({ workspaces: [{ id: workspaceId, worktrees: [{ apps: [{ appId: "notes" }] }] }] });
+    vi.mocked(client.retention).mockResolvedValue({ kind: "chat", workflow: null, resourcesFinished: true });
+    vi.mocked(client.call).mockRejectedValueOnce(new AppContextError(status, status === 409 ? "workspace_revision_conflict" : "workspace_forbidden", "Refused"));
+    await expect(manager.newWorkspaceSession("member", "token", { workspaceId, requestId, expectedRevision: 2 })).rejects.toThrow("Refused");
+    const record = (await store.listRecords())[0]!;
+    expect(record.associationRequests?.[0]?.state).toBe("rejected");
+    expect(retentionBusy(record)).toBe(false);
+    await manager.shutdown(); manager = build();
+    await expect(manager.deleteSession(record.id, "member", "token")).resolves.toBe(true);
+  });
+
+  it.each([new Error("response lost"), new AppContextError(503, "unavailable", "Core unavailable")])(
+    "preserves uncertain attachment through a later authorization refusal", async failure => {
+      const record = await manager.createSession({ createdBy: "member" });
+      const input = { workspaceId, requestId, expectedRevision: 2 };
+      vi.mocked(client.retention).mockResolvedValue({ kind: "chat", workflow: null, resourcesFinished: true });
+      vi.mocked(client.call).mockRejectedValueOnce(failure);
+      await expect(manager.workspaceAction(record.id, "attach", input, "token", "member")).rejects.toThrow(failure.message);
+      await manager.shutdown(); manager = build();
+      vi.mocked(client.call).mockRejectedValueOnce(new AppContextError(403, "workspace_forbidden", "Revoked"));
+      await expect(manager.workspaceAction(record.id, "attach", input, "token", "member")).rejects.toThrow("Revoked");
+      expect((await store.readRecord(record.id))!.associationRequests?.[0]?.state).toBe("pending");
+      await expect(manager.deleteSession(record.id, "member", "token")).rejects.toMatchObject({ code: "resource_operation_pending" });
+    });
+
+  it("refreshes a definitively refused detach before retrying chat deletion", async () => {
+    const record = await manager.createSession({ createdBy: "member" });
+    const input = { workspaceId, requestId, expectedRevision: 2 };
+    vi.mocked(client.call).mockRejectedValueOnce(new Error("response lost"));
+    await expect(manager.workspaceAction(record.id, "detach", input, "token", "member")).rejects.toThrow("response lost");
+    await manager.shutdown(); manager = build();
+    vi.mocked(client.activity).mockResolvedValue({ workspaceId, revision: 3, stopRequested: false, state: "idle" });
+    vi.mocked(client.call).mockRejectedValueOnce(new AppContextError(409, "workspace_revision_conflict", "Refresh"));
+    await expect(manager.deleteSession(record.id, "member", "token")).rejects.toThrow("Refresh");
+    expect((await store.readRecord(record.id))!.associationRequests?.[0]?.state).toBe("rejected");
+    vi.mocked(client.call).mockImplementation(async (_id, _token, action) => {
+      if (action === "detach") vi.mocked(client.retention).mockResolvedValue({ kind: "chat", workflow: null, resourcesFinished: true, sessionDetached: true });
+      return { workspace: null };
+    });
+    await expect(manager.deleteSession(record.id, "member", "token")).resolves.toBe(true);
+    const commands = vi.mocked(client.call).mock.calls.filter(c => c[2] === "detach").map(c => c[3]);
+    expect(commands.slice(0, 2)).toEqual([expect.objectContaining(input), expect.objectContaining(input)]);
+    expect(commands[2]).toMatchObject({ workspaceId, expectedRevision: 3 });
+    expect(commands[2]!.requestId).not.toBe(requestId);
+  });
+
+  it("retains uncertainty when a previously refused request is retried and loses its response", async () => {
+    const record = await manager.createSession({ createdBy: "member" });
+    const input = { workspaceId, requestId, expectedRevision: 2 };
+    vi.mocked(client.call).mockRejectedValueOnce(new AppContextError(403, "workspace_forbidden", "Refused"));
+    await expect(manager.workspaceAction(record.id, "attach", input, "token", "member")).rejects.toThrow("Refused");
+    vi.mocked(client.call).mockRejectedValueOnce(new Error("response lost"));
+    await expect(manager.workspaceAction(record.id, "attach", input, "token", "member")).rejects.toThrow("response lost");
+    expect((await store.readRecord(record.id))!.associationRequests?.[0]?.state).toBe("pending");
   });
 
   it("stops only a revoked user's execution and acknowledges its lease with that user's credential", async () => {

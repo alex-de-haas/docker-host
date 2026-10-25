@@ -6,6 +6,18 @@ let server: Server | undefined;
 afterEach(async () => { vi.unstubAllGlobals(); if (server) { server.closeAllConnections(); await new Promise<void>(resolve => server!.close(() => resolve())); server = undefined; } });
 
 describe("Core workspaces transport", () => {
+  it.each(["commit", "pr-commit"] as const)("advertises and forwards the selected-file receipt for %s", async action => {
+    const tool = developmentTools().find(t => t.name === action.replaceAll("-", "_"))!;
+    expect(tool.inputSchema).toMatchObject({ additionalProperties: false, properties: { reviewId: { type: "string" } } });
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => new Response("{}"));
+    vi.stubGlobal("fetch", fetcher);
+    const client = new DevelopmentClient("http://core.test", "example.assistant", "service");
+    const reviewId = "a6b50647-c489-4395-8de3-cf0e6f3a2810";
+    await client.call("session", "user", action, { workspaceId: "a".repeat(64), requestId: "request", reviewId, paths: ["README.md"] });
+    expect(JSON.parse(String(fetcher.mock.calls[0]![1]?.body))).toMatchObject({ reviewId, paths: ["README.md"], sessionId: "session" });
+    expect(String(fetcher.mock.calls[0]![0])).toContain(action === "commit" ? "/operations/commit" : "/publications/" + "a".repeat(64) + "/commit");
+  });
+
   it("selects package/workspace targets and observes the same request without replaying mutation", async () => {
     const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => new Response(JSON.stringify({ state: "running" })));
     vi.stubGlobal("fetch", fetcher);
