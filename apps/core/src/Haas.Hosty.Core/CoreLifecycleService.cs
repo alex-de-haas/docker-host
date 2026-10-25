@@ -5529,7 +5529,7 @@ internal sealed partial class CoreLifecycleService(
         }
 
         AddUpdateServiceChanges(changes, currentSelection, targetSelection);
-        AddSettingChanges(changes, app.Settings, BuildSettingDefinitions(targetSelection));
+        AddSettingChanges(changes, app, currentSelection.Manifest.Settings, BuildSettingDefinitions(targetSelection));
         changes.AddRange(BuildExternalMountChanges(currentSelection.Manifest.ExternalMounts, targetSelection.Manifest.ExternalMounts));
         AddDependencyChanges(changes, app.Dependencies, targetSelection.Manifest.Dependencies);
         AddEndpointChanges(changes, app.Endpoints, BuildEndpointContracts(targetSelection));
@@ -5829,7 +5829,7 @@ internal sealed partial class CoreLifecycleService(
 
         changes.Add($"development:{targetSelection.RuntimeProfile.Development.ToString().ToLowerInvariant()}");
         AddServiceChanges(changes, app.Id, instanceId, currentSelection, targetSelection);
-        AddSettingChanges(changes, app.Settings, BuildSettingDefinitions(targetSelection));
+        AddSettingChanges(changes, app, currentSelection.Manifest.Settings, BuildSettingDefinitions(targetSelection));
         AddDependencyChanges(changes, app.Dependencies, targetSelection.Manifest.Dependencies);
         AddEndpointChanges(changes, app.Endpoints, BuildEndpointContracts(targetSelection));
         AddDataTargetChanges(changes, app, targetSelection);
@@ -6094,9 +6094,11 @@ internal sealed partial class CoreLifecycleService(
 
     private static void AddSettingChanges(
         List<string> changes,
-        IReadOnlyDictionary<string, AppSettingValue> currentSettings,
+        AppRecord app,
+        IReadOnlyList<RuntimeAppSettingManifest> currentDeclarations,
         IReadOnlyList<RuntimeAppSettingManifest> targetSettings)
     {
+        var currentSettings = app.Settings;
         var targetByKey = targetSettings.ToDictionary(setting => setting.Key, StringComparer.Ordinal);
         foreach (var key in currentSettings.Keys.Concat(targetByKey.Keys).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal))
         {
@@ -6110,8 +6112,12 @@ internal sealed partial class CoreLifecycleService(
             {
                 // Match BuildAppRecord's carry-forward: host ports and local browser names survive
                 // apply, so reporting their removal would produce an update that never converges.
+                // A retired preference is also retained for migration, but its first removal from
+                // the installed manifest still needs review. Later checks see only the retained value.
                 // Declared target settings still undergo the normal type/secret checks below.
-                if (!IsPreservedCoreSetting(key))
+                var retainedMigrationValue = IsRetiredNativePreference(app.Id, key)
+                    && !currentDeclarations.Any(setting => string.Equals(setting.Key, key, StringComparison.Ordinal));
+                if (!IsPreservedCoreSetting(key) && !retainedMigrationValue)
                 {
                     changes.Add($"setting:{key}:removed");
                 }

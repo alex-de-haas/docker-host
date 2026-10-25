@@ -1,6 +1,6 @@
 ---
 created: 2026-06-04
-updated: 2026-10-22
+updated: 2026-10-25
 summary: Reviewed update plans and their apply behavior, including permission changes and routine updates.
 components: [apps/core, apps/shell]
 ---
@@ -106,6 +106,14 @@ and requires review. A later successful check replaces the result and clears the
 The `changes` list is a human-review summary of the update plan. Core reports specific contract changes when it can classify them, such as `version`, `runtime`, `role`, `service`, `image`, `command`, `port`, `environment`, `setting`, `endpoint`, `data`, `dependency`, and `capability` changes, plus `artifact:{service}:{current}->{target}` for compiled-image digest movement. When the target manifest digest differs but none of those contract categories changed, Core reports `manifest` as a fallback meaning "manifest content changed." A recheck against the same installed manifest returns an empty `changes` list.
 
 Core-owned `HOSTY_PORT_*` host-port overrides and `HOSTY_LOCAL_NAME_*` local browser names are never reported as `setting:*:removed`: an update carries them forward, so reporting a removal would promise a change apply does not make — a same-version plan that could never converge. Both update and runtime-switch plans use the same preservation rule as apply. Removed app settings remain reviewable, including other `HOSTY_*` keys.
+
+The existing native-preference migrations retain the last launch value for Harness session retention
+and Marketplace source selection after their settings move into the apps. The first removal from an
+installed manifest remains review-required. Once the installed manifest no longer declares that
+setting, its retained migration value is excluded from subsequent update and runtime-switch removal
+summaries. A same-version recheck, including after a Core restart, does not offer that completed
+removal again. Other apps using the same key and later declarations or schema changes still undergo
+normal review; the retained value is not deleted to clear an update offer.
 
 ## Classification (`requiresReview`)
 
@@ -292,6 +300,7 @@ Failed updates leave enough state for diagnosis and retry. Runtime state and app
 - **Plan and classification** — change detection per contract category, `requiresReview` routine/review split (including `role: system` escalation and a cross-repository `image` move), `updateAvailable` treating `->unknown` as "cannot tell", and plan-digest stability across a rebuild.
 - **Apply** — digest mismatch, expiry, and stale-base rejection; verbatim consumption of the cached plan; `update_in_progress`; the interrupted-apply boot sweep.
 - **Core-owned settings** — host-port overrides and local browser names survive apply and a fresh check after recreating Core reports no phantom update; removal of ordinary app settings still requires review.
+- **Retired native preferences** — the first same-version manifest removal requires review; retained migration values do not reappear in update availability or runtime-switch changes after apply/restart. The same keys in unrelated apps and subsequent schema changes remain reviewable.
 - **Shell self-update wait** — the page stays put through `"updating"` and through the intermediate `"updated"` while the restart is still to report, settles on that restart's `"started"` (and on `"updated"` when no restart is coming), reports a `"failed"` record with its error, treats a failed read as no outcome at all, and gives up on its deadline (and when the app is gone) without reloading.
 - **Fleet check** — availability projected into summaries (target version and revisions alongside the verdict, and nothing named for a probe that did not resolve), live-source apps skipped and an earlier verdict suppressed, per-app failures captured without failing the sweep, an app with no update source reported as an error rather than as up to date (and cleared by a plan from an explicit manifest), per-app timeout recorded as that app's error while the rest of the fleet still completes, shutdown not recorded as timeouts, single-flight joining, and the finish announced only once the run no longer reports running.
 - **Version metadata** — the target version shown whether or not it advances, and nothing shown when the verdict names no version; installed revisions read from the app record alone, so the tooltip stands without an update.
