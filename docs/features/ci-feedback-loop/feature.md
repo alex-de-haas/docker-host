@@ -15,6 +15,14 @@ The fast PR path contains classification, version consistency, documentation val
 
 `ci-required` evaluates the actual job results against the classification plan. Every selected job must succeed. Missing, cancelled, failed and unexpectedly skipped jobs fail the aggregate; only unaffected skips are accepted. The policy/wiring tests ensure every workflow job belongs to the aggregate. Main protection requires this GitHub Actions check and keeps strict up-to-date enforcement. The replacement was enabled alongside the original contexts before those contexts were removed, so protection had no gap.
 
+## .NET SDK Installation
+
+CI and .NET publication use the shared setup action to install the exact SDK version declared in
+the checked-out `global.json`. The local CLI roll-forward policy stays unchanged. Passing an explicit
+version to `actions/setup-dotnet` avoids resolving that policy through a floating channel download;
+a failed SDK installation still fails the job. The action reads the selected checkout, including
+source revisions selected by publication, rather than a separate hard-coded toolchain version.
+
 ## Automatic Selection
 
 `scripts/ci-policy.mjs` owns the inspectable path policy. `scripts/ci-select.mjs` resolves the full source SHA, reads both sides of renames/deletions and publishes the selected job list in the run summary. PRs compare their base with the tested merge revision; main pushes compare their `before` revision with the pushed commit. An initial push without a baseline classifies the entire tracked tree.
@@ -30,11 +38,6 @@ The classification log retains full per-path selection reasons. The job output c
 bounded gate contract: version, selected components/profiles, required jobs and an empty reasons
 object. This keeps both `CI_PLAN` and the copied `needs` environment small for large changesets,
 while the aggregate still validates every required result and rejects failed unexpected jobs.
-
-The CI .NET setup steps read the exact SDK version from `global.json` and pass it as the
-`actions/setup-dotnet` version input. Installation therefore uses the repository's declared SDK
-instead of resolving the rolling latest channel; the local SDK roll-forward policy remains intact.
-This avoids an unavailable latest SDK blocking every .NET check before compilation.
 
 Core's managed build/unit suite and NativeAOT publication are independent jobs. A production Core source/configuration/dependency change selects NativeAOT; isolated unit-test edits do not require it. The AOT script retains its cold Release compile and zero-new-warning check.
 

@@ -241,13 +241,8 @@ jobs:
         with:
           ref: ${{ needs.changes.outputs.sha }}
 
-      - name: Read declared .NET SDK version
-        id: dotnet-sdk
-        run: echo "version=$(jq -r '.sdk.version' global.json)" >> "$GITHUB_OUTPUT"
       - name: Set up .NET
-        uses: actions/setup-dotnet@v6
-        with:
-          dotnet-version: ${{ steps.dotnet-sdk.outputs.version }}
+        uses: ./.github/actions/setup-dotnet
 
       - name: Test HostySdk.App
         run: dotnet test packages/app-sdk-dotnet/HostySdk.App.Tests/HostySdk.App.Tests.csproj
@@ -262,13 +257,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.changes.outputs.sha }}
-      - name: Read declared .NET SDK version
-        id: dotnet-sdk
-        run: echo "version=$(jq -r '.sdk.version' global.json)" >> "$GITHUB_OUTPUT"
-      - name: Set up .NET
-        uses: actions/setup-dotnet@v6
-        with:
-          dotnet-version: ${{ steps.dotnet-sdk.outputs.version }}
+      - uses: ./.github/actions/setup-dotnet
       - name: Test Whisper provider (bounded unit suite)
         run: dotnet test apps/whisper/Hosty.Whisper.Tests/Hosty.Whisper.Tests.csproj
 
@@ -314,13 +303,8 @@ jobs:
         with:
           ref: ${{ needs.changes.outputs.sha }}
 
-      - name: Read declared .NET SDK version
-        id: dotnet-sdk
-        run: echo "version=$(jq -r '.sdk.version' global.json)" >> "$GITHUB_OUTPUT"
       - name: Set up .NET
-        uses: actions/setup-dotnet@v6
-        with:
-          dotnet-version: ${{ steps.dotnet-sdk.outputs.version }}
+        uses: ./.github/actions/setup-dotnet
 
       - name: Build Core
         run: npm run core:build
@@ -338,13 +322,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.changes.outputs.sha }}
-      - name: Read declared .NET SDK version
-        id: dotnet-sdk
-        run: echo "version=$(jq -r '.sdk.version' global.json)" >> "$GITHUB_OUTPUT"
-      - name: Set up .NET
-        uses: actions/setup-dotnet@v6
-        with:
-          dotnet-version: ${{ steps.dotnet-sdk.outputs.version }}
+      - uses: ./.github/actions/setup-dotnet
       - name: Ensure NativeAOT prerequisites
         run: |
           if ! command -v clang >/dev/null || ! dpkg-query -W -f='${Status}' zlib1g-dev 2>/dev/null | grep -q 'install ok installed'; then
@@ -366,13 +344,8 @@ jobs:
         with:
           ref: ${{ needs.changes.outputs.sha }}
 
-      - name: Read declared .NET SDK version
-        id: dotnet-sdk
-        run: echo "version=$(jq -r '.sdk.version' global.json)" >> "$GITHUB_OUTPUT"
       - name: Set up .NET
-        uses: actions/setup-dotnet@v6
-        with:
-          dotnet-version: ${{ steps.dotnet-sdk.outputs.version }}
+        uses: ./.github/actions/setup-dotnet
 
       - name: Validate installer syntax
         run: |
@@ -397,13 +370,8 @@ jobs:
         with:
           ref: ${{ needs.changes.outputs.sha }}
 
-      - name: Read declared .NET SDK version
-        id: dotnet-sdk
-        run: echo "version=$(jq -r '.sdk.version' global.json)" >> "$GITHUB_OUTPUT"
       - name: Set up .NET
-        uses: actions/setup-dotnet@v6
-        with:
-          dotnet-version: ${{ steps.dotnet-sdk.outputs.version }}
+        uses: ./.github/actions/setup-dotnet
 
       - name: Build Telemetry Backend
         run: npm run telemetry-backend:build

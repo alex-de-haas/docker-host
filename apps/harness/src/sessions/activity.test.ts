@@ -6,6 +6,7 @@ import { SessionStore, type StoredEvent } from "./store.js";
 import { SessionManager } from "./manager.js";
 import { FakeHarnessAdapter } from "../harness/fake.js";
 import type { HarnessEvent, HarnessRun, HarnessStartOptions } from "../harness/adapter.js";
+import { aggregateToolActivity, startHarnessToolActivity } from "../tool-activity.js";
 import { AuditReporter } from "../audit.js";
 
 class ManualAdapter extends FakeHarnessAdapter {
@@ -112,4 +113,68 @@ it("retains current activity behind an approval wait and clears it on the next t
   await vi.waitFor(async () => expect((await manager.getSession(id))?.status).toBe("idle"));
   await manager.postMessage(id, "next");
   expect(await snapshot()).toMatchObject({ activity: { phase: "working", tool: null, toolCount: 0 } });
+});
+
+it("publishes server tool activity for approvals, questions, failures and removal without frame subscriptions", async () => {
+  const changed = vi.fn(), unsubscribe = manager.subscribeToolActivity(changed);
+  expect(await manager.toolActivitySnapshot()).toEqual([{ userId: "admin", status: "running", pending: 0 }]);
+  adapter.emit({ type: "approval_request", approvalId: "approve-1", toolName: "Command", input: {} });
+  await vi.waitFor(async () => expect(await manager.toolActivitySnapshot()).toEqual([{ userId: "admin", status: "awaiting_approval", pending: 1 }]));
+  await manager.resolveApproval(id, "approve-1", "allow");
+  expect((await manager.toolActivitySnapshot())[0]).toMatchObject({ status: "running", pending: 0 });
+  adapter.emit({ type: "question_request", questionId: "question-1", questions: [{ question: "Which?", header: "Choice", multiSelect: false, options: [{ label: "A", description: "First" }, { label: "B", description: "Second" }] }] });
+  await vi.waitFor(async () => expect((await manager.toolActivitySnapshot())[0]).toMatchObject({ status: "awaiting_question", pending: 1 }));
+  await manager.resolveQuestion(id, "question-1", { "Which?": "A" });
+  adapter.emit({ type: "error", message: "Test failure" });
+  await vi.waitFor(async () => expect((await manager.toolActivitySnapshot())[0]).toMatchObject({ status: "failed" }));
+  await manager.deleteSession(id, "admin");
+  expect(await manager.toolActivitySnapshot()).toEqual([]);
+  expect(changed).toHaveBeenCalled();
+  unsubscribe();
+});
+
+it("does not revive an orphaned native run merely because its conversation is opened", async () => {
+  const record = (await store.readRecord(id))!;
+  await manager.shutdown();
+  await store.saveRecord({ ...record, status: "running", workerRun: undefined });
+  manager = new SessionManager(store, adapter, new AuditReporter(null, null, "hosty.harness"), dir);
+  expect((await manager.toolActivitySnapshot())[0]).toMatchObject({ status: "failed" });
+  const view = await manager.subscribe(id, 0, () => {});
+  view.unsubscribe();
+  expect((await manager.toolActivitySnapshot())[0]).toMatchObject({ status: "failed" });
+});
+
+it.each([
+  ["approval", "approval"], ["question", "question"],
+  ["approval", "question"], ["question", "approval"],
+])("keeps tool attention after resolving one of two decisions (%s then %s)", async (first, second) => {
+  const types = [first, second];
+  for (const [index, type] of types.entries()) {
+    if (type === "approval") adapter.emit({ type: "approval_request", approvalId: `decision-${index}`, toolName: "Command", input: {} });
+    else adapter.emit({ type: "question_request", questionId: `decision-${index}`,
+      questions: [{ question: "Which?", header: "Choice", multiSelect: false, options: [{ label: "A", description: "First" }] }] });
+  }
+  const activity = async () => aggregateToolActivity(await manager.toolActivitySnapshot()).get("admin");
+  await vi.waitFor(async () => expect(await activity()).toEqual({ state: "needs-you", count: 2 }));
+  for (const [index, type] of types.entries()) {
+    const resolved = type === "approval"
+      ? await manager.resolveApproval(id, `decision-${index}`, "allow")
+      : await manager.resolveQuestion(id, `decision-${index}`, { "Which?": "A" });
+    expect(resolved).toBe(true);
+    expect(await activity()).toEqual(index === 0 ? { state: "needs-you", count: 1 } : { state: "working", count: 1 });
+  }
+});
+
+it.each(["awaiting_approval", "awaiting_question"] as const)("clears tool attention when an unopened %s session is abandoned after restart", async status => {
+  const record = (await store.readRecord(id))!;
+  await manager.shutdown();
+  await store.saveRecord({ ...record, status });
+  manager = new SessionManager(store, adapter, new AuditReporter(null, null, "hosty.harness"), dir);
+  const reporter = { set: vi.fn(), dispose: vi.fn().mockResolvedValue(undefined) };
+  const stop = startHarnessToolActivity(manager, reporter);
+  try {
+    await vi.waitFor(() => expect(reporter.set).toHaveBeenLastCalledWith("admin", "assistant", { state: "failed", count: 1 }));
+    expect(await manager.sweepAbandoned(86_400_000, Date.now() + 172_800_000)).toEqual([id]);
+    await vi.waitFor(() => expect(reporter.set).toHaveBeenLastCalledWith("admin", "assistant", { state: "idle" }));
+  } finally { await stop(); }
 });

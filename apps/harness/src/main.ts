@@ -1,3 +1,5 @@
+import { ToolActivityReporter } from "@hosty-sdk/app/tool-activity/server";
+import { startHarnessToolActivity, ToolActivityOwners } from "./tool-activity.js";
 import path from "node:path";
 import { WorkerClient } from "./worker/client.js";
 import { RemoteConnections } from "./worker/connections.js";
@@ -71,6 +73,14 @@ const manager: SessionManager = new SessionManager(
   config.executionMode,
 );
 
+// Older Core launches have no installation identity; activity becomes available after an app restart.
+const toolActivityOwners = new ToolActivityOwners(config.dataDir);
+const stopToolActivity = config.coreOrigin && config.serviceToken && process.env.HOSTY_APP_INSTALLATION_ID
+  ? startHarnessToolActivity(manager, new ToolActivityReporter({ coreOrigin: config.coreOrigin,
+    serviceToken: config.serviceToken, appId: config.appId,
+    onReported: (userId, panelId, value) => toolActivityOwners.acknowledge(userId, panelId, value) }), toolActivityOwners)
+  : async () => {};
+
 // Retention: once at boot, then daily. The manager reconciles Core resources and completion
 // before removal; running it in-process avoids a separate scheduler.
 const sweep = (): void => {
@@ -141,7 +151,7 @@ const shutdown = (): void => {
   clearInterval(sweepTimer);
   clearInterval(abandonTimer);
   server.close();
-  void manager.shutdown().then(() => connections?.shutdown()).finally(() => process.exit(0));
+  void stopToolActivity().then(() => manager.shutdown()).then(() => connections?.shutdown()).finally(() => process.exit(0));
 };
 process.on("SIGTERM", shutdown);
 process.on("SIGINT", shutdown);

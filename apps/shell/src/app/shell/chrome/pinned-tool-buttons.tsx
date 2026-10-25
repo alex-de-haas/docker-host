@@ -5,6 +5,7 @@ import { PanelsTopLeft } from "lucide-react";
 import { panelKey, type UiPanel } from "@hosty-sdk/app/ui/types";
 import { Button } from "@/components/ui/button";
 import { AppIcon } from "../app-icon";
+import { useToolActivity, ToolActivityMark, activityNames } from "./tool-activity";
 import { cn } from "@/lib/utils";
 
 export function fitPinnedTools(available: number, labelled: number, count: number) {
@@ -15,6 +16,7 @@ export function fitPinnedTools(available: number, labelled: number, count: numbe
 export function PinnedToolButtons({ panels, selectedKey, onSelect }: {
   panels: UiPanel[]; selectedKey?: string; onSelect: (panel: UiPanel) => void;
 }) {
+  const activity = useToolActivity();
   const root = useRef<HTMLDivElement>(null), measure = useRef<HTMLDivElement>(null);
   const [layout, setLayout] = useState({ compact: false, visible: panels.length });
   useLayoutEffect(() => {
@@ -34,9 +36,9 @@ export function PinnedToolButtons({ panels, selectedKey, onSelect }: {
     </div>
     <div className="flex items-center justify-end gap-1">
       {panels.slice(0, layout.visible).map(item => <Button key={panelKey(item.panel)} type="button" variant="ghost" size={layout.compact ? "icon-sm" : "sm"}
-        className={cn("shrink-0 gap-1.5 px-2.5", layout.compact && "size-8 p-0", selectedKey === panelKey(item.panel) && "bg-background text-foreground")} onClick={() => onSelect(item)}
-        title={`${item.appName} — ${item.label}`} aria-label={`Open ${item.appName} — ${item.label}`} aria-pressed={selectedKey === panelKey(item.panel)}>
-        <AppIcon src={null} name={item.icon} fallback={PanelsTopLeft} className="size-4" />{!layout.compact && <span>{item.label}</span>}
+        className={cn("relative shrink-0 gap-1.5 px-2.5", layout.compact && "size-8 p-0", selectedKey === panelKey(item.panel) && "bg-background text-foreground")} onClick={() => onSelect(item)}
+        title={`${item.appName} — ${item.label}: ${activityNames[activity.read(item).state]}`} aria-label={`Open ${item.appName} — ${item.label}`} aria-pressed={selectedKey === panelKey(item.panel)}>
+        <AppIcon src={null} name={item.icon} fallback={PanelsTopLeft} className="size-4" /><span className="absolute top-0.5 right-0.5"><ToolActivityMark compact activity={activity.read(item)} /></span>{!layout.compact && <span>{item.label}</span>}
       </Button>)}
     </div>
   </div>;

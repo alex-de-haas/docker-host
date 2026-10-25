@@ -47,6 +47,7 @@ internal static class EventStreamEndpoints
             {
                 var topics = request.Query["topics"].ToString().Split(',');
                 var resources = topics.Contains("resources", StringComparer.Ordinal);
+                var toolActivity = topics.Contains("tool-activity", StringComparer.Ordinal);
                 var workspaces = topics.Contains("workspaces", StringComparer.Ordinal);
                 if ((resources || workspaces) && !AppAccessPolicy.IsAdmin(user))
                     return CoreJson.Json(new ErrorResponse("admin_required", "Resource and workspace subscriptions require a Host administrator."), 403);
@@ -64,7 +65,7 @@ internal static class EventStreamEndpoints
                 using var subscription = events.Subscribe(
                     user.Id,
                     AppAccessPolicy.IsAdmin(user),
-                    CoreSessionAuthorization.ReadSessionId(request), resources, workspaces);
+                    CoreSessionAuthorization.ReadSessionId(request), resources, workspaces, toolActivity);
                 using var streamCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, applicationStopping);
                 var streamToken = streamCts.Token;
                 var inspection = workspaces ? request.HttpContext.RequestServices.GetRequiredService<WorkspaceInspectionService>() : null;
@@ -100,11 +101,13 @@ internal static class EventStreamEndpoints
                     await response.WriteAsync(": connected\n\n", streamToken);
                     // Older Core ignores the topic query and sends no acknowledgement. New clients
                     // must see this before retiring their legacy hint/GET path.
-                    if (resources || workspaces)
+                    if (resources || workspaces || toolActivity)
                     {
-                        var capabilities = resources ? workspaces ? "{\"resources\":1,\"workspaces\":1}" : "{\"resources\":1}"
-                            : "{\"workspaces\":1}";
-                        await response.WriteAsync($"event: stream.ready\ndata: {capabilities}\n\n", streamToken);
+                        var capabilities = new List<string>();
+                        if (resources) capabilities.Add("\"resources\":1");
+                        if (workspaces) capabilities.Add("\"workspaces\":1");
+                        if (toolActivity) capabilities.Add("\"toolActivity\":1");
+                        await response.WriteAsync($"event: stream.ready\ndata: {{{string.Join(",", capabilities)}}}\n\n", streamToken);
                     }
                     await response.Body.FlushAsync(streamToken);
 

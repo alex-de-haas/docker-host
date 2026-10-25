@@ -1,0 +1,13 @@
+name: Set up repository .NET SDK
+description: Install the exact SDK declared by the checked-out global.json.
+runs:
+  using: composite
+  steps:
+    - name: Read repository SDK version
+      id: sdk
+      shell: bash
+      run: node "${GITHUB_ACTION_PATH}/version.mjs"
+    - name: Install repository SDK
+      uses: actions/setup-dotnet@v6
+      with:
+        dotnet-version: ${{ steps.sdk.outputs.version }}

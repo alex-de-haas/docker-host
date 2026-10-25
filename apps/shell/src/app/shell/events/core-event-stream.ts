@@ -12,6 +12,7 @@ export const CoreEventNames = {
   appUpdateCheckChanged: "app.update-check.changed",
   fleetUpdateCheckChanged: "apps.update-check.changed",
   notification: "notification",
+  toolActivityChanged: "tool.activity.changed",
 } as const;
 export type CoreEventName = (typeof CoreEventNames)[keyof typeof CoreEventNames];
 export type CoreStreamState = "connecting" | "stream" | "legacy" | "error" | "inactive";
@@ -21,7 +22,7 @@ export interface CoreEventSubscription {
   onEvent?: (name: CoreEventName, data: unknown) => void;
   syncDebounceMs?: number;
   /** Optional high-volume or source metadata interest exists only while the page is visible. */
-  topic?: "resources" | "workspaces";
+  topic?: "resources" | "workspaces" | "tool-activity";
   onStreamState?: (state: CoreStreamState) => void;
   /** The consumer buffers/reconciles payloads itself instead of fetching again for every event. */
   receiveWhileSyncing?: boolean;
@@ -125,7 +126,7 @@ function reconcile(connection: Connection, force = false): boolean {
     if (!current()) return;
     try {
       const capabilities = JSON.parse((event as MessageEvent).data);
-      if (topics.split(",").includes("resources") ? capabilities.resources === 1 : capabilities.workspaces === 1)
+      if (topics.split(",").every(topic => capabilities[topic === "tool-activity" ? "toolActivity" : topic] === 1))
         acknowledge(connection, "stream");
     } catch { /* Ignore malformed capability messages. */ }
   });

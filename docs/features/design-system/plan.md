@@ -1497,6 +1497,40 @@ footer with count, rows per page and pagination.
 
 ### Tools at every width
 
+Owner approval, 2026-10-25: implement D15 now and verify exclusively on the local Mac.
+Keep the shipped Tools catalogue, pinning, responsive buttons and retained frames. This approval
+does not include pin reordering (D38), unrelated redesign deliverables or other operating systems.
+
+D15 implementation contract reviewed before code:
+- Core owns user/install/panel activity in memory. The app-service producer supplies the current
+  installation id injected at launch, a declared panel id and an assigned enabled user id.
+- The authenticated UI host reads activity through its existing actor-scoped internal UI API.
+  The shared Core SSE stream carries only empty, user-targeted refresh hints; runtime changes
+  also invalidate activity so stopped tools cannot retain a misleading working indicator.
+- The SDK server reporter retains current values, serializes reports, renews working presence and
+  retries bounded requests after disconnection. Its periodic presence renewal re-reports retained
+  states after a Core restart; it never silently binds a running producer to a new installation.
+- Working defaults to 60 seconds, accepts 1–300 seconds, and expiry emits a refresh hint.
+  Labels are plain text (120 characters maximum); counts are non-negative integers up to 9999.
+- Harness aggregates all non-deleted sessions for their owner, with failed before pending decisions
+  before running. Pending approvals and questions both need the user; resolving, restarting,
+  deleting a session replaces the aggregate.
+- Shell renders activity independently of mounted frames, preserving drafts and pin preferences.
+  Phone priority groups and the Tools badge count tools, not the sum of provider counts.
+- Verify API authorization, isolation/reinstall, expiry, recovery, aggregation and UI retention with
+  local tests and a Core-managed sandbox. Two browser clients and narrow browser widths stand in
+  for second-client and phone layout checks; no physical second-device or other-OS claim is made.
+
+Local acceptance, 2026-10-25: D15 is implemented in the [tool activity feature](../tool-activity/feature.md).
+Core/SDK authorization, user and installation isolation, TTL, reporter retry and Harness manager
+transitions pass automated tests. A source child Core with local Docker Shell, Harness and synthetic
+tools passed normal setup/password login, unopened-panel delivery to an independent Shell client,
+15-second presence expiry, stopped-provider No connection with last report time, and recovery after
+a keep-apps Core restart. A Harness question reached a second client with zero mounted frames.
+A hidden panel retained its unsent draft across an activity update. The 390 px browser picker showed
+failed tools before pending decisions and working tools without horizontal overflow. This is local
+browser coverage, not physical iOS/Android or another operating system acceptance.
+
 There is no permanent right rail. The assistant has a top-strip button with a status dot; every other
 `ui.panels` tool is listed in one Tools menu.
 
@@ -1900,7 +1934,7 @@ the deliverable that changes it.
 - [SDK UI Composition](../sdk-ui-composition/feature.md) and
   [SDK Panel System](../sdk-panel-system/feature.md) own child tool-launcher negotiation. The adopted
   Assistant/Tools controls must keep honoring enabled/hidden policy. Existing readiness/attention
-  remains distinct from D15's still-unimplemented Core-backed working/activity contract.
+  remains distinct from D15's Core-backed working/activity contract.
 - [Shell Navigation](../shell-navigation/feature.md) owns the adopted sidebar/top-strip and phone
   tab layout. D12/D13 accept its responsive behavior; D18 separately replaces remaining legacy
   System labels with confirmed role visuals.
@@ -1918,7 +1952,7 @@ the deliverable that changes it.
   keeps its placement.
 - [Assistant Entry Points](../assistant-entry-points/feature.md) and
   [Assistant Approval Rules](../assistant-approval-rules/feature.md) stay owned by Harness; D17 accepts
-  the implemented pinned decision/composer and its integration with D15, which still owns Core-backed
+  the implemented pinned decision/composer and its integration with D15, which owns Core-backed
   activity reporting and Harness as the first provider.
 - [Harness Development UI](../harness-development-ui/feature.md) documents the page D21–D26 restyle.
   The current workspace implements the review page, External workspaces row, collapsible PR cards
@@ -2063,7 +2097,7 @@ These items expose remaining backend/SDK or timing dependencies, rather than tre
 cosmetic acceptance. Documentation reorganization alone approves none of the unresolved contracts;
 record the contract review before dependent code and preserve existing safe behavior meanwhile.
 
-- [ ] D15. Complete the Core-backed tool-activity contract and dependent Core/SDK/Shell/Harness integration described under Tools at every width: per-user installation/panel identity, assigned-user app-authenticated reporting, SDK server helper, working TTL, reconnect/re-report after Core restart, `tool.activity.changed` hint delivery and readiness-derived No connection. Implement severity aggregation, the Assistant indicator, phone activity-priority groups and Tools badge, with Harness as the first provider. Existing opened-frame attention is not completion. Verify unopened/second-device delivery, TTL, reconnect, installation/user isolation and failed-before-needs-you-before-working priority.
+- [x] D15. Complete the Core-backed tool-activity contract and dependent Core/SDK/Shell/Harness integration described under Tools at every width: per-user installation/panel identity, assigned-user app-authenticated reporting, SDK server helper, working TTL, reconnect/re-report after Core restart, `tool.activity.changed` hint delivery and readiness-derived No connection. Implement severity aggregation, the Assistant indicator, phone activity-priority groups and Tools badge, with Harness as the first provider. Existing opened-frame attention is not completion. Verify unopened/second-device delivery, TTL, reconnect, installation/user isolation and failed-before-needs-you-before-working priority.
 - [ ] D34. Define and review authoritative elapsed-time semantics for the Harness working bar, then implement and verify the dependent display. Specify turn versus step start, reconnect/reload, hidden/background time and unavailable timestamps. Preserve current activity/Stop and do not substitute component mount time or infer elapsed time from unrelated events.
 - [ ] D35. Resolve and separately scope the missing workspace/preview observations and dependent presentation: Not pushed, full preview launch history, time-to-ready and child-Core test-user totals. Define source, meaning, freshness, visibility and unavailable states with the owning Core/Harness features; preserve the distinction from existing app-sandbox user counts. Any retained target requires reviewed projections, Harness display and acceptance, not just DTO names. Keep unknown/omitted values until that work is verified; an explicit owner decision is required to remove an existing target.
 - [ ] D36. Design the retained original branch/source binding for historical PR review and scope its implementation separately. Preserve workspace ownership, selected account, repository/head validation, immutable published coordinates and explicit refusal/GitHub fallback when old evidence cannot be validated. Do not infer a branch from the current worktree or weaken provider checks. D23 accepts current supported scopes; the historical extension needs its own reviewed implementation and provider acceptance before being claimed complete.
@@ -2081,7 +2115,7 @@ current redesign version outcomes; this documentation-only cleanup changes no ar
 
 - [ ] D7. Accept the implemented Dashboard against its target section and current feature: common columns, source/version metadata and inline file counts, concrete production runtime names, runtime/health versus update progress, contextual actions and More, five-minute resources, App Details/Logs navigation, Core information relocation and supported Runtime / workspace handover/Return. Verify long/missing/stale data, mouse/keyboard/touch, roles, protected-flow recovery and retained actions. Resources/actions use approved 192/184 px columns and the contextual action has a 144 px maximum. Compact filters are completed in D8; role visuals belong to D18 and token/status residuals to D1/D6.
 - [ ] D12. Accept the implemented fit rule through Core-managed embedding: Dashboard minimum 440 px, Settings/embedded-app minimum 560 px and tool minimum 320 px. Verify full-nav/rail/dock/sheet/phone transitions, resizing and rotation with retained frame, draft, scroll and selected conversation. Existing 599/600 px unit coverage does not replace actual embedded or mobile keyboard acceptance. A future manifest-defined minimum is an unapproved extension, not a blocker to verifying these defaults.
-- [ ] D13. Accept the implemented below-600 px phone tabs, retained last-tool sheet, All tools search/app grouping, visible viewport sizing, second-tap hide/reopen and long forms on iOS Safari/Android Chrome. Verify keyboard pan/safe areas, rotation, focus and retained drafts with 16 or more tools. D15 separately owns unimplemented activity-priority groups/severity badges, and D38 owns Edit/pin/reorder.
+- [ ] D13. Accept the implemented below-600 px phone tabs, retained last-tool sheet, All tools search/app grouping, visible viewport sizing, second-tap hide/reopen and long forms on iOS Safari/Android Chrome. Verify keyboard pan/safe areas, rotation, focus and retained drafts with 16 or more tools. D15 separately owns activity-priority groups/severity badges, and D38 owns Edit/pin/reorder.
 - [ ] D16. Complete measured Shell light/dark contrast, grayscale, reduced-motion and disabled/unsupported-state acceptance across text, tinted surfaces, primary-colored text/borders/dots and focus. Shared semantic tokens and successful builds do not prove every consumer passes. D1 owns control conformance; D6 owns status semantics/motion. The approved exact lime focus remains 1.51:1 against white; resolve its design constraint before claiming full focus-contrast acceptance.
 - [ ] D17. Accept Harness's implemented pinned approval/question Review navigation and bottom composer through embedded/phone layouts. Verify the first-provider integration once D15 supplies Core-backed activity; preserve visible pending decisions while another tool works and on a device that never opened Harness. Existing frame-local attention is not this integration.
 - [ ] D20. Complete functional-parity acceptance against the inventory above and the owning features: every supported action/state, role/permission, route, independent form/draft, selection, retained panel and failure/recovery flow remains reachable. Check existing ReUI primitive/wrapper reuse and document concrete unsupported-control exceptions. Moving actions into menus does not permit losing keyboard/touch access or changing authority.

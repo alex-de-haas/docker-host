@@ -1,6 +1,6 @@
 ---
 created: 2026-07-24
-updated: 2026-10-20
+updated: 2026-10-25
 summary: One authorized SSE stream carries ephemeral domain hints, notifications and opt-in resource measurements and workspace metadata hints.
 components: [apps/core, apps/shell]
 ---
@@ -147,6 +147,14 @@ consumer owns topic interest; hiding or removing it releases workspace demand wh
 subscriptions remain. Workspace hints do not enter ordinary app subscriptions. Bounded-channel drops retain a counter
 that forces an authorized snapshot resync. See [Workspace Event Observation](../workspace-event-observation/feature.md)
 for per-worktree filtering, authority revalidation and browser recovery.
+
+## Tool Activity Interest
+
+`topics=tool-activity` opts into empty `tool.activity.changed` refresh hints and receives
+`toolActivity: 1` in `stream.ready`. Reports and expiry target the relevant user's subscribers;
+runtime changes invalidate interested clients without identifying an app in the hint. Activity
+reads use the actor's current accessible catalogue. Shell shares its connection and releases this
+interest while hidden. See [tool activity](../tool-activity/feature.md).
 
 ## Testing Expectations
 

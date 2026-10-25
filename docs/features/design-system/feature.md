@@ -322,6 +322,10 @@ SDK host. There is no permanently occupied right icon rail. Navigation folds bef
 an overlay: Dashboard reserves 440 px, Settings/embedded apps 560 px, and the tool 320 px. Below
 600 px, Dashboard, Apps, Tools and Settings use bottom tabs; Tools hides/reopens the last mounted
 presentation. Its sheet keeps All tools visible and uses the visual viewport above the keyboard.
+[Tool activity](../tool-activity/feature.md) comes from Core even for unopened panels. Tools and
+pinned buttons show per-user activity; the badge counts tools requiring the user, with failure
+before decisions. All tools groups attention, working and disconnected tools before its searchable
+catalogue. Reports renew presence and recover after Core restarts without remounting frames.
 
 Harness uses 264 px session and 344 px workspace columns around the conversation at desktop widths.
 Sessions retain combined workspace/title/app search, activity-state chips and their activity

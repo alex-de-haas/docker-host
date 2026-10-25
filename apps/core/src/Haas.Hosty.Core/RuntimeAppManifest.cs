@@ -2025,6 +2025,8 @@ internal sealed partial class DockerRuntimeAdapter(
                 "-e",
                 $"HOSTY_APP_ID={context.App.Id}",
                 "-e",
+                $"HOSTY_APP_INSTALLATION_ID={PanelIdentity.Installation(context.App)}",
+                "-e",
                 $"HOSTY_APP_SERVICE_KEY={service.Key}",
             };
             if (config.InstanceId.Length > 0)

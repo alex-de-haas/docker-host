@@ -381,7 +381,7 @@ it("opens an unpinned target from Tools and a session link without silently pinn
   HTMLElement.prototype.scrollIntoView = vi.fn(); await render(true);
   expect(host!.getSnapshot().selected).toBeNull();
   await openTools();
-  const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(item => item.textContent === "assistantassistant")!;
+  const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(item => item.textContent?.startsWith("assistantassistant"))!;
   await act(async () => item.click());
   expect(host!.getSnapshot().selected).toEqual(panels[1].panel); expect(container.querySelectorAll('[data-pinned-tools] button')).toHaveLength(0);
   await act(async () => host!.collapseWorkspace("default"));
@@ -396,15 +396,15 @@ it("removes inaccessible launchers, preserves an explicit panel pin through meta
   catalog = [{ ...panels[0], label: "Renamed", route: "/new" }, panels[1]]; await act(async () => host!.refresh()); expect(container.querySelector('button[aria-label="Open notes — Renamed"]')).not.toBeNull();
   catalog = [{ ...panels[0], panel: { ...panels[0].panel, installationId: "notes-2" } }, panels[1]]; await act(async () => host!.refresh()); expect(container.querySelector('button[aria-label="Open notes — notes"]')).toBeNull();
 });
-it("keeps unpinned assistant attention in Tools and honors its keyboard shortcut without changing pins", async () => {
+it("ignores legacy iframe attention and honors the unpinned assistant shortcut without changing pins", async () => {
   localStorage.setItem(panelPreferenceKey(bootstrap.coreOrigin, "alice"), JSON.stringify({ version: 1, pins: { [panelKey(panels[1].panel)]: false } }));
   HTMLElement.prototype.scrollIntoView = vi.fn(); await render(false);
   await act(async () => { await toggleAssistantPanel(host!, "assistant"); });
   expect(host!.getSnapshot().selected).toEqual(panels[1].panel);
   const frame = container.querySelector('iframe[title="assistant"]');
   await act(async () => { host!.collapseWorkspace("default"); host!.setAttention(panels[1].panel, 3); });
-  expect(container.querySelector('header [aria-label="Tools"]')?.textContent).toContain("3");
-  await openTools(); expect(document.querySelector('[aria-label="Needs attention"]')).not.toBeNull();
+  expect(container.querySelector('header [aria-label="Tools"]')?.textContent).not.toContain("3");
+  await openTools(); expect(document.querySelector('[aria-label="Needs attention"]')).toBeNull();
   expect(document.querySelector(`[role="menuitemcheckbox"][aria-label="${pinLabel("assistant")}"]`)?.getAttribute("aria-checked")).toBe("false");
   expect(container.querySelectorAll('[data-pinned-tools] button')).toHaveLength(0); expect(container.querySelector('iframe[title="assistant"]')).toBe(frame);
 });

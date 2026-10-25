@@ -1,6 +1,6 @@
 ---
 created: 2026-07-15
-updated: 2026-10-24
+updated: 2026-10-25
 summary: The shared app-side Host integration published as an npm package and a NuGet package.
 components: [packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -418,6 +418,13 @@ Standalone clicks open Core review directly. Embedded clicks send a credential-f
 `parseActiveFramePermissionReview` from `/embedder` to verify window and origin and derive
 the target from the mounted frame. Payload app ids and URLs never choose the target.
 See [permission management](../app-permission-management/feature.md) for first-party adoption.
+
+## Tool Activity Reporter
+
+The server-only `@hosty-sdk/app/tool-activity/server` helper reports per-user declared-panel
+activity with the managed installation identity. It renews working presence, retains decisions
+through transient failures and re-reports after Core restarts. The existing UI server adapter
+reads activity with the current app-user grant. See the [tool activity contract](../tool-activity/feature.md).
 
 ## Testing Expectations
 

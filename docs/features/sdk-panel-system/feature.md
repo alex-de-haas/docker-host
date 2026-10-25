@@ -12,6 +12,9 @@ Plans is embedded; top-level Plans uses the same workspace supplied by Hosty Ove
 retrying, switching or focusing a tool does not submit its draft or start a model run. An explicit
 Open separately link opens an additional view of the same conversation.
 
+The separate [tool activity contract](../tool-activity/feature.md) reports server-owned state through
+Core, independently of mounted frames. Its producer uses only its app service identity.
+
 ## Ownership And Identity
 
 An application owns its domain operation, session, protected UI and readiness. The SDK owns panel
@@ -40,9 +43,10 @@ The fixed internal routes are scoped to the caller app:
 | --- | --- |
 | `GET /bootstrap?parentOrigin=...` | Protocol version, own app/installation, actor, Core origin, hosting/pinned-open support and optional verified parent metadata |
 | `GET /panels` | Actor-filtered declared tools, stable identities, availability and minimal frame policy |
+| `GET /activity` | Actor-filtered current tool activity and service connection state |
 | `POST /panels/resolve` | Revalidated target, concrete frame surface and pinned standalone link |
 
-Every request requires the caller's own service credential and its current app-user grant. Bootstrap
+Each discovery/resolution request above requires the caller's own service credential and its current app-user grant. Bootstrap
 does not require catalog access. Hosting/discovery requires the optional `apps.panels.read` grant;
 existing `apps.read` also qualifies. A child without catalog permission can use an authorized host.
 Capabilities, UI roles and browser messages grant no API authority.

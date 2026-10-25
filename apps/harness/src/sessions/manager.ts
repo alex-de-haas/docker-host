@@ -54,6 +54,7 @@ export interface SessionListener {
 }
 
 interface LiveSession {
+  activityRunStarted?: boolean;
   toolOutputCalls?: Map<string, string | null>;
   runEpoch?: string;
   persistedWorkerSequences?: Set<number>;
@@ -1040,6 +1041,24 @@ export class SessionManager {
     return deleted;
   }
 
+  private readonly toolActivityListeners = new Set<() => void>();
+  subscribeToolActivity(listener: () => void): () => void {
+    this.toolActivityListeners.add(listener);
+    return () => { this.toolActivityListeners.delete(listener); };
+  }
+  private notifyToolActivity(): void {
+    for (const listener of this.toolActivityListeners) { try { listener(); } catch { /* Observer isolation. */ } }
+  }
+  async toolActivitySnapshot(): Promise<import("../tool-activity.js").SessionToolActivity[]> {
+    return (await this.listSessions()).map(record => {
+      const live = this.live.get(record.id);
+      // A native process cannot survive a Harness restart. Do not renew an orphan's presence.
+      const orphan = !live?.run && !live?.activityRunStarted && !record.workerRun && ["running", "awaiting_approval", "awaiting_question"].includes(record.status);
+      return { userId: record.createdBy, status: orphan ? "failed" : record.status,
+        pending: live ? live.pendingApprovals.size + live.pendingQuestions.size : record.mcpPendingApprovals?.length ?? 0 };
+    });
+  }
+
   async listSessions(): Promise<SessionRecord[]> {
     return (await this.store.listRecords()).filter(record => !record.handoffPending).map(record => this.runtimeProjection(record));
   }
@@ -1150,6 +1169,7 @@ export class SessionManager {
       this.proxy?.unregister(id);
       this.developmentMcp.unregister(id);
       await this.store.deleteSession(id);
+      this.notifyToolActivity();
       // Reported like every other lifecycle transition, and with the administrator who asked for it:
       // the transcript this removed is exactly what an audit trail cannot recover afterwards, so an
       // unattributable deletion would be the one entry that matters least. The deleter is recorded
@@ -1474,6 +1494,7 @@ export class SessionManager {
           ...(attached.length > 0 ? { attachments: attached.map((file) => file.name) } : {}),
         });
         if (messageReceipt) messageReceipt.eventSeq = messageEventSeq;
+        session.activityRunStarted = true;
         await this.setStatus(id, "running");
         this.setActivity(session, workingActivity());
         if (!session.run) {
@@ -2168,6 +2189,7 @@ export class SessionManager {
             if (event.type === "approval_request") session.pendingApprovals.set(event.approvalId, event.toolName);
             if (event.type === "question_request") session.pendingQuestions.set(event.questionId, event.questions.map(q => q.question));
           }
+          this.notifyToolActivity();
         },
       });
     }
@@ -2398,6 +2420,8 @@ export class SessionManager {
   }
 
   private fanOut(session: LiveSession, event: StoredEvent): void {
+    if (["session_status", "session_created", "approval_request", "approval_decision", "question_request", "question_answered"].includes(event.type))
+      this.notifyToolActivity();
     for (const listener of session.listeners) {
       try {
         listener(event);
@@ -2444,6 +2468,7 @@ export class SessionManager {
       if (record.handoffDispatch?.state === "running") record.handoffDispatch.state = "failed";
       record.updatedAt = new Date(now).toISOString();
       await this.store.saveRecord(record);
+      this.notifyToolActivity();
       this.audit.report("session_abandoned", { sessionId: record.id, waitedMs: String(waitedMs) });
       abandoned.push(record.id);
     }

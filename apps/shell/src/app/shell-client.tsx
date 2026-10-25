@@ -1,5 +1,6 @@
 "use client";
 
+import { ToolActivityProvider } from "./shell/chrome/tool-activity";
 import { PanelPreferencesProvider } from "./shell/chrome/panel-preferences";
 
 import { isAppAutostartEnabled } from "./shell/app-helpers";
@@ -2341,6 +2342,7 @@ export function ShellClient({
   return (
     <ShellActionsContext.Provider value={shellActionsContextValue}>
       <ShellStateContext.Provider value={shellStateContextValue}>
+      <ToolActivityProvider coreOrigin={coreOrigin} userId={activeUserId}>
       <PanelPreferencesProvider coreOrigin={coreOrigin} userId={activeUserId} assistantAppId={assistantGateway?.appId}>
       <div className="shell-viewport flex h-dvh flex-col overflow-hidden bg-sidebar">
         <ShellTopStrip
@@ -2495,6 +2497,7 @@ export function ShellClient({
         ask: askErrorAssistant,
       }}><Toaster /></AssistantFeedbackContext.Provider>
       </PanelPreferencesProvider>
+      </ToolActivityProvider>
       </ShellStateContext.Provider>
     </ShellActionsContext.Provider>
   );
