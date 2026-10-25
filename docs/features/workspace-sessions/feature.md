@@ -268,7 +268,9 @@ ordinary chat workflow reads after creator detachment without restoring source a
 attach/detach refusal recovery. Definitive refusals stop blocking chat retention/deletion; uncertain
 responses retain their exact request. A later authorization refusal does not erase that uncertainty.
 Browser recovery also clears confirmed refusals, unlocking attachment, sharing and new-session
-controls across reloads, while retaining uncertain requests after a later authorization failure.
+controls across reloads, while retaining uncertain requests after a later authorization failure. A
+Core binding-conflict response retires the same recovery receipt in both browser and server because
+Core checks successful receipt replay before evaluating the current binding.
 Deletion retries a refused detach with a fresh membership revision. Environment source admission
 continues to return the sandbox API's forbidden error for an unattached session.
 

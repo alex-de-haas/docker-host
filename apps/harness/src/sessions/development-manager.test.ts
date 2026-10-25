@@ -663,6 +663,19 @@ describe("shared workspace session boundaries", () => {
       await expect(manager.deleteSession(record.id, "member", "token")).rejects.toMatchObject({ code: "resource_operation_pending" });
     });
 
+  it("retires an uncertain attach when Core proves the session was bound elsewhere", async () => {
+    const record = await manager.createSession({ createdBy: "member" });
+    const input = { workspaceId, requestId, expectedRevision: 2 };
+    vi.mocked(client.retention).mockResolvedValue({ kind: "chat", workflow: null, resourcesFinished: true });
+    vi.mocked(client.call).mockRejectedValueOnce(new Error("response lost"));
+    await expect(manager.workspaceAction(record.id, "attach", input, "token", "member")).rejects.toThrow("response lost");
+    await manager.shutdown(); manager = build();
+    vi.mocked(client.call).mockRejectedValueOnce(new AppContextError(409, "workspace_session_bound", "Bound elsewhere"));
+    await expect(manager.workspaceAction(record.id, "attach", input, "token", "member")).rejects.toThrow("Bound elsewhere");
+    expect((await store.readRecord(record.id))!.associationRequests?.[0]?.state).toBe("rejected");
+    await expect(manager.deleteSession(record.id, "member", "token")).resolves.toBe(true);
+  });
+
   it("refreshes a definitively refused detach before retrying chat deletion", async () => {
     const record = await manager.createSession({ createdBy: "member" });
     const input = { workspaceId, requestId, expectedRevision: 2 };

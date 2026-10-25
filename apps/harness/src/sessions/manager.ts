@@ -1107,9 +1107,9 @@ export class SessionManager {
     try { result = await this.development!.call(record.id, token, receipt.action, receipt.input) as typeof result; }
     catch (error) {
       // A fresh 4xx refusal is final. A later auth refusal cannot disprove an earlier
-      // uncertain success; Core checks receipt replay before reporting a revision conflict.
+      // uncertain success; Core checks receipt replay before revision or binding conflicts.
       if (!acknowledged && error instanceof AppContextError && error.status >= 400 && error.status < 500
-        && ![408, 429].includes(error.status) && (!recovering || error.code === "workspace_revision_conflict")) {
+        && ![408, 429].includes(error.status) && (!recovering || ["workspace_revision_conflict", "workspace_session_bound"].includes(error.code))) {
         receipt.state = "rejected";
         await this.store.saveRecord(record);
       }
