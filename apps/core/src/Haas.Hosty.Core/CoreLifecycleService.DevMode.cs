@@ -327,6 +327,17 @@ internal sealed partial class CoreLifecycleService
         return selection;
     }
 
+    private AppSourceState? ReturnDevSource(AppDevOperation operation)
+    {
+        var source = operation.PreviousSource;
+        if (!operation.PackageReturn || source is null) return source;
+        // Package selection drops historical workspace overrides without deleting their source.
+        // Locally created apps keep their canonical Git binding, just like clearing an override.
+        var packagePath = source.Type == "local-git" ? paths.ResolveManagedCheckoutPath(operation.AppId) : null;
+        return source.LocalOverridePath == packagePath ? source : source with
+        { LocalOverridePath = packagePath, OverrideCommit = null, UpdatedAt = clock.UtcNow };
+    }
+
     private async Task<AppDevOperation> ReturnDevAsync(AppDevOperation op, string requestId, bool acceptDataChanges, CancellationToken ct)
     {
         if (op.Phase == "returned") return op;
@@ -346,7 +357,7 @@ internal sealed partial class CoreLifecycleService
             // for legacy recovery. Current settings, source edits and permission revocations survive.
             if (!op.PackageReturn) await manifests.SaveManifestCopyAsync(previous, GetAppRoot(op.AppId), ct);
             var restored = BuildAppRecord(previous, app.ManifestPath!, app.ManifestUrl, app.System, app) with
-            { InstallManifestPath = app.InstallManifestPath, SourceState = op.PreviousSource,
+            { InstallManifestPath = app.InstallManifestPath, SourceState = ReturnDevSource(op),
                 ArtifactLocks = op.PackageReturn ? null : op.PreviousArtifacts, DevModeId = op.Id,
                 GrantedCorePermissions = op.ExecutionManifest is null ? app.GrantedCorePermissions :
                     DevelopmentBaseGrants(app, op).Intersect(previous.Manifest.CorePermissions.Concat(previous.Manifest.OptionalCorePermissions), StringComparer.Ordinal).ToArray(),
@@ -417,12 +428,20 @@ internal sealed partial class CoreLifecycleService
                 configuration == op.ReturnConfigurationHash);
         if (app.InstalledAt != op.Installation || app.DevModeId != op.Id || !configurationMatches)
             throw DevError("binding_changed", "Installation, settings or mounts changed. A stale return cannot overwrite a newer operator choice.");
+        // Return projects the normalized package binding before Start; retries validate that same
+        // binding, while entry still recognizes the source captured before workspace activation.
+        var previousSource = op.Phase.StartsWith("return-", StringComparison.Ordinal) ? ReturnDevSource(op) : op.PreviousSource;
         var previous = app.SelectedRuntime == (op.PackageReturn ? op.PackageRuntime ?? op.PreviousRuntime : op.PreviousRuntime) &&
-            app.SourceState?.LocalOverridePath == op.PreviousSource?.LocalOverridePath;
+            app.SourceState?.LocalOverridePath == previousSource?.LocalOverridePath;
         var live = app.SelectedRuntime == op.TargetRuntime && app.SourceState?.LocalOverridePath == op.SourcePath;
         // A crash after source persistence but before the profile write is a known intermediate state.
         var binding = op.Phase == "backed-up" && app.SelectedRuntime == op.PreviousRuntime && app.SourceState?.LocalOverridePath == op.SourcePath;
-        if (!previous && !live && !binding) throw DevError("binding_changed", "The runtime or source binding changed outside this operation. Retain the current selection and inspect it.");
+        // Stop can be journaled before Return projects source, including an entry that failed at
+        // backup. Only this checkpoint may still carry the exact pre-entry runtime/source binding.
+        var unprojectedReturn = op.Phase == "return-stopped" && app.SelectedRuntime == op.PreviousRuntime &&
+            app.SourceState?.LocalOverridePath == op.PreviousSource?.LocalOverridePath;
+        if (!previous && !live && !binding && !unprojectedReturn)
+            throw DevError("binding_changed", "The runtime or source binding changed outside this operation. Retain the current selection and inspect it.");
     }
 
     private async Task<RuntimeAppManifestSelection> ValidateLiveDevManifestAsync(AppDevOperation op, CancellationToken ct)
