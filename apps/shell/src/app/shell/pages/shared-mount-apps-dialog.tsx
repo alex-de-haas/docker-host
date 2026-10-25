@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Check, LoaderCircle, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Frame, FrameHeader, FramePanel } from "@/components/reui/frame";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { EmptyState } from "../ui";
 import type { CoreApp, CoreGlobalMount } from "../types";
 import { acceptSavedAssignments, assignmentChanges, mountAssignments, mountSlotConflict, saveMountAssignments, sharedMountMode, sharedMountPath, type MountAssignmentChange, type MountAssignmentResult } from "../shared-mount-bindings";
 
@@ -24,6 +25,7 @@ export function SharedMountAppsDialog({ mount, apps, onSave, onRefresh, onReload
   const [baseline, setBaseline] = useState(() => mountAssignments(reviewedApps, mount.name));
   const [selected, setSelected] = useState(baseline);
   const [query, setQuery] = useState("");
+  const searchInput = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [results, setResults] = useState<MountAssignmentResult[]>([]);
   const [refreshError, setRefreshError] = useState<string | null>(null);
@@ -66,11 +68,15 @@ export function SharedMountAppsDialog({ mount, apps, onSave, onRefresh, onReload
           <FrameHeader>
             <div className="relative">
               <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input aria-label="Search apps" placeholder="Search apps" className="pl-9" value={query} onChange={event => setQuery(event.target.value)} disabled={busy} />
+              <Input ref={searchInput} aria-label="Search apps" placeholder="Search apps" className="pl-9" value={query} onChange={event => setQuery(event.target.value)} disabled={busy} />
             </div>
           </FrameHeader>
           <FramePanel className="divide-y py-0">
-            {visible.length === 0 && <p className="py-6 text-center text-sm text-muted-foreground">{reviewedApps.length ? "No matching apps." : "No installed apps declare shared folder slots."}</p>}
+            {visible.length === 0 && <div className="py-2">
+              <EmptyState className="rounded-none border-0" title={reviewedApps.length ? "No matching apps" : "No apps with shared folder slots"}
+                description={reviewedApps.length ? "Clear the search to see apps and keep your selections." : "Installed apps with declared folder slots appear here."} />
+              {reviewedApps.length > 0 && <div className="pb-4 text-center"><Button variant="outline" size="sm" disabled={busy} onClick={() => { setQuery(""); searchInput.current?.focus(); }}>Clear search</Button></div>}
+            </div>}
             {visible.map(app => <section key={app.id} className="py-4" aria-label={app.displayName}>
               <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                 <div className="min-w-0"><h3 className="break-words text-sm font-medium">{app.displayName}</h3><p className="break-all text-xs text-muted-foreground">{app.id}</p></div>

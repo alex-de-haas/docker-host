@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { preloadHighlighter } from "@pierre/diffs";
 import { FileDiff, type FileDiffOptions } from "@pierre/diffs/react";
 import { useTheme } from "next-themes";
+import { HostyLoader } from "../../../../../../shared/web/hosty-states";
 import { prepareSourceDiff, type SourceDiffInput } from "./source-diff-data";
 import type { SourceDiffSettings } from "./source-diff-settings";
 
@@ -38,7 +39,7 @@ export default function SourceDiffView({ path, content, untracked, truncated, se
     {content && !(untracked && content === "New binary file") && <pre className="overflow-x-auto bg-muted p-3 text-xs">{content}</pre>}
   </div>;
 
-  if (highlighter === "loading") return <p role="status" className="p-3 text-sm text-muted-foreground">Loading diff viewer…</p>;
+  if (highlighter === "loading") return <p role="status" className="flex items-center gap-2 p-3 text-sm text-muted-foreground"><HostyLoader label={null} className="size-4 shrink-0" />Loading diff viewer…</p>;
   if (highlighter === "failed") return <div className="space-y-2">
     <p className="px-3 py-2 text-xs text-muted-foreground">The diff viewer could not load. The original preview is shown below.</p>
     <pre className="overflow-x-auto bg-muted p-3 text-xs">{content}</pre>

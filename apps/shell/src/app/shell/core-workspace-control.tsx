@@ -10,6 +10,7 @@ import { useShellActions, useShellState } from "./shell-context";
 import { fetchCore } from "./core-transport.js";
 import type { CoreDevelopment, CoreLaunch } from "./core-development";
 import type { ActivationWorkspace, WorkspaceSource } from "./workspace-sources";
+import { HostyLoader } from "../../../../../shared/web/hosty-states";
 import { CheckboxRow, InlineError } from "./ui";
 
 type Selection = { coreSelected: boolean; coreWorktreeId?: string | null; apps: { appId: string; selected: boolean; worktreeId?: string | null; runtime?: string | null }[] };
@@ -365,7 +366,7 @@ export function useCoreWorkspaceControl({ coreOrigin, state, workspaces, workspa
       <Check className={"size-4 " + (state?.launch.mode === "release" ? "opacity-100" : "opacity-0")} />Release
     </DropdownMenuItem>
     <DropdownMenuSeparator />
-    {loading && <DropdownMenuItem disabled>Loading workspaces…</DropdownMenuItem>}
+    {loading && <DropdownMenuItem disabled><HostyLoader label={null} className="size-4" />Loading workspaces…</DropdownMenuItem>}
     {!loading && !candidates.length && <DropdownMenuItem disabled>No matching Core workspaces</DropdownMenuItem>}
     {candidates.map(candidate => <DropdownMenuItem key={candidate.target.workspaceId + ":" + candidate.target.worktreeId}
       disabled={unavailable || busy || loading || !inventoryReady || !!candidate.unavailable || candidate.current || blockedByRecovery || retained.length > 1}

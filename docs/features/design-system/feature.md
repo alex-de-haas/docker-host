@@ -89,6 +89,23 @@ Working rings keep their shape and label with `prefers-reduced-motion: reduce` a
 Warning, failure and completion shapes remain static in both themes. Lime retains its existing
 interaction, selection and progress roles; status feedback does not introduce a lime data series.
 
+## Loading And Empty Results
+
+Shell's sandbox inventory shows labelled grid loading until each independent first read settles.
+Successful rows remain visible while the other inventory loads or a transient refresh fails;
+failed or malformed reads do not become confirmed empty lists. The empty result uses the shared
+slot artwork and keeps Create environment available. Refresh is disabled during an active read.
+
+App Details separates pending service reads, unconfirmed observations and confirmed empty results,
+while retaining observed services during refresh. Shared-folder assignment search distinguishes no
+eligible apps from no matches. Clear search preserves selections and returns focus to the field.
+These states reuse the accepted Frames and existing actions.
+
+Core workspace choices, source-diff preparation, Core logs and Harness provider discovery use the
+labelled grid loader. Demo's composition-view Suspense fallback uses its existing loading component.
+Read loaders preserve visible static cells under reduced motion; operation statuses keep D6's
+separate shapes and semantics.
+
 ## SDK, Telemetry And Credential Adoption
 
 SDK-owned access/permission/activity cards and banners, installation, tool rail/chooser, retained
@@ -487,6 +504,14 @@ Catalog settings loads with explicit retry, saves against its observed source an
 unsaved source on rejection. These presentation changes add no install or permission authority.
 
 ## Testing Expectations
+
+- Cover independently delayed sandbox inventories, first-read failure/retry, malformed refreshes
+  with retained rows, service loading/unavailable/empty results and shared-folder search with retained
+  assignments and keyboard focus. Preserve request identity, lifecycle actions and existing reads.
+- Verify the built artifacts through a Core-managed sandbox with normal password login, both themes
+  and desktop/narrow layouts. Use controlled delayed/failed reads to exercise transient states;
+  verify computed animation stops with reduced motion while all loader cells and labels remain.
+  Remove response fixtures afterwards and confirm actual Core observations recover.
 
 - Cover active update stages, Core completion/unconfirmed outcomes and retained disabled actions,
   sandbox confirmation/retry with the original request ID, initialization read/work/failure states

@@ -6,7 +6,7 @@ import type { CoreEnvironment, SandboxDiagnostics, SandboxInstance } from "@host
 import type { EnvironmentApps } from "@hosty-sdk/app/sandbox/react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { OperationStatus, StatusBadge } from "../ui";
+import { EmptyState, OperationStatus, StatusBadge } from "../ui";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
@@ -19,15 +19,16 @@ import { CoreRequestError, readCoreErrorDetail } from "../core-api";
 import { useShellActions } from "../shell-context";
 import type { CoreApp } from "../types";
 import { EnvironmentInitialization } from "./environment-initialization";
+import { HostyLoader } from "../../../../../../shared/web/hosty-states";
 import { CreateEnvironmentDialog } from "./create-environment-dialog";
 import type { ActivationWorkspace } from "../workspace-sources";
 
 type CorePending = { path: string; body: Record<string, unknown>; id?: string; kind: string };
 type AppPending = { id: string; action: string; requestId: string; expectedRevision: number };
-type Inventory<T> = { loaded: boolean; items: T[]; error: string };
+type Inventory<T> = { loaded: boolean; loading: boolean; items: T[]; error: string };
 type Feedback = { id?: string; message: string; failed?: boolean };
 type Request = <T>(path: string, body: unknown) => Promise<T>;
-const empty = <T,>(): Inventory<T> => ({ loaded: false, items: [], error: "" });
+const empty = <T,>(): Inventory<T> => ({ loaded: false, loading: true, items: [], error: "" });
 const message = (cause: unknown) => cause instanceof Error ? cause.message : "The sandbox request could not be confirmed.";
 const normalizeId = (value: string) => value.replaceAll("-", "");
 const terminalAppRefusals = new Set(["sandbox_revision_stale", "sandbox_operation_capacity", "sandbox_metadata_quota", "sandbox_forbidden", "sandbox_not_found"]);
@@ -119,19 +120,23 @@ function SandboxInventory({ coreOrigin, apps, workspaces }: { coreOrigin: string
     const load = (): Promise<void> => {
       if (!current()) return Promise.resolve();
       if (pending) { reread = true; return pending; }
+      setCores(previous => ({ ...previous, loading: true }));
+      setIndividual(previous => ({ ...previous, loading: true }));
       const epoch = readEpoch.current;
       const valid = () => current() && epoch === readEpoch.current;
       pending = Promise.allSettled([
         read<{ environments: CoreEnvironment[] }>(`${coreOrigin}/api/core-environments`, controller.signal)
           .then(result => {
             if (!valid()) return;
-            setCores({ loaded: true, items: result.environments, error: "" });
+            if (!Array.isArray(result.environments)) throw new Error("Core did not return the sandbox inventory.");
+            setCores({ loaded: true, loading: false, items: result.environments, error: "" });
             for (const item of result.environments) observeCore(item);
-          }).catch(cause => { if (valid()) setCores(previous => ({ ...previous, loaded: true, error: message(cause) })); }),
+          }).catch(cause => { if (valid()) setCores(previous => ({ ...previous, loading: false, error: message(cause) })); }),
         read<{ instances: SandboxInstance[] }>(`${coreOrigin}/api/sandbox-instances`, controller.signal)
           .then(async result => {
             if (!valid()) return;
-            setIndividual({ loaded: true, items: result.instances, error: "" });
+            if (!Array.isArray(result.instances)) throw new Error("Core did not return the app sandbox inventory.");
+            setIndividual({ loaded: true, loading: false, items: result.instances, error: "" });
             for (const item of result.instances) observeApp(item);
             const saved = appPendingRef.current;
             if (saved && !result.instances.some(item => item.id === saved.id)) {
@@ -140,7 +145,7 @@ function SandboxInventory({ coreOrigin, apps, workspaces }: { coreOrigin: string
                 if (valid()) observeApp(receipt);
               } catch { /* Disappearance alone does not confirm cleanup; keep the exact pending request. */ }
             }
-          }).catch(cause => { if (valid()) setIndividual(previous => ({ ...previous, loaded: true, error: message(cause) })); }),
+          }).catch(cause => { if (valid()) setIndividual(previous => ({ ...previous, loading: false, error: message(cause) })); }),
       ]).then(() => { if (valid()) setPollVersion(value => value + 1); }).finally(() => {
         pending = null;
         if (current() && (reread || epoch !== readEpoch.current)) { reread = false; void load(); }
@@ -254,11 +259,13 @@ function SandboxInventory({ coreOrigin, apps, workspaces }: { coreOrigin: string
       <h2 className="font-medium">Sandboxes</h2>
       <div className="flex flex-wrap items-center gap-2">
         <CreateEnvironmentDialog origin={coreOrigin} disabled={coreDisabled} onCreate={async body => { if (!await runCore({ path: "", body, kind: "create" })) throw new Error("Creation could not be confirmed. Check the sandbox message and retry its saved request before creating another."); }} />
-        <Button type="button" variant="ghost" size="sm" onClick={() => void refresh()}><RefreshCw data-icon="inline-start" />Refresh sandboxes</Button>
+        <Button type="button" variant="ghost" size="sm" disabled={cores.loading || individual.loading} onClick={() => void refresh()}><RefreshCw data-icon="inline-start" />Refresh sandboxes</Button>
       </div>
     </FrameHeader>
     <FramePanel className="flex flex-col gap-2 p-0">
-      {!survivingCores.length && !survivingApps.length && cores.loaded && individual.loaded && !cores.error && !individual.error && <p className="p-3 text-sm text-muted-foreground">No sandboxes yet. Create an environment to try a fresh Hosty installation.</p>}
+      {(!cores.loaded && cores.loading || !individual.loaded && individual.loading) && <p role="status" className="flex items-center gap-2 p-3 text-sm text-muted-foreground"><HostyLoader label={null} className="size-5 shrink-0" />Loading sandbox inventory…</p>}
+      {!survivingCores.length && !survivingApps.length && cores.loaded && individual.loaded && !cores.error && !individual.error && <EmptyState className="rounded-none border-0" title="No sandboxes yet" description="Create an environment to try a fresh Hosty installation." />}
+      {(cores.error && cores.items.length > 0 || individual.error && individual.items.length > 0) && <p className="px-3 text-sm text-muted-foreground">Previously loaded sandboxes are shown for the unavailable inventory.</p>}
       {cores.error && <ErrorNotice>Core sandbox inventory: {cores.error}</ErrorNotice>}
       {individual.error && <ErrorNotice>App sandbox inventory: {individual.error}</ErrorNotice>}
       {coreFeedback && <FeedbackNotice value={coreFeedback} />}

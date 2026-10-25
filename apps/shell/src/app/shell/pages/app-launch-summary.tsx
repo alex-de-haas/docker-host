@@ -10,7 +10,8 @@ import { buildRuntimeServiceRows, shortDigest } from "../app-helpers";
 import { fetchCore } from "../core-transport.js";
 import { isAuthRequiredRedirectError, readCoreError, redirectToCoreLoginIfAuthRequired } from "../core-api";
 import { isAppUp } from "../runtime-states";
-import { Alert, StatusBadge } from "../ui";
+import { Alert, EmptyState, StatusBadge } from "../ui";
+import { HostyLoader } from "../../../../../../shared/web/hosty-states";
 import { ResourceUsage, ResourceUsageProvider } from "../resources/resource-usage";
 
 type ServiceDetails = {
@@ -99,7 +100,7 @@ export function AppLaunchSummary({ app, coreOrigin, serviceRevision = 0 }: { app
     <div className="flex flex-wrap items-center justify-between gap-3 border-b bg-muted/25 px-4 py-3">
       <div><h3 id={"app-services-" + app.id} className="flex items-center gap-2 text-sm font-medium"><Box className="size-4 text-muted-foreground" aria-hidden />Services</h3><p className="mt-1 text-xs text-muted-foreground">Observed state and resource use. CPU: 100% is one logical core.</p></div>
       <div className="flex flex-wrap items-center gap-1">
-        <Button type="button" variant="ghost" size="sm" disabled={loading} onClick={() => setRefreshRevision(value => value + 1)}><RefreshCw className={"size-3.5 " + (loading ? "animate-spin motion-reduce:animate-none" : "")} aria-hidden />{loading ? "Loading services" : "Refresh services"}</Button>
+        <Button type="button" variant="ghost" size="sm" disabled={loading} onClick={() => setRefreshRevision(value => value + 1)}>{loading ? <HostyLoader className="size-4" label={null} /> : <RefreshCw className="size-3.5" aria-hidden />}{loading ? "Loading services" : "Refresh services"}</Button>
         <Button asChild variant="ghost" size="sm"><Link href="/dashboard">Dashboard<ArrowUpRight className="size-3.5" /></Link></Button>
       </div>
     </div>
@@ -140,7 +141,9 @@ export function AppLaunchSummary({ app, coreOrigin, serviceRevision = 0 }: { app
           {serviceStatus?.unknown && <p className="text-[11px] text-muted-foreground">Update check unavailable (registry unreachable).</p>}
         </div>}
       </article>;
-    }) : <p className="px-4 py-5 text-sm text-muted-foreground">No service observations are available.</p>}</div>
+    }) : loading ? <EmptyState loading className="rounded-none border-0" title="Loading service observations…" />
+      : !current?.health || !current?.update || current.healthError || current.updateError ? <p role="status" className="px-4 py-5 text-sm text-muted-foreground">Service observations could not be confirmed. Refresh services to try again.</p>
+      : <EmptyState className="rounded-none border-0" title="No service observations are available" description="Refresh services to check for new observations." />}</div>
   </section>;
   return <div className="space-y-4">
     <section aria-labelledby={"app-dependencies-" + app.id} className="overflow-hidden rounded-xl border bg-card">

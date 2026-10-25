@@ -1,5 +1,7 @@
 "use client";
 
+import { HostyLoader } from "../../../../../../shared/web/hosty-states";
+
 import { fetchCore } from "../core-transport.js";
 
 
@@ -153,7 +155,7 @@ export function CoreLogsDialog({
 
           <div className="min-h-[20rem] min-w-0 max-w-full flex-1 overflow-auto rounded-md bg-zinc-950 p-4 font-mono text-xs leading-relaxed text-zinc-50">
             {state.loading && state.records.length === 0 ? (
-              <div className="text-zinc-400">Loading logs…</div>
+              <div role="status" className="flex items-center gap-2 text-zinc-400"><HostyLoader label={null} className="size-4 shrink-0" />Loading logs…</div>
             ) : state.records.length === 0 ? (
               <div className="text-zinc-400">
                 {ring === "hosty"

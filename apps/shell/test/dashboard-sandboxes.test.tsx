@@ -331,3 +331,49 @@ it.each([
   expect(badge.querySelector(`.lucide-${icon}[aria-hidden="true"]`)).not.toBeNull();
   expect(transport.send).not.toHaveBeenCalled();
 });
+
+
+it("waits for both independent inventories before claiming empty and keeps the available half visible", async () => {
+  let resolve!: (value: Response) => void;
+  transport.read.mockImplementation((url: string) => url.endsWith("/core-environments")
+    ? Promise.resolve(Response.json({ environments: [child()] }))
+    : new Promise<Response>(done => { resolve = done; }));
+  await render();
+  expect(container.querySelector('[role="status"]')?.textContent).toBe("Loading sandbox inventory…");
+  expect(container.querySelector('.hosty-grid-loader')).not.toBeNull();
+  expect(rows()).toHaveLength(1);
+  expect(container.textContent).not.toContain("No sandboxes yet");
+  expect(button("Refresh sandboxes").disabled).toBe(true);
+  await act(async () => resolve(Response.json({ instances: [] })));
+  expect(container.textContent).not.toContain("Loading sandbox inventory");
+  expect(rows()).toHaveLength(1);
+  expect(button("Refresh sandboxes").disabled).toBe(false);
+});
+
+it("does not turn a first-read failure into empty while retrying and only confirms an empty success", async () => {
+  childFailure = Response.json({ message: "Inventory offline" }, { status: 503 });
+  await render();
+  expect(container.textContent).toContain("Inventory offline");
+  expect(container.querySelector('.hosty-empty-slots')).toBeNull();
+  let resolve!: (value: Response) => void;
+  transport.read.mockImplementation((url: string) => url.endsWith("/core-environments")
+    ? new Promise<Response>(done => { resolve = done; }) : Promise.resolve(Response.json({ instances: [] })));
+  await click("Refresh sandboxes");
+  expect(container.querySelector('[role="status"]')?.textContent).toBe("Loading sandbox inventory…");
+  expect(container.textContent).not.toContain("No sandboxes yet");
+  await act(async () => resolve(Response.json({ environments: [] })));
+  expect(container.textContent).not.toContain("Inventory offline");
+  expect(container.querySelector('.hosty-empty-slots')).not.toBeNull();
+  expect(button("Create environment").disabled).toBe(false);
+});
+
+it("retains confirmed inventory after a malformed refresh instead of reporting empty", async () => {
+  environments = [child()]; await render();
+  transport.read.mockResolvedValue(Response.json({}));
+  await click("Refresh sandboxes");
+  expect(rows()).toHaveLength(1);
+  expect(container.textContent).toContain("Previously loaded sandboxes");
+  expect(container.textContent).toContain("Core did not return the sandbox inventory");
+  expect(container.textContent).not.toContain("No sandboxes yet");
+  expect(transport.send).not.toHaveBeenCalled();
+});

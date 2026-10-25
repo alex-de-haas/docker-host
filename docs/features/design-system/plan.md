@@ -57,11 +57,11 @@ app-management contracts without a new Core/SDK/manifest or permission change.
 
 | Work class | Deliverables | Boundary |
 | --- | --- | --- |
-| Remaining implementation using established contracts | D3–D6, D8, D10, D14, D18, D19, D38 | Completed foundations, seven runtime icons and existing screen layouts are not repeated. D4/D14 depend on D39; D18 depends on its role-data owner; D38 retains the scope decision below. |
+| Remaining implementation using established contracts | D3, D4, D14, D18, D19, D38 | Completed foundations, seven runtime icons and existing screen layouts are not repeated. D4/D14 depend on D39; D18 depends on its role-data owner; D38 retains the scope decision below. |
 | Contracts and dependent work | D15, D34–D37, D39 | Record timing, data, identity and authority semantics before dependent implementation; preserve explicit unavailable/refused states meanwhile. |
-| Acceptance of implemented behavior | D7, D12, D13, D16, D17, D20–D30 | Verify the existing surfaces and their recovery/permission/device matrix. D17's cross-device part depends on D15; D23/D25 retain the limits owned by D36/D37. |
+| Acceptance of implemented behavior | D7, D12, D13, D16, D17, D20–D27, D29 | Verify the existing surfaces and their recovery/permission/device matrix. D17's cross-device part depends on D15; D23/D25 retain the limits owned by D36/D37. |
 | Remaining design references | D32 | Prepare and review the missing variants; new page implementation requires concrete scope. |
-| Implemented and verified baseline | D1, D2, D5, D9, D11, D31, D33, D40–D48 | Keep the recorded foundations, scoped SDK chrome, credential grid and compact bound-app refinement; broader functional, provider and device acceptance remains in its own deliverables. |
+| Implemented and verified baseline | D1, D2, D5, D6, D8, D9, D10, D11, D28, D30, D31, D33, D40–D51 | Keep the recorded foundations, scoped SDK chrome, credential grid and compact bound-app refinement; broader functional, provider and device acceptance remains in its own deliverables. |
 
 The remaining acceptance baseline includes Core-managed Shell embedding, normal password identity,
 light/dark and narrow layouts, protected-flow recovery, real mobile keyboards and the required
@@ -439,7 +439,7 @@ browser bridge; embedded rendering and standalone interactions are recorded sepa
 
 The composition fixture truthfully reports unavailable optional panel access in this child. No new
 optional access was granted, and retained two-view tool composition is not claimed by this pass.
-D4/D6/D19 remain open for their other consumers and acceptance obligations; D5's Demo/Telemetry
+D4/D19 remain open for their other consumers and acceptance obligations; D6 is completed below; D5's Demo/Telemetry
 external navigation artwork is verified. Swift/native, Plans and frozen Shell/Dashboard source stay
 unchanged. No aggregate redesign commit or publication is authorized by this verification.
 
@@ -466,8 +466,7 @@ All native applications, including Swift, are deferred. Plans and Demo App adopt
 because their products will be reconsidered separately. Their obligations in D3/D4/D5/D19 remain
 unchecked and are not part of this implementation batch. Other unresolved contracts, missing design
 references and broad device/provider acceptance remain with their existing deliverables; narrowing
-this batch does not complete or retire them. D8 is frozen with Dashboard pending another owner
-request. No publication, push or additional commit is implied by the checkpoint permission.
+this batch does not complete or retire them. D8 was frozen in this batch; the subsequent owner-approved compact-filter continuation is complete. No publication, push or additional commit is implied by the checkpoint permission.
 
 The owner subsequently approved Host settings content refinement as D42: use Core information as
 the visual reference for Updates, Network, Shared folders and Core source while keeping the accepted
@@ -1984,6 +1983,47 @@ inherits both themes. Component tests cover Core final/unconfirmed states, sandb
 installation and workspace-removal recovery without changing lifecycle authority. The owned child is Finished; its containers, networks, volumes and data root are removed, preview ports are closed, and the disposable parent is stopped. The normal Core retains its original process identity.
 
 
+## D10 Continuation (2026-10-24)
+
+The owner resumes D10 after the merged redesign, D8 and D6. Complete remaining labelled
+read loading and empty-state placement using the adopted shared marks. Cover independent sandbox
+inventories, unavailable service observations and shared-folder search/assignment results; retain
+confirmed data and drafts while refreshing. Audit residual read loaders in the adopted web apps.
+Operation status remains separate under D6. D4 owns new app-specific artwork; deferred Plans/native
+adoption stays with D19/D3. Verify affected tests/builds and managed sandbox light/dark, narrow and
+browser-emulated reduced-motion behavior before marking D10 complete.
+
+Verification on macOS with Docker Desktop passes `npm run shell:test` (206 unit and 739 component
+tests), `npm run shell:lint` (zero errors; three pre-existing warnings), `npm run shell:build`,
+`npm run harness:build-web`, `npm run harness:test` (1,581 tests), `npm run harness:lint`,
+`npm run lint -w apps/harness/web`, `npm run test -w apps/demo-app` (10 tests),
+`npm run demo-app:lint`, and `npm run build -w apps/demo-app -- --webpack`. Shell, Harness API/worker
+and Demo Docker builds pass. Version and documentation checks pass.
+
+The Core-managed child uses a separate data root, normal setup/password login and Docker artifacts
+built from the registered workspace. Its final Shell container digest matches the final build.
+Browser checks cover light/dark at 480 px and the sandbox empty state at 1280 px, with no horizontal
+overflow in the checked surfaces. Delayed inventory reads retain the grid and label without a false
+empty state; computed animation changes from `hosty-cell-light` to `none` under reduced-motion
+emulation while all seven cells remain visible. Controlled failed reads distinguish unavailable
+inventory/service observations from confirmed empty results; removing those fixtures restores actual
+Core observations. Shared-folder search preserves a pending assignment and Clear search returns
+focus to the field; the draft is canceled without saving. Harness provider discovery and Demo's
+existing loader render in both actual SDK-resolved themes with static reduced-motion cells. Demo's
+composition Suspense fallback is verified in server-rendered markup; the transient fallback itself
+was not captured visibly because the session loader precedes it.
+
+The installed test Core (0.150.2) refuses newer workspace/execution-target scopes with 403; those
+unrelated flows are not claimed as accepted and no grants are widened. Named platform integration
+suites are not run for this UI-only pass; affected runtime behavior is checked in the managed child.
+Physical-device, OS-toggle, full contrast/grayscale and deferred app-theme acceptance stay with
+D13/D16/D19. The protected-data-root mount refusal is respected by placing the empty read-only test
+folder outside that root. Final Shell replacement uses the supported update-plan/update workflow
+and a distinct local image tag, preserving Core's immutable image lock. No provider credentials or
+ordinary app data are copied. The child is Finished; its containers, networks, volumes and data
+root are removed, preview ports are closed and the disposable parent is stopped. The normal Core
+retains its original process identity.
+
 ## Deliverables
 
 IDs D1–D32 retain their original obligations or explicitly delegate extracted work below. No ID is
@@ -1999,7 +2039,7 @@ Testing Expectations rather than repeating completed implementation as new work.
 - [x] D6. Finish status-semantic and motion adoption: Info-blue labelled working, amber needs-you, red failure and distinct state shapes cover the remaining Shell update/Core-transition/sandbox/installation and Harness workspace-operation feedback. Completion and unconfirmed outcomes stay static even with retained busy guards; reduced motion preserves labelled static rings. Managed Core/Docker checks cover both themes and the actual motion preference with real readiness/update states. Unit/component tests, lint and production/Docker builds pass; Shell 0.112.2 → 0.112.3, Harness 0.67.5 → 0.67.6. Lime remains an interaction/progress color. D16 retains full contrast/grayscale acceptance.
 - [x] D8. Complete the compact Dashboard state-filter menu below 820 px of container width, retaining the merged redesign, combined search/filter semantics, full-host counts and selected state. Five focused tests cover live/zero/empty states, shared selection, focus and synthetic touch input. Core-managed child/Docker verification through normal password login covers light/dark phone-width views, keyboard selection/Escape, the 819/820 px boundary and sidebar resizing at a fixed viewport. Shell tests, lint and production/Docker builds pass; Shell 0.112.1 → 0.112.2. D7 accepts the rest of Dashboard; D13 retains physical-device acceptance.
 - [x] D9. Build the ReUI Data Grid pattern for current-user Tokens & devices: the specified search/filtering, sorting, density/column controls, selection/bulk behavior and pagination. Preserve existing credential visibility, Create/Connect/Rename/Revoke authority and recovery. Current-user navigation stays under My profile; authorized support for another user stays in that user's detail.
-- [ ] D10. Complete remaining labelled grid-loader and empty-state placement, including environment inventory, unavailable service observations and shared-mount empty results. Keep factual loading/error/empty/no-results distinctions, static reduced-motion behavior and theme contrast. D4 supplies app-specific empty artwork; working/status indicators remain separate data.
+- [x] D10. Complete remaining labelled grid-loader and empty-state placement for sandbox inventory, service observations, shared-folder search, Core workspaces/logs, source-diff preparation, Harness providers and Demo composition. Preserve loading/error/empty/no-results distinctions, cached rows, drafts and keyboard focus. Affected tests, lint and production/Docker builds pass; managed child checks cover both themes, narrow/desktop layouts and browser-emulated reduced motion. Shell 0.112.3 → 0.112.4, Harness 0.67.6 → 0.67.7, Demo 0.18.0 → 0.18.1. D4 retains app-specific artwork; operation statuses remain separate.
 - [ ] D14. Apply the tool's Lucide icon and owning-app accent badge consistently in menus, pickers and panel headers after D39 settles its metadata source and fallback. Do not replace supplied icons or introduce app-ID color overrides.
 - [ ] D18. Replace legacy System labels/presentation with confirmed provider-role icons and detail chips for `ui-client`, `assistant`, `speech-to-text` and `otlp-collector`, including the reserved icon set. Consume authoritative role facts owned by [Replaceable UI Clients D8](../replaceable-ui-clients/plan.md#deliverables); this design item does not duplicate that contract, infer roles from `system` or grant lifecycle authority.
 - [ ] D19. Adopt the shared light/dark theme, local IBM Plex Sans/JetBrains Mono, lime interaction/selection/focus/progress and app chart accents in Plans, Telemetry UI and Demo App. Shell/Harness/Marketplace theme foundations and Harness's local typography scale already exist; preserve app-owned typography inside SDK workspaces. Finish residual control conformance across all adopted first-party app controls, including Harness/Marketplace inside the SDK host: one 2 px lime focus indicator, red invalid states and parent-only grouped focus. Preserve D4's distinct chart series and independent artifact versions.
