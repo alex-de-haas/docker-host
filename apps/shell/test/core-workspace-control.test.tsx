@@ -51,7 +51,7 @@ function review(workspaceId: string, selection: Selection) {
 }
 function Probe() {
   const control = useCoreWorkspaceControl(props);
-  return <><output aria-label="Busy">{String(control.busy)}</output>{props.menu ? <DropdownMenu>
+  return <><output aria-label="Busy">{String(control.busy)}</output><output aria-label="Needs attention">{String(control.needsAttention)}</output><button onClick={control.showRecovery}>Check switch</button>{props.menu ? <DropdownMenu>
     <DropdownMenuTrigger asChild><button type="button">Core actions</button></DropdownMenuTrigger>
     <DropdownMenuContent>{control.control}</DropdownMenuContent>
   </DropdownMenu> : control.control}{control.dialog}</>;
@@ -107,7 +107,7 @@ beforeEach(() => {
       current = { id: String(body.requestId), workspaceId, coreWorktreeId: (body.selection as Selection).coreWorktreeId, phase: "prepared", coreProject: `${props.workspaces.find(row => row.id === workspaceId)!.worktrees.find(tree => tree.id === (body.selection as Selection).coreWorktreeId)!.path}/${project}` };
       return Response.json({ state: "accepted" });
     }
-    if (kind === "status") return statusError ? Response.json({ message: "Operation status unavailable" }, { status: 404 })
+    if (kind === "status") return statusError ? Response.json({ message: "Operation status unavailable" }, { status: 503 })
       : Response.json({ status: { activation: current ?? { id: body.activationId, phase: "preparing", coreProject: `/managed/tree-a/${project}` }, helper: { state: current?.phase === "active" ? "completed" : "running" } }, children: [] });
     if (kind === "return") {
       current = { ...current!, phase: "return-core-starting", returns: [{ request: { requestId: (body.return as { requestId: string }).requestId }, state: "pending" }] };
@@ -470,4 +470,119 @@ it("repairs a real stale-plan refusal after a failed review read without replaci
   expect(JSON.parse(localStorage.getItem(journalKey())!).expectedCoreProject).toBe("/managed/tree-a/apps/core/Renamed.csproj");
   expect(repaired.selection.apps.every((row: { selected: boolean }) => !row.selected)).toBe(true);
   expect(mutations().every(([url]) => new URL(url).pathname.endsWith("/activation/apply"))).toBe(true);
+});
+
+it("shows a missing workspace and dismisses only its stale browser journal after a fresh catalog read", async () => {
+  const saved = { workspaceId: "deleted-workspace", activationId: "returned-activation", target: { kind: "release" } };
+  localStorage.setItem(journalKey(), JSON.stringify(saved));
+  current = active("current-activation"); records[workspace.id] = [current];
+  props.state = { ...state, launch: { ...state.launch, mode: "dev", projectPath: current.coreProject } };
+  intercept = kind => kind === "status" ? Response.json({ code: "workspace_not_found", message: "Workspace not found." }, { status: 404 }) : undefined;
+  await render();
+  expect(container.querySelector('[aria-label="Needs attention"]')?.textContent).toBe("true");
+  await click("Check switch");
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Workspace not found.");
+  expect(document.querySelector('[role="dialog"] .animate-spin')).toBeNull();
+  expect(localStorage.getItem(journalKey())).not.toBeNull();
+  const reads = fixture.read.mock.calls.length;
+  await click("Dismiss saved switch");
+  expect(fixture.read.mock.calls.length).toBeGreaterThan(reads);
+  expect(localStorage.getItem(journalKey())).toBeNull();
+  expect(container.querySelector('[aria-label="Busy"]')?.textContent).toBe("false");
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Core and applications were not changed.");
+  expect(mutations()).toHaveLength(0); expect(fixture.release).not.toHaveBeenCalled();
+  await act(async () => root.unmount()); root = createRoot(container); await render();
+  expect(container.querySelector('[aria-label="Needs attention"]')?.textContent).toBe("false");
+  expect(container.querySelector('[aria-label="Busy"]')?.textContent).toBe("false");
+});
+
+it.each(["workspace", "activation", "catalog-error"])("retains a missing-workspace journal when fresh catalog evidence is %s", async evidence => {
+  const saved = { workspaceId: workspace.id, activationId: "saved-activation", target: { kind: "release" } };
+  localStorage.setItem(journalKey(), JSON.stringify(saved));
+  intercept = kind => kind === "status" ? Response.json({ code: "workspace_not_found", message: "Workspace not found." }, { status: 404 }) : undefined;
+  if (evidence !== "workspace") props.workspaces = [];
+  if (evidence === "activation") records[workspace.id] = [active(saved.activationId)];
+  if (evidence === "catalog-error") fixture.read.mockResolvedValue(Response.json({ message: "Catalog unavailable" }, { status: 503 }));
+  await render(); await click("Check switch"); await click("Dismiss saved switch");
+  expect(JSON.parse(localStorage.getItem(journalKey())!)).toEqual(saved);
+  expect(document.body.textContent).toContain(evidence === "catalog-error" ? "Catalog unavailable" : "Core still lists");
+  expect(mutations()).toHaveLength(0);
+});
+
+it.each([[403, "workspace_forbidden"], [404, "activation_not_found"]])("exposes status refusal %s without forgetting or replaying an uncertain action", async (status, code) => {
+  const pending = { kind: "apply", workspaceId: workspace.id, body: { requestId: "original-request", selection: { coreSelected: true } } };
+  const saved = { workspaceId: workspace.id, activationId: "original-request", target: null, pending };
+  localStorage.setItem(journalKey(), JSON.stringify(saved));
+  intercept = kind => kind === "status" ? Response.json({ code, message: "The saved switch cannot be inspected." }, { status: Number(status) }) : undefined;
+  await render(); await click("Check switch");
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("The saved switch cannot be inspected.");
+  expect(document.querySelector('[role="dialog"] .animate-spin')).toBeNull();
+  expect(button("Dismiss saved switch")).toBeUndefined();
+  await click("Check progress");
+  expect(JSON.parse(localStorage.getItem(journalKey())!)).toEqual(saved);
+  expect(calls("status").every(([, body]) => body.activationId === saved.activationId)).toBe(true);
+  expect(mutations()).toHaveLength(0);
+});
+
+it("shows a sustained outage after three checks and clears attention when the original operation is readable again", async () => {
+  current = active();
+  const saved = { workspaceId: workspace.id, activationId: current.id, target: null };
+  localStorage.setItem(journalKey(), JSON.stringify(saved));
+  statusError = true;
+  await render(); await click("Check switch");
+  await act(async () => vi.advanceTimersByTimeAsync(9000));
+  expect(container.querySelector('[aria-label="Needs attention"]')?.textContent).toBe("true");
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Operation status unavailable");
+  expect(document.querySelector('[role="dialog"] .animate-spin')).toBeNull();
+  expect(JSON.parse(localStorage.getItem(journalKey())!)).toEqual(saved);
+  statusError = false; await click("Check progress");
+  expect(container.querySelector('[aria-label="Needs attention"]')?.textContent).toBe("false");
+  expect(container.querySelector('[aria-label="Busy"]')?.textContent).toBe("false");
+  expect(document.querySelector('[role="dialog"]')?.textContent).not.toContain("Operation status unavailable");
+  expect(mutations()).toHaveLength(0);
+});
+
+it("keeps a missing Release operation visible and retained without pretending a restart is still progressing", async () => {
+  props.state = { ...state, launch: { ...state.launch, mode: "dev", projectPath: "/managed/Core.csproj" } };
+  const saved = { workspaceId: "", activationId: "", target: { kind: "release" }, release: { fromInstance: state.instance, operationId: releaseOperationId } };
+  localStorage.setItem(journalKey(), JSON.stringify(saved)); operationMissing = true;
+  await render(); await click("Check switch");
+  expect(container.querySelector('[aria-label="Needs attention"]')?.textContent).toBe("true");
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Operation not found");
+  expect(document.querySelector('[role="dialog"] .animate-spin')).toBeNull();
+  expect(button("Dismiss saved switch")).toBeUndefined();
+  expect(JSON.parse(localStorage.getItem(journalKey())!)).toEqual(saved);
+  expect(fixture.release).not.toHaveBeenCalled();
+});
+
+it("does not dismiss recovery if a successful status arrives during the catalog check", async () => {
+  current = active();
+  const saved = { workspaceId: workspace.id, activationId: current.id, target: null };
+  localStorage.setItem(journalKey(), JSON.stringify(saved));
+  intercept = kind => kind === "status" ? Response.json({ code: "workspace_not_found", message: "Workspace not found." }, { status: 404 }) : undefined;
+  await render(); await click("Check switch");
+  const catalog = deferred<Response>(); fixture.read.mockReturnValueOnce(catalog.promise);
+  await click("Dismiss saved switch");
+  intercept = null;
+  await act(async () => vi.advanceTimersByTimeAsync(3000));
+  await act(async () => catalog.resolve(Response.json({ targets: [], activations: [] })));
+  expect(JSON.parse(localStorage.getItem(journalKey())!)).toEqual(saved);
+  expect(document.body.textContent).not.toContain("removed from this browser");
+  expect(mutations()).toHaveLength(0);
+});
+
+it.each(["user", "origin"])("ignores a delayed dismissal catalog after the %s changes", async scope => {
+  const saved = { workspaceId: "deleted", activationId: "saved", target: null };
+  const oldKey = journalKey(); localStorage.setItem(oldKey, JSON.stringify(saved));
+  intercept = kind => kind === "status" ? Response.json({ code: "workspace_not_found", message: "Workspace not found." }, { status: 404 }) : undefined;
+  await render(); await click("Check switch");
+  const catalog = deferred<Response>(); fixture.read.mockReturnValueOnce(catalog.promise);
+  await click("Dismiss saved switch");
+  if (scope === "user") fixture.userId = "other-admin"; else props.coreOrigin = "https://other-core.test";
+  await render();
+  await act(async () => catalog.resolve(Response.json({ targets: [], activations: [] })));
+  expect(JSON.parse(localStorage.getItem(oldKey)!)).toEqual(saved);
+  expect(localStorage.getItem(journalKey())).toBeNull();
+  expect(document.body.textContent).not.toContain("removed from this browser");
+  expect(mutations()).toHaveLength(0);
 });
