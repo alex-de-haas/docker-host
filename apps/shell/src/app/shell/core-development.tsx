@@ -73,8 +73,7 @@ export function useCoreDevelopment(coreOrigin: string, enabled: boolean) {
               setBusy(false);
               sessionStorage.removeItem(key);
               setPhase(null);
-              if (value.status === "completed") toast.success("Core restarted");
-              else toast.error("Core restart failed", { description: [value.error, value.logPath && `Log: ${value.logPath}`].filter(Boolean).join(" "), duration: 15000 });
+              if (value.status === "failed") toast.error("Core restart failed", { description: [value.error, value.logPath && `Log: ${value.logPath}`].filter(Boolean).join(" "), duration: 15000 });
             } else setPhase(value.status === "building" ? "Building" : value.status === "starting" ? "Starting" : "Preparing");
           } else if (response.status === 404) {
             // A lost response may mean the request never arrived. Never replay it automatically.

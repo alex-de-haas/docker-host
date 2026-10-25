@@ -228,7 +228,7 @@ Both version values are tooltip triggers, marked with a dotted underline rather 
 Update activity does not add a line beneath version/source metadata. The primary Status label
 uses actual runtime state and applicable health; update operation progress occupies the line below it.
 
-App actions > Check updates triggers or joins the fleet sweep. "Update all (N)" applies every routine verdict, leaving review-class ones on their rows and counting them in the summary toast; the Shell's own app goes last, because its apply restarts the Shell serving the page.
+App actions > Check updates triggers or joins the fleet sweep. "Update all (N)" applies every routine verdict, leaving review-class ones on their rows; the Shell's own app goes last, because its apply restarts the Shell serving the page.
 
 An accepted update follows the existing queue/Core-confirmation flow. A rejected enqueue (stale, expired, consumed, or already updating) keeps the existing error/recovery handling and refreshes state; uncertain submissions do not authorize replay. Manage reads the applicable cached pending plan; explicit Check now, a source/feed change or a definite stale-preparation refusal uses the existing rebuild path. Progress needs no poll: every app-record commit publishes a hint on Core's event stream, and the page re-reads the list from it.
 
@@ -247,7 +247,7 @@ beneath the primary status, without a service suffix. Other supported phases sho
 Preparing update, Creating backup, Installing, Downloading or Checking readiness, with the reported
 service when present. Queueing or preparation can coexist with Running; readiness checking can
 coexist with a newly running runtime.
-Terminal update outcomes add no row message or expiry timer. Existing success/error/readiness
+Terminal update outcomes add no row message or expiry timer. Only error/readiness-problem
 toasts use the same app-state outcomes rather than treating installation as proof of readiness.
 Readiness warnings retain affected service states and an addressable console-log action; problem
 icons and Manage keep failure/interruption diagnostics. Healthy recovery clears the readiness warning.

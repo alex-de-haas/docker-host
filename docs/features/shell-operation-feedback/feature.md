@@ -1,6 +1,6 @@
 ---
 created: 2026-09-25
-updated: 2026-10-22
+updated: 2026-10-25
 summary: Shell separates confirmations, transient operation results and persistent diagnostics.
 components: [apps/shell]
 ---
@@ -30,6 +30,12 @@ reminder and does not authorize or cancel work already accepted by Core.
 
 ## Notifications
 
+App and Core lifecycle actions, runtime switches, installation/removal and update checks/applies
+show no informational or success toasts, including cancellation and no-update results. Existing
+row progress, refreshes and Shell self-recovery communicate normal operation. Failures, readiness
+problems and unconfirmed recovery still produce diagnostic toasts. Required confirmation fallback
+links remain actionable; unrelated settings and backup feedback keeps its existing behavior.
+
 Dashboard lifecycle actions show progress in the primary Status column immediately after activation
 (after confirmation for Shell itself), including time spent waiting in Shell's serialized CSRF
 request queue or Core preflight. The row displays Restarting, Starting or Stopping with a spinner;
@@ -53,7 +59,7 @@ runtime state and applicable health; it never derives lifecycle from an update o
 Missing runtime observations show Unknown. Active update phases `stopping` and `starting` show
 only Updating below the primary status, without a service suffix. Update queued, Preparing update,
 Creating backup, Installing, Downloading and Checking readiness retain their specific labels and
-optional reported service. Terminal outcomes add no row message or timer. Existing success, error and readiness toasts remain, and problem icons
+optional reported service. Terminal outcomes add no row message or timer. Only error and readiness-problem toasts remain, and problem icons
 and Manage retain diagnostics.
 
 Reviewed and routine app updates report their terminal result from Core's app-state stream. An
@@ -94,7 +100,7 @@ failures, instead of replacing the cause with only an HTTP status.
 - Verify actual Running/Starting/Stopping/Stopped and applicable health remain primary during
   updates, with Unknown for missing runtime observations. Update stopping/starting phases show only
   Updating beneath them; other phases retain their label and optional service. Verify no terminal
-  row messages or expiry timers, and retained success/error/readiness toasts and diagnostics.
+  row messages or expiry timers, and silent success with retained error/readiness-problem toasts and diagnostics.
 - Verify immediate lifecycle progress before server state changes, duplicate activation suppression,
   two apps waiting in the CSRF queue, server-driven stages, failure/retry and confirmation cancellation.
 - Confirm cancellation, Escape, initial/restored focus, overlapping prompts, and unmount cancellation. Never trigger a real destructive action merely to smoke-test a dialog.
@@ -103,7 +109,7 @@ failures, instead of replacing the cause with only an HTTP status.
   source-safety refusal and same-request recovery without an intermediate Shell dialog.
 - Verify copy includes full diagnostics; clipboard rejection leaves the error visible. Verify absent/stopped Gateway and concurrent/retried handoff behavior.
 - Verify app-context capability negotiation and identical idempotency keys across uncertain session-creation retries.
-- Verify readiness warnings, log actions, terminal success/failure notifications, missed intermediate snapshots, no duplicate notifications after refresh, and clearing diagnostics after recovery.
+- Verify readiness warnings, log actions, silent successful updates, terminal failure notifications, missed intermediate snapshots, no duplicate notifications after refresh, and clearing diagnostics after recovery.
   Readiness and update-notification Open logs actions select the app's Logs section, matching both
   Dashboard entries and preserving the existing capability/authorization boundaries; Core logs
   still open their own dialog.

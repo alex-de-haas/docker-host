@@ -650,7 +650,6 @@ export function ShellClient({
         if (coreUpdateProbeGeneration.current !== generation) return;
         if (completed) {
           setCoreUpdating(false);
-          toast.success("Core updated");
           coreUpdateProbeTimer.current = setTimeout(() => {
             coreUpdateProbeTimer.current = null;
             setCoreUpdate(previous => previous ? { ...previous, clientPhase: undefined } : previous);
@@ -901,7 +900,6 @@ export function ShellClient({
         setBusyAction(actionKey);
         setState((current) => ({ ...current, error: null }));
         const endpoint = action === "backup" ? appEndpoint(app, "/backups") : appEndpoint(app, `/${action}`);
-        let restartResponseLost = false;
         try {
           await sendCsrfJson(endpoint, action === "backup" ? { reason: "manual" } : action === "autostart" ? { autostart: !isAppAutostartEnabled(currentApp) } : {});
         } catch (error) {
@@ -911,13 +909,9 @@ export function ShellClient({
           const connectionLost = error instanceof TypeError || (error instanceof CoreRequestError &&
             (error.code === "core_unavailable" || error.code === "core_request_timeout"));
           if (app.id !== shellAppId || action !== "restart" || !connectionLost) throw error;
-          restartResponseLost = true;
         }
 
         if (app.id === shellAppId && action === "restart") {
-          toast.info(restartResponseLost ? "Reconnecting to Shell" : "Shell restarting", {
-            description: "Waiting for the Shell, then reloading this page…",
-          });
           if (await waitForOwnOrigin()) {
             window.location.reload();
           } else {
@@ -929,7 +923,7 @@ export function ShellClient({
         }
 
         await refresh();
-        toast.success(`${app.displayName}: ${action} complete`);
+        if (action === "backup" || action === "autostart") toast.success(`${app.displayName}: ${action} complete`);
       } catch (error) {
         if (isAuthRequiredRedirectError(error)) {
           return;
@@ -1029,7 +1023,7 @@ export function ShellClient({
             const approval = await requestCoreApproval(installationClient, result.review,
               pending => showCoreConfirmation(popup, pending), { retryInterruptedStatus: true });
             if (approval.status === "denied") {
-              toast.info("Runtime switch cancelled", { description: "The additional access was not approved." }); return;
+              return;
             }
             // Approval admits this exact candidate; resume the same retained execution intent.
             try { localStorage.setItem(storageKey + ":state", "running"); } catch { /* Optional recovery journal. */ }
@@ -1063,7 +1057,6 @@ export function ShellClient({
           return;
         }
         await refresh();
-        toast.success("Runtime switched", { description: app.displayName });
       } catch (error) {
         if (isAuthRequiredRedirectError(error)) return;
         toast.error("Runtime switch failed", { description: error instanceof Error ? error.message : "Runtime switch failed.", appId: app.id });
@@ -1154,7 +1147,6 @@ export function ShellClient({
           return dismissConfirmation;
         });
         if (result.status === "denied") {
-          toast.info("Update cancelled", { description: app.displayName });
           return false;
         }
         // Core reports success after the apply and restart complete. A pending confirmation
@@ -1203,7 +1195,6 @@ export function ShellClient({
       await enqueueRoutineUpdate(sendCsrfJson, coreOrigin, app.id, planDigest);
       queued = true;
       setActivePanel(current => current?.appId === app.id ? null : current);
-      toast.info("Update started", { id: actionKey, description: app.displayName });
       void refresh();
       if (app.id === shellAppId) {
         const outcome = await waitForShellUpdateToSettle({
@@ -1256,7 +1247,7 @@ export function ShellClient({
         const plan = await getUpdatePlan(app, attempt > 0 || Boolean(app.updateCheck?.error));
         if (plan.error) throw new Error(plan.error);
         if (plan.sourceConfigured === false) throw new Error("Configure an update source in app Settings before updating.");
-        if (!plan.changes.length) { popup?.close(); toast.info("No update available", { description: app.displayName }); return; }
+        if (!plan.changes.length) { popup?.close(); return; }
         try {
           if (plan.requiresReview !== false) await enqueueUpdate(app, plan.planDigest, popup);
           else { popup?.close(); await enqueueRoutine(app, plan.planDigest, true); }
@@ -1322,13 +1313,11 @@ export function ShellClient({
         return showCoreConfirmation(popup, pending);
       });
       if (result.status === "denied") {
-        toast.info("App removal cancelled");
         return;
       }
       await refresh();
       setActivePanel(current => current?.appId === app.id ? null : current);
       setWorkspace(current => current?.appId === app.id ? null : current);
-      toast.success("App removed", { description: app.displayName });
     } catch (error) {
       if (!submitted) popup?.close();
       if (!isAuthRequiredRedirectError(error)) toast.error("App removal failed", {
@@ -1787,7 +1776,6 @@ export function ShellClient({
   const updateAllApps = useCallback(async () => {
     const routine = state.apps.filter(isRoutineUpdate);
     if (routine.length === 0) {
-      toast.info("No routine updates available");
       return;
     }
     await reviewUpdatesInOrder(routine, shellAppId, app => enqueueRoutine(app, app.updateCheck!.planDigest!));
@@ -2482,7 +2470,6 @@ export function ShellClient({
           onInstalled={() => {
             installActivation.current = false;
             setInstallOpen(false);
-            toast.success("App installed");
             void refresh();
           }}
         />}

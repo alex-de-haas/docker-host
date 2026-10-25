@@ -64,7 +64,7 @@ it("refreshes the displayed process before explicit confirmation and guards dupl
   await accept(promise);
   expect(transport.send).toHaveBeenCalledExactlyOnceWith(origin + "/api/core/stop", { instance: initial.instance }, "POST", expect.any(AbortSignal));
   expect(control.busy).toBe(true); expect(control.phase).toBe("Stop requested");
-  expect(transport.info).toHaveBeenCalledWith("Core stop requested", expect.anything());
+  expect(transport.info).not.toHaveBeenCalled();
   await act(async () => { await control.stop(); });
   expect(transport.read).toHaveBeenCalledTimes(1); expect(transport.send).toHaveBeenCalledTimes(1);
 });
