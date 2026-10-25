@@ -6,7 +6,7 @@ import { SessionStore, type StoredEvent } from "./store.js";
 import { SessionManager } from "./manager.js";
 import { FakeHarnessAdapter } from "../harness/fake.js";
 import type { HarnessEvent, HarnessRun, HarnessStartOptions } from "../harness/adapter.js";
-import { aggregateToolActivity } from "../tool-activity.js";
+import { aggregateToolActivity, startHarnessToolActivity } from "../tool-activity.js";
 import { AuditReporter } from "../audit.js";
 
 class ManualAdapter extends FakeHarnessAdapter {
@@ -163,4 +163,18 @@ it.each([
     expect(resolved).toBe(true);
     expect(await activity()).toEqual(index === 0 ? { state: "needs-you", count: 1 } : { state: "working", count: 1 });
   }
+});
+
+it.each(["awaiting_approval", "awaiting_question"] as const)("clears tool attention when an unopened %s session is abandoned after restart", async status => {
+  const record = (await store.readRecord(id))!;
+  await manager.shutdown();
+  await store.saveRecord({ ...record, status });
+  manager = new SessionManager(store, adapter, new AuditReporter(null, null, "hosty.harness"), dir);
+  const reporter = { set: vi.fn(), dispose: vi.fn().mockResolvedValue(undefined) };
+  const stop = startHarnessToolActivity(manager, reporter);
+  try {
+    await vi.waitFor(() => expect(reporter.set).toHaveBeenLastCalledWith("admin", "assistant", { state: "failed", count: 1 }));
+    expect(await manager.sweepAbandoned(86_400_000, Date.now() + 172_800_000)).toEqual([id]);
+    await vi.waitFor(() => expect(reporter.set).toHaveBeenLastCalledWith("admin", "assistant", { state: "idle" }));
+  } finally { await stop(); }
 });

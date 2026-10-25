@@ -2274,6 +2274,7 @@ export class SessionManager {
       if (record.handoffDispatch?.state === "running") record.handoffDispatch.state = "failed";
       record.updatedAt = new Date(now).toISOString();
       await this.store.saveRecord(record);
+      this.notifyToolActivity();
       this.audit.report("session_abandoned", { sessionId: record.id, waitedMs: String(waitedMs) });
       abandoned.push(record.id);
     }

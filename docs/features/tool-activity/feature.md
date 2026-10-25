@@ -80,7 +80,8 @@ failed clear and a process restart. Only an acknowledged idle removes an absent 
 journal; a concurrent new active snapshot preserves that owner.
 Counts describe failed sessions, pending decisions or running sessions within the winning state.
 A running session with outstanding decisions retains Needs you until its final decision is resolved,
-including mixed approval and question requests.
+including mixed approval and question requests. Automatic abandonment of persisted sessions also
+notifies the observer, clearing orphaned attention without opening the conversation.
 Native runs orphaned by a Harness restart are not renewed as working presence. Existing worker
 recovery supplies the retained worker session state. The helper runs only with a complete managed
 service and installation identity.
