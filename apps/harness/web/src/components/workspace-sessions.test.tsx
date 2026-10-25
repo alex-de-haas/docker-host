@@ -6,7 +6,8 @@ import { WorkspaceSessionTabs } from "./workspace-session-tabs";
 import { useWorkspaceSessionActions } from "@/lib/use-workspace-session-actions";
 import { WorkspaceSessions } from "./workspace-sessions";
 import { AssistantApiError, createWorkspaceSession, listSessions, workspaceAction, type AssistantSession } from "@/lib/assistant-api";
-import { type DevelopmentWorkspace } from "@/lib/development-api";
+import { developmentRequest, DevelopmentRequestError, type DevelopmentWorkspace } from "@/lib/development-api";
+vi.mock("@/lib/development-api", async original => ({ ...await original<object>(), developmentRequest: vi.fn() }));
 vi.mock("@/lib/assistant-api", async original => ({ ...await original<object>(), createWorkspaceSession: vi.fn(), listSessions: vi.fn(), workspaceAction: vi.fn() }));
 let root: Root, container: HTMLDivElement;
 const workspace = (): DevelopmentWorkspace => ({ id: "workspace", state: "active", owner: { kind: "assistant", label: "Assistant", reference: "first" }, workflow: { state: "in-progress", revision: 0 }, worktrees: [], participation: {
@@ -62,4 +63,63 @@ it("refreshes stale membership instead of keeping an impossible detach retry", a
   await act(async () => root.render(<WorkspaceSessions workspace={workspace()} sessionId="second" refresh={refresh} />));
   await act(async () => button("Detach this session").click());
   expect(refresh).toHaveBeenCalledOnce(); expect(button("Retry same request")).toBeUndefined(); expect(sessionStorage.length).toBe(0);
+});
+
+function Controls({ refresh }: { refresh: () => void }) {
+  const space = workspace(); space.participation!.role = "owner";
+  const actions = useWorkspaceSessionActions(space, refresh);
+  return <>
+    <button disabled={actions.busy || actions.retry} onClick={() => void actions.command("attach", {}, "bound")}>Attach candidate</button>
+    <WorkspaceSessions workspace={space} sessionId="second" refresh={refresh} actions={actions} />
+    <WorkspaceSessionTabs workspace={space} sessions={[]} onPick={() => {}} actions={actions} />
+  </>;
+}
+it.each([
+  new AssistantApiError("workspace_session_bound", "Already attached elsewhere", 409),
+  new AssistantApiError("workspace_forbidden", "Access refused", 403),
+])("clears a confirmed attach refusal and unlocks unrelated actions after reload", async failure => {
+  const refresh = vi.fn(); vi.mocked(workspaceAction).mockRejectedValueOnce(failure);
+  await act(async () => root.render(<Controls refresh={refresh} />));
+  await act(async () => button("Attach candidate").click());
+  expect(container.textContent).toContain(failure.message);
+  expect(sessionStorage.length).toBe(0); expect(refresh).toHaveBeenCalledOnce();
+  expect(button("Retry same request")).toBeUndefined();
+  for (const name of ["Attach session", "Detach this session", "Manage sharing", "New session in workspace"])
+    expect(button(name).disabled).toBe(false);
+  await act(async () => root.render(null));
+  await act(async () => root.render(<Controls refresh={refresh} />));
+  expect(button("Retry same request")).toBeUndefined(); expect(button("New session in workspace").disabled).toBe(false);
+});
+it("clears a confirmed sharing refusal from browser recovery", async () => {
+  vi.mocked(developmentRequest).mockRejectedValueOnce(new DevelopmentRequestError("Not permitted", "workspace_forbidden", 403));
+  await act(async () => root.render(<Controls refresh={() => {}} />));
+  await act(async () => button("Manage sharing").click());
+  await act(async () => button("Revoke access").click());
+  expect(container.textContent).toContain("Not permitted"); expect(sessionStorage.length).toBe(0);
+  expect(button("Retry same request")).toBeUndefined(); expect(button("New session in workspace").disabled).toBe(false);
+});
+it.each([
+  new Error("Response lost"), new AssistantApiError("unavailable", "Core unavailable", 503),
+  new AssistantApiError("timeout", "Request timed out", 408), new AssistantApiError("rate_limit", "Retry later", 429),
+])("retains uncertain actions through reload and a later authorization refusal", async failure => {
+  vi.mocked(createWorkspaceSession).mockRejectedValueOnce(failure);
+  await act(async () => root.render(<Tabs space={workspace()} select={() => {}} />));
+  await act(async () => button("New session in workspace").click());
+  const original = vi.mocked(createWorkspaceSession).mock.calls[0][0];
+  expect(sessionStorage.length).toBe(1);
+  await act(async () => root.render(null));
+  await act(async () => root.render(<Tabs space={workspace()} select={() => {}} />));
+  vi.mocked(createWorkspaceSession).mockRejectedValueOnce(new AssistantApiError("forbidden", "Access changed", 403));
+  await act(async () => button("Retry same request").click());
+  expect(vi.mocked(createWorkspaceSession).mock.calls[1][0]).toEqual(original);
+  expect(sessionStorage.length).toBe(1); expect(button("New session in workspace").disabled).toBe(true);
+});
+it("unlocks actions when a successful attach cannot refresh the conversation list", async () => {
+  vi.mocked(workspaceAction).mockResolvedValueOnce({ workspace: { id: "workspace" } });
+  vi.mocked(listSessions).mockRejectedValueOnce(new AssistantApiError("unavailable", "List unavailable", 503));
+  const refresh = vi.fn();
+  await act(async () => root.render(<Controls refresh={refresh} />));
+  await act(async () => button("Attach candidate").click());
+  expect(container.textContent).toContain("List unavailable"); expect(sessionStorage.length).toBe(0);
+  expect(refresh).toHaveBeenCalledOnce(); expect(button("New session in workspace").disabled).toBe(false);
 });

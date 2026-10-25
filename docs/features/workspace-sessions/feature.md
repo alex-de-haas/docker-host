@@ -267,6 +267,8 @@ Review regression coverage verifies selected-file `reviewId` transport for both 
 ordinary chat workflow reads after creator detachment without restoring source access, and durable
 attach/detach refusal recovery. Definitive refusals stop blocking chat retention/deletion; uncertain
 responses retain their exact request. A later authorization refusal does not erase that uncertainty.
+Browser recovery also clears confirmed refusals, unlocking attachment, sharing and new-session
+controls across reloads, while retaining uncertain requests after a later authorization failure.
 Deletion retries a refused detach with a fresh membership revision. Environment source admission
 continues to return the sandbox API's forbidden error for an unattached session.
 

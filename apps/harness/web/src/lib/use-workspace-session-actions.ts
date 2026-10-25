@@ -28,15 +28,19 @@ export function useWorkspaceSessionActions(workspace: DevelopmentWorkspace | und
   const run = async (action: Action) => {
     if (executing.current || !workspace?.participation) return;
     executing.current = true;
+    const recovering = pending?.input.requestId === action.input.requestId;
+    let acknowledged = false;
     const isCurrent = () => mounted.current && currentIdentity.current === identity;
     setPending(action); setBusy(true); setError("");
     try { if (key) sessionStorage.setItem(key, JSON.stringify(action)); } catch { /* Optional browser recovery. */ }
     try {
       if (action.kind === "new") {
         const session = await createWorkspaceSession(action.input as { workspaceId: string; requestId: string; expectedRevision: number });
+        acknowledged = true;
         if (isCurrent()) onSelect?.(session);
       } else if (action.kind === "attach" || action.kind === "detach") {
         await workspaceAction(action.sessionId!, action.kind, action.input);
+        acknowledged = true;
         if (action.kind === "attach") {
           const record = (await listSessions()).find(s => s.id === action.sessionId);
           if (record && isCurrent()) onSelect?.(record);
@@ -48,7 +52,12 @@ export function useWorkspaceSessionActions(workspace: DevelopmentWorkspace | und
     } catch (cause) {
       if (!isCurrent()) return;
       setError(cause instanceof Error ? cause.message : String(cause));
-      if ((cause instanceof DevelopmentRequestError || cause instanceof AssistantApiError) && ["workspace_revision_conflict", "revision_conflict"].includes(cause.code ?? "")) {
+      const apiError = cause instanceof DevelopmentRequestError || cause instanceof AssistantApiError;
+      const confirmedRefusal = apiError && (cause.status ?? 0) >= 400 && (cause.status ?? 0) < 500
+        && ![408, 429].includes(cause.status!) && (!recovering || ["workspace_revision_conflict", "revision_conflict", "workspace_session_bound"].includes(cause.code ?? ""));
+      // Preserve an uncertain request after a later auth failure; a successful mutation
+      // needs no replay merely because fetching the updated conversation failed.
+      if (acknowledged || confirmedRefusal) {
         try { if (key) sessionStorage.removeItem(key); } catch { /* Optional browser recovery. */ }
         setPending(null); refresh();
       }
