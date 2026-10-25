@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Check, CircleAlert, Copy, LoaderCircle, TriangleAlert } from "lucide-react";
+import { Check, CircleAlert, Copy, Hourglass, LoaderCircle, TriangleAlert } from "lucide-react";
 import { HostyEmptySlots, HostyLoader } from "../../../../../shared/web/hosty-states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -91,11 +91,13 @@ export function StatusBadge({ value, health, compact = false, className, label }
 
   const normalized = value.toLowerCase();
   const failed = /error|failed|unhealthy|offline/.test(normalized);
-  const attention = /degraded|unknown|configuration|approval|needs-attention|quota-exceeded/.test(normalized);
+  const waiting = normalized === "waiting";
+  const attention = /waiting|degraded|unknown|configuration|approval|needs-attention|quota-exceeded/.test(normalized);
   const transitional = !failed && !attention && /starting|stopping|restarting|updating|preparing|building|installing|finishing|resetting|provisioning/.test(normalized);
   const running = !failed && !attention && !transitional && /running|ready|healthy|^ok$/.test(normalized);
   const tone = failed ? "text-destructive-foreground" : attention ? "text-warning-foreground" : transitional ? "text-info-foreground" : running ? "text-success-foreground" : "text-muted-foreground";
   const glyph = failed ? <CircleAlert aria-hidden className="size-3.5 shrink-0" />
+    : waiting ? <Hourglass aria-hidden className="size-3.5 shrink-0" />
     : attention ? <TriangleAlert aria-hidden className="size-3.5 shrink-0" />
     : transitional ? <LoaderCircle aria-hidden className="size-3.5 shrink-0 animate-spin motion-reduce:animate-none" />
     : <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-current" />;
@@ -103,7 +105,7 @@ export function StatusBadge({ value, health, compact = false, className, label }
     <TooltipTrigger asChild><span role="img" aria-label={value} tabIndex={0} className={cn("inline-flex size-6 items-center justify-center rounded-sm", tone, className)}>{glyph}</span></TooltipTrigger>
     <TooltipContent>{value}</TooltipContent>
   </Tooltip></TooltipProvider>;
-  return <span className={cn("inline-flex items-center gap-2 text-sm", tone, className)}>{glyph}<span>{label ?? value.charAt(0).toUpperCase() + value.slice(1)}</span></span>;
+  return <span className={cn("inline-flex items-center gap-2 text-sm", tone, className)}>{glyph}<span>{label ?? (waiting ? "Waiting for dependencies" : value.charAt(0).toUpperCase() + value.slice(1))}</span></span>;
 }
 
 /** Progress and outcomes use the same labels but never share an animated working glyph. */

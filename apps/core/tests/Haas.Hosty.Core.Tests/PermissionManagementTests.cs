@@ -164,7 +164,7 @@ public sealed partial class CoreLifecycleServiceTests
         var adapter = new RecordingRuntimeAdapter("localCommand");
         var fixture = await LifecycleFixture.CreateAsync(localRuntimeAdapter: adapter);
         const string busyId = "aaa.busy";
-        await fixture.Service.InstallAsync(new(await fixture.WriteLocalCommandManifestAsync(id: busyId), Autostart: false));
+        await fixture.Service.InstallAsync(new(await fixture.WriteLocalCommandManifestAsync(id: busyId, includeDependency: false), Autostart: false));
         await fixture.Service.InstallAsync(new(await WritePermissionManifest(fixture, [CoreAppPermissions.ReadSkills], []), Autostart: false));
         await fixture.Service.StartAsync("example.permissions");
         await fixture.Apps.UpdateAppAsync("example.permissions", app => app with { GrantedCorePermissions = [] });

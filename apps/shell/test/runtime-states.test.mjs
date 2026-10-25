@@ -4,7 +4,7 @@ import { isAppBusy, isAppIdle, isAppUp } from "../src/app/shell/runtime-states.t
 
 test("isAppUp admits only a fully started app", () => {
   assert.equal(isAppUp("running"), true);
-  for (const state of ["starting", "stopping", "stopped", "unknown", undefined, null]) {
+  for (const state of ["starting", "stopping", "stopped", "unknown", "waiting", undefined, null]) {
     assert.equal(isAppUp(state), false, `isAppUp(${state})`);
   }
 });
@@ -12,7 +12,7 @@ test("isAppUp admits only a fully started app", () => {
 test("isAppBusy admits exactly the transitional states", () => {
   assert.equal(isAppBusy("starting"), true);
   assert.equal(isAppBusy("stopping"), true);
-  for (const state of ["running", "stopped", "unknown", undefined, null]) {
+  for (const state of ["running", "stopped", "unknown", "waiting", undefined, null]) {
     assert.equal(isAppBusy(state), false, `isAppBusy(${state})`);
   }
 });
@@ -25,10 +25,11 @@ test("isAppIdle is narrower than the negation of isAppUp", () => {
   assert.equal(isAppIdle("stopping"), false);
   assert.equal(isAppIdle("starting"), false);
   assert.equal(isAppIdle("unknown"), false);
+  assert.equal(isAppIdle("waiting"), false);
 });
 
 test("the three predicates are mutually exclusive", () => {
-  for (const state of ["running", "starting", "stopping", "stopped", "unknown"]) {
+  for (const state of ["running", "starting", "stopping", "stopped", "unknown", "waiting"]) {
     const matches = [isAppUp(state), isAppBusy(state), isAppIdle(state)].filter(Boolean).length;
     assert.ok(matches <= 1, `${state} matched ${matches} predicates`);
   }

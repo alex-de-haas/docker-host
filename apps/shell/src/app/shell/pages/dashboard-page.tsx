@@ -658,6 +658,7 @@ function InstalledAppRow({
         <div className="flex items-center justify-end gap-1">
           <div className="dashboard-context-action">
             {canControl && lifecycleLabel ? <Button variant="outline" size="sm" disabled><LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" />{lifecycleLabel}</Button>
+              : app.runtimeState === "waiting" && canControl ? <Button variant="outline" size="sm" disabled={lifecycleDisabled || isBusy("stop")} onClick={() => onAction(app, "stop")}>Cancel start</Button>
               : showRestartRequired && canControl ? <Button variant="outline" size="sm" disabled={lifecycleDisabled || Boolean(busyAction?.startsWith(`${app.id}:`))} onClick={() => onAction(app, "restart")}>Restart</Button>
               : running && canViewLogs && needsDiagnostics ? <Button variant="outline" size="sm" onClick={() => onOpenPanel(app, "logs")}>Logs</Button>
               : configurationRequired && canConfigure ? <Button variant="outline" size="sm" onClick={() => onOpenPanel(app, "settings", { settingsTab: app.configurationReadiness?.mounts.length && !app.configurationReadiness?.missingSettings.length ? "mounts" : "app" })}>Configure</Button>
@@ -1000,7 +1001,7 @@ function InstalledAppActionsMenu({
         {canControl && (
           <>
             <DropdownMenuLabel>Lifecycle</DropdownMenuLabel>
-            {running ? (
+            {running || app.runtimeState === "waiting" ? (
               <DropdownMenuItem disabled={transitioning || stopBusy} onClick={() => onLifecycleAction("stop")}>
                 <Square className="h-4 w-4" />
                 Stop app

@@ -130,7 +130,7 @@ export function AppDetailsDialog({
       <div className="flex flex-wrap items-center gap-2">
         {onOpenApp && <Button variant="outline" size="sm" onClick={onOpenApp}><ExternalLink className="size-4" />Open app</Button>}
         {onManageAction && <><Button variant="outline" size="sm" disabled={!!busyAction} onClick={() => onManageAction(isAppUp(app.runtimeState) ? "restart" : "start")}>{isAppUp(app.runtimeState) ? <RefreshCw className="size-4" /> : <Play className="size-4" />}{isAppUp(app.runtimeState) ? "Restart" : "Start"}</Button>
-          {isAppUp(app.runtimeState) && <Button variant="outline" size="sm" disabled={!!busyAction} onClick={() => onManageAction("stop")}><Square className="size-4" />Stop</Button>}</>}
+          {(isAppUp(app.runtimeState) || app.runtimeState === "waiting") && <Button variant="outline" size="sm" disabled={!!busyAction} onClick={() => onManageAction("stop")}><Square className="size-4" />{app.runtimeState === "waiting" ? "Cancel start" : "Stop"}</Button>}</>}
         <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label="More app actions"><Ellipsis /></Button></DropdownMenuTrigger>
           <DropdownMenuContent align="end">{onShowLogs && <DropdownMenuItem onSelect={onShowLogs}>Logs</DropdownMenuItem>}{onAskAssistant && <DropdownMenuItem onSelect={onAskAssistant}>Ask assistant</DropdownMenuItem>}{canManageApps && onShowRemoval && <DropdownMenuItem onSelect={onShowRemoval}>Remove app…</DropdownMenuItem>}</DropdownMenuContent>
         </DropdownMenu>

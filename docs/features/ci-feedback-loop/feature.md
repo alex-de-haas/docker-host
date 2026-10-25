@@ -1,6 +1,6 @@
 ---
 created: 2026-10-20
-updated: 2026-10-24
+updated: 2026-10-25
 summary: Affected component CI, explicit local integration checks and publication of verified main revisions.
 components: [.github, scripts]
 ---
@@ -49,6 +49,7 @@ Use the console entry point from a registered development worktree:
 
 ```bash
 npm run test:integration -- activation
+npm run test:integration -- dependencies
 npm run test:integration -- windows
 npm run test:integration -- transport
 npm run test:integration -- worker
@@ -65,6 +66,7 @@ GitHub Actions. Its small command-construction tests remain in the CI policy job
 | --- | --- |
 | activation | Requires .NET, Git, Python and Docker; builds Core/CLI and runs Return plus detached-helper recovery in parent-owned isolated Core environments. |
 | windows | Requires Windows, Git and .NET; runs the focused process/path/document/storage Core tests and CLI shared-receipt tests. Other operating systems receive an explicit refusal. |
+| dependencies | Requires .NET, Python and Docker; builds Core/CLI and checks dependency waits, recovery, cancellation and boot in a parent-owned isolated Core. |
 | transport | Requires .NET, Python and Docker; builds Core and runs its isolated real-Docker listener/transport fixture. |
 | worker | Requires Docker; builds the worker image named by the current manifest and runs its process/mount/control fixtures. |
 | whisper | Requires .NET; explicitly enables only NativeSpeechTests, including pinned-model download and real CPU inference. `HOSTY_WHISPER_TEST_CACHE` can reuse a verified cache. |
