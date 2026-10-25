@@ -1,6 +1,6 @@
 ---
 created: 2026-10-21
-updated: 2026-10-24
+updated: 2026-10-25
 summary: Shared web tokens, local fonts and scoped SDK chrome, with Shell, Harness, Marketplace and Telemetry adoption and an in-place credential grid.
 components: [apps/shell, apps/harness, apps/marketplace, apps/plans, apps/telemetry, apps/telemetry-ui, apps/whisper, apps/demo-app, packages/app-sdk, shared/web]
 ---
@@ -178,7 +178,11 @@ in More and Manage > Launch. Core's source label uses the same muted `text-xs` s
 app labels. The source name has a dotted underline, preceded by a decorative hammer for a registered
 workspace or Git branch icon for source, without a type prefix, background highlight or extra padding.
 Development rows omit pseudo-runtime words and their separator. Package versions retain concrete
-production runtime/profile names; internal development recipe names are not shown.
+production runtime/profile names; internal development recipe names are not shown. Core and app
+package updates share the inline current → target version layout and contextual Update action.
+Routine target versions use Info blue; review-required app target versions and their Update action
+use Attention amber, with an accessible Core-review label. Core keeps Restart and diagnostic Logs
+ahead of Update and preserves the Update entry in More.
 
 Runtime choices are in each row's More > Runtime / workspace submenu. All supported lifecycle, logs, configuration,
 update, backup, autostart, assistant and removal actions retain their existing authorization and
