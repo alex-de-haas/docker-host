@@ -24,6 +24,83 @@ public sealed partial class CoreLifecycleServiceTests
         fixture.Adapter.Health = _ => new("healthy", [new("app", "running", null, null, null, null, null, Health: "healthy")]);
     }
 
+    private static async Task AddDevDependencyAsync(LifecycleFixture fixture, string? worktree = null)
+    {
+        var app = (await fixture.Apps.GetAppAsync("test.created"))!;
+        var paths = new[] { app.ManifestPath!, Path.Combine(app.SourceState!.LocalOverridePath!, "manifest.json"),
+            Path.Combine(worktree ?? app.SourceState.LocalOverridePath!, "manifest.json") };
+        foreach (var path in paths.Distinct())
+        {
+            var manifest = JsonNode.Parse(await File.ReadAllTextAsync(path))!;
+            manifest["dependencies"] = new JsonArray(new JsonObject { ["id"] = "org.example.provider", ["required"] = true });
+            await File.WriteAllTextAsync(path, manifest.ToJsonString());
+        }
+        await fixture.Apps.UpdateAppAsync(app.Id, value => value with
+        { Dependencies = [new("org.example.provider", null, true, [])] });
+        await InstallDependencyFixtureAsync(fixture, "org.example.provider");
+    }
+
+    [Theory]
+    [InlineData(false, "enter", "ready")]
+    [InlineData(true, "enter", "ready")]
+    [InlineData(false, "restart", "ready")]
+    [InlineData(true, "restart", "ready")]
+    [InlineData(false, "restart", "revoked")]
+    [InlineData(true, "restart", "revoked")]
+    [InlineData(false, "restart", "cancelled")]
+    [InlineData(true, "restart", "cancelled")]
+    public async Task ResumeWaitingAppsAsync_PrivateDevelopmentRevalidatesOriginatingAuthority(
+        bool privateManifest, string action, string outcome)
+    {
+        var (f, service, users, privateSources) = await PrivateDevFixture(privateManifest);
+        await AddDevDependencyAsync(f);
+        var actor = new AppDevActor("admin", "manual");
+        if (action == "restart")
+        {
+            await f.Apps.UpdateAppAsync("org.example.provider", app => app with { RuntimeState = "running", Health = new("healthy", [], f.Clock.UtcNow) });
+            await ApplyReviewedDev(service, DevRequest("enter"), actor);
+            await f.Apps.UpdateAppAsync("org.example.provider", app => app with { RuntimeState = "stopped" });
+        }
+        var waiting = await ApplyReviewedDev(service, DevRequest(action), actor);
+        Assert.Equal("active", waiting.Phase);
+        Assert.Equal("waiting", waiting.App.RuntimeState);
+        Assert.Equal("dev_source_authority_required", (await Assert.ThrowsAsync<AppLifecycleException>(() => service.StartAsync("test.created"))).Code);
+        var starts = f.Adapter.StartCount;
+        if (outcome == "revoked") await users.UpdateAsync(state => state with { ProviderConnections = [] });
+        if (outcome == "cancelled") await service.StopAsync("test.created");
+        await f.Apps.UpdateAppAsync("org.example.provider", app => app with { RuntimeState = "running", Health = new("healthy", [], f.Clock.UtcNow) });
+
+        // Recovery must use persisted authority, not the service instance or the original request.
+        var resumed = f.RecreateService(privateSources: privateSources);
+        await resumed.ResumeWaitingAppsAsync();
+        var result = (await f.Apps.GetAppAsync("test.created"))!;
+        Assert.Equal(outcome == "ready" ? "running" : "stopped", result.RuntimeState);
+        Assert.Equal(starts + (outcome == "ready" ? 1 : 0), f.Adapter.StartCount);
+        Assert.Equal(waiting.OperationId, result.DevModeId);
+        if (outcome == "revoked") Assert.NotNull(result.LastError);
+        await resumed.ResumeWaitingAppsAsync();
+        Assert.Equal(starts + (outcome == "ready" ? 1 : 0), f.Adapter.StartCount);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ResumeWaitingAppsAsync_DevelopmentRevalidatesWorkspaceBinding(bool changed)
+    {
+        var (f, owner, _, tree, _, _) = await LocalHandoffFixture();
+        await AddDevDependencyAsync(f, tree.Path);
+        var waiting = await ApplyReviewedDev(f.Service, DevRequest("enter", tree.Id), DevActor(owner));
+        Assert.Equal("waiting", waiting.App.RuntimeState);
+        if (changed)
+            await JsonStorage.WriteAsync(Path.Combine(f.Paths.CoreRoot, "development/workspaces", tree.Id + ".json"),
+                tree with { State = "released" });
+        await f.Apps.UpdateAppAsync("org.example.provider", app => app with { RuntimeState = "running", Health = new("healthy", [], f.Clock.UtcNow) });
+        var starts = f.Adapter.StartCount;
+        await f.RecreateService().ResumeWaitingAppsAsync();
+        Assert.Equal(changed ? "stopped" : "running", (await f.Apps.GetAppAsync("test.created"))!.RuntimeState);
+        Assert.Equal(starts + (changed ? 0 : 1), f.Adapter.StartCount);
+    }
+
     [Theory]
     [InlineData(true, "waiting", 0)]
     [InlineData(false, "running", 1)]

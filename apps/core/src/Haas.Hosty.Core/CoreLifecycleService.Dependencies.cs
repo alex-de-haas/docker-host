@@ -121,7 +121,18 @@ internal sealed partial class CoreLifecycleService
             if ((await GetConfigurationReadinessAsync(app, ct)).Required)
                 return new(await BuildAppSummaryAsync(app, ct), null, "configuration-required");
             return await StartCoreAsync(appId, afterOwnStop: false, ct);
-        }, ct, allowDevelopment: true, startsDevelopmentRuntime: true);
+        }, ct, allowDevelopment: true, startsDevelopmentRuntime: true, resumeWaitingDevelopment: true);
+
+    private async Task<T> ResumeWaitingDevelopmentAsync<T>(AppRecord app, AppDevOperation development,
+        Func<Task<T>> start, CancellationToken ct)
+    {
+        await ValidateDevBindingAsync(app, development, ct);
+        var installed = await manifests.LoadAsync(app.ManifestPath!, app.SelectedRuntime, ct);
+        await ValidateDevSourceAuthorityAsync(app, installed, development.Actor, ct);
+        if (development.WorktreeId is { } treeId)
+            return await DevWorkspaces.WithDevAdmissionAsync(treeId, app, development.Actor.WorkspaceOwner, start, ct);
+        return await start();
+    }
 
     /// <summary>Rechecks durable waiting intents under their own locks; a concurrent Stop wins before admission.</summary>
     public async Task ResumeWaitingAppsAsync(CancellationToken cancellationToken = default, IReadOnlySet<string>? allowedIds = null)

@@ -109,7 +109,7 @@ internal sealed partial class CoreLifecycleService(
     // NOT reentrant: verbs that internally start an app (ApplyUpdate,
     // ApplyRuntimeSwitch, CreateManualBackup) call StartCoreAsync — the unlocked body — never StartAsync.
 
-    internal async Task<T> WithAppLockAsync<T>(string appId, Func<Task<T>> operation, CancellationToken cancellationToken, bool allowDevelopment = false, bool developmentOperation = false, bool startsDevelopmentRuntime = false)
+    internal async Task<T> WithAppLockAsync<T>(string appId, Func<Task<T>> operation, CancellationToken cancellationToken, bool allowDevelopment = false, bool developmentOperation = false, bool startsDevelopmentRuntime = false, bool resumeWaitingDevelopment = false)
     {
         var mutex = apps.OperationLock(appId);
         await mutex.WaitAsync(cancellationToken);
@@ -120,6 +120,10 @@ internal sealed partial class CoreLifecycleService(
             {
                 if (!allowDevelopment || development.Phase != "active")
                     throw new AppLifecycleException("dev_mode_active", "Return from development mode before changing this app. An interrupted transition must be recovered using its original requestId.");
+                // A deferred start retains the reviewed dev operation through DevModeId. Only the
+                // dependency scheduler can resume it, after revalidating that persisted authority.
+                if (resumeWaitingDevelopment && installed.RuntimeState == AppRuntimeStates.Waiting)
+                    return await ResumeWaitingDevelopmentAsync(installed, development, operation, cancellationToken);
                 // Generic lifecycle callers have no source-owner identity. Private development code
                 // must use the reviewed dev operation, which rechecks ownership and current grants.
                 if (startsDevelopmentRuntime && installed.PrivateSources is { Git: not null } or { Manifest: not null })

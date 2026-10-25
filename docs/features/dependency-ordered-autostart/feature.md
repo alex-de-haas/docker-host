@@ -39,6 +39,10 @@ so concurrent resume requests cannot duplicate a launch and Stop cannot be undon
 Reviewed updates retain a pending start and recheck the updated graph, including cycle repairs.
 Normal configuration, source authority and runtime preparation checks remain in force; an update
 requiring new configuration remains stopped until configured and started.
+Deferred development starts retain their operation through the app's development journal pointer.
+Resume revalidates the installation/source binding, the original actor's current private-source grants,
+and any workspace ownership/admission rules before launching. Revoked authority fails closed; ordinary
+manual Start still requires the reviewed development controls for private source.
 
 Waiting is durable across a Core crash and is excluded from stranded-operation recovery and crash
 supervision. Normal boot autostart policy still applies, including stopping disabled apps. Shutdown
@@ -60,7 +64,7 @@ Existing app-change events refresh the UI. CLI colours `waiting` yellow and retu
 - Core lifecycle tests cover required/optional and absent providers, unhealthy and unresolved
   endpoints, reverse-alphabetical chains, later-tier providers, cycles and graph repair, immediate
   slot refill, concurrency bounds, system preference, bootstrap, manual Start/Restart, Stop/resume
-  races, crash recovery and readiness notifications.
+  races, crash recovery, readiness notifications and deferred development authority/revocation.
 - Existing configuration, source/runtime authority, local-process and Docker lifecycle coverage
   remains applicable. Dependency summaries and admission agree on readiness.
 - Shell tests verify the waiting indicator, Attention classification, enabled cancellation and the
