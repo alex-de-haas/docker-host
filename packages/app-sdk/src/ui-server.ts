@@ -1,6 +1,6 @@
 import type { SandboxIdentityContext } from "./sandbox-identity.js";
 import type { ProviderServerOptions } from "@hosty-sdk/app/providers/server";
-import { UiError, type PanelTarget, type UiBootstrap, type UiPanel, type UiResolvedPanel, type UiNavigationCatalog, type UiNavigationTarget, type UiResolvedNavigation } from "@hosty-sdk/app/ui/types";
+import { UiError, type ToolActivity, type PanelTarget, type UiBootstrap, type UiPanel, type UiResolvedPanel, type UiNavigationCatalog, type UiNavigationTarget, type UiResolvedNavigation } from "@hosty-sdk/app/ui/types";
 
 /** Server transport for generic UI metadata. Credentials never appear in returned metadata. */
 export class UiServerClient {
@@ -32,6 +32,9 @@ export class UiServerClient {
   }
   async listPanels(token: string, signal?: AbortSignal): Promise<UiPanel[]> {
     return (await this.request<{ panels: UiPanel[] }>("panels", token, undefined, signal)).panels;
+  }
+  async activity(token: string, signal?: AbortSignal): Promise<ToolActivity[]> {
+    return (await this.request<{ activities: ToolActivity[] }>("activity", token, undefined, signal)).activities;
   }
   navigation(token: string, signal?: AbortSignal): Promise<UiNavigationCatalog> {
     return this.request("navigation", token, undefined, signal);
@@ -71,6 +74,9 @@ export async function createHostyUiResponse(request: Request, context: UiAuthent
       result = await client.bootstrap({ parentOrigin: url.searchParams.get("parentOrigin") ?? undefined }, context.token, request.signal);
     } else if (request.method === "GET" && route === "panels") {
       result = { panels: await client.listPanels(context.token, request.signal) };
+    } else if (request.method === "GET" && route === "activity") {
+      if (url.search) throw new UiError("ui_request_invalid", "Unexpected activity parameters.", 400);
+      result = { activities: await client.activity(context.token, request.signal) };
     } else if (request.method === "GET" && route === "navigation") {
       if (url.search) throw new UiError("ui_request_invalid", "Unexpected navigation parameters.", 400);
       result = await client.navigation(context.token, request.signal);

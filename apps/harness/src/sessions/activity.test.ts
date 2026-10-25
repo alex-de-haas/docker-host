@@ -113,3 +113,32 @@ it("retains current activity behind an approval wait and clears it on the next t
   await manager.postMessage(id, "next");
   expect(await snapshot()).toMatchObject({ activity: { phase: "working", tool: null, toolCount: 0 } });
 });
+
+it("publishes server tool activity for approvals, questions, failures and removal without frame subscriptions", async () => {
+  const changed = vi.fn(), unsubscribe = manager.subscribeToolActivity(changed);
+  expect(await manager.toolActivitySnapshot()).toEqual([{ userId: "admin", status: "running", pending: 0 }]);
+  adapter.emit({ type: "approval_request", approvalId: "approve-1", toolName: "Command", input: {} });
+  await vi.waitFor(async () => expect(await manager.toolActivitySnapshot()).toEqual([{ userId: "admin", status: "awaiting_approval", pending: 1 }]));
+  await manager.resolveApproval(id, "approve-1", "allow");
+  expect((await manager.toolActivitySnapshot())[0]).toMatchObject({ status: "running", pending: 0 });
+  adapter.emit({ type: "question_request", questionId: "question-1", questions: [{ question: "Which?", header: "Choice", multiSelect: false, options: [{ label: "A", description: "First" }, { label: "B", description: "Second" }] }] });
+  await vi.waitFor(async () => expect((await manager.toolActivitySnapshot())[0]).toMatchObject({ status: "awaiting_question", pending: 1 }));
+  await manager.resolveQuestion(id, "question-1", { "Which?": "A" });
+  adapter.emit({ type: "error", message: "Test failure" });
+  await vi.waitFor(async () => expect((await manager.toolActivitySnapshot())[0]).toMatchObject({ status: "failed" }));
+  await manager.deleteSession(id, "admin");
+  expect(await manager.toolActivitySnapshot()).toEqual([]);
+  expect(changed).toHaveBeenCalled();
+  unsubscribe();
+});
+
+it("does not revive an orphaned native run merely because its conversation is opened", async () => {
+  const record = (await store.readRecord(id))!;
+  await manager.shutdown();
+  await store.saveRecord({ ...record, status: "running", workerRun: undefined });
+  manager = new SessionManager(store, adapter, new AuditReporter(null, null, "hosty.harness"), dir);
+  expect((await manager.toolActivitySnapshot())[0]).toMatchObject({ status: "failed" });
+  const view = await manager.subscribe(id, 0, () => {});
+  view.unsubscribe();
+  expect((await manager.toolActivitySnapshot())[0]).toMatchObject({ status: "failed" });
+});

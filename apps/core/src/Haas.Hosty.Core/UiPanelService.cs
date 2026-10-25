@@ -23,7 +23,7 @@ internal sealed record UiResolvedPanel(UiPanelTarget Target, UiFrameSurface? Sur
 
 /// <summary>Stateless, actor-scoped UI discovery. A browser handshake never becomes API authority.</summary>
 internal sealed partial class UiPanelService(AppRegistryStore apps, AppIdentityService identity,
-    UserDirectoryStore users, CorePublicOriginResolver coreOrigins)
+    UserDirectoryStore users, CorePublicOriginResolver coreOrigins, ToolActivityService activity)
 {
     internal static bool CanHost(AppRecord app) => AppManagementAuthorization.HasPermission(app, CoreAppPermissions.ReadPanels)
         || AppManagementAuthorization.HasPermission(app, CoreAppPermissions.ReadApps);
@@ -79,6 +79,25 @@ internal sealed partial class UiPanelService(AppRegistryStore apps, AppIdentityS
                     SurfaceState(app, panel),
                     canStart, UiFramePolicy.From(app)));
             }
+        }
+        return new(result);
+    }
+
+    public async Task<ToolActivityList> ActivityAsync(AppRecord caller, string userId, CancellationToken ct)
+    {
+        var catalog = await ListAsync(caller, userId, ct);
+        var installed = (await apps.ListAppRecordsAsync(ct)).ToDictionary(a => a.Id);
+        var result = new List<ToolActivity>();
+        foreach (var panel in catalog.Panels)
+        {
+            if (!installed.TryGetValue(panel.Panel.AppId, out var app)
+                || PanelIdentity.Installation(app) != panel.Panel.InstallationId) continue;
+            var surface = AppSummary.From(app).PanelSurfaces.FirstOrDefault(p => p.PanelId == panel.Panel.PanelId);
+            if (surface is null) continue;
+            var health = app.Health?.Services.FirstOrDefault(s => s.Service == surface.Service)?.Health;
+            // Panels may still be opened with an advisory failed probe, but their activity must not
+            // promise a live provider. Another service's failed probe cannot hide this tool's state.
+            result.Add(activity.Read(userId, panel with { Available = panel.Available && health != "unhealthy" }));
         }
         return new(result);
     }
@@ -161,6 +180,26 @@ internal static class UiPanelEndpoints
     public static void Map(WebApplication app)
     {
         const string root = "/api/internal/apps/{appId}/ui";
+        app.MapPost(root + "/activity", async (string appId, ToolActivityReport input, HttpContext context,
+            ProviderAccessService access, ToolActivityService activity) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            try
+            {
+                var caller = await access.AuthenticateAsync(appId, context.Request, context.RequestAborted);
+                return CoreJson.Json(await activity.ReportAsync(caller, input, context.RequestAborted));
+            }
+            catch (AppIdentityException ex)
+            {
+                var status = ex.Code == "installation_changed" ? 409 : ex.Code == "activity_capacity" ? 429
+                    : ex.Code is "activity_invalid" or "destination_invalid" ? 400 : AuthEndpoints.MapIdentityErrorStatus(ex.Code);
+                return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), status);
+            }
+        });
+        app.MapGet(root + "/activity", async (string appId, HttpContext context,
+            ProviderAccessService access, AppIdentityService identity, UiPanelService ui) =>
+            await Handle(context, appId, access, identity, async (caller, userId) =>
+                CoreJson.Json(await ui.ActivityAsync(caller, userId, context.RequestAborted))));
         app.MapGet(root + "/bootstrap", async (string appId, string? parentOrigin, HttpContext context,
             ProviderAccessService access, AppIdentityService identity, UiPanelService ui) =>
             await Handle(context, appId, access, identity, async (caller, userId) =>

@@ -234,6 +234,8 @@ internal static class HostyCoreApplication
         builder.Services.AddHostedService<AppUpdateSweepScheduler>();
         builder.Services.AddHostedService<AppPermissionObserver>();
         builder.Services.AddSingleton<ProviderAccessService>();
+        builder.Services.AddSingleton<ToolActivityService>();
+        builder.Services.AddHostedService(sp => sp.GetRequiredService<ToolActivityService>());
         builder.Services.AddSingleton<UiPanelService>();
         builder.Services.AddSingleton<InstallationApprovalStore>();
         builder.Services.AddSingleton<ProtectedSettingsChanges>();

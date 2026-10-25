@@ -539,6 +539,7 @@ internal sealed partial class LocalCommandRuntimeAdapter(
                 if (Environment.GetEnvironmentVariable(key) is { } value) startInfo.Environment[key] = value;
         }
         startInfo.Environment["HOSTY_APP_ID"] = context.App.Id;
+        startInfo.Environment["HOSTY_APP_INSTALLATION_ID"] = PanelIdentity.Installation(context.App);
         startInfo.Environment["HOSTY_APP_SERVICE_KEY"] = service.Key;
         foreach (var environment in BuildCoreEnvironment(config, CorePublicOrigin))
         {

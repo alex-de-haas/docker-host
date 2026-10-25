@@ -5,7 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Haas.Hosty.Core.Tests.Http;
 
-public sealed class UiPanelHttpTests
+public sealed partial class UiPanelHttpTests
 {
     [Fact]
     public async Task OwnNavigationNeedsNoCatalogGrant_AndKeepsStableKeysAcrossLabels()
@@ -317,9 +317,9 @@ public sealed class UiPanelHttpTests
         return client;
     }
 
-    private static async Task<CoreHttpHarness> Setup()
+    private static async Task<CoreHttpHarness> Setup(IClock? clock = null)
     {
-        var host = await CoreHttpHarness.StartAsync();
+        var host = await CoreHttpHarness.StartAsync(clock);
         var apps = host.Services.GetRequiredService<AppRegistryStore>();
         var now = DateTimeOffset.UtcNow;
         AppRecord App(string id, int port) => new(id, id, null, "1.0.0", "runtime", false, "installed", null, null,

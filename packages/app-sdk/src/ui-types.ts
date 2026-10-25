@@ -102,3 +102,7 @@ export type UiNavigationResult = UiActionResult;
 export type UiToolPickerResult = UiActionResult;
 export type UiRouterAdapter = { endpoint?: string; getRoute(): string; subscribe(listener: () => void): () => void;
   navigate(route: string): void | Promise<void> };
+
+/** Activity is owned by Core, independently of mounted tool frames. */
+export type ToolActivityState = "idle" | "working" | "needs-you" | "failed";
+export type ToolActivity = { panel: PanelRef; state: ToolActivityState | "no-connection"; count: number | null; label: string | null; reportedAt: string | null; expiresAt: string | null };

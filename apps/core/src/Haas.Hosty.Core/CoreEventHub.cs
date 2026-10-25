@@ -16,6 +16,7 @@ namespace Haas.Hosty.Core;
 internal sealed class CoreEventHub
 {
     // Domain events. Names are the wire contract for the SSE `event:` field.
+    public const string ToolActivityChanged = "tool.activity.changed";
     public const string WorkspaceChanged = "workspace.changed";
     public const string AppChanged = "app.changed";
     public const string AppRemoved = "app.removed";
@@ -29,9 +30,9 @@ internal sealed class CoreEventHub
     private readonly object gate = new();
     private readonly List<CoreEventSubscription> subscriptions = [];
 
-    public CoreEventSubscription Subscribe(string userId, bool isAdmin, string? sessionId = null, bool resources = false, bool workspaces = false)
+    public CoreEventSubscription Subscribe(string userId, bool isAdmin, string? sessionId = null, bool resources = false, bool workspaces = false, bool toolActivity = false)
     {
-        var subscription = new CoreEventSubscription(userId, isAdmin, this, sessionId, resources && isAdmin, workspaces);
+        var subscription = new CoreEventSubscription(userId, isAdmin, this, sessionId, resources && isAdmin, workspaces, toolActivity);
         lock (gate)
         {
             subscriptions.Add(subscription);
@@ -100,7 +101,11 @@ internal sealed class CoreEventHub
     // session would leak the existence of apps a user was never assigned.
     public void PublishAppEvent(string name, string? appId = null)
     {
-        if (name is AppChanged or AppRemoved) PublishWorkspaceChange("*");
+        if (name is AppChanged or AppRemoved)
+        {
+            PublishWorkspaceChange("*");
+            PublishToolActivity();
+        }
         CoreEventSubscription[] targets;
         lock (gate)
         {
@@ -120,6 +125,14 @@ internal sealed class CoreEventHub
         {
             subscription.TryWrite(envelope);
         }
+    }
+
+    // Empty hints disclose no panel, user or activity data; reads revalidate the actor's catalogue.
+    public void PublishToolActivity(string? userId = null)
+    {
+        CoreEventSubscription[] targets;
+        lock (gate) targets = subscriptions.Where(s => s.IsActive && s.ToolActivity && (userId is null || s.UserId == userId)).ToArray();
+        foreach (var target in targets) target.TryWrite(new(ToolActivityChanged, "{}"));
     }
 
     public void PublishNotification(NotificationRecord record)
@@ -171,13 +184,14 @@ internal sealed class CoreEventSubscription : IDisposable
     private readonly CoreEventHub owner;
     private int completed;
 
-    public CoreEventSubscription(string userId, bool isAdmin, CoreEventHub owner, string? sessionId = null, bool resources = false, bool workspaces = false)
+    public CoreEventSubscription(string userId, bool isAdmin, CoreEventHub owner, string? sessionId = null, bool resources = false, bool workspaces = false, bool toolActivity = false)
     {
         UserId = userId;
         IsAdmin = isAdmin;
         SessionId = sessionId;
         Resources = resources;
         Workspaces = workspaces;
+        ToolActivity = toolActivity;
         this.owner = owner;
         channel = Channel.CreateBounded<CoreEventEnvelope>(
             new BoundedChannelOptions(64) { FullMode = BoundedChannelFullMode.DropOldest, SingleReader = true },
@@ -189,6 +203,7 @@ internal sealed class CoreEventSubscription : IDisposable
     public bool IsAdmin { get; }
     public bool Resources { get; }
     internal bool Workspaces { get; }
+    internal bool ToolActivity { get; }
     public bool IsActive => Volatile.Read(ref completed) == 0;
 
     // Which credential opened this stream, so revoking that credential can close it. Null when the

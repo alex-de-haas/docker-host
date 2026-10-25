@@ -122,7 +122,7 @@ Plans: 14 In Progress · 1 Blocked · 40 Draft · 7 On Hold.
 - [Assistant MCP Delegation](features/delegated-token-exchange/feature.md) — Core grants individual assistants access to selected MCP targets through administrator-configured delegation.
 - [Demo App](features/demo-app/feature.md) — The repository-local reference app used to validate lifecycle, identity, directory access and app roles.
 - [Dependency-Ordered Startup](features/dependency-ordered-autostart/feature.md) — Required dependencies gate manual and automatic startup with a durable waiting state and event-driven recovery.
-- [Design System](features/design-system/feature.md) — Shared web tokens, local fonts and scoped SDK chrome, with Shell, Harness, Marketplace and Telemetry adoption and an in-place credential grid. · [plan](features/design-system/plan.md): In Progress, 24/51, updated 2026-10-24
+- [Design System](features/design-system/feature.md) — Shared web tokens, local fonts and scoped SDK chrome, with Shell, Harness, Marketplace and Telemetry adoption and an in-place credential grid. · [plan](features/design-system/plan.md): In Progress, 25/51, updated 2026-10-24
 - [Documentation Workflow](features/documentation-workflow/feature.md) — Workflow documents carry YAML frontmatter and stable deliverable IDs, checked by one validator shared by every Hosty repository.
 - [Feature: Domain Model](features/domain-model/feature.md) — The shared vocabulary for Core, Shell, the CLI and runtime apps.
 - [Embedded App Chrome](features/embedded-app-chrome/feature.md) — Navigation visibility uses explicit SDK composition policy while legacy launch modes retain transport and old-client compatibility.
@@ -183,6 +183,7 @@ Plans: 14 In Progress · 1 Blocked · 40 Draft · 7 On Hold.
 - [Source Providers](features/source-providers/feature.md) — Core owns a typed source-provider registry with built-in GitHub, owner-scoped connections and Shell account management.
 - [Swift Shell](features/swift-shell/feature.md) — A native SwiftUI client for iOS, iPadOS and macOS that manages a host's installed apps.
 - [Telemetry Over MCP](features/telemetry-mcp/feature.md) — Stored logs, traces and resource metrics exposed as an MCP interface behind a scoped credential.
+- [Tool Activity](features/tool-activity/feature.md) — Per-user tool activity flows from app servers through Core to Tools, including unopened panels, presence expiry and restart recovery.
 - [Translation Providers](features/translation-provider/feature.md) — Core translation discovery and scoped invocation, SDK clients, and two static Harness variants for translating text and Markdown plans.
 - [Isolated User Agent Sessions](features/user-agent-sessions/plan.md) — Deferred non-admin agent conversations with verified execution isolation and MCP calls limited to the acting user's current rights. · On Hold, 0/6, updated 2026-10-10
 - [User Management](features/user-management/feature.md) — Administrators invite, disable, delete and assign app access to Host users from the Shell User Management view.

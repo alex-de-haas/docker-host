@@ -15,6 +15,7 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { HostyEmptySlots, HostyLoader } from "../../../../../../shared/web/hosty-states";
 import { AppIcon } from "../app-icon";
 import { usePanelPreferences } from "./panel-preferences";
+import { useToolActivity, ToolActivityMark } from "./tool-activity";
 import { ShellWorkspaceSplit } from "./shell-workspace-split";
 
 const empty: UiHostSnapshot = { bootstrap: null, catalog: [], tools: [], selected: null, expanded: false, width: 360, error: null };
@@ -169,6 +170,7 @@ export function ShellPanelWorkspace({ children, initialWidth = 360, pageMinimum 
     : tool?.resolved.state === "degraded" ? "This app’s health check is failing. Its page may still work." : null;
   const siblings = tools.filter(t => t.key === tool?.key);
   const search = query.trim().toLowerCase();
+  const activity = useToolActivity();
   const matchingTools = state.catalog.filter(item => `${item.label} ${item.appName}`.toLowerCase().includes(search));
   const toolGroups = new Map<string, { appName: string; items: UiPanel[] }>();
   for (const item of matchingTools) {
@@ -237,10 +239,22 @@ export function ShellPanelWorkspace({ children, initialWidth = 360, pageMinimum 
         <Input className="shrink-0" aria-label="Search tools" placeholder="Search tools and apps" value={query} onChange={event => setQuery(event.target.value)} />
         {!state.bootstrap && !state.error && !state.catalog.length ? <p role="status" className="flex items-center gap-2 py-4 text-sm text-muted-foreground"><HostyLoader label={null} className="size-6" />Loading tools…</p>
           : !matchingTools.length && (!state.error || state.catalog.length > 0) && <div role="status" className="flex flex-col items-center gap-2 rounded-lg border bg-card px-4 py-5 text-center"><HostyEmptySlots className="size-12" /><p className="text-sm font-medium">{state.catalog.length ? "No tools match your search" : "No tools are available for your account."}</p>{state.catalog.length > 0 && <Button variant="outline" size="sm" onClick={() => setQuery("")}>Clear search</Button>}</div>}
-        <div className="min-h-0 space-y-4 overflow-y-auto">{[...toolGroups].map(([appId, group]) => <section key={appId} className="space-y-2" aria-label={`${group.appName} tools`}>
+        <div className="min-h-0 space-y-4 overflow-y-auto">
+          {(["needs-you", "working", "no-connection"] as const).map(status => {
+            const items = matchingTools.filter(item => status === "needs-you"
+              ? ["failed", "needs-you"].includes(activity.read(item).state) : activity.read(item).state === status)
+              .sort((a, b) => Number(activity.read(b).state === "failed") - Number(activity.read(a).state === "failed"));
+            return items.length > 0 && <section key={status} aria-label={status === "needs-you" ? "Needs you" : status === "working" ? "Working" : "No connection"} className="space-y-1">
+              <h3 className="text-xs font-medium">{status === "needs-you" ? "Needs you" : status === "working" ? "Working" : "No connection"}</h3>
+              {items.map(item => <Button key={panelKey(item.panel)} variant="ghost" className="flex h-auto w-full justify-between gap-2 py-2" onClick={() => void select(item)}>
+                <span className="min-w-0 truncate">{item.appName} — {item.label}</span><ToolActivityMark activity={activity.read(item)} />
+              </Button>)}
+            </section>;
+          })}
+          {[...toolGroups].map(([appId, group]) => <section key={appId} className="space-y-2" aria-label={`${group.appName} tools`}>
           <h3 className="text-xs font-medium text-muted-foreground">{group.appName}</h3>
           <div className="grid grid-cols-2 gap-2 min-[400px]:grid-cols-4">{group.items.map(item => <div key={panelKey(item.panel)} className="flex min-w-0 flex-col gap-2">
-            <Button variant="outline" aria-pressed={tool?.key === panelKey(item.panel)} className={cn("h-auto w-full min-w-0 flex-1 flex-col justify-start px-2 py-3", tool?.key === panelKey(item.panel) && "border-brand-strong bg-brand-soft")} onClick={() => void select(item)}><AppIcon src={null} name={item.icon} fallback={PanelsTopLeft} className="size-4" /><span className="flex min-w-0 flex-col items-start"><span className="w-full truncate">{item.label}</span><span className="w-full truncate text-xs text-muted-foreground">{item.appName}{!item.available && ` · ${item.state}`}</span></span></Button>
+            <Button variant="outline" aria-pressed={tool?.key === panelKey(item.panel)} className={cn("h-auto w-full min-w-0 flex-1 flex-col justify-start px-2 py-3", tool?.key === panelKey(item.panel) && "border-brand-strong bg-brand-soft")} onClick={() => void select(item)}><AppIcon src={null} name={item.icon} fallback={PanelsTopLeft} className="size-4" /><span className="flex min-w-0 flex-col items-start"><span className="w-full truncate">{item.label}</span><span className="w-full truncate text-xs text-muted-foreground">{item.appName}{!item.available && ` · ${item.state}`}</span><ToolActivityMark activity={activity.read(item)} /></span></Button>
             <Button variant="ghost" size="sm" role="checkbox" aria-checked={panelPreferences.isPinned(item)} disabled={!panelPreferences.ready}
               aria-label={`Pin ${item.appName} — ${item.label} to top bar`} onClick={() => panelPreferences.setPinned(item, !panelPreferences.isPinned(item))}>
               <Pin className={cn("size-4", panelPreferences.isPinned(item) && "fill-current")} />{panelPreferences.isPinned(item) ? "Pinned" : "Pin"}
@@ -248,7 +262,7 @@ export function ShellPanelWorkspace({ children, initialWidth = 360, pageMinimum 
             {!item.available && item.canStart && onStartApp && <Button variant="outline" onClick={() => void Promise.resolve(onStartApp(item.panel.appId)).then(() => host?.refresh())}>Start app</Button>}
           </div>)}</div>
         </section>)}</div>
-        <Button variant="outline" onClick={() => void host?.refresh()}>Refresh tools</Button>
+        <Button variant="outline" onClick={() => { activity.refresh(); void host?.refresh(); }}>Refresh tools</Button>
       </DialogContent>
     </Dialog>
     {error && !picker && <Alert className="absolute bottom-4 right-4 max-w-sm" role="status"><AlertDescription>{error}<Button variant="outline" size="sm" onClick={() => setPicker(true)}>Choose tool</Button></AlertDescription></Alert>}

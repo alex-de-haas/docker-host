@@ -14,6 +14,7 @@ import { NotificationBell } from "../notifications/notification-bell";
 import { ThemeMenuButton } from "./theme-menu-button";
 
 import { usePanelPreferences } from "./panel-preferences";
+import { useToolActivity, ToolActivityMark, ToolsActivityBadge } from "./tool-activity";
 import { PinnedToolButtons } from "./pinned-tool-buttons";
 
 const empty: UiHostSnapshot = { bootstrap: null, catalog: [], tools: [], selected: null, expanded: false, width: 360, error: null };
@@ -57,7 +58,7 @@ export function ShellTopStrip({
     if (toggle && workspace?.expanded && selected?.key === panelKey(item.panel)) { host?.collapseWorkspace("default"); return; }
     void host?.selectPanel(item.panel).then(result => setToolError(result.status === "opened" ? null : `${item.appName}: ${item.available ? "could not open tool" : item.state}.`));
   }
-  const attention = snapshot.tools.filter(item => item.workspaceId === "default").reduce((sum, item) => sum + item.attention, 0);
+  const activity = useToolActivity();
 
   const showPanelToggle = chrome.tools.enabled && chrome.tools.launcher !== "hide";
   return (
@@ -98,7 +99,7 @@ export function ShellTopStrip({
 
         {showPanelToggle && rightRailExpanded !== null && <div className="hidden min-w-0 flex-1 items-center gap-1 min-[600px]:flex">
           <PinnedToolButtons panels={pinned} selectedKey={workspace?.expanded ? selected?.key : undefined} onSelect={item => openTool(item, true)} />
-          <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="sm" className="shrink-0" aria-label="Tools"><PanelsTopLeft className="size-4" /><span className="hidden sm:inline">Tools</span>{attention > 0 && <span className="rounded-full bg-warning-soft px-1.5 text-xs text-warning-foreground">{attention}</span>}<ChevronDown className="size-3" /></Button></DropdownMenuTrigger>
+          <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="sm" className="shrink-0" aria-label="Tools"><PanelsTopLeft className="size-4" /><span className="hidden sm:inline">Tools</span><ToolsActivityBadge values={snapshot.catalog.map(activity.read)} /><ChevronDown className="size-3" /></Button></DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="max-h-[70dvh] w-64 overflow-y-auto">
               <p className="px-2 py-1.5 text-xs text-muted-foreground">Pin tools to the top bar</p>
               {preferences.error && <p role="status" className="px-2 py-1.5 text-xs text-warning-foreground">{preferences.error}</p>}
@@ -106,7 +107,7 @@ export function ShellTopStrip({
               {snapshot.catalog.map(item => <div key={panelKey(item.panel)} className="flex items-stretch gap-1">
                 <DropdownMenuItem className="min-w-0 flex-1" onSelect={() => openTool(item)}>
                   <AppIcon src={null} name={item.icon} fallback={PanelsTopLeft} className="size-4" /><span className="min-w-0 flex-1"><span className="block truncate">{item.label}</span><span className="block truncate text-xs text-muted-foreground">{item.appName}{!item.available && ` · ${item.state}`}</span></span>
-                  {snapshot.tools.some(tool => tool.key === panelKey(item.panel) && tool.attention > 0) && <span className="text-warning-foreground" aria-label="Needs attention">!</span>}
+                  <ToolActivityMark activity={activity.read(item)} />
                 </DropdownMenuItem>
                 <DropdownMenuItem role="menuitemcheckbox" aria-checked={preferences.isPinned(item)} disabled={!preferences.ready}
                   aria-label={`Pin ${item.appName} — ${item.label} to top bar`} title={preferences.isPinned(item) ? "Unpin from top bar" : "Pin to top bar"}
