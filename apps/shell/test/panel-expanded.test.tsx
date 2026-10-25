@@ -417,3 +417,23 @@ it("does not turn a pin action into an automatic open when restoring an all-unpi
   expect(host!.getSnapshot().selected).toBeNull();
   await act(async () => host!.refresh()); expect(host!.getSnapshot().selected).toBeNull();
 });
+
+it.each(["local", "another tab"])("cancels an in-flight automatic restore when pins change in %s, then permits an explicit open", async source => {
+  let release!: () => void;
+  resolutionGate = new Promise(resolve => { release = resolve; });
+  HTMLElement.prototype.scrollIntoView = vi.fn(); await render(true);
+  expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith("resolve"))).toBe(true);
+  expect(host!.getSnapshot().selected).toBeNull();
+  if (source === "local") { await openTools(); await pinWithKeyboard("assistant"); }
+  else await act(async () => {
+    const key = panelPreferenceKey(bootstrap.coreOrigin, "alice");
+    localStorage.setItem(key, JSON.stringify({ version: 1, pins: { [panelKey(panels[1].panel)]: false } }));
+    window.dispatchEvent(new StorageEvent("storage", { key }));
+  });
+  await act(async () => release());
+  expect(host!.getSnapshot().selected).toBeNull();
+  expect(container.querySelectorAll("iframe")).toHaveLength(0);
+  await act(async () => { await host!.selectPanel(panels[0].panel); });
+  expect(host!.getSnapshot().selected).toEqual(panels[0].panel);
+  expect(container.querySelector('iframe[title="notes"]')).not.toBeNull();
+});

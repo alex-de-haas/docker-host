@@ -58,7 +58,12 @@ export function ShellPanelWorkspace({ children, initialWidth = 360, pageMinimum 
   const panelPreferences = usePanelPreferences();
   const latestPins = useRef(panelPreferences);
   const restorePinned = useRef<(() => void) | null>(null);
-  useEffect(() => { latestPins.current = panelPreferences; restorePinned.current?.(); }, [panelPreferences]);
+  const pendingRestore = useRef<AbortController | null>(null);
+  useEffect(() => {
+    latestPins.current = panelPreferences;
+    if (!panelPreferences.restoreAllowed) pendingRestore.current?.abort();
+    restorePinned.current?.();
+  }, [panelPreferences]);
   const preferences = useRef(onExpandedChange);
   useEffect(() => { preferences.current = onExpandedChange; }, [onExpandedChange]);
 
@@ -89,12 +94,17 @@ export function ShellPanelWorkspace({ children, initialWidth = 360, pageMinimum 
       if (!latestPins.current.restoreAllowed) return;
       const first = current.catalog.find(p => p.available && latestPins.current.isPinned(p)); if (!first) return;
       attempted = current.catalog; opening = true;
-      void host.selectPanel(first.panel).finally(() => { opening = false; restore(); });
+      const controller = new AbortController(); pendingRestore.current = controller;
+      void host.selectPanel(first.panel, "default", controller.signal).finally(() => {
+        if (pendingRestore.current === controller) pendingRestore.current = null;
+        opening = false; restore();
+      });
     };
     restorePinned.current = restore;
     const stop = host.subscribeSnapshot(restore); restore();
     return () => {
-      live = false; restorePinned.current = null; stop();
+      live = false; pendingRestore.current?.abort(); pendingRestore.current = null;
+      restorePinned.current = null; stop();
       for (const item of host.getSnapshot().tools.filter(t => t.workspaceId === "default")) host.closePresentation(item.presentationId);
       unregister();
     };

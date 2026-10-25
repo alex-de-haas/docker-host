@@ -134,7 +134,7 @@ sessions and running apps intact. Explicit menu opens, assistant shortcuts, sess
 finalized handoffs resolve their intended target without changing pins or selecting another
 provider. Attention remains in Tools and its aggregate count. Restoring an expanded layout with
 no retained selection chooses only a pinned, available panel; an all-unpinned catalog stays closed
-until an explicit open. Changing a pin cancels a pending automatic restore and does not open a tool.
+until an explicit open. Changing a pin cancels a pending automatic restore, including delayed target resolution or presentation, and does not open a tool. The cancellation is scoped to that restore and preserves retained views and later explicit selections.
 SDK enabled/launcher policies remain independent of pin preferences.
 
 The document and open tool body share a resizable area. A tool header provides its title,
@@ -224,10 +224,10 @@ and local drafts.
 
 ## Local Verification
 
-The 2026-10-25 panel-pinning change completes visibility-plan deliverables D1–D5 and changes only
-Shell, from 0.113.2 to 0.114.0. `npm run shell:test` passes 206 logic tests and 765 component tests after integrating current main;
+The 2026-10-25 panel-pinning change completes visibility-plan deliverables D1–D5 and releases
+Shell 0.114.0 from 0.113.2, with SDK 0.34.2 from 0.34.1 for scoped restore cancellation. `npm run shell:test` passes 206 logic tests and 767 component tests after integrating current main;
 `npm run shell:build` succeeds. `npm run shell:lint` has no errors and three existing warnings.
-Core and CLI build successfully for the local fixture; their implementation is unchanged.
+`npm run sdk:test` passes 699 tests and the SDK build succeeds. Delayed-resolution regressions cover local and cross-tab unpinning; SDK regressions cover retained views, newer explicit selections and renderer cancellation. Core and CLI build successfully for the local fixture; their implementation is unchanged.
 
 Browser acceptance uses a parent-managed source child Core on macOS with locally built Docker
 Shell and a 12-panel fixture. Normal setup/password login and reviewed invitation/app assignments

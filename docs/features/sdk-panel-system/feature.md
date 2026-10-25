@@ -105,8 +105,13 @@ Request IDs are caller-generated UUIDs, distinct from handoff IDs. Presentation 
 SDK-created retained instances. The host keeps a bounded window-local ledger scoped to source
 document and orders selection per destination workspace. Matching replay
 revalidates authority and reuses the frame; conflicting payloads fail. Status rechecks the target.
-An aborted/timed-out wait is uncertain, not cancellation; retry/status uses the same ID. Message
-size and concurrent-request limits bound work. Core restart requires no browser-lease restoration.
+An aborted/timed-out protocol wait is uncertain, not cancellation; retry/status uses the same ID.
+The host's local `selectPanel(ref, workspaceId, signal)` accepts a separate optional cancellation
+signal for host-owned selections such as layout restoration. Aborting it before presentation
+returns `presentation_cancelled`, cancels pending renderer work and leaves retained views and
+newer selections intact. Signalled selections keep their operation pending until it settles;
+protocol wait timeouts do not detach ownership of the automatic restore.
+Message size and concurrent-request limits bound work. Core restart requires no browser-lease restoration.
 Immediate validation, conflict and concurrency refusals reach the embedded caller through the same
 response path as successful placement. The child reserves a request ID and target before asynchronous
 verification, coalesces identical in-flight calls and rejects conflicting targets locally. Status

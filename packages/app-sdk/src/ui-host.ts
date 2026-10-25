@@ -319,8 +319,9 @@ export class UiHost implements UiClient {
   openSurface = (target: PanelTarget, options: PresentationOptions): Promise<PresentationResult> =>
     waitForPresentation(this.open(target, options, "local"), options.requestId, options.signal);
 
-  private open(target: PanelTarget, options: PresentationOptions, source: string, frame?: Frame, sourceWorkspace?: string): Promise<PresentationResult> {
+  private open(target: PanelTarget, options: PresentationOptions, source: string, frame?: Frame, sourceWorkspace?: string, selectionSignal?: AbortSignal): Promise<PresentationResult> {
     const id = options.requestId;
+    if (selectionSignal?.aborted) return Promise.resolve({ status: "blocked", requestId: id, code: "presentation_cancelled" });
     if (!this.active || !this.activityReady || this.disposed)
       return Promise.resolve({ status: "blocked", requestId: id, code: "activity_required" });
     if (!validId(id) || !validTarget(target) || options.placement !== "side" || options.reuse !== undefined && !["exact", "new"].includes(options.reuse))
@@ -357,6 +358,7 @@ export class UiHost implements UiClient {
       try {
         const own = await this.bootstrap(generation);
         const check = () => {
+          if (selectionSignal?.aborted) throw new UiError("presentation_cancelled", "This selection was cancelled.");
           this.checkActivity(generation); this.requireTools(frame);
           if (!own.canHost) throw new UiError("app_permission_required", "Allow this app to host panels.");
           if (!currentSource() || frame && frame.actor !== own.userId || this.snapshot.bootstrap?.userId !== own.userId
@@ -544,7 +546,16 @@ export class UiHost implements UiClient {
       return result ?? { status: "unknown", requestId: id, code: "presentation_unknown" };
     } catch (error) { return failure(id, error); }
   }
-  selectPanel = async (ref: PanelRef, workspaceId = DEFAULT_WORKSPACE): Promise<PresentationResult> => {
+  // Host-owned selections may cancel before presentation without superseding another selection.
+  // PresentationOptions.signal still cancels only a protocol caller's wait.
+  selectPanel = async (ref: PanelRef, workspaceId = DEFAULT_WORKSPACE, signal?: AbortSignal): Promise<PresentationResult> => {
+    const cancel = () => this.invalidateRendererWork();
+    signal?.addEventListener("abort", cancel);
+    try { return await this.selectPanelWithSignal(ref, workspaceId, signal); }
+    finally { signal?.removeEventListener("abort", cancel); }
+  };
+  private selectPanelWithSignal = async (ref: PanelRef, workspaceId: string, signal?: AbortSignal): Promise<PresentationResult> => {
+    if (signal?.aborted) return { status: "blocked", requestId: createPresentationRequestId(), code: "presentation_cancelled" };
     const opened = this.snapshot.tools.filter(t => t.workspaceId === workspaceId && t.key === panelKey(ref)).sort((a, b) => b.focusedAt - a.focusedAt)[0];
     if (opened?.resolved.surface) {
       const requestId = createPresentationRequestId();
@@ -558,6 +569,7 @@ export class UiHost implements UiClient {
         const resolved = await uiRequest<UiResolvedPanel>(this.path, "panels/resolve", opened.target);
         this.checkActivity(generation);
         this.requireTools();
+        if (signal?.aborted) throw new UiError("presentation_cancelled", "This selection was cancelled.");
         if (selection !== state.generation) throw new UiError("presentation_superseded", "A newer action replaced this opening.");
         if (!resolved.available || !resolved.surface) throw new UiError(resolved.state, "The tool is unavailable.");
         const surface = opened.panelSurface;
@@ -575,7 +587,8 @@ export class UiHost implements UiClient {
       } catch (error) { return failure(requestId, error); }
     } else if (opened) this.closePresentation(opened.presentationId);
     const requestId = createPresentationRequestId();
-    return waitForPresentation(this.open({ panel: ref }, { placement: "side", requestId }, "local", undefined, workspaceId), requestId);
+    const opening = this.open({ panel: ref }, { placement: "side", requestId }, "local", undefined, workspaceId, signal);
+    return signal ? opening : waitForPresentation(opening, requestId);
   };
   setExpanded = (expanded: boolean, workspaceId = DEFAULT_WORKSPACE) => {
     if (!expanded) return this.collapseWorkspace(workspaceId);
