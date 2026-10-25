@@ -1346,6 +1346,8 @@ export class SessionManager {
           return result;
         }
       }
+      if (session.record.associationRequests?.some(request => request.state === "pending"))
+        throw new AppContextError(409, "workspace_association_pending", "Retry the pending workspace attachment or detachment before sending another message.");
       if (session.record.retentionCleanup) throw new AppContextError(409, "cleanup_pending", "Workspace cleanup has started. Recover deletion before starting a new conversation.");
       if (session.record.handoffPending) throw new AppContextError(409, "handoff_pending", "Finalize the prepared handoff before sending.");
       if (context.dispatchId) {

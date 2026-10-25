@@ -649,6 +649,55 @@ describe("shared workspace session boundaries", () => {
     expect(await store.readEvents(initial.id)).not.toEqual(expect.arrayContaining([expect.objectContaining({ type: "user_message" })]));
   });
 
+  it.each(["attach", "detach"] as const)("blocks turns after an uncertain %s until exact replay persists fresh source context", async action => {
+    const source = { ...tree, branch: "feature", targetBranch: "main", originalBase: "base",
+      repository: "https://github.com/example/notes", sessionPath: dir, pullRequests: [], apps: [{ appId: "notes", subpath: null }] };
+    const record = await manager.createSession({ createdBy: "member", appIds: ["notes"] });
+    await manager.shutdown();
+    record.harnessSessionId = "old-native-context";
+    if (action === "detach") {
+      record.workspaceAssociation = { id: workspaceId, revision: 2 };
+      record.developmentWorkspaces = [source];
+    }
+    await store.saveRecord(record); manager = build();
+    const input = { workspaceId, requestId, expectedRevision: 2 };
+    const messageId = "12345678-1234-4234-8234-123456789def";
+    const context = { clientRequestId: messageId, actorUserId: "member" };
+    let lost = true;
+    vi.mocked(client.call).mockImplementation(async (_id, _token, name) => {
+      if (name === action) {
+        if (lost) { lost = false; throw new Error("response lost"); }
+        return { workspace: action === "attach" ? { id: workspaceId, revision: 3 } : null };
+      }
+      if (name === "lease") {
+        expect(starts).toHaveLength(0);
+        expect(await store.readRecord(record.id)).toMatchObject({ harnessSessionId: null, developmentWorkspaces: [source] });
+      }
+      return name === "list" ? { workspaces: action === "attach" ? [source] : [] } : tree;
+    });
+    await expect(manager.workspaceAction(record.id, action, input, "token", "member")).rejects.toThrow("response lost");
+    for (const restart of [false, true]) {
+      if (restart) { await manager.shutdown(); manager = build(); }
+      await expect(manager.postMessage(record.id, "Continue", "token", [], context)).rejects.toMatchObject({ code: "workspace_association_pending" });
+      expect(starts).toHaveLength(0); expect(sent).toHaveLength(0);
+      expect(await store.readMessageReceipt(record.id, messageId)).toBeNull();
+      expect((await store.readEvents(record.id)).some(event => event.type === "user_message")).toBe(false);
+      expect(vi.mocked(client.call).mock.calls.some(call => call[2] === "lease")).toBe(false);
+    }
+    await manager.workspaceAction(record.id, action, input, "token", "member");
+    const commands = vi.mocked(client.call).mock.calls.filter(call => call[2] === action);
+    expect(commands[0]).toEqual(commands[1]);
+    expect(await store.readRecord(record.id)).toMatchObject({ harnessSessionId: null,
+      workspaceAssociation: action === "attach" ? { id: workspaceId, revision: 3 } : null,
+      developmentWorkspaces: action === "attach" ? [source] : [], associationRequests: [{ state: "succeeded" }] });
+    await manager.shutdown(); manager = build();
+    await manager.postMessage(record.id, "Continue", "token", [], context);
+    expect(starts).toHaveLength(1); expect(sent).toHaveLength(1);
+    expect(starts[0]!.resumeHarnessSessionId).toBeUndefined();
+    expect(vi.mocked(client.call).mock.calls.filter(call => call[2] === "lease")).toHaveLength(action === "attach" ? 1 : 0);
+    await finish(record.id);
+  });
+
   it("persists fresh provider context when an acknowledged attach cannot list source yet", async () => {
     const record = await manager.createSession({ createdBy: "member" });
     record.harnessSessionId = "old-native-context";

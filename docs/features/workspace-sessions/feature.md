@@ -267,6 +267,9 @@ Review regression coverage verifies selected-file `reviewId` transport for both 
 ordinary chat workflow reads after creator detachment without restoring source access, and durable
 attach/detach refusal recovery. Definitive refusals stop blocking chat retention/deletion; uncertain
 responses retain their exact request. A later authorization refusal does not erase that uncertainty.
+New agent turns remain blocked while an association outcome is unknown, including after restart.
+Replaying the original request persists the source association and fresh provider context before
+another turn can acquire its source lease and dispatch.
 Browser recovery also clears confirmed refusals, unlocking attachment, sharing and new-session
 controls across reloads, while retaining uncertain requests after a later authorization failure. A
 Core binding-conflict response retires the same recovery receipt in both browser and server because
