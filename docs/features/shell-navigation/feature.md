@@ -1,6 +1,6 @@
 ---
 created: 2026-07-30
-updated: 2026-10-23
+updated: 2026-10-25
 summary: Shell routes, role-specific home, sidebar app launchers and phone navigation.
 components: [apps/shell]
 ---
@@ -431,7 +431,7 @@ Core's runtime state and applicable health, without inferring lifecycle from an 
 an absent runtime observation shows Unknown. Pending start/stop/restart verbs appear once in the
 main status. Update phases `stopping` and `starting` show only Updating below it, without a service
 suffix. Other supported phases retain their specific update label and optional reported service. Terminal outcomes add
-no row label or expiry timer. Existing completion, error and readiness toasts remain; problem icons
+no row label or expiry timer. Only error and readiness-problem toasts remain; problem icons
 and Manage retain diagnostics.
 Version tooltips contain revision/build details; full update-check errors remain on the after-name
 problem icon and in Manage diagnostics. Failed checks retain found updates and are excluded from

@@ -88,7 +88,6 @@ import type {
   AppProblem,
   AppUpdateAvailability,
   AppUpdateCheckStatus,
-  AppUpdateStatusResponse,
   CoreApp,
   AppExecutionTargets,
   AppExecutionChoice,
@@ -166,8 +165,7 @@ export function DashboardPage({
       const response = await fetchCore(`${coreOrigin}/api/apps/${encodeURIComponent(app.id)}/update-status?refresh=true`, { credentials: "include" });
       redirectToCoreLoginIfAuthRequired(response, coreOrigin);
       if (!response.ok) throw new Error(await readCoreError(response));
-      const status = await response.json() as AppUpdateStatusResponse;
-      toast.success(status.updateAvailable ? "Update available" : "Up to date", { description: app.displayName });
+      await response.json();
     } catch (error) {
       if (!isAuthRequiredRedirectError(error)) toast.error("Update check failed", {
         description: `${app.displayName}: ${error instanceof Error ? error.message : "Update status is unavailable."}`, appId: app.id,
@@ -181,7 +179,7 @@ export function DashboardPage({
 
   // The fleet check runs on Core (plan-first updates): the button just triggers/joins the sweep and
   // the spinner reads the server-side status block, so a page opened mid-sweep — or reloaded — keeps
-  // showing the check in progress. Summarise in a toast when a sweep observed running settles.
+  // showing the check in progress. Only failed checks need a toast when the sweep settles.
   const checkingUpdates = updateCheck?.running ?? false;
   const previousCheckingRef = useRef(checkingUpdates);
   useEffect(() => {
@@ -191,17 +189,7 @@ export function DashboardPage({
       return;
     }
 
-    const available = apps.filter((app) => app.updateCheck?.updateAvailable).length;
     const failedApps = apps.filter((app) => app.updateCheck?.error);
-    if (available > 0) {
-      const review = apps.filter((app) => app.updateCheck?.updateAvailable && app.updateCheck.requiresReview).length;
-      const reviewNote = review > 0 ? `${review} need${review === 1 ? "s" : ""} review.` : undefined;
-      toast.success(`${available} update${available === 1 ? "" : "s"} available`, {
-        description: reviewNote,
-      });
-    } else if (failedApps.length === 0) {
-      toast.success("All apps up to date");
-    }
     if (failedApps.length > 0) {
       toast.error("Update check incomplete", {
         description: failedApps.map((app) => `${app.displayName}: ${app.updateCheck?.error}`).join("\n"),

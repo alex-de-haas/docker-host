@@ -118,7 +118,7 @@ it("opens Core removal from Dashboard with default choices, CSRF and blocked-pop
   expect(callsTo("/api/installations")).toHaveLength(1);
   expect(window.open).toHaveBeenCalledTimes(1);
   await settle();
-  expect(fixture.toast.info).toHaveBeenCalledWith("App removal cancelled");
+  expect(fixture.toast.info).not.toHaveBeenCalledWith("App removal cancelled");
   expect(fixture.toast.dismiss).toHaveBeenCalledWith("confirmation");
   expect(fixture.toast.success).not.toHaveBeenCalled();
   await removeFromDashboard(); await settle();
@@ -151,7 +151,7 @@ it("routes existing removal entrypoints to Core and refreshes only after success
   expect(document.querySelector('[role="alertdialog"]')).toBeNull();
   await settle();
   expect(callsTo("/api/apps", "GET").length).toBeGreaterThan(reads);
-  expect(fixture.toast.success).toHaveBeenCalledExactlyOnceWith("App removed", { description: "Media" });
+  expect(fixture.toast.success).not.toHaveBeenCalled();
   expect(appRow()).toBeNull();
   expect(container.textContent).toContain("No installed apps");
 });
@@ -184,5 +184,5 @@ it("keeps the selected app identity and another app’s Logs destination while r
   expect(JSON.parse(callsTo("/api/installations")[0][1].body)).toEqual({ removeAppId: target.id });
   expect(fixture.router.push).toHaveBeenLastCalledWith("/apps/example.other?section=logs", { scroll: false });
   expect(document.querySelector('[role="dialog"]')).toBeNull();
-  expect(fixture.toast.success).toHaveBeenCalledExactlyOnceWith("App removed", { description: "Media" });
+  expect(fixture.toast.success).not.toHaveBeenCalled();
 });
