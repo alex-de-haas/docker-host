@@ -1,4 +1,6 @@
 import { prepareSkills, skillRequest, validSkillIds } from "../skills.js";
+import { resolveAppSession } from "../app-session.js";
+import { contextActions, contextEvent, contextMetadataNotice, searchContext, validateContextInput, type ContextAction, type ContextReceipt } from "./app-context-tools.js";
 import { harnessEnvironmentActions } from "./environment-tools.js";
 import { projectWorktreePaths } from "../worker/resources.js";
 import { transcriptFileEdits } from "./transcript-edits.js";
@@ -332,6 +334,7 @@ export class SessionManager {
   }
 
   async workspaceAction(id: string, action: DevelopmentAction, input: Record<string, unknown>, credential?: string, userId?: string, dispatchGuard?: () => Promise<void>): Promise<unknown> {
+    if (contextActions.includes(action as ContextAction)) return this.contextAction(id, action as ContextAction, input, credential, userId, dispatchGuard);
     if (action.startsWith("environment-")) return this.environmentAction(id, action as CoreEnvironmentAction, input, credential, userId);
     if (action.startsWith("sandbox-")) return this.sandboxWorkspaceAction(id, action as SandboxAction, input, credential, userId);
     return this.serialize(id, async () => {
@@ -411,7 +414,6 @@ export class SessionManager {
       }
       if (["cleanup", "workflow-complete", "workflow-defer", "workflow-delete"].includes(action) && ["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) throw new SessionBusyError();
       if (action === "prepare") {
-        if (!(session.record.appIds ?? []).includes(String(input.appId))) throw new AppContextError(409, "workspace_app_required", "Attach the source app to this session first.");
         let name = input.name;
         if (name === null || name === undefined) {
           const retained = session.record.developmentPreparationNames?.find(p => p.requestId === input.requestId);
@@ -971,17 +973,90 @@ export class SessionManager {
   async setAppContext(id: string, value: unknown, revision: unknown, actor: string): Promise<SessionRecord> {
     return this.serialize(id, async () => {
       const session = await this.requireLive(id);
+      if (session.record.createdBy !== actor) throw new AppContextError(403, "session_forbidden", "This session belongs to another user.");
+      await this.flushAppContextEvent(session);
       const ids = parseAppIds(value);
       this.checkRevision(session.record, revision);
       await validateSelection(this.providers, ids, session.record.appIds ?? []);
-      // Development grants/cwd are deliberately absent here. Their future owner must quiesce
-      // removed grants before this mutation; association itself creates no execution authority.
+      // Context changes only descriptive metadata; execution grants have independent controls.
       session.record.appIds = ids;
       session.record.appContextRevision = (session.record.appContextRevision ?? 0) + 1;
       session.record.updatedAt = new Date().toISOString();
       await this.append(id, { type: "app_context_changed", ts: session.record.updatedAt, appIds: ids, appContextRevision: session.record.appContextRevision, actor });
       return session.record;
     });
+  }
+
+  private async contextAction(id: string, action: ContextAction, input: Record<string, unknown>, credential?: string, userId?: string, dispatchGuard?: () => Promise<void>) {
+    return this.serialize(id, async () => {
+      const session = await this.requireLive(id);
+      if (userId && userId !== session.record.createdBy)
+        throw new AppContextError(403, "session_forbidden", "This session belongs to another user.");
+      const authorize = async () => {
+        await dispatchGuard?.();
+        const identity = await resolveAppSession(credential ?? session.workspaceCredential ?? session.credential, AbortSignal.timeout(5_000));
+        if (identity.status !== "active")
+          throw new AppContextError(identity.status === "unavailable" ? 503 : identity.status === "forbidden" ? 403 : 401, "app_context_credentials_required", "Refresh this chat's Hosty app session before managing context.");
+        if (identity.identity.hostRole !== "host.admin" || identity.identity.userId !== session.record.createdBy)
+          throw new AppContextError(403, "session_forbidden", "Current Hosty access does not authorize this chat.");
+        if (!userId && !["running", "awaiting_approval", "awaiting_question"].includes(session.record.status))
+          throw new AppContextError(409, "workspace_turn_inactive", "Context agent tools require an active turn.");
+      };
+      await authorize();
+      const mutation = validateContextInput(action, input);
+      await this.flushAppContextEvent(session);
+      const current = async () => ({ appIds: [...session.record.appIds ?? []], revision: session.record.appContextRevision ?? 0,
+        snapshot: await captureContext(this.providers, session.record.appIds ?? [], session.record.appContextRevision ?? 0, true) });
+      if (action === "context-search") return searchContext(this.providers, input);
+      if (!mutation) return { metadataNotice: contextMetadataNotice, ...await current() };
+      const prior = session.record.appContextRequests?.find(receipt => receipt.input.requestId === mutation.requestId);
+      if (prior) {
+        if (JSON.stringify(prior.input) !== JSON.stringify(mutation))
+          throw new AppContextError(409, "app_context_request_conflict", "This requestId was already used with different arguments. Retry the exact original request.");
+        return { metadataNotice: contextMetadataNotice, replayed: true, outcome: prior.outcome, current: await current() };
+      }
+      if (mutation.expectedRevision !== (session.record.appContextRevision ?? 0))
+        throw new AppContextError(409, "app_context_conflict", "App context changed. Read context_list and reconsider the mutation with its current revision and a new requestId.",
+          { appIds: session.record.appIds ?? [], revision: session.record.appContextRevision ?? 0 });
+      const previous = session.record.appIds ?? [];
+      const ids = parseAppIds(action === "context-add" ? [...new Set([...previous, ...mutation.appIds])]
+        : previous.filter(appId => !mutation.appIds.includes(appId)));
+      await validateSelection(this.providers, ids, previous);
+      // Directory reads and approval waits cannot preserve authority after access or policy changes.
+      await authorize();
+      const changed = JSON.stringify(ids) !== JSON.stringify(previous);
+      const receipt: ContextReceipt = { input: mutation, outcome: { appIds: ids,
+        revision: (session.record.appContextRevision ?? 0) + (changed ? 1 : 0), changed } };
+      const next: SessionRecord = { ...session.record, appIds: ids, appContextRevision: receipt.outcome.revision,
+        appContextRequests: [...session.record.appContextRequests ?? [], receipt] };
+      if (changed) {
+        next.updatedAt = new Date().toISOString();
+        next.lastEventSeq += 1;
+        next.appContextEvent = contextEvent(receipt, next.createdBy, next.lastEventSeq, next.updatedAt, userId ? "operator" : "agent");
+      }
+      try { await this.store.saveRecord(next); session.record = next; }
+      catch (error) {
+        // Atomic replacement may have succeeded even when its caller lost acknowledgement.
+        session.record = await this.store.readRecord(id) ?? session.record;
+        throw error;
+      }
+      await this.flushAppContextEvent(session);
+      return { metadataNotice: contextMetadataNotice, replayed: false, outcome: receipt.outcome, current: await current() };
+    });
+  }
+
+  /** Called inside the session queue before any later transcript event can overtake the outbox. */
+  private async flushAppContextEvent(session: LiveSession): Promise<void> {
+    const event = session.record.appContextEvent;
+    if (!event) return;
+    const existing = (await this.store.readEvents(session.record.id)).find(item => item.seq === event.seq);
+    if (existing && (existing.type !== event.type || existing.contextRequestId !== event.contextRequestId))
+      throw new AppContextError(503, "app_context_event_conflict", "The retained context event conflicts with the transcript; preserve the session for recovery.");
+    if (!existing) await this.store.appendEvent(session.record.id, event);
+    const next = { ...session.record, appContextEvent: undefined };
+    await this.store.saveRecord(next);
+    session.record = next;
+    this.fanOut(session, event);
   }
 
   private checkRevision(record: SessionRecord, revision: unknown): void {
@@ -1998,6 +2073,7 @@ export class SessionManager {
     listener: SessionListener,
   ): Promise<{ replay: StoredEvent[]; unsubscribe: () => void }> {
     const session = await this.requireLive(id);
+    await this.serialize(id, () => this.flushAppContextEvent(session));
     // Attach BEFORE reading the replay and buffer until the read finishes: an event persisted
     // mid-read could otherwise miss both the file snapshot and the listener — for an approval
     // request that gap would strand the harness on a pause nobody can see. The buffered tail is
@@ -2380,6 +2456,8 @@ export class SessionManager {
     if (!session) {
       return;
     }
+
+    await this.flushAppContextEvent(session);
 
     // Child setup is reviewed normally, but its password is not a transcript artifact.
     // The MCP policy retains the original in-memory call until dispatch.

@@ -76,6 +76,9 @@ export interface SessionRecord {
   context: Record<string, string> | null;
   appIds?: string[];
   appContextRevision?: number;
+  appContextRequests?: import("./app-context-tools.js").ContextReceipt[];
+  /** Durable outbox committed atomically with the selection and replay receipt. */
+  appContextEvent?: StoredEvent;
   creationRequest?: { id: string; fingerprint: string };
   status: SessionStatus;
   createdAt: string;

@@ -3,7 +3,7 @@ import type { AppDirectoryEntry, ProviderDirectory } from "../settings/providers
 export const MAX_CONTEXT_APPS = 16;
 export const MAX_CONTEXT_BYTES = 16 * 1024;
 export class AppContextError extends Error {
-  constructor(public readonly status: number, public readonly code: string, message: string) { super(message); }
+  constructor(public readonly status: number, public readonly code: string, message: string, public readonly details?: Record<string, unknown>) { super(message); }
 }
 export interface ContextApp {
   id: string;

@@ -1,5 +1,5 @@
 import { ContextUsageReader, claudeContextUsage } from "./context-usage.js";
-import { toolResult, shouldRetainToolOutput } from "./tool-result.js";
+import { toolResult, toolDuration, shouldRetainToolOutput } from "./tool-result.js";
 import { randomUUID } from "node:crypto";
 import { claudeCommandResult, commandToolUseId, CommandCallHistory } from "./command-result.js";
 import { ActivityTracker, activeTool, type ActiveTool } from "./activity.js";
@@ -133,7 +133,7 @@ class ClaudeRun implements HarnessRun {
   private readonly commandRun = randomUUID();
   private commandTurn = 0;
   private readonly commandCalls = new Map<string, { id: string; rawId: string }>();
-  private readonly toolCalls = new Map<string, { id: string; rawId: string; name: string }>();
+  private readonly toolCalls = new Map<string, { id: string; rawId: string; name: string; durationMs?: number; timingConflict?: boolean }>();
   private readonly commandHistory = new CommandCallHistory();
   private readonly deniedToolCalls = new Set<string>();
   private ambiguousCommandDenial = false;
@@ -288,6 +288,10 @@ class ClaudeRun implements HarnessRun {
           permissionMode: this.options.autonomy === "autonomous" ? "bypassPermissions" : "default",
           allowDangerouslySkipPermissions: this.options.autonomy === "autonomous",
           includePartialMessages: true,
+          hooks: {
+            PostToolUse: [{ hooks: [async (input: Record<string, unknown>) => this.recordToolDuration(input)] }],
+            PostToolUseFailure: [{ hooks: [async (input: Record<string, unknown>) => this.recordToolDuration(input)] }],
+          },
           // The preset is named explicitly rather than left to the SDK default, because the operator
           // profile is defined as behaving like the admin running Claude Code by hand — that is the
           // Claude Code prompt, and relying on a default to supply it would make the behavior depend
@@ -396,6 +400,22 @@ class ClaudeRun implements HarnessRun {
     });
   }
 
+  private recordToolDuration(input: Record<string, unknown>): Record<string, never> {
+    const durationMs = toolDuration(input.duration_ms);
+    if (!this.turnActive || this.stopped || durationMs === undefined || input.agent_id !== undefined) return {};
+    // Subagent hook IDs do not identify the parent tool in the transcript; do not guess that join.
+    const matches = [...this.toolCalls.values()].filter(tool => tool.rawId === input.tool_use_id && tool.name === input.tool_name);
+    const main = this.toolCalls.get(JSON.stringify(["main", input.tool_use_id]));
+    const tool = matches.length === 1 && matches[0] === main ? main : undefined;
+    if (tool && !tool.timingConflict) {
+      if (tool.durationMs !== undefined && tool.durationMs !== durationMs) {
+        delete tool.durationMs;
+        tool.timingConflict = true;
+      } else tool.durationMs = durationMs;
+    }
+    return {};
+  }
+
   private dispatch(message: Record<string, unknown>): void {
     if (this.stopped) return;
     const type = message.type;
@@ -433,7 +453,7 @@ class ClaudeRun implements HarnessRun {
               ? claudeCommandResult(command.id, block, resultBlocks.length === 1 ? message.tool_use_result : undefined)?.status ?? "unknown"
               : block.is_error === true ? "failed" : deferred ? "unknown"
                 : block.is_error === false || block.is_error === undefined ? "completed" : "unknown";
-            this.options.onEvent(toolResult(tool.id, status, block.content));
+            this.options.onEvent(toolResult(tool.id, status, block.content, deferred ? undefined : tool.durationMs));
           }
           this.commandCalls.delete(key);
           this.toolCalls.delete(key);

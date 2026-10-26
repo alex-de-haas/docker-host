@@ -1,11 +1,15 @@
 ---
 created: 2026-09-27
-updated: 2026-10-25
+updated: 2026-10-26
 summary: Logical workspaces group repository worktrees with explicit session membership, compatible Git operations and an authorized inspection API.
 components: [apps/core, apps/harness]
 ---
 
 # Assistant Session Workspaces
+
+Workspace preparation does not require an app to be selected as chat context. Empty, unrelated
+or full context selections leave Core source and participant admission unchanged. Context tools
+manage metadata separately and do not join, detach or expand a shared workspace.
 
 ## Ownership And Allocation
 

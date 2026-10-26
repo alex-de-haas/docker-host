@@ -61,3 +61,38 @@ it("does not claim a detached native tool placeholder is its final completion", 
   await vi.waitFor(() => expect(events.some(event => event.type === "result")).toBe(true));
   expect(events.find(event => event.type === "tool_result")).toMatchObject({ status: "unknown", output: "Tool still running" });
 });
+
+it.each(["PostToolUse", "PostToolUseFailure"])("records %s execution time on the unique matching call", async hookName => {
+  const events: HarnessEvent[] = [];
+  queryMock.mockImplementation((args: { options: { hooks: Record<string, { hooks: ((input: unknown) => Promise<unknown>)[] }[]> } }) => Object.assign((async function* () {
+    yield proposal("timed");
+    const hook = args.options.hooks[hookName]![0]!.hooks[0]!;
+    expect(await hook({ tool_use_id: "timed", tool_name: "mcp__hosty-core__list_apps", duration_ms: 250 })).toEqual({});
+    yield completion("timed", "result", null, hookName === "PostToolUseFailure");
+    yield { type: "result", subtype: "success" };
+  })(), { interrupt: async () => {}, close() {} }));
+  run = new ClaudeHarnessAdapter().start({ sessionId: "chat", cwd: "/tmp", onEvent: event => events.push(event) }); run.send("inspect");
+  await vi.waitFor(() => expect(events.some(event => event.type === "result")).toBe(true));
+  expect(events.find(event => event.type === "tool_result")).toMatchObject({
+    status: hookName === "PostToolUseFailure" ? "failed" : "completed", durationMs: 250,
+  });
+});
+it("omits ambiguous, contradictory and deferred hook timing", async () => {
+  const events: HarnessEvent[] = [];
+  queryMock.mockImplementation((args: { options: { hooks: Record<string, { hooks: ((input: unknown) => Promise<unknown>)[] }[]> } }) => Object.assign((async function* () {
+    const hook = args.options.hooks.PostToolUse![0]!.hooks[0]!;
+    const timing = (id: string, duration_ms = 250) => hook({ tool_use_id: id, tool_name: "Read", duration_ms });
+    yield proposal("same", "Read"); yield proposal("same", "Read", "child"); await timing("same");
+    yield completion("same", "main"); yield completion("same", "child", "child");
+    yield proposal("conflict", "Read"); await timing("conflict"); await timing("conflict", 300);
+    yield completion("conflict", "conflicting");
+    yield proposal("deferred", "Read"); await timing("deferred");
+    yield { ...completion("deferred", "pending"), tool_use_result: { detachedToolCall: true } };
+    yield { type: "result", subtype: "success" };
+  })(), { interrupt: async () => {}, close() {} }));
+  run = new ClaudeHarnessAdapter().start({ sessionId: "chat", cwd: "/tmp", onEvent: event => events.push(event) }); run.send("inspect");
+  await vi.waitFor(() => expect(events.some(event => event.type === "result")).toBe(true));
+  const results = events.filter(event => event.type === "tool_result");
+  expect(results).toHaveLength(4);
+  for (const result of results) expect(result).not.toHaveProperty("durationMs");
+});
