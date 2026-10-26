@@ -483,6 +483,7 @@ it.each([false, true])("retains native source leases on close without descendant
   const input = { requestId: "568b93d2-cfe6-4d50-a39a-409a1e8a16b5", expectedRevision: 0 };
   const route = `/${workspaceId}/workflow/close`;
   const inspection = vi.spyOn(client, "inspection").mockImplementation(async (_credential, path, body) => {
+    if (!path) return { workspaces: [{ id: workspaceId, owner: { kind: "assistant" } }] };
     if (path?.endsWith("/participants")) return { sessions: [{ appId: "hosty.harness", userId: "admin", sessionId: record.id, attached: true, currentInstallation: true }] };
     expect(body).toEqual(input);
     if (path?.endsWith("close-confirm")) throw new Error("Execution stop is unconfirmed: activity lease retained");
@@ -859,4 +860,72 @@ it("publishes failed outcomes only after native exit and preserves failure on re
   const reports = vi.mocked(client.activity).mock.calls.map(call => call[2]);
   expect(reports.at(-1)).toMatchObject({ status: "idle", stopped: true });
   expect(reports.map(r => r.sequence)).toEqual([...reports.map(r => r.sequence)].sort((a, b) => a! - b!));
+});
+
+
+describe("external workspace pause", () => {
+  const workspaceId = "b".repeat(64);
+  const input = { requestId: "bdfd9e87-b51b-4907-aefd-dbf51dc82e57", expectedRevision: 3 };
+  const pending = { closure: "closing", operations: [{ id: input.requestId, state: "pending" }] };
+  const closed = { closure: "closed", operations: [{ id: input.requestId, state: "succeeded" }] };
+
+  it.each(["pause", "close"])("confirms external %s without requesting participants or cancelling unrelated sessions", async kind => {
+    const session = await manager.createSession({ createdBy: "admin" });
+    await manager.postMessage(session.id, "unrelated work", "session-token");
+    const route = `/${workspaceId}/workflow/${kind}`;
+    const inspection = vi.spyOn(client, "inspection").mockImplementation(async (_credential, path) => {
+      if (!path) return { workspaces: [{ id: workspaceId, owner: { kind: "external" } }] };
+      if (path === route) return pending;
+      if (path === route + "-confirm") return closed;
+      throw new Error("External workspaces have no participant roster");
+    });
+    expect(await manager.inspectWorkspaces("operator", route, input, "admin")).toEqual(closed);
+    expect(inspection.mock.calls).toEqual([["operator", route, input], ["operator"], ["operator", route + "-confirm", input]]);
+    expect((await manager.getSession(session.id))!.status).toBe("running");
+    await finish(session.id);
+  });
+
+  it("retains Core lease refusal and retries the same pause after release and coordinator restart", async () => {
+    const route = `/${workspaceId}/workflow/pause`;
+    let leased = true;
+    const inspection = vi.spyOn(client, "inspection").mockImplementation(async (_credential, path) => {
+      if (!path) return { workspaces: [{ id: workspaceId, owner: { kind: "external" } }] };
+      if (path === route) return pending;
+      if (path === route + "-confirm") {
+        if (leased) throw new AppContextError(409, "workspace_in_use", "Activity lease retained");
+        return closed;
+      }
+      throw new Error("Unexpected external participation request");
+    });
+    await expect(manager.inspectWorkspaces("operator", route, input, "admin")).rejects.toMatchObject({ code: "workspace_in_use" });
+    await manager.shutdown(); manager = build(); leased = false;
+    expect(await manager.inspectWorkspaces("operator", route, input, "admin")).toEqual(closed);
+    expect(inspection.mock.calls.filter(([, path]) => path === route + "-confirm")).toEqual([
+      ["operator", route + "-confirm", input], ["operator", route + "-confirm", input],
+    ]);
+    expect(client.activity).not.toHaveBeenCalled();
+  });
+
+  it.each(["missing", "unknown", "unavailable"])("does not confirm when ownership is %s", async state => {
+    const route = `/${workspaceId}/workflow/pause`;
+    const inspection = vi.spyOn(client, "inspection").mockImplementation(async (_credential, path) => {
+      if (path === route) return pending;
+      if (!path) {
+        if (state === "unavailable") throw new AppContextError(403, "workspace_forbidden", "Access revoked");
+        return { workspaces: state === "missing" ? [] : [{ id: workspaceId, owner: { kind: "unknown" } }] };
+      }
+      throw new Error("Unexpected confirmation");
+    });
+    await expect(manager.inspectWorkspaces("operator", route, input, "admin")).rejects.toMatchObject({
+      code: state === "unavailable" ? "workspace_forbidden" : "workspace_owner_unavailable",
+    });
+    expect(inspection).not.toHaveBeenCalledWith("operator", route + "-confirm", input);
+  });
+
+  it("returns a completed receipt without inspecting or stopping a resumed execution", async () => {
+    const inspection = vi.spyOn(client, "inspection").mockResolvedValue(closed);
+    const route = `/${workspaceId}/workflow/pause`;
+    expect(await manager.inspectWorkspaces("operator", route, input, "admin")).toEqual(closed);
+    expect(inspection.mock.calls).toEqual([["operator", route, input]]);
+  });
 });
