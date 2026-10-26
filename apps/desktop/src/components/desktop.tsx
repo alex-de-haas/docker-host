@@ -9,6 +9,7 @@ import { APPEARANCE, APPLICATIONS, dockApps, focusWindow, initialBounds, isAdmin
 import { readWallpaper } from "@/lib/wallpaper";
 import { AppIcon } from "./app-icon";
 import { DesktopMark } from "./desktop-mark";
+import { Dock, DockButton } from "./dock";
 import { DesktopWindow } from "./desktop-window";
 import { ApplicationLibrary } from "./application-library";
 import { Appearance } from "./appearance";
@@ -167,21 +168,21 @@ function WorkspaceDesktop({ user, apps, ownId, coreOrigin, refresh, connectionEr
       </DesktopWindow>}</WindowTools>;
     })}
 
-    <nav className="dock-wrap" aria-label="Application dock"><div className="dock">
-      <button className="dock-item" aria-label="Applications" onClick={() => open(APPLICATIONS)}><AppIcon icon={Grid2X2} tone={0} /><span className="dock-tooltip">Applications</span><span className={`dock-dot ${workspace.windows.some(win => win.id === APPLICATIONS) ? "open" : ""}`} /></button>
+    <Dock>
+      <DockButton label="Applications" className="dock-item" aria-label="Applications" onClick={() => open(APPLICATIONS)}><AppIcon icon={Grid2X2} tone={0} /><span className={`dock-dot ${workspace.windows.some(win => win.id === APPLICATIONS) ? "open" : ""}`} /></DockButton>
       <span className="dock-separator" />
-      <div className="dock-apps">{orderedApps.map(app => <button key={app.id} className={`dock-item ${app.runtimeState === "stopped" ? "stopped" : ""} ${pending[app.id] || isBusy(app) ? "launching" : ""}`}
-        aria-label={`${app.displayName}${app.runtimeState === "stopped" ? " — click to start" : ""}`} title={app.displayName} onClick={() => openApp(app)} draggable
+      <div className="dock-apps">{orderedApps.map(app => <DockButton key={app.id} label={app.displayName} hint={app.runtimeState === "stopped" ? "Click to start" : undefined} className={`dock-item ${app.runtimeState === "stopped" ? "stopped" : ""} ${pending[app.id] || isBusy(app) ? "launching" : ""}`}
+        aria-label={`${app.displayName}${app.runtimeState === "stopped" ? " — click to start" : ""}`} onClick={() => openApp(app)} draggable
         onDragStart={event => { dockDrag.current = app.id; event.dataTransfer.setData("text/plain", app.id); event.dataTransfer.effectAllowed = "move"; }}
         onDragOver={event => { if (dockDrag.current) event.preventDefault(); }} onDragEnd={() => { dockDrag.current = null; }}
         onDrop={event => { event.preventDefault(); const id = dockDrag.current; dockDrag.current = null; if (!id || id === app.id) return;
           const order = orderedApps.map(item => item.id).filter(value => value !== id); order.splice(order.indexOf(app.id), 0, id); update({ order, pins: order.filter(value => workspace.pins.includes(value)) }); }}
         onContextMenu={event => { event.preventDefault(); context(app.id, event.clientX, event.clientY); }}>
-        <AppIcon app={app} /><span className="dock-tooltip">{app.displayName}{app.runtimeState === "stopped" && <small>Click to start</small>}</span>
+        <AppIcon app={app} />
         <span className={`dock-dot ${workspace.windows.some(win => win.id === app.id) ? "open" : ""}`} />
-      </button>)}</div>
-      <span className="dock-separator" /><button className="dock-item" aria-label="Appearance" onClick={() => open(APPEARANCE)}><AppIcon icon={Settings2} tone={5} /><span className="dock-tooltip">Appearance</span><span className={`dock-dot ${workspace.windows.some(win => win.id === APPEARANCE) ? "open" : ""}`} /></button>
-    </div></nav>
+      </DockButton>)}</div>
+      <span className="dock-separator" /><DockButton label="Appearance" className="dock-item" aria-label="Appearance" onClick={() => open(APPEARANCE)}><AppIcon icon={Settings2} tone={5} /><span className={`dock-dot ${workspace.windows.some(win => win.id === APPEARANCE) ? "open" : ""}`} /></DockButton>
+    </Dock>
 
     {menu && <div className="menu-backdrop" onPointerDown={() => setMenu(null)}><div className="context-menu" role="menu" aria-label="Application actions" style={{ left: Math.max(8, menu.x), top: Math.max(44, menu.y) }} onPointerDown={event => event.stopPropagation()}>
       <span className="menu-caption">{menuApp?.displayName || (menu.id === APPEARANCE ? "Appearance" : "Applications")}</span>
