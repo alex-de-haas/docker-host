@@ -1,8 +1,8 @@
 ---
 created: 2026-10-15
-updated: 2026-10-19
+updated: 2026-10-26
 summary: Core translation discovery and scoped invocation, SDK clients, and two static Harness variants for translating text and Markdown plans.
-components: [apps/core, apps/harness, apps/plans, packages/app-sdk, packages/app-sdk-dotnet]
+components: [apps/core, apps/harness, apps/documents, packages/app-sdk, packages/app-sdk-dotnet]
 ---
 
 # Translation Providers
@@ -153,7 +153,7 @@ document. It owns translator and target-language choices; Harness owns account a
 model settings. The original file, workflow metadata and workspace diff remain authoritative.
 Translations are temporary reading views with an original toggle and cancellation. Current source
 authorization, displayed-byte fingerprints and installation identity are checked before invocation.
-See [Plan Tracking](../plan-tracking/feature.md#translate-a-document) for the UI and acceptance evidence.
+See [Plan Tracking](../documents-app/feature.md#translate-a-document-and-optional-permissions) for the UI and acceptance evidence.
 
 ## Operator Preview Installation
 
@@ -178,7 +178,7 @@ Claude and 15.3 seconds for Codex, one run each; these include source validation
 and are not a repeated latency benchmark. The plan also loads within Shell. Translation interaction
 is checked in the normally authenticated app window because the browser automation tool cannot click
 controls inside this Shell iframe; earlier isolated embedded-flow coverage remains recorded in
-[Plan Tracking](../plan-tracking/feature.md#translate-a-document).
+[Plan Tracking](../documents-app/feature.md#translate-a-document-and-optional-permissions).
 
 ## Measured Behavior
 

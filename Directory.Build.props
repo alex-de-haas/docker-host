@@ -11,6 +11,6 @@
     torrent-engine) version independently via the "version" field in their own manifest.json.
   -->
   <PropertyGroup>
-    <Version>0.155.0</Version>
+    <Version>0.156.0</Version>
   </PropertyGroup>
 </Project>

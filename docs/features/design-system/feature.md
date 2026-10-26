@@ -1,8 +1,8 @@
 ---
 created: 2026-10-21
-updated: 2026-10-25
+updated: 2026-10-26
 summary: Shared web tokens, local fonts and scoped SDK chrome, with Shell, Harness, Marketplace and Telemetry adoption and an in-place credential grid.
-components: [apps/shell, apps/harness, apps/marketplace, apps/plans, apps/telemetry, apps/telemetry-ui, apps/whisper, apps/demo-app, packages/app-sdk, shared/web]
+components: [apps/shell, apps/harness, apps/marketplace, apps/documents, apps/telemetry, apps/telemetry-ui, apps/whisper, apps/demo-app, packages/app-sdk, shared/web]
 ---
 
 # Design System

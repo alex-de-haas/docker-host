@@ -292,6 +292,13 @@ try:
         csrf = request('/api/auth/csrf')['token']
         initial = request('/control/v1/core/status',control=True)
         say('Started a parent-managed child Core and logged in with its separate test account')
+    if scenario == 'documents':
+        assert managed, 'Documents acceptance requires a managed child Core'
+        sys.dont_write_bytecode = True
+        from documents_acceptance import check
+        check(globals())
+        success = True
+        sys.exit(0)
     if scenario == 'sessions':
         assert managed, 'Session acceptance requires a managed child Core'
         sys.dont_write_bytecode = True
