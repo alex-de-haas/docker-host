@@ -114,7 +114,7 @@ The 2026-10-26 macOS acceptance also verifies dock launch/loading, closing witho
 ## Testing Expectations
 
 - Run `npm run desktop:test`, `npm run desktop:lint` and `npm run desktop:build`.
-- Verify role-based visibility, per-service readiness, URL validation, corrupted storage,
+- Verify role-based visibility, per-service readiness using Core's nullable string health readings (including unrelated starting/unhealthy services), URL validation, corrupted storage,
   per-user persistence and bounds. Component tests distinguish close from stop, preserve
   minimized documents, coalesce starts and require explicit shared-runtime actions.
 - Proxy tests cover the route boundary, missing identity, cross-origin/malformed CSRF and

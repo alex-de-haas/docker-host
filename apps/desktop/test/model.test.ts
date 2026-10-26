@@ -11,11 +11,29 @@ describe("app access and readiness", () => {
     expect(visibleApps(apps, { ...user, role: "host.admin" }, "desktop").map(app => app.id)).toEqual([running.id, "stopped", "starting"]);
   });
   it("waits for the selected service without confusing runtime and probe states", () => {
-    const app = { ...running, health: { services: [{ service: "web", status: "running", health: { status: "starting" } }] } };
+    const app = { ...running, health: { services: [{ service: "web", status: "running", health: "starting" }] } };
     expect(pageReady(app, { label: "Notes", path: "/", service: "web" })).toBe(false);
-    app.health.services[0].health.status = "healthy";
+    app.health.services[0].health = "healthy";
     expect(pageReady(app, { label: "Notes", path: "/", service: "web" })).toBe(true);
     expect(pageReady({ ...app, runtimeState: "stopping" }, { label: "Notes", path: "/", service: "web" })).toBe(false);
+  });
+  it.each([
+    { aggregate: "starting", selected: "healthy", ready: true },
+    { aggregate: "starting", selected: null, ready: true },
+    { aggregate: "degraded", selected: "starting", ready: false },
+  ])("uses the selected service probe ($selected) instead of aggregate $aggregate", ({ aggregate, selected, ready }) => {
+    // Core serializes each service's Health as a nullable string, not a nested object.
+    const app: App = { ...running, endpoints: [{ key: "web", service: "frontend" }], health: { status: aggregate, services: [
+      { service: "frontend", status: "running", health: selected },
+      { service: "worker", status: "running", health: aggregate === "starting" ? "starting" : "unhealthy" },
+    ] } };
+    expect(pageReady(app, { label: "Notes", path: "/", endpoint: "web" })).toBe(ready);
+  });
+  it("falls back to aggregate readiness only when the selected service has no reading", () => {
+    const page = { label: "Notes", path: "/", service: "web" };
+    expect(pageReady({ ...running, health: { status: "starting", services: [] } }, page)).toBe(false);
+    expect(pageReady({ ...running, health: { status: "healthy", services: [] } }, page)).toBe(true);
+    expect(pageReady({ ...running, health: { status: "healthy", services: [{ service: "web", status: "stopped", health: null }] } }, page)).toBe(false);
   });
   it("only opens valid Core-projected HTTP surfaces and removes stale composition hints", () => {
     const page = { label: "Notes", path: "/", embeddedUrl: "https://notes.example/work?q=hello#draft" };

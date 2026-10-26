@@ -6,7 +6,7 @@ export type App = {
   runtimeState: string; lastError?: string | null; iconUrl?: string | null; icon?: string | null;
   entryEndpoint?: string | null; entryPath?: string | null; embeddedUrl?: string | null;
   navigation?: AppPage[]; endpoints?: { key: string; service?: string | null; url?: string | null; browserOrigin?: string | null }[];
-  health?: { status?: string; services: { service: string; status: string; health?: { status?: string } | null }[] } | null;
+  health?: { status?: string; services: { service: string; status: string; health?: string | null }[] } | null;
   framePolicy?: { microphone: boolean; popupEscape: boolean } | null;
   confirmedRoles?: string[];
   interfaces?: Record<string, { key: string; url?: string | null; version?: number | null; capabilities?: string[] | null }[]>;
@@ -46,7 +46,7 @@ export function pageReady(app: App, page: AppPage): boolean {
   const service = page.service || app.endpoints?.find(endpoint => endpoint.key === page.endpoint)?.service;
   const reading = app.health?.services?.find(item => item.service === service);
   return (reading ? reading.status === "running" : app.runtimeState === "running")
-    && (reading?.health?.status || app.health?.status) !== "starting";
+    && (reading ? reading.health : app.health?.status) !== "starting";
 }
 export function clampBounds(bounds: Bounds, viewport: Viewport): Bounds {
   const maxWidth = Math.max(280, viewport.width - 24), maxHeight = Math.max(220, viewport.height - 132);
