@@ -51,8 +51,10 @@ or disappear, including when the last idea is removed. These comments reserve id
 retaining removed idea contents or creating a history database.
 
 The validator compares reservations with HEAD for working edits. CI supplies DOCS_BASE_REF from the
-pull request base or previous push; --base explicitly selects the baseline. With divergent branches,
-the merge base distinguishes newly allocated IDs and detects conflicting allocations. The unpublished
+pull request base or previous push; --base explicitly selects the baseline. DOCS_HEAD_REF (or --head)
+identifies the original proposal revision, so a merged CI checkout still compares the two branches
+against their common ancestor. Only IDs allocated by both branches collide; IDs inherited solely
+from the target remain valid in the merged document. The unpublished
 idea receives a new ID before integration. Existing idea titles may still be edited. Missing explicit
 Git history fails rather than silently skipping the baseline check.
 

@@ -129,11 +129,12 @@ jobs:
           node-version: 24
 
       - name: Test the docs validator
-        run: node --test scripts/docs-index.test.mjs scripts/docs-format.test.mjs
+        run: node --test scripts/docs-index.test.mjs scripts/docs-format.test.mjs scripts/docs-git.test.mjs
 
       - name: Check docs index and frontmatter
         env:
           DOCS_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
+          DOCS_HEAD_REF: ${{ github.event.pull_request.head.sha || github.sha }}
         run: node scripts/docs-index.mjs --check
 
   # Type-checks the workflows themselves: expression syntax, `needs`/`outputs` references, action input
