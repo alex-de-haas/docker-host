@@ -1,3 +1,4 @@
+import { contextActions, contextTools, type ContextAction } from "./app-context-tools.js";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { McpToolPolicy } from "../mcp/policy.js";
@@ -21,7 +22,7 @@ export interface WorkspaceParticipation {
   sessions: { appId: string; userId: string; sessionId: string; title: string; attached: boolean; canOpen: boolean; viewerPath: string | null; status: string; activityAt: string | null }[];
   eligibleUsers: { id: string; name: string }[];
 }
-export type DevelopmentAction = "association" | "attach" | "detach" | "participants" | "commit-review" | "execution-select" | "execution-status" | "rename" | "activation-plan" | "activation-apply" | "activation-status" | "activation-list" | "activation-cancel" | "activation-resume" | "activation-return" | "app-dev-logs" | "app-dev-status" | "app-dev-plan" | "app-dev-apply" | "merge-upstream" | "remote-status" | "remote-connect" | "remote-fetch" | "remote-push-base" | "pr-push" | "app-local-status" | "app-local-accept" | "app-local-use" | "app-create" | "app-creation-status" | "app-creation-capabilities" | "app-creation-guide" | "workflow-status" | "workflow-complete" | "workflow-resume" | "workflow-pause" | "workflow-pause-confirm" | "workflow-defer" | "workflow-delete" | CoreEnvironmentAction | SandboxAction | "viewer" | "pr-resolve-review" | "pr-commit" | "pr-list" | "pr-connections" | "pr-status" | "pr-configure" | "pr-publish" | "pr-link" | "pr-ready" | "pr-merge" | "pr-complete" | "pr-corrective" | "list" | "prepare" | "status" | "diff" | "commit" | "refresh" | "merge" | "abort-merge" | "cleanup" | "references" | "lease" | "release-lease";
+export type DevelopmentAction = ContextAction | "association" | "attach" | "detach" | "participants" | "commit-review" | "execution-select" | "execution-status" | "rename" | "activation-plan" | "activation-apply" | "activation-status" | "activation-list" | "activation-cancel" | "activation-resume" | "activation-return" | "app-dev-logs" | "app-dev-status" | "app-dev-plan" | "app-dev-apply" | "merge-upstream" | "remote-status" | "remote-connect" | "remote-fetch" | "remote-push-base" | "pr-push" | "app-local-status" | "app-local-accept" | "app-local-use" | "app-create" | "app-creation-status" | "app-creation-capabilities" | "app-creation-guide" | "workflow-status" | "workflow-complete" | "workflow-resume" | "workflow-pause" | "workflow-pause-confirm" | "workflow-defer" | "workflow-delete" | CoreEnvironmentAction | SandboxAction | "viewer" | "pr-resolve-review" | "pr-commit" | "pr-list" | "pr-connections" | "pr-status" | "pr-configure" | "pr-publish" | "pr-link" | "pr-ready" | "pr-merge" | "pr-complete" | "pr-corrective" | "list" | "prepare" | "status" | "diff" | "commit" | "refresh" | "merge" | "abort-merge" | "cleanup" | "references" | "lease" | "release-lease";
 export interface RetentionSnapshot {
   kind: "chat" | "workspace" | "sandbox";
   workflow: { state: string; revision: number; completedAt?: string | null; closure?: string | null } | null;
@@ -202,7 +203,7 @@ const devToolProperties = {
   appId: { type: "string" },
   requestId: { type: "string" },
 };
-const actions = ["participants", "commit-review","execution-select", "execution-status", "rename", "activation-plan", "activation-apply", "activation-status", "activation-list", "activation-cancel", "activation-resume", "activation-return", "app-dev-status", "app-dev-plan", "app-dev-apply", "merge-upstream", "remote-status", "remote-connect", "remote-fetch", "remote-push-base", "pr-push", "app-local-status","app-creation-guide", "app-create", "app-creation-status", "app-creation-capabilities", "workflow-status", "workflow-complete", "workflow-resume", "workflow-pause", ...harnessEnvironmentActions, ...sandboxActions, "list", "prepare", "status", "diff", "commit", "refresh", "merge", "abort-merge", "cleanup", "references", "pr-resolve-review", "pr-commit", "pr-list", "pr-connections", "pr-status", "pr-configure", "pr-publish", "pr-link", "pr-ready", "pr-merge", "pr-complete", "pr-corrective"] as const;
+const actions = [...contextActions, "participants", "commit-review","execution-select", "execution-status", "rename", "activation-plan", "activation-apply", "activation-status", "activation-list", "activation-cancel", "activation-resume", "activation-return", "app-dev-status", "app-dev-plan", "app-dev-apply", "merge-upstream", "remote-status", "remote-connect", "remote-fetch", "remote-push-base", "pr-push", "app-local-status","app-creation-guide", "app-create", "app-creation-status", "app-creation-capabilities", "workflow-status", "workflow-complete", "workflow-resume", "workflow-pause", ...harnessEnvironmentActions, ...sandboxActions, "list", "prepare", "status", "diff", "commit", "refresh", "merge", "abort-merge", "cleanup", "references", "pr-resolve-review", "pr-commit", "pr-list", "pr-connections", "pr-status", "pr-configure", "pr-publish", "pr-link", "pr-ready", "pr-merge", "pr-complete", "pr-corrective"] as const;
 const descriptions: Partial<Record<(typeof actions)[number], string>> = {
   "execution-select": "Select the app execution target in one operation on this Core's ordinary users/data. Supply appId, UUID requestId and kind package or workspace. Package optionally selects a release runtime; workspace selects this session's aggregate workspaceId and optional worktreeId. Dev profiles are internal recipes. Switching workspaces preserves the Core-owned package baseline. Additional authority returns review-required with a concrete operator approval destination. Follow Ask/Run unprompted/Disabled policy. During an active turn, finish the turn after queueing so Harness releases writers before dispatch. Preserve exact request arguments after uncertainty; use execution_status to observe readiness.",
   "execution-status": "Observe an app target-selection operation with appId and its original UUID requestId. Reports running, succeeded, review-required or failed, including the additional-access approval destination when required. Does not retry, start or stop anything.",
@@ -246,7 +247,7 @@ const descriptions: Partial<Record<(typeof actions)[number], string>> = {
   "pr-corrective": "After a merged PR needs repair, preserve its history and start a corrective publication cycle in this workspace. Supply requestId and expectedHead; next publish creates a new PR.",
   list: "List this session's registered Core worktrees.",
   rename: "Rename this session workspace when its scope changes materially. Supply a short purpose-based name (at most 120 plain-text characters) and UUID requestId. Reuse both after uncertainty. Changes display metadata only; source, branches, grants and active runtimes stay intact.",
-  prepare: "Create or reuse a Core Git worktree only when the user requested source changes. Use this before editing; never edit the original app checkout. Supply the appId, a UUID requestId, a short meaningful purpose-based name and optionally targetBranch. Do not use agent names, IDs or generated branch names as the name.",
+  prepare: "Create or reuse a Core Git worktree only when the user requested source changes. App context selection is not required and is unchanged by preparation. Core source and participant authority remain required. Use this before editing; never edit the original app checkout. Supply the appId, a UUID requestId, a short meaningful purpose-based name and optionally targetBranch. Do not use agent names, IDs or generated branch names as the name.",
   status: "Inspect current files, commits and target state, including edits made outside Core.",
   diff: "Read a changed file's session-base or local uncommitted diff. Supply path and view: session or local.",
   participants: "Read the workspace participants and factual session activity. This contains no conversation history. Recheck before changing shared files.",
@@ -275,7 +276,7 @@ const activationToolProperties = {
 
 export const DEVELOPMENT_PROVIDER = "hosty:development";
 export const DEVELOPMENT_IDENTITY = "hosty-development-v1";
-export const developmentTools = () => [...coreEnvironmentTools(), ...sandboxTools(), ...actions.filter(action => !action.startsWith("sandbox-") && !action.startsWith("environment-")).map(action => ({ name: action.replaceAll("-", "_"), description: descriptions[action]!,
+export const developmentTools = () => [...contextTools(), ...coreEnvironmentTools(), ...sandboxTools(), ...actions.filter(action => !action.startsWith("sandbox-") && !action.startsWith("environment-") && !action.startsWith("context-")).map(action => ({ name: action.replaceAll("-", "_"), description: descriptions[action]!,
   inputSchema: { type: "object", ...(action.startsWith("execution-") ? { required: action === "execution-select" ? ["appId", "requestId", "kind"] : ["appId", "requestId"] } : {}), ...(["prepare", "rename"].includes(action) ? { required: action === "prepare" ? ["appId", "requestId", "name"] : ["requestId", "name"] } : {}), properties: action.startsWith("execution-") ? executionToolProperties : action.startsWith("activation-") ? activationToolProperties : action.startsWith("app-dev-") ? devToolProperties : toolProperties, additionalProperties: false },
   annotations: { readOnlyHint: ["execution-status", "activation-plan", "activation-status", "activation-list", "app-dev-status", "app-dev-plan", "remote-status", "app-local-status","app-creation-guide", "app-creation-status", "app-creation-capabilities", "workflow-status", "list", "status", "diff", "pr-list", "pr-status", "pr-connections"].includes(action), destructiveHint: ["execution-select", "activation-apply", "activation-return", "activation-resume", "app-dev-apply", "cleanup", "pr-merge"].includes(action), openWorldHint: false } }))];
 
@@ -323,7 +324,7 @@ export class DevelopmentMcp {
       try {
         if (!actions.includes(action)) throw new Error("Unknown workspace tool.");
         const input = rpc.params?.arguments ?? {};
-        if (typeof input !== "object" || Array.isArray(input)) throw new Error("Tool arguments must be an object.");
+        if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("Tool arguments must be an object.");
         const abort = new AbortController();
         const cancel = () => abort.abort();
         response.once("close", cancel);
@@ -333,10 +334,10 @@ export class DevelopmentMcp {
           const dispatchGuard = await this.policy?.authorize(sessionId, DEVELOPMENT_PROVIDER, DEVELOPMENT_IDENTITY, JSON.stringify(rpc.id), rpc.params!.name!, input, abort.signal);
           if (abort.signal.aborted || !this.keys.has(sessionId)) throw new Error("Session ended before dispatch.");
           await dispatchGuard?.();
-          result = (action.startsWith("activation-") || action === "execution-select") ? await this.invoke(sessionId, action, input, dispatchGuard) : await this.invoke(sessionId, action, input);
+          result = (action.startsWith("activation-") || action === "execution-select" || action.startsWith("context-")) ? await this.invoke(sessionId, action, input, dispatchGuard) : await this.invoke(sessionId, action, input);
         } finally { response.off("close", cancel); }
         answer({ content: [{ type: "text", text: JSON.stringify(await this.project(result)) }] });
-      } catch (error) { answer({ isError: true, content: [{ type: "text", text: error instanceof Error ? error.message : "Workspace operation failed." }] }); }
+      } catch (error) { answer({ isError: true, content: [{ type: "text", text: error instanceof AppContextError && error.details ? JSON.stringify({ code: error.code, message: error.message, ...error.details }) : error instanceof Error ? error.message : "Workspace operation failed." }] }); }
     } else send(200, { jsonrpc: "2.0", id: rpc.id, error: { code: -32601, message: "Method not found" } });
     return true;
   }
@@ -344,6 +345,7 @@ export class DevelopmentMcp {
 
 export function workspaceInstructions(workspaces: DevelopmentWorkspace[]): string {
   return "Hosty development workflow: before editing application source, use hosty-workspaces prepare to obtain a registered Git worktree. " +
+    "App context is optional: prepare any installed source app Core authorizes, even with empty or full chat context. Use context_search/list/add/remove to manage descriptive app metadata independently; context changes grant no source, tools or shared-workspace membership. Preserve request IDs and reread after revision conflicts. " +
     "Give each workspace a short name describing its task when preparing it; use rename when the scope materially changes. Names are independent of session titles, branches and agent identity. " +
     "Read app_creation_guide overview and relevant topics on demand before creating or changing an app; refresh after Core version/revision changes. If MCP is disabled or refused, do not bypass it with a shell/CLI bridge; only an already authorized typed coordinator may retrieve the guide. For a new application, use app_create with the user-approved id and bootstrap commit consent before editing. No remote is required. Reuse the same child Core preview between turns; Finish preserves durable source. " +
     "A workspace can have multiple sessions and users editing concurrently. Use participants to inspect active work; reread files before edits and do not attribute the whole workspace diff to this chat. Chat history and approvals remain private. Managed commits require a selected-file review; native writes do not have automatic conflict protection. " +

@@ -24,6 +24,11 @@ internal sealed partial class CoreLifecycleService
         var choices = installed.Where(p => !p.Development)
             .Select(p => new AppExecutionChoice("package", p.Key, null, null, p.Key)).ToList();
         var operation = await AppDevStore.ReadAsync(paths, app, ct);
+        // The recovery journal remains active before entry binds and while package Return starts.
+        // Describe the persisted runtime/source binding, not the unfinished operation's worktree.
+        var currentWorktreeId = operation is { Active: true } && operation.Installation == app.InstalledAt &&
+            app.SelectedRuntime == operation.TargetRuntime && app.SourceState?.LocalOverridePath == operation.SourcePath
+            ? operation.WorktreeId : null;
         AppExecutionChoice current = new(installed.Any(p => p.Key == app.SelectedRuntime && !p.Development)
             ? "package" : "legacy", app.SelectedRuntime, null, null, app.SelectedRuntime ?? "Unknown runtime");
         foreach (var workspace in inventory.Workspaces.Where(w => w.State != "released"))
@@ -32,7 +37,7 @@ internal sealed partial class CoreLifecycleService
             if (candidates.Length == 0) continue;
             var allowed = candidates.Where(t => selectableWorktrees is null || selectableWorktrees.Contains(t.Id)).ToArray();
             var resolved = await ResolveWorkspaceTreeAsync(app, workspace.Id, allowed.Select(t => t.Id).ToArray(),
-                null, operation is { Active: true } ? operation.WorktreeId : null, ct);
+                null, currentWorktreeId, ct);
             var tree = allowed.SingleOrDefault(t => t.Id == resolved.WorktreeId);
             var recipe = tree is null ? null : await ReadWorkspaceRecipeAsync(app, installed, tree.Id, ct, resolved.Runtime);
             var reason = tree is null ? resolved.Unavailable
@@ -41,7 +46,7 @@ internal sealed partial class CoreLifecycleService
             var choice = new AppExecutionChoice("workspace", recipe, workspace.Id, tree?.Id,
                 workspace.Name ?? workspace.Owner.Label, reason is null, reason);
             if (allowed.Length > 0) choices.Add(choice);
-            if (operation is { Active: true } && candidates.SingleOrDefault(t => t.Id == operation.WorktreeId) is { } activeTree)
+            if (currentWorktreeId is not null && candidates.SingleOrDefault(t => t.Id == currentWorktreeId) is { } activeTree)
                 current = new("workspace", app.SelectedRuntime, workspace.Id, activeTree.Id, choice.Name,
                     allowed.Any(t => t.Id == activeTree.Id), allowed.Any(t => t.Id == activeTree.Id) ? null
                         : "This workspace belongs to another user or credential.");

@@ -4,9 +4,13 @@ export interface ToolResult {
   status: "completed" | "failed" | "cancelled" | "unknown";
   output: string;
   truncated?: true;
+  durationMs?: number;
 }
 
 export const MAX_TOOL_OUTPUT_CHARS = 32_768;
+/** Optional provider execution time; malformed timing must not discard a valid outcome. */
+export const toolDuration = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= 604_800_000 ? value : undefined;
 const safeId = (value: unknown): value is string => typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/.test(value);
 const statuses: readonly string[] = ["completed", "failed", "cancelled", "unknown"];
 const fields = (value: unknown): Record<string, unknown> | null => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
@@ -30,14 +34,16 @@ export function sanitizeToolResult(value: unknown): ToolResult | null {
     || source.truncated !== undefined && source.truncated !== true) return null;
   return { type: "tool_result", toolUseId: source.toolUseId, status: source.status as ToolResult["status"],
     output: clippedText(source.output, MAX_TOOL_OUTPUT_CHARS),
+    ...(toolDuration(source.durationMs) !== undefined ? { durationMs: toolDuration(source.durationMs) } : {}),
     ...(source.truncated === true || source.output.length > MAX_TOOL_OUTPUT_CHARS ? { truncated: true } : {}) };
 }
 
 /** Only provider tool content belongs here, never an SDK response or transport configuration. */
-export function toolResult(toolUseId: string, status: ToolResult["status"], content: unknown): ToolResult {
+export function toolResult(toolUseId: string, status: ToolResult["status"], content: unknown, durationMs?: unknown): ToolResult {
   if (!safeId(toolUseId) || !statuses.includes(status)) throw new TypeError("Invalid tool result identity or status.");
   const rendered = renderContent(content);
-  return { type: "tool_result", toolUseId, status, ...rendered };
+  return { type: "tool_result", toolUseId, status, ...rendered,
+    ...(toolDuration(durationMs) !== undefined ? { durationMs: toolDuration(durationMs) } : {}) };
 }
 
 function binaryPlaceholder(value: unknown): string | null {

@@ -330,9 +330,9 @@ describe("development session coordination", () => {
     for (const prompt of sent) expect(prompt).toContain("Do not access or modify original source checkouts");
     expect(starts[0]!.mcpServers).toHaveProperty("hosty-workspaces");
   });
-  it("prepares only attached apps, persists associations and holds a lease for active source work", async () => {
+  it("prepares source independently of context, persists associations and holds a lease for active source work", async () => {
     const record = await manager.createSession({ createdBy: "admin", appIds: ["notes"] });
-    await expect(manager.workspaceAction(record.id, "prepare", { appId: "other" }, "token", "admin")).rejects.toThrow("Attach");
+    await expect(manager.workspaceAction(record.id, "prepare", { appId: "other" }, "token", "admin")).resolves.toEqual(tree);
     await expect(manager.workspaceAction(record.id, "prepare", { appId: "notes" }, "token", "other")).rejects.toThrow("another user");
     await manager.workspaceAction(record.id, "prepare", { appId: "notes", requestId: "prepare-id" }, "token", "admin");
     expect((await store.readRecord(record.id))!.developmentWorkspaces?.[0]?.id).toBe(tree.id);
@@ -928,4 +928,21 @@ describe("external workspace pause", () => {
     expect(await manager.inspectWorkspaces("operator", route, input, "admin")).toEqual(closed);
     expect(inspection.mock.calls).toEqual([["operator", route, input]]);
   });
+});
+
+it.each(["empty", "unrelated", "full"])("prepares authorized source independently of %s app context", async selection => {
+  const apps = Array.from({ length: 16 }, (_, index) => ({ id: "other-" + index }));
+  vi.mocked(directory.readApps).mockResolvedValue([{ id: "notes" }, ...apps]);
+  const appIds = selection === "empty" ? [] : selection === "unrelated" ? ["other-0"] : apps.map(app => app.id);
+  const session = await manager.createSession({ createdBy: "admin", appIds });
+  expect(await manager.workspaceAction(session.id, "prepare", { appId: "notes", requestId: "prepare-source" }, "token", "admin")).toEqual(tree);
+  expect(client.call).toHaveBeenCalledWith(session.id, "token", "prepare", expect.objectContaining({ appId: "notes" }));
+  expect((await manager.getSession(session.id))?.appIds).toEqual(appIds);
+  expect((await manager.getSession(session.id))?.appContextRevision).toBe(0);
+});
+it.each(["source_unsupported", "source_unavailable", "workspace_forbidden", "installation_changed"])("preserves authoritative Core prepare refusal %s without a context prerequisite", async code => {
+  const session = await manager.createSession({ createdBy: "admin" });
+  vi.mocked(client.call).mockRejectedValueOnce(new AppContextError(403, code, "Core rejected this source binding"));
+  await expect(manager.workspaceAction(session.id, "prepare", { appId: "notes" }, "token", "admin")).rejects.toMatchObject({ code });
+  expect((await manager.getSession(session.id))?.appIds).toEqual([]);
 });

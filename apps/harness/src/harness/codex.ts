@@ -659,7 +659,7 @@ class CodexRun implements HarnessRun {
             : item.status === "completed" && hasResult ? "completed" : "unknown";
           // Project public tool content only. Provider _meta, app identity and configuration stay private.
           this.emit(toolResult(toolUseId, status, typeof error.message === "string" ? error.message
-            : hasResult ? { content: result.content, structuredContent: result.structuredContent } : undefined));
+            : hasResult ? { content: result.content, structuredContent: result.structuredContent } : undefined, item.durationMs));
         }
       } else if (type === "dynamicToolCall") {
         const toolName = typeof item.namespace === "string" && item.namespace ? `${item.namespace}: ${String(item.tool ?? "Tool")}` : String(item.tool ?? "Tool");
@@ -672,7 +672,7 @@ class CodexRun implements HarnessRun {
           }) : undefined;
           const status = item.status === "failed" || item.success === false ? "failed"
             : item.status === "completed" && item.success === true && content !== undefined ? "completed" : "unknown";
-          this.emit(toolResult(toolUseId, status, content));
+          this.emit(toolResult(toolUseId, status, content, item.durationMs));
         }
       } else if (type === "commandExecution" || type === "fileChange") {
         // Codex reports a refused item as completed too; reporting it as a tool use would tell the

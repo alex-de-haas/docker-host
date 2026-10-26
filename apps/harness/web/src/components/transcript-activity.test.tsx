@@ -236,3 +236,35 @@ it("keeps a recorded repository group unavailable when its exact workspace bindi
   expect(container.textContent).toContain("Recorded line totals unavailable");
   await click(row); expect(open).not.toHaveBeenCalled();
 });
+
+it("shows MCP failure and separate execution-time badges alongside command results", async () => {
+  const calls = [
+    event(1, "tool_use", { toolName: "Command", toolUseId: "cmd", input: { command: "npm test" } }),
+    event(2, "tool_use", { toolName: "mcp__core__check", toolUseId: "mcp", input: {} }),
+    event(3, "tool_use", { toolName: "Bash", toolUseId: "claude", input: { description: "Claude check", command: "true" } }),
+  ];
+  await act(async () => root.render(<ToolActivity events={calls}
+    commandResults={{ 1: { status: "failed", exitCode: 1, durationMs: 1250 }, 3: { status: "completed" } }}
+    toolResults={{ 2: { status: "failed", output: "Denied", durationMs: 0 }, 3: { status: "completed", output: "", durationMs: 250 } }} />));
+  await click(button("3 tool calls"));
+  const command = button("npm test"), mcp = button("core · check"), claude = button("Claude check");
+  expect(mcp.textContent).toContain("Failed"); expect(mcp.textContent).not.toContain("Exit");
+  for (const [row, text] of [[command, "1.3 s"], [mcp, "0 ms"], [claude, "250 ms"]] as const) {
+    const duration = row.querySelector('[aria-label="Execution time: ' + text + '"]');
+    expect(duration?.getAttribute("data-slot")).toBe("badge");
+    expect(duration?.textContent).toBe(text);
+  }
+  expect(command.parentElement?.className).toBe(mcp.parentElement?.className);
+  expect(command.className).toBe(mcp.className);
+  expect(mcp.getAttribute("aria-expanded")).toBe("false");
+  await click(mcp); expect(container.textContent).toContain("Denied");
+});
+it("does not show duration for legacy or conflicting outcomes", async () => {
+  const calls = [event(1, "tool_use", { toolName: "mcp__core__old", toolUseId: "old" }), event(2, "tool_use", { toolName: "Command", toolUseId: "conflict", input: { command: "check" } })];
+  await act(async () => root.render(<ToolActivity events={calls}
+    commandResults={{ 2: { status: "unknown", conflict: true } }}
+    toolResults={{ 1: { status: "failed", output: "" }, 2: { status: "completed", output: "", durationMs: 20 } }} />));
+  await click(button("2 tool calls"));
+  expect(button("core · old").textContent).toContain("Failed");
+  expect(container.querySelector('[aria-label^="Execution time:"]')).toBeNull();
+});

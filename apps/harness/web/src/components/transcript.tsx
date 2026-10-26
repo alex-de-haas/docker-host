@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useId, useMemo, useRef, useState } from "react";
-import { Check, ChevronDown, ChevronRight, HelpCircle, ShieldCheck, Wrench, X, FileCode2 } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Clock3, HelpCircle, ShieldCheck, Wrench, X, FileCode2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { HostyLoader } from "../../../../../shared/web/hosty-states";
 import { Button } from "@/components/ui/button";
@@ -114,7 +114,7 @@ export function TranscriptEvent({
   switch (event.type) {
     case "app_context_changed": {
       const ids = Array.isArray(event.appIds) ? event.appIds.map(String) : [];
-      return <div className="px-3 py-1 text-xs text-muted-foreground">App context: {ids.length ? ids.join(", ") : "General context"}</div>;
+      return <div className="px-3 py-1 text-xs text-muted-foreground">{event.origin === "agent" ? "Assistant updated app context" : "App context"}: {ids.length ? ids.join(", ") : "General context"}</div>;
     }
     case "user_message": {
       // The files this turn carried are named here, under the message that carried them, because
@@ -154,7 +154,7 @@ export function TranscriptEvent({
     case "tool_result":
       return <p className="p-2 text-xs text-muted-foreground">Tool output has no unique matching call in this turn.</p>;
     case "command_result":
-      return <div className="space-y-1 rounded-md border border-muted-foreground/25 p-2 text-xs"><p className="text-muted-foreground">Command result has no unique matching call in this turn.</p><CommandResult outcome={commandOutcome(event)} /></div>;
+      return <div className="space-y-1 rounded-md border border-muted-foreground/25 p-2 text-xs"><p className="text-muted-foreground">Command result has no unique matching call in this turn.</p><InvocationResult outcome={commandOutcome(event)} /></div>;
     case "approval_request":
       return (
         <ApprovalCard
@@ -250,14 +250,17 @@ function TranscriptChanges({ events, reviewContext }: { events: AssistantEvent[]
     </CollapsibleContent>
   </Collapsible>;
 }
-function CommandResult({ outcome, legacy = false, compact = false }: { outcome?: CommandOutcome; legacy?: boolean; compact?: boolean }) {
+function InvocationResult({ outcome, legacy = false, compact = false }: { outcome?: CommandOutcome; legacy?: boolean; compact?: boolean }) {
   const Tag = compact ? "span" : "div";
   return <Tag data-slot="command-result" className={cn("min-w-0 items-center text-xs font-normal tabular-nums", compact ? "ml-auto inline-flex shrink-0 gap-x-1 whitespace-nowrap @sm:gap-x-2" : "flex flex-wrap gap-x-2 gap-y-1 px-1")} aria-label={compact ? undefined : "Recorded command result"}>
     <Badge variant="outline" className={cn(outcome?.status === "failed" ? "text-destructive-foreground" : "text-muted-foreground", compact && "px-1.5 py-0 @sm:px-2")}>
       {outcome?.conflict ? "Conflicting recorded results" : outcome?.status === "completed" ? "Completed" : outcome?.status === "failed" ? "Failed" : outcome?.status === "cancelled" ? "Cancelled" : "Outcome unavailable"}
     </Badge>
     {outcome?.exitCode !== undefined && <span className="font-mono text-muted-foreground">Exit {outcome.exitCode}</span>}
-    {outcome?.durationMs !== undefined && <span className="font-mono text-muted-foreground">{commandDuration(outcome.durationMs)}</span>}
+    {outcome?.durationMs !== undefined && <Badge variant="secondary" className="shrink-0 gap-1 px-1.5 py-0 font-mono font-normal text-muted-foreground @sm:px-2"
+      aria-label={"Execution time: " + commandDuration(outcome.durationMs)} title="Provider-reported execution time">
+      <Clock3 className="size-3" aria-hidden />{commandDuration(outcome.durationMs)}
+    </Badge>}
     {!compact && outcome?.summary && <span className="min-w-0 basis-full break-words text-muted-foreground">{outcome.summary}</span>}
     {!compact && !outcome && legacy && <span className="text-muted-foreground">This older call has no recorded result identity.</span>}
   </Tag>;
@@ -302,7 +305,7 @@ function ToolRow({ toolName, input, appNames, mcp, output, command }: {
   const Chevron = open ? ChevronDown : ChevronRight;
 
   return (
-    <div className={cn("@container min-w-0 text-xs text-muted-foreground", !command && "px-1")}>
+    <div className="@container min-w-0 text-xs text-muted-foreground">
       <Button
         type="button" variant="ghost" size="sm"
         onClick={() => setOpen((current) => !current)}
@@ -314,7 +317,10 @@ function ToolRow({ toolName, input, appNames, mcp, output, command }: {
           <span className="font-medium">{summary.label}</span>
           {summary.detail && <span className={cn("ml-1 font-normal", (["Command", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Glob", "Grep", "WebFetch", "FileChange"].includes(toolName) || toolName === "Bash" && !(typeof description === "string" && description.length > 0)) && "font-mono")}>{summary.detail}</span>}
         </span>
-        {command && <CommandResult outcome={command.outcome} compact />}
+        {command ? <InvocationResult outcome={command.outcome && {
+          ...command.outcome,
+          ...(!command.outcome.conflict && command.outcome.durationMs === undefined && !output?.conflict && output?.durationMs !== undefined ? { durationMs: output.durationMs } : {}),
+        }} compact /> : output && <InvocationResult outcome={output} compact />}
         <Chevron className="ml-auto size-3 shrink-0" aria-hidden />
       </Button>
       {open && <div className="min-w-0">
