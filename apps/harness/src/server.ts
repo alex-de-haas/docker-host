@@ -1,3 +1,4 @@
+import { isSkillManagementRoute, manageSkills, migrateSkillSelection, validSkillIds } from "./skills.js";
 import { createHash } from "node:crypto";
 import { WorkerApiError } from "./worker/contracts.js";
 import { EventStreamTransport } from "./event-stream-transport.js";
@@ -36,9 +37,8 @@ const APP_SESSION_STREAM_SECONDS = 3600;
 import { SessionBusyError, SessionNotFoundError, type SessionManager } from "./sessions/manager.js";
 import type { HarnessAdapter } from "./harness/adapter.js";
 import { MAX_SYSTEM_PROMPT_CHARS, type SettingsStore } from "./settings/store.js";
-import { validRetention, validSkillAcceptances } from "./settings/store.js";
+import { validRetention } from "./settings/store.js";
 import { DEFAULT_WORKFLOW_PROMPT } from "./settings/workflow.js";
-import type { PendingSkill } from "./mcp/skills.js";
 import type { ProviderDirectory } from "./settings/providers.js";
 import { serverName } from "./mcp/exchange.js";
 import type { McpProxy } from "./mcp/proxy.js";
@@ -309,6 +309,13 @@ async function route(
     sendJson(response, 200, await eventStreams.issue(await readJson(request), request, actor)); return;
   }
 
+  if (isSkillManagementRoute(method, url.pathname)) {
+    if (actor.via !== "app-session") throw new AppContextError(403, "app_session_required", "Open Harness through Core to manage skills.");
+    response.setHeader("cache-control", "no-store");
+    const result = await manageSkills(method, url, readAppCredential(request), method === "POST" ? await readJson(request) : undefined);
+    sendJson(response, result.status, result.body); return;
+  }
+
   if (isSourceConnectionRoute(method, url.pathname)) {
     response.setHeader("cache-control", "no-store");
     if (actor.via !== "app-session") {
@@ -445,7 +452,7 @@ async function route(
     const body = await readJson(request);
     const current = await settings.read();
     if (body.revision !== mcpPreferencesRevision(current)) throw new AppContextError(409, "settings_changed", "Invocation preferences changed. Reload before saving.");
-    if (!validSkillAcceptances(body.skills) || !Array.isArray(body.resetProviders) || body.resetProviders.some(p => typeof p !== "string"))
+    if (!Array.isArray(body.resetProviders) || body.resetProviders.some(p => typeof p !== "string"))
       throw new AppContextError(400, "mcp_preferences_invalid", "Invalid MCP preferences.");
     const removeRules = body.removeRules ?? [];
     if (!Array.isArray(removeRules) || removeRules.length > 2000 || removeRules.some(key => typeof key !== "string" || !Object.hasOwn(current.mcpToolRules ?? {}, key)))
@@ -456,14 +463,13 @@ async function route(
     const prepared = manager.mcpPolicy.preparePreferences(body.defaults as never, body.rules as never);
     if (body.resetProviders.some(p => !Object.hasOwn(prepared.defaults, p)))
       throw new AppContextError(400, "mcp_preferences_invalid", "A provider reset needs its reviewed default.");
-    const skills = body.skills, resetProviders = body.resetProviders as string[];
-    await providers.validateInstructions(skills, current.mcpSkillApprovals);
+    const resetProviders = body.resetProviders as string[];
+
     await settings.transform(latest => {
       if (body.revision !== mcpPreferencesRevision(latest)) throw new AppContextError(409, "settings_changed", "Invocation preferences changed. Reload before saving.");
       const rules = { ...latest.mcpToolRules };
       for (const key of Object.keys(rules)) if (rules[key]?.mode === "disabled" ? migratedDenials.has(key) || JSON.parse(key)[0] === "hosty:development" && removeRules.includes(key) : resetProviders.includes(JSON.parse(key)[0]) || removeRules.includes(key)) delete rules[key];
-      return { mcpDefaults: { ...latest.mcpDefaults, ...prepared.defaults }, mcpToolRules: { ...rules, ...prepared.rules },
-        mcpSkillApprovals: skills, mcpSkillsMigrated: true };
+      return { mcpDefaults: { ...latest.mcpDefaults, ...prepared.defaults }, mcpToolRules: { ...rules, ...prepared.rules } };
     });
     sendJson(response, 200, { revision: mcpPreferencesRevision(await settings.read()) }); return;
   }
@@ -476,8 +482,10 @@ async function route(
   }
 
   if (url.pathname === "/api/settings" && settings && (method === "GET" || method === "PUT")) {
+    if (method === "GET") await migrateSkillSelection(settings).catch(() => {});
     if (method === "PUT") {
       const body = await readJson(request);
+      if (body.skillIds !== undefined && !validSkillIds(body.skillIds)) throw new AppContextError(400, "skills_invalid", "Choose stable skill IDs from the Core catalog.");
       if (body.retention !== undefined && !validRetention(body.retention)) {
         sendJson(response, 400, { code: "retention_invalid", message: "Choose Off or whole days from 1 to 3650 for both retention policies." }); return;
       }
@@ -518,6 +526,7 @@ async function route(
       }
       if (body.executionMode !== undefined) await manager.setExecutionMode(body.executionMode);
       await settings.update({
+        skillIds: validSkillIds(body.skillIds) ? body.skillIds : undefined,
         workflowPrompt: typeof body.workflowPrompt === "string" ? body.workflowPrompt : undefined,
         retention: validRetention(body.retention) ? body.retention : undefined,
         immediateHandoffs: typeof body.immediateHandoffs === "boolean" ? body.immediateHandoffs : undefined,
@@ -542,14 +551,13 @@ async function route(
     const discovered = providers ? await providers.read() : null;
     if (discovered) {
       await settings.prune(discovered.installedAppIds);
-      await providers?.migrateInstructions(settings);
     }
     // Core is governed by the same host offer policy as app targets.
     const core = providers?.core() ?? null;
 
     const current = await settings.read();
     // Legacy field remains empty; instructions and review are exposed together below.
-    const pendingSkills: PendingSkill[] = [];
+    const pendingSkills: never[] = [];
     // Capabilities ride along so the page can say what a change actually does on this harness
     // instead of one wording that is false on one of them.
     sendJson(response, 200, {
@@ -559,7 +567,7 @@ async function route(
       toolCatalogs: manager.mcpPolicy.snapshot(),
       mcpReviewBaseUrl: process.env.HOSTY_CORE_PUBLIC_ORIGIN
         ? `${process.env.HOSTY_CORE_PUBLIC_ORIGIN.replace(/\/$/, "")}/install/agents/${encodeURIComponent(process.env.HOSTY_APP_ID ?? "hosty.harness")}` : null,
-      instructions: await providers?.instructions(current) ?? [],
+      instructions: [],
       pendingSkills,
       providers: [...(core ? [core] : []), ...(discovered?.providers ?? [])],
       discovery: discovered ? "ok" : "unavailable",
@@ -589,6 +597,7 @@ async function route(
   if (url.pathname === "/api/sessions" && method === "POST") {
     const body = await readJson(request);
     const record = await manager.createSession({
+      skillIds: body.skillIds,
       title: typeof body.title === "string" ? body.title : undefined,
       context: isStringRecord(body.context) ? body.context : undefined,
       createdBy: actor.userId,
@@ -1179,5 +1188,5 @@ function sendJson(response: ServerResponse, status: number, body: unknown): void
 }
 
 function mcpPreferencesRevision(settings: import("./settings/store.js").AssistantSettings): string {
-  return createHash("sha256").update(JSON.stringify([settings.mcpDefaults ?? {}, settings.mcpToolRules ?? {}, settings.mcpSkillApprovals ?? {}])).digest("hex");
+  return createHash("sha256").update(JSON.stringify([settings.mcpDefaults ?? {}, settings.mcpToolRules ?? {}])).digest("hex");
 }

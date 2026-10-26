@@ -27,6 +27,8 @@ export type SessionStatus =
 export type SessionAutonomy = "normal" | "autonomous";
 
 export interface SessionRecord {
+  skillIds?: string[];
+  skillExportId?: string;
   executionSelection?: import("../worker/contracts.js").ExecutionSelection;
   selectionRevision?: number;
   workerRun?: { id: string; sequence: number; generation?: string };

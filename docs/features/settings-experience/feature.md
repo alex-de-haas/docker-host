@@ -1,7 +1,7 @@
 ---
 created: 2026-10-20
-updated: 2026-10-23
-summary: Shell unifies personal, host and application settings; Core confirms protected changes while Harness owns invocation preferences and instruction acceptance.
+updated: 2026-10-26
+summary: Shell unifies personal, host and application settings; Core confirms protected changes while Harness owns invocation preferences and skill selections.
 components: [apps/core, apps/shell, apps/harness, apps/marketplace]
 ---
 
@@ -256,9 +256,8 @@ Harness stores provider-wide Ask/Do not ask defaults and per-tool exceptions. Pr
 controls change these defaults without granting excluded tools. New tools inherit the provider's
 saved default. Built-in development tools keep their Harness-local disabled choices: Core does not
 serve these tools. Bulk invocation preferences preserve those exclusions, and the same editor
-can explicitly enable or disable an individual built-in tool. App instructions are accepted locally against their installation and exact content
-digest, without a Core popup. Changed content remains unaccepted. Instruction acceptance grants no
-MCP capabilities and does not approve instructions for other consumers.
+can explicitly enable or disable an individual built-in tool. Skills have a separate library screen and stable-ID defaults. Current packages reach native clients
+without repeated digest acceptance; choosing skills grants no MCP capabilities.
 
 Save submits all Core access changes as one installation-bound review and atomic policy update,
 then writes Harness preferences. This is not a distributed transaction: a local failure after Core
@@ -269,8 +268,7 @@ configuring another assistant requires the administrative permission. Neither pe
 
 External OAuth/facade discovery uses the current user's assignments and reviewed credential scope,
 without the former Offered switch. Target/audience bounds, expiry, revocation, per-tool scope and the
-facade's read-only filter remain effective. CLI instruction delivery retains its separate global
-digest contract. See [agent MCP directory](../agent-mcp-directory/feature.md).
+facade's read-only filter remain effective. Native skills use their independent library selection and export contract. See [agent MCP directory](../agent-mcp-directory/feature.md).
 
 ## Native Preferences And Migration
 
@@ -285,9 +283,10 @@ Typed manifest parameters remain supported for wrappers and headless apps. Whisp
 continues to use Shell's Launch form and needs no application-specific web UI.
 
 Legacy Harness tool exclusions migrate through Core review before the local disabled rule is removed.
-Accepted instructions transfer only when the old approved digest, enabled assistant relationship and
-provider installation match. Existing Ask/Run rules and other consumers' approvals are preserved.
-Default-app resolution, object links and the shared skills library have their own plans.
+Explicit previous Harness instruction choices migrate to stable app/default skill IDs, including
+apps upgraded later. Existing Ask/Run rules remain independent. See the
+[shared skill library](../agent-skills/feature.md). Default-app resolution and object links retain
+their own plans.
 
 A completed operation retains its captured status and response even when delivery to the caller
 fails. Retrying the same reviewed request replays that result without executing the mutation again.
@@ -307,7 +306,7 @@ fails. Retrying the same reviewed request replays that result without executing 
 - Cover independent assistant grants, both installation identities, discovery-only credentials,
   direct denied calls, future tools and persistent exclusions across catalog outages/removals.
 - Cover one batched Save, local-only saves, cancellation, partial-save recovery, stable operation IDs,
-  refresh with unsaved edits, bulk defaults and exact instruction digest migration.
+  refresh with unsaved edits, bulk defaults and stable skill-selection migration.
 - Run affected Core/CLI, Harness, Shell and Marketplace tests, builds, lint and version/docs checks.
   Use normal password login and Core-managed app lifecycle for browser acceptance; a standalone-only
   app test is not evidence of Shell identity or embedding.

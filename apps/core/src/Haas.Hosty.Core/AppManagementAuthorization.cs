@@ -134,6 +134,8 @@ internal static class AppManagementAuthorization
         Add(CoreAppPermissions.SandboxesOperate, "POST /api/sandbox-instances/{id}/operations/{kind}",
             "POST /api/sandbox-instances/{id}/users", "POST /api/sandbox-instances/{id}/seeds", "POST /api/sandbox-instances/{id}/browser-runs",
             "POST /api/sandbox-instances/{id}/users/delete", "POST /api/sandbox-instances/{id}/viewers", "POST /api/sandbox-instances/{id}/evidence/clear", "POST /api/sandbox-instances/{id}/browser-runs/cancel");
+        Add(CoreAppPermissions.ReadSkills, "GET /api/skills", "GET /api/skills/", "GET /api/skills/{id}/content");
+        Add(CoreAppPermissions.ManageSkills, "POST /api/skills/discover", "POST /api/skills/install", "POST /api/skills/check-updates", "POST /api/skills/update", "DELETE /api/skills/{id}");
         Add(CoreAppPermissions.ReadApps,
             "GET /api/apps/{appId}/preview-checks",
             "GET /api/apps", "GET /api/apps/permissions", "GET /api/apps/{appId}/health", "GET /api/apps/{appId}/update-status",

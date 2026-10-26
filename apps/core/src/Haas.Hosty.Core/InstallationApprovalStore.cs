@@ -36,11 +36,12 @@ internal static class CoreAppPermissions
     public const string LegacySources = "apps.sources";
     public const string SourceConnections = "sources.connections";
     public const string RequestMcpAccess = "apps.mcp.access.request";
+    public const string ManageSkills = "skills.manage";
     public const string ReadSkills = "apps.skills.read";
     public const string SpeechProviders = "providers.speech-to-text";
     public const string TranslationProviders = "providers.translation";
     public const string AssistantProviders = "providers.assistant";
-    public static readonly string[] Known = [ReadCredentials, RevokeCredentials, RequestMcpAccess, WorkspaceCore, Install, ReadApps, ReadPanels, AppLogs, Notifications, AppLifecycle, ConfigureApps, ReadCore, UpdateCore, CoreLifecycle, ConfigureCore, CoreLogs, ReadUsers, ManageUsers, Sources, SourcesRead, WorkspacesRead, WorkspacesCleanup, SandboxesRead, SandboxesManage, CoreEnvironmentsRead, CoreEnvironmentsManage, CoreEnvironmentsInspect, CoreEnvironmentsOperate, SandboxesInspect, SandboxesOperate, SourceConnections, ReadSkills, SpeechProviders, TranslationProviders, AssistantProviders];
+    public static readonly string[] Known = [ReadCredentials, RevokeCredentials, RequestMcpAccess, WorkspaceCore, Install, ReadApps, ReadPanels, AppLogs, Notifications, AppLifecycle, ConfigureApps, ReadCore, UpdateCore, CoreLifecycle, ConfigureCore, CoreLogs, ReadUsers, ManageUsers, Sources, SourcesRead, WorkspacesRead, WorkspacesCleanup, SandboxesRead, SandboxesManage, CoreEnvironmentsRead, CoreEnvironmentsManage, CoreEnvironmentsInspect, CoreEnvironmentsOperate, SandboxesInspect, SandboxesOperate, SourceConnections, ReadSkills, ManageSkills, SpeechProviders, TranslationProviders, AssistantProviders];
 
     // The old name grants exactly the same authority. Other retired permissions remain unsupported.
     public static string Normalize(string permission) => permission == LegacySources ? Sources : permission;
@@ -99,7 +100,8 @@ internal static class CoreAppPermissions
         TranslationProviders => "Send text to all current and future translation providers, using their configured accounts",
         AssistantProviders => "Create draft assistant conversations on your behalf",
         RequestMcpAccess => "Request user-reviewed changes to this assistant installation’s MCP access; cannot approve changes",
-        ReadSkills => "Read agent skills published by installed apps",
+        ReadSkills => "Read shared agent skills and prepare native skill exports",
+        ManageSkills => "Manage the shared skill library as an administrator",
         Install => "Install, update and remove applications; routine updates need no confirmation, other changes require Core review",
         _ => permission,
     };

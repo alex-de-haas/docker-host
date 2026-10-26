@@ -1503,80 +1503,56 @@ public sealed class AppManifestServiceTests
     }
 
     [Theory]
-    // Every shape that would put an agent's instructions outside the app's own folder, plus the
-    // shapes the asset machinery already refuses for display assets. A skill is validated where the
-    // operator is looking at an install, not resolved to nothing much later.
-    [InlineData("../outside.md")]
-    [InlineData("docs/../../outside.md")]
-    [InlineData("/etc/passwd.md")]
-    [InlineData("https://example.com/skill.md")]
-    // Escaped for JSON: the value the validator sees is `docs\windows.md`, a Windows separator the
-    // asset machinery refuses. Written unescaped, the manifest simply fails to parse and the test
-    // would pass while proving nothing.
-    [InlineData("docs\\\\windows.md")]
-    public async Task LoadAsync_RejectsASkillOutsideTheManifestFolder(string skillFile)
+    [InlineData("../outside")]
+    [InlineData("docs/../../outside")]
+    [InlineData("/etc/passwd")]
+    [InlineData("https://example.com/skill")]
+    [InlineData("data/skill")]
+    [InlineData("source/skill")]
+    public async Task LoadAsync_RejectsASkillOutsideItsPackageNamespace(string directory)
     {
-        var manifestPath = await WriteManifestAsync(
-            "com.example.notes",
-            agent: $$"""", "agent": { "skillFile": "{{skillFile}}" } """");
-
-        var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifestPath));
-
-        Assert.Contains(error.Errors, candidate => candidate.Code == "app_manifest_agent_skill_file_outside_app");
+        var manifest = await WriteManifestAsync("com.example.notes",
+            agent: $$""", "agent": { "skills": [{ "key": "default", "path": "{{directory}}" }] } """);
+        var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifest));
+        Assert.Contains(error.Errors, e => e.Code == "app_manifest_agent_skill_path_invalid");
     }
 
     [Fact]
-    public async Task LoadAsync_AcceptsASkillInsideTheManifestFolder()
+    public async Task LoadAsync_AcceptsMultipleCompleteSkillDirectories()
     {
-        // The acceptance beside the refusals above: a validator that rejected everything would
-        // satisfy each negative on its own and be completely broken.
-        var manifestPath = await WriteManifestAsync(
-            "com.example.notes",
-            agent: """", "agent": { "skillFile": "docs/agent.md" } """");
+        var manifest = await WriteManifestAsync("com.example.notes", agent:
+            """, "agent": { "skills": [{ "key": "planning", "path": "skills/planning" }, { "key": "review", "path": "skills/review" }] } """);
+        var selection = await new AppManifestService().LoadAsync(manifest);
+        Assert.Equal(2, selection.Manifest.Agent!.Skills!.Length);
+        Assert.Equal("planning", selection.Manifest.Agent.Skills[0].Key);
+    }
 
-        var selection = await new AppManifestService().LoadAsync(manifestPath);
-
-        Assert.Equal("docs/agent.md", selection.Manifest.Agent?.SkillFile);
+    [Theory]
+    [InlineData("default", "skills/other", "app_manifest_agent_skill_key_invalid")]
+    [InlineData("other", "skills/main/sub", "app_manifest_agent_skill_path_invalid")]
+    public async Task LoadAsync_RejectsAmbiguousSkillKeysAndOverlappingPaths(string key, string path, string code)
+    {
+        var manifest = await WriteManifestAsync("com.example.notes", agent:
+            $$""", "agent": { "skills": [{ "key": "default", "path": "skills/main" }, { "key": "{{key}}", "path": "{{path}}" }] } """);
+        var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifest));
+        Assert.Contains(error.Errors, e => e.Code == code);
     }
 
     [Fact]
-    public async Task LoadAsync_RejectsAPaddedSkillPath()
+    public async Task LoadAsync_ExplainsRetiredSingleFileContractWithoutBrickingInstalledLifecycle()
     {
-        // Validation, projection and vendoring must agree on one string. A padded path that validated,
-        // projected trimmed and vendored untrimmed would leave the record pointing at a file nobody
-        // wrote — an app whose skill silently never arrives.
-        var manifestPath = await WriteManifestAsync(
-            "com.example.notes",
-            agent: """", "agent": { "skillFile": " docs/agent.md" } """");
-
-        var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifestPath));
-
-        Assert.Contains(error.Errors, candidate => candidate.Code == "app_manifest_agent_skill_file_padded");
-    }
-
-    [Fact]
-    public async Task LoadAsync_RejectsASkillThatIsNotMarkdown()
-    {
-        // The file is handed to a model as prose; the one thing worse than no skill is a binary read
-        // as instructions.
-        var manifestPath = await WriteManifestAsync(
-            "com.example.notes",
-            agent: """", "agent": { "skillFile": "docs/agent.pdf" } """");
-
-        var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifestPath));
-
-        Assert.Contains(error.Errors, candidate => candidate.Code == "app_manifest_agent_skill_file_not_markdown");
+        var manifest = await WriteManifestAsync("com.example.notes", agent: """, "agent": { "skillFile": "docs/agent.md" } """);
+        var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifest));
+        Assert.Contains(error.Errors, e => e.Code == "app_manifest_agent_skill_file_retired" && e.Message.Contains("agent.skills"));
+        var installed = await new AppManifestService().LoadAsync(manifest, allowRetiredContracts: true);
+        Assert.Null(installed.Manifest.Agent!.Skills);
     }
 
     [Fact]
     public async Task LoadAsync_AcceptsAManifestDeclaringNoAgentBlock()
     {
-        // Additive: the overwhelming majority of manifests declare nothing here and must be unaffected.
-        var manifestPath = await WriteManifestAsync("com.example.notes");
-
-        var selection = await new AppManifestService().LoadAsync(manifestPath);
-
-        Assert.Null(selection.Manifest.Agent?.SkillFile);
+        var selection = await new AppManifestService().LoadAsync(await WriteManifestAsync("com.example.notes"));
+        Assert.Null(selection.Manifest.Agent);
     }
 
     private static async Task<string> WriteManifestAsync(string appId, string? externalMounts = null, string? ports = null, string? runtimeNetwork = null, string? dependencies = null, string? runtimeArtifact = null, string? restartPolicy = null, string? healthcheck = null, string? telemetry = null, string? catalogMetadata = null, string? role = null, string? agent = null)

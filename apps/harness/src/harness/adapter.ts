@@ -103,6 +103,9 @@ export type HarnessEvent =
   | { type: "error"; message: string };
 
 export interface HarnessStartOptions {
+  skillExportId?: string;
+  /** Worker-owned isolated discovery home; never supplied by an API caller. */
+  nativeHome?: string;
   workerRunId?: string;
   onWorkerEvent?: (frame: import("../worker/contracts.js").WorkerEvent) => Promise<void>;
   onWorkerPending?: (events: import("../worker/contracts.js").WorkerEvent[]) => Promise<void>;

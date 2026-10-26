@@ -1,7 +1,5 @@
-// Core owns assistant access; Harness owns local invocation preferences and instruction acceptance.
+// Core owns assistant access; Harness owns local invocation preferences and skill selection.
 import { AppContextError } from "../sessions/app-context.js";
-import type { AssistantSettings, SettingsStore, SkillAcceptance } from "./store.js";
-import { readAppSkill, skillDigest, type AppSkill } from "../mcp/skills.js";
 
 export const MCP_INTERFACE = "mcp";
 export const CORE_PROVIDER_ID = "hosty:core";
@@ -59,57 +57,7 @@ export class ProviderDirectory {
     return target ? this.provider(target) : null;
   }
 
-  approvedSkills(): Record<string, string> {
-    return Object.fromEntries((this.snapshot?.agents.targets ?? []).flatMap(target =>
-      target.skills.filter(skill => skill.key === "agent" && skill.digest && skill.digest === skill.approvedDigest)
-        .map(skill => [target.id, skill.approvedDigest!])));
-  }
-
-  async instructions(settings?: AssistantSettings) {
-    return Promise.all((this.snapshot?.agents.targets ?? []).filter(target => target.skills.some(skill => skill.key === "agent"))
-      .map(async target => {
-        const status = target.skills.find(skill => skill.key === "agent")!;
-        const skill = await this.readSkill(target.id);
-        const identity = this.installationIdentity(target), digest = skill ? skillDigest(skill.markdown) : null;
-        const accepted = settings?.mcpSkillApprovals?.[target.id];
-        return { appId: target.id, identity, digest, markdown: skill?.markdown ?? null,
-          approved: Boolean(digest && accepted?.identity === identity && accepted.digest === digest) };
-      }));
-  }
-
   private installationIdentity(target: AgentTarget): string { return JSON.stringify([target.id, target.installedAt ?? "core"]); }
-
-  localApprovedSkills(settings: AssistantSettings): Record<string, string> {
-    return Object.fromEntries((this.snapshot?.agents.targets ?? []).flatMap(target => {
-      const accepted = settings.mcpSkillApprovals?.[target.id];
-      return accepted?.identity === this.installationIdentity(target) ? [[target.id, accepted.digest]] : [];
-    }));
-  }
-
-  async migrateInstructions(store: SettingsStore): Promise<void> {
-    if (!this.snapshot || (await store.read()).mcpSkillsMigrated) return;
-    await store.transform(current => {
-      if (current.mcpSkillsMigrated) return {};
-      const accepted = { ...current.mcpSkillApprovals };
-      for (const target of this.snapshot!.agents.targets) {
-        const skill = target.skills.find(s => s.key === "agent");
-        if (target.offered && skill?.digest && skill.digest === skill.approvedDigest && !accepted[target.id])
-          accepted[target.id] = { identity: this.installationIdentity(target), digest: skill.digest };
-      }
-      return { mcpSkillsMigrated: true, mcpSkillApprovals: accepted };
-    });
-  }
-
-  async validateInstructions(approvals: Record<string, SkillAcceptance>, previous: Record<string, SkillAcceptance> = {}): Promise<void> {
-    if (!await this.read()) throw new Error("Core is unavailable. Instructions were not changed.");
-    const instructions = await this.instructions();
-    for (const [id, approval] of Object.entries(approvals)) {
-      if (previous[id]?.identity === approval.identity && previous[id]?.digest === approval.digest) continue;
-      const current = instructions.find(i => i.appId === id);
-      if (!current || current.identity !== approval.identity || current.digest !== approval.digest)
-        throw new Error("Application instructions changed. Read the current text before saving.");
-    }
-  }
 
   async accessReview(credential: string, input: { requestId: string; revision: string; targets: unknown[] }) {
     const request = await this.reviewRequest(credential, "", { assistantAccess: { ...input, assistantId: this.appId } });
@@ -125,11 +73,6 @@ export class ProviderDirectory {
     const result = await response.json() as { id: string; status: string; approvalUrl: string; error?: string; message?: string; code?: string };
     if (!response.ok) throw new AppContextError(response.status, result.code ?? "mcp_review_failed", result.message ?? "Core could not prepare this access review.");
     return result;
-  }
-
-  async readSkill(targetAppId: string): Promise<AppSkill | null> {
-    if (!this.coreOrigin || !this.serviceToken) return null;
-    return readAppSkill(this.coreOrigin, this.serviceToken, this.appId, targetAppId);
   }
 
   private async refresh(): Promise<DirectorySnapshot | null> {

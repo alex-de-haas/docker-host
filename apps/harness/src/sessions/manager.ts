@@ -1,3 +1,4 @@
+import { prepareSkills, skillRequest, validSkillIds } from "../skills.js";
 import { harnessEnvironmentActions } from "./environment-tools.js";
 import { projectWorktreePaths } from "../worker/resources.js";
 import { transcriptFileEdits } from "./transcript-edits.js";
@@ -15,7 +16,6 @@ import type { AgentConnections, ConnectionBinding } from "../connections/registr
 import { AppContextError, parseAppIds, validateSelection, captureContext, withAppContext } from "./app-context.js";
 import { mkdir, stat } from "node:fs/promises";
 import { isWaitingStatus, WaitingNotifier } from "../notifications.js";
-import { composeSystemPrompt, partitionSkills, type AppSkill } from "../mcp/skills.js";
 import { HOST_SYSTEM_PROMPT, DOCKER_SYSTEM_PROMPT } from "./host-prompt.js";
 import { createHash, randomUUID } from "node:crypto";
 import { deriveTitleFromMessage, normalizeTitle } from "./title.js";
@@ -751,6 +751,7 @@ export class SessionManager {
   }
 
   async createSession(input: {
+    skillIds?: unknown;
     title?: string;
     context?: Record<string, string>;
     createdBy: string;
@@ -760,11 +761,12 @@ export class SessionManager {
     reservedHandoffId?: string;
   }): Promise<SessionRecord> {
     return this.serialize("create", async () => {
+      if (input.skillIds !== undefined && !validSkillIds(input.skillIds)) throw new AppContextError(400, "skills_invalid", "Choose stable skill IDs from the Core catalog.");
       const appIds = parseAppIds(input.appIds === undefined ? [] : input.appIds);
       const requestId = input.clientRequestId;
       if (requestId !== undefined && (typeof requestId !== "string" || !/^[a-zA-Z0-9-]{1,128}$/.test(requestId)))
         throw new AppContextError(400, "request_id_invalid", "Invalid creation request id.");
-      const fingerprint = JSON.stringify({ title: normalizeTitle(input.title), context: input.context ?? null, appIds, ...(input.connectionId !== undefined ? { connectionId: input.connectionId } : {}) });
+      const fingerprint = JSON.stringify({ ...(input.skillIds !== undefined ? { skillIds: input.skillIds } : {}), title: normalizeTitle(input.title), context: input.context ?? null, appIds, ...(input.connectionId !== undefined ? { connectionId: input.connectionId } : {}) });
       if (typeof requestId === "string") {
         const existing = (await this.store.listRecords()).find(r => r.createdBy === input.createdBy && r.creationRequest?.id === requestId);
         if (existing) {
@@ -777,6 +779,7 @@ export class SessionManager {
       const now = new Date().toISOString();
       const title = normalizeTitle(input.title);
       const record: SessionRecord = {
+        skillIds: input.skillIds as string[] | undefined ?? (await this.settings?.read())?.skillIds,
         retentionVersion: 1,
         executionMode: this.executionMode ?? (await this.settings?.read())?.executionMode ?? "native",
         id: input.reservedHandoffId ?? randomUUID(),
@@ -1180,6 +1183,7 @@ export class SessionManager {
       }
       this.proxy?.unregister(id);
       this.developmentMcp.unregister(id);
+      if (record.skillExportId) await skillRequest(`/exports/${record.skillExportId}`, "DELETE");
       await this.store.deleteSession(id);
       this.notifyToolActivity();
       // Reported like every other lifecycle transition, and with the administrator who asked for it:
@@ -1522,15 +1526,14 @@ export class SessionManager {
           const operatorPrompt = [instructions?.workflowPrompt ?? DEFAULT_WORKFLOW_PROMPT, instructions?.systemPrompt].filter(Boolean).join("\n\n");
           const mcpServers = await this.buildMcpServers(session);
           session.mcpSignature = JSON.stringify([mcpServers ?? {}, session.mcpTargetSignature]);
-          // After the servers, deliberately: the set of enabled providers is what decides whose skill is
-          // read, and buildMcpServers is where that set is resolved. Asking first would use a stale one.
-          // Host preamble first, operator text second — the platform states identity and ground rules,
-          // and the operator's own words come after so they can override any of it. App skills follow,
-          // fenced, inside composeSystemPrompt. The facade's instructions deliberately do not carry the
-          // preamble: an external client has no shell and no approval cards, so it would be false there.
-          const systemPrompt = composeSystemPrompt(
-            [docker ? DOCKER_SYSTEM_PROMPT : HOST_SYSTEM_PROMPT, operatorPrompt?.trim()].filter(Boolean).join("\n\n"),
-            await this.readDeliverableSkills(session));
+          // Standing instructions are prompt text; selected skill packages use native discovery.
+          const systemPrompt = [docker ? DOCKER_SYSTEM_PROMPT : HOST_SYSTEM_PROMPT, operatorPrompt?.trim()].filter(Boolean).join("\n\n");
+          const skillExport = this.settings && this.providers ? await prepareSkills(id, this.settings, session.record.skillIds) : undefined;
+          if (skillExport) {
+            session.record.skillExportId = skillExport.id;
+            session.record.skillIds ??= (await this.settings!.read()).skillIds ?? [];
+            await this.store.saveRecord(session.record);
+          }
           // The session's own directory, not the shared one. Every session used to start in the same
           // `workDir`, which defaulted to the home directory — a file placed "next to the session" was
           // visible to all of them at once.
@@ -1548,6 +1551,7 @@ export class SessionManager {
           this.mcpPolicy.cancel(id); // A new native client starts a fresh JSON-RPC request namespace.
           const runEpoch = session.runEpoch = randomUUID();
           session.run = selectedAdapter.start({
+            skillExportId: skillExport?.id,
             workerRunId: session.record.workerRun?.id,
             onWorkerEvent: frame => this.receiveWorkerEvent(session, frame, runEpoch),
             sessionId: id,
@@ -1681,40 +1685,6 @@ export class SessionManager {
       return null;
     }
     return [...(core ? [core] : []), ...(discovered?.providers ?? [])];
-  }
-
-  /**
-   * The skills of the providers this session actually got, in the order they were offered.
-   *
-   * Keyed off `session.mcpAppIds` rather than the policy, so a provider that is enabled but
-   * unreachable contributes no skill: handing a model instructions for tools it does not have would
-   * be worse than silence, because it reads as a capability rather than as an absence.
-   */
-  private async readEnabledSkills(session: LiveSession): Promise<AppSkill[]> {
-    if (!this.providers || session.mcpAppIds.length === 0) {
-      return [];
-    }
-
-    // Core declares no skill: its guidance reaches the harness through the operator's own instruction
-    // sources, and asking Core's app-directory for a skill about itself would only be a 404 per start.
-    const appIds = session.mcpAppIds.filter((appId) => appId !== CORE_PROVIDER_ID);
-    const skills = await Promise.all(appIds.map((appId) => this.providers!.readSkill(appId)));
-    return skills.filter((skill): skill is AppSkill => skill !== null);
-  }
-
-  /**
-   * The skills this session may be given: only those matching a digest the operator approved.
-   *
-   * Core stores approvals for the text reviewed in Shell Settings → Agents.
-   */
-  private async readDeliverableSkills(session: LiveSession): Promise<AppSkill[]> {
-    const skills = await this.readEnabledSkills(session);
-    if (skills.length === 0 || !this.settings) {
-      return skills;
-    }
-
-    await this.providers?.migrateInstructions(this.settings);
-    return partitionSkills(skills, this.providers?.localApprovedSkills(await this.settings.read()) ?? {}).deliver;
   }
 
   /** Re-reads the fleet and the policy, then rebuilds this session's grants from both. */

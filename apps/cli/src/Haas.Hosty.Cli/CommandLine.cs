@@ -67,6 +67,7 @@ public static class CommandLine
                 "open" => await new OpenCommand(commandContext).ExecuteAsync(args[1..]),
                 "core" => await new CoreCommand(commandContext).ExecuteAsync(args[1..]),
                 "apps" => await new AppsCommand(commandContext).ExecuteAsync(args[1..]),
+                "skills" => await new SkillsCommand(commandContext).ExecuteAsync(args[1..]),
                 "mcp" => await new McpCommand(commandContext).ExecuteAsync(args[1..]),
                 "storage" => await new StorageCommand(commandContext).ExecuteAsync(args[1..]),
                 "users" => await new UsersCommand(commandContext).ExecuteAsync(args[1..]),
@@ -219,6 +220,7 @@ public static class CommandLine
         WriteCommandGroup(console, "Apps & users",
         [
             ("apps", "Install, update, back up, and inspect apps"),
+            ("skills", "Read the shared skill library and provision native skill exports"),
             ("mcp", "Serve this host's app tools to an agent client (MCP)"),
             ("storage", "Manage shared host-path mounts"),
             ("users", "List app users"),

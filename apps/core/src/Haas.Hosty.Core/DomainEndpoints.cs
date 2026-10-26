@@ -41,44 +41,6 @@ internal static class DomainEndpoints
             await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
                 CoreJson.Json(new AppsResponse(await lifecycle.ListAppsAsync(cancellationToken)))));
 
-        // The same skill, read over the control channel instead.
-        //
-        // The connector is the CLI, and the CLI already holds unconditional host-operator power here
-        // — it is the channel that installs and removes apps. So this needs no gate of its own: one
-        // that refused would refuse a caller who can already do more, which is theatre rather than
-        // security. The app-to-app route above is the one that had to earn its authorization.
-        app.MapGet("/control/v1/apps/{appId}/agent-skill", async (
-            string appId,
-            HttpRequest request,
-            ControlSecret secret,
-            AppRegistryStore apps,
-            CoreDataPaths paths,
-            CancellationToken cancellationToken) =>
-            await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
-            {
-                var app = await apps.GetAppAsync(appId, cancellationToken);
-                if (app?.AgentSkillFile is not { } skillFile)
-                {
-                    return CoreJson.Json(
-                        new ErrorResponse("agent_skill_not_found", "That app declares no agent skill."),
-                        statusCode: StatusCodes.Status404NotFound);
-                }
-
-                var relative = CoreDataPaths.NormalizeRelativeAssetPath("", skillFile);
-                if (relative is null ||
-                    !AppAssetEndpoints.TryResolveAsset(paths.AppsRoot, appId, relative, out var absolute, out _))
-                {
-                    return CoreJson.Json(
-                        new ErrorResponse("agent_skill_not_found", "That app declares an agent skill that was not packaged."),
-                        statusCode: StatusCodes.Status404NotFound);
-                }
-
-                return CoreJson.Json(new AgentSkillResponse(
-                    app.Id,
-                    app.DisplayName,
-                    await File.ReadAllTextAsync(absolute, cancellationToken)));
-            }));
-
         // App-authenticated read of installed app ids. An app (e.g. Marketplace) calls this with its
         // own service token to learn which apps are already installed — enough to flag catalog entries
         // as installed — without holding a Core session. Returns ids only; the richer per-app state
@@ -130,69 +92,6 @@ internal static class DomainEndpoints
         // a reason to read a neighbour's instructions, and "cheap to allow" is how a torrent client
         // ends up reading the media server's. The narrower alternative — folding skills into the
         // fleet listing every app already reads — would have granted this to all of them silently.
-        app.MapGet("/api/internal/apps/{appId}/agent-skills/{targetAppId}", async (
-            string appId,
-            string targetAppId,
-            HttpRequest request,
-            AppServiceTokenService serviceTokens,
-            AppRegistryStore apps,
-            CoreDataPaths paths,
-            CancellationToken cancellationToken) =>
-        {
-            var token = CoreSessionAuthorization.ReadBearerToken(request);
-            if (string.IsNullOrWhiteSpace(token) || !serviceTokens.ValidateToken(appId, token))
-            {
-                return CoreJson.Json(
-                    new ErrorResponse("agent_skill_unauthorized", "App service token is missing or invalid."),
-                    statusCode: StatusCodes.Status401Unauthorized);
-            }
-
-            var caller = await apps.GetAppAsync(appId, cancellationToken);
-            if (caller is null)
-            {
-                return CoreJson.Json(
-                    new ErrorResponse("app_not_found", "Runtime app was not found."),
-                    statusCode: StatusCodes.Status404NotFound);
-            }
-
-            if (caller.GrantedCorePermissions?.Contains(CoreAppPermissions.ReadSkills, StringComparer.Ordinal) != true)
-            {
-                return CoreJson.Json(
-                    new ErrorResponse(
-                        "agent_skill_forbidden",
-                        "The apps.skills.read permission is required to read another app's agent skill."),
-                    statusCode: StatusCodes.Status403Forbidden);
-            }
-
-            var target = await apps.GetAppAsync(targetAppId, cancellationToken);
-            if (target?.AgentSkillFile is not { } skillFile)
-            {
-                return CoreJson.Json(
-                    new ErrorResponse("agent_skill_not_found", "That app declares no agent skill."),
-                    statusCode: StatusCodes.Status404NotFound);
-            }
-
-            // Resolved through the display-asset helper rather than by joining paths here. It is not
-            // merely containment: it refuses reserved app namespaces (the path a past IDOR was read
-            // through) and fails closed on a symbolic link at the app root or anywhere below it. A
-            // second, simpler resolver beside it would be the one missing those checks.
-            //
-            // Declared is also not the same as present — the path was validated at install, but the
-            // file may never have been packaged. That is an app packaging fault, answered as a plain
-            // absence rather than a server error.
-            var relative = CoreDataPaths.NormalizeRelativeAssetPath("", skillFile);
-            if (relative is null ||
-                !AppAssetEndpoints.TryResolveAsset(paths.AppsRoot, targetAppId, relative, out var absolute, out _))
-            {
-                return CoreJson.Json(
-                    new ErrorResponse("agent_skill_not_found", "That app declares an agent skill that was not packaged."),
-                    statusCode: StatusCodes.Status404NotFound);
-            }
-
-            var markdown = await File.ReadAllTextAsync(absolute, cancellationToken);
-            return CoreJson.Json(new AgentSkillResponse(target.Id, target.DisplayName, markdown));
-        });
-
         app.MapGet("/api/internal/apps/{appId}/app-directory", async (
             string appId,
             HttpRequest request,
@@ -433,7 +332,6 @@ internal sealed record InstalledAppsResponse(IReadOnlyList<string> AppIds);
 /// One app's agent skill, as another app reads it. The app id and name travel with the text so a
 /// consumer can attribute it — prose reaching a model without saying whose it is invites exactly the
 /// confusion this feature is careful about elsewhere.
-internal sealed record AgentSkillResponse(string AppId, string DisplayName, string Markdown);
 
 internal sealed record AppDirectoryResponse(IReadOnlyList<AppDirectoryEntry> Apps, AgentDirectoryResponse? Agents = null);
 

@@ -225,7 +225,7 @@ class CodexRun implements HarnessRun {
     const spawnOptions = {
       stdio: ["pipe", "pipe", "pipe"] as const,
       cwd: options.cwd,
-      env: { ...(auth.isolated ? cleanAgentEnvironment() : process.env), ...env, ...mcp.env },
+      env: { ...(auth.isolated ? cleanAgentEnvironment() : process.env), ...env, ...mcp.env, ...(options.nativeHome ? { HOME: options.nativeHome } : {}) },
     };
     this.child = options.processTransport
       ? options.processTransport.spawn("codex", providerArgs, spawnOptions)

@@ -1,3 +1,4 @@
+import { linkSkillDirectory } from "./skills.js";
 import { spawn } from "node:child_process";
 import { cp, mkdir, mkdtemp, readFile, readdir, lstat, chown, chmod, rm, copyFile } from "node:fs/promises";
 import path from "node:path";
@@ -7,7 +8,7 @@ import { isNodeEntry, resolveCodexCommand } from "../harness/codex-binary.js";
 
 /** Normal Linux credentials separate the control backend from the selected provider CLI.
  * Profiles are staged in the container layer, so NTFS bind permission reporting is not a gate. */
-export async function prepareNativeProfile(home: string, kind: "claude" | "codex", uid: number) {
+export async function prepareNativeProfile(home: string, kind: "claude" | "codex", uid: number, skills?: string) {
   const parent = "/run/hosty-execution";
   await mkdir(parent, { recursive: true, mode: 0o711 }); await chmod(parent, 0o711);
   const root = await mkdtemp(path.join(parent, "profile-"));
@@ -25,6 +26,7 @@ export async function prepareNativeProfile(home: string, kind: "claude" | "codex
       }
     }
     await own(root, uid);
+    if (skills) await linkSkillDirectory(root, kind, skills);
   } catch (error) { await rm(root, { recursive: true, force: true }); throw error; }
   const groups = new Set<number>();
   const transport: AgentProcessTransport = { spawn(provider, args, options) {

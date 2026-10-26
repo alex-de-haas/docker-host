@@ -1,5 +1,5 @@
 ---
-status: Ready
+status: In Progress
 created: 2026-10-15
 updated: 2026-10-26
 summary: Implement a shared Core skill library from Git and app packages, manual individual and bulk updates, current-content native delivery and coordinated app-contract migration.
@@ -689,7 +689,7 @@ Static Hosty findings at the historical inspection baseline:
   checks below exercise the native behavior separately from the Harness adapter.
 - The [Codex adapter](../../../apps/harness/src/harness/codex.ts) starts App Server. The native
   methods verified below are not wired into a Hosty skill-selection flow.
-- [App-skill composition](../../../apps/harness/src/mcp/skills.ts) still injects approved Markdown
+- The historical app-skill composer (retired during this implementation) injected approved Markdown
   with an 8,000-character cap. The [CLI connector](../../../apps/cli/src/Haas.Hosty.Cli/Mcp/StdioMcpServer.cs)
   advertises protocol `2025-06-18` and handles tools rather than the Skills extension methods;
   [assistant catalog discovery](../../../apps/core/src/Haas.Hosty.Core/AssistantMcpDiscovery.cs)
@@ -980,14 +980,13 @@ code, manifest, version or runtime configuration was changed, and the plan remai
 ## Deliverables
 
 D1-D6 retain their original responsibility areas, now expressed as implementation outcomes rather
-than preparation of another research proposal. All remain unchecked: no implementation or runtime
-integration is claimed by this edit. Owner decision 60 explicitly removes manual upload.
+than preparation of another research proposal. Verified implementation and acceptance are checked below. Owner decision 60 explicitly removes manual upload.
 
-- [ ] D1. Deliver Harness's administrator library journeys over shared Core APIs: catalog/filter/read packages, discover/select Git skills, choose existing Source connections, install, check, update one/update all and remove; show current provenance, removals and failures without upload, package editing or repeated content-acceptance UI.
-- [ ] D2. Implement source/skill persistence and complete-package validation for Git/app sources, shared fetching, manual per-skill/bulk updates and applied upstream removals; migrate agent.skillFile producers, packaging, readers, SDK/schema surfaces, templates and existing selections to agent.skills, including app lifecycle and removal of legacy digest gates.
-- [ ] D3. Implement the application-neutral Core catalog/read/import/check/apply/remove/export API and native current-content delivery; enforce administrator writes, authorized reads and repository connection grants, omit deleted IDs, publish complete replacements and separate differing selection exports without historical revisions or session pins.
+- [x] D1. Deliver Harness's administrator library journeys over shared Core APIs: catalog/filter/read packages, discover/select Git skills, choose existing Source connections, install, check, update one/update all and remove; show current provenance, removals and failures without upload, package editing or repeated content-acceptance UI.
+- [x] D2. Implement source/skill persistence and complete-package validation for Git/app sources, shared fetching, manual per-skill/bulk updates and applied upstream removals; migrate agent.skillFile producers, packaging, readers, SDK/schema surfaces, templates and existing selections to agent.skills, including app lifecycle and removal of legacy digest gates.
+- [x] D3. Implement the application-neutral Core catalog/read/import/check/apply/remove/export API and native current-content delivery; enforce administrator writes, authorized reads and repository connection grants, omit deleted IDs, publish complete replacements and separate differing selection exports without historical revisions or session pins.
 - [ ] D4. Verify both current Harness native adapters and an explicitly provisioned local Codex CLI consumer: full-package references/activation, two concurrent selections on one provider connection, update/removal, private-source failure, publication and resume; record reload limits and prove no historical retention or missing-skill session block.
-- [ ] D5. Integrate assistant-default selection and stable-ID inputs for app-owned profiles while preserving standing instructions and separate tool/script authority; demonstrate development and non-development journeys, reuse workspace/sandbox/optional plan owners and support an independent authorized Core consumer without team orchestration or first-party-ID dependencies.
+- [x] D5. Integrate assistant-default selection and stable-ID inputs for app-owned profiles while preserving standing instructions and separate tool/script authority; demonstrate development and non-development journeys, reuse workspace/sandbox/optional plan owners and support an independent authorized Core consumer without team orchestration or first-party-ID dependencies.
 - [ ] D6. Complete the coordinated component/app migration inventory and release sequence, record verification and outstanding blockers, update feature.md and current behavior/authoring documentation, retire this plan only after all deliverables pass, and regenerate the index alongside applicable artifact version changes.
 
 ## Implementation Boundaries And Defaults

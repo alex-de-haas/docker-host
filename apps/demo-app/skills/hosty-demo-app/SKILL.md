@@ -1,3 +1,8 @@
+---
+name: hosty-demo-app
+description: Use the Hosty demo application and its supported tools.
+---
+
 # Demo App
 
 A Hosty reference app for host identity, app-owned roles, and a scoped user directory. Its tools

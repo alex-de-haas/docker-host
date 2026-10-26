@@ -133,7 +133,7 @@ The read-only MCP endpoint is `/api/mcp`. `list_plans`, `get_plan` and `plan_wor
 tracked-branch state, workspace versions, errors and detail links. Each request introspects its
 app-addressed MCP credential through Core, requires `mcp:read` and a current administrator, and
 passes the same credential to the document API. The app's agent guidance is in
-[apps/documents/docs/agent.md](../../../apps/documents/docs/agent.md).
+[Documents skill package](../../../apps/documents/skills/hosty-documents/SKILL.md).
 
 ## Runtime And Release
 

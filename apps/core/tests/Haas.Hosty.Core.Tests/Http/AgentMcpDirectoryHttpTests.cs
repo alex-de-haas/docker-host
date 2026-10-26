@@ -9,55 +9,32 @@ namespace Haas.Hosty.Core.Tests.Http;
 public sealed class AgentMcpDirectoryHttpTests
 {
     [Fact]
-    public async Task ApprovalNamesReviewedBytes_DefaultsRevisionAndReinstallAreSafe()
+    public async Task SkillUpdatesDoNotChangeToolAccessOrRequireDigestApproval()
     {
         await using var host = await CoreHttpHarness.StartAsync();
         var apps = host.Services.GetRequiredService<AppRegistryStore>();
-        var paths = host.Services.GetRequiredService<CoreDataPaths>();
         var directory = host.Services.GetRequiredService<AgentMcpDirectory>();
+        var library = host.Services.GetRequiredService<AgentSkillLibrary>();
         var app = CreateApp("example.notes") with {
-            AgentSkillFile = "agent.md",
             Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> { ["mcp"] = [new("default", null, "/api/mcp")] }
         };
         await apps.UpsertAppAsync(app);
-        var skillPath = Path.Combine(paths.AppsRoot, app.Id, "agent.md");
-        await File.WriteAllTextAsync(skillPath, "Reviewed instructions");
-        await SignInAsync(host, "host.admin");
-        using var client = host.CreateClient();
-        client.DefaultRequestHeaders.Add("Cookie", "hosty_session=agent-session; hosty_csrf=csrf");
-        client.DefaultRequestHeaders.Add("X-Hosty-CSRF", "csrf");
         var first = await directory.ReadAsync(true);
-        Assert.True(first.Targets.Single(t => t.Id == "hosty:core").Offered);
-        var target = first.Targets.Single(t => t.Id == app.Id);
-        Assert.False(target.Offered);
-        Assert.Equal("Reviewed instructions", Assert.Single(target.Skills).Markdown);
-        var digest = target.Skills[0].Digest!;
+        Assert.False(first.Targets.Single(t => t.Id == app.Id).Offered);
         using var enable = await ApplyLegacyPolicyInProcess(host, app.Id, new { revision = first.Revision, offered = true });
         Assert.Equal(HttpStatusCode.OK, enable.StatusCode);
         var enabled = await directory.ReadAsync();
-        Assert.True(enabled.Targets.Single(t => t.Id == app.Id).Offered);
-        Assert.Null(enabled.Targets.Single(t => t.Id == app.Id).Skills[0].ApprovedDigest);
-        using var approve = await ApplyLegacyPolicyInProcess(host, app.Id,
-            new { revision = enabled.Revision, offered = true, approveSkills = new Dictionary<string, string> { ["agent"] = digest } });
-        Assert.Equal(HttpStatusCode.OK, approve.StatusCode);
-        var approved = await directory.ReadAsync();
-        Assert.Equal(digest, approved.Targets.Single(t => t.Id == app.Id).Skills[0].ApprovedDigest);
-        Assert.Null(approved.Targets.Single(t => t.Id == app.Id).Skills[0].Markdown);
-        await File.WriteAllTextAsync(skillPath, "Changed instructions");
-        using var stale = await ApplyLegacyPolicyInProcess(host, app.Id,
-            new { revision = approved.Revision, offered = true, approveSkills = new Dictionary<string, string> { ["agent"] = digest } });
-        Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
-        var changed = await directory.ReadAsync();
-        Assert.NotEqual(approved.Revision, changed.Revision);
+        var package = AgentSkillPackages.Validate([new("SKILL.md", System.Text.Encoding.UTF8.GetBytes("---\nname: notes\ndescription: Use notes\n---\nInstructions"))]);
+        await library.ReplaceAppAsync(app.Id, "2", new Dictionary<string, AgentSkillPackage> { ["default"] = package }, default);
+        var changed = await directory.ReadAsync(true);
+        Assert.Equal(enabled.Revision, changed.Revision);
         Assert.True(changed.Targets.Single(t => t.Id == app.Id).Offered);
-        Assert.NotEqual(digest, changed.Targets.Single(t => t.Id == app.Id).Skills[0].Digest);
-        Assert.Contains("agent.policy.updated", await File.ReadAllTextAsync(paths.AuditLogPath));
+        Assert.Empty(changed.Targets.Single(t => t.Id == app.Id).Skills);
         await host.Services.GetRequiredService<CoreLifecycleService>().RemoveAsync(app.Id, new AppRemoveRequest(DeleteData: false, IgnoreRuntimeErrors: true));
+        Assert.Empty((await library.CatalogAsync(default)).Skills);
         Assert.DoesNotContain(app.Id, (await host.Services.GetRequiredService<AgentPolicyStore>().ReadAsync()).Targets.Keys);
         await apps.UpsertAppAsync(app with { InstalledAt = app.InstalledAt.AddMinutes(1) });
-        var reinstalled = (await directory.ReadAsync()).Targets.Single(t => t.Id == app.Id);
-        Assert.False(reinstalled.Offered);
-        Assert.Null(reinstalled.Skills[0].ApprovedDigest);
+        Assert.False((await directory.ReadAsync()).Targets.Single(t => t.Id == app.Id).Offered);
     }
 
     [Fact]
@@ -77,13 +54,12 @@ public sealed class AgentMcpDirectoryHttpTests
     }
 
     [Fact]
-    public async Task PermissionDeniedSkill_WithholdsTextWithoutBreakingDirectory()
+    public async Task RetiredInstructionFilesAreNotReadByTheToolDirectory()
     {
         // Unix mode bits exercise the real permission failure; Windows uses ACLs instead.
         if (OperatingSystem.IsWindows()) return;
         await using var host = await CoreHttpHarness.StartAsync();
         var app = CreateApp("example.unreadable") with {
-            AgentSkillFile = "agent.md",
             Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> { ["mcp"] = [new("default", null, "/api/mcp")] }
         };
         await host.Services.GetRequiredService<AppRegistryStore>().UpsertAppAsync(app);
@@ -99,9 +75,7 @@ public sealed class AgentMcpDirectoryHttpTests
             using var admin = await client.GetAsync("/api/core/agents");
             Assert.Equal(HttpStatusCode.OK, admin.StatusCode);
             var snapshot = await host.Services.GetRequiredService<AgentMcpDirectory>().ReadAsync(true);
-            var skill = Assert.Single(snapshot.Targets.Single(target => target.Id == app.Id).Skills);
-            Assert.Null(skill.Digest);
-            Assert.Null(skill.Markdown);
+            Assert.Empty(snapshot.Targets.Single(target => target.Id == app.Id).Skills);
             Assert.True(snapshot.Targets.Single(target => target.Id == "hosty:core").Offered);
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer",
                 host.Services.GetRequiredService<AppServiceTokenService>().CreateToken(app.Id));

@@ -24,6 +24,8 @@ export function validRetention(value: unknown): value is RetentionSettings {
 }
 
 export interface AssistantSettings {
+  /** Stable Core package IDs; contents always follow the installed library. */
+  skillIds?: string[];
   workflowPrompt?: string;
   retention?: RetentionSettings;
   executionMode?: "native" | "docker";
@@ -126,6 +128,7 @@ export class SettingsStore {
     try {
       const parsed = JSON.parse(await readFile(this.file, "utf8")) as Partial<AssistantSettings>;
       this.cached = withCoreDefaults({
+        skillIds: Array.isArray(parsed.skillIds) && parsed.skillIds.every((id: unknown) => typeof id === "string" && /^[a-f0-9]{64}$/.test(id)) ? parsed.skillIds : undefined,
         workflowPrompt: typeof parsed.workflowPrompt === "string" ? parsed.workflowPrompt : DEFAULT_WORKFLOW_PROMPT,
         retention: validRetention(parsed.retention) ? parsed.retention : { ordinaryDays: parsed.retention === undefined ? this.legacyRetentionDays : null, completedWorkspaceDays: null },
         executionMode: parsed.executionMode === "docker" ? "docker" : "native",
@@ -190,6 +193,7 @@ export class SettingsStore {
   ): Promise<AssistantSettings> {
     const current = await this.read();
     const next: AssistantSettings = {
+      skillIds: patch.skillIds ?? current.skillIds,
       workflowPrompt: (patch.workflowPrompt ?? current.workflowPrompt ?? DEFAULT_WORKFLOW_PROMPT).slice(0, MAX_SYSTEM_PROMPT_CHARS),
       retention: patch.retention ?? current.retention ?? { ordinaryDays: this.legacyRetentionDays, completedWorkspaceDays: null },
       executionMode: patch.executionMode ?? current.executionMode ?? "native",

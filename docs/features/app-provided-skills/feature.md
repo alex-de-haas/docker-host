@@ -1,133 +1,56 @@
 ---
 created: 2026-08-21
-updated: 2026-10-20
-summary: Apps ship an agent skill file that explains how their tools are meant to be used.
-components: [apps/core, apps/harness]
+updated: 2026-10-26
+summary: Apps supply multiple complete SKILL.md packages to Core through stable agent.skills declarations.
+components: [apps/core, apps/harness, apps/documents, apps/demo-app]
 ---
 
-# App-Provided Skills
+# App-Provided Skill Packages
 
-An app ships the prose an agent needs to use it well, the way it already ships its icon and its long
-description. MCP tells an agent *what calls exist*; a skill tells it how this app is meant to be
-worked — which tool answers first, what the app's words mean, what a refusal means.
+An app contributes optional reusable guidance to the [shared skill library](../agent-skills/feature.md).
+MCP describes callable tools; a package explains useful workflows and can include supporting files.
 
-## The Declaration
+## Manifest Contract
 
-A sibling of `interfaces`, not a member of `catalogMetadata`:
-
-```jsonc
-"agent": { "skillFile": "docs/agent.md" }
+```json
+"agent": {
+  "skills": [
+    { "key": "default", "path": "skills/my-app" },
+    { "key": "review", "path": "skills/my-app-review" }
+  ]
+}
 ```
 
-The placement carries the distinction. `catalogMetadata` holds display assets and is documented in
-Core's own source as *outside runtime validation* — a missing icon is a cosmetic disappointment. A
-skill is prose a model acts on, so it is validated **at install**: relative, contained in the manifest
-folder, and markdown. A declaration that escapes the folder is refused where an operator is looking at
-an install, not resolved to nothing much later.
+Each path names a complete directory relative to the manifest. Its `SKILL.md` contains YAML
+`name` and `description`; the name matches the directory name. References, scripts and assets stay
+in their original directory tree. Stable keys preserve selection across app updates; new keys do
+not auto-select themselves. Keys and directory paths must be unique and non-overlapping. Core
+refuses traversal, symlinks, reserved runtime/data paths and invalid or oversized packages.
 
-Containment reuses the asset machinery's own answer rather than a second copy, and so does reading:
-the resolver that serves display assets refuses reserved app namespaces — the path a past IDOR was
-read through — and fails closed on a symbolic link at the app root or anywhere below it. A simpler
-second resolver beside it would be the one missing those checks.
+Core prepares and validates all declared packages before committing the application record. Name
+collisions are checked against the shared library under its publication lock. App updates replace
+the supplying app's current package set; removing an app removes its packages and selected exports.
+Local manifests supply contained directories. Repository-backed manifest URLs supply packages
+from the same repository/ref; Core verifies the fetched manifest against the reviewed digest.
 
-One skill per app. An app with several `interfaces.mcp` entries still has one story about how it is
-worked; division is sections in the file rather than another axis in the manifest.
+`agent.skillFile` is retired. New installations and updates require `agent.skills`; installed legacy
+apps can still be stopped, removed and upgraded. The old single-file read endpoints are removed.
+Documents and Demo App use the stable `default` key for their migrated guidance.
 
-## MCP Access And Reviewed Instructions
+## Selection And Authority
 
-The [Core Agent MCP Directory](../agent-mcp-directory/feature.md) owns assistant MCP access.
-Harness Settings → MCP access owns local acceptance of complete app instruction text against its
-installation and digest. Enabling tools never approves unseen text. CLI/facade consumers retain their
-separate global Core digest acceptance; local Harness acceptance does not change it.
+Skills are selected independently of MCP permissions and standing instructions. Apps do not inject
+all their prose into prompts. Authorized consumers discover/read packages through Core, choose
+stable IDs and provision native exports. There is no repeated content-digest acceptance gate.
+Updating files does not retract text already loaded by a native conversation.
 
-## Reaching An Agent
-
-| Reader | Condition | Path |
-| --- | --- | --- |
-| Hosty Harness | Core allows the provider, Harness accepts its current installation/digest, and the session got its tools | `GET /api/internal/apps/{caller}/agent-skills/{target}` |
-| `hosty mcp` | Core offers the app, approves its skill digest, and the app contributed tools | `GET /control/v1/apps/{appId}/agent-skill` |
-
-Both are keyed off **tools the client actually has**, never off policy alone: instructions for tools a
-session does not have read as a capability rather than as an absence.
-
-**The Hosty assistant is a reader like any other**, though it runs on the host with shell access and
-is the highest-consequence one there is. That argues for the gate, which exists, not for exclusion:
-the assistant **already** receives app-authored text through this very toggle — the name and
-description of every enabled provider's tool. Excluding skills would draw a line the platform draws
-nowhere else, on the one surface where people actually work.
-
-**The app-to-app route had to earn its authorization.** Every other `/api/internal/apps/{appId}/…`
-route answers about the caller itself — the service token is validated against the id in the path,
-which is what stops an app asking Core about its neighbours. Reading a skill crosses that line, so
-only an app holding the confirmed `apps.skills.read` permission may cross: nothing else has a reason to read a
-neighbour's instructions, and "cheap to allow" is how a torrent client ends up reading the media
-server's. The narrower-looking alternative — folding skills into the fleet listing every app already
-reads — would have granted this to all of them silently.
-
-The control route is restricted to the local control secret; it does not grant cross-app access to a service token.
-
-## Attribution Is The Contract
-
-Wherever a skill lands, the reader's own text comes **first and unwrapped** — in a session the
-host's built-in preamble and then the operator's system prompt
-([host-prompt.ts](../../../apps/harness/src/sessions/host-prompt.ts)), in a client the
-connector's own instructions. An app must not be able to appear above the text that describes the
-surface, because there it reads as the operator or the host speaking. Between the two texts that
-legitimately are the host and the operator, the host goes first and the operator second — identity
-and ground rules are the platform's to state, and the operator's later words can override them.
-
-Each skill is then fenced and named:
-
-```text
-<app-skill app="com.haas.demo-app" name="Demo App">
-…
-</app-skill>
-```
-
-under a preamble stating what the sections are: documentation an app wrote about its own tools, which
-speaks for nobody else and grants nothing. A skill that tries to issue orders about anything else then
-reads as out of place rather than as authority.
-
-Each is capped at 8,000 characters so one app cannot crowd out the operator's instructions or another
-app's, and a skill that cannot be read is skipped rather than fatal — an agent that knows less costs
-less than an assistant that will not open because one app is mid-update.
-
-## A Changed Skill Is Withheld
-
-Harness approvals are keyed by provider installation and digest in Harness settings. Local acceptance
-revalidates the displayed text before saving. CLI/facade global approvals remain in Core. Consumers
-deliver only matching text; changed or unreadable content is withheld while tool access is unchanged.
-Existing conversation text is not retracted. Reinstallation does not inherit an earlier acceptance.
-Migration imports only matching previously approved text for an enabled relationship.
-
-**This is stricter than the rest of the platform, and knowingly so.** An app update rewrites its tool
-*names and descriptions* silently while the provider stays enabled — the same app-authored text,
-reaching the same model, under the same decision, with no digest in the way. Recorded as a known
-asymmetry rather than smoothed over: it is a gap on that surface, not a reason to open one here.
+The library records supplying app/version and preserves complete portable contents. An app skill
+does not grant tools, host access or permission to execute a bundled script. Package authors should
+describe procedures, domain terms and failure handling rather than duplicate the MCP tool inventory.
 
 ## Testing Expectations
 
-- **Manifest validation as pairs**: every escaping shape refused beside a legitimate path accepted,
-  non-markdown refused, and a manifest declaring no `agent` block unaffected.
-- **The cross-app gate as a pair**: an app granted `apps.skills.read` allowed beside an ungranted app
-  refused — a route that answers nobody satisfies the negative alone while being broken.
-- **Anonymous and foreign-token callers refused**, since the caller is who the token says and never
-  who the URL says.
-- **A declared-but-unpackaged skill is an absence, not a server error.**
-- **Composition**: the reader's own text first and unwrapped, every skill attributed, the preamble
-  present, and the per-app cap enforced — asserted for a session prompt and for the connector's
-  instructions, each beside the no-skill case that must stay clean.
-- **Withholding as a set**: an unapproved first sighting withheld, an approved unchanged skill
-  delivered, a changed one withheld, and one app held without holding another. The digest is asserted to ignore surrounding whitespace and to follow the text.
-- **The install-time budget as boundary pairs**, one per limb, because a skill that shared one and
-  bypassed the other would pass a test of either alone: the markdown description's 256 KiB per-file cap
-  asserted at the byte, the per-app **file** ceiling exhausted by tiny screenshots, and the per-app
-  **byte** ceiling spent by large ones while the file count stays far below its own limit. Each pair
-  differs only in the size or the count, which is what makes the budget rather than the fixture the
-  thing under test; verified by widening every constant and watching each refusal fail. Sizes are
-  written as raw bytes, so no encoding decision can move a boundary while the test keeps passing. A
-  skill the budget refuses on an **update** is asserted to remove the previously vendored copy, since
-  both delivery routes read whatever is on disk and a survivor is text the installed app no longer
-  contains.
-- **Session policy**: Gateway tests verify that a disabled provider contributes no skill and legacy
-  local approval values cannot grant Core MCP access or accept a changed instruction digest.
+- Verify multiple complete packages, nested references and scripts, stable key selection and
+  rejection of invalid metadata/paths, overlapping paths and native-name collisions.
+- Cover app install/update/removal and failed preparation without replacing existing skills.
+- Keep native package discovery separate from MCP tool access and app authentication tests.

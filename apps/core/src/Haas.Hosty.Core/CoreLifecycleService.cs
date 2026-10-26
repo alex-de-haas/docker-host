@@ -65,7 +65,8 @@ internal sealed partial class CoreLifecycleService(
     AgentPolicyStore? agentPolicies = null,
     PrivateSourceService? privateSources = null,
     CorePublicOriginResolver? coreOrigins = null,
-    AuditStore? audit = null)
+    AuditStore? audit = null,
+    AppSkillPackages? appSkills = null)
 {
     private async Task ValidatePrivateSelectionAsync(RuntimeAppManifestSelection selection, CancellationToken ct)
     {
@@ -538,6 +539,7 @@ internal sealed partial class CoreLifecycleService(
 
         var grantedPermissions = CoreAppPermissions.ResolveGrants(selection.Manifest.CorePermissions, selection.Manifest.OptionalCorePermissions, request.OptionalPermissions);
         await ValidatePrivateSelectionAsync(selection, cancellationToken);
+        var preparedSkills = appSkills is null ? null : await appSkills.PrepareAsync(selection, cancellationToken);
         var appRoot = GetAppRoot(selection.Manifest.Id!);
         var manifestCopyPath = Path.Combine(appRoot, "manifest.json");
 
@@ -608,7 +610,9 @@ internal sealed partial class CoreLifecycleService(
             {
                 await LocalBrowserOrigins.ValidateAppAsync(candidate,
                     coreOrigins?.Effective ?? runtimeConfig?.EffectiveCorePublicOrigin ?? "http://core.hosty.localhost:7070", apps, ct);
-                return await apps.UpsertAppAsync(candidate, ct);
+                return preparedSkills is null ? await apps.UpsertAppAsync(candidate, ct)
+                    : await appSkills!.CommitAsync(selection, appRoot, preparedSkills,
+                        () => apps.UpsertAppAsync(candidate, ct), ct);
             }
             // Reserve ports before validating local names; new installs may not yet have endpoint URLs.
             document = portAllocator is not null && string.Equals(record.Kind, "runtime", StringComparison.Ordinal)
@@ -2410,6 +2414,8 @@ internal sealed partial class CoreLifecycleService(
             : CoreAppPermissions.ResolveGrants(selection.Manifest.CorePermissions, selection.Manifest.OptionalCorePermissions, request.OptionalPermissions, app.GrantedCorePermissions);
         await ValidatePrivateSelectionAsync(selection, cancellationToken);
 
+        var preparedSkills = appSkills is null ? null : await appSkills.PrepareAsync(selection, cancellationToken);
+
         // Check the target's managed checkout before any stop, backup, manifest replacement or pin
         // advancement. Checking only inside Start strands a running app and advertises the new version
         // even though its source never advanced. The start-time check still protects concurrent edits.
@@ -2516,7 +2522,9 @@ internal sealed partial class CoreLifecycleService(
             next = next with { ArtifactLocks = reviewedLocks };
         }
 
-        var document = await PersistRuntimePortsAsync(next, selection, cancellationToken, allowIncompleteConfiguration: true);
+        Task<AppStateDocument> PersistUpdate() => PersistRuntimePortsAsync(next, selection, cancellationToken, allowIncompleteConfiguration: true);
+        var document = preparedSkills is null ? await PersistUpdate()
+            : await appSkills!.CommitAsync(selection, GetAppRoot(appId), preparedSkills, PersistUpdate, cancellationToken);
         // An endpoint the new manifest dropped (or made private) can never serve its hostname again, so the
         // route and DNS record go with it. Best-effort, and only for endpoints that are actually gone.
         await CleanUpOrphanedPublicationsAsync(appId, next, cancellationToken);
@@ -2878,6 +2886,8 @@ internal sealed partial class CoreLifecycleService(
                 }, restrictToOwner: true, cancellationToken);
             else TryDelete(GetRetainedConfigPath(appId));
         }
+
+        if (appSkills is not null) await appSkills.RemoveAsync(appId, cancellationToken);
 
         // Removal revokes agent offers even when the operator retains runtime state.
         await (agentPolicies ?? new AgentPolicyStore(paths)).ChangeAsync(appId, null, cancellationToken);
@@ -3918,7 +3928,6 @@ internal sealed partial class CoreLifecycleService(
             Dependencies = manifest.Dependencies.Select(ToDependencyContract).ToArray(),
             Ui = AppUiContract.FromManifest(manifest.Ui),
             CatalogMetadata = AppCatalogMetadataContract.FromManifest(manifest.CatalogMetadata),
-            AgentSkillFile = string.IsNullOrWhiteSpace(manifest.Agent?.SkillFile) ? null : manifest.Agent!.SkillFile!.Trim(),
             Interfaces = AppInterfaceContract.FromManifest(manifest.Interfaces),
             RuntimeProfiles = BuildRuntimeProfileSummaries(manifest),
             MountSlots = BuildMountSlots(manifest),
@@ -5195,6 +5204,7 @@ internal sealed partial class CoreLifecycleService(
                 ? []
                 : BuildUpdateChanges(app, load.Baseline, selection);
 
+            var preparedSkills = appSkills is null ? null : await appSkills.PrepareAsync(selection, cancellationToken);
             await manifests.SaveManifestCopyAsync(selection, GetAppRoot(app.Id), cancellationToken);
             await manifests.VendorDisplayAssetsAsync(selection, GetAppRoot(app.Id), cancellationToken);
 
@@ -5202,7 +5212,7 @@ internal sealed partial class CoreLifecycleService(
             // the stale `app` captured before the lock, so a setting/mount change applied concurrently
             // (ConfigureAsync / ConfigureMountsAsync) is carried forward by BuildAppRecord instead of being
             // overwritten with stale operator state. The lambda is pure and may re-run on a write conflict.
-            var updated = await apps.UpdateAppAsync(app.Id, current =>
+            Task<AppStateDocument> PersistContract() => apps.UpdateAppAsync(app.Id, current =>
             {
                 var reconciled = BuildAppRecord(selection, current.ManifestPath!, manifestUrl: current.ManifestUrl, system: current.System, existing: current);
                 // Manifest projections come from the shared choke point rather than a hand-copied field
@@ -5224,6 +5234,8 @@ internal sealed partial class CoreLifecycleService(
                     LiveChanges = changes.Count > 0 ? changes : null,
                 };
             }, cancellationToken);
+            var updated = preparedSkills is null ? await PersistContract()
+                : await appSkills!.CommitAsync(selection, GetAppRoot(app.Id), preparedSkills, PersistContract, cancellationToken);
             return updated.App;
         }
         finally { apps.HostPathMutationLock.Release(); }

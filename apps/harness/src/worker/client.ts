@@ -144,7 +144,7 @@ class RemoteRun implements HarnessRun {
     if (this.busy || this.stopped) throw new WorkerApiError(409, "run_busy", "Wait for the current turn to finish.");
     this.busy = true; this.id = this.options.workerRunId ?? randomUUID(); this.controller = new AbortController();
     const id = this.id, signal = this.controller.signal;
-    const request: WorkerRunRequest = { conversationId: this.options.sessionId, binding: this.binding!,
+    const request: WorkerRunRequest = { skillExportId: this.options.skillExportId, conversationId: this.options.sessionId, binding: this.binding!,
       selection: { model: this.options.model ?? null, reasoningEffort: this.options.reasoningEffort ?? null },
       resource: this.options.resource ?? { kind: "conversation", id: this.options.sessionId }, input,
       options: { autonomy: this.options.autonomy, systemPrompt: this.options.systemPrompt, resumeHarnessSessionId: this.resume, mcpServers: this.options.mcpServers },
