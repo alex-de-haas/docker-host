@@ -51,7 +51,9 @@ converted model are runtime cache artifacts, not repository files.
 
 ## HTTP Contract And Limits
 
-The service binds to the Hosty-assigned HTTP port on loopback. `GET /healthz` reports process
+The service binds to the Hosty-assigned HTTP port on all IPv4 host interfaces so Docker consumers
+can reach it through the host gateway. Provider routes require a live Core invocation token regardless
+of the incoming interface. `GET /healthz` reports process
 liveness while the model initializes. Authenticated `GET /api/translation/v1/capabilities` reports
 model readiness separately. `POST /api/translation/v1/translations` accepts the standard SDK request
 and returns `text`, `sourceLanguage` and `targetLanguage`. Both provider routes validate the Core
@@ -96,7 +98,7 @@ The opt-in integration suite also verifies overlong-fragment refusal, cancellati
 usable worker, cache reuse without reconversion, and corrupted-cache reconstruction. No request text
 is retained in the test cache. Ordinary unit tests run without downloading model weights.
 
-Final checks pass: 14 Node app tests, three Python cache/archive tests, the real-model native suite,
+Final checks pass: 15 Node app tests, three Python cache/archive tests, the real-model native suite,
 eight Core manifest tests, 44 CI-policy/workflow/launcher tests, 147 Documents tests, both app builds,
 version consistency, documentation validation and whitespace checks. The managed Python HTTPS probe
 receives HTTP 206 from the pinned archive endpoint. Initial Documents checks used stale dependencies
@@ -113,7 +115,7 @@ selection, user data or running Core was changed. Linux and Windows native infer
 
 - `npm run opus:build`: type check and bundle the shipped entry point.
 - `npm run opus:test`: Markdown/real-plan structure, language and size limits, capacity, live authority
-  checks at the HTTP boundary, process failure, cancellation and credential-free worker environment.
+  checks at the HTTP boundary, host-interface reachability, process failure, cancellation and credential-free worker environment.
 - `python3 -m unittest discover -s apps/opus/runtime -p 'test_*.py'`: archive traversal/symlinks,
   checksummed cache corruption and bounded failed downloads. Requires Python 3.11 or newer.
 - `npm run test:integration -- opus`: explicit local real-model preparation/inference, limits,

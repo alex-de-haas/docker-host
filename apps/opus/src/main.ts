@@ -2,7 +2,7 @@ import { fileURLToPath } from 'node:url';
 import { join, resolve } from 'node:path';
 import { OpusWorker } from './worker.js';
 import { TranslationService } from './service.js';
-import { createApp } from './server.js';
+import { createApp, listenApp } from './server.js';
 const cache = process.env.HOSTY_APP_CACHE_DIR;
 if (!cache || !process.env.HOSTY_APP_ID || !process.env.HOSTY_APP_SERVICE_TOKEN || !process.env.HOSTY_CORE_ORIGIN)
   throw new Error('Run OPUS Translate through Hosty with app credentials and cache configured.');
@@ -13,7 +13,7 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invali
 const python = join(resolve(cache), 'python', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
 const worker = new OpusWorker(python, [fileURLToPath(new URL('../runtime/worker.py', import.meta.url)), join(resolve(cache), 'models'), String(threads)]);
 const server = createApp(new TranslationService(worker));
-server.listen(port, '127.0.0.1', () => console.info('OPUS Translate is running; the model initializes in the background.'));
+listenApp(server, port, () => console.info('OPUS Translate is running; the model initializes in the background.'));
 void worker.start().then(() => console.info('OPUS-MT Big is ready (English to Russian, CPU INT8).')).catch(() => console.error('OPUS model initialization failed; check app setup and cache, then restart.'));
 let stopping = false;
 const stop = async () => {

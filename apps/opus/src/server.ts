@@ -1,4 +1,4 @@
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { ProviderClient } from '@hosty-sdk/app/providers/server';
 import { ProviderError } from '@hosty-sdk/app/providers';
 import { MAX_BYTES, TIMEOUT_SECONDS, type TranslationService } from './service.js';
@@ -10,6 +10,11 @@ export function createApp(service: TranslationService, authorize: Authorize = (t
       if (!response.destroyed && !response.headersSent) send(response, 500, { code: 'translation_failed', message: 'Local translation failed.' });
     });
   });
+}
+// Docker consumers reach the native provider through the host gateway, not host loopback.
+// Every provider route still requires a live Core invocation credential.
+export function listenApp(server: Server, port: number, onListening?: () => void) {
+  return server.listen(port, '0.0.0.0', onListening);
 }
 const send = (response: ServerResponse, status: number, body: unknown) => {
   response.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
