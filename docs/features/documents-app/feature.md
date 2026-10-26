@@ -35,8 +35,10 @@ identity are revalidated by Core, including before cached bytes are returned.
 ## Navigation And Reading
 
 Home supports all repositories or one selected repository, application/component filters, source
-freshness labels, current workspace activity and recent document updates. Repository Home renders
-the prose before root.md's generated index. Navigation exposes Vision, Ideas, Features, Plans,
+freshness labels, current workspace activity and recent document updates. Progress and attention
+appear first. Repository overviews form a compact list beside current work; selecting one opens
+the complete root.md in the document reader. Home does not render root document bodies.
+Navigation exposes Vision, Ideas, Features, Plans,
 Reviews and Tooling. Optional files have an explicit empty state. Tool-owned agent.md and store.md
 are labelled as tooling, outside feature status/progress. Reviews remain dated documents.
 

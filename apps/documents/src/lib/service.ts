@@ -593,12 +593,7 @@ function overviewDocument(
   return document
     ? {
         ...document,
-        body:
-          document.kind === "overview"
-            ? document.body
-                .split("<!-- docs-index:begin -->")[0]
-                .slice(0, 12000)
-            : "",
+        body: "",
         content: "",
         deliverables: [],
       }

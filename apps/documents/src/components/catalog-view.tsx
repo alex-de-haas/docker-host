@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   BookOpenIcon,
   CompassIcon,
+  ChevronRightIcon,
   FileTextIcon,
   GitBranchIcon,
   LightbulbIcon,
@@ -31,7 +32,6 @@ import { Alert, AlertTitle, AlertDescription } from "./ui/alert";
 import { Progress, formatTime } from "./plan-metadata";
 import { WorkspaceOwner } from "./workspace-owner";
 import { PlanGrid } from "./plan-grid";
-import { SourceDocument } from "./document";
 
 const views = [
   ["home", "Home", BookOpenIcon],
@@ -421,42 +421,6 @@ export function CatalogView({
           </div>
         ) : view === "home" && !search ? (
           <>
-            {roots.length > 0 && (
-              <section className="grid gap-3 lg:grid-cols-2">
-                {roots.map((card) => (
-                  <section
-                    key={card.repository.id}
-                    className="min-w-0 rounded-lg border p-5"
-                  >
-                    <a
-                      href={planLink(card.repository.id, card.path)}
-                      onClick={(event) => {
-                        if (!event.metaKey && !event.ctrlKey) {
-                          event.preventDefault();
-                          navigate(planLink(card.repository.id, card.path));
-                        }
-                      }}
-                      className="mb-4 block text-xs text-info hover:underline"
-                    >
-                      {repositoryName(card.repository)} ·{" "}
-                      {card.repository.branch} · Open full overview
-                    </a>
-                    {card.document && (
-                      <SourceDocument
-                        document={{
-                          ...card.document,
-                          errors: [],
-                          backlinks: [],
-                        }}
-                        repositoryId={card.repository.id}
-                        navigate={navigate}
-                        body={card.document.body}
-                      />
-                    )}
-                  </section>
-                ))}
-              </section>
-            )}
             <div className="flex flex-wrap gap-x-6 gap-y-3 rounded-lg border p-4 text-xs">
               {STATUSES.map((state) => (
                 <span key={state}>
@@ -553,6 +517,43 @@ export function CatalogView({
                 </Button>
               </section>
               <aside className="space-y-6">
+                {roots.length > 0 && (
+                  <section aria-label="Repository overviews" className="space-y-3">
+                    <h2 className="text-sm font-semibold">
+                      Repository overviews{" "}
+                      <span className="text-muted-foreground">{roots.length}</span>
+                    </h2>
+                    <ul className="divide-y rounded-lg border">
+                      {roots.map((card) => (
+                        <li key={card.repository.id}>
+                          <a
+                            href={planLink(card.repository.id, card.path)}
+                            aria-label={`Open overview for ${repositoryName(card.repository)}`}
+                            title={repositoryName(card.repository)}
+                            onClick={(event) => {
+                              if (!event.metaKey && !event.ctrlKey) {
+                                event.preventDefault();
+                                navigate(planLink(card.repository.id, card.path));
+                              }
+                            }}
+                            className="flex min-w-0 items-center gap-2 rounded-md px-3 py-2 hover:bg-muted/40 focus-visible:outline-2 focus-visible:outline-brand"
+                          >
+                            <BookOpenIcon className="size-4 shrink-0 text-muted-foreground" />
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate text-xs font-medium">
+                                {repositoryName(card.repository)}
+                              </span>
+                              <span className="block truncate text-xs text-muted-foreground">
+                                {card.repository.branch} · {card.path}
+                              </span>
+                            </span>
+                            <ChevronRightIcon className="size-4 shrink-0 text-muted-foreground" />
+                          </a>
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                )}
                 <section className="space-y-3">
                   <h2 className="text-sm font-semibold">
                     In development{" "}
