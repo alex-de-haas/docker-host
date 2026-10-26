@@ -687,3 +687,25 @@ it("keeps current busy controls while historical status chunks replay", async ()
   });
   expect(button("Stop")).not.toBeNull();
 });
+
+it("preserves an unsent draft and attachments while agent context changes replay after reconnect", async () => {
+  record = { ...record, appIds: [], appContextRevision: 0,
+    handoffDraft: { text: "Inspect image", attachments: [{ name: "image.png", size: 8 }] } };
+  window.history.replaceState({}, "", "/assistant?session=session-one");
+  await render(); await type("My unsent draft");
+  await act(async () => connection("reconnecting"));
+  record = { ...record, appIds: ["notes"], appContextRevision: 1 };
+  await act(async () => {
+    emit({ type: "app_context_changed", seq: 4, ts: "2026-10-26T12:00:00Z",
+      origin: "agent", actor: "admin", appIds: ["notes"], appContextRevision: 1 });
+    connection("connected");
+  });
+  expect(input().value).toBe("My unsent draft");
+  expect(container.textContent).toContain("image.png");
+  expect(container.textContent).toContain("Assistant updated app context: notes");
+  expect(api.postMessage).not.toHaveBeenCalled();
+  await act(async () => emit({ type: "app_context_changed", seq: 3, ts: "2026-10-26T11:00:00Z",
+    origin: "agent", appIds: [], appContextRevision: 0 }));
+  expect(input().value).toBe("My unsent draft");
+  expect(localStorage.getItem("hosty.assistant.draft.session-one")).toBe("My unsent draft");
+});

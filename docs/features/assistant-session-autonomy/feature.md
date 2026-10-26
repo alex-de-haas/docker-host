@@ -1,6 +1,6 @@
 ---
 created: 2026-10-05
-updated: 2026-10-11
+updated: 2026-10-26
 summary: A per-chat Normal or Autonomous mode that controls whether native commands and file changes ask for approval.
 components: [apps/core, apps/harness]
 ---
@@ -35,6 +35,11 @@ Changing mode does not select a different provider or credential.
 Closing a tab does not stop a run. Stop interrupts the provider before a mode can be changed; a mode
 change governs subsequent dispatch. Neither control promises termination of host processes that
 have detached from the provider. Restoring Normal does not undo completed changes.
+
+Agent context tools use the same Ask / Run unprompted / Disabled policy in both modes.
+Autonomous runs enabled context operations without an extra attachment confirmation; current
+user identity and session ownership are still checked. Source preparation is independent of
+context selection and continues to use Core's source and participant authority.
 
 ## Core Tool Authority
 

@@ -21,6 +21,7 @@ export function AppContextPicker({ session, busy, running, onChange, onBusyChang
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
   const [revision, setRevision] = useState(0);
+  const [baseline, setBaseline] = useState<string[]>([]);
   const [search, setSearch] = useState("");
   const [apps, setApps] = useState<ContextApp[]>([]);
   const [labels, setLabels] = useState<Record<string, ContextApp>>({});
@@ -63,7 +64,7 @@ export function AppContextPicker({ session, busy, running, onChange, onBusyChang
   const changeOpen = (nextOpen: boolean) => {
     if (saving || (nextOpen && busy)) return;
     // Loading starts with the change that triggers a roster read, not inside the effect that runs it.
-    if (nextOpen) { setSelected(ids); setRevision(session.appContextRevision ?? 0); setSearch(""); setLoading(true); }
+    if (nextOpen) { setSelected(ids); setBaseline(ids); setRevision(session.appContextRevision ?? 0); setSearch(""); setLoading(true); }
     setOpen(nextOpen);
   };
   useImperativeHandle(ref, () => ({ open: () => changeOpen(true) }));
@@ -76,7 +77,16 @@ export function AppContextPicker({ session, busy, running, onChange, onBusyChang
       setError(cause instanceof Error ? cause.message : String(cause));
       if (cause instanceof AssistantApiError && cause.code === "app_context_conflict") {
         const current = await getSession(session.id).catch(() => null);
-        if (current) { onChange(current); setSelected(current.appIds ?? []); setRevision(current.appContextRevision ?? 0); }
+        if (current) {
+          const committed = current.appIds ?? [];
+          const removed = baseline.filter(id => !appIds.includes(id));
+          const added = appIds.filter(id => !baseline.includes(id));
+          onChange(current);
+          setSelected([...new Set([...committed.filter(id => !removed.includes(id)), ...added])]);
+          setBaseline(committed);
+          setRevision(current.appContextRevision ?? 0);
+          setError(cause.message + " Your pending edits were kept. Review the selection and Apply again.");
+        }
       }
     } finally { setSaving(false); }
   };
@@ -109,6 +119,7 @@ export function AppContextPicker({ session, busy, running, onChange, onBusyChang
           <PopoverHeader>
             <PopoverTitle>App context</PopoverTitle>
             <PopoverDescription>{selected.length}/16 selected</PopoverDescription>
+            {selected.length > 16 && <p role="alert" className="text-xs text-destructive-foreground">Remove apps to keep at most 16 selected.</p>}
             {running && <p className="text-xs text-muted-foreground">Applies to your next message</p>}
           </PopoverHeader>
           {selected.length > 0 && <div className="flex max-h-28 shrink-0 flex-wrap gap-1 overflow-y-auto" aria-label="Selected apps">
@@ -138,7 +149,7 @@ export function AppContextPicker({ session, busy, running, onChange, onBusyChang
           {(error || rosterError || labelsUnavailable) && <div className="flex items-center gap-2"><p role="alert" className="text-xs text-destructive-foreground">{error ?? rosterError ?? "App context is unavailable."}</p><Button type="button" variant="ghost" size="sm" onClick={() => { setError(null); setLoading(true); setRetry(value => value + 1); }}>Retry</Button></div>}
           <div className="flex shrink-0 justify-end gap-2">
             <Button type="button" variant="ghost" size="sm" disabled={saving} onClick={close}>Cancel</Button>
-            <Button type="button" size="sm" disabled={saving || busy} onClick={() => void save(selected, revision)}>{saving ? <><HostyLoader label={null} className="size-4 shrink-0" />Applying…</> : "Apply"}</Button>
+            <Button type="button" size="sm" disabled={saving || busy || selected.length > 16} onClick={() => void save(selected, revision)}>{saving ? <><HostyLoader label={null} className="size-4 shrink-0" />Applying…</> : "Apply"}</Button>
           </div>
         </PopoverContent>
       </Popover>

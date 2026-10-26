@@ -21,6 +21,8 @@ def check(context):
     run, request, say, wait_for = (context[key] for key in ('run', 'request', 'say', 'wait_for'))
     origin, password, cli = (context[key] for key in ('origin', 'password', 'cli'))
     app = 'hosty.harness'
+    def app_summary(app_id):
+        return next(row for row in request('/api/apps')['apps'] if row['id'] == app_id)
     manifest = json.loads((workspace/'apps/harness/manifest.json').read_text())
     manifest['source']['repository'] = context['repository']
     manifest_path = base/'harness-manifest.json'
@@ -76,13 +78,55 @@ def check(context):
         def harness(self, path, body=None, method=None, expected=200):
             return self.call(app_origin, '/api'+path, body, method, expected)
 
+    # Source preparation is independent of runtime state. These fixtures stay stopped and use
+    # an already-built local image so source admission needs no registry/provider credentials.
+    image = next(service for service in manifest['services'] if service['key'] == 'api')['runtimes']['docker']['image']
+    def install_source_fixture(relative, repository, override_id=None, source=True):
+        value = json.loads((workspace/relative).read_text())
+        if override_id: value['id'] = override_id
+        if source: value['source']['repository'] = repository
+        else: value.pop('source', None)
+        for service in value['services']:
+            for runtime in service['runtimes'].values():
+                if 'image' in runtime: runtime['image'] = image
+        target = base/(value['id']+'-manifest.json')
+        target.write_text(json.dumps(value))
+        run([cli, '--data-root', root, 'apps', 'install', target, '--runtime', 'docker', '--no-autostart'])
+        return value['id']
+    stopped_app = install_source_fixture('apps/demo-app/manifest.json', context['repository'])
+    no_source_app = install_source_fixture('apps/demo-app/manifest.json', context['repository'], 'test.context.no-source', False)
+    another_remote = context['remote']/'context-other.git'
+    run(['git', 'clone', '--bare', str(context['remote']), str(another_remote)])
+    run(['git', '--git-dir', str(another_remote), 'update-server-info'])
+    another_repository = context['repository'].removesuffix('/.git')+'/context-other.git'
+    another_app = install_source_fixture('apps/marketplace/manifest.json', another_repository)
+    assert app_summary(stopped_app)['runtimeState'] == 'stopped'
     owner = Browser('activation-fixture@example.test', 'Owner')
     member = Browser('workspace-member@example.test', 'Member', invited=True)
     outsider = Browser('workspace-outsider@example.test', 'Outsider', invited=True)
-    first = owner.harness('/sessions', {'title': 'Owner implementation', 'appIds': [app]})
+    first = owner.harness('/sessions', {'title': 'Owner implementation'})
     def action(browser, session, kind, **payload):
         return browser.harness('/sessions/'+session['id']+'/workspaces', {'action': kind, **payload})
-    tree = action(owner, first, 'prepare', requestId=str(uuid.uuid4()), appId=app, targetBranch='main')
+    tree = action(owner, first, 'prepare', requestId=str(uuid.uuid4()), appId=stopped_app, targetBranch='main')
+    same_repository = action(owner, first, 'prepare', requestId=str(uuid.uuid4()), appId=app, targetBranch='main')
+    assert same_repository['id'] == tree['id'] and same_repository['path'] == tree['path']
+    for unavailable, expected_code in [(no_source_app, 'workspace_source_missing'), ('missing.context.app', 'workspace_app_missing')]:
+        denied = owner.harness('/sessions/'+first['id']+'/workspaces',
+            {'action': 'prepare', 'appId': unavailable, 'requestId': str(uuid.uuid4())}, expected=409)
+        assert denied['code'] == expected_code, denied.get('code')
+    assert app_summary(stopped_app)['runtimeState'] == 'stopped'
+    assert owner.harness('/sessions/'+first['id'])['appIds'] == []
+    original_runtime = app_summary(app)['runtimeState']
+    context_input = {'appIds': [app], 'expectedRevision': 0, 'requestId': str(uuid.uuid4())}
+    changed = action(owner, first, 'context-add', **context_input)
+    assert changed['current']['appIds'] == [app] and changed['outcome']['revision'] == 1
+    assert action(owner, first, 'context-list')['revision'] == 1
+    assert any(row['id'] == app for row in action(owner, first, 'context-search', search=app)['apps'])
+    owner.harness('/sessions/'+first['id']+'/apps', {'appIds': [], 'expectedRevision': 1}, method='PUT')
+    replay = action(owner, first, 'context-add', **context_input)
+    assert replay['replayed'] and replay['outcome']['appIds'] == [app] and replay['current']['appIds'] == []
+    assert app_summary(app)['runtimeState'] == original_runtime
+    say('PASS: empty chat prepares source without attachment; context tools preserve manual removal on replay and do not change runtime')
     workspace_id = tree['workspaceId']
     participants_path = '/development-workspaces/'+workspace_id+'/participants'
     state = owner.harness(participants_path)
@@ -97,6 +141,19 @@ def check(context):
     shared = action(member, second, 'list')['workspaces']
     assert len(shared) == 1 and shared[0]['id'] == tree['id'] and shared[0]['path'] == tree['path']
     assert shared[0]['branch'] == tree['branch'] and shared[0].get('sourceGrant') is None
+    cleared = action(member, second, 'context-remove', appIds=second.get('appIds', []),
+        expectedRevision=second.get('appContextRevision', 0), requestId=str(uuid.uuid4()))
+    assert cleared['current']['appIds'] == []
+    assert action(member, second, 'prepare', requestId=str(uuid.uuid4()), appId=app, targetBranch='main')['id'] == tree['id']
+    added = action(member, second, 'context-add', appIds=[app, another_app],
+        expectedRevision=cleared['current']['revision'], requestId=str(uuid.uuid4()))
+    assert added['current']['appIds'] == [app, another_app]
+    denied = member.harness('/sessions/'+second['id']+'/workspaces',
+        {'action': 'prepare', 'appId': another_app, 'requestId': str(uuid.uuid4())}, expected=409)
+    assert denied['code'] == 'workspace_sharing_scope_invalid'
+    other_tree = action(owner, first, 'prepare', requestId=str(uuid.uuid4()), appId=another_app, targetBranch='main')
+    assert other_tree['id'] != tree['id'] and other_tree['workspaceId'] == tree['workspaceId']
+    say('PASS: stopped app and monorepo preparation ignore context; another repository needs its own owner-authorized binding')
     member.harness('/sessions/'+second['id'], {'title': 'Member review'}, method='PATCH')
     state = member.harness(participants_path)
     assert next(row for row in state['sessions'] if row['sessionId'] == second['id'])['title'] == 'Member review'
@@ -119,6 +176,11 @@ def check(context):
     state = owner.harness(participants_path)
     owner.harness(participants_path+'/revoke', {'requestId': str(uuid.uuid4()), 'expectedRevision': state['revision'], 'userId': member.user})
     member.harness(participants_path, expected=403)
+    current_context = action(member, second, 'context-list')
+    action(member, second, 'context-remove', appIds=[app], expectedRevision=current_context['revision'], requestId=str(uuid.uuid4()))
+    action(member, second, 'context-add', appIds=[app], expectedRevision=current_context['revision'] + 1, requestId=str(uuid.uuid4()))
+    member.harness('/sessions/'+second['id']+'/workspaces',
+        {'action': 'prepare', 'appId': app, 'targetBranch': 'main', 'requestId': str(uuid.uuid4())}, expected=403)
     assert member.harness('/sessions/'+second['id']+'/workspaces', {'action': 'list'})['workspaces'] == []
     member.harness('/sessions/'+second['id']+'/workspaces', {'action': 'status', 'workspaceId': tree['id']}, expected=403)
     assert (source/'owner-acceptance.txt').read_text() == 'owner edit\n'
@@ -128,7 +190,7 @@ def check(context):
     assert not any(row['attached'] for row in state['sessions'])
     assert source.exists() and (source/'member-acceptance.txt').exists()
     third = owner.harness('/workspace-sessions', {'requestId': str(uuid.uuid4()), 'workspaceId': workspace_id, 'expectedRevision': state['revision']})
-    assert action(owner, third, 'list')['workspaces'][0]['path'] == str(source)
+    assert next(row for row in action(owner, third, 'list')['workspaces'] if row['id'] == tree['id'])['path'] == str(source)
     say('PASS: revocation fences reads; deleting both chats preserves dirty source; sessionless workspace accepts a new idle chat')
     # External work has no participant roster. Pause must still reach Core's lease checks,
     # and recovering a verified stopped fixture lease must finish the original request.

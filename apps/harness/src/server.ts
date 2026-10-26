@@ -693,7 +693,8 @@ async function route(
     const action = body.action;
     if (typeof action !== "string") throw new AppContextError(400, "workspace_action_invalid", "Workspace action is required.");
     sendJson(response, 200, await manager.workspaceAction(sessionId, action as import("./sessions/development.js").DevelopmentAction,
-      body, (actor.via === "app-session" ? readAppCredential(request) : readBearer(request)) ?? undefined, actor.userId)); return;
+      action.startsWith("context-") ? Object.fromEntries(Object.entries(body).filter(([key]) => key !== "action")) : body,
+      (actor.via === "app-session" ? readAppCredential(request) : readBearer(request)) ?? undefined, actor.userId)); return;
   }
 
   const rest = sessionMatch[2] ?? "";

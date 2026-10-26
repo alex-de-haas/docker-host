@@ -61,3 +61,14 @@ it("excludes hidden routing, private operator answers and setup results", () => 
   for (const name of ["Bash", "Read", "mcp__hosty-core__list_apps", "custom: environment_status"])
     expect(shouldRetainToolOutput(name)).toBe(true);
 });
+
+it("retains bounded producer durations and ignores malformed optional timing without hiding failures", () => {
+  for (const durationMs of [0, 1250, 604_800_000]) {
+    expect(sanitizeToolResult({ ...result, durationMs })).toEqual({ ...result, durationMs });
+    expect(toolResult("id", "failed", "failure", durationMs)).toMatchObject({ status: "failed", durationMs });
+  }
+  for (const durationMs of [null, "12", -1, 1.5, NaN, Infinity, 604_800_001]) {
+    expect(sanitizeToolResult({ ...result, durationMs })).toEqual(result);
+    expect(toolResult("id", "failed", "failure", durationMs)).not.toHaveProperty("durationMs");
+  }
+});

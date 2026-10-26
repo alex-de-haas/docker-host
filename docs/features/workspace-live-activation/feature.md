@@ -1,6 +1,6 @@
 ---
 created: 2026-10-19
-updated: 2026-10-25
+updated: 2026-10-26
 summary: Select named app workspaces or installed package runtimes with scoped access review, retained package choices and recoverable Core-owned transitions.
 components: [apps/core, apps/cli, apps/shell, apps/harness, shared]
 ---
@@ -34,6 +34,11 @@ workspace A and then B preserves that package choice. Selecting a package entry 
 current installed package with the selected release runtime. It never restores an old workspace,
 package manifest or data backup. A missing release profile is reported as unavailable.
 Source edits and current ordinary data remain intact.
+
+The current execution target follows the persisted runtime and source binding. A prepared workspace
+does not become current before binding. During Return, the installed package becomes current as soon
+as its binding is restored, including while it is starting or if its start fails. The retained
+development journal supports recovery without keeping the old workspace label on Dashboard.
 
 `GET /api/apps/execution-targets` returns one shared inventory; the app-specific variant is
 `GET /api/apps/{appId}/execution-targets`. Expected app metadata read failures, including missing or corrupt development journals and workspace
@@ -561,6 +566,10 @@ on subsequent GETs, without changing persisted Git observations, dirty source, r
 activation records or snapshots. Finish removes the child, its processes and test data.
 
 ## Testing Expectations
+
+- Verify execution-target inventory during workspace entry and package Return, including the live
+  starting callback, failed package startup and retry. Current workspace identity must match the
+  persisted runtime/source binding rather than the recovery journal's active flag.
 
 - Shell recovery covers deleted-workspace journals, explicit status refusals, sustained outages and
   recovery, missing Release receipts, fresh-catalog dismissal guards and delayed responses across

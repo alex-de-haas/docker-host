@@ -1,13 +1,13 @@
 ---
 created: 2026-09-16
-updated: 2026-10-18
-summary: Administrators attach up to 16 installed apps to an assistant session as shared context for Claude and Codex.
+updated: 2026-10-26
+summary: Administrators and session-bound agents manage up to 16 descriptive app associations independently of source preparation and execution grants.
 components: [apps/harness, apps/shell]
 ---
 
 # Assistant App Context
 
-Administrators associate up to 16 installed apps with an assistant session. The gateway persists
+Administrators and session-bound agents associate up to 16 installed apps with an assistant session. The gateway persists
 an ordered, unique `appIds` selection and an `appContextRevision`; it resolves fresh metadata from
 Core when accepting each message. Both Claude and Codex receive the same bounded context through
 the shared session manager.
@@ -54,6 +54,40 @@ resolution prevents message dispatch; the operator can explicitly choose **Send 
 details for this message**. The resulting snapshot says `resolution: unavailable`. An uninstalled
 app instead retains its id with `available: false`; stale URLs are not reused. Removing an
 unavailable association remains possible during a directory outage.
+
+## Agent Context Tools
+
+The session-key authenticated `hosty-workspaces` MCP surface exposes `context_list`,
+`context_search`, `context_add` and `context_remove`. They need no prepared workspace and do
+not enable app MCP providers. Search includes stopped and source-less apps, pages at 16 entries
+with `nextOffset`, and uses the existing 16-KiB metadata snapshot bound.
+
+List returns the current ordered `appIds`, revision and fresh bounded snapshot. Add/remove take
+exact `appIds`, `expectedRevision` and a UUID `requestId`; mutations preserve unrelated apps
+and order. Invalid additions and capacity overflow reject the whole mutation. No-op requests
+retain the revision, and unavailable selections can be removed during directory outages.
+Fresh metadata failures are reported by `snapshot.resolution` without hiding a committed result.
+
+Harness resolves the chat from the session-key route and revalidates its current Hosty app
+identity, administrator role and owning user before reading or mutating metadata. Model-supplied
+actor, chat and URL arguments are rejected. The same Ask / Run unprompted / Disabled broker used
+by the other workspace tools applies. Autonomous runs enabled context tools without an extra
+attachment approval; disabled tools remain unavailable.
+
+Mutation arguments and outcomes persist atomically with the selection. Exact request replay
+returns `replayed: true`, the original `outcome` and a separately resolved `current` selection.
+It does not increment revision or re-add an app removed by a later user action. Changed arguments
+under the same request ID conflict. A new stale request reports current IDs/revision and requires
+a reread. The durable context-event outbox recovers interrupted transcript delivery without
+repeating the mutation or event.
+
+The active turn receives the tool result as a separately attributed metadata observation.
+Accepted user-message snapshots remain immutable. Agent changes emit `app_context_changed`
+with `origin: agent` and the human owner as actor; the transcript identifies the assistant's
+update. Header/history selections and other open views follow the existing live event stream.
+An open picker retains pending changes; after a revision conflict it rebases those additions
+and removals onto the current selection for explicit review and a second Apply. Composer text,
+attachments and mention identities remain separate.
 
 ## Inline App Mentions
 
@@ -150,7 +184,9 @@ remain authoritative. Selecting a system app creates no extra authority over it.
 
 ## Development Integration Boundary
 
-Selection is distinct from both a primary development workspace and execution grants. Re-adding an
+Selection is distinct from both a primary development workspace and execution grants.
+Workspace `prepare` accepts any source app Core authorizes, even with empty, unrelated or full
+chat context. Preparation leaves the context selection unchanged. Re-adding an
 app restores context only; this feature's selection mutation performs no implicit rebinding or grant.
 The [approval plan](../assistant-approval-rules/plan.md) owns explicit grant choices and revocation
 feedback; [execution authorization](../assistant-execution-authorization/plan.md) owns scoped Core
@@ -161,6 +197,22 @@ native command has lost OS access.
 associations rather than implementing another session binding mechanism.
 
 ## Testing Expectations
+
+- Agent context tests cover active-turn delivery, immutable accepted snapshots, ordered deltas,
+  atomic validation, bounded search, outage removal, no-op revisions, concurrent edits, exact
+  replay after manual removal and restart, and durable event recovery before/after journal writes.
+- Real local MCP transport tests cover Claude/Codex configuration, all three tool modes in
+  Normal/Autonomous, session-key substitution and disconnect. Mutation tests revalidate current
+  identity and tool policy immediately before the write.
+- Picker tests preserve pending edits across agent revisions and require review before the
+  rebased selection is saved. Managed multi-user acceptance covers preparation from an empty
+  chat, context mutation/replay, stopped-app and monorepo reuse, separate-repository admission,
+  runtime preservation and revoked participant authority.
+- Core-managed browser verification on 2026-10-26 covered normal password login, direct app
+  access and Shell embedding, two-tab picker conflict/rebase, live header/transcript updates,
+  and preservation of unsent text and a pending attachment. No provider prompts were sent or
+  provider credentials copied; agent-origin events and both adapters are covered by regressions.
+  Parent Finish confirmed removal of the child Core and its resources.
 
 - Header placement, history selection/overflow/fallback rendering, and session-list display metadata
   are covered by component and API tests. Directory outages preserve saved associations.

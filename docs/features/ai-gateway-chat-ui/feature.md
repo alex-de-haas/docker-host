@@ -1,6 +1,6 @@
 ---
 created: 2026-09-22
-updated: 2026-10-09
+updated: 2026-10-26
 summary: The chat components Harness uses for messages, code blocks, attachments, the composer and collapsible activity.
 components: [apps/harness]
 ---
@@ -128,6 +128,18 @@ Messages, interactive requests and turn boundaries end a group; they retain thei
 order. Group labels do not assert execution success, because a recorded call alone does
 not establish its outcome.
 
+Command and tool rows share the same icon, text and disclosure alignment. Each matched result
+shows its own Completed, Failed, Cancelled or unavailable badge, including MCP failures. A group's
+failure count remains one per uniquely matched failed call.
+
+Available execution time appears in a separate clock badge. Codex supplies native command, MCP
+and dynamic-tool durations; Claude supplies tool durations through its PostToolUse and
+PostToolUseFailure hooks, excluding permission-prompt and hook time. Only a uniquely matched live
+main-agent call receives hook timing; subagent timing is omitted when the SDK identities cannot
+establish the corresponding parent call. Durations survive worker transport and transcript replay
+and are bounded numeric metadata, never inferred from chat timestamps. Older calls, missing timing and
+ambiguous or conflicting results show no fabricated duration.
+
 ## Current Activity
 
 A compact status row below the latest content stays visible throughout a running turn, including
@@ -169,6 +181,11 @@ The owner approved deterministic Claude SDK coverage instead of a live Claude ch
 installation has only a Codex connection.
 
 ## Testing Expectations
+
+- Verify aligned command/MCP rows, per-call failure badges and a separately labeled execution-time
+  badge. Cover zero, missing, invalid and conflicting durations without deriving time from event
+  timestamps. Exercise Codex result fields, Claude success/failure hooks and ambiguous child calls,
+  then retain timing through worker journal reload and replay without exposing transport metadata.
 
 Composer tests cover running/waiting states, Enter and submit guards, draft retention,
 stop failure/retry, send failure, and completion before or after the HTTP response.
