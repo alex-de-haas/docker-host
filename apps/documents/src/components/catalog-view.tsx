@@ -91,8 +91,8 @@ function Entry({
       }}
       className="group flex min-w-0 flex-col gap-2 rounded-lg border bg-card p-4 transition-colors hover:bg-muted/40 focus-visible:outline-2 focus-visible:outline-brand"
     >
-      <div className="flex items-start justify-between gap-3">
-        <strong className="min-w-0 text-sm font-medium wrap-anywhere group-hover:text-info">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <strong className="min-w-[12ch] flex-1 text-sm font-medium wrap-anywhere group-hover:text-info">
           {document.title}
         </strong>
         {document.status && (
