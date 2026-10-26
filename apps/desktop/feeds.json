@@ -1,0 +1,11 @@
+{
+  "schemaVersion": "app-feeds.0.1",
+  "appId": "hosty.desktop",
+  "feeds": [
+    {
+      "id": "main",
+      "manifestRef": "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/desktop/manifest.json",
+      "default": true
+    }
+  ]
+}

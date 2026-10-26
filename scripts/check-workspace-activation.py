@@ -2,7 +2,7 @@
 """Native Core activation/Return acceptance with isolated users, Git source and data.
 
 Build Core and CLI in Debug first, then run with repository path and optional scenario:
-return (default), stop-failure, auto, cancel, direct, catalog. The catalog scenario verifies
+return (default), stop-failure, auto, cancel, direct, catalog, documents, sessions, desktop. The catalog scenario verifies
 read-only Core workspace discovery without an activation or runtime switch. The direct scenario verifies
 workspace-to-workspace handover, same-workspace restart continuity and baseline Return. --managed runs inside a parent-owned child
 Core and requires the local Docker engine for the supported child environment lifecycle.
@@ -292,6 +292,13 @@ try:
         csrf = request('/api/auth/csrf')['token']
         initial = request('/control/v1/core/status',control=True)
         say('Started a parent-managed child Core and logged in with its separate test account')
+    if scenario == 'desktop':
+        assert managed, 'Desktop acceptance requires a managed child Core'
+        sys.dont_write_bytecode = True
+        from desktop_acceptance import check
+        check(globals())
+        success = True
+        sys.exit(0)
     if scenario == 'documents':
         assert managed, 'Documents acceptance requires a managed child Core'
         sys.dont_write_bytecode = True
@@ -536,6 +543,8 @@ finally:
                 child = request(f'/api/core-environments/{child_id}/operations/finish', {'requestId':str(uuid.uuid4()), 'expectedRevision':child['revision']})
                 assert child['state'] == 'finished', child
                 say('Parent Finish confirmed child resource removal')
+                if globals().get('desktop_fixture_image'):
+                    run(['docker', 'image', 'rm', desktop_fixture_image])
             except Exception as error:
                 cleanup_error = error
                 success = False

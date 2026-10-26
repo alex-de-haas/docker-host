@@ -12,7 +12,8 @@
     "apps/shell",
     "apps/telemetry-ui",
     "packages/app-sdk",
-    "apps/opus"
+    "apps/opus",
+    "apps/desktop"
   ],
   "overrides": {
     "postcss": "^8.5.26"
@@ -21,9 +22,9 @@
     "test:integration": "node scripts/test-integration.mjs",
     "dev": "node scripts/dev-local.mjs",
     "check-versions": "node scripts/check-versions.mjs",
-    "lint": "npm run shell:lint && npm run demo-app:lint && npm run marketplace:lint && npm run telemetry-ui:lint && npm run harness:lint && npm run documents:lint && npm run opus:lint",
-    "build": "npm run core:build && npm run cli:build && npm run telemetry-backend:build && npm run marketplace:build && npm run telemetry-ui:build && npm run shell:build && npm run demo-app:build && npm run documents:build && npm run opus:build",
-    "test": "npm run sdk:test && npm run sdk:dotnet:test && npm run core:test && npm run cli:test && npm run telemetry-backend:test && npm run marketplace:test && npm run telemetry-ui:test && npm run shell:test && npm run harness:test && npm run cardputer:test && npm run documents:test && npm run opus:test",
+    "lint": "npm run shell:lint && npm run demo-app:lint && npm run marketplace:lint && npm run telemetry-ui:lint && npm run harness:lint && npm run documents:lint && npm run opus:lint && npm run desktop:lint",
+    "build": "npm run core:build && npm run cli:build && npm run telemetry-backend:build && npm run marketplace:build && npm run telemetry-ui:build && npm run shell:build && npm run demo-app:build && npm run documents:build && npm run opus:build && npm run desktop:build",
+    "test": "npm run sdk:test && npm run sdk:dotnet:test && npm run core:test && npm run cli:test && npm run telemetry-backend:test && npm run marketplace:test && npm run telemetry-ui:test && npm run shell:test && npm run harness:test && npm run cardputer:test && npm run documents:test && npm run opus:test && npm run desktop:test",
     "ci": "npm run lint && npm run build && npm run test",
     "core:dev": "dotnet run --project apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj --launch-profile dev",
     "core:build": "dotnet build apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj",
@@ -75,6 +76,11 @@
     "documents:docker:build": "docker build -f apps/documents/Dockerfile -t ghcr.io/alex-de-haas/hosty-documents:latest .",
     "opus:build": "npm run build --workspace @haas/hosty-opus",
     "opus:lint": "npm run lint --workspace @haas/hosty-opus",
-    "opus:test": "npm run test --workspace @haas/hosty-opus"
+    "opus:test": "npm run test --workspace @haas/hosty-opus",
+    "desktop:dev": "npm run dev --workspace @haas/hosty-desktop",
+    "desktop:build": "npm run build --workspace @haas/hosty-desktop",
+    "desktop:start": "npm run start --workspace @haas/hosty-desktop",
+    "desktop:lint": "npm run lint --workspace @haas/hosty-desktop",
+    "desktop:test": "npm run test --workspace @haas/hosty-desktop"
   }
 }

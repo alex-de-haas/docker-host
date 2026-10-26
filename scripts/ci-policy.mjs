@@ -5,22 +5,22 @@ import { pathToFileURL } from "node:url";
 
 export const BASE_JOBS = Object.freeze(["changes", "versions", "docs", "ci-policy"]);
 export const COMPONENTS = Object.freeze([
-  "shell", "app-sdk", "app-sdk-dotnet", "whisper", "opus", "demo-app", "core", "cli",
+  "shell", "desktop", "app-sdk", "app-sdk-dotnet", "whisper", "opus", "demo-app", "core", "cli",
   "telemetry-backend", "marketplace", "documents", "harness", "telemetry-ui", "swift-shell", "cardputer-shell",
 ]);
 export const PROFILES = Object.freeze(["core-aot"]);
 export const ALL_JOBS = Object.freeze([...BASE_JOBS, "actionlint", ...COMPONENTS, ...PROFILES]);
-const NODE_COMPONENTS = ["opus", "shell", "app-sdk", "demo-app", "marketplace", "documents", "harness", "telemetry-ui"];
+const NODE_COMPONENTS = ["opus", "shell", "desktop", "app-sdk", "demo-app", "marketplace", "documents", "harness", "telemetry-ui"];
 const DOTNET_COMPONENTS = ["app-sdk-dotnet", "whisper", "core", "cli", "telemetry-backend"];
 const COMPONENT_PATHS = [
   ["apps/opus/", "opus"],
-  ["apps/shell/", "shell"], ["apps/demo-app/", "demo-app"], ["apps/marketplace/", "marketplace"],
+  ["apps/shell/", "shell"], ["apps/desktop/", "desktop"], ["apps/demo-app/", "demo-app"], ["apps/marketplace/", "marketplace"],
   ["apps/documents/", "documents"], ["apps/harness/", "harness"], ["apps/telemetry-ui/", "telemetry-ui"],
   ["apps/shell-swift/", "swift-shell"], ["apps/shell-cardputer/", "cardputer-shell"],
 ];
 const BUILD_CONFIG = /(?:^|\/)(?:[^/]+\.csproj|global\.json|[Nn]u[Gg]et\.[Cc]onfig|appsettings[^/]*\.json)$/;
 const WORKFLOW_COMPONENTS = {
-  "shell-image.yml": ["shell"], "demo-app-image.yml": ["demo-app"], "marketplace-image.yml": ["marketplace"],
+  "shell-image.yml": ["shell"], "desktop-image.yml": ["desktop"], "demo-app-image.yml": ["demo-app"], "marketplace-image.yml": ["marketplace"],
   "documents-image.yml": ["documents"], "telemetry-ui-image.yml": ["telemetry-ui"],
   "telemetry-backend-image.yml": ["telemetry-backend"], "publish-app-sdk.yml": ["app-sdk"],
   "publish-app-sdk-dotnet.yml": ["app-sdk-dotnet"], "cardputer-release.yml": ["cardputer-shell"],

@@ -133,6 +133,16 @@ expectEqual("marketplace version", {
   marketplaceImageTag,
 });
 
+// Desktop starts its own release line; health reads package metadata directly.
+const desktopManifest = json("apps/desktop/manifest.json");
+expectEqual("desktop version", {
+  manifest: desktopManifest.version,
+  packageJson: json("apps/desktop/package.json").version,
+  imageTag: desktopManifest.services?.find(service => service.key === "web")?.runtimes?.docker?.image?.tag,
+});
+expectEqual("desktop feed identity", { manifest: desktopManifest.id, feeds: json("apps/desktop/feeds.json").appId });
+if (json("apps/desktop/feeds.json").schemaVersion !== "app-feeds.0.1") problems.push("desktop feeds schema must be app-feeds.0.1");
+
 // documents: independently versioned runtime app and its first-party image/feed.
 const documentsManifest = json("apps/documents/manifest.json");
 expectEqual("documents version", {

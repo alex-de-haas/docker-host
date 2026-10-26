@@ -126,6 +126,7 @@ Plans: 13 In Progress · 1 Blocked · 46 Draft · 7 On Hold.
 - [Demo App](features/demo-app/feature.md) — The repository-local reference app used to validate lifecycle, identity, directory access and app roles.
 - [Dependency-Ordered Startup](features/dependency-ordered-autostart/feature.md) — Required dependencies gate manual and automatic startup with a durable waiting state and event-driven recovery.
 - [Design System](features/design-system/feature.md) — Shared web tokens, local fonts and scoped SDK chrome, with Shell, Harness, Marketplace and Telemetry adoption and an in-place credential grid. · [plan](features/design-system/plan.md): In Progress, 25/51, updated 2026-10-26
+- [Desktop Shell](features/desktop-shell/feature.md) — Hosty Desktop provides movable application windows, a glass dock, personal appearance and role-aware app access beside the management Shell.
 - [Documentation Workflow](features/documentation-workflow/feature.md) — Workflow documents carry YAML frontmatter and stable deliverable IDs, checked by one validator shared by every Hosty repository.
 - [Documents App](features/documents-app/feature.md) — Read current application documentation, source-defined plans and workspace progress from Git, with version-aware links, attention and assistant drafts.
 - [Feature: Domain Model](features/domain-model/feature.md) — The shared vocabulary for Core, Shell, the CLI and runtime apps.
