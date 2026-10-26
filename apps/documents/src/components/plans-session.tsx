@@ -4,5 +4,9 @@ import { HostyNextOverlay as HostyOverlay } from "@hosty-sdk/app/next";
 import { DocumentsWorkbench } from "./workbench";
 
 export function DocumentsSession() {
-  return <HostyOverlay><DocumentsWorkbench /></HostyOverlay>;
+  return (
+    <HostyOverlay navigation={{ renderer: "custom" }}>
+      <DocumentsWorkbench />
+    </HostyOverlay>
+  );
 }

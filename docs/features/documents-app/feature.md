@@ -39,8 +39,10 @@ freshness labels, current workspace activity and recent document updates. Progre
 appear first. Repository overviews form a compact list beside current work; selecting one opens
 the complete root.md in the document reader. Home does not render root document bodies.
 Navigation exposes Vision, Ideas, Features, Plans,
-Reviews and Tooling. Optional files have an explicit empty state. Tool-owned agent.md and store.md
-are labelled as tooling, outside feature status/progress. Reviews remain dated documents.
+Reviews and Tooling. The app uses its own documentation navigation and disables the SDK's
+automatic manifest-page menu, avoiding a redundant standalone Documents sidebar. The reader
+keeps its Documentation home link; SDK tools remain available. Optional files have an explicit
+empty state. Tool-owned agent.md and store.md are labelled as tooling, outside feature status/progress. Reviews remain dated documents.
 
 Search covers title, summary, content, heading text and source-defined idea/deliverable identifiers.
 Matching headings link to their anchors. Filters and selected view/layout are addressable in the
