@@ -3,7 +3,7 @@
   "id": "hosty.desktop",
   "name": "Hosty Desktop",
   "description": "A personal desktop for your Hosty applications.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "role": "system",
   "source": {
     "type": "git",
@@ -34,7 +34,7 @@
           "type": "docker",
           "image": {
             "repository": "ghcr.io/alex-de-haas/hosty-desktop",
-            "tag": "0.1.0"
+            "tag": "0.1.1"
           },
           "environment": {
             "PORT": "3000",
@@ -92,7 +92,7 @@
       "endpoint": "web",
       "path": "/"
     },
-    "icon": "assets/icon.svg"
+    "icon": "PanelsTopLeft"
   },
   "capabilities": [
     "logs"
@@ -115,7 +115,8 @@
       "first-party"
     ],
     "summary": "A glass desktop with windows, a dock and personal appearance.",
-    "license": "AGPL-3.0-only"
+    "license": "AGPL-3.0-only",
+    "icon": "assets/icon.svg"
   },
   "optionalCorePermissions": [
     "providers.assistant"

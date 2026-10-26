@@ -10,7 +10,7 @@ components: [apps/desktop]
 ## Runtime And Access
 
 `hosty.desktop` is a separate first-party runtime app in `apps/desktop`, with its own
-`0.1.0` release line. The existing management Shell remains independent. Desktop runs
+`0.1.x` release line. The existing management Shell remains independent. Desktop runs
 as a standalone browser surface and rejects embedding inside another shell to avoid
 recursive desktops. Its manifest supplies a Docker production profile and a Core-managed
 local development profile. Core assigns the port and supplies identity and transport configuration.
@@ -83,7 +83,7 @@ The same ID is retained until presentation succeeds, so retries recover the disc
 
 ## Appearance
 
-The Desktop mark follows the Hosty Style Guide: a square-cell frame with a mint green lit window (#34D399). The manifest and browser tab use the dark ink tile; the menu bar and loading screen use the unboxed mark.
+The Desktop mark follows the Hosty Style Guide: a square-cell frame with a mint green lit window (#34D399). The manifest declares the image in `catalogMetadata.icon` so Core serves it through the app asset endpoint; `ui.icon` retains a Lucide fallback. The catalog and browser tab use the dark ink tile; the menu bar and loading screen use the unboxed mark.
 
 Light, dark and system preferences share one design. Glass title bars, sidebars and the dock
 use backdrop blur with opaque content areas. Reduced-motion and reduced-transparency
