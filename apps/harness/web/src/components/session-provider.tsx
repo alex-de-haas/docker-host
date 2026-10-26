@@ -28,7 +28,7 @@ export function SessionProvider({ session, busy, onChange, onSavingChange }: {
   const refreshRef = useRef<() => void>(() => {});
   const savingRef = useRef(false);
   const attemptedDefault = useRef<string | null>(null);
-  const locked = session.providerLocked === true && Boolean(session.connectionId);
+  const locked = (session.providerLocked === true || Boolean(session.agentProfile)) && Boolean(session.connectionId);
   const legacy = session.providerLocked === true && !session.connectionId;
   const callbacks = useRef({ onChange, onSavingChange });
   useEffect(() => { callbacks.current = { onChange, onSavingChange }; }, [onChange, onSavingChange]);

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import AssistantPage from "./page";
 import { AssistantConversation } from "@/components/assistant-conversation";
 import * as api from "@/lib/assistant-api";
+import * as profilesApi from "@/lib/profiles-api";
 
 const ui = vi.hoisted(() => ({ reportSurfaceState: vi.fn(), getNavigation: vi.fn(), navigate: vi.fn() }));
 vi.mock("@hosty-sdk/app/ui/react", () => ({ useHostyUi: () => ui }));
@@ -12,8 +13,9 @@ vi.mock("@hosty-sdk/app/ui/react", () => ({ useHostyUi: () => ui }));
 vi.mock("@/lib/assistant-api", async original => ({
   ...await original<typeof api>(),
   getHealth: vi.fn(), listSessions: vi.fn(), getSession: vi.fn(), createSession: vi.fn(), deleteSession: vi.fn(),
-  listAppNames: vi.fn(), listContextApps: vi.fn(), setSessionApps: vi.fn(), postMessage: vi.fn(), stopSession: vi.fn(), streamEvents: vi.fn(), setSessionAutonomy: vi.fn(), listAgentConnections: vi.fn(), renameSession: vi.fn(),
+  listAppNames: vi.fn(), listContextApps: vi.fn(), setSessionApps: vi.fn(), postMessage: vi.fn(), stopSession: vi.fn(), streamEvents: vi.fn(), setSessionAutonomy: vi.fn(), listAgentConnections: vi.fn(), getSessionModels: vi.fn(), renameSession: vi.fn(),
 }));
+vi.mock("@/lib/profiles-api", () => ({ listProfiles: vi.fn(), selectSessionProfile: vi.fn() }));
 vi.mock("@/lib/development-api", async original => ({ ...await original<typeof import("@/lib/development-api")>(), useDevelopmentInventory: () => ({ workspaces: [], error: "", refresh: () => {} }) }));
 vi.mock("@/components/speech-input", () => ({ SpeechInput: () => null }));
 vi.mock("@/components/session-credentials", () => ({ SessionCredentials: () => null }));
@@ -40,6 +42,8 @@ beforeEach(() => {
   vi.mocked(api.createSession).mockResolvedValue(record);
   vi.mocked(api.listAppNames).mockResolvedValue({});
   vi.mocked(api.listAgentConnections).mockResolvedValue({ connections: [], defaultId: null });
+  vi.mocked(api.getSessionModels).mockResolvedValue({ revision: "catalog", models: [] });
+  vi.mocked(profilesApi.listProfiles).mockResolvedValue({ revision: 1, defaultId: null, profiles: [] });
   vi.mocked(api.streamEvents).mockImplementation(async (_id, listener, _signal, onConnection) => {
     emit = listener; connection = onConnection!; connection("connected");
   });
@@ -708,4 +712,181 @@ it("preserves an unsent draft and attachments while agent context changes replay
     origin: "agent", appIds: [], appContextRevision: 0 }));
   expect(input().value).toBe("My unsent draft");
   expect(localStorage.getItem("hosty.assistant.draft.session-one")).toBe("My unsent draft");
+});
+
+
+it("keeps one set of execution controls when creating consecutive profile-enabled sessions", async () => {
+  record.profileLocked = false;
+  record.providerLocked = false;
+  record.connectionId = "codex";
+  record.connectionRevision = 1;
+  await render();
+  for (const id of ["second-session", "third-session"]) {
+    vi.mocked(api.createSession).mockResolvedValue({ ...record, id });
+    await act(async () => button("New session")!.click());
+    for (const label of ["Agent profile", "Model", "Reasoning effort"]) {
+      expect(container.querySelectorAll(`button[aria-label="${label}"]`)).toHaveLength(1);
+    }
+    expect(container.querySelectorAll('[aria-label="Chat provider"]')).toHaveLength(1);
+  }
+});
+
+
+it("applies a profile refresh whose saved timestamp precedes its notification", async () => {
+  record.profileLocked = false;
+  record.selectionRevision = 0;
+  record.updatedAt = "2026-10-26T12:00:00.000Z";
+  await render();
+  const profile = { id: "reviewer", revision: 1, name: "Reviewer", description: "Reviews code", instructions: "Review only",
+    connectionId: "codex", model: "review-model", reasoningEffort: "high", skillIds: ["code-review"] };
+  vi.mocked(api.getSessionModels).mockResolvedValue({ revision: "catalog", models: [
+    { id: "review-model", label: "Review model", efforts: [{ id: "high", label: "High" }] },
+  ] });
+  vi.mocked(api.getSession).mockResolvedValue({ ...record, agentProfile: profile, connectionId: "codex", connectionRevision: 1,
+    executionSelection: { model: profile.model, reasoningEffort: profile.reasoningEffort }, selectionRevision: 1,
+    lastEventSeq: 2, updatedAt: "2026-10-26T12:00:01.000Z" });
+  await act(async () => emit({ type: "session_profile_changed", profileId: profile.id, revision: 1, seq: 2, ts: "2026-10-26T12:00:01.005Z" }));
+  expect(button("Agent profile")?.textContent).toBe("Reviewer");
+  expect(button("Model")?.textContent).toBe("Review model");
+  expect(button("Reasoning effort")?.textContent).toBe("High");
+  await type("Review this snippet"); await submit();
+  expect(api.postMessage).toHaveBeenCalledWith(record.id, "Review this snippet", [], 0, false, 1, expect.any(String));
+});
+
+
+it.each(["before", "after"])("retains the newer model when a delayed profile snapshot arrives %s its replacement", async order => {
+  record.profileLocked = false;
+  record.connectionId = "codex";
+  record.selectionRevision = 0;
+  record.updatedAt = "2026-10-26T12:00:00.000Z";
+  vi.mocked(api.getSessionModels).mockResolvedValue({ revision: "catalog", models: [
+    { id: "old-model", label: "Old model", efforts: [] },
+    { id: "new-model", label: "New model", efforts: [{ id: "high", label: "High" }] },
+  ] });
+  await render(); await type("Retained review request");
+  const profile = { id: "reviewer", revision: 1, name: "Reviewer", description: "Reviews code", instructions: "Review only",
+    connectionId: "codex", model: "old-model", reasoningEffort: null, skillIds: ["code-review"] };
+  const stale = { ...record, agentProfile: profile, selectionRevision: 1, lastEventSeq: 2,
+    updatedAt: "2026-10-26T12:00:01.000Z", executionSelection: { model: "old-model", reasoningEffort: null } };
+  const latest = { ...stale, selectionRevision: 2, lastEventSeq: 3, updatedAt: "2026-10-26T12:00:02.000Z",
+    executionSelection: { model: "new-model", reasoningEffort: "high" } };
+  let releaseStale!: (value: api.AssistantSession) => void;
+  let releaseLatest: ((value: api.AssistantSession) => void) | undefined;
+  vi.mocked(api.getSession).mockImplementationOnce(() => new Promise(resolve => { releaseStale = resolve; }))
+    .mockImplementationOnce(() => new Promise(resolve => { releaseLatest = resolve; }));
+  await act(async () => emit({ type: "session_profile_changed", profileId: profile.id, revision: 1, seq: 2, ts: "2026-10-26T12:00:01.005Z" }));
+  await act(async () => emit({ type: "model_selection_changed", revision: 2, selection: latest.executionSelection, seq: 3, ts: latest.updatedAt }));
+  expect(button("Model")?.textContent).toBe("New model");
+  if (order === "before") await act(async () => releaseStale(stale));
+  await act(async () => releaseLatest?.(latest));
+  if (order === "after") await act(async () => releaseStale(stale));
+  expect(button("Model")?.textContent).toBe("New model");
+  expect(button("Reasoning effort")?.textContent).toBe("High");
+  expect(button("Agent profile")?.textContent).toBe("Reviewer");
+  expect(input().value).toBe("Retained review request");
+  await submit();
+  expect(api.postMessage).toHaveBeenCalledWith(record.id, "Retained review request", [], 0, false, 2, expect.any(String));
+});
+
+
+it("does not let a delayed profile mutation response replace a newer model event", async () => {
+  record.profileLocked = false;
+  record.connectionId = "codex";
+  record.selectionRevision = 0;
+  record.updatedAt = "2026-10-26T12:00:00.000Z";
+  const profile = { id: "reviewer", revision: 1, name: "Reviewer", description: "Reviews code", instructions: "Review only",
+    connectionId: "codex", model: "old-model", reasoningEffort: null, skillIds: [] };
+  vi.mocked(profilesApi.listProfiles).mockResolvedValue({ revision: 1, defaultId: null, profiles: [profile] });
+  vi.mocked(api.getSessionModels).mockResolvedValue({ revision: "catalog", models: [
+    { id: "old-model", label: "Old model", efforts: [] }, { id: "new-model", label: "New model", efforts: [] },
+  ] });
+  await render();
+  let finishSave!: (value: api.AssistantSession) => void;
+  let finishRefresh!: (value: api.AssistantSession) => void;
+  vi.mocked(profilesApi.selectSessionProfile).mockImplementation(() => new Promise(resolve => { finishSave = resolve; }));
+  vi.mocked(api.getSession).mockImplementationOnce(() => new Promise(resolve => { finishRefresh = resolve; }));
+  await act(async () => button("Agent profile")!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })));
+  await act(async () => [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find(item => item.textContent?.startsWith("Reviewer"))!.click());
+  const saved = { ...record, agentProfile: profile, selectionRevision: 1, lastEventSeq: 2,
+    updatedAt: "2026-10-26T12:00:01.000Z", executionSelection: { model: "old-model", reasoningEffort: null } };
+  const latest = { ...saved, selectionRevision: 2, lastEventSeq: 3, updatedAt: "2026-10-26T12:00:02.000Z",
+    executionSelection: { model: "new-model", reasoningEffort: null } };
+  await act(async () => emit({ type: "model_selection_changed", revision: 2, selection: latest.executionSelection, seq: 3, ts: latest.updatedAt }));
+  await act(async () => finishSave(saved));
+  expect(button("Model")?.textContent).toBe("New model");
+  await act(async () => finishRefresh(latest));
+  expect(button("Agent profile")?.textContent).toBe("Reviewer");
+  expect(button("Model")?.textContent).toBe("New model");
+  await type("Review after the concurrent update"); await submit();
+  expect(api.postMessage).toHaveBeenCalledWith(record.id, "Review after the concurrent update", [], 0, false, 2, expect.any(String));
+});
+
+
+it.each(["session_status", "app_context_changed"])("refreshes complete settings when %s overtakes a profile read", async eventType => {
+  record.profileLocked = false;
+  record.providerLocked = false;
+  record.connectionId = "old-account";
+  record.selectionRevision = 0;
+  record.updatedAt = "2026-10-26T12:00:00.000Z";
+  vi.mocked(api.getSessionModels).mockResolvedValue({ revision: "catalog", models: [
+    { id: "new-model", label: "New model", efforts: [{ id: "high", label: "High" }] },
+  ] });
+  await render(); await type("Retained review request");
+  const profile = { id: "reviewer", revision: 1, name: "Reviewer", description: "Reviews code", instructions: "Review only",
+    connectionId: "codex", model: "new-model", reasoningEffort: "high", skillIds: [] };
+  const snapshot = { ...record, agentProfile: profile, connectionId: "codex", connectionRevision: 1, harnessKind: "codex" as const,
+    selectionRevision: 2, lastEventSeq: 3, updatedAt: "2026-10-26T12:00:02.000Z",
+    executionSelection: { model: "new-model", reasoningEffort: "high" } };
+  const responses: Array<(value: api.AssistantSession) => void> = [];
+  vi.mocked(api.getSession).mockImplementation(() => new Promise(resolve => { responses.push(resolve); }));
+  await act(async () => emit({ type: "session_profile_changed", revision: 1, seq: 2, ts: "2026-10-26T12:00:01.000Z" }));
+  await act(async () => emit({ type: "model_selection_changed", revision: 2, selection: snapshot.executionSelection, seq: 3, ts: snapshot.updatedAt }));
+  if (eventType === "session_status") {
+    await act(async () => emit({ type: "user_message", text: "Sent from the other tab", seq: 4, ts: "2026-10-26T12:00:03.000Z" }));
+  }
+  await act(async () => emit({ type: eventType, status: "running", appIds: ["notes"], appContextRevision: 1,
+    seq: 5, ts: "2026-10-26T12:00:04.000Z" }));
+  const refreshed = { ...snapshot, lastEventSeq: 5, updatedAt: "2026-10-26T12:00:04.000Z",
+    ...(eventType === "session_status" ? { status: "running", profileLocked: true, providerLocked: true }
+      : { appIds: ["notes"], appContextRevision: 1 }) };
+  // All requests started before the overtaking event carry the obsolete lifecycle/context snapshot.
+  const currentRead = responses.length > 2 ? responses.pop() : undefined;
+  await act(async () => { for (const resolve of responses) resolve(snapshot); });
+  await act(async () => currentRead?.(refreshed));
+  expect(button("Agent profile")?.textContent).toBe("Reviewer");
+  expect(button("Provider: codex")).not.toBeNull();
+  expect(button("Model")?.textContent).toBe("New model");
+  expect(input().value).toBe("Retained review request");
+  if (eventType === "session_status") {
+    expect(button("Agent profile")?.disabled).toBe(true);
+    expect(button("Model")?.disabled).toBe(true);
+  } else {
+    await submit();
+    expect(api.postMessage).toHaveBeenCalledWith(record.id, "Retained review request", [], 1, false, 2, expect.any(String));
+  }
+  const readsAfterSettlement = vi.mocked(api.getSession).mock.calls.length;
+  await act(async () => emit({ type: "session_status", status: "idle", seq: 6, ts: "2026-10-26T12:00:05.000Z" }));
+  expect(api.getSession).toHaveBeenCalledTimes(readsAfterSettlement);
+});
+
+
+it("keeps admission locks when a delayed profile save arrives before the status event", async () => {
+  record.profileLocked = false;
+  record.providerLocked = false;
+  record.connectionId = "codex";
+  record.selectionRevision = 0;
+  const profile = { id: "reviewer", revision: 1, name: "Reviewer", description: "Reviews code", instructions: "Review only",
+    connectionId: "codex", model: null, reasoningEffort: null, skillIds: [] };
+  vi.mocked(profilesApi.listProfiles).mockResolvedValue({ revision: 1, defaultId: null, profiles: [profile] });
+  await render();
+  let finishSave!: (value: api.AssistantSession) => void;
+  vi.mocked(profilesApi.selectSessionProfile).mockImplementation(() => new Promise(resolve => { finishSave = resolve; }));
+  await act(async () => button("Agent profile")!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })));
+  await act(async () => [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find(item => item.textContent?.startsWith("Reviewer"))!.click());
+  await act(async () => emit({ type: "user_message", text: "Sent from the other tab", seq: 3, ts: "2026-10-26T12:00:02.000Z" }));
+  await act(async () => finishSave({ ...record, agentProfile: profile, selectionRevision: 1, lastEventSeq: 2,
+    updatedAt: "2026-10-26T12:00:01.000Z" }));
+  expect(button("Agent profile")?.textContent).toBe("Reviewer");
+  expect(button("Agent profile")?.disabled).toBe(true);
+  expect(container.querySelector<HTMLButtonElement>('[aria-label="Chat provider"] button')?.disabled).toBe(true);
 });
