@@ -212,8 +212,11 @@ export function CatalogView({
             kindOf(card) ===
             (view === "reviews" ? "review" : view === "plans" ? "plan" : view),
         );
-  const page = Math.max(0, Number(query.get("page")) || 0),
-    pageSize = 24;
+  const pageSize = 24;
+  const page = Math.min(
+    Math.max(0, Math.floor(Number(query.get("page")) || 0)),
+    Math.max(0, Math.ceil(candidates.length / pageSize) - 1),
+  );
   const shown = candidates.slice(page * pageSize, (page + 1) * pageSize);
   const workspaces = scopes.flatMap(
     (item) => loaded[item.id]?.workspaces ?? [],
@@ -292,6 +295,7 @@ export function CatalogView({
               onClick={() => {
                 const next = new URLSearchParams(query);
                 next.set("view", key);
+                next.delete("page");
                 next.delete("q");
                 next.delete("status");
                 navigate(`/?${next}`);
@@ -320,6 +324,8 @@ export function CatalogView({
                 const next = new URLSearchParams(query);
                 next.set("view", "plans");
                 next.set("status", state);
+                next.delete("page");
+                next.delete("q");
                 navigate(`/?${next}`);
               }}
             >
