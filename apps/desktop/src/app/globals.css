@@ -138,7 +138,8 @@ h1,h2,p { margin-top: 0; }
 .profile-row { display: flex; justify-content: space-between; gap: 15px; padding: 22px 0; margin-top: 25px; border-top: 1px solid var(--divider); border-bottom: 1px solid var(--divider); font-size: 12px; }
 .dock-wrap { position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%); z-index: 600; max-width: calc(100vw - 32px); }
 .dock { display: flex; align-items: center; gap: 7px; padding: 9px 10px 5px; border-radius: 23px; border: 1px solid var(--line); background: var(--glass); box-shadow: 0 10px 35px #0c26363b,var(--material-shadow); -webkit-backdrop-filter: blur(40px) saturate(1.6); backdrop-filter: blur(40px) saturate(1.6); }
-.dock-apps { display: flex; align-items: center; gap: 7px; min-width: 0; max-width: calc(100vw - 214px); overflow-x: auto; scrollbar-width: none; padding: 8px 2px 1px; margin-top: -8px; }
+/* Keep transformed icons and focus rings inside the horizontal scroll viewport. */
+.dock-apps { display: flex; align-items: center; gap: 7px; min-width: 0; max-width: calc(100vw - 214px); overflow-x: auto; scrollbar-width: none; padding: 16px 8px 6px; margin: -16px -6px -5px; }
 .dock-item { display: flex; flex-direction: column; align-items: center; padding: 0 1px; position: relative; gap: 6px; flex-shrink: 0; }
 .dock-item .app-icon { transition: transform .2s cubic-bezier(.2,.8,.3,1); transform-origin: bottom center; width: 52px; height: 52px; }
 .dock-item:hover .app-icon,.dock-item:focus-visible .app-icon { transform: translateY(-5px) scale(1.09); }
