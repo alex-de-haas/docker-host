@@ -94,6 +94,10 @@ resulting approval request. They then retry the original execution choice. A loc
 requiring additional rights directs the operator to select the workspace in Dashboard under their
 signed-in identity. It cannot manufacture approval for a synthetic operator.
 
+Before a workspace's source binding is applied, Stop uses the previous runtime contract; an
+entry journal alone does not apply the candidate's mounts or permissions to that runtime.
+Switching from a workspace without a skill collection to one with it preserves this boundary.
+
 Restart refreshes an admitted candidate and checks current access again. Stop uses the last
 launched snapshot, so invalid live JSON does not trap an app. Package return uses the current
 installed contract and strips temporary workspace authority. Native, system, Docker and mixed

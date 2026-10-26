@@ -406,6 +406,31 @@ async function route(
     return;
   }
 
+  if (url.pathname.startsWith("/api/profiles")) response.setHeader("cache-control", "no-store");
+  if (manager.profiles && url.pathname === "/api/profiles") {
+    if (method === "GET") { sendJson(response, 200, await manager.profiles.read()); return; }
+    if (method === "POST") {
+      const body = await readJson(request);
+      const config = await manager.validateProfile(body.profile);
+      sendJson(response, 201, await manager.profiles.save(config, body.expectedRevision)); return;
+    }
+  }
+  if (manager.profiles && url.pathname === "/api/profiles/default" && method === "PUT") {
+    const body = await readJson(request);
+    sendJson(response, 200, await manager.profiles.setDefault(body.profileId, body.expectedRevision)); return;
+  }
+  const profileMatch = url.pathname.match(/^\/api\/profiles\/([a-f0-9-]{36})$/);
+  if (manager.profiles && profileMatch && (method === "PUT" || method === "DELETE")) {
+    const body = await readJson(request);
+    if (method === "DELETE") sendJson(response, 200, await manager.profiles.remove(profileMatch[1]!, body.expectedRevision));
+    else sendJson(response, 200, await manager.profiles.save(await manager.validateProfile(body.profile), body.expectedRevision, profileMatch[1]!));
+    return;
+  }
+  const connectionModels = url.pathname.match(/^\/api\/connections\/([a-zA-Z0-9-]+)\/models$/);
+  if (connections && connectionModels && method === "GET") {
+    sendJson(response, 200, await connections.models(connectionModels[1]!)); return;
+  }
+
   if (connections && url.pathname === "/api/connections") {
     if (method === "GET") { sendJson(response, 200, await connections.list()); return; }
     if (method === "POST") { sendJson(response, 201, await connections.update(await readJson(request))); return; }
@@ -485,6 +510,7 @@ async function route(
     if (method === "GET") await migrateSkillSelection(settings).catch(() => {});
     if (method === "PUT") {
       const body = await readJson(request);
+      if (manager.profiles && body.skillIds !== undefined) throw new AppContextError(409, "skill_selection_moved", "Choose skills in Agent profiles or supply an explicit session selection.");
       if (body.skillIds !== undefined && !validSkillIds(body.skillIds)) throw new AppContextError(400, "skills_invalid", "Choose stable skill IDs from the Core catalog.");
       if (body.retention !== undefined && !validRetention(body.retention)) {
         sendJson(response, 400, { code: "retention_invalid", message: "Choose Off or whole days from 1 to 3650 for both retention policies." }); return;
@@ -597,6 +623,8 @@ async function route(
   if (url.pathname === "/api/sessions" && method === "POST") {
     const body = await readJson(request);
     const record = await manager.createSession({
+      profileId: body.profileId,
+      profileRevision: body.profileRevision,
       skillIds: body.skillIds,
       title: typeof body.title === "string" ? body.title : undefined,
       context: isStringRecord(body.context) ? body.context : undefined,
@@ -696,6 +724,9 @@ async function route(
   const ownedSession = await manager.getSession(sessionId);
   if (!ownedSession || ownedSession.createdBy !== actor.userId) {
     sendJson(response, 404, { code: "session_not_found", message: "Session not found." }); return;
+  }
+  if (sessionMatch[2] === "/profile" && method === "PUT") {
+    sendJson(response, 200, await manager.setProfile(sessionId, await readJson(request))); return;
   }
   if (sessionMatch[2] === "/workspaces" && method === "POST") {
     const body = await readJson(request, 256 * 1024);

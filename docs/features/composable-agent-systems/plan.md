@@ -60,7 +60,7 @@ This inventory is not evidence that a complete autonomous team or a common publi
 | --- | --- | --- | --- |
 | Identity and delegated authority | Core [human accounts](../user-management/feature.md), app identity, reviewed permissions and [background delegation](../continuous-app-access/feature.md). [Workspace membership](../workspace-sessions/feature.md) supports administrator sharing. | A durable agent participant visible across apps, separately from its profile, runtime and initiating human; assignment, attribution and current access must agree. | Existing authority stays with [Agent Providers D3](../agent-provider-interface/plan.md#deliverables) and [Execution Authorization D1-D3](../assistant-execution-authorization/plan.md#deliverables). [Agent Participants](../agent-participants/plan.md) owns the shared identity design; [ordinary-user sessions](../user-agent-sessions/plan.md) remain On Hold and are not this identity feature. |
 | Shared tasks and assignments | Plans supplies document/deliverable views; session and worker run records cover their own execution. There is no general Core task contract. | Compare a small Core-owned task record with provider-owned storage under the same observable contract. Include child tasks, participants, resource links and executor-owned extension data. | [Shared Tasks](../shared-tasks/plan.md) owns the common record, executor binding and workspace relationship. Reconcile [Plan Provider](../plan-provider-interface/plan.md) read/progress semantics, [Default Applications](../default-applications/plan.md) selection and Agent Providers invocation; do not turn any existing plan into a second task registry. |
-| Skills and standing instructions | The shared [Core library](../agent-skills/feature.md) imports complete Git/app packages, updates them manually, and delivers separate current-content exports to native consumers. Harness exposes default selection and stable-ID session inputs. | Compose those existing APIs into named role/project profiles and work orchestration; distinguish standing rules from optional activation. | [Harness Work Orchestration D1](../harness-work-orchestration/plan.md#deliverables) owns profiles. Shared package delivery is implemented and is not duplicated here. |
+| Skills and standing instructions | The shared [Core library](../agent-skills/feature.md) imports complete Git/app packages, updates them manually, and delivers separate current-content exports to native consumers. Harness profiles select explicit skills; manual session inputs retain stable IDs. | Compose the existing profile editor with persistent participants and work orchestration, retaining independent standing rules and optional skill activation. | [Shared Agent Profiles](../agent-profiles/feature.md) owns independent configuration; Harness Work Orchestration owns participant binding and coordination. Shared package delivery is implemented and is not duplicated here. |
 | Discoverable execution providers | Confirmed assistant/speech interfaces and [MCP discovery](../agent-mcp-directory/feature.md); the Harness Worker has a concrete private application API. | A public app-facing model/agent contract with capability/model selection, bounded input/output, caller authority and independently provided execution. Assistant handoff is not that contract. | [Agent Providers D1-D6](../agent-provider-interface/plan.md#deliverables); [Worker acceptance](../assistant-shared-docker-runtime/plan.md) retains its separate scope. |
 | Durable invocations | [Worker journals](../assistant-shared-docker-runtime/feature.md), run identities, result/event reads, cancellation and interrupted-run recovery; Core resource operations have replay receipts. | A consuming app must distinguish accepted work, waiting, failure, interruption and completion, reconcile uncertain outcomes and retrieve results without replaying effects. A finished run need not mean its business result was accepted. | Agent Providers D2 owns invocation semantics. [Shared History D1-D4](../assistant-shared-history/plan.md#deliverables) owns conversation recovery/context, not a cross-app task registry. |
 | Events and subscriptions | The [Core event bus](../core-event-bus/feature.md) and [workspace observation](../workspace-event-observation/feature.md) deliver refresh hints with state resynchronization. | Durable authorized delivery, cursors, duplicates, retention gaps and app-produced facts where required. Event reception and an authorized command are distinct. | [Notifications D6](../notifications/plan.md#deliverables) owns durable domain-event subscriptions; D7 owns its first delivery-channel consumer. Cross-feature orchestration use is investigated here without expanding those deliverables implicitly. |
@@ -101,26 +101,32 @@ An orchestrator's agent hierarchy refers to participants but remains independent
 
 ### Agent Configuration And Skills
 
-Investigate a configuration assembled from a provider reference, standing role instructions,
-selected skill revisions and execution defaults. Effective tool/source access comes from current
+Reuse the implemented shared configuration assembled from a connection reference, standing role
+instructions, explicit skill IDs and model/reasoning choices. Effective tool/source access comes from current
 grants, independently of those instructions. A model connection is not automatically a role or a
 separate user identity.
 
 The owner's first priority is the common skill pool and delivery, reusable before a team coordinator
-exists. Candidate profiles may combine analyst/design guidance, repository conventions and
-application-specific skills such as .NET, Next.js or React. Establish who selects or changes those
-sets and how a run records its effective configuration.
+exists. Profiles can combine analyst/design guidance, repository conventions and
+technology-specific skills such as .NET, Next.js or React. Establish who selects or changes those
+sets when composing them with persistent participants; Harness already records conversation configuration.
 
 Shared Skills' 2026-10-26 decision selects one administrator-managed Core pool, app-owned profile
 references/defaults and delivery of current installed files. Decision 59 removes session pinning
 and historical package retention; deletion stops delivery without blocking creation/resume. Model/provider
 connections do not select separate sets. Native filesystem/bind-mount delivery remains; clients
-control rediscovery and export/migration contracts are still Draft. Git changes are
+control rediscovery; export and migration contracts are implemented. Git changes are
 detected for manual apply; app packages update with the app. Multiple full app packages replace the
 single-file contract. Package editing, personal pools and automatic Git updates are outside the first
 slice. Decision 60 also excludes manual uploads: Git and app packages are the initial sources,
 private Git reuses Source connections and migrated consumers do not repeat content-digest acceptance
-on updates. Harness Work Orchestration owns profiles/instructions, not another package pool.
+on updates. Harness Work Orchestration composes participants and coordination over the independent profiles.
+[Shared Agent Profiles](../agent-profiles/feature.md) implements profile
+configuration/editor and manual chat use, transferred from Harness Work Orchestration D1/D3.
+Profiles select explicit skills and have no project/app/workspace binding or per-profile access
+settings. Personalized participants, hierarchy and routing remain orchestration work. A later
+personalized-agent form can compose the same editor without requiring two setup workflows.
+
 The selected [package/catalog contract](../agent-skills/feature.md#api-and-delivery)
 defines agent.skills key/path declarations, source/skill records and stable profile references
 without historical revision bindings or a new Node.js/skills CLI dependency. The implemented API, runtime publication and migration behavior are documented by that feature.
@@ -251,7 +257,8 @@ Organization app and its name remain open. Shared APIs must remain consumable in
 
 | Priority | Owning plan | Boundary |
 | --- | --- | --- |
-| Foundation delivered | [Shared Skills](../agent-skills/feature.md) | Core package library and current-content exports, Harness defaults and stable-ID selection inputs; reuse these APIs for profiles and roles. |
+| Foundation delivered | [Shared Skills](../agent-skills/feature.md) | Core package library and current-content exports, with stable-ID selection inputs. |
+| Foundation delivered | [Shared Agent Profiles](../agent-profiles/feature.md) | Reusable shared configuration/editor and fixed conversation profiles; no participant identity or workspace binding. |
 | 2 | [Agent Participants](../agent-participants/plan.md) | New persistent identity, attribution and responsible-human contract; app profiles are separate. |
 | 3 | [Agent Providers](../agent-provider-interface/plan.md) | Existing public invocation owner; models, runs and capabilities, not scheduling. |
 | 4 | [Shared Tasks](../shared-tasks/plan.md) | New common records, assignments, child visibility, executor and workspace bindings. |
@@ -259,7 +266,7 @@ Organization app and its name remain open. Shared APIs must remain consumable in
 | 6 | [Shared Artifacts](../shared-artifacts/plan.md) | New minimal described/versioned results and explicit context handoffs. |
 | 7 | [Shared Decisions](../shared-decisions/plan.md) | New addressed requests, resolution and durable continuation handoff. |
 | Execution foundation | [Durable Agent Jobs](../durable-agent-jobs/plan.md) | Former Bridge D11; build with invocation/events, then integrate parked decisions. |
-| Composition | [Harness Work Orchestration](../harness-work-orchestration/plan.md) | App profiles, optional hierarchy, coordination and first joined UI/journey. |
+| Composition | [Harness Work Orchestration](../harness-work-orchestration/plan.md) | Participant bindings, optional hierarchy, coordination and first joined UI/journey over existing profiles. |
 
 These are priorities, not a strictly serial build order. Shared History retains session context;
 resource, permission, provider and notification plans keep their own deliverables and status.
@@ -277,7 +284,7 @@ owners can progress independently within their authorized scope.
 
 | Order | Investigation | Exit evidence and dependencies |
 | --- | --- | --- |
-| 1 | Shared skills and common identities | Keep the skill pool as the owner's first priority. Alongside it, distinguish task, participant, profile and invocation identities so later contracts do not confuse them. Apply Shared Skills' selected Core-pool/profile/session boundary and resolve its remaining export/migration details. |
+| 1 | Shared skills and common identities | Keep the skill pool as the owner's first priority. Alongside it, distinguish task, participant, profile and invocation identities so later contracts do not confuse them. Reuse the implemented shared skill/profile contracts and resolve the remaining persistent-participant identity boundary. |
 | 2 | One task, one executor and authorized observation | Compare Core-owned and provider-owned tasks with the same consumer example. Connect Agent Providers invocation and Notifications D6 observation; explain accepted requests, assignments, state changes and recovery before adding a team hierarchy. |
 | 3 | Minimal artifacts and a handoff | Specify a summary plus described/versioned output references, basic discovery/read/save and a clear lifetime. Reconcile Plan Provider, Object Links and existing source/attachment contracts. No learned memory or artifact tier system is required. |
 | 4 | Durable decisions and continuation | Compose addressed decision records with Agent Providers, Shared History and Durable Agent Jobs. Compare quick response with overnight parking, restart, lost/repeated events and resource release. Keep permission approvals under their current authority owners. |
@@ -336,7 +343,7 @@ roles and automation must not make this basic composition depend on unused appli
 ## Deliverables
 
 - [ ] D1. Review the capability map against the three example compositions and their variations, including an independent consumer/provider example; agree the minimum shared boundaries and optional app-owned behavior without requiring new implementation for this investigation.
-- [ ] D2. Review the assigned owners and cross-feature boundaries for shared tasks/executor bindings, persistent participants, role/project skills, artifacts/context and decisions. Compare compatible composition alternatives; detailed contracts and implementation remain in the linked owner plans.
+- [ ] D2. Review the assigned owners and cross-feature boundaries for shared tasks/executor bindings, persistent participants, role configurations/shared skills, artifacts/context and decisions. Compare compatible composition alternatives; detailed contracts and implementation remain in the linked owner plans.
 - [ ] D3. Produce integration-level request/result and handoff examples covering actor authority, revisions, observable child tasks, inherited versus explicit workspace bindings, artifact preservation, quick versus parked decision waits, duplicate/lost delivery and restart recovery.
 - [ ] D4. Define acceptance evidence for the three compositions and their variations, including concurrent workspace requests, an independent bugfix/PR, overnight decisions, post-cleanup artifact reuse, stale input/approval handling, cancellation, failure/budget reporting and the app-neutral Core baseline; distinguish verified primitives from assumptions.
 - [ ] D5. Reconcile investigation order and dependency/ownership with existing plans, keep learned memory outside this scope, present a bounded proposal for explicit owner approval and route selected implementation work to its owning plan without implicit status changes.
@@ -347,8 +354,8 @@ roles and automation must not make this basic composition depend on unused appli
   Core records with provider-owned tasks using the same cross-app read/observe example. What
   remains possible when the executor is unavailable or removed?
 - How do participant identity, responsible-human routing and execution credentials fit existing
-  users/app grants without simulating a human account? How do app-owned profiles reference the common skill pool
-  and deliver current selected packages through native exports without mixing profiles?
+  users/app grants without simulating a human account? How should participant editors compose the existing
+  profile configuration and skill-delivery contracts across independent applications?
 - What binding/allocation scope prevents accidental workspace duplication while allowing a
   deliberate independent bugfix? How do reparenting, reassignment and existing consumers affect it?
 - What is the minimum artifact ownership, description/version, storage, retention and save/read/find
