@@ -41,7 +41,10 @@ workspace for each application window before mounting its frame.
 
 The dock contains accessible apps, marks open windows, dims stopped apps for administrators,
 and supports ordering and favorites. Its horizontal scroll area reserves space around enlarged
-hover/focus icons and focus rings without changing the dock's visible size. Applications and Appearance are built-in windows.
+hover/focus icons and focus rings without changing the dock's visible size.
+App-name tooltips render in the desktop overlay outside that scroll area, stay inside the
+viewport and wrap long names. They follow their icon during scrolling and resizing, support
+keyboard focus, and dismiss on Escape or interaction. Applications and Appearance are built-in windows.
 Search is available from the menu bar and Command-K/Control-K. Window menus also expose
 keyboard-accessible maximize and tile actions.
 

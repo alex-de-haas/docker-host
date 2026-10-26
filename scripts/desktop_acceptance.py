@@ -38,7 +38,7 @@ def check(context):
     context['desktop_fixture_image'] = fixture_image
     fixtures = [('test.desktop.ready', 'Desktop fixture', False),
                 ('test.desktop.failure', 'Failure fixture', True),
-                ('test.desktop.hidden', 'Unassigned fixture', False)]
+                ('test.desktop.hidden', 'Unassigned fixture with a deliberately long application name for checking dock tooltip wrapping and viewport edges', False)]
     for id, name, fail in fixtures:
         value = {'schemaVersion':'app.0.1', 'id':id, 'name':name, 'description':'Disposable Desktop acceptance fixture.', 'version':'0.1.0',
             'runtimeProfiles':[{'key':'docker','type':'docker','default':True}], 'defaultRuntime':'docker',
