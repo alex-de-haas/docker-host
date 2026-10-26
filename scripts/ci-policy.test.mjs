@@ -67,8 +67,13 @@ test("worker and speech inputs retain component tests without native acceptance"
   assertSelection(["apps/whisper/Hosty.Whisper.Tests/WaveAudioTests.cs"], ["whisper"]);
 });
 
+test("OPUS source and native fixtures retain offline component checks", () => {
+  for (const path of ["apps/opus/runtime/worker.py", "apps/opus/test/native.integration.ts", "apps/opus/manifest.json"])
+    assertSelection([path], ["opus"]);
+});
+
 test("Node dependency changes fan out only to Node consumers", () => {
-  const node = ["shell", "app-sdk", "demo-app", "marketplace", "documents", "harness", "telemetry-ui"];
+  const node = ["opus", "shell", "app-sdk", "demo-app", "marketplace", "documents", "harness", "telemetry-ui"];
   assertSelection(["package-lock.json"], node);
   assertSelection(["packages/app-sdk/src/session.ts"], node);
   assertSelection([".npmrc"], node);

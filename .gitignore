@@ -63,6 +63,10 @@ next-env.d.ts
 **/bin/
 **/obj/
 
+# OPUS native app build and Python bytecode
+/apps/opus/dist/
+/apps/opus/runtime/__pycache__/
+
 # Built SDK package output (publish-time artifact, never committed)
 packages/*/dist/
 
