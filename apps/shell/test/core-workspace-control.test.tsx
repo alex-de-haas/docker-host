@@ -30,7 +30,7 @@ const state: CoreDevelopment = {
 
 const other: ActivationWorkspace = { ...workspace, id: "app-only", name: "Media repository", worktrees: [{ ...workspace.worktrees[0], id: "media-tree", path: "/media" }] };
 type Selection = { coreSelected?: boolean; coreWorktreeId?: string; apps?: { appId: string; selected: boolean; worktreeId?: string; runtime?: string }[] };
-type Activation = { id: string; workspaceId?: string; coreWorktreeId?: string; activatedCore?: CoreLaunch; coreReturnTarget?: { launch: CoreLaunch }; phase: string; coreProject: string; coreReturned?: boolean; previousCore?: { mode: string; projectPath?: string }; returns?: { request: { requestId: string }; state: string }[] };
+type Activation = { id: string; workspaceId?: string; coreWorktreeId?: string; activatedCore?: CoreLaunch; coreReturnTarget?: { launch: CoreLaunch }; phase: string; coreProject: string; coreReturned?: boolean; previousCore?: { mode: string; projectPath?: string }; returns?: { request: { requestId: string; core?: boolean }; state: string }[] };
 let props: CoreWorkspaceControlProps, root: Root, container: HTMLDivElement;
 let records: Record<string, Activation[]>, current: Activation | null, statusError: boolean;
 let operationStatus: string, operationMissing: boolean;
@@ -585,4 +585,55 @@ it.each(["user", "origin"])("ignores a delayed dismissal catalog after the %s ch
   expect(localStorage.getItem(journalKey())).toBeNull();
   expect(document.body.textContent).not.toContain("removed from this browser");
   expect(mutations()).toHaveLength(0);
+});
+
+it("reconciles a completed Release Return after another workspace has already started Core", async () => {
+  const before: CoreLaunch = { ...state.launch, mode: "dev", projectPath: `/managed/tree-a/${project}`, generationPath: "/build/before", processId: 43 };
+  current = { ...active("returned-activation"), phase: "returned", coreReturned: true, previousCore: { mode: "release" }, activatedCore: before,
+    returns: [{ request: { requestId: "old-return", core: true }, state: "succeeded" }] };
+  localStorage.setItem(journalKey(), JSON.stringify({ workspaceId: workspace.id, activationId: current.id, target: { kind: "release" } }));
+  props.state = { ...state, instance: "44:newer", launch: { ...before, processId: 44, generationPath: "/build/newer", startedAt: "2026-10-22T13:00:00Z" } };
+  records[workspace.id] = [{ ...active("new-activation"), activatedCore: props.state.launch }];
+  await render();
+  expect(container.querySelector('[aria-label="Busy"]')?.textContent).toBe("false");
+  expect(localStorage.getItem(journalKey())).toBeNull();
+  await click("Check switch");
+  expect(document.body.textContent).toContain("The saved Return completed. Core has since been started from a workspace.");
+  expect(document.querySelector('[role="dialog"] .animate-spin')).toBeNull();
+  current = records[workspace.id][0];
+  await click("Close"); await choose("Release");
+  expect(button("Return Core")).toBeDefined();
+  expect(JSON.parse(localStorage.getItem(journalKey())!).activationId).toBe("new-activation");
+  expect(mutations()).toHaveLength(0); expect(fixture.release).not.toHaveBeenCalled();
+});
+
+it.each(["pending", "failed", "same-launch", "dev-baseline", "different-request", "wrong-activation", "wrong-workspace"])("retains Return recovery when completion evidence is %s", async evidence => {
+  const before: CoreLaunch = { ...state.launch, mode: "dev", projectPath: `/managed/tree-a/${project}`, generationPath: "/build/before", processId: 43 };
+  current = { ...active("returned-activation"), phase: "returned", coreReturned: true,
+    previousCore: { mode: evidence === "dev-baseline" ? "dev" : "release" }, activatedCore: before,
+    returns: [{ request: { requestId: "old-return", core: true }, state: ["pending", "failed"].includes(evidence) ? evidence : "succeeded" }] };
+  const pending = evidence === "different-request" ? { kind: "return", workspaceId: workspace.id, body: { return: { requestId: "unconfirmed-return" } } } : undefined;
+  const saved = { workspaceId: workspace.id, activationId: current.id, target: { kind: "release" }, pending };
+  localStorage.setItem(journalKey(), JSON.stringify(saved));
+  if (evidence === "wrong-activation") current.id = "unrelated-activation";
+  if (evidence === "wrong-workspace") current.workspaceId = "unrelated-workspace";
+  props.state = { ...state, launch: evidence === "same-launch" ? before : { ...before, processId: 44, generationPath: "/build/newer", startedAt: "2026-10-22T13:00:00Z" } };
+  await render();
+  expect(localStorage.getItem(journalKey())).not.toBeNull();
+  expect(mutations()).toHaveLength(0); expect(fixture.release).not.toHaveBeenCalled();
+});
+
+it("reconciles the completed Return when factual Core launch data arrives later", async () => {
+  const before: CoreLaunch = { ...state.launch, mode: "dev", projectPath: `/managed/tree-a/${project}`, processId: 43 };
+  current = { ...active("returned-activation"), phase: "returned", coreReturned: true, previousCore: { mode: "release" }, activatedCore: before,
+    returns: [{ request: { requestId: "old-return", core: true }, state: "succeeded" }] };
+  localStorage.setItem(journalKey(), JSON.stringify({ workspaceId: workspace.id, activationId: current.id, target: { kind: "release" } }));
+  props.state = null;
+  await render();
+  expect(localStorage.getItem(journalKey())).not.toBeNull();
+  props.state = { ...state, instance: "44:newer", launch: { ...before, processId: 44, startedAt: "2026-10-22T13:00:00Z" } };
+  await render();
+  expect(container.querySelector('[aria-label="Busy"]')?.textContent).toBe("false");
+  expect(localStorage.getItem(journalKey())).toBeNull();
+  expect(mutations()).toHaveLength(0); expect(fixture.release).not.toHaveBeenCalled();
 });

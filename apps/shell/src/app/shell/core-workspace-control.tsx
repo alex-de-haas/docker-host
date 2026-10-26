@@ -16,7 +16,7 @@ import { CheckboxRow, InlineError } from "./ui";
 type Selection = { coreSelected: boolean; coreWorktreeId?: string | null; apps: { appId: string; selected: boolean; worktreeId?: string | null; runtime?: string | null }[] };
 type Participant = { id: string; kind: string; selected: boolean; worktreeId?: string | null; worktreeOptions?: string[]; sourcePath?: string | null; branch?: string | null; commit?: string | null; changedFiles?: number | null; unavailable?: string | null; targetRuntime?: string | null };
 type Review = { plan: { coreInstance: string; coreSourceRevision?: string; participants: Participant[] }; planDigest: string; consequences: string[] };
-type Activation = { id: string; workspaceId?: string; coreWorktreeId?: string | null; replacesCoreActivationId?: string | null; activatedCore?: CoreLaunch | null; coreReturnTarget?: { launch: CoreLaunch } | null; phase: string; coreProject?: string | null; coreReturned?: boolean; previousCore?: { mode: string; projectPath?: string | null }; preparationReleased?: boolean; error?: string | null; returns?: { request: { requestId: string }; state: string }[] };
+type Activation = { id: string; workspaceId?: string; coreWorktreeId?: string | null; replacesCoreActivationId?: string | null; activatedCore?: CoreLaunch | null; coreReturnTarget?: { launch: CoreLaunch } | null; phase: string; coreProject?: string | null; coreReturned?: boolean; previousCore?: { mode: string; projectPath?: string | null }; preparationReleased?: boolean; error?: string | null; returns?: { request: { requestId: string; core?: boolean }; state: string }[] };
 type Retained = { workspaceId: string; activation: Activation };
 type Detail = { status: { activation: Activation; helper?: { state: string; error?: string | null; logPath?: string | null }; cancellationRequested?: boolean }; children?: { appId: string; phase: string; error?: string | null }[] };
 type Target = { kind: "release" } | { kind: "workspace"; workspaceId: string; worktreeId: string; label: string };
@@ -56,6 +56,16 @@ function matchesTarget(activation: Activation, entry: Recovery, state: CoreDevel
     activation.activatedCore?.mode === state.launch.mode && pathKey(activation.activatedCore.projectPath) === pathKey(state.launch.projectPath) &&
     pathKey(activation.activatedCore.generationPath) === pathKey(state.launch.generationPath) &&
     activation.activatedCore.processId === state.launch.processId && activation.activatedCore.startedAt === state.launch.startedAt;
+}
+function completedReturnWasFollowedByAnotherLaunch(activation: Activation, entry: Recovery, state: CoreDevelopment | null) {
+  const pendingReturn = entry.pending?.kind === "return" ? (entry.pending.body.return as { requestId?: string } | undefined)?.requestId : undefined;
+  return activation.id === entry.activationId && activation.workspaceId === entry.workspaceId &&
+    entry.target?.kind === "release" && (!entry.pending || entry.pending.kind === "return" && !!pendingReturn) &&
+    activation.coreReturned && (activation.coreReturnTarget?.launch ?? activation.previousCore)?.mode === "release" &&
+    activation.returns?.some(receipt => receipt.request.core && receipt.state === "succeeded" &&
+      (!pendingReturn || receipt.request.requestId === pendingReturn)) &&
+    state?.launch.mode === "dev" && !!activation.activatedCore &&
+    Date.parse(state.launch.startedAt) > Date.parse(activation.activatedCore.startedAt);
 }
 function readRecovery(key: string): Recovery | null {
   try {
@@ -181,6 +191,13 @@ export function useCoreWorkspaceControl({ coreOrigin, state, workspaces, workspa
       const others = previous.filter(row => row.activation.id !== activation.id && (activation.phase !== "active" || row.activation.id !== activation.replacesCoreActivationId));
       return ownsCore(activation) ? [...others, { workspaceId: entry.workspaceId, activation }] : others;
     });
+    // A completed Return is historical fact. A later workspace launch must not keep
+    // this browser waiting for its old Release target or replay that old lifecycle request.
+    if (completedReturnWasFollowedByAnotherLaunch(activation, entry, state)) {
+      remember(null); setDetail(null); setTarget(null); setReview(null); setAccept(false); setCompletion("");
+      setNotice("The saved Return completed. Core has since been started from a workspace.");
+      return value;
+    }
     if (entry.pending && (entry.pending.kind === "apply" && activation.id === entry.activationId ||
         entry.pending.kind === "return" && activation.returns?.some(receipt => receipt.request.requestId === (entry.pending!.body.return as { requestId?: string })?.requestId) ||
         entry.pending.kind === "resume" && value.status.helper && ["accepted", "running", "completed"].includes(value.status.helper.state) ||
@@ -188,7 +205,7 @@ export function useCoreWorkspaceControl({ coreOrigin, state, workspaces, workspa
       remember({ ...entry, pending: null });
     }
     return value;
-  }, [remember, request]);
+  }, [remember, request, state]);
   const observed = recovery && detail?.status.activation.id === recovery.activationId ? detail.status.activation : null;
   const helper = observed ? detail?.status.helper : null;
   const awaitingLaunch = !!recovery?.originalApply && observed?.phase === "active" && !observed.coreReturned && !matchesTarget(observed, recovery, state);
