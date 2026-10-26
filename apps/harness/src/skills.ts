@@ -57,7 +57,12 @@ export async function migrateSkillSelection(store: SettingsStore): Promise<void>
   if (previous.skillIds !== undefined || !hasSkillLibrary()) return;
   await store.transform(current => {
     if (current.skillIds !== undefined) return {};
-    const selectedApps = new Set([...Object.keys(current.mcpSkillApprovals ?? {}), ...Object.keys(current.mcpSkillDigests ?? {})]);
+    // After the earlier instruction migration, approvals are authoritative: removing one
+    // was an explicit opt-out even though its historical digest remained in settings.
+    const selectedApps = new Set([
+      ...Object.keys(current.mcpSkillApprovals ?? {}),
+      ...Object.keys(current.mcpSkillsMigrated ? {} : current.mcpSkillDigests ?? {}),
+    ]);
     // Stable app/key identity preserves choices even when an app upgrades after Harness.
     // Missing packages remain unavailable until installed; no old skill bytes are retained.
     return { skillIds: [...selectedApps].map(appId => createHash("sha256").update(["app", appId, "default"].join("\n")).digest("hex")) };

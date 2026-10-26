@@ -138,6 +138,23 @@ describe("native skills in a session", () => {
     expect((await settings.read()).skillIds).toEqual([migrated]);
   });
 
+  it.each([false, true])("preserves instruction opt-outs after legacy migration (another approval: %s)", async (anotherApproval) => {
+    const enabledApp = "org.example.enabled";
+    await settings.update({
+      mcpSkillsMigrated: true,
+      mcpSkillDigests: { [APP]: "historical-digest" },
+      mcpSkillApprovals: anotherApproval ? { [enabledApp]: { identity: "installed-app", digest: "accepted" } } : {},
+    });
+    await startSession();
+    const expected = anotherApproval
+      ? [createHash("sha256").update(["app", enabledApp, "default"].join("\n")).digest("hex")]
+      : [];
+    expect(exports[0]?.skillIds).toEqual(expected);
+    expect((await settings.read()).skillIds).toEqual(expected);
+    await startSession();
+    expect(exports[1]?.skillIds).toEqual(expected);
+  });
+
   it("rejects caller supplied paths as skill selections", async () => {
     await expect(manager.createSession({ createdBy: "user_admin", skillIds: ["../../private"] })).rejects.toThrow("stable skill IDs");
     expect(exports).toHaveLength(0);
