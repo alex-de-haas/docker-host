@@ -36,9 +36,9 @@ export async function translationOptions(request: Request) {
       if (result.problem) return result;
       try {
         const capabilities = await client.translationCapabilities(provider, request.signal);
-        result.problem = !capabilities.ready ? capabilities.reason ?? "Configure a translation connection in Harness."
+        result.problem = !capabilities.ready ? capabilities.reason ?? "The selected translator is not ready. Check its configuration and logs."
           : !capabilities.formats.includes("markdown") ? "This translator does not support Markdown." : null;
-      } catch { result.problem = "This translator is unavailable. Check its connection in Harness."; }
+      } catch { result.problem = "This translator is unavailable. Check its status and logs in Core."; }
       return result;
     }));
     return Response.json({ userId: actor.userId, providers: choices }, { headers });
