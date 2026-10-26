@@ -305,7 +305,7 @@ class ClaudeRun implements HarnessRun {
           // Host operator context: the harness reads the operator's own user+project settings
           // (CLAUDE.md, skills), exactly like an admin running Claude Code by hand.
           settingSources: ["user", "project"],
-          env: this.environment,
+          env: { ...this.environment, ...(this.options.nativeHome ? { HOME: this.options.nativeHome, CLAUDE_CONFIG_DIR: this.options.nativeHome } : {}) },
           ...(this.options.mcpServers ? { mcpServers: this.options.mcpServers } : {}),
           canUseTool: (toolName: string, input: Record<string, unknown>, context?: ApprovalContext) =>
             this.requestApproval(toolName, input, context),

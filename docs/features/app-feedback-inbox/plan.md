@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-26
-updated: 2026-10-13
+updated: 2026-10-26
 summary: Durable draft app observations, administrator triage and reviewed batch delivery with optional assistant grouping into development sessions.
 components: [apps/shell, apps/harness, packages/app-sdk]
 ---
@@ -115,7 +115,7 @@ rules. Completion or one merged PR does not resolve every item in the batch.
 
 D6 owns this optional feedback dispatch integration, including bounded fan-out, cancellation,
 retry/deduplication and traceability. General execution scheduling/delegation stays with
-[Bridge D11](../ai-agent-bridge/plan.md#step-11--durable-jobs-and-notifications) and shared session
+[Durable Agent Jobs](../durable-agent-jobs/plan.md) and shared session
 APIs; do not build an unrelated scheduler inside the inbox. The [local demo](../hosty-delivery-readiness/plan.md)
 uses one active agent and does not require this optional parallel mode.
 

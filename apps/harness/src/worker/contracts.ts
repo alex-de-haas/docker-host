@@ -10,6 +10,7 @@ export type ModelChoice = { id: string; label: string; efforts: Array<{ id: stri
 export type ModelCatalog = { revision: string; models: ModelChoice[]; defaultModel?: string; unavailableReason?: string };
 export type ResourceReference = { kind: "conversation"; id: string } | { kind: "worktree"; id: string; revision: string; path?: string };
 export type WorkerRunRequest = {
+  skillExportId?: string;
   operation?: "chat" | "translation";
   conversationId: string;
   binding: ConnectionBinding;
@@ -47,6 +48,8 @@ export function validateRun(value: unknown): asserts value is WorkerRunRequest {
     || !r.options || ![undefined, "normal", "autonomous"].includes(r.options.autonomy)
     || !Array.isArray(r.autoAllowedPrefixes) || r.autoAllowedPrefixes.some(p => typeof p !== "string" || !/^mcp__[A-Za-z0-9_-]+__$/.test(p)))
     throw new WorkerApiError(400, "invalid_run", "Invalid worker run request.");
+  if (r.skillExportId !== undefined && (typeof r.skillExportId !== "string" || !/^[a-f0-9]{64}$/.test(r.skillExportId)))
+    throw new WorkerApiError(400, "invalid_skills", "Invalid skill export reference.");
   if (Object.keys(r.options).some(key => !["autonomy", "systemPrompt", "resumeHarnessSessionId", "mcpServers"].includes(key))
     || r.options.systemPrompt !== undefined && typeof r.options.systemPrompt !== "string"
     || r.options.resumeHarnessSessionId !== undefined && !safeIdentity(r.options.resumeHarnessSessionId)

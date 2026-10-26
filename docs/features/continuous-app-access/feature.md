@@ -120,7 +120,7 @@ cannot undo completed work or stop an unrestricted OS process.
 
 Grant creation, credential issuance, dispatch and revocation are audited without secrets. Browser
 heartbeats are not audit events. Scheduling and job retry policy belong to
-[AI Agent Bridge](../ai-agent-bridge/plan.md); no scheduler or automatic updater is part of this feature.
+[Durable Agent Jobs](../durable-agent-jobs/plan.md); no scheduler or automatic updater is part of this feature.
 
 ### Control and SDK clients
 

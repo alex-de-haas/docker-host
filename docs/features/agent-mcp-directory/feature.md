@@ -1,7 +1,7 @@
 ---
 created: 2026-09-26
-updated: 2026-10-21
-summary: Core enforces installation-bound assistant MCP access and tool exclusions; Harness owns invocation preferences and app instruction acceptance.
+updated: 2026-10-26
+summary: Core enforces installation-bound assistant MCP access and tool exclusions; Harness owns invocation preferences and independent skill selections.
 components: [apps/core, apps/harness, apps/shell]
 ---
 
@@ -28,7 +28,7 @@ under the affected application locks before one atomic policy write. Other assis
 unchanged. Same-ID retries require identical inputs and recover the retained request.
 
 The former direct `PUT /api/core/agents/{targetId}` cannot bypass review. Trusted legacy Core
-`/install/agents` review remains for compatible consumers and global instruction acceptance.
+`/install/agents` review remains for compatible consumers of tool access.
 Legacy relationships without an explicit enabled value use their old Offered bound. New reviewed
 relationships use their own enabled value; the extra host-wide offer is not their gate. Batch changes
 preserve the global offer: without a stored policy, Core defaults to offered and other providers to
@@ -45,26 +45,19 @@ Harness stores provider Ask/Do not ask defaults and per-tool exceptions locally.
 never remove Core denials. New tools inherit the provider default. Existing read-only/default rules
 retain their compatibility behavior until the operator selects an explicit provider default.
 
-Application instruction acceptance is local to Harness, keyed by provider installation and reviewed
-digest. Core provides authorized text with the existing `apps.skills.read` permission; Harness does
-not require global Core instruction approval. Migration transfers only the matching previously
-approved content from an enabled relationship. Changed or unreadable content is withheld. Acceptance
-does not grant tools or approve text for another consumer. Fresh sessions receive accepted text;
-already delivered conversation history cannot be retracted.
-
-CLI/facade instruction delivery retains the global approved digest in `core/agent-policy.json`.
-The existing skill identity is the first 32 lowercase hex characters of SHA-256 over trimmed UTF-8
-text. Tools and instructions remain independent decisions. The shared skills library belongs to the
-[agent skills plan](../agent-skills/plan.md).
+Skill packages use the independent [shared library](../agent-skills/feature.md). Harness selects
+stable IDs; current complete files reach native agents without digest approval. Tool access is
+unaffected by package selection, changes or removal. Legacy policy fields are inert migration
+data, not an instruction-delivery gate. The CLI and facade do not inject skill text through MCP.
 
 ## Directory And Discovery
 
 `GET /api/internal/apps/{appId}/app-directory` authenticates the installed service identity and
 returns the app roster plus `agents: { revision, targets, settingsUrl }`. Targets include identity,
-MCP interfaces/readiness, installation and instruction digests. In this assistant-specific view,
+MCP interfaces/readiness, installation and tool policy. The legacy skills list is empty. In this assistant-specific view,
 `offered` projects that assistant's enabled relationship and `deniedTools` its exclusions. Other
 assistant IDs and credentials are omitted. `?revision=<current>` returns 304 for unchanged data.
-Policy, installation, fleet metadata, endpoints, readiness and skill changes invalidate the revision.
+Policy, installation, fleet metadata, endpoints, and readiness changes invalidate the revision.
 The trusted local control endpoint exposes a credential-free administrative directory.
 
 Settings catalog discovery needs a current administrator app activity and the narrow request
@@ -87,7 +80,7 @@ external credential online. Its per-user cache has a 30-second TTL under an unch
 cache retention during discovery failure grants no offline invocation authority. Direct OAuth
 credentials and assistant delegation retain distinct provenance and scopes.
 
-The local CLI retains its compatible offer/instruction path. Removing a user assignment, disabling
+The local CLI retains its compatible tool-offer path; skills use separate native exports. Removing a user assignment, disabling
 a user or revoking a grant still blocks subsequent calls. Already dispatched work is not rolled back.
 
 ## Testing Expectations
@@ -97,8 +90,8 @@ a user or revoking a grant still blocks subsequent calls. Already dispatched wor
 - Check installation replacement, parent logout, per-tool denial on direct calls/introspection and
   rejection of discovery credentials for calls or chat authority.
 - Cover future tools, absent-tool exclusions, default inheritance, local-only saves, bulk controls,
-  stale refresh, partial-save recovery and exact-content instruction migration.
+  stale refresh, partial-save recovery and legacy skill-selection migration.
 - Verify external OAuth user/scope bounds and facade read-only filtering without Offered gating;
-  global instruction approval must not be implicitly broadened.
+  skill selection must not broaden tool permissions.
 - Run Core/CLI and Harness tests and production builds; verify normal authenticated Shell embedding
   and standalone settings. Repeat the native protocol probe when pinned agent SDK behavior changes.

@@ -1,6 +1,6 @@
 ---
 created: 2026-08-19
-updated: 2026-10-25
+updated: 2026-10-26
 ---
 
 # Hosty Platform Vision
@@ -48,6 +48,13 @@ The owner clarified this broader direction on 2026-10-23. Decision 52 and the
 [exploration below](#personal-and-shared-environments-owner-exploration-2026-10-23) retain the
 direction without selecting a new architecture, creating plans or changing existing implementation
 status. Forms that are still raw live in [ideas](ideas.md).
+
+On 2026-10-25 the owner selected a bounded next step: map the universal capabilities needed for
+composable human and agent work and investigate their gaps. Decision 54 and the
+[composable-work Draft](features/composable-agent-systems/plan.md) record this planning scope;
+the broader exploration retains its separate open choices. Decision 55 records the 2026-10-26
+clarification of shared tasks, agent participants, decisions and basic artifact handoffs, with
+explicit workspace alternatives and learned memory deferred.
 
 ## App Creation And Development (owner direction, 2026-09-16)
 
@@ -415,7 +422,7 @@ Decisions 1–5: 2026-08-19.
     Retire Bridge D12 as a separate workstream. Session workspaces and PR lifecycle own source and
     publication; their pending authorization/lifecycle work stays with the respective plans.
     Sandbox owns isolated runtime/data/browser verification, and development sessions own the
-    integrated journey. General scheduled/non-interactive agent execution remains Bridge D11.
+    integrated journey. General scheduled/non-interactive agent execution was retained as Bridge D11; its scope now lives in [Durable Agent Jobs](features/durable-agent-jobs/plan.md) after the 2026-10-26 transfer.
     This transfers ownership without claiming Sandbox or automatic source jobs already work.
 
 31. **Retire the Core Extension Model umbrella (2026-10-10).** The owner agreed that its shipped
@@ -471,7 +478,7 @@ Decisions 1–5: 2026-08-19.
     App trust does not imply all user permissions, and browser activity is not background consent.
     [Continuous app access](features/continuous-app-access/feature.md) implements the session policy,
     SDK maintenance and durable Core grants after the owner's subsequent implementation approval
-    on 2026-10-11. Cross-App Auth D8 is retired by transfer; Bridge D11 retains its runner and consumes
+    on 2026-10-11. Cross-App Auth D8 is retired by transfer; the runner formerly tracked as Bridge D11 now belongs to [Durable Agent Jobs](features/durable-agent-jobs/plan.md) and consumes
     those grants. Container-based isolation and honest disclosure of unrestricted local commands
     remain separate from authentication UX. SDK UI composition remains deferred. Verification uses
     an isolated instance; this direction does not authorize changes to the operator's live grants.
@@ -528,7 +535,7 @@ Decisions 1–5: 2026-08-19.
     repositories can proceed in parallel; independent changes to one repository may use separate
     worktrees/PRs with overlap/merge-order handling. Every item keeps provenance and partial outcomes.
     [Feedback Inbox](features/app-feedback-inbox/plan.md) owns intake/grouping/dispatch integration;
-    [Bridge D11](features/ai-agent-bridge/plan.md#step-11--durable-jobs-and-notifications) retains general
+    [Durable Agent Jobs](features/durable-agent-jobs/plan.md) retains general
     execution/delegation. Feedback remains optional for the local demonstration, and neither
     reporting nor approval alone launches an agent or grants source access.
 
@@ -823,6 +830,189 @@ Decisions 1–5: 2026-08-19.
     [Core Extension Model](features/core-extension-model/feature.md) records the current boundary;
     its retired umbrella implementation plan stays retired.
 
+54. **Build reusable capabilities for composable human and agent work (2026-10-25).**
+    The owner wants a construction kit for autonomous systems of varying complexity, useful to
+    one person and to teams with different responsibilities. People and configured agents can
+    perform, delegate, review and accept work. An analyst, designer, developer or QA role is an
+    application-level responsibility, separate from Core permissions and from a model connection.
+    Humans may configure specialized agents and accept their results at any chosen stage.
+
+    Prioritize investigating a shared skill pool and delivery, with reusable packages from
+    standard sources, standing role instructions and optional skills selected for a project or
+    application. Core's delivery capability and an app's agent/profile configuration are distinct
+    building blocks. Reconcile role/project selection with the existing Shared Skills decisions;
+    selecting instructions does not grant tool access or establish enforcement.
+
+    Identify reusable contracts for authority, capability discovery and invocation, durable work,
+    events, versioned inputs/results, human decisions and resource lifetimes. Core supplies the
+    application-neutral mechanisms within its ownership; providers and ordinary apps own agent
+    execution, roles, task meaning and orchestration. Explicit calls, events, hooks/webhooks and
+    schedules remain options for initiating the same authorized work. No transport, workflow
+    language, universal task store, organization chart or packaging into Harness versus a separate
+    application is selected.
+
+    Idea-to-plan-and-mockup review, implementation, functional/visual QA, sandbox acceptance and
+    authorized PR/review/merge form one example composition. Iterations can reuse their test
+    environment and data, and acceptance refers to the reviewed versions. Non-development work
+    and simple direct use remain equally valid. Existing repository, resource, privacy and
+    publication boundaries apply; merge is distinct from production deployment.
+
+    The [Composable Human And Agent Work Draft](features/composable-agent-systems/plan.md) owns the
+    initial capability/gap map, missing ownership decisions and proposed investigation order.
+    This advances only that foundational investigation beyond decision 52's vision-only capture.
+    Existing feature plans keep their deliverables and statuses, including ordinary-user access
+    prerequisites. The owner authorizes documentation and Draft planning only, with no implementation
+    or operational changes; the retired Core Extension Model implementation umbrella stays retired.
+
+55. **Shared work records, deliberate workspace choices and explicit handoffs (2026-10-26).**
+    The owner prefers investigating a small shared task model in Core, with replaceable executors
+    and app-owned orchestration. Other apps can create tasks, observe states and participants, and
+    inspect child tasks and resource/result links through a common contract. A task-provider model
+    remains an alternative to compare. Standardization and storage are separate choices; extra
+    executor state need not become Core fields. No wire schema or implementation is approved.
+
+    Persistent agent participants are distinct from profiles, model connections, sessions and runs.
+    They can have stable system identities, explicit access and a responsible human. Agent hierarchies
+    remain app-owned relationships between participants; task parentage is independent. A direct
+    agent invocation need not create a participant account. Existing user/session restrictions remain.
+
+    Shared task and decision state should be observable through authorized events. A decision can
+    be addressed to the responsible human or a role/project-specific reviewer, presented in a common
+    inbox and answered outside the original chat. Quick answers may resume a live run; longer waits
+    retain the question and recoverable state while releasing stopped execution resources. A saved
+    response can trigger durable continuation. Silence, decision expiry and process-wait time are
+    different outcomes; permission decisions retain their own enforcement and revalidation.
+
+    Reuse an existing workspace for related delegated work and prevent accidental duplicate allocation,
+    while allowing explicit independent workspaces. The owner does not select one workspace per whole
+    task tree: an unrelated bug discovered during feature work can have its own workspace and PR, with
+    a decision about urgency or hotfix targeting if needed. Exact binding/inheritance rules remain open.
+    Workspace sharing does not imply shared private conversations or safe unrestricted concurrent writes.
+
+    Basic artifacts are needed for work handoff and reuse: descriptions, versions, provenance and
+    access-controlled content/references for reports, scripts and prepared materials. A child can return
+    a summary plus artifact references for another agent to consume. Session context, explicitly shared
+    context, artifacts and skills remain distinct; no elaborate artifact tiers or automatic promotion
+    are selected. Source identity/version survives a change of location into a workspace.
+
+    Learned long-term memory stays outside this investigation. Keep recurring preferences and decisions
+    as a later [idea](ideas.md#i1-memory-as-a-replaceable-provider), with no implementation or automatic
+    policy learning. The [composable-work Draft](features/composable-agent-systems/plan.md) owns the
+    integration questions, including minimal artifacts; existing feature owners keep their scope and
+    status. These clarifications update the investigation under decision 54, not implementation approval.
+
+56. **Separate capability Drafts and a first composition inside Harness (2026-10-26).**
+    The owner requests independently refinable plans for the missing reusable blocks. Existing
+    Shared Skills, Agent Providers and Notifications D6 retain their scope; new Drafts own
+    [agent participants](features/agent-participants/plan.md),
+    [shared tasks](features/shared-tasks/plan.md),
+    [artifacts](features/shared-artifacts/plan.md) and
+    [decisions](features/shared-decisions/plan.md). The
+    [composable-work umbrella](features/composable-agent-systems/plan.md) retains priorities and
+    integration boundaries rather than duplicating those deliverables.
+
+    The initial organizational experience is proposed within
+    [Harness](features/harness-work-orchestration/plan.md): app-owned profiles, optional agent
+    hierarchy, task coordination and a coherent Tasks/Decisions/Artifacts UI. A separate app and
+    its name remain open; cross-app widgets or a new UI composition framework are not prerequisites.
+    Shared contracts remain independent of Harness routes, app identity and private storage.
+    First prove one Documents task, one agent, an artifact, a human decision and continuation before
+    expanding hierarchy. Core stays usable without this application and learned memory stays deferred.
+
+    The owner also requests closing Bridge D11. Its entire unbuilt runner, scheduling/retry budget,
+    notification and background-grant consumption scope transfers to
+    [Durable Agent Jobs](features/durable-agent-jobs/plan.md), Draft. D11 is retired, not declared
+    implemented. The Bridge rollout plan closes with no remaining owned deliverables; its dated
+    validation and ownership transfers remain in the feature document. No implementation, Ready
+    status or runtime/publication action is authorized by this documentation split.
+
+57. **One skill pool, profile selections and full app packages (2026-10-26).**
+    Decision 59 supersedes revision pinning/retention; decision 60 removes manual uploads.
+    The owner selects one administrator-managed library per Hosty instance. Core stores package
+    bytes, provenance and immutable revisions and provides APIs/prepared exports. Harness owns
+    profiles, standing instructions and skill references, with its first management UI over Core.
+    Resolve a conversation's effective set from its profile or assistant default and retain those
+    revisions on resume, independently of model/provider credentials. This supersedes the earlier
+    installation-wide selection assumption. No personal pools or per-package user owners are added.
+
+    Git is the primary import/update source, with prepared uploads and app-supplied packages in the
+    same catalog. Reuse Core's Git-check mechanisms to show package updates; administrators apply
+    Git updates explicitly. App packages advance with their app version. Expose source kind and
+    revision, preserve standard package contents, and resolve native-name collisions explicitly.
+    Hosty package editing/forking is excluded; customization remains in instructions and profiles.
+
+    Replace agent.skillFile through a coordinated producer/reader migration. Each app can supply
+    several complete directories with SKILL.md, references, examples and supporting files; no
+    permanent single-file compatibility mode is selected. Decision 58 selects the manifest and
+    catalog shape; API and rollout details remain in the [Shared Skills](features/agent-skills/feature.md). Test both Harness native
+    runtimes, different profile selections and one explicitly provisioned external local client.
+    Supporting files must survive for pinned conversations under an explicit retention contract.
+    Existing tool/app authority remains separate from package selection. Automatic Git updates,
+    personal libraries and remote MCP Skills delivery remain later ideas; these answers settle
+    scope but do not approve implementation or change the Draft status.
+
+58. **Skill declarations and catalog identities (2026-10-26).**
+    Decision 59 supersedes immutable Revision records/session bindings; decision 60 removes uploads.
+    The owner accepts agent.skills as an array of stable app-local key and manifest-relative
+    directory path entries. One package contains one root SKILL.md and supporting files; name and
+    description come from the portable file rather than duplicate manifest fields. The declaration
+    describes installed resources, not a running-app endpoint.
+
+    Core keeps Source, Skill and immutable Revision records. Source kinds are git, app and upload;
+    a stable skill ID is distinct from its native name, source revision and complete-package content
+    hash. Profiles select skill IDs; new sessions resolve and retain skillId/revision pairs.
+    Existing sessions keep those revisions. New app skills enter the catalog without automatic
+    profile enrollment; conflicting native names in one selected set require an explicit choice.
+
+    The shared API covers catalog lookup, package reads, import, update checks/apply and prepared
+    execution sets. Harness keeps profiles/instructions. The
+    [Shared Skills](features/agent-skills/feature.md#api-and-delivery)
+    owns exact examples and remaining validation, API, storage/export and migration questions.
+    This records accepted design only; status remains Draft and implementation is not authorized.
+
+59. **Current skill contents, simple removal and native Core implementation (2026-10-26).**
+    The owner removes the requirement to pin skills to conversations or retain old package copies.
+    Core supplies current installed content. Native clients may discover updates during execution
+    when they support it; otherwise they use their normal loading behavior. Hosty does not add a
+    universal hot-reload or context-revocation mechanism. Source commit/app version may describe
+    current installed content without a historical Revision store or a session lifetime policy.
+
+    Removing a skill, including through removal of its supplying app, removes its availability
+    and supplied files everywhere. Missing references are omitted, without blocking a new/resumed
+    session or retaining deleted content. Only technical name collisions require validation;
+    contradictory guidance in different skills is an operator configuration concern, not something
+    Core detects or resolves. The source/skill identities and app directory declaration remain.
+
+    In a subsequent confirmation on the same date, the owner selects discovery of repository skills,
+    installation of chosen packages only, and manual per-skill updates plus Update all. Reuse one
+    source checkout/download across selected packages in an operation; keep only each skill's current
+    installed contents and source commit, with no archive for sessions. Download transport does not
+    dictate update granularity. Update all does not install unselected skills. The
+    [Shared Skills](features/agent-skills/feature.md) owns remaining integration details. Git checks
+    do not apply updates automatically. App packages continue to follow their supplying app.
+
+    The owner rejects adding a Node.js dependency for skills management. Implement the mechanism
+    natively in Core/.NET with suitable existing Git infrastructure; the skills CLI is an external
+    design reference only. This simplifies the Draft without authorizing product implementation.
+
+60. **Skill acceptance, private Git and initial source scope (2026-10-26).**
+    The owner accepts replacing repeated content-digest confirmation: administrator install/update
+    supplies current content to selected consumers, and app skills advance with their app without
+    another acceptance in each profile. Migrate both Harness and CLI/facade content gates while
+    preserving explicit selections and independent repository/tool permissions.
+
+    Private Git reuses explicitly selected existing administrator Source connections within
+    supported providers/transports. No separate skill credential store is added. Upstream deletion
+    is shown by a check and removes the skill only when the administrator applies that update;
+    unavailable sources and failed downloads preserve installed content.
+
+    Manual package upload is removed from the initial slice. Its only sources are Git and installed
+    apps; no archive-upload UI/API or upload replacement flow is required. Earlier upload references
+    in decisions 57-58 are superseded. The [Shared Skills](features/agent-skills/feature.md) now
+    tracks implementation/acceptance under D1-D6. Runtime verification belongs to delivery rather
+    than requiring finished code before Ready. This records scope, not implementation start or
+    promotion from Draft.
+
 ## Personal And Shared Environments (owner exploration, 2026-10-23)
 
 ### Composition And Extension Boundaries
@@ -883,6 +1073,9 @@ pitfalls:
   [I2](ideas.md#i2-search-across-knowledge-providers).
 - Retention, transcription and summaries: [I13](ideas.md#i13-retention-transcription-and-summaries).
 - Collaboration and QA as optional compositions: [I14](ideas.md#i14-collaboration-and-qa-as-optional-compositions).
+  Decision 54 selects the underlying capability/gap investigation in the
+  [composable-work Draft](features/composable-agent-systems/plan.md); specific application forms
+  remain exploratory.
 - Bringing existing applications into Hosty: [I15](ideas.md#i15-bringing-existing-applications-into-hosty).
 - A portable environment and a dedicated Hosty OS: [I16](ideas.md#i16-a-portable-environment-and-a-dedicated-hosty-os).
 
@@ -966,6 +1159,13 @@ the manifest contract. Two standing consequences:
 
 ## Spanned Features
 
+[composable-agent-systems](features/composable-agent-systems/plan.md) ·
+[agent-participants](features/agent-participants/plan.md) ·
+[shared-tasks](features/shared-tasks/plan.md) ·
+[shared-artifacts](features/shared-artifacts/plan.md) ·
+[shared-decisions](features/shared-decisions/plan.md) ·
+[durable-agent-jobs](features/durable-agent-jobs/plan.md) ·
+[harness-work-orchestration](features/harness-work-orchestration/plan.md) ·
 [harness-development-ui](features/harness-development-ui/feature.md) ·
 [harness-session-retention](features/harness-session-retention/feature.md) ·
 [workspaces-app](features/workspaces-app/feature.md) ·
@@ -981,7 +1181,7 @@ the manifest contract. Two standing consequences:
 [core-extension-model](features/core-extension-model/feature.md) ·
 [assistant-provider-permissions](features/assistant-provider-permissions/feature.md) ·
 [agent-mcp-directory](features/agent-mcp-directory/feature.md) ·
-[ai-agent-bridge](features/ai-agent-bridge/plan.md) ·
+[ai-agent-bridge](features/ai-agent-bridge/feature.md) ·
 [user-agent-sessions](features/user-agent-sessions/plan.md) ·
 [agent-provider-interface](features/agent-provider-interface/plan.md) ·
 [app-ui-surfaces](features/app-ui-surfaces/feature.md) ·

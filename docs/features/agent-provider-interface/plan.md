@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-10
-updated: 2026-10-21
+updated: 2026-10-26
 summary: Explore a shared app-facing interface for independently provided agents and models, including multi-model providers and structured results.
 components: [apps/core, apps/harness, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -78,7 +78,7 @@ current ownership of conversations and confirmations or explicitly specify its r
   decide when an acting user's current authority is required and how each delegated tool call is
   narrowed. A provider's own installation permissions cannot elevate the requesting app or user.
 - Decide whether calls are stateless, resumable or asynchronous, how results/artifacts are retrieved,
-  and how retries avoid duplicate side effects. General scheduled work remains Bridge D11's scope.
+  and how retries avoid duplicate side effects. General scheduled work belongs to [Durable Agent Jobs](../durable-agent-jobs/plan.md).
 - Bound input/output, time, tool iterations and cost; make retention, external data transfer and
   structured-result validation explicit. Provider credentials remain outside app/model-visible data.
 - Determine extraction/migration boundaries for existing Harness connections and sessions. AHP's
@@ -94,6 +94,20 @@ current ownership of conversations and confirmations or explicitly specify its r
 - [ ] D5. Integrate one real app's prompt-to-result feature and prove the same consumer contract against a second provider implementation or conformance fixture; exercise permissions, failures and structured results.
 - [ ] D6. Record verified behavior and compatibility limits in feature.md, reconcile Harness/provider docs, delete this plan and regenerate the index.
 
+## Composable Work Coordination (2026-10-26)
+
+This plan remains the sole owner of the public invocation contract. A persistent
+[participant](../agent-participants/plan.md), an app-owned profile, a provider connection and a run
+are distinct. D2-D3 must define bounded context/skill references, task/resource correlation and
+declared resume/reconstruction capabilities without assuming shared host paths or private Harness
+storage. [Artifacts](../shared-artifacts/plan.md) owns retained result references and
+[Decisions](../shared-decisions/plan.md) owns addressed questions; neither reference grants access.
+
+[Durable Agent Jobs](../durable-agent-jobs/plan.md) consumes invocation/results and owns repeated
+execution and parked continuation. [Harness Work Orchestration](../harness-work-orchestration/plan.md)
+owns the first joined task journey. Its business acceptance does not duplicate D5's provider
+compatibility/independence acceptance. Existing D1-D6 remain unchecked and Draft.
+
 ## Dependencies And Boundaries
 
 - [Core extension boundaries](../core-extension-model/feature.md) describe the existing role and grant
@@ -104,7 +118,7 @@ current ownership of conversations and confirmations or explicitly specify its r
 - Agent execution with tools consumes [session containment](../assistant-runtime-containment/plan.md)
   and the applicable [approval policy](../assistant-approval-rules/plan.md). No administrator credential
   or native-tool fallback can stand in for a missing user-safe execution mode.
-- [Durable jobs](../ai-agent-bridge/plan.md#step-11--durable-jobs-and-notifications) own scheduled runs;
+- [Durable jobs](../durable-agent-jobs/plan.md) own scheduled runs;
   this interface defines the invocation they consume, not another scheduler.
 
 ## Verification

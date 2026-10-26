@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-26
-updated: 2026-10-25
+updated: 2026-10-26
 summary: Durable session events and cross-provider context so one conversation can switch between Claude and Codex.
 components: [apps/harness]
 ---
@@ -82,6 +82,19 @@ clients. Define durable operation identity and reconciliation for uncertain send
 multi-client races. Store domain events and revisions independently of wire sequence numbers or
 SDK DTOs. Replacing or disabling a protocol adapter must not erase history or interrupt normal web
 session use. Preserving the current implementation does not freeze limitations such as provider locking.
+
+## Durable Work Coordination (2026-10-26)
+
+[Durable Agent Jobs](../durable-agent-jobs/plan.md) owns execution scheduling and live/parked waits;
+[Shared Decisions](../shared-decisions/plan.md) owns persistent questions and answers. D1-D4 here
+retain session events, invocation correlation, native cursors and recoverable context. Define their
+checkpoint/reference seam so a pending decision survives ordinary idle retention and a runner can
+resume or reconstruct without replaying earlier tool effects. No portable hidden model state is
+promised, and a missing native resume capability must be explicit.
+
+[Shared Artifacts](../shared-artifacts/plan.md) owns cross-session result handoffs and useful outputs;
+it does not replace this journal or implicitly share private conversations. Learned memory remains
+outside the composable-work scope. This coordination adds no separate transcript or scheduler.
 
 ## Session Visibility
 

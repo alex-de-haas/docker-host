@@ -15,7 +15,7 @@ import { ApiError, call, loadSettings, type Settings, type SettingsResponse, typ
 type Mode = "ask" | "run";
 type Access = { enabled: boolean; denied: string[] };
 type Draft = { access: Record<string, Access>; defaults: NonNullable<Settings["mcpDefaults"]>; rules: Record<string, ToolRule>;
-  skills: NonNullable<Settings["mcpSkillApprovals"]>; resetProviders: string[] };
+  resetProviders: string[] };
 type Review = { id: string; status: string; approvalUrl: string; error?: string };
 const keyOf = (provider: string, tool: string) => JSON.stringify([provider, tool]);
 const equal = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
@@ -28,7 +28,7 @@ function initial(data: SettingsResponse): Draft {
     if (access[provider!] && !access[provider!]!.denied.includes(tool!)) access[provider!]!.denied.push(tool!);
   }
   return { access, defaults: { ...data.settings.mcpDefaults }, rules: { ...data.settings.mcpToolRules },
-    skills: { ...data.settings.mcpSkillApprovals }, resetProviders: [] };
+    resetProviders: [] };
 }
 // Refresh adopts concurrent changes only for fields the operator has not edited.
 function rebaseDraft(previous: Draft, draft: Draft, next: Draft): Draft {
@@ -41,7 +41,7 @@ function rebaseDraft(previous: Draft, draft: Draft, next: Draft): Draft {
     return result;
   }
   return { access: merge(previous.access, draft.access, next.access), defaults: merge(previous.defaults, draft.defaults, next.defaults),
-    rules: merge(previous.rules, draft.rules, next.rules), skills: merge(previous.skills, draft.skills, next.skills), resetProviders: draft.resetProviders };
+    rules: merge(previous.rules, draft.rules, next.rules), resetProviders: draft.resetProviders };
 }
 // Never attach a fresh concurrency token to an edit of the same field in another client.
 function hasDraftConflict(previous: Draft, draft: Draft, next: Draft): boolean {
@@ -50,7 +50,7 @@ function hasDraftConflict(previous: Draft, draft: Draft, next: Draft): boolean {
       !equal(before[key], edited[key]) && !equal(before[key], fresh[key]));
   }
   if (overlap(previous.access, draft.access, next.access) || overlap(previous.defaults, draft.defaults, next.defaults) ||
-    overlap(previous.rules, draft.rules, next.rules) || overlap(previous.skills, draft.skills, next.skills)) return true;
+    overlap(previous.rules, draft.rules, next.rules)) return true;
   // A bulk preference change also removes tool exceptions that were added concurrently.
   return draft.resetProviders.some(provider => !equal(previous.defaults[provider], next.defaults[provider]) ||
     [...new Set([...Object.keys(previous.rules), ...Object.keys(next.rules)])].some(key =>
@@ -163,7 +163,7 @@ export function McpAccess({ data, onRefresh }: { data: SettingsResponse; busy: b
       const rules = Object.fromEntries(Object.entries(draft.rules).filter(([key, value]) => (value.mode !== "disabled" || JSON.parse(key)[0] === "hosty:development") &&
         (!equal(value, base.settings.mcpToolRules?.[key]) || draft.resetProviders.includes(JSON.parse(key)[0]))));
       await call("/settings/mcp/preferences", { method: "PUT", body: JSON.stringify({ revision: base.mcpRevision, defaults, rules,
-        resetProviders: draft.resetProviders, removeRules: Object.keys(base.settings.mcpToolRules ?? {}).filter(key => !Object.hasOwn(draft.rules, key) && (base.settings.mcpToolRules?.[key]?.mode !== "disabled" || JSON.parse(key)[0] === "hosty:development")), skills: draft.skills }) });
+        resetProviders: draft.resetProviders, removeRules: Object.keys(base.settings.mcpToolRules ?? {}).filter(key => !Object.hasOwn(draft.rules, key) && (base.settings.mcpToolRules?.[key]?.mode !== "disabled" || JSON.parse(key)[0] === "hosty:development")) }) });
       const loaded = await loadSettings(); setLatest(loaded); setBase(loaded); setDraft(initial(loaded)); setDirty(false); setReview(null);
       setStatus("Saved. Changes apply to subsequent tool calls."); await onRefresh();
     } catch (cause) {
@@ -193,7 +193,7 @@ export function McpAccess({ data, onRefresh }: { data: SettingsResponse; busy: b
       const id = provider.appId, access = draft.access[id] ?? { enabled: true, denied: [] }, catalog = catalogs.find(c => c.provider === id);
       const tools = catalog?.tools ?? [], permitted = tools.filter(t => access.enabled && !access.denied.includes(t.name) && (!catalog || !locallyDisabled(catalog, t.name)));
       const modes = catalog ? permitted.map(t => mode(catalog, t.name)) : [];
-      const instruction = base.instructions?.find(i => i.appId === id), accepted = draft.skills[id];
+
       return <Collapsible key={id} className="p-4"><div className="flex flex-wrap items-center gap-3">
         {id !== "hosty:development" && <Checkbox aria-label={`Allow ${provider.displayName}`} disabled={busy || loading} checked={access.enabled && access.denied.length ? "indeterminate" : access.enabled}
           onCheckedChange={checked => change({ ...draft, access: { ...draft.access, [id]: { enabled: checked === true,
@@ -214,10 +214,7 @@ export function McpAccess({ data, onRefresh }: { data: SettingsResponse; busy: b
             }} />
           <div className="min-w-0"><FieldLabel htmlFor={`tool-${id}-${tool.name}`}>{tool.name}</FieldLabel><p className="text-sm text-muted-foreground">{tool.description}</p></div></div>
           <ModeSelect label={`Approval for ${tool.name}`} disabled={!access.enabled || access.denied.includes(tool.name) || locallyDisabled(catalog, tool.name)} value={mode(catalog, tool.name)} change={value => { const rules = { ...draft.rules }; const key = keyOf(id, tool.name); if (value === (draft.defaults[id]?.mode ?? "ask")) delete rules[key]; else rules[key] = { identity: catalog.identity, mode: value }; change({ ...draft, rules }); }} /></Field>)}
-        {instruction?.markdown && <Field><FieldLabel>Application instructions</FieldLabel><pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md border p-3 text-sm">{instruction.markdown}</pre>
-          <Field orientation="horizontal"><Checkbox id={`instructions-${id}`} checked={accepted?.identity === instruction.identity && accepted.digest === instruction.digest}
-            onCheckedChange={checked => { const skills = { ...draft.skills }; if (checked === true && instruction.digest) skills[id] = { identity: instruction.identity, digest: instruction.digest }; else delete skills[id]; change({ ...draft, skills }); }} />
-            <FieldLabel htmlFor={`instructions-${id}`}>Use these instructions</FieldLabel></Field></Field>}
+
       </FieldGroup></FieldSet></CollapsibleContent></Collapsible>;
     })}</div>
     <div className="flex flex-wrap items-center justify-end gap-3"><p role="status" className="mr-auto text-sm text-muted-foreground">{status || (dirty ? "Unsaved changes" : "")}</p>

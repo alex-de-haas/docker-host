@@ -64,7 +64,7 @@ public sealed partial class CoreLifecycleServiceTests
         };
         var html = InstallationApprovalEndpoints.Render(entry, "nonce");
         Assert.Contains("Provide an assistant", html);
-        Assert.Contains("Read agent skills", html);
+        Assert.Contains("Read shared agent skills and prepare native skill exports", html);
         Assert.Equal(1, html.Split("(new)").Length - 1);
         Assert.Contains("(new declaration)", html);
         Assert.Contains("currently not granted", html);

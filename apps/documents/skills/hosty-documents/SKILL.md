@@ -1,3 +1,8 @@
+---
+name: hosty-documents
+description: Create, review and implement plans and documents in Hosty Documents.
+---
+
 # Hosty Documents
 
 Documents reads current repository documentation and progress from Core's tracked target branches

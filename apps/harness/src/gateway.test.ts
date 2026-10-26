@@ -1078,7 +1078,7 @@ describe("gateway", () => {
     const core = createServer((request, response) => {
       seen.push(request.url!);
       response.setHeader("content-type", "application/json");
-      response.end(JSON.stringify({ active: true, userId: "user_admin", hostRole: "host.admin" }));
+      response.end(JSON.stringify(request.url?.endsWith("/skills/exports") ? { id: "e".repeat(64), path: "/core/export", skills: [] } : { active: true, userId: "user_admin", hostRole: "host.admin" }));
     });
     await new Promise<void>(resolve => core.listen(0, resolve));
     process.env.HOSTY_CORE_ORIGIN = `http://127.0.0.1:${(core.address() as AddressInfo).port}`;
@@ -1088,7 +1088,7 @@ describe("gateway", () => {
       const response = await fetch(`${origin}/api/sessions/${session.id}/messages`, { method: "POST",
         headers: { authorization: "Bearer hostyg_browser", origin, "content-type": "application/json" }, body: JSON.stringify({ text: "hello" }) });
       expect(response.status).toBe(202);
-      expect(seen).toEqual(["/api/auth/apps/revalidate"]);
+      expect(seen).toEqual(["/api/auth/apps/revalidate", "/api/internal/apps/hosty.harness/skills/exports"]);
       expect(await manager.mintAppToken(session.id, "another.app")).toBeNull();
       const messages = await store.readEvents(session.id, 0);
       expect(JSON.stringify(messages)).not.toContain("mcp_authorization_required");
@@ -1127,7 +1127,7 @@ describe("gateway", () => {
   it("waits for the selected conversation credential update but not other conversations", async () => {
     const core = createServer((request, response) => {
       request.resume(); response.setHeader("content-type", "application/json");
-      response.end(JSON.stringify({ active: true, userId: "user_admin", hostRole: "host.admin" }));
+      response.end(JSON.stringify(request.url?.endsWith("/skills/exports") ? { id: "e".repeat(64), path: "/core/export", skills: [] } : { active: true, userId: "user_admin", hostRole: "host.admin" }));
     });
     await new Promise<void>(resolve => core.listen(0, resolve));
     process.env.HOSTY_CORE_ORIGIN = `http://127.0.0.1:${(core.address() as AddressInfo).port}`;
@@ -1162,7 +1162,7 @@ describe("gateway", () => {
     const core = createServer((request, response) => {
       request.resume();
       response.setHeader("content-type", "application/json");
-      response.end(JSON.stringify({ active: true, userId: "user_admin", hostRole: "host.admin" }));
+      response.end(JSON.stringify(request.url?.endsWith("/skills/exports") ? { id: "e".repeat(64), path: "/core/export", skills: [] } : { active: true, userId: "user_admin", hostRole: "host.admin" }));
     });
     await new Promise<void>(resolve => core.listen(0, resolve));
     process.env.HOSTY_CORE_ORIGIN = `http://127.0.0.1:${(core.address() as AddressInfo).port}`;
@@ -1194,7 +1194,7 @@ describe("gateway", () => {
       for await (const chunk of request) chunks.push(chunk as Buffer);
       response.setHeader("content-type", "application/json");
       if (request.url === "/api/auth/apps/revalidate") {
-        response.end(JSON.stringify({ active: true, userId: "user_admin", hostRole: "host.admin" })); return;
+        response.end(JSON.stringify(request.url?.endsWith("/skills/exports") ? { id: "e".repeat(64), path: "/core/export", skills: [] } : { active: true, userId: "user_admin", hostRole: "host.admin" })); return;
       }
       forwarded.push({ path: request.url!, headers: request.headers, body: JSON.parse(Buffer.concat(chunks).toString() || "null") });
       response.statusCode = 403; response.end(JSON.stringify({ code: "app_permission_required" }));

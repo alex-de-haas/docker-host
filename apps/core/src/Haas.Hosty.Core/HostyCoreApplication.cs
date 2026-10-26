@@ -112,6 +112,10 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<CoreEventHub>();
         builder.Services.AddSingleton<NotificationService>();
         builder.Services.AddSingleton<AppSourceService>();
+        builder.Services.AddSingleton<IAgentSkillGit, AgentSkillGit>();
+        builder.Services.AddSingleton<AgentSkillLibrary>();
+        builder.Services.AddSingleton<AppSkillPackages>();
+        builder.Services.AddHostedService<AgentSkillRecovery>();
         builder.Services.AddSingleton<ISourceGitAccess>(sp => sp.GetRequiredService<PrivateSourceService>());
         builder.Services.AddSingleton<WorkspaceObservationState>();
         builder.Services.AddSingleton<DevelopmentWorkspaceService>();
@@ -410,6 +414,7 @@ internal static class HostyCoreApplication
             await shellOrigins.ResolveAsync(cancellationToken)), "text/html"));
 
         DomainEndpoints.Map(app);
+        AgentSkillEndpoints.Map(app);
         AgentMcpEndpoints.Map(app);
         AuthEndpoints.Map(app);
         AppContinuityEndpoints.Map(app);

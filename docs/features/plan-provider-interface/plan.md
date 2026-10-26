@@ -58,6 +58,19 @@ hints, but do not prove current canonical progress, verified deliverable complet
 integration. Explore this within D1/D2 using both explicit references and PR-derived hints; preserve
 source-of-truth/version semantics instead of parsing an arbitrary description as authoritative state.
 
+## Shared Work Coordination (2026-10-26)
+
+[Shared Tasks](../shared-tasks/plan.md) owns executable work records and executor assignments;
+this plan retains source-native plan/progress semantics. A document or tracker item can be linked
+to a shared task without becoming the same object. A successful run or completed task must not
+silently check off source deliverables or replace the source owner's acceptance rules.
+
+[Shared Artifacts](../shared-artifacts/plan.md) owns retained materials and readable versioned
+references. Reconcile D2 with approved document revisions and workspace variants, keeping navigation,
+content access and selected agent context distinct. [Harness Work Orchestration](../harness-work-orchestration/plan.md)
+owns the first Documents-to-task execution journey; neither that UI nor this plan creates a second
+task registry or makes plans mandatory for execution. Existing D1-D4 and Draft status remain.
+
 ## Documents App Consumer (2026-10-26)
 
 The approved [Documents App](../documents-app/feature.md) defines replacing Plans with a specification-driven reader for root, vision, ideas, features, plans and reviews. Its current progress comes from

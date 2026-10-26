@@ -423,7 +423,6 @@ internal sealed record AppRecord(
     // same moments. Unlike the metadata above it is **not** display-only — it is prose an agent acts
     // on — which is why its path is validated at install rather than resolved leniently at read time.
     // Storing only the declaration: whether it reaches a model is a separate, operator-owned decision.
-    string? AgentSkillFile = null,
     // App-owned feeds.json used by generic feed lifecycle operations. Null for direct manifest/folder
     // installs. Stored independently of any discovery provider so updates keep working without it.
     string? FeedsUrl = null,
@@ -1077,7 +1076,6 @@ internal sealed record AppSummary(
     // The app's declared agent skill, resolved to the same asset endpoint. Non-null means *declared*,
     // never *enabled*: whether it reaches a model is the operator's per-app decision, and a client
     // must not read a URL here as permission. Additive/nullable.
-    string? AgentSkillUrl = null,
     // Generic app-owned feed source and selected feed. Null for direct installs.
     string? FeedsUrl = null,
     string? FollowedFeedId = null,
@@ -1213,7 +1211,6 @@ internal sealed record AppSummary(
             app.CatalogMetadata,
             ResolveIconUrl(app.CatalogMetadata?.Icon, app.Id, assetVersion),
             ResolveAssetUrl(app.CatalogMetadata?.DescriptionFile, app.Id, assetVersion),
-            ResolveAssetUrl(app.AgentSkillFile, app.Id, assetVersion),
             app.FeedsUrl,
             app.FollowedFeedId,
             Interfaces: BuildInterfaceSummaries(app.Interfaces, endpoints),

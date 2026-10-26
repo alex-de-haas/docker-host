@@ -1,3 +1,4 @@
+import { resolveSkillExport, skillAdapter } from "./skills.js";
 import path from "node:path";
 import { conversationDirectory, storeAttachment } from "./resources.js";
 import { mkdir, realpath, stat, chown, chmod } from "node:fs/promises";
@@ -15,7 +16,7 @@ import { isolatedAdapter, prepareNativeProfile } from "./native.js";
 import { WorkerClient } from "./client.js";
 
 /** Hosty-specific composition lives here; the HTTP engine/client remain endpoint-only. */
-export async function createProviderService(options: { data: string; cache: string; auth: string; mode: "native" | "docker"; trees?: string; files?: string }) {
+export async function createProviderService(options: { data: string; cache: string; auth: string; mode: "native" | "docker"; trees?: string; skills?: string; files?: string }) {
   let coordinator: WorkerClient | undefined;
   const secrets: ConnectionSecrets = {
     get: async key => (await secret("get", key) as { value: string | null }).value,
@@ -57,10 +58,11 @@ export async function createProviderService(options: { data: string; cache: stri
     adapter: async request => {
       if (request.operation === "translation") return translationAdapter(connections, request, options.mode === "docker" ? executionUid : undefined);
       const adapter = await connections.adapter(request.binding);
-      if (options.mode !== "docker") return adapter;
+      const skills = await resolveSkillExport(options.skills, request.skillExportId);
+      if (options.mode !== "docker") return skills ? skillAdapter(adapter, await connections.executionHome(request.binding), request.binding.harnessKind, skills) : adapter;
       const health = await adapter.probe();
       if (!health.available) throw new Error(health.reason);
-      return isolatedAdapter(adapter, await prepareNativeProfile(await connections.executionHome(request.binding), request.binding.harnessKind, executionUid));
+      return isolatedAdapter(adapter, await prepareNativeProfile(await connections.executionHome(request.binding), request.binding.harnessKind, executionUid, skills));
     },
   };
   const engine = new WorkerEngine(journal, execution, capacity);

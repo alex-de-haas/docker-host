@@ -706,7 +706,7 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
             var ids = list.StandardOutput.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
             if (ids.Length == 0) return;
             if (ids.Length > 256 || ids.Any(id => id.Length > 64 || !id.All(char.IsAsciiHexDigit))) throw Error("consumer_unavailable", "Docker returned invalid container identities.");
-            var hasCollection = manifest.ExternalMounts.Values.Any(mount => mount.Kind == "managed-workspaces");
+            var hasCollection = manifest.ExternalMounts.Values.Any(mount => mount.Kind is "managed-workspaces" or "agent-skills");
             var mounts = await docker.RunAsync(["inspect", "--format", hasCollection ? "{{json .}}" : "{{json .Mounts}}", .. ids], cancellationToken: deadline.Token);
             if (mounts.ExitCode != 0) throw Error("consumer_unavailable", "Cannot verify running Docker mounts.");
             foreach (var line in mounts.StandardOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries))

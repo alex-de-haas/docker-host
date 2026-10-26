@@ -1,173 +1,119 @@
 using System.Net;
-using System.Net.Http.Headers;
+using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Haas.Hosty.Core.Tests.Http;
 
-// Reading one app's agent skill from another app (docs/features/app-provided-skills/plan.md).
-//
-// Every other /api/internal/apps/{appId}/… route answers about the caller itself — the service token
-// is validated against the id in the path — and that is what stops an app asking Core about its
-// neighbours. This route crosses that line deliberately, so the crossing is asserted rather than
-// assumed: who may cross, who may not, and that nothing but the declared skill comes back.
 public sealed class AgentSkillHttpTests
 {
-    [Fact]
-    public async Task SkillPermissionIsIndependentOfRoleAndInterface_AndRevokedOnNextRequest()
+    private const string Reader = "example.reader";
+    private const string Root = "/api/internal/apps/example.reader/skills";
+
+    private static async Task Seed(CoreHttpHarness host, string permission = CoreAppPermissions.ReadSkills)
     {
-        await using var harness = await CoreHttpHarness.StartAsync();
-        var apps = harness.Services.GetRequiredService<AppRegistryStore>();
-        var paths = harness.Services.GetRequiredService<CoreDataPaths>();
-        var caller = CreateApp("example.reader") with { GrantedCorePermissions = [CoreAppPermissions.ReadSkills] };
-        await apps.UpsertAppAsync(caller);
-        await apps.UpsertAppAsync(CreateApp("example.target") with { AgentSkillFile = "agent.md" });
-        WriteSkill(paths, "example.target", "agent.md", "# Target skill");
-        using var client = harness.CreateClient();
-        var token = IssueServiceToken(harness, caller.Id);
-        using var allowed = await SendAsync(client, "/api/internal/apps/example.reader/agent-skills/example.target", token);
-        Assert.Equal(HttpStatusCode.OK, allowed.StatusCode);
-        await apps.UpsertAppAsync(caller with { System = true, GrantedCorePermissions = [], ConfirmedRoles = [PlatformCapabilities.Assistant],
-            Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> { ["ai-gateway"] = [new("default", null, "/api")] } });
-        using var denied = await SendAsync(client, "/api/internal/apps/example.reader/agent-skills/example.target", token);
-        Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+        var now = host.Services.GetRequiredService<IClock>().UtcNow;
+        await host.Services.GetRequiredService<AppRegistryStore>().UpsertAppAsync(
+            AssistantMcpAccessHttpTests.Record(Reader, now) with { GrantedCorePermissions = [permission] });
+        var package = AgentSkillPackages.Validate([
+            new("SKILL.md", Encoding.UTF8.GetBytes("---\nname: test-guide\ndescription: Test guide.\n---\nRead references/details.md.")),
+            new("references/details.md", Encoding.UTF8.GetBytes("Complete reference content."))
+        ]);
+        await host.Services.GetRequiredService<AgentSkillLibrary>().ReplaceAppAsync("example.producer", "1", new Dictionary<string, AgentSkillPackage>
+            { ["default"] = package }, default);
+    }
+
+    private static HttpClient AppClient(CoreHttpHarness host)
+    {
+        var client = host.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new("Bearer", host.Services.GetRequiredService<AppServiceTokenService>().CreateToken(Reader));
+        return client;
     }
 
     [Fact]
-    public async Task AnAssistantReadsADeclaredSkill_AndAnOrdinaryAppCannot()
+    public async Task ReadsRequireCurrentAppPermissionAndMatchingServiceToken()
     {
-        // The pair. Either half alone is satisfied by a route that answers everyone, or by one that
-        // answers nobody — and the second is the failure that looks like security while being a bug.
-        await using var harness = await CoreHttpHarness.StartAsync();
-        var apps = harness.Services.GetRequiredService<AppRegistryStore>();
-        var paths = harness.Services.GetRequiredService<CoreDataPaths>();
-
-        await apps.UpsertAppAsync(CreateApp("hosty.harness", system: true) with
-        {
-            GrantedCorePermissions = [CoreAppPermissions.ReadSkills],
-            Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>>
-            {
-                ["ai-gateway"] = [new AppInterfaceContract("default", null, "/api")],
-            },
-        });
-        await apps.UpsertAppAsync(CreateApp("com.haas.torrent-engine"));
-        await apps.UpsertAppAsync(CreateApp("com.haas.demo-app") with { AgentSkillFile = "docs/agent.md" });
-        WriteSkill(paths, "com.haas.demo-app", "docs/agent.md", "# Demo App\n\nCall list_people before roles.");
-
-        using var client = harness.CreateClient();
-
-        using var allowed = await SendAsync(
-            client,
-            "/api/internal/apps/hosty.harness/agent-skills/com.haas.demo-app",
-            IssueServiceToken(harness, "hosty.harness"));
-        Assert.Equal(HttpStatusCode.OK, allowed.StatusCode);
-        var payload = JsonDocument.Parse(await allowed.Content.ReadAsStringAsync()).RootElement;
-        Assert.Equal("com.haas.demo-app", payload.GetProperty("appId").GetString());
-        // The text travels with whose it is: prose reaching a model without attribution invites the
-        // confusion this feature is careful about everywhere else.
-        Assert.Contains("Call list_people before roles.", payload.GetProperty("markdown").GetString());
-
-        // An installed app with a valid token of its own, and no reason to read a neighbour's
-        // instructions. "Cheap to allow" is how a torrent client ends up reading the media server's.
-        using var refused = await SendAsync(
-            client,
-            "/api/internal/apps/com.haas.torrent-engine/agent-skills/com.haas.demo-app",
-            IssueServiceToken(harness, "com.haas.torrent-engine"));
-        Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
+        await using var host = await CoreHttpHarness.StartAsync();
+        await Seed(host);
+        using var anonymous = host.CreateClient();
+        Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync(Root + "/")).StatusCode);
+        using var client = AppClient(host);
+        var catalog = await client.GetFromJsonAsync<JsonElement>(Root + "/");
+        var id = catalog.GetProperty("skills")[0].GetProperty("id").GetString();
+        var file = await client.GetFromJsonAsync<JsonElement>($"{Root}/{id}/content?path=references%2Fdetails.md");
+        Assert.Equal("Complete reference content.", Encoding.UTF8.GetString(file.GetProperty("content").GetBytesFromBase64()));
+        Assert.False(catalog.GetProperty("skills")[0].TryGetProperty("sourceGrant", out _));
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/internal/apps/other.app/skills/")).StatusCode);
+        var apps = host.Services.GetRequiredService<AppRegistryStore>();
+        await apps.UpsertAppAsync((await apps.GetAppAsync(Reader))! with { GrantedCorePermissions = [] });
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync(Root + "/")).StatusCode);
     }
 
     [Fact]
-    public async Task RefusesAnAnonymousCallerAndAForeignToken()
+    public async Task AppCanPrepareOwnExportsButCannotManageLibraryWithItsServiceToken()
     {
-        await using var harness = await CoreHttpHarness.StartAsync();
-        var apps = harness.Services.GetRequiredService<AppRegistryStore>();
-        await apps.UpsertAppAsync(CreateApp("hosty.harness", system: true) with
-        {
-            GrantedCorePermissions = [CoreAppPermissions.ReadSkills],
-            Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>>
-            {
-                ["ai-gateway"] = [new AppInterfaceContract("default", null, "/api")],
-            },
-        });
-        await apps.UpsertAppAsync(CreateApp("com.haas.demo-app") with { AgentSkillFile = "docs/agent.md" });
-        using var client = harness.CreateClient();
-
-        using var anonymous = await client.GetAsync("/api/internal/apps/hosty.harness/agent-skills/com.haas.demo-app");
-        Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
-
-        // Someone else's token, presented against the assistant's path: the caller is who the token
-        // says, never who the URL says.
-        using var foreign = await SendAsync(
-            client,
-            "/api/internal/apps/hosty.harness/agent-skills/com.haas.demo-app",
-            IssueServiceToken(harness, "com.haas.demo-app"));
-        Assert.Equal(HttpStatusCode.Unauthorized, foreign.StatusCode);
+        await using var host = await CoreHttpHarness.StartAsync();
+        await Seed(host);
+        using var client = AppClient(host);
+        var id = AgentSkillLibrary.Id("app", "example.producer", "default");
+        using var response = await client.PostAsJsonAsync(Root + "/exports", new { contextId = "session-one", skillIds = new[] { id, "removed" } });
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var export = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var directory = export.GetProperty("path").GetString()!;
+        Assert.True(File.Exists(Path.Combine(directory, "test-guide/references/details.md")));
+        Assert.Contains(AgentSkillLibrary.Id("app:" + Reader), directory);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.PostAsJsonAsync("/api/skills/update", new { skillIds = new[] { id } })).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.PostAsJsonAsync(Root + "/install", new { })).StatusCode);
+        await host.Services.GetRequiredService<AgentSkillLibrary>().ReplaceAppAsync("example.producer", "2", new Dictionary<string, AgentSkillPackage>(), default);
+        Assert.Empty(Directory.GetDirectories(directory));
     }
 
     [Fact]
-    public async Task ADeclaredButUnpackagedSkillIsAnAbsence_NotAServerError()
+    public async Task CoreControlSupportsExternalNativeConsumersWithoutHarness()
     {
-        // The path is validated at install; whether the file was actually packaged is the app's
-        // business, and an operator should see "no skill" rather than a 500.
-        await using var harness = await CoreHttpHarness.StartAsync();
-        var apps = harness.Services.GetRequiredService<AppRegistryStore>();
-        await apps.UpsertAppAsync(CreateApp("hosty.harness", system: true) with
-        {
-            GrantedCorePermissions = [CoreAppPermissions.ReadSkills],
-            Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>>
-            {
-                ["ai-gateway"] = [new AppInterfaceContract("default", null, "/api")],
-            },
-        });
-        await apps.UpsertAppAsync(CreateApp("com.haas.demo-app") with { AgentSkillFile = "docs/missing.md" });
-        using var client = harness.CreateClient();
-
-        using var response = await SendAsync(
-            client,
-            "/api/internal/apps/hosty.harness/agent-skills/com.haas.demo-app",
-            IssueServiceToken(harness, "hosty.harness"));
-
-        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        await using var host = await CoreHttpHarness.StartAsync();
+        await Seed(host);
+        using var client = host.CreateClient();
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/control/v1/skills/")).StatusCode);
+        client.DefaultRequestHeaders.Add("X-Hosty-Control-Secret", host.Services.GetRequiredService<ControlSecret>().Value);
+        var catalog = await client.GetFromJsonAsync<JsonElement>("/control/v1/skills/");
+        var id = catalog.GetProperty("skills")[0].GetProperty("id").GetString();
+        var export = await client.PostAsJsonAsync("/control/v1/skills/exports", new { contextId = "external-codex", skillIds = new[] { id } });
+        Assert.Equal(HttpStatusCode.OK, export.StatusCode);
+        var value = await export.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(File.Exists(Path.Combine(value.GetProperty("path").GetString()!, "test-guide/SKILL.md")));
+        Assert.Equal(HttpStatusCode.OK, (await client.DeleteAsync("/control/v1/skills/exports/" + value.GetProperty("id").GetString())).StatusCode);
+        Assert.False(Directory.Exists(value.GetProperty("path").GetString()));
     }
 
-    private static void WriteSkill(CoreDataPaths paths, string appId, string relative, string markdown)
+    [Theory]
+    [InlineData("host.admin", true, HttpStatusCode.OK)]
+    [InlineData("host.admin", false, HttpStatusCode.Forbidden)]
+    [InlineData("host.user", true, HttpStatusCode.Forbidden)]
+    public async Task ManagementRequiresBothAdministratorAndAppGrant(string role, bool permission, HttpStatusCode expected)
     {
-        var full = Path.Combine(paths.AppsRoot, appId, relative.Replace('/', Path.DirectorySeparatorChar));
-        Directory.CreateDirectory(Path.GetDirectoryName(full)!);
-        File.WriteAllText(full, markdown);
+        await using var host = await CoreHttpHarness.StartAsync();
+        await Seed(host, permission ? CoreAppPermissions.ManageSkills : CoreAppPermissions.ReadSkills);
+        var now = host.Services.GetRequiredService<IClock>().UtcNow;
+        await host.Services.GetRequiredService<UserDirectoryStore>().WriteAsync(new(1,
+            [new("operator", "operator@example.test", "Operator", "host.admin", false, now, now)], [], [], []));
+        var grant = await BrowserAuthorityFixture.Grant(host, Reader, "operator");
+        if (role != "host.admin") await host.Services.GetRequiredService<UserDirectoryStore>().UpdateAsync(state => state with { Users = state.Users.Select(u => u with { Role = role }).ToArray() });
+        using var client = AppClient(host);
+        client.DefaultRequestHeaders.Add(AppManagementAuthorization.IdentityHeader, grant.AccessToken);
+        using var response = await client.PostAsJsonAsync("/api/skills/check-updates", new { skillIds = Array.Empty<string>() });
+        Assert.Equal(expected, response.StatusCode);
     }
 
-    private static async Task<HttpResponseMessage> SendAsync(HttpClient client, string path, string token)
+    [Fact]
+    public async Task LegacySingleFileEndpointIsRetiredAndTraversalIsRefused()
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, path);
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        return await client.SendAsync(request);
+        await using var host = await CoreHttpHarness.StartAsync();
+        await Seed(host);
+        using var client = AppClient(host);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/api/internal/apps/example.reader/agent-skills/example.producer")).StatusCode);
+        var id = AgentSkillLibrary.Id("app", "example.producer", "default");
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.GetAsync($"{Root}/{id}/content?path=..%2Fsecret")).StatusCode);
     }
-
-    private static string IssueServiceToken(CoreHttpHarness harness, string appId)
-        => harness.Services.GetRequiredService<AppServiceTokenService>().CreateToken(appId);
-
-    private static AppRecord CreateApp(string id, bool system = false)
-        => new(
-            Id: id,
-            DisplayName: "App",
-            Description: null,
-            Version: "1.0.0",
-            Kind: "runtime",
-            System: system,
-            Source: "installed",
-            ManifestPath: $"apps/{id}/manifest.json",
-            ManifestUrl: null,
-            SelectedRuntime: "docker",
-            OperationStatus: "installed",
-            RuntimeState: "stopped",
-            LastOperation: null,
-            LastError: null,
-            Capabilities: ["open"],
-            Settings: new Dictionary<string, AppSettingValue>(),
-            StorageMappings: [],
-            Dependencies: [],
-            Endpoints: [],
-            InstalledAt: DateTimeOffset.UtcNow,
-            UpdatedAt: DateTimeOffset.UtcNow);
 }

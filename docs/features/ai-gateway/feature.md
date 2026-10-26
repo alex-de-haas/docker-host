@@ -1,6 +1,6 @@
 ---
 created: 2026-08-09
-updated: 2026-10-22
+updated: 2026-10-26
 summary: Hosty Harness, the optional administrator assistant app hosting operator chat sessions on a host-resident agent harness.
 components: [apps/harness, apps/shell]
 ---
@@ -148,7 +148,7 @@ See [assistant MCP delegation](../delegated-token-exchange/feature.md).
   fields, inputs, selects, switches, alerts and empty states. Layout uses Tailwind utilities and
   semantic theme tokens; the root stylesheet holds theme definitions and the SDK launch-mode
   chrome rule. MCP access uses expandable provider rows and tool-level controls, a local draft and one
-  Save. Core confirms provider/tool access in a batch; Harness saves invocation defaults and instruction
+  Save. Core confirms provider/tool access in a batch; Harness saves invocation defaults and skill
   acceptance locally. [Settings experience](../settings-experience/feature.md) defines recovery and ownership.
   Switching tabs preserves unsaved prompt
   text and ongoing provider-login polling.
@@ -176,10 +176,11 @@ See [assistant MCP delegation](../delegated-token-exchange/feature.md).
   characters. It applies to the **next session**, not the running one: the prompt is a session's
   instruction set, and swapping it mid-conversation would leave a transcript whose halves ran under
   different instructions.
-- **MCP offers and skills** come from the [Core Agent MCP Directory](../agent-mcp-directory/feature.md).
-  The Gateway page shows the offer state and links to Shell Settings → Agents. New apps default off;
-  Core defaults on, and the same switch governs sessions, the facade and `hosty mcp`. Gateway's legacy
-  offer/skill settings do not grant access. Auto-allow remains a Gateway setting, independent of offers.
+- **MCP access** comes from the [Core Agent MCP Directory](../agent-mcp-directory/feature.md).
+  Core enforces assistant-specific grants; Harness owns per-call approval preferences.
+- **Skills** come from the [shared Core library](../agent-skills/feature.md). Settings → Skills manages
+  packages and assistant defaults; session creation also accepts explicit stable IDs. Native files
+  are delivered independently of the provider connection, MCP access and standing instructions.
 - Sessions refresh their assistant-specific directory before every turn. The forwarding proxy checks policy and resolves
   the current target URL before each request, then obtains a fresh token. Core outages retain the
   previous listing but cannot forward calls using an older token. Claude applies server updates through
@@ -231,8 +232,8 @@ uses `bypassPermissions` with explicit SDK opt-in; Normal uses the behavior belo
   ([host-prompt.ts](../../../apps/harness/src/sessions/host-prompt.ts)): identity, the approval
   gate's semantics, the platform's ground rules (never a second Core, never raw docker on managed
   containers, credential hygiene), and the trust boundary for third-party text. The operator's
-  settings prompt follows it — later words win, so the operator can override any of it — and app
-  skills come last, fenced. The facade's instructions deliberately do not carry the preamble: an
+  settings prompt follows it. Selected skills remain complete native packages, loaded by the client
+  when used. The facade's instructions deliberately do not carry the preamble: an
   external client has no shell and no approval cards, so it would be false there.
 - The system prompt names its preset explicitly (`{type: "preset", preset: "claude_code"}`) rather
   than relying on the SDK default, because the operator profile is defined as behaving like the

@@ -59,7 +59,7 @@ internal sealed class AgentPolicyStore(CoreDataPaths paths)
 
 internal sealed class AgentMcpDirectory(
     AgentPolicyStore policies, AppRegistryStore apps, CoreLifecycleService lifecycle,
-    CoreDataPaths paths, HostyCoreRuntimeConfig config, AuditStore audit, IClock clock, ShellPublicOriginResolver shellOrigins)
+    HostyCoreRuntimeConfig config, AuditStore audit, IClock clock, ShellPublicOriginResolver shellOrigins)
 {
     public const string CoreId = "hosty:core";
     public const string SkillKey = "agent";
@@ -82,12 +82,6 @@ internal sealed class AgentMcpDirectory(
             policy.Targets.TryGetValue(app.Id, out var entry);
             if (entry?.InstalledAt != record.InstalledAt) entry = null;
             var skills = new List<AgentSkillStatus>();
-            if (record.AgentSkillFile is { } file)
-            {
-                var text = await ReadSkillAsync(app.Id, file, cancellationToken);
-                var digest = text is null ? null : Digest(text);
-                skills.Add(new(SkillKey, digest, entry?.ApprovedSkills.GetValueOrDefault(SkillKey), includeText ? text : null));
-            }
             targets.Add(new(app.Id, app.DisplayName, entry?.Offered ?? false, app.RuntimeState,
                 declarations!.Select(declaration =>
                 {
@@ -98,7 +92,7 @@ internal sealed class AgentMcpDirectory(
                     return new AgentMcpInterface(declaration.Key, declaration.Url, declaration.Service, readiness);
                 }).ToArray(), skills, record.InstalledAt, Granted(entry)));
         }
-        // Text is excluded so admin and consumer snapshots share one revision. Changes to skill bytes,
+        // Text is excluded so admin and consumer snapshots share one revision. Changes to MCP
         // policy, URLs, readiness, installation identity or any app's fleet state invalidate it.
         var canonical = new AgentDirectoryResponse("", targets.Select(target => target with
         { Skills = target.Skills.Select(skill => skill with { Markdown = null }).ToArray() }).ToArray());
@@ -268,14 +262,6 @@ internal sealed class AgentMcpDirectory(
                 new Dictionary<string, string> { ["requestId"] = plan.RequestId, ["targets"] = string.Join(",", changes.Keys) }), ct);
         }
         finally { if (updating) updateGate.Release(); for (var i = acquired - 1; i >= 0; i--) locks[i].Release(); }
-    }
-
-    private async Task<string?> ReadSkillAsync(string id, string file, CancellationToken cancellationToken)
-    {
-        var relative = CoreDataPaths.NormalizeRelativeAssetPath("", file);
-        if (relative is null || !AppAssetEndpoints.TryResolveAsset(paths.AppsRoot, id, relative, out var absolute, out _)) return null;
-        try { return await File.ReadAllTextAsync(absolute, cancellationToken); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
     }
 
     public static string Digest(string text) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(text.Trim())))[..32];

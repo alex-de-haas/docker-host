@@ -12,20 +12,18 @@ import { AuditReporter } from "../audit.js";
 import { TokenExchange } from "./exchange.js";
 import { McpProxy } from "./proxy.js";
 import type { ProviderDirectory } from "../settings/providers.js";
-import { skillDigest } from "./skills.js";
+import { createHash } from "node:crypto";
 
 const APP = "com-example-notes";
 
-// A skill reaches a session only through the app whose tools it describes. The pair that matters is
-// the provider toggle: on, the prose arrives; off, the session must not carry instructions for tools
-// it does not have.
-describe("app skills in a session", () => {
+describe("native skills in a session", () => {
   let dataDir: string;
   let settings: SettingsStore;
   let manager: SessionManager;
   let adapter: FakeHarnessAdapter;
   let offered = true;
-  let approved: Record<string, string> = {};
+  const exports: { contextId: string; skillIds: string[] }[] = [];
+  const skillId = "a".repeat(64), exportId = "e".repeat(64);
 
   const providers = {
     read: async () => ({
@@ -35,13 +33,16 @@ describe("app skills in a session", () => {
     // No Core row: these tests are about app skills, and Core declares none.
     core: () => null,
     migrateInstructions: async () => undefined,
-    localApprovedSkills: () => approved,
+
     readSkill: async (appId: string) =>
       appId === APP ? { appId: APP, displayName: "Notes", markdown: "Call list_people first." } : null,
   } as unknown as ProviderDirectory;
 
   beforeEach(() => {
-    offered = true; approved = {};
+    offered = true; exports.length = 0;
+    vi.stubEnv("HOSTY_CORE_ORIGIN", "http://core.test");
+    vi.stubEnv("HOSTY_APP_ID", "hosty.harness");
+    vi.stubEnv("HOSTY_APP_SERVICE_TOKEN", "service");
     dataDir = mkdtempSync(path.join(os.tmpdir(), "hosty-session-skills-"));
     settings = new SettingsStore(dataDir);
     adapter = new FakeHarnessAdapter();
@@ -59,8 +60,12 @@ describe("app skills in a session", () => {
       "http://127.0.0.1:3400",
     );
 
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
+      if (url.endsWith("/skills/exports")) {
+        exports.push(JSON.parse(String(init?.body)));
+        return Response.json({ id: exportId, path: "/core/export", skills: [] });
+      }
     if (url.includes("/api/auth/apps/revalidate")) return Response.json({ active: true, expiresAt: new Date(Date.now() + 3600_000).toISOString() });
       if (url.includes("/mcp/token")) {
         return new Response(
@@ -76,8 +81,8 @@ describe("app skills in a session", () => {
   });
 
   afterEach(async () => {
-    vi.restoreAllMocks();
     await manager.shutdown();
+    vi.restoreAllMocks(); vi.unstubAllEnvs();
     rmSync(dataDir, { recursive: true, force: true });
   });
 
@@ -87,27 +92,13 @@ describe("app skills in a session", () => {
     return adapter.lastStart?.systemPrompt;
   }
 
-  it("layers the prompt host-first, operator second, skills last", async () => {
-    // The stack is the contract. The host states identity and ground rules; the operator's own
-    // words come after so they can override any of it; an app must not appear above either — above
-    // the operator it would read as the operator, above the host it would read as the platform.
-    await settings.update({
-      systemPrompt: "Be brief.",
-      mcpProviders: { [APP]: true },
-      mcpSkillDigests: { [APP]: skillDigest("Call list_people first.") },
-    });
-
-    approved[APP] = skillDigest("Call list_people first.");
+  it("exports selected packages while keeping standing instructions separate", async () => {
+    await settings.update({ systemPrompt: "Be brief.", skillIds: [skillId], mcpProviders: { [APP]: true } });
     const prompt = await startSession();
-
-    expect(prompt!.startsWith("# Hosty host assistant")).toBe(true);
-    expect(prompt).toContain("Call list_people first.");
-    expect(prompt).toContain(`<app-skill app="${APP}"`);
-    expect(prompt!.indexOf(HOST_SYSTEM_PROMPT)).toBeLessThan(prompt!.indexOf("Be brief."));
-    // The needle is the opening tag with its attribute: the host preamble legitimately *mentions*
-    // the <app-skill> fence by name in its trust-boundaries rule, and a bare "app-skill" would
-    // find that mention instead of the section.
-    expect(prompt!.indexOf("Be brief.")).toBeLessThan(prompt!.indexOf("<app-skill app="));
+    expect(prompt).toBe(`${HOST_SYSTEM_PROMPT}\n\n${DEFAULT_WORKFLOW_PROMPT}\n\nBe brief.`);
+    expect(prompt).not.toContain("Call list_people first.");
+    expect(exports[0]?.skillIds).toEqual([skillId]);
+    expect(adapter.lastStart?.skillExportId).toBe(exportId);
   });
 
   it("delivers edited or empty workflow guidance to new agent sessions", async () => {
@@ -117,25 +108,55 @@ describe("app skills in a session", () => {
     expect(await startSession()).not.toContain(DEFAULT_WORKFLOW_PROMPT);
   });
 
-  it("withholds a skill that carries no approved digest", async () => {
-    // Enabled, readable, and still withheld: text that arrived without the operator's decision must
-    // not deliver itself. This is the hole the first version had.
-    await settings.update({ systemPrompt: "Be brief.", mcpProviders: { [APP]: true } });
-
-    const prompt = await startSession();
-
-    expect(prompt).toBe(`${HOST_SYSTEM_PROMPT}\n\n${DEFAULT_WORKFLOW_PROMPT}\n\nBe brief.`);
+  it("does not auto-select packages when no defaults were chosen", async () => {
+    await startSession();
+    expect(exports[0]?.skillIds).toEqual([]);
   });
 
-  it("carries no skill when the provider is off", async () => {
-    // The half that matters. Without it, a manager that always folded in every declared skill would
-    // pass the test above while ignoring the only decision the operator makes here.
+  it("keeps skill selection independent of MCP provider access", async () => {
     offered = false;
-    await settings.update({ systemPrompt: "Be brief.", mcpProviders: { [APP]: true }, mcpSkillDigests: { [APP]: skillDigest("Call list_people first.") } });
+    await settings.update({ skillIds: [skillId], mcpProviders: { [APP]: false } });
+    await startSession();
+    expect(exports[0]?.skillIds).toEqual([skillId]);
+    expect(adapter.lastStart?.mcpServers ?? {}).not.toHaveProperty(APP);
+  });
 
-    const prompt = await startSession();
+  it("uses an explicit per-session selection instead of defaults", async () => {
+    await settings.update({ skillIds: [skillId] });
+    const selected = "b".repeat(64);
+    const record = await manager.createSession({ createdBy: "user_admin", skillIds: [selected] });
+    await manager.postMessage(record.id, "hello", "hostyg_seed");
+    expect(exports[0]?.skillIds).toEqual([selected]);
+    expect((await settings.read()).skillIds).toEqual([skillId]);
+  });
 
-    expect(prompt).toBe(`${HOST_SYSTEM_PROMPT}\n\n${DEFAULT_WORKFLOW_PROMPT}\n\nBe brief.`);
-    expect(prompt).not.toContain("<app-skill app=");
+  it("migrates explicit old choices before the supplying app upgrades", async () => {
+    await settings.update({ mcpSkillDigests: { [APP]: "old-digest" } });
+    await startSession();
+    const migrated = createHash("sha256").update(["app", APP, "default"].join("\n")).digest("hex");
+    expect(exports[0]?.skillIds).toEqual([migrated]);
+    expect((await settings.read()).skillIds).toEqual([migrated]);
+  });
+
+  it.each([false, true])("preserves instruction opt-outs after legacy migration (another approval: %s)", async (anotherApproval) => {
+    const enabledApp = "org.example.enabled";
+    await settings.update({
+      mcpSkillsMigrated: true,
+      mcpSkillDigests: { [APP]: "historical-digest" },
+      mcpSkillApprovals: anotherApproval ? { [enabledApp]: { identity: "installed-app", digest: "accepted" } } : {},
+    });
+    await startSession();
+    const expected = anotherApproval
+      ? [createHash("sha256").update(["app", enabledApp, "default"].join("\n")).digest("hex")]
+      : [];
+    expect(exports[0]?.skillIds).toEqual(expected);
+    expect((await settings.read()).skillIds).toEqual(expected);
+    await startSession();
+    expect(exports[1]?.skillIds).toEqual(expected);
+  });
+
+  it("rejects caller supplied paths as skill selections", async () => {
+    await expect(manager.createSession({ createdBy: "user_admin", skillIds: ["../../private"] })).rejects.toThrow("stable skill IDs");
+    expect(exports).toHaveLength(0);
   });
 });

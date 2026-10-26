@@ -56,7 +56,7 @@ internal sealed partial class CoreLifecycleService
         var sharedNames = library.Mounts.Select(mount => mount.Name).ToHashSet(StringComparer.Ordinal);
         foreach (var slot in app.MountSlots ?? [])
         {
-            if (slot.Kind == "managed-workspaces" || !slot.Required || configuredKeys.Contains(slot.Key)) continue;
+            if (slot.Kind is "managed-workspaces" or "agent-skills" || !slot.Required || configuredKeys.Contains(slot.Key)) continue;
             var missingReferences = (app.Mounts ?? []).Where(binding => binding.Key == slot.Key &&
                 binding.GlobalMountName is { } name && !sharedNames.Contains(name)).ToArray();
             if (missingReferences.Length == 0)

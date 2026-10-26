@@ -62,13 +62,10 @@ it("retries local failure without asking Core to approve the saved access again"
   expect(container.textContent).toContain("Local storage unavailable"); await save();
   expect(vi.mocked(call).mock.calls.filter(args => args[0] === "/settings/mcp/review")).toHaveLength(1);
 });
-it("accepts reviewed application instructions in Harness without a Core request", async () => {
+it("keeps skill selection outside MCP tool access", async () => {
   await render(); await click(button("Notes"));
-  const controls = [...container.querySelectorAll<HTMLButtonElement>('[role="checkbox"]')];
-  const acceptance = controls.find(node => node.id.startsWith("instructions-")) ?? controls[controls.length - 1]!;
-  await click(acceptance); await save();
-  expect(vi.mocked(call).mock.calls.map(args => args[0])).toEqual(["/settings/mcp/preferences"]);
-  expect(JSON.parse(vi.mocked(call).mock.calls[0]![1]!.body as string).skills.notes).toEqual({ identity: "notes-1", digest: "content-1" });
+  expect(container.querySelector('[id^="instructions-"]')).toBeNull();
+  expect(container.textContent).not.toContain("Reviewed notes guidance");
 });
 it("explains future-tool availability once, on demand", async () => {
   await render(); expect(container.textContent).not.toContain("New tools from enabled");

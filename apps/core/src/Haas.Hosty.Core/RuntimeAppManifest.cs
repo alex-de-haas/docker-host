@@ -193,14 +193,13 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
         var meta = selection.Manifest.CatalogMetadata;
         // Trimmed here as well as at projection: a padded path validated, projected trimmed, and then
         // vendored untrimmed would leave the record pointing at a file nobody wrote.
-        var agentSkillFile = selection.Manifest.Agent?.SkillFile?.Trim();
         var navIconAssets = (selection.Manifest.Ui?.Navigation ?? [])
             .Select(item => item.IconAsset)
             .Where(icon => !string.IsNullOrWhiteSpace(icon))
             .ToArray();
         // An app may declare a skill and nothing else — no catalog metadata, no page icons — and
         // returning early on the old condition would have vendored nothing for it.
-        if (meta is null && navIconAssets.Length == 0 && string.IsNullOrWhiteSpace(agentSkillFile))
+        if (meta is null && navIconAssets.Length == 0)
         {
             return;
         }
@@ -283,28 +282,6 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
                         await VendorAsync(imageRef, descriptionDir, ImageMaxBytes, imageOnly: true);
                     }
                 }
-            }
-        }
-
-        // The agent skill, carried exactly like the markdown description above and sharing its byte
-        // budget — the plan's "reuse rather than add a second one". Its path was already validated at
-        // install, so a declaration that got here is contained and is markdown; this only has to
-        // survive the file being absent, which is an app packaging mistake rather than a manifest one.
-        var skillRootRel = CoreDataPaths.NormalizeRelativeAssetPath("", agentSkillFile);
-        if (skillRootRel is not null)
-        {
-            var skill = await read(skillRootRel, DescriptionMaxBytes);
-            if (skill is not null && budget.TryAdd(skill.Length))
-            {
-                WriteVendoredAsset(appRoot, skillRootRel, skill);
-            }
-            else
-            {
-                // An update that keeps the path but drops, oversizes, or fails to fetch the file must
-                // not leave the previous copy in place: both delivery routes resolve whatever is on
-                // disk, so an agent would keep receiving instructions the installed app no longer
-                // contains. Absence is the honest answer, and it is the one both routes document.
-                DeleteVendoredAsset(appRoot, skillRootRel);
             }
         }
 
@@ -566,7 +543,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
             || manifest.CorePermissions.Intersect(manifest.OptionalCorePermissions, StringComparer.Ordinal).Any())
             errors.Add(new("app_manifest_core_permission_duplicate", "Required and optional permissions must be distinct and disjoint.", "$.optionalCorePermissions"));
         ValidateInterfaces(manifest.Interfaces, errors);
-        ValidateAgent(manifest.Agent, errors);
+        ValidateAgent(manifest.Agent, errors, allowRetiredContracts);
 
         // System-app UI is validated strictly and fail-closed (docs/features/app-ui-surfaces/feature.md):
         // its pages are rendered as administrator Shell surfaces, so a system app must not rely on
@@ -831,7 +808,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
                 errors.Add(new("app_manifest_external_mount_key_collision", $"externalMounts key '{mountKey}' normalizes to the same HOSTY_MOUNT_ environment name as another slot.", "$.externalMounts"));
             }
 
-            if (mount.Kind is not ("host-path" or "managed-workspaces"))
+            if (mount.Kind is not ("host-path" or "managed-workspaces" or "agent-skills"))
             {
                 errors.Add(new("app_manifest_external_mount_kind_unsupported", $"externalMounts['{mountKey}'].kind '{mount.Kind}' is not supported.", "$.externalMounts"));
             }
@@ -839,6 +816,9 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
             if (mount.Kind == "managed-workspaces" && (mount.Scope != "instance" || mount.Multiple
                 || string.IsNullOrWhiteSpace(mount.Service) || !manifest.CorePermissions.Contains(CoreAppPermissions.Sources)))
                 errors.Add(new("app_manifest_collection_invalid", "Managed workspaces require instance scope, a service and required full-source authority; operator bindings are not supported.", "$.externalMounts"));
+            if (mount.Kind == "agent-skills" && (mount.Scope != "instance" || mount.Multiple || mount.Mode != "ro"
+                || string.IsNullOrWhiteSpace(mount.Service) || !manifest.CorePermissions.Contains(CoreAppPermissions.ReadSkills)))
+                errors.Add(new("app_manifest_collection_invalid", "Agent skills require read-only instance scope, a service and required apps.skills.read authority.", "$.externalMounts"));
             if (mount.Kind == "host-path" && mount.Scope is not null)
                 errors.Add(new("app_manifest_collection_invalid", "Host-path mounts do not declare a collection scope.", "$.externalMounts"));
 
@@ -1501,51 +1481,30 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
     // read time. The display assets beside it are not — they are display-only, and a missing icon is
     // a cosmetic disappointment. A declaration that escapes the app folder must be refused where the
     // operator is looking at an install, not silently resolve to nothing much later.
-    private static void ValidateAgent(RuntimeAppAgentManifest? agent, List<AppManifestValidationError> errors)
+    private static void ValidateAgent(RuntimeAppAgentManifest? agent, List<AppManifestValidationError> errors, bool allowRetiredContracts)
     {
-        if (agent?.SkillFile is not { } skillFile)
+        if (agent is null) return;
+        if (agent.SkillFile is not null && !allowRetiredContracts)
+            errors.Add(new("app_manifest_agent_skill_file_retired", "Replace agent.skillFile with agent.skills entries containing key and a complete SKILL.md directory path.", "$.agent.skillFile"));
+        var keys = new HashSet<string>(StringComparer.Ordinal);
+        var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var skill in agent.Skills ?? [])
         {
-            return;
-        }
-
-        if (skillFile.Length != skillFile.Trim().Length)
-        {
-            errors.Add(new(
-                "app_manifest_agent_skill_file_padded",
-                $"agent.skillFile '{skillFile}' has leading or trailing whitespace; write the path exactly.",
-                "$.agent.skillFile"));
-            return;
-        }
-
-        if (string.IsNullOrWhiteSpace(skillFile))
-        {
-            errors.Add(new(
-                "app_manifest_agent_skill_file_empty",
-                "agent.skillFile is declared but empty; omit it instead.",
-                "$.agent.skillFile"));
-            return;
-        }
-
-        // Containment, absolute paths, backslashes and URLs are all one question, and the asset
-        // machinery already answers it — reusing it keeps the two from drifting apart.
-        var normalized = CoreDataPaths.NormalizeRelativeAssetPath("", skillFile);
-        if (normalized is null)
-        {
-            errors.Add(new(
-                "app_manifest_agent_skill_file_outside_app",
-                $"agent.skillFile '{skillFile}' must be a relative path inside the manifest folder.",
-                "$.agent.skillFile"));
-            return;
-        }
-
-        // Markdown specifically: the file is handed to a model as prose, and the one thing worse than
-        // no skill is a binary read as instructions.
-        if (!string.Equals(Path.GetExtension(normalized), ".md", StringComparison.OrdinalIgnoreCase))
-        {
-            errors.Add(new(
-                "app_manifest_agent_skill_file_not_markdown",
-                $"agent.skillFile '{skillFile}' must be a .md file.",
-                "$.agent.skillFile"));
+            if (skill is null || string.IsNullOrWhiteSpace(skill.Key) || !ContractKeyPattern.IsMatch(skill.Key) || !keys.Add(skill.Key))
+            {
+                errors.Add(new("app_manifest_agent_skill_key_invalid", "Each app skill requires a unique stable kebab-case key.", "$.agent.skills"));
+                continue;
+            }
+            try
+            {
+                if (skill.Path is null) throw AgentSkillPackages.Invalid("An app skill requires a directory path.");
+                AgentSkillPackages.RelativePath(skill.Path);
+                if (!paths.Add(skill.Path) || paths.Any(path => path != skill.Path && (path.StartsWith(skill.Path + "/", StringComparison.OrdinalIgnoreCase) || skill.Path.StartsWith(path + "/", StringComparison.OrdinalIgnoreCase))))
+                    throw AgentSkillPackages.Invalid("App skill directories must not overlap.");
+                if (CoreDataPaths.IsReservedAppRootPath(skill.Path))
+                    throw AgentSkillPackages.Invalid("App skill directory conflicts with a reserved app path.");
+            }
+            catch (AppLifecycleException ex) { errors.Add(new("app_manifest_agent_skill_path_invalid", ex.Message, "$.agent.skills")); }
         }
     }
 
@@ -3583,15 +3542,13 @@ internal sealed class RuntimeAppManifest
 
 // The app's agent-facing prose (top-level `agent`).
 //
-// One skill per app, not one per interface: that is how a human documents an app, and an app with
-// two interfaces still has one story about how it is worked. Division, if ever needed, is sections
-// in the file rather than a new axis here.
+// Stable app-local keys identify portable package directories across app versions.
+internal sealed record RuntimeAppAgentSkill(string Key, string Path);
 internal sealed record RuntimeAppAgentManifest
 {
-    // Manifest-relative path to a markdown file. Carried by the same asset machinery as
-    // catalogMetadata.descriptionFile — vendored under the shared byte budget, served from the
-    // per-app asset endpoint — but unlike that one it is validated, because what it contains is
-    // acted on rather than displayed.
+    public RuntimeAppAgentSkill[]? Skills { get; init; }
+    // Read only to diagnose new manifests and keep already-installed retired contracts operable.
+    // This field no longer delivers instructions or creates a library package.
     public string? SkillFile { get; init; }
 }
 
