@@ -1,0 +1,127 @@
+{
+  "schemaVersion": "app.0.1",
+  "id": "hosty.opus",
+  "name": "OPUS Translate",
+  "description": "Local English-to-Russian text and Markdown translation with OPUS-MT Big on the host CPU.",
+  "version": "0.1.0",
+  "source": {
+    "type": "git",
+    "repository": "https://github.com/alex-de-haas/docker-host.git",
+    "branch": "main"
+  },
+  "runtimeProfiles": [
+    {
+      "key": "local",
+      "type": "localCommand",
+      "default": true
+    },
+    {
+      "key": "dev",
+      "type": "localCommand",
+      "development": true
+    }
+  ],
+  "defaultRuntime": "local",
+  "services": [
+    {
+      "key": "api",
+      "runtimes": {
+        "local": {
+          "type": "localCommand",
+          "workingDirectory": ".",
+          "setup": "npm ci --workspace @haas/hosty-opus --include-workspace-root=false --ignore-scripts && npm run build --workspace @haas/hosty-opus && node apps/opus/scripts/setup.mjs",
+          "command": "node apps/opus/dist/main.mjs",
+          "ports": [
+            {
+              "key": "http",
+              "containerPort": 3510,
+              "protocol": "http",
+              "public": true
+            }
+          ],
+          "healthcheck": {
+            "type": "http",
+            "port": 3510,
+            "path": "/healthz",
+            "timeoutSeconds": 5
+          }
+        },
+        "dev": {
+          "type": "localCommand",
+          "workingDirectory": ".",
+          "setup": "npm ci --workspace @haas/hosty-opus --include-workspace-root=false --ignore-scripts && npm run build --workspace @haas/hosty-opus && node apps/opus/scripts/setup.mjs",
+          "command": "node apps/opus/dist/main.mjs",
+          "ports": [
+            {
+              "key": "http",
+              "containerPort": 3510,
+              "protocol": "http",
+              "public": true
+            }
+          ],
+          "healthcheck": {
+            "type": "http",
+            "port": 3510,
+            "path": "/healthz",
+            "timeoutSeconds": 5
+          }
+        }
+      }
+    }
+  ],
+  "cache": {
+    "enabled": true,
+    "targets": [
+      {
+        "runtime": "local",
+        "environment": "HOSTY_APP_CACHE_DIR"
+      },
+      {
+        "runtime": "dev",
+        "environment": "HOSTY_APP_CACHE_DIR"
+      }
+    ]
+  },
+  "endpoints": [
+    {
+      "key": "http",
+      "service": "api",
+      "port": "http",
+      "protocol": "http",
+      "public": true
+    }
+  ],
+  "settings": [
+    {
+      "key": "OPUS_THREADS",
+      "type": "string",
+      "default": "8",
+      "required": true,
+      "label": "CPU threads",
+      "description": "1\u201332 CPU threads, capped at the available cores. Restart to apply."
+    }
+  ],
+  "provides": [
+    "translation"
+  ],
+  "interfaces": {
+    "translation": [
+      {
+        "key": "default",
+        "endpoint": "http",
+        "path": "/api/translation/v1",
+        "version": 1,
+        "capabilities": [
+          "text",
+          "markdown"
+        ]
+      }
+    ]
+  },
+  "catalogMetadata": {
+    "icon": "assets/icon.svg"
+  },
+  "capabilities": [
+    "logs"
+  ]
+}

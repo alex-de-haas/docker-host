@@ -413,7 +413,135 @@ completion; stop only the isolated server afterwards. The measured server and wo
 Temporary model/dependency files remain under `/tmp` for reproduction. This experiment does not change
 the existing Ollama model store, Core lifecycle, production settings or release-artifact versions.
 
+### Expanded Local Comparison, 2026-10-26
+
+A second isolated English-to-Russian experiment uses registered workspace baseline
+`5568918df460b2f30d3c933df1939959d36d9ccb` on the same Apple M4 Pro (14 physical cores,
+48 GiB RAM). It adds larger/newer OPUS checkpoints, Argos and Bergamot. These are native
+experiment processes, not installed Hosty providers or Core/Shell integration tests.
+No cloud inference, provider credential access or production configuration change is involved.
+
+The two hash-verified synthetic inputs above are joined by real plans from that baseline:
+`accent-presets/plan.md` (2,073 characters) and `removable-system-apps/plan.md`
+(5,493 characters). Twenty additional complete sentences probe terminology, negation,
+permissions and conditional requirements. The large synthetic input contains repeated prose;
+no result cache or duplicate elimination is enabled. Each document has three warm runs,
+except the large synthetic input with two. A separate first call is excluded from medians.
+Timing includes prose extraction, local worker transport, translation, reassembly and the
+production Markdown validator; it excludes download/conversion and resident-model loading.
+
+| Pipeline | Small synthetic, 1,480 chars | Large synthetic, 19,861 chars | Real accent plan, 2,073 chars | Real platform plan, 5,493 chars |
+| --- | --- | --- | --- | --- |
+| OPUS 2020, CTranslate2 INT8, beam 1 | 0.195 s | 1.718 s | 0.322 s | 0.682 s |
+| OPUS+BT 2021 bilingual, CTranslate2 INT8, beam 1 | 0.210 s | 1.579 s | 0.339 s | 0.702 s |
+| OPUS TC Big 2022, CTranslate2 INT8, beam 1 | 0.308 s | 3.137 s | 0.538 s | 1.180 s |
+| OPUS TC Big 2022, CTranslate2 INT8, beam 4 | 0.578 s | 7.613 s | 1.045 s | 2.557 s |
+| Argos 1.11.0 stock package API, beam 1 | 1.286 s | 19.093 s | 1.959 s | 5.507 s |
+| Argos 1.11.0 stock package API, default beam 4 | 2.383 s | 35.607 s | 3.703 s | 10.192 s |
+| Argos EN-RU model through batched CTranslate2, beam 1 | 0.306 s | 3.176 s | 0.600 s | 1.336 s |
+| Argos EN-RU model through batched CTranslate2, beam 4 | 0.631 s | 7.690 s | 1.738 s | 3.019 s |
+| Bergamot Firefox WASM, 8 workers, beam 1 | 0.282 s | 1.090 s | 0.516 s | 0.848 s |
+| Bergamot Firefox WASM, 1 worker, beam 1 | 0.727 s | 7.116 s | 1.482 s | 3.053 s |
+
+The earlier Haiku 5.5 results (4.194/22.195 seconds for the synthetic inputs) are historical
+context from October 15, not a concurrent cloud control. These small repeated samples are
+latency observations, not percentiles or a representative translation-quality benchmark.
+
+**Models and execution.** CTranslate2 4.8.3 uses CPU INT8, eight intra-operation threads,
+one inter-operation thread, SentencePiece 0.2.2, and batches of at most 32 fragments. The
+[2020 archive](https://object.pouta.csc.fi/OPUS-MT-models/en-ru/opus-2020-02-11.zip) has about
+76M floating-point checkpoint weight entries and an 81.4 MB converted model. The
+[2021 OPUS+BT bilingual archive](https://object.pouta.csc.fi/Tatoeba-MT-models/eng-rus/opus+bt-2021-04-14.zip)
+has about 75M and 80.6 MB: it is newer, not larger. The
+[2022 English-to-East-Slavic Big archive](https://object.pouta.csc.fi/Tatoeba-MT-models/eng-zle/opusTCv20210807+bt_transformer-big_2022-03-13.zip)
+has about 239M and 249.4 MB. Its source tokens receive the required `>>rus<<` prefix.
+All three downloaded Marian archives include CC-BY-4.0. These dates identify the tested
+checkpoints; they are not a claim that the models were trained in 2026.
+
+[Argos](https://github.com/argosopentech/argos-translate) uses the official index's
+[`translate-en_ru-1_9` package](https://argos-net.com/v1/translate-en_ru-1_9.argosmodel),
+whose metadata reports package version 1.9 while its README says English-Russian 2.2.
+The package's CTranslate2 model is 214.3 MB. The stock-path probe calls `PackageTranslation`
+for each protected prose fragment, with its bundled Stanza sentence splitter and without
+Argos's result-cache wrapper. The separate batched probe uses the same weights and tokenizer,
+keeps Argos's length penalty 0.2 and unknown-token replacement, bypasses Stanza, and submits
+32 fragments per CTranslate2 batch. Its speedup demonstrates an integration/batching cost;
+it does not establish that every application using Argos has the stock-path timings above.
+
+Bergamot uses Mozilla's EN-RU `base` model marked **Release Desktop** in the
+[model registry](https://mozilla.github.io/translations/model-registry/), snapshot generated
+2026-10-26. Its identifier is `student_base_AYqN3ysXRp2EGkEqeaA5Rg`, with 42,686,774 parameters,
+43.0 MB weights, 2.8 MB lexical shortlist and 0.9 MB shared vocabulary. The tested engine is
+`v0.6.0+1de4a085d`, Remote Settings version 4.0, with matching Firefox 144 JavaScript glue;
+[Mozilla documents this distribution](https://firefox-source-docs.mozilla.org/toolkit/components/translations/resources/03_bergamot.html).
+Downloaded model and engine checksums match their registries. Execution uses Node 24.18.0,
+WASM SIMD, the packaged fallback GEMM implementation, batches of eight requests, and no result
+cache. It is not a native C++ or in-browser Firefox speed measurement. Eight WASM workers reach
+2.88 GB process peak RSS; one reaches 0.574 GB. Model-file size alone understates runtime memory.
+For context, the OPUS Big process reaches 1.34 GB across its beam 1/4 document probes.
+
+The published `@browsermt/bergamot-translator` 0.4.9 package needs a temporary CommonJS worker
+loader correction under Node 24. Its initial experiment is superseded by the matched Mozilla
+engine above. The wrapper also adapts the newer seven-argument model constructor. All twelve
+eight-worker document outputs are byte-identical between the old and matched engines, so the
+observed wording defects are reproducible with the matched runtime. The official ARM64
+translateLocally executable passes `--help`, but its model catalog contains no Russian pair;
+it is not the backend of the measured Bergamot translations.
+
+**Structure and meaning.** All 150 document outputs from the final configurations pass the
+unchanged production Markdown validator, including frontmatter, code, URLs, identifiers and
+checkbox states. This is a property of the prose adapter, not proof that these models can
+safely rewrite Markdown themselves. The existing experiment adapter initially refuses the
+real plans' indented continuation lines. A temporary copy admits indentation-only differences
+and treats soft wraps as spaces before sentence segmentation. The original five adapter tests
+and three added real-plan/soft-wrap checks pass. Earlier refused or incorrectly segmented
+attempts remain separate from final measurements. Inline emphasis, links and code still split
+sentence context: an isolated English article can remain untranslated beside a translated span.
+
+Direct source/output review finds better terminology in OPUS Big than the 2020 model, but
+none of these configurations demonstrates sufficient fidelity for replacing the agent provider
+on technical requirements. Concrete failures include:
+
+- OPUS Big translates an unchecked checkbox as remaining "unnoticed"; beam 4 does not fix it.
+- Argos changes "only an administrator can enable translation" into only an administrator
+  performing translation. It confuses enabling a provider with permission to use translation.
+- Bergamot produces malformed terminology for "checkbox" and "byte-identical" in the complete
+  sentence probe; it also changes finishing a sandbox into cancelling it. Runtime replacement
+  preserves these failures. Some wording varies with the batch context.
+- In the real platform plan, OPUS Big beam 4, Argos beam 4 and Bergamot turn "Verify no implicit
+  install, UI substitution..." into an instruction **not to verify** those things. All three
+  outputs still pass Markdown validation. Color names and UI terms such as lime and hover also
+  remain unreliable without domain context.
+
+Bergamot is the fastest tested configuration on the large synthetic input; OPUS Big improves the old OPUS
+wording with modest CPU latency. Argos offers convenient model packaging but its ready API does
+not provide a quality advantage in these probes. The evidence supports fast reading drafts,
+with the English source available, rather than an unqualified replacement for requirements
+translation. No local provider is added or enabled by this experiment. The separate
+[OPUS Translate app](../local-translation/feature.md) implements the selected local model.
+
+The local replay bundle, model metadata, source hashes, per-run outputs, rejected attempts and
+summaries remain outside the repository at `/tmp/hosty-opus-20261026`. `summary.json` aggregates
+only the final configurations. Its runners are `run.mts`, `run-real.mts`, `run-argos.mts`,
+`run-argos-batch.mts`, `run-bergamot-firefox.mts` and `run-bergamot-firefox-one.mts`; each accepts
+the registered worktree path. Model setup is in `setup_models.py`; the matched Bergamot glue and
+WASM plus registry snapshots are retained in `firefox-engine/`. The bundle is local temporary
+storage, not a published or permanent benchmark dataset.
+
 ## Testing Expectations
+
+Expanded local evaluation verification on 2026-10-26:
+
+- `node --import tsx --test scripts/experiments/translation/local-markdown.test.mts`: five passed.
+- The temporary adapter suite at `/tmp/hosty-opus-20261026/local-markdown.test.mts`: eight passed,
+  including continuation indentation and soft-wrap handling on the real plan inputs.
+- `node --import tsx /tmp/hosty-opus-20261026/verify-final.mts <registered-worktree>`: all 150 final
+  document outputs revalidate and shared input hashes match. This validates structure, not meaning.
+- `node scripts/docs-index.mjs --fix`, `node scripts/docs-index.mjs --check` and `git diff --check`: passed.
+- Benchmark workers have exited; the temporary translateLocally disk image is unmounted. Model files
+  and evidence remain in the temporary replay bundle. No release version changes or commits are made.
+- Application builds, Core-managed integration/browser checks and the full test suites are not run:
+  the repository change is documentation-only; all model/adapter experiments remain outside it.
 
 - Settings UI coverage checks the separate translation tab, enable/disable persistence, models while
   disabled, multiple/missing/changed accounts, failed saves, and custom model validation.

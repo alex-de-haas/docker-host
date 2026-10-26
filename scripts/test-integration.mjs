@@ -9,7 +9,7 @@ const cli = 'apps/cli/src/Haas.Hosty.Cli/Haas.Hosty.Cli.csproj';
 const coreTests = 'apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj';
 const cliTests = 'apps/cli/tests/Haas.Hosty.Cli.Tests/Haas.Hosty.Cli.Tests.csproj';
 const windowsFilter = 'FullyQualifiedName~WindowsProcessControlTests|FullyQualifiedName~StopAsync_OnWindowsKillsAdoptedJobDescendantAfterShellExited|FullyQualifiedName~CoreDevelopmentTests|FullyQualifiedName~ExplicitStop|FullyQualifiedName~SourceDocuments_ReferenceMetadataSupportsLfAndCrLf|FullyQualifiedName~WorkspaceGit_|FullyQualifiedName~JsonStorageTests';
-export const suites = Object.freeze(['activation', 'dependencies', 'sessions', 'windows', 'transport', 'worker', 'whisper', 'documents']);
+export const suites = Object.freeze(['activation', 'dependencies', 'sessions', 'windows', 'transport', 'worker', 'whisper', 'opus', 'documents']);
 const usage = 'Usage: npm run test:integration -- <' + suites.join('|') + '> [--dry-run]\n'
   + 'Runs one explicitly selected local suite. Builds its fixtures first; no automatic retries.\n'
   + 'activation: .NET, Git, Python, Docker; isolated managed Core Return and recovery\n'
@@ -20,6 +20,7 @@ const usage = 'Usage: npm run test:integration -- <' + suites.join('|') + '> [--
   + 'documents: .NET, Git, Python, Docker; current docs, workspace progress and scoped events in a managed Core\n'
   + 'worker: Docker; builds the manifest-matching worker image and checks its lifecycle\n'
   + 'whisper: .NET; downloads the pinned model and runs native CPU inference\n'
+  + 'opus: Node 24 and uv; builds the app and runs pinned native OPUS-MT Big inference\n'
   + '--dry-run prints prerequisites and commands without running them.';
 
 export function suitePlan(suite, { platform = process.platform, node = process.execPath,
@@ -77,6 +78,11 @@ export function suitePlan(suite, { platform = process.platform, node = process.e
         command(node, ['scripts/check-harness-worker.mjs']),
       ] };
     }
+    case 'opus':
+      return { prerequisites: [command(node, ['--version']), command('uv', ['--version'])], steps: [
+        command(node, ['apps/opus/scripts/build.mjs']),
+        command(node, ['--import', 'tsx', '--test', 'apps/opus/test/native.integration.ts'], { HOSTY_OPUS_INTEGRATION: '1' }),
+      ] };
     case 'whisper':
       return { prerequisites: [dotnet], steps: [command('dotnet', [
         'test', 'apps/whisper/Hosty.Whisper.Tests/Hosty.Whisper.Tests.csproj', '--filter', 'FullyQualifiedName~NativeSpeechTests',
