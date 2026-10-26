@@ -944,7 +944,7 @@ Decisions 1–5: 2026-08-19.
     Replace agent.skillFile through a coordinated producer/reader migration. Each app can supply
     several complete directories with SKILL.md, references, examples and supporting files; no
     permanent single-file compatibility mode is selected. Decision 58 selects the manifest and
-    catalog shape; API and rollout details remain in the [Shared Skills Draft](features/agent-skills/plan.md). Test both Harness native
+    catalog shape; API and rollout details remain in the [Shared Skills](features/agent-skills/feature.md). Test both Harness native
     runtimes, different profile selections and one explicitly provisioned external local client.
     Supporting files must survive for pinned conversations under an explicit retention contract.
     Existing tool/app authority remains separate from package selection. Automatic Git updates,
@@ -966,7 +966,7 @@ Decisions 1–5: 2026-08-19.
 
     The shared API covers catalog lookup, package reads, import, update checks/apply and prepared
     execution sets. Harness keeps profiles/instructions. The
-    [Shared Skills Draft](features/agent-skills/plan.md#selected-package-and-catalog-contract-2026-10-26)
+    [Shared Skills](features/agent-skills/feature.md#api-and-delivery)
     owns exact examples and remaining validation, API, storage/export and migration questions.
     This records accepted design only; status remains Draft and implementation is not authorized.
 
@@ -988,7 +988,7 @@ Decisions 1–5: 2026-08-19.
     source checkout/download across selected packages in an operation; keep only each skill's current
     installed contents and source commit, with no archive for sessions. Download transport does not
     dictate update granularity. Update all does not install unselected skills. The
-    [Shared Skills Draft](features/agent-skills/plan.md) owns remaining integration details. Git checks
+    [Shared Skills](features/agent-skills/feature.md) owns remaining integration details. Git checks
     do not apply updates automatically. App packages continue to follow their supplying app.
 
     The owner rejects adding a Node.js dependency for skills management. Implement the mechanism
@@ -1008,7 +1008,7 @@ Decisions 1–5: 2026-08-19.
 
     Manual package upload is removed from the initial slice. Its only sources are Git and installed
     apps; no archive-upload UI/API or upload replacement flow is required. Earlier upload references
-    in decisions 57-58 are superseded. The [Shared Skills plan](features/agent-skills/plan.md) now
+    in decisions 57-58 are superseded. The [Shared Skills](features/agent-skills/feature.md) now
     tracks implementation/acceptance under D1-D6. Runtime verification belongs to delivery rather
     than requiring finished code before Ready. This records scope, not implementation start or
     promotion from Draft.

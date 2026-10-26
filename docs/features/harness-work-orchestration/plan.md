@@ -30,7 +30,7 @@ Use an assistant default before profiles are configured. Do not pin conversation
 revisions or retain deleted skills; missing selections do not block creation/resume. Native clients
 control when updated files are loaded. Profile customization does not edit/fork skill packages,
 create personal libraries or rewrite instructions already loaded in a session.
-The [selected skills contract](../agent-skills/plan.md#selected-package-and-catalog-contract-2026-10-26)
+The [selected skills contract](../agent-skills/feature.md#api-and-delivery)
 uses stable skill IDs in profiles and current content in execution exports, following vision decision 59.
 New app packages appear in the common catalog without being automatically added to profiles.
 Decision 60 limits initial sources to Git/app packages and removes repeated content-digest acceptance
@@ -69,7 +69,7 @@ is not required for first acceptance, but the contracts must remain consumable b
 
 ## Dependencies And Ownership
 
-[Shared Skills](../agent-skills/plan.md), [Agent Participants](../agent-participants/plan.md),
+[Shared Skills](../agent-skills/feature.md), [Agent Participants](../agent-participants/plan.md),
 [Agent Providers](../agent-provider-interface/plan.md), [Shared Tasks](../shared-tasks/plan.md),
 [Notifications D6](../notifications/plan.md#deliverables), [Artifacts](../shared-artifacts/plan.md),
 [Decisions](../shared-decisions/plan.md) and [Durable Jobs](../durable-agent-jobs/plan.md) own their

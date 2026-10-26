@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-16
-updated: 2026-10-18
+updated: 2026-10-26
 summary: Repository provisioning, installable releases and feeds, and catalog promotion for apps built in Hosty.
 components: [apps/core, apps/harness]
 ---
@@ -59,7 +59,7 @@ and do not inherit permission from a discovery call.
 - Marketplace owns catalog-specific instructions and submission metadata. Start with a maintained
   instruction contract; add MCP only for concrete structured queries/actions that need it. Current
   skill delivery follows enabled MCP providers, so a skill-only Marketplace is not automatically
-  discoverable: decide an explicit delivery path instead of assuming `agent.skillFile` alone works.
+  discoverable: decide an explicit delivery path using the shared `agent.skills` package contract and explicit native selection.
 - A Marketplace tool may prepare/submit a catalog contribution with its own scoped authorization;
   it must not inherit authority to install, update or remove apps. Core remains catalog-agnostic.
 - Keep repository tokens in the selected credential provider, never prompts, generated app files,

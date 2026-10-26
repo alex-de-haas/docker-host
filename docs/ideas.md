@@ -851,7 +851,7 @@ schema and resource-wait policy remain Draft questions. Basic artifacts support 
 learned memory stays only in I1 and outside the current work.
 
 **Skill-library boundary, 2026-10-26:** [Vision decisions 57-60](vision.md) and the
-[Shared Skills Draft](features/agent-skills/plan.md) select one administrator-managed Core pool,
+[Shared Skills](features/agent-skills/feature.md) select one administrator-managed Core pool,
 profile selections and current installed content, without retained session revisions. Automatic Git skill updates and personal
 skill libraries remain possible later ideas, without a commitment or current deliverable. The first
 slice has Git/app packages, manual Git updates, app-coupled updates and editable instructions/profiles;

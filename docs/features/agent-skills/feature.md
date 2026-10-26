@@ -121,7 +121,9 @@ These checks verify delivery and native tool execution, not model judgment or wo
 
 A parent-managed source child Core supplies normal password login, Shell embedding and the
 Harness library UI. A separate unrelated Docker app creates its own export through the service
-API and reads it from Core's read-only collection mount. App lifecycle acceptance covers multiple
+API and reads it from Core's read-only collection mount; manual updates change files inside
+an already running container. Explicit upstream removal clears selected exports. Both native
+adapters accept fresh and resumed turns with a removed skill ID; fresh catalogs omit it. App lifecycle acceptance covers multiple
 packages, stable keys across directory moves, updates, invalid-package rejection and removal.
 Private Source revocation is covered with real Git and a substituted authenticated transport;
 ordinary operator credentials are not used by the acceptance fixtures.
