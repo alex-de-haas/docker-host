@@ -40,7 +40,8 @@ multiple manifest pages appear in its sidebar. The shared SDK registers a separa
 workspace for each application window before mounting its frame.
 
 The dock contains accessible apps, marks open windows, dims stopped apps for administrators,
-and supports ordering and favorites. Applications and Appearance are built-in windows.
+and supports ordering and favorites. Its horizontal scroll area reserves space around enlarged
+hover/focus icons and focus rings without changing the dock's visible size. Applications and Appearance are built-in windows.
 Search is available from the menu bar and Command-K/Control-K. Window menus also expose
 keyboard-accessible maximize and tile actions.
 
