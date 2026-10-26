@@ -37,6 +37,7 @@ jobs:
       app_sdk: ${{ steps.filter.outputs.app_sdk }}
       app_sdk_dotnet: ${{ steps.filter.outputs.app_sdk_dotnet }}
       whisper: ${{ steps.filter.outputs.whisper }}
+      opus: ${{ steps.filter.outputs.opus }}
       demo_app: ${{ steps.filter.outputs.demo_app }}
       core: ${{ steps.filter.outputs.core }}
       core_aot: ${{ steps.filter.outputs.core_aot }}
@@ -413,6 +414,26 @@ jobs:
       - name: Build Marketplace
         run: npm run marketplace:build
 
+  opus:
+    name: OPUS Translate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: changes
+    if: needs.changes.outputs.opus == 'true'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.changes.outputs.sha }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run opus:build
+      - run: npm run opus:test
+      - name: Verify model cache boundaries without downloading weights
+        run: python3 -m unittest discover -s apps/opus/runtime -p 'test_*.py'
+
   documents:
     name: Documents
     runs-on: ubuntu-latest
@@ -611,7 +632,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     if: always()
-    needs: [changes, versions, docs, ci-policy, actionlint, shell, app-sdk, app-sdk-dotnet, whisper, demo-app, core, core-aot, cli, telemetry-backend, marketplace, documents, harness, telemetry-ui, swift-shell, cardputer-shell]
+    needs: [changes, versions, docs, ci-policy, actionlint, shell, app-sdk, app-sdk-dotnet, whisper, opus, demo-app, core, core-aot, cli, telemetry-backend, marketplace, documents, harness, telemetry-ui, swift-shell, cardputer-shell]
     steps:
       - uses: actions/checkout@v7
         with:

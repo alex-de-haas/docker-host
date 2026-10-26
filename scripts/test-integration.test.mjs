@@ -83,6 +83,14 @@ test('native inference is opt-in and preserves caller environment without modify
   assert.equal(env.HOSTY_WHISPER_INTEGRATION, undefined);
 });
 
+test('OPUS builds before inference, uses uv, and opts in without requiring Docker', () => {
+  const plan = suitePlan('opus', { node: '/node with spaces' });
+  assert.deepEqual(plan.prerequisites.map(step => step.file), ['/node with spaces', 'uv']);
+  assert.deepEqual(plan.steps[0].args, ['apps/opus/scripts/build.mjs']);
+  assert.equal(plan.steps[1].env.HOSTY_OPUS_INTEGRATION, '1');
+  assert.ok(plan.steps.every(step => step.file === '/node with spaces'));
+});
+
 test('GitHub Actions cannot accidentally opt into the local runtime suites', () => {
   assert.equal(main(['activation'], { ...options, env: { GITHUB_ACTIONS: 'true' }, run: () => assert.fail('unexpected process') }), 2);
 });

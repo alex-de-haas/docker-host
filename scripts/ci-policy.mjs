@@ -5,14 +5,15 @@ import { pathToFileURL } from "node:url";
 
 export const BASE_JOBS = Object.freeze(["changes", "versions", "docs", "ci-policy"]);
 export const COMPONENTS = Object.freeze([
-  "shell", "app-sdk", "app-sdk-dotnet", "whisper", "demo-app", "core", "cli",
+  "shell", "app-sdk", "app-sdk-dotnet", "whisper", "opus", "demo-app", "core", "cli",
   "telemetry-backend", "marketplace", "documents", "harness", "telemetry-ui", "swift-shell", "cardputer-shell",
 ]);
 export const PROFILES = Object.freeze(["core-aot"]);
 export const ALL_JOBS = Object.freeze([...BASE_JOBS, "actionlint", ...COMPONENTS, ...PROFILES]);
-const NODE_COMPONENTS = ["shell", "app-sdk", "demo-app", "marketplace", "documents", "harness", "telemetry-ui"];
+const NODE_COMPONENTS = ["opus", "shell", "app-sdk", "demo-app", "marketplace", "documents", "harness", "telemetry-ui"];
 const DOTNET_COMPONENTS = ["app-sdk-dotnet", "whisper", "core", "cli", "telemetry-backend"];
 const COMPONENT_PATHS = [
+  ["apps/opus/", "opus"],
   ["apps/shell/", "shell"], ["apps/demo-app/", "demo-app"], ["apps/marketplace/", "marketplace"],
   ["apps/documents/", "documents"], ["apps/harness/", "harness"], ["apps/telemetry-ui/", "telemetry-ui"],
   ["apps/shell-swift/", "swift-shell"], ["apps/shell-cardputer/", "cardputer-shell"],

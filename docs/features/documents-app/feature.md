@@ -115,6 +115,10 @@ same ordinary workspace and publication rules as other work.
 
 ### Translate A Document And Optional Permissions
 
+The provider list supports [OPUS Translate](../local-translation/feature.md), the independent local
+English-to-Russian provider. Generic unavailable/not-ready messages refer to the selected provider
+and Core status/logs; provider-supplied readiness reasons remain visible.
+
 Reading needs apps.sources.read and administrator access. Assistant, panel and translation access
 remain optional permissions reviewed by Core. Permission failures leave source reading available.
 Panel placement uses the SDK host in Shell and the standalone host otherwise. Translation retains

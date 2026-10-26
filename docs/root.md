@@ -152,6 +152,7 @@ Plans: 14 In Progress · 1 Blocked · 46 Draft · 7 On Hold.
 - [Local Browser Origins](features/local-browser-origins/feature.md) — Core derives local browser addresses under hosty.localhost without stored public origins or DNS. · [plan](features/local-browser-origins/plan.md): In Progress, 31/40, updated 2026-10-10
 - [Local Development And Testing](features/local-development/feature.md) — The Core-managed local development and test loops for Core, Shell and runtime apps.
 - [Local Password Login](features/local-password-login/feature.md) — Core-owned email and password setup, recovery, invitations and login.
+- [Local OPUS Translation](features/local-translation/feature.md) — Independent OPUS-MT Big CPU translation app for English-to-Russian text and protected Markdown, with pinned native dependencies and verified model caching.
 - [Manifest-Level App Assets](features/manifest-level-app-assets/feature.md) — An app's icon, screenshots and markdown description live in its own repository and Core serves them for installed apps. · [plan](features/manifest-level-app-assets/plan.md): Draft, 0/3, updated 2026-10-05
 - [Manifest Projection Backfill](features/manifest-projection-backfill/feature.md) — A Core upgrade re-projects installed app records from their manifests without operator action.
 - [MCP Facade — One Remote Endpoint For The Whole Fleet](features/mcp-facade/feature.md) — A Harness MCP endpoint that exposes Core and every enabled app's tools through one remote entry. · [plan](features/mcp-facade/plan.md): On Hold, 0/6, updated 2026-10-10
