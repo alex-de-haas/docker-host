@@ -1,6 +1,6 @@
 ---
 created: 2026-10-16
-updated: 2026-10-25
+updated: 2026-10-26
 summary: Core coordinates workspace pause, verified completion, conservative deletion and separately confirmed physical removal of unwanted unfinished work.
 components: [apps/core, apps/harness]
 ---
@@ -75,6 +75,12 @@ already-admitted cleanup retains its recovery path; pending source cleanup preve
 being acknowledged until that earlier operation is resolved. Replaying a successful pause after Resume returns its receipt without
 cancelling the new run. Terminal session events refresh worker availability in the chat, so recovered
 Docker health does not remain stale until a page reload.
+
+Harness reads Core's workspace owner after pause admission. External workspaces skip participant
+lookup and Harness session cancellation, then submit the original pause UUID/revision for Core
+confirmation. Active external leases and outstanding source operations still block confirmation;
+recovery of a stopped external lease can finish the same pause without a participant record.
+Unavailable or unrecognized ownership retains the pending request for an explicit retry.
 
 External agents and older assistant installations are not impersonated. Unrelated sessions are not stopped.
 Their outstanding source operations and leases block acknowledgement. Since the shared worker can
