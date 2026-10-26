@@ -3,7 +3,7 @@ status: Draft
 created: 2026-10-26
 updated: 2026-10-26
 summary: Minimal described and versioned work artifacts with authorized save, discovery and reads, durable references and explicit agent handoffs.
-components: [apps/core, apps/harness, apps/plans, packages/app-sdk, packages/app-sdk-dotnet]
+components: [apps/core, apps/harness, apps/documents, packages/app-sdk, packages/app-sdk-dotnet]
 ---
 
 # Shared Work Artifacts And Handoffs

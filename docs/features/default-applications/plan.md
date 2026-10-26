@@ -1,9 +1,9 @@
 ---
 status: Draft
 created: 2026-10-08
-updated: 2026-10-20
+updated: 2026-10-26
 summary: Proposed shared defaults for host UI and assistants, with personal overrides, explicit migration and no silent replacement of selected providers.
-components: [apps/core, apps/cli, apps/shell, apps/plans, packages/app-sdk]
+components: [apps/core, apps/cli, apps/shell, apps/documents, packages/app-sdk]
 ---
 
 # Default Applications
@@ -43,7 +43,7 @@ Inspected on 2026-10-10:
   [resolver](../../../apps/shell/src/app/shell/assistant/assistant-client.ts) picks a sole assistant
   when no preference exists and retains an invalid explicit choice without silently replacing it.
   Shell chooses the `default` interface key, or the first declaration, within an app.
-- [Plans discussions](../../../apps/plans/src/lib/discussion-server.ts) independently enumerate
+- [Plans discussions](../../../apps/documents/src/lib/discussion-server.ts) independently enumerate
   providers and require an explicit app ID/key, interface version 1, attachments and a UI destination.
   They preserve the selected provider and request ID through prepare/upload/finalize retries.
 - [Provider access](../../../apps/core/src/Haas.Hosty.Core/ProviderEndpoints.cs) already discovers

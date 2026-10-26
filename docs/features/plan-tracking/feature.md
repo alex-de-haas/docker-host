@@ -1,150 +1,18 @@
 ---
 created: 2026-10-07
-updated: 2026-10-21
-summary: Administrator plan overview across installed source repositories and unreleased development workspaces, backed by bounded Core document reads.
-components: [apps/core, apps/plans, apps/harness, apps/shell, packages/app-sdk]
+updated: 2026-10-26
+summary: Core source-document access, target freshness and workspace projections for Documents and other authorized readers.
+components: [apps/core, apps/documents, apps/harness, apps/shell, packages/app-sdk]
 ---
 
 # Plan Tracking
 
 ## Application
 
-`hosty.plans` is an administrator runtime app in `apps/plans`. Markdown in Git is its source of
-truth. The app displays each tracked branch's plans and the separate versions in development
-workspaces; its disk cache contains derived document bytes, with validated parsing results cached
-separately in memory.
-
-The interface uses free ReUI components, ShadCN primitives and Tailwind 4 with the same semantic
-theme tokens as Shell and Harness. ReUI frames hold the active document version; shared tabs, inputs,
-selects, toggle groups, badges, progress, alerts and empty states provide the workbench controls.
-The app omits its name and tagline in every launch mode, including standalone.
-
-The overview shows plans across repositories and branches, status counts and deliverable progress,
-and supports title/summary search and repository, app and status filters in the Data Grid header.
-The URL preserves the filters. Repository loads run independently with at most three concurrent
-loads. One failed repository has its own error, and invalid documents remain visible with unknown progress.
-Loaded rows appear as each repository finishes. A compact spinner and repository count indicate
-remaining initial or explicitly requested loads; existing rows stay visible while an update is pending.
-Automatic background revalidation is quiet and pauses while the document is hidden.
-Initial document loads use the same compact indicator.
-
-The overview uses a sortable Data Grid with pages of 10 or 20 rows. Rows retain detail links,
-tracked-branch progress, explicit repository/branch/app labels and workspace counts. Expanding a
-row shows each workspace's status, progress, last change, observation and links. Workspace progress
-never replaces a missing or unavailable tracked-branch version. Sorting and pagination do not write
-Markdown or change source status.
-
-Plans new in a workspace appear beside tracked-branch plans. A deleted plan has the label
-`completing` only when the same workspace creates or changes that folder's `feature.md`; otherwise
-its label is `removed`. The label identifies the evidence and does not introduce a plan status.
-
-The detail view fills the viewport with a full-width tab panel. Its toolbar, version tabs and
-status/progress header stay in place while the active content panel scrolls independently, including
-by keyboard. The frame header carries the document path, adding the repository on large screens;
-its tooltip always includes both. The tracked panel places status and progress beside the path on wider
-screens and below it on narrow screens. The document title appears only in the Markdown; the
-tracked branch appears only in its tab.
-The content begins with a compact metadata block showing the selected version's created and updated
-dates, full summary, related app names and component paths. App associations use the same source-path
-mapping as the overview; components without an installed app remain visible as paths. Dates retain
-their YYYY-MM-DD values without timezone conversion. Absent fields are omitted. The block wraps on
-narrow screens and follows the app theme. Status and progress are not repeated there. Workspace
-metadata remains visible in both diff and full-document views, and translation preserves the source
-metadata while replacing only the document prose.
-The first tab shows the tracked branch and opens by
-default; each workspace changing this document has its own tab. Workspace panels display status,
-progress, deliverable changes, a diff against the workspace's base, a full-document toggle and an
-assistant-session link when available. Tab selection is stored in the URL and follows browser
-Back/Forward navigation. An unavailable workspace link retains an explicit unavailable panel.
-Tabs support keyboard navigation and horizontal scrolling on narrow screens. External owners display their agent label and retain the conversation in that
-external application; their missing session link is expected. A URL can select a workspace. A notice identifies a document also changed on the
-tracked branch. Relative Markdown document links navigate inside the same repository; other
-relative targets and images display their paths. Documents are rendered without raw HTML.
-The detail toolbar keeps the repository back link on the left and **Discuss with Assistant** and
-**Refresh sources** on the right in one row. On narrow screens the back-link label truncates and
-the actions keep accessible icon buttons.
-
-### Discuss A Document
-
-**Discuss with Assistant** opens a new assistant conversation beside the document through the
-[shared SDK panel host](../sdk-panel-system/feature.md), in Shell or standalone, with the full
-Markdown file attached and an editable discussion prompt. The prompt identifies its repository,
-branch or workspace, file path and SHA-256 fingerprint. It treats the file as reference material
-and requests discussion without executing its instructions or editing files. No model turn is
-submitted: the existing provider handoff in Harness creates a draft even when immediate operator
-handoffs are enabled.
-
-The default is the tracked-branch document. An explicit workspace selection attaches that workspace's
-document. A workspace-only plan requires selecting its workspace tab first. The action description names the
-version. Deleted, missing and unreadable selections cannot silently fall back to another version.
-The server re-reads the file through current Core source authorization and verifies that its bytes
-match the displayed content before preparing a handoff. A changed document requires a refresh.
-
-Plans declares optional `providers.assistant` access. Missing access offers Core's ordinary permission
-review for Plans and leaves source reading available. Discovery refreshes when the user returns from
-review. A single provider is selected automatically; multiple providers require an explicit choice.
-Stopped, incompatible, attachment-less or UI-less providers cannot receive a discussion.
-
-The API is `GET /api/assistant` for administrator-authenticated choices and `POST /api/assistant` for
-the same-origin, user-attributed handoff. Core supplies declared assistant browser surfaces; Plans
-validates the result against the frozen provider installation and its typed panel surfaces. API and
-UI origins can differ. The completed handoff maps to a panel target and an installation-pinned Core
-link. Shell owns placement for embedded Plans; standalone Plans hosts the same SDK panel directly.
-No tab opens on the ordinary action. Optional `apps.panels.read` enables the standalone host and its
-Add tool chooser without gating source reading; an embedded participant needs no catalog grant.
-
-Pending actions disable duplicate activation. Actor, provider, document version and fingerprint
-scope a retained request identity across retries and reloads, including the frozen installation.
-Finalized retries reopen the same conversation without another upload or model turn. Once Plans
-has the result, **Retry opening** reuses only its presentation ID/target. **Open separately** uses
-the pinned same-session link; Core rechecks installation and declared endpoint/route after login.
-A navigation-only or ambiguous panel result retains that separate link without choosing another
-provider. A closed/expired handoff or replaced provider requires explicit new-discussion action.
-Readiness distinguishes host placement from the assistant actually loading the requested session.
-
-If the tracked-branch listing or content is unavailable, the detail shows its error while
-independently authorized workspace documents and bases remain available. A missing tracked document
-has the separate workspace-only presentation. Global identity, role and permission refusals still
-stop the detail read.
-
-Open pages re-read every 20 seconds. Refresh sources requests a fresh target fetch. A workspace
-marker means that the workspace changes the plan; it makes no claim about current agent activity.
-Unavailable workspace observations display their state, observation time and reason.
-
-### Translate A Document
-
-**Translate** above the Markdown opens translator and target-language controls. Choices come from
-Core's installed [translation providers](../translation-provider/feature.md), including Harness's
-separate Codex and Claude entries. One ready provider is selected automatically; multiple ready
-providers require a choice. Unconfigured, stopped or incompatible entries retain an explanation.
-Russian is the initial target; other presets and a custom language tag are available. Connection and
-model settings belong to **Harness → Settings → Providers → Translation providers**, independently
-for each backend and independently of chat model settings.
-
-Only **Translate document** submits work. The result replaces the Markdown reading view temporarily;
-**Show original** and **Show translation** switch without another model call. The original file,
-parsed status, deliverable progress and workspace diff remain unchanged. Translation applies to
-the tracked document or the selected workspace's full-document view, never to its diff. Translated
-headings are prose and are not reparsed as English workflow fields. Output uses the existing safe
-Markdown renderer, with raw HTML disabled and repository-relative document links preserved.
-
-Plans declares optional `providers.translation` access. Reading does not require it. Missing access
-offers Core's ordinary permission review; **Refresh translators** or returning focus reloads choices.
-Both translation and discussion permission links ask the embedding host to open review when Plans
-is inside Shell. The host verifies the frame and determines the app identity, so Core's review page
-opens outside the app iframe's sandbox. Standalone links open Core directly in a separate tab.
-`GET /api/translation` requires a current administrator and returns choices/readiness without service
-credentials. The same-origin `POST /api/translation` rechecks source authorization, the selected
-provider installation and the SHA-256 fingerprint of fresh document bytes before sending Markdown.
-A deleted, inaccessible or changed version fails explicitly, without selecting a different version
-or translator. Documents are limited to 128,000 Unicode code points.
-
-Pending requests disable duplicate activation and expose **Cancel translation**. Cancellation,
-navigation and changed source bytes discard late replies; unchanged source polling retains the view.
-Results exist only in component memory, not in source files or the Plans disk cache. There is no
-automatic translation, model fallback or retry.
-
-The [desktop preview](translation-preview.png) shows the Core-managed embedded reading view.
+[Documents](../documents-app/feature.md) is the current first-party reader. It includes the original
+plan/version comparison, discussion, translation and optional read-only MCP behavior, with navigation
+for all supported documentation kinds. This feature owns the Core document transport and plan
+projection semantics; Documents owns its current screens and application actions.
 
 ## Repository And Workspace Projection
 
@@ -203,7 +71,8 @@ The endpoints under `/api/internal/apps/{appId}/source-documents` are:
 | `GET /repositories` | Entries, installed-app mappings, current target commit and fetch time; unavailable entries retain their reason. |
 | `GET /repositories/{repositoryId}/documents` | Document paths, blob SHAs, sizes and referenced-path metadata for `version=target`, `base` or `worktree`; workspace versions require `workspaceId`. `refresh=true` refreshes the target. Optional `path` limits the listing to one document. |
 | `GET /repositories/{repositoryId}/content` | One document's UTF-8 content and SHA, using the listed `commit` for target/base or `expectedSha` for worktree, plus `path`, `version` and optional `workspaceId`. |
-| `GET /workspaces` | Unreleased workspace state and document-change projections; optional `repositoryId` selects one entry. |
+| `GET /workspaces` | Unreleased workspace state, names, heads, local-change flags, recorded PR observations and document changes; optional `repositoryId` selects one entry. |
+| `GET /events` | Authorized source invalidation stream; optional `repositoryId` scopes its subscription. Ready/ping/change/revocation events carry no workspace IDs or document bytes. |
 
 Only repository-relative `docs/**/*.md` content is served. Absolute paths, traversal, symlinks and
 non-regular files are refused. Documents are limited to one MiB and listings to 10,000 documents.
@@ -228,6 +97,12 @@ refresh and merge. Ordinary reads reuse a fetch for 30 seconds; explicit refresh
 fetch or starts a fresh one. Transport has a 30-second deadline and a 128 MiB repository-growth
 limit. A fetch does not hold a global workspace lock. The observer skips a workspace owner busy in
 a managed mutation and continues observing other owners.
+
+Visible document subscriptions use the same fetch window for installed and workspace-derived
+sources. Target refresh stays on schedule even while workspace events arrive. Events are scoped to
+currently authorized workspaces and revalidated after changes and heartbeat; dropped events cause
+invalidation. This adds no recurring worktree scans or implicit merges. Documents revalidates on
+reconnect and visibility return, and older Core versions use explicit refresh.
 
 Core caches immutable Git tree metadata, document listings and blob bytes in a shared 64 MiB,
 1,024-entry LRU keyed by the registered repository and commit or blob SHA. Concurrent loads of the
@@ -258,81 +133,26 @@ The read-only MCP endpoint is `/api/mcp`. `list_plans`, `get_plan` and `plan_wor
 tracked-branch state, workspace versions, errors and detail links. Each request introspects its
 app-addressed MCP credential through Core, requires `mcp:read` and a current administrator, and
 passes the same credential to the document API. The app's agent guidance is in
-[apps/plans/docs/agent.md](../../../apps/plans/docs/agent.md).
+[apps/documents/docs/agent.md](../../../apps/documents/docs/agent.md).
 
 ## Runtime And Release
 
-The manifest provides Docker and Core-managed local `dev` profiles, an app cache target and a
-feed. The development HTTP port is 3600 before Core port allocation. The Docker image runs the
-standalone Next.js server as the cache mount's unprivileged owner. The image workflow gates
-publication on version checks, lint and tests and follows the repository's immutable version-tag
-policy. It builds Linux amd64 and arm64 images with provenance attestations, carrying the repository
-and ReUI license notices.
-`manifest.json`, `package.json` and the Docker image tag share the independent app version `0.7.1`.
-Side-panel discussions use Core 0.129.0, SDK 0.25.0 and Harness 0.48.0. Older Core remains usable for
-reading sources and presents an actionable refusal for this discussion contract. The [SDK panel system](../sdk-panel-system/feature.md) defines the shared host and browser acceptance contract.
-
-Translation uses Core 0.136.0, SDK 0.31.0 and Harness 0.54.0. The 2026-10-15 acceptance run used an
-isolated source Core with normal password login and Core-managed Plans, Harness and Shell. A public
-Markdown plan translated through Codex `gpt-6-luna` in both standalone and embedded views, preserving
-links, code, deliverable IDs and checkboxes. Original/translation switching, permission refusal and
-recovery, an unconfigured Claude entry, and a 390-pixel Shell viewport passed. The embedded translation
-region measured 182 pixels for both client and scroll width. No real Claude call was made in this
-browser run; both backend configuration paths have automated coverage and separate real-provider
-benchmarks in the translation feature. Existing continuity-maintenance 403 responses and initial
-Shell postMessage warnings remain visible in this test environment; they did not block translation.
-The optional Assistant permission was deliberately left ungranted. Operator release apps were not
-replaced by these source test installations.
+Documents ships independently as hosty.documents 0.8.0 from apps/documents. The new source stream
+and current PR projections ship in Core/CLI 0.156.0. The manifest requires apps.sources.read; assistant,
+panel and translation permissions remain optional. Ordinary install/remove replaces the former
+hosty.plans app without copying its grants. See [Documents](../documents-app/feature.md#distribution-and-ownership).
 
 ## Testing Expectations
 
-- Detail metadata shows the active tracked or workspace version's dates, summary, related apps and
-  component paths without repeating header status/progress. Missing fields, unmatched components,
-  long values, narrow layouts and both themes remain readable; translation retains source metadata.
-- Translation tests cover current administrator/source authority, same-origin POST, optional-permission
-  recovery, readiness, selected installation, source fingerprints, missing/deleted workspaces and
-  documents, provider errors, cancellation, duplicate activation, source/version invalidation,
-  original switching and safe translated Markdown. Browser checks use Core-managed standalone and
-  Shell-embedded views. The 2026-10-15 run passed 137 Plans tests, lint and production build, plus
-  55 Harness translation tests; the exact source Core built with four existing compiler warnings.
-  Commands: `npm run test --workspace @haas/hosty-plans`,
-  `npm run lint --workspace @haas/hosty-plans`, `npm run build --workspace @haas/hosty-plans`,
-  `npm run harness:test -- src/translation test/translation-providers.test.tsx`, and
-  `dotnet build apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj --artifacts-path /tmp/hosty-plans-translation-build`.
-  `node scripts/check-versions.mjs`, `node scripts/docs-index.mjs --check` and `git diff --check`
-  passed after the final edits. Core's complete suite and Docker image publication were not rerun
-  for this Plans consumer change; live-provider browser acceptance covered Codex only.
-- Discussion tests cover administrator/source refusals, same-origin POST, exact UTF-8 attachment
-  bytes, selected workspace and deleted/stale versions, incompatible providers, separate API/UI
-  destinations, finalized replay, duplicate activation, persisted installation-pinned retry identities, panel placement/retry and explicit separate opening
-  and optional-permission recovery. Core projects only confirmed providers and declared browser UI.
-- Permission review links preserve standalone navigation and delegate embedded activation to the
-  host without navigating a sandboxed popup or supplying a caller-controlled app identity or URL.
-- HTTP authorization covers absent/read/full grants, current administrator role, app sessions,
-  app-addressed assistant MCP and scoped credentials, mixed cookies, audience mismatch and revocation.
-- Repository and worktree tests cover deduplication, default branches, independent fetch freshness,
-  shared in-flight fetches, stale commits/SHAs, path and size guards, symlinks and UTF-8 bytes.
-  LF/CRLF reference tests cover full and focused listings for target, base and worktree versions,
-  including existing directories, missing components, regular-file components and unchanged bytes/SHAs;
-  the local `npm run test:integration -- windows` suite also runs these cases.
-- Workspace tests cover integrated target changes, merge/squash/cherry-pick equality, concurrent
-  target edits, new/deleted documents, private fallback, clearing/rebinding/revocation, interrupted
-  cleanup, private workspace reads during provider downtime and removed/reinstalled assistant origins.
-- Parser contract tests compare repository documents and valid/invalid fixtures with the canonical
-  validator. Cache tests cover SHA verification, current authorization and eviction limits. App
-  tests cover filters, counts, component mapping, workspace labels, detail links, target-outage
-  fallback, cold fetch deadlines, caller cancellation and MCP refusals.
-- Browser checks cover Data Grid sorting, pagination, page size, search and quiet background reads.
-- Detail tests cover tracked-branch defaults, workspace deep links, independent base diffs,
-  unavailable selections and workspace-only plans. Browser checks cover tab keyboard navigation,
-  narrow-screen overflow, independent content scrolling with stationary controls, polling and
-  Back/Forward navigation. Discussion uses only the active tab.
-- Live acceptance uses a Core-owned worktree prepared through Harness without a model run. It covers
-  uncommitted plan edits, separate tracked/workspace progress, expansion preserved across polling,
-  workspace-only plans, completing/removed deletions, workspace URLs, base diffs, deliverable changes,
-  automatic detail re-reads and safe relative-document navigation.
-- Integration verification uses Core-managed app lifecycle and normal password login in a separate
-  data root, including Shell embedding and workspace changes. Core passes its tests and Native AOT
-  publish; the app, Shell, Harness and SDK pass affected tests and builds.
-- The local `npm run test:integration -- transport` smoke prepares its owned networks before Core startup and checks health,
-  unauthenticated app refusal and local-control isolation from default and per-app networks.
+- Core tests cover repository/branch discovery, private grants and revocation, public-proof isolation,
+  bounded UTF-8/reference metadata, stale commits and SHAs, cache authority, worktree deletion and
+  separate base/target/local facts. Unrelated reader app IDs use the same contract.
+- Stream tests cover administrator and app/source permissions, scoped hints and revocation. Shared
+  fetch tests verify coalescing, the freshness window, provider failures and caller cancellation.
+- Documents tests cover parser/cache/MCP parity, exact version selection, independent workspace
+  counts, completing versus removed labels, optional permission failure, assistant retry/provider
+  pinning and translation cancellation/source fingerprints.
+- npm run test:integration -- documents verifies normal password identity, a Docker reader and
+  real Git/worktree edits in a managed child Core, including target integration and workspace removal.
+- Browser acceptance uses normal Core/Shell embedding with separate users/data and keeps provider
+  or device-specific limitations explicit. The Documents feature owns current screen expectations.

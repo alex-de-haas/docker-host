@@ -8,8 +8,8 @@ namespace Haas.Hosty.Core.Tests.Http;
 
 public sealed class SourceDocumentHttpTests
 {
-    private const string AppId = "hosty.plans";
-    private const string Root = "/api/internal/apps/hosty.plans/source-documents";
+    private const string AppId = "hosty.documents";
+    private const string Root = "/api/internal/apps/hosty.documents/source-documents";
 
     [Theory]
     [InlineData("../README.md", HttpStatusCode.BadRequest, "source_document_path_invalid")]
@@ -35,10 +35,10 @@ public sealed class SourceDocumentHttpTests
     }
 
     [Theory]
-    [InlineData("hosty.plans", "mcp:read", true)]
+    [InlineData("hosty.documents", "mcp:read", true)]
     [InlineData("other.app", "mcp:read", false)]
     [InlineData("hosty:core", "mcp:read", false)]
-    [InlineData("hosty.plans", "", false)]
+    [InlineData("hosty.documents", "", false)]
     [InlineData(null, "mcp:read", false)]
     public async Task ScopedCredentialsRequireThisAppAudienceAndReadScope(string? audience, string scope, bool allowed)
     {

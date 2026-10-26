@@ -3,7 +3,7 @@ status: Draft
 created: 2026-10-25
 updated: 2026-10-26
 summary: Map reusable capabilities for shared tasks, agent participants, decisions and artifact handoffs, with explicit workspace choices, existing owners and memory deferred.
-components: [apps/core, apps/harness, apps/plans, packages/app-sdk]
+components: [apps/core, apps/harness, apps/documents, packages/app-sdk]
 ---
 
 # Composable Human And Agent Work

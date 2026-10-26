@@ -253,7 +253,7 @@ internal sealed partial class WorkspaceInspectionService(DevelopmentWorkspaceSer
     }
     private static bool SafeUrl(string url) => Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme == "https" && uri.UserInfo.Length == 0;
 
-    private async Task<InspectionPullRequest[]> PullRequestsAsync(DevelopmentWorkspace tree, string userId, CancellationToken ct)
+    internal async Task<InspectionPullRequest[]> PullRequestsAsync(DevelopmentWorkspace tree, string userId, CancellationToken ct)
     {
         if (tree.Owner.IsExternal && publications is not null)
             return await publications.ReadExternalReferencesAsync(tree, userId, ct);

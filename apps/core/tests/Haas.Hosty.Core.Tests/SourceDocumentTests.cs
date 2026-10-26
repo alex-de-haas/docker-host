@@ -34,6 +34,9 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.Equal(2, entry.Apps.Length);
         Assert.Null(entry.Commit);
         var first = await documents.ListDocumentsAsync(entry.Id, "admin", false, default);
+        var observed = await documents.ObserveTargetsAsync("admin", entry.Id, default);
+        Assert.Contains(first.Commit!, observed);
+        Assert.Empty(await documents.ObserveTargetsAsync("admin", "unrelated-repository", default));
         Assert.Equal(PlanPath, Assert.Single(first.Documents).Path);
         var references = first.Documents[0].ReferencePaths!;
         Assert.Contains(references, p => p.Path == "apps/example" && p.Exists && p.IsDirectory);
@@ -43,6 +46,7 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.Equal(first.Commit, (await documents.ListDocumentsAsync(entry.Id, "admin", false, default)).Commit);
         var changed = await documents.ListDocumentsAsync(entry.Id, "admin", true, default);
         Assert.NotEqual(first.Commit, changed.Commit);
+        Assert.NotEqual(observed, await documents.ObserveTargetsAsync("admin", entry.Id, default));
         Assert.Equal(changed.Commit, Assert.Single((await documents.ListRepositoriesAsync("admin", default)).Repositories).Commit);
         Assert.NotNull(workspaces.Fetches.LastFetched(entry.Repository, entry.Branch));
     }
@@ -191,10 +195,15 @@ public sealed partial class CoreLifecycleServiceTests
         var workspace = await workspaces.PrepareAsync(WorkspaceTestOwner(f), WorkspaceRequest() with { TargetBranch = "other" }, default);
         var entries = (await documents.ListRepositoriesAsync("admin", default)).Repositories;
         Assert.Equal(2, entries.Length);
-        Assert.True(Assert.Single(entries, e => e.Branch == "other").WorkspaceDerived);
+        var other = Assert.Single(entries, e => e.Branch == "other");
+        Assert.True(other.WorkspaceDerived);
+        await documents.ObserveTargetsAsync(workspace.Owner.UserId, other.Id, default);
+        Assert.Contains(workspace.Id, await documents.AuthorizedWorkspaceIdsAsync(workspace.Owner.UserId, other.Id, default));
+        Assert.Empty(await documents.AuthorizedWorkspaceIdsAsync(workspace.Owner.UserId, Assert.Single(entries, e => e.Branch != "other").Id, default));
         var record = Path.Combine(f.Paths.CoreRoot, "development/workspaces", workspace.Id + ".json");
         await JsonStorage.WriteAsync(record, workspace with { State = "releasing" });
         var projection = Assert.Single((await documents.ListWorkspacesAsync("admin", null, default)).Workspaces);
+        Assert.Empty(await documents.AuthorizedWorkspaceIdsAsync(workspace.Owner.UserId, other.Id, default));
         Assert.Equal("releasing", projection.State);
         Assert.Null(projection.Changes);
         Assert.NotNull(projection.Error);

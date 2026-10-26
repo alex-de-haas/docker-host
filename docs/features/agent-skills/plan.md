@@ -3,7 +3,7 @@ status: Ready
 created: 2026-10-15
 updated: 2026-10-26
 summary: Implement a shared Core skill library from Git and app packages, manual individual and bulk updates, current-content native delivery and coordinated app-contract migration.
-components: [apps/core, apps/cli, apps/harness, apps/shell, apps/plans, apps/demo-app, packages/app-sdk, packages/app-sdk-dotnet]
+components: [apps/core, apps/cli, apps/harness, apps/shell, apps/documents, apps/demo-app, packages/app-sdk, packages/app-sdk-dotnet]
 ---
 
 # Shared Agent Skills And Configurable Workflows
@@ -417,7 +417,7 @@ bindings, asset inclusion, API transport and coordinated releases. Do not introd
 as old prompt text and a new package.
 
 The repository inventory on 2026-10-26 finds current declarations in
-[Plans](../../../apps/plans/manifest.json) and [Demo App](../../../apps/demo-app/manifest.json).
+[Plans](../../../apps/documents/manifest.json) and [Demo App](../../../apps/demo-app/manifest.json).
 The migration must cover them, inventory registered/external app repositories with this contract,
 and identify the owner/release of every required change before claiming rollout completion. An external app is not migrated
 by editing this repository's examples alone.

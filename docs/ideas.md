@@ -5,6 +5,8 @@ updated: 2026-10-26
 
 # Ideas
 
+<!-- idea-id-high-water: 17 -->
+
 This living document collects early possibilities, questions and examples that may expand or
 complement the [vision](vision.md). The vision describes the system the owner wants to build;
 these ideas are still too unformed even for a Draft feature plan. They can evolve, be combined or

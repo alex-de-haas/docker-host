@@ -6,21 +6,21 @@ import { pathToFileURL } from "node:url";
 export const BASE_JOBS = Object.freeze(["changes", "versions", "docs", "ci-policy"]);
 export const COMPONENTS = Object.freeze([
   "shell", "app-sdk", "app-sdk-dotnet", "whisper", "demo-app", "core", "cli",
-  "telemetry-backend", "marketplace", "plans", "harness", "telemetry-ui", "swift-shell", "cardputer-shell",
+  "telemetry-backend", "marketplace", "documents", "harness", "telemetry-ui", "swift-shell", "cardputer-shell",
 ]);
 export const PROFILES = Object.freeze(["core-aot"]);
 export const ALL_JOBS = Object.freeze([...BASE_JOBS, "actionlint", ...COMPONENTS, ...PROFILES]);
-const NODE_COMPONENTS = ["shell", "app-sdk", "demo-app", "marketplace", "plans", "harness", "telemetry-ui"];
+const NODE_COMPONENTS = ["shell", "app-sdk", "demo-app", "marketplace", "documents", "harness", "telemetry-ui"];
 const DOTNET_COMPONENTS = ["app-sdk-dotnet", "whisper", "core", "cli", "telemetry-backend"];
 const COMPONENT_PATHS = [
   ["apps/shell/", "shell"], ["apps/demo-app/", "demo-app"], ["apps/marketplace/", "marketplace"],
-  ["apps/plans/", "plans"], ["apps/harness/", "harness"], ["apps/telemetry-ui/", "telemetry-ui"],
+  ["apps/documents/", "documents"], ["apps/harness/", "harness"], ["apps/telemetry-ui/", "telemetry-ui"],
   ["apps/shell-swift/", "swift-shell"], ["apps/shell-cardputer/", "cardputer-shell"],
 ];
 const BUILD_CONFIG = /(?:^|\/)(?:[^/]+\.csproj|global\.json|[Nn]u[Gg]et\.[Cc]onfig|appsettings[^/]*\.json)$/;
 const WORKFLOW_COMPONENTS = {
   "shell-image.yml": ["shell"], "demo-app-image.yml": ["demo-app"], "marketplace-image.yml": ["marketplace"],
-  "plans-image.yml": ["plans"], "telemetry-ui-image.yml": ["telemetry-ui"],
+  "documents-image.yml": ["documents"], "telemetry-ui-image.yml": ["telemetry-ui"],
   "telemetry-backend-image.yml": ["telemetry-backend"], "publish-app-sdk.yml": ["app-sdk"],
   "publish-app-sdk-dotnet.yml": ["app-sdk-dotnet"], "cardputer-release.yml": ["cardputer-shell"],
   "cli-release.yml": ["core", "cli"], "harness-worker-image.yml": ["harness"],
@@ -74,7 +74,7 @@ export function classifyPaths(paths, { versionOnlyPaths = [] } = {}) {
     } else if (path.startsWith(".github/actions/")) {
       add("actionlint", reason("composite action"));
     } else if (path.startsWith("docs/") || /^scripts\/docs-index(?:\.test)?\.mjs$/.test(path)) {
-      add("plans", reason("canonical document parser contract"));
+      add("documents", reason("canonical document parser contract"));
     } else if (["README.md", "AGENTS.md", "CLAUDE.md", "LICENSE", ".gitignore", ".gitattributes", ".editorconfig", ".github/dependabot.yml"].includes(path)) {
       // These repository metadata files do not change a compiled/runtime input.
     } else if (path === "package-lock.json" || [".npmrc", ".node-version", ".nvmrc"].includes(path)) {

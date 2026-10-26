@@ -3,7 +3,7 @@ status: Draft
 created: 2026-10-26
 updated: 2026-10-26
 summary: Shared observable tasks, assignments, child relationships and resource bindings with replaceable executors and app-owned workflow state.
-components: [apps/core, apps/plans, apps/harness, packages/app-sdk, packages/app-sdk-dotnet]
+components: [apps/core, apps/documents, apps/harness, packages/app-sdk, packages/app-sdk-dotnet]
 ---
 
 # Shared Tasks And Executor Bindings

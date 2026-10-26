@@ -59,6 +59,10 @@ internal static class SourceDocumentEndpoints
                 context.HttpContext.Response.Headers.CacheControl = "no-store";
                 return await next(context);
             });
+        routes.MapGet("/events", (string appId, HttpRequest request, HttpResponse response,
+            SourceDocumentAuthorization auth, SourceDocumentService documents,
+            CoreEventHub events, IHostApplicationLifetime lifetime, CancellationToken ct) =>
+            SourceDocumentStream.RunAsync(appId, request, response, auth, documents, events, lifetime, ct));
         routes.MapGet("/repositories", async (string appId, HttpRequest request,
             SourceDocumentAuthorization auth, SourceDocumentService documents, CancellationToken ct) =>
             await Handle(async () => await documents.ListRepositoriesAsync(await auth.RequireAsync(request, appId, ct), ct)));

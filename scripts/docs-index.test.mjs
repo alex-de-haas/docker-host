@@ -25,6 +25,7 @@ function repo(files) {
   const dir = mkdtempSync(join(tmpdir(), "docs-index-"));
   mkdirSync(join(dir, "scripts"));
   copyFileSync(script, join(dir, "scripts", "docs-index.mjs"));
+  copyFileSync(join(dirname(script), "docs-format.mjs"), join(dir, "scripts", "docs-format.mjs"));
   for (const [path, content] of Object.entries({ "docs/root.md": ROOT, ...files })) {
     mkdirSync(dirname(join(dir, path)), { recursive: true });
     if (content !== null) writeFileSync(join(dir, path), content);
@@ -175,7 +176,7 @@ test("links", async (t) => {
   await t.test("absolute link", () =>
     assertError({ "docs/features/a/feature.md": feature("", "See [b](/docs/root.md).\n") }, /is absolute/));
   await t.test("existing links, anchors, URLs and code are fine", () => {
-    const body = "See [root](../../root.md#documents), [web](https://example.com), [here](#x) and `[x](missing.md)`.\n\n```\n[y](missing.md)\n```\n";
+    const body = "See [root](../../root.md#documentation), [web](https://example.com), [here](#testing-expectations) and `[x](missing.md)`.\n\n```\n[y](missing.md)\n```\n";
     assert.equal(check({ "docs/features/a/feature.md": feature("", body) }).code, 0);
   });
   await t.test("root.md prose links are checked", () =>
@@ -269,4 +270,22 @@ test("ideas require dated metadata and valid links without becoming a plan", asy
   await t.test("code examples remain examples", () => {
     assert.equal(check({ "docs/ideas.md": ideas + "\n```markdown\n## Deliverables\n- [ ] Example only.\n```\n" }).code, 0);
   });
+});
+
+
+test("deleting an idea registry cannot erase its reservations", () => {
+  const r = repo({ "docs/ideas.md": "---\ncreated: 2026-01-01\nupdated: 2026-01-01\n---\n# Ideas\n<!-- idea-id-high-water: 1 -->\n## I1. Reserved\n" });
+  const git = (...args) => { const result = spawnSync("git", args, { cwd: r.dir, encoding: "utf8" }); assert.equal(result.status, 0, result.stderr); return result.stdout.trim(); };
+  try {
+    git("init", "-q"); git("add", "."); git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "Reserve an idea");
+    rmSync(join(r.dir, "docs/ideas.md"));
+    const result = r.run("--check");
+    assert.equal(result.code, 1); assert.match(result.err, /never decrease or disappear/); assert.match(result.err, /I1 must stay reserved/);
+  } finally { r.done(); }
+});
+
+test("fragment validation accepts literal identifier underscores and rejects the stripped alias", () => {
+  const body = "## `DOCS_BASE_REF`\n\nSee [configuration](#docs_base_ref).\n";
+  assert.equal(check({ "docs/features/a/feature.md": feature("", body) }).code, 0);
+  assertError({ "docs/features/a/feature.md": feature("", body.replace("#docs_base_ref", "#docsbaseref")) }, /missing anchor/);
 });

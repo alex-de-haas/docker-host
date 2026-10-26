@@ -1,8 +1,8 @@
 ---
 created: 2026-10-10
-updated: 2026-10-25
+updated: 2026-10-26
 summary: Shared SDK panels compose app-owned tools beside documents in Shell and standalone, with verified peers and pinned presentation targets.
-components: [packages/app-sdk, apps/core, apps/shell, apps/plans, apps/harness, apps/demo-app]
+components: [packages/app-sdk, apps/core, apps/shell, apps/documents, apps/harness, apps/demo-app]
 ---
 
 # SDK Panel System

@@ -3,7 +3,7 @@ status: Draft
 created: 2026-10-26
 updated: 2026-10-26
 summary: Compose shared work capabilities in Harness with agent profiles, optional hierarchy, task coordination and one tasks, decisions and artifacts experience.
-components: [apps/harness, apps/plans]
+components: [apps/harness, apps/documents]
 ---
 
 # Harness Work Orchestration
