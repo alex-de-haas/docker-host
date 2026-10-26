@@ -283,3 +283,9 @@ test("deleting an idea registry cannot erase its reservations", () => {
     assert.equal(result.code, 1); assert.match(result.err, /never decrease or disappear/); assert.match(result.err, /I1 must stay reserved/);
   } finally { r.done(); }
 });
+
+test("fragment validation accepts literal identifier underscores and rejects the stripped alias", () => {
+  const body = "## `DOCS_BASE_REF`\n\nSee [configuration](#docs_base_ref).\n";
+  assert.equal(check({ "docs/features/a/feature.md": feature("", body) }).code, 0);
+  assertError({ "docs/features/a/feature.md": feature("", body.replace("#docs_base_ref", "#docsbaseref")) }, /missing anchor/);
+});
