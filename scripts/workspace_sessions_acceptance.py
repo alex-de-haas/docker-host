@@ -130,6 +130,33 @@ def check(context):
     third = owner.harness('/workspace-sessions', {'requestId': str(uuid.uuid4()), 'workspaceId': workspace_id, 'expectedRevision': state['revision']})
     assert action(owner, third, 'list')['workspaces'][0]['path'] == str(source)
     say('PASS: revocation fences reads; deleting both chats preserves dirty source; sessionless workspace accepts a new idle chat')
+    # External work has no participant roster. Pause must still reach Core's lease checks,
+    # and recovering a verified stopped fixture lease must finish the original request.
+    development = request('/api/core/development')
+    external_source = request('/api/core/source', {'revision': development['source']['revision'], 'overridePath': None,
+        'repository': {'repositoryUrl': context['repository'], 'ref': 'main', 'projectPath': context['project'], 'connectionId': None}}, method='PUT', confirm_settings=True)
+    lease = str(uuid.uuid4())
+    external = request('/api/core/source/workspaces', {'requestId': str(uuid.uuid4()), 'taskId': 'external-pause-fixture', 'leaseId': lease,
+        'sourceRevision': external_source['revision'], 'targetBranch': 'main', 'label': 'External pause fixture', 'principalLabel': 'Pause acceptance'})
+    external_path = '/development-workspaces/'+external['workspaceId']
+    external_file = pathlib.Path(external['path'])/'retained-pause.txt'
+    external_file.write_text('unfinished external work\n')
+    workflow = owner.harness(external_path+'/workflow')
+    pause = {'requestId': str(uuid.uuid4()), 'expectedRevision': workflow['revision']}
+    refusal = owner.harness(external_path+'/workflow/pause', pause, expected=409)
+    assert refusal['code'] == 'workspace_in_use', refusal.get('code')
+    workflow = owner.harness(external_path+'/workflow')
+    assert workflow['closure'] == 'closing'
+    assert next(op for op in workflow['operations'] if op['id'] == pause['requestId'])['state'] == 'pending'
+    detail = owner.harness(external_path+'/worktrees/'+external['id'])
+    recovery = {'requestId': str(uuid.uuid4()), 'expectedHead': detail['observation']['head'], 'leaseId': lease, 'consumerExitConfirmed': True}
+    owner.harness(external_path+'/worktrees/'+external['id']+'/recover-lease', recovery)
+    closed = owner.harness(external_path+'/workflow/pause', pause)
+    assert closed['closure'] == 'closed'
+    assert next(op for op in closed['operations'] if op['id'] == pause['requestId'])['state'] == 'succeeded'
+    assert owner.harness(external_path+'/workflow/pause', pause)['closure'] == 'closed'
+    assert external_file.read_text() == 'unfinished external work\n'
+    say('PASS: external pause reaches Core lease refusal; verified recovery finishes the original request and retains dirty source')
     if '--hold-ui' in context['sys'].argv:
         owner.harness('/sessions/'+third['id'], {'title': 'Implementation'}, method='PATCH')
         owner.harness('/sessions', {'title': 'Standalone chat'})

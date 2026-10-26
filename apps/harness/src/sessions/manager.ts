@@ -296,7 +296,19 @@ export class SessionManager {
     // retained identity; an owner's browser credential never impersonates a participant.
     const admitted = await this.development.inspection(credential, path, body) as { operations?: { id: string; state: string }[] };
     if (close && admitted.operations?.some(o => o.id === body.requestId && o.state === "succeeded")) return admitted;
-    await this.stopWorkspaceExecutions((close ?? revoke)![1]!, credential, revoke ? String(body.userId) : undefined);
+    let external = false;
+    if (close) {
+      const inventory = await this.development.inspection(credential) as {
+        workspaces: { id: string; owner: { kind: string } }[];
+      };
+      const owner = inventory.workspaces.find(workspace => workspace.id === close[1])?.owner;
+      if (!owner || !["assistant", "external"].includes(owner.kind))
+        throw new AppContextError(409, "workspace_owner_unavailable", "Refresh workspace ownership before retrying the original pause request.");
+      external = owner.kind === "external";
+    }
+    // External agents have no Harness participants to cancel. Core still verifies their
+    // outstanding source operations and leases before confirming the original pause.
+    if (!external) await this.stopWorkspaceExecutions((close ?? revoke)![1]!, credential, revoke ? String(body.userId) : undefined);
     return this.development.inspection(credential, close ? path + "-confirm" : path, body);
   }
 
