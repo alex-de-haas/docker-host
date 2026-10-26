@@ -73,7 +73,7 @@ test("OPUS source and native fixtures retain offline component checks", () => {
 });
 
 test("Node dependency changes fan out only to Node consumers", () => {
-  const node = ["opus", "shell", "app-sdk", "demo-app", "marketplace", "documents", "harness", "telemetry-ui"];
+  const node = ["opus", "shell", "desktop", "app-sdk", "demo-app", "marketplace", "documents", "harness", "telemetry-ui"];
   assertSelection(["package-lock.json"], node);
   assertSelection(["packages/app-sdk/src/session.ts"], node);
   assertSelection([".npmrc"], node);
@@ -97,7 +97,7 @@ test("workflow scheduling edits do not rebuild unrelated clients, artifact workf
 });
 
 test("all first-party component roots and joint telemetry manifests have explicit ownership", () => {
-  for (const [path, component] of [["marketplace", "marketplace"], ["documents", "documents"], ["telemetry-ui", "telemetry-ui"], ["demo-app", "demo-app"], ["shell-swift", "swift-shell"], ["shell-cardputer", "cardputer-shell"], ["telemetry-backend", "telemetry-backend"]]) {
+  for (const [path, component] of [["desktop", "desktop"], ["marketplace", "marketplace"], ["documents", "documents"], ["telemetry-ui", "telemetry-ui"], ["demo-app", "demo-app"], ["shell-swift", "swift-shell"], ["shell-cardputer", "cardputer-shell"], ["telemetry-backend", "telemetry-backend"]]) {
     assertSelection([`apps/${path}/new-input`], [component]);
   }
   assertSelection(["apps/telemetry/manifest.json"], ["telemetry-backend", "telemetry-ui"]);

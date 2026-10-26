@@ -1,0 +1,123 @@
+{
+  "schemaVersion": "app.0.1",
+  "id": "hosty.desktop",
+  "name": "Hosty Desktop",
+  "description": "A personal desktop for your Hosty applications.",
+  "version": "0.1.0",
+  "role": "system",
+  "source": {
+    "type": "git",
+    "repository": "https://github.com/alex-de-haas/docker-host.git",
+    "branch": "main",
+    "paths": [
+      "apps/desktop"
+    ]
+  },
+  "runtimeProfiles": [
+    {
+      "key": "docker",
+      "type": "docker",
+      "default": true
+    },
+    {
+      "key": "dev",
+      "type": "localCommand",
+      "development": true
+    }
+  ],
+  "defaultRuntime": "docker",
+  "services": [
+    {
+      "key": "web",
+      "runtimes": {
+        "docker": {
+          "type": "docker",
+          "image": {
+            "repository": "ghcr.io/alex-de-haas/hosty-desktop",
+            "tag": "0.1.0"
+          },
+          "environment": {
+            "PORT": "3000",
+            "HOSTNAME": "0.0.0.0"
+          },
+          "ports": [
+            {
+              "key": "http",
+              "containerPort": 3000,
+              "protocol": "http",
+              "public": true
+            }
+          ],
+          "healthcheck": {
+            "type": "exec",
+            "command": "node -e \"fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
+            "intervalSeconds": 15,
+            "timeoutSeconds": 5,
+            "retries": 3,
+            "gracePeriodSeconds": 20
+          }
+        },
+        "dev": {
+          "type": "localCommand",
+          "workingDirectory": "apps/desktop",
+          "setup": "npm --prefix ../.. install --workspace @haas/hosty-desktop --no-audit --no-fund",
+          "command": "npm run dev",
+          "environment": {
+            "HOSTNAME": "0.0.0.0",
+            "NEXT_TELEMETRY_DISABLED": "1"
+          },
+          "ports": [
+            {
+              "key": "http",
+              "containerPort": 3000,
+              "protocol": "http",
+              "public": true
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "endpoints": [
+    {
+      "key": "web",
+      "service": "web",
+      "port": "http",
+      "protocol": "http",
+      "public": true
+    }
+  ],
+  "ui": {
+    "entrypoint": {
+      "endpoint": "web",
+      "path": "/"
+    },
+    "icon": "assets/icon.svg"
+  },
+  "capabilities": [
+    "logs"
+  ],
+  "corePermissions": [
+    "apps.read",
+    "apps.lifecycle",
+    "core.read",
+    "apps.notifications"
+  ],
+  "catalogMetadata": {
+    "publisher": {
+      "name": "Haas",
+      "url": "https://github.com/alex-de-haas"
+    },
+    "category": "Utilities",
+    "tags": [
+      "desktop",
+      "shell",
+      "first-party"
+    ],
+    "summary": "A glass desktop with windows, a dock and personal appearance.",
+    "license": "AGPL-3.0-only"
+  },
+  "optionalCorePermissions": [
+    "providers.assistant"
+  ]
+}

@@ -64,7 +64,10 @@ npm run test:integration -- worker
 npm run test:integration -- sessions
 npm run test:integration -- whisper
 npm run test:integration -- opus
+npm run test:integration -- desktop
 ```
+
+The `desktop` suite builds Desktop and exercises normal password login, role-based app access, assignment revocation and lifecycle authorization in the existing parent-managed child Core. `HOSTY_DESKTOP_BROWSER=1` retains that same sandbox for manual UI acceptance until its completion marker is written; the owner then Finishes the environment and verifies removal.
 
 Each command runs only its named suite. No argument prints help and runs nothing; there is
 no implicit all-suite mode. Add `--dry-run` to inspect commands without executing them.
