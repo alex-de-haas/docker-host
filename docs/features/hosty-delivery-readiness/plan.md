@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-13
-updated: 2026-10-21
+updated: 2026-10-26
 summary: Local demo priorities through November 5 for host-contained agents, workspace Docker sandboxes, app creation, Git review, optional feedback and gradual redesign.
 components: [apps/core, apps/harness, apps/shell]
 ---
@@ -275,7 +275,7 @@ An administrator selects, approves/dismisses, adds context and sends a batch. A 
 Independent repositories can proceed in parallel; one repository is sequential by default unless
 an explicit independent split uses separate worktrees/PRs and accounts for overlap and merge order.
 Submission or approval alone starts no agent. General scheduling/delegation remains
-[Bridge D11](../ai-agent-bridge/plan.md#step-11--durable-jobs-and-notifications); Feedback owns its
+[Durable Agent Jobs](../durable-agent-jobs/plan.md); Feedback owns its
 batch handoff and per-item links. This direction does not add a queue to the one-agent demo.
 
 ## Remaining Questions

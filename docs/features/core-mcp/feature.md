@@ -1,6 +1,6 @@
 ---
 created: 2026-08-09
-updated: 2026-10-19
+updated: 2026-10-26
 summary: Core MCP exposes app state, logs and bounded audit search, with explicit grants for lifecycle actions and reviewed updates.
 components: [apps/core]
 ---
@@ -10,7 +10,7 @@ components: [apps/core]
 An embedded Model Context Protocol endpoint on Core, giving agent clients typed tools for the things
 Core already knows — which apps exist, what state they are in, what their logs say — instead of
 leaving them to guess at shell commands. This is step 5 of the
-[AI Agent Bridge](../ai-agent-bridge/plan.md) rollout; the umbrella's 2026-07-11
+[AI Agent Bridge](../ai-agent-bridge/feature.md) rollout; the umbrella's 2026-07-11
 [decisions](../ai-agent-bridge/feature.md#decision-log) govern it:
 Core MCP is embedded in Core rather than a separate service, and it stays control-plane only — it
 never performs or proxies work that belongs to a runtime app's own domain API.
@@ -335,4 +335,4 @@ Return preserves current data and live source edits.
   was checked by the affected 49-test MCP suite and a source restart/live update.
 - Not covered: Codex as a client, a client carrying a Hosty skill, and any client reaching Core over
   a non-loopback origin. Tracked as unchecked items under step 6 of the
-  [AI Agent Bridge](../ai-agent-bridge/plan.md) rollout rather than as prose here.
+  [AI Agent Bridge](../ai-agent-bridge/feature.md) rollout rather than as prose here.

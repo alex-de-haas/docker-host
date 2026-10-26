@@ -1,6 +1,6 @@
 ---
 created: 2026-08-24
-updated: 2026-10-07
+updated: 2026-10-26
 summary: Access tokens can be bound to one audience and a set of scopes, validated against live state on every call.
 components: [apps/core]
 ---
@@ -95,7 +95,7 @@ half-believed.
 ### Introspection is the audit callback
 
 An external client acting on an app never passes through Core, which is why
-[ai-agent-bridge](../ai-agent-bridge/plan.md) recorded the missing audit callback as what gates the
+[ai-agent-bridge](../ai-agent-bridge/feature.md) recorded the missing audit callback as what gates the
 write half of external access. With this credential the call *does* pass through Core, once, and the
 request names the tool being invoked.
 
@@ -151,7 +151,7 @@ escalation wearing the clothes of a restriction: any signed-in user could have m
 `hosty:core` credential and read the whole fleet through it.
 
 This is the first credential narrower than "an administrator" that reaches Core at all, and it
-retires the cost [ai-agent-bridge](../ai-agent-bridge/plan.md) step 6 recorded: connecting a stock
+retires the cost [ai-agent-bridge](../ai-agent-bridge/feature.md) step 6 recorded: connecting a stock
 client no longer means a full-role admin token in plaintext in its config.
 
 ## The App Side

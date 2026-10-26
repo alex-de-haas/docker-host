@@ -1,20 +1,28 @@
 ---
-status: Draft
+status: Ready
 created: 2026-10-15
-updated: 2026-10-20
-summary: Draft bind-mount delivery decision, native-client evidence and remaining choices for shared skills selected per assistant.
-components: [apps/core, apps/harness, apps/shell]
+updated: 2026-10-26
+summary: Implement a shared Core skill library from Git and app packages, manual individual and bulk updates, current-content native delivery and coordinated app-contract migration.
+components: [apps/core, apps/cli, apps/harness, apps/shell, apps/plans, apps/demo-app, packages/app-sdk, packages/app-sdk-dotnet]
 ---
 
 # Shared Agent Skills And Configurable Workflows
 
-## Idea And Status
+## Goal And Status
 
-An intentionally very early idea sketch captured at the owner's request on 2026-10-15, so the
-discussion is not lost. The initial capture left ownership, configuration, packaging and delivery
-open. The owner's subsequent filesystem-delivery preference is recorded below; detailed design
-and implementation remain unapproved. The deliverables are questions to investigate, not a
-committed build sequence.
+Implement one administrator-managed Core skill library, selected by assistants/profiles and usable
+without a particular orchestration application. Initial sources are Git repositories and installed
+app packages. Git installation is selective; updates are manual, per skill or Update all. Consumers
+receive current installed files, without session revision pins or historical package retention.
+
+The owner settled product choices on 2026-10-26, including reuse of Source connections for private
+Git, removal on applied upstream deletion, and replacement of repeated content-digest acceptance.
+The latest decision removes manual package upload. D1-D6 below now describe implementation outcomes
+and acceptance within their existing responsibility areas. No product question remains open.
+The owner approved Ready and end-to-end implementation, verification, PR, review and merge on
+2026-10-26. Implementation progress is tracked in D1-D6; other linked Draft plans remain unapproved.
+Historical research below retains its original limits. Complete runtime integration is delivery
+acceptance, not a prerequisite to have finished code before approving the plan.
 
 The owner requested standards and client-integration research on 2026-10-16, without implementation.
 The owner then requested verification against Harness's pinned Codex and Claude versions. The
@@ -45,10 +53,95 @@ existing single-file contract, including local content-digest review, authorized
 reads and migration from the shared approval gate. It also separates Core-enforced
 MCP application/tool access from Harness-owned per-call Ask/Run preferences.
 
-Harness uses local digest acceptance; CLI/facade retain the global digest gate.
-This shared-skills plan owns full packages and delivery,
+Harness currently uses local digest acceptance; CLI/facade retain the global digest gate.
+Decision 60 replaces these content gates for the new contract; this is a planned migration, not
+current behavior. This shared-skills plan owns full packages and delivery,
 and should reuse that assistant settings entry rather than create a second editor.
 It does not duplicate the shipped settings work or authorize implementation.
+
+## Owner Decisions (2026-10-26)
+
+The owner answered the ten scope questions and selected the following direction; see
+[vision decisions 57-60](../../vision.md). This list incorporates the simplification in decision 59
+and source/update choices in decision 60. Product agreement does not mark implementation deliverables
+complete or itself change the plan status.
+
+1. **One shared pool per Hosty instance.** Core owns current package bytes,
+   provenance, catalog APIs and prepared exports. Administrators manage that one pool for all
+   consumers. There are no personal pools or per-package user owners. Who imported a package is
+   audit provenance, not a new ownership/visibility model. Existing caller and app permissions
+   still govern reads and delivery; a common catalog does not grant an app's tools or private data.
+2. **Profiles select current installed skills.** Harness owns profiles, role instructions and
+   stable skill references, independently of model and provider credential connection. Use an
+   assistant default until a profile is selected. Deliver current installed contents without
+   pinning a conversation to historical files. Native clients determine when they reload changes;
+   Hosty does not add a hot-reload requirement. Other clients consume the same Core APIs.
+3. **Git and app packages only.** Discover packages in a repository/subdirectory and install only
+   those the administrator selects, recording their source commit. Apps can contribute complete
+   packages. Show source kind, repository or supplying app and installed version in the catalog.
+   Manual package/archive upload, upload replacement, a marketplace and in-product authoring are
+   outside the initial slice.
+4. **Stable identity without changing portable content.** Keep Hosty IDs, source metadata and
+   revisions outside the standard SKILL.md package. Native name, display name and Hosty ID are
+   distinct. Detect technical native-name collisions without silently renaming, merging or
+   overwriting unrelated packages. Hosty does not analyze contradictory instructions; selecting
+   mutually inconsistent guidance is an operator configuration concern.
+5. **Instructions and skills are different inputs.** Edit standing instructions and profiles in
+   Harness. Make optional packages available for native activation; a profile/task can explicitly
+   request a selected skill when necessary. Do not inject every package into every prompt or
+   mistake skill selection for enforcement of workflow or permissions.
+6. **Check Git, apply manually.** Reuse Core's existing Git ref/update-check mechanisms where they
+   fit. Show available changes and let an administrator update one installed skill or choose
+   Update all. Detection never advances the installed package revision on its own. App-supplied
+   skills instead advance with the applied app version, without an independent Git update action.
+   Replace the current supplied files on update. Removing a skill, including through app removal,
+   stops its delivery everywhere; stale selections do not block a new or resumed conversation.
+   Do not retain old packages for sessions. Automatic Git skill updates remain a later idea.
+7. **No package editor or fork flow.** Do not edit, override, merge or fork skill contents in Hosty
+   initially. Customization is limited to instructions/profiles. Administrators manage Git
+   installations and app-supplied packages; they do not upload or edit package bytes in Hosty.
+8. **Replace the app single-file contract.** Migrate existing app producers and readers to a new
+   declaration supporting multiple complete skill directories per app, including examples,
+   scripts and references. Do not keep agent.skillFile as a permanent compatibility mode or merely
+   mark it deprecated. The selected agent.skills shape is recorded below; validation details and the coordinated release sequence still need design.
+9. **Administrative management, no personal ownership.** Additional administrators can install
+   packages and configure the agents they manage. Non-admin users consume the configured capabilities
+   through existing rights; per-user package management/private pools are outside this scope.
+10. **Verify actual consumers.** Cover both Harness native runtimes and one explicitly provisioned
+    external local client. Test differing profile selections, full-package reads/activation,
+    updates, disabling and resumed conversations. Remote MCP Skills delivery and automatic script
+    dependency installation are deferred, not prerequisites.
+
+The owner also excludes adding Node.js or the skills CLI as a dependency of this feature. Core owns
+the mechanism in .NET and reuses suitable Git infrastructure. External installers are research
+references only; no CLI installation, invocation or new runtime dependency is selected.
+
+The owner also accepted these operational rules on 2026-10-26:
+
+- Administrator install/update supplies current content to selected consumers. Replace repeated
+  content-digest acceptance in Harness and CLI/facade. App updates advance selected app skills
+  without another per-profile confirmation. New skills are not automatically selected; source
+  grants and tool/script permissions remain separate.
+- Public Git needs no connection. Private Git uses an explicitly selected existing administrator
+  Source connection, within supported providers/transports. No separate skill token store or
+  credential form is added.
+- A check shows upstream deletion without changing the pool. Applying that update removes the
+  skill. Access/network errors preserve installed contents and are not evidence of deletion.
+
+## Composable Work Coordination (2026-10-26)
+
+The [composable-work umbrella](../composable-agent-systems/plan.md) retains skills as the first
+priority. This plan owns package formats, import/update, delivery, effective-set resolution and
+the app-contract migration. [Harness Work Orchestration D1](../harness-work-orchestration/plan.md#deliverables)
+owns profiles and role/project configuration; [Agent Participants](../agent-participants/plan.md)
+owns persistent actor identity. Neither must be implemented in full before the library can serve
+an assistant default. A model connection or responsible human is not a package owner.
+
+Core exposes the shared API; the first management and selection UI is in Harness. Core prepares
+exports and Harness attaches them to native execution. The existing settings entry is the starting
+point, not a second Core approval of each Harness selection. Updates replace complete packages;
+tool grants and script execution remain separate. D3-D4 implement and verify separate selection
+exports and concurrent native delivery before claiming per-profile runtime support.
 
 ## Current Baseline
 
@@ -69,9 +162,10 @@ not be treated as proof that a client discovers or follows a complete developmen
 
 ## Owner Direction (2026-10-16)
 
-The owner prefers native filesystem packages as the initial delivery approach for assistants
-whose execution environment Hosty controls. This narrows the Draft; it is not approval to implement
-or promote it to Ready.
+This dated decision selected native filesystem packages for environments Hosty controls.
+The 2026-10-26 decisions above supersede its installation-wide selection and unresolved library
+ownership, while retaining filesystem delivery, fresh-conversation behavior and coexistence with
+native sources. It was not implementation approval.
 
 - **Complete packages in ordinary directories.** Preserve SKILL.md and its supporting directory
   tree. Core prepares a directory containing the skills selected for an assistant. Native clients
@@ -111,10 +205,12 @@ After reviewing the Docker experiment, the owner selected **bind mounts as the p
 mechanism for containerized assistants whose environment Hosty controls**. Mount a stable
 per-assistant parent directory read-only and publish selected complete packages inside it.
 Connect the native discovery paths to that mount, including each managed CLAUDE_CONFIG_DIR.
-Core manages the export; the detailed library ownership and storage model remain open.
+Core manages the export. Core library ownership and profile/session selection are settled by the
+2026-10-26 decisions; the delivery section below supplies the implementation direction for exports.
+Historical package retention is excluded.
 
-This settles the delivery direction, not the full feature design or an implementation approval.
-The following earlier decisions remain in force:
+The following list records the 2026-10-18 baseline. Installation-wide selection is superseded above;
+bind mounts, fresh-conversation semantics and native-source coexistence remain selected:
 
 - One Hosty-selected set per assistant, shared by its Claude and Codex runtimes, rather than a
   separate selection per model or provider credential profile.
@@ -131,37 +227,217 @@ provisioning. The [shared Docker runtime](../assistant-shared-docker-runtime/fea
 shipped worker, while [Assistant Runtime Containment](../assistant-runtime-containment/plan.md) owns stricter isolation; this feature supplies the selected package export and its delivery
 contract rather than introducing another runner. The plan remains Draft.
 
-## Candidate Direction
+## Selected Initial Scope
 
-### A Shared Pool With Different Sources
+### Shared Pool, Profiles And Sources
 
-Explore a shared library, possibly owned by Core, containing:
+Core stores one administrator-managed pool. Git and app packages use the same catalog and provenance
+model. Manual package upload is excluded from the initial UI and API. No personal owner/visibility tiers,
+package editor or fork workflow are included. A shared package may be unrelated to any installed app;
+an app can contribute several packages. Read permissions and actual tool access remain explicit.
 
-- Core-provided skills for using Hosty capabilities and composing common workflows.
-- App-provided skills for the app's own tools, concepts, development and test data.
-- User-authored or uploaded skills, including skills unrelated to a particular installed app.
-- Imported packages, potentially from a Git repository or another distribution source.
+Harness stores profiles and selected package references, with an assistant default for consumers
+without profiles. Selected skills resolve to current installed content, including when resuming.
+Updating or removing a package changes its supplied files; the native client controls rediscovery
+and may already have loaded instructions. Hosty neither preserves old packages for sessions nor
+promises to erase loaded context. Standing instructions remain editable separately. Selecting a
+skill makes it available; actual activation and observed behavior require separate evidence.
 
-A user might add Rust or framework-specific guidance even when Hosty ships no such skill. An app
-might supply several focused skills instead of one growing instruction file. The library would
-preserve where each skill came from; an app update, Core update and user edit need not share one
-update policy. These are possibilities to compare, not a selected manifest or storage layout.
+### Selected Package And Catalog Contract (2026-10-26)
 
-### Selection Per Assistant
+The owner accepted the declaration and stable identities in [vision decision 58](../../vision.md).
+Decision 59 supersedes immutable revision records/session snapshots; decision 60 removes uploads
+and settles update acceptance/private sources. The model below includes those changes; it is not
+an implemented API.
 
-The owner's preferred initial scope is a common pool with selection for each assistant: one
-assistant gets a development-oriented set, another a different specialization.
-Users should be able to add skills and disable optional skills they do not want used.
+#### App Declaration And Package Contents
 
-Explore shared defaults with per-assistant choices and define the user/administrator configuration
-surface. Harness could expose the relevant controls without being the owner of every assistant's
-configuration. Resolve how the assistant identity maps to installations and users. Separate
-per-model or per-provider-connection selections are not required for the initial approach.
+Keep the existing agent block and replace skillFile with skills:
 
-Separate eligibility, selection and actual loading: a skill can be available without every file
-being inserted into every prompt. Decide how the user sees the effective set and why a particular
-skill was included, excluded or unavailable. Optional guidance is configurable; actual API grants
-and enforcement do not become instructions that can be toggled off.
+```json
+{
+  "agent": {
+    "skills": [
+      { "key": "planning", "path": "skills/project-planning" },
+      { "key": "review", "path": "skills/plan-review" }
+    ]
+  }
+}
+```
+
+The key is stable and unique within the supplying app. Moving its directory does not by itself
+change the skill's logical identity or profile references. The path names a complete directory
+relative to the manifest. Name and description come from SKILL.md, not duplicate manifest fields.
+An absent skills declaration contributes no packages. These are installed resources under agent,
+not a new endpoint in interfaces; reading their stored content does not require the app to run.
+
+One package is one directory with one root SKILL.md and its supporting files. An app or Git source
+may supply multiple independently selectable packages:
+
+```text
+skills/
+  project-planning/
+    SKILL.md
+    references/documentation-rules.md
+    assets/plan-template.md
+  plan-review/
+    SKILL.md
+    scripts/validate-plan.py
+```
+
+Use the [Agent Skills format](https://agentskills.io/specification), including name and description
+in YAML frontmatter. Keep Hosty source, identity and revision metadata outside the portable package.
+Directory/native-name validation follows the supported format; exact limits and path diagnostics
+remain part of D2. The declaration above is the selected target, not a claim that current manifests
+or clients already accept it.
+
+#### Core Catalog Records
+
+| Record | Responsibility |
+| --- | --- |
+| Source | Kind git or app; repository/ref with an optional authorized Source connection, or supplying installed-app reference. One source can supply several skills. |
+| Skill | Stable Hosty ID, source reference, source-local package key/path, current complete contents and parsed metadata. Its native/display identity is distinct from the Hosty ID. |
+
+Keep the currently installed Git commit or app version as provenance and update information.
+A current content hash may support change detection or validation; it is not a separately retained
+Revision entity or a session pin. Do not maintain a history of package copies for active/resumable
+sessions. Temporary update staging is an implementation detail, not a historical version library.
+
+Only technical name collisions need validation. Reject introducing a second installed package
+with the same native name into the shared pool, with a clear source diagnostic and no overwrite.
+Validate before publishing the package/app change. This implementation rule replaces the earlier
+candidate of allowing duplicate names until selection. Hosty does not check semantic contradictions between
+different skills or infer which instructions should win. Native sources outside Hosty's pool retain
+their own discovery/precedence behavior.
+
+#### Profile References And Current Delivery
+
+A Harness profile references stable skill IDs, for example:
+
+```json
+{ "skills": ["skill_123", "skill_456"] }
+```
+
+Resolve those references to currently installed packages. Do not record skillId/revision pairs as
+execution dependencies, retain their old bytes or restore historical packages on resume. A native
+client that supports rediscovery can pick up replaced files while running; otherwise its normal
+next load uses them. No additional live-reload mechanism is required by this scope.
+
+Removing a package removes its supplied files and availability in every Hosty selection/export.
+Discard missing IDs during selection resolution; stale profile references do not block session
+creation or resume and do not substitute another package. The same applies when the supplying app
+is removed. Already loaded instructions remain a native session-context concern.
+
+New app packages enter the catalog without being automatically selected into existing profiles.
+Explicitly requesting a skill for a task is an invocation instruction, not a package permission.
+
+#### Shared API And Catalog Presentation
+
+Core provides catalog listing/lookup, authorized package reads, selective Git import, source update checks,
+manual update application, removal and preparation of currently selected packages for execution.
+Harness owns profiles and instructions and consumes these operations. Use existing Core route,
+DTO and pagination conventions, administrator writes and authorized reads. No upload or arbitrary
+archive-replacement operation is included.
+
+The catalog shows name, description, source, installed source commit/app version and update
+availability, with filtering by supplying app or Git source. Git updates are manually applied;
+app packages follow app install/update/removal. Adding content does not automatically select new
+skills. Selected consumers receive current content without repeated digest acceptance; selection
+does not grant tools, repository credentials or script-execution authority.
+
+### Git And Application Updates
+
+Installation selection, source download and update granularity are separate choices. Discover
+package directories in a repository or supplied subdirectory, then let the administrator select
+which packages to install. Only selected complete directories enter the shared skill pool; finding
+more skills in the repository does not automatically install or enable them.
+
+The owner confirmed manual per-skill updates plus Update all on 2026-10-26. Store source URL/ref,
+package path and the installed commit for each package. Reuse one source checkout/download across
+selected packages in an operation instead of cloning once per skill. Updating one package replaces
+only its current installed copy; other packages keep their currently installed contents. No
+archive of replaced versions is required. Update all groups installed packages by source and
+reuses each source download; it does not install newly discovered skills. Updating a source does
+not force every installed skill from that source to advance when only one was selected.
+
+For the first generic Git transport, a shallow checkout is a simple baseline. It avoids full Git
+history but can still download unselected repository contents. Copy only selected packages into
+the library and release temporary source material afterwards. Do not promise folder-only network
+downloads or keep one full clone per installed skill. Partial fetching is an optimization to assess,
+not a prerequisite for selection or independent updates.
+
+A source commit change is enough for a source-level update indication; do not claim every package
+changed solely from that signal. Per-directory comparison can refine it if included in the selected
+UI. Detection does not apply updates. Failed source checks leave installed files usable. New upstream
+skills are not auto-installed. Show a removed selected directory in the update preview; remove
+its package only on explicit apply, without historical retention. Failed fetches/reads are errors,
+not evidence of upstream deletion.
+
+Core's existing [AppSourceService](../../../apps/core/src/Haas.Hosty.Core/AppSourceService.cs)
+resolves remote refs without advancing installed source, and
+[AppUpdateSweep](../../../apps/core/src/Haas.Hosty.Core/AppUpdateSweep.cs) coordinates checks.
+Reuse suitable .NET/Git mechanisms without registering skill repositories as runtime apps or adding
+Node.js/skills CLI as a dependency. These are existing building blocks, not an implemented skill updater.
+
+Private Git reuses [Source connections](../user-profile-connections/feature.md) and the
+[source-provider boundary](../source-providers/feature.md), with explicit administrator selection.
+Persist repository-scoped connection references, never tokens in skill metadata. Adapt repository
+grants to skill sources without registering a fictitious app or borrowing an unrelated app grant.
+Recheck supported providers and access for remote operations. Revocation blocks new fetches but
+does not erase installed package files; readers of the common pool receive no repository credentials.
+
+Use the repository default branch unless an explicit ref is supplied, through the existing resolver.
+Reuse update-check configuration where suitable and provide manual refresh. Stage and validate a
+complete package before replacing it. A failed update preserves its current contents; Update all
+reports per-package outcomes without rolling back unrelated successes.
+
+App packages follow the supplying app's applied version. Update replaces their current content;
+app removal or removal from its declaration removes those skills from the pool and exports.
+Rollback follows the actual applied app package contents, not a separate retained skill history.
+Neither Git nor app updates pin sessions; native-client loading determines when new files take effect.
+
+#### Installer Reference (2026-10-26)
+
+The [Vercel skills CLI README](https://github.com/vercel-labs/skills#install-a-skill) documents
+interactive skill selection and an explicit --skill option. Its command list supports updating
+named skills or the installed collection. The inspected
+[Git transport](https://github.com/vercel-labs/skills/blob/main/src/git.ts) creates a temporary
+shallow clone with depth 1; [discovery](https://github.com/vercel-labs/skills/blob/main/src/skills.ts)
+finds SKILL.md packages in that checkout. Its
+[update code](https://github.com/vercel-labs/skills/blob/main/src/update.ts) filters requested skill
+names. This demonstrates selective installation/update without requiring a separate repository per
+skill. It does not establish folder-only downloads. These are external implementation references,
+not a Hosty dependency or evidence that Hosty's proposed flow is implemented.
+
+### App Contract Replacement And Migration
+
+The selected target replaces agent.skillFile with the agent.skills array of key/path directory
+entries above. Implement complete-package validation, source attribution, installed/reinstalled
+bindings, asset inclusion, API transport and coordinated releases. Do not introduce a permanent legacy branch or deliver the same guidance both
+as old prompt text and a new package.
+
+The repository inventory on 2026-10-26 finds current declarations in
+[Plans](../../../apps/plans/manifest.json) and [Demo App](../../../apps/demo-app/manifest.json).
+The migration must cover them, inventory registered/external app repositories with this contract,
+and identify the owner/release of every required change before claiming rollout completion. An external app is not migrated
+by editing this repository's examples alone.
+
+Cover Core manifest validation, package vendoring/asset limits, registry/read/export APIs, installation
+and update/rollback behavior; Harness settings and native delivery; CLI/connector and other current
+readers; SDK/schema surfaces where present; tests, templates and app-authoring documentation including
+[the manifest reference](../../../skills/hosty-app-skill/references/app-manifest.md). The source/discard
+asset inventory also reads the old field. None of these consumers is updated by this documentation change.
+
+The selected rollout has one contract. D2/D6 coordinate releases and give actionable old-manifest
+diagnostics; never silently drop instructions or retain a permanent legacy reader. A failed update
+preflight preserves the installed app. Remove legacy content-digest gates and their UI/state in
+migrated consumers. Map existing accepted/enabled app instructions to migrated package selections,
+without duplicate old prompt text and new packages; additional packages remain unselected.
+Keep caller/app authorization and separate repository/tool approvals.
+
+The 8,000-character prompt cap and trimmed-text digest do not define a full-package limit. Validate
+supporting files using existing asset containment and bounded-size conventions. A content hash
+may support integrity or change detection; it is not an acceptance gate or historical archive.
 
 ### Workflows As Configurable Guidance
 
@@ -193,21 +469,28 @@ fixture authority remain owned by the sandbox feature.
 
 ### Internal And External Delivery
 
-Aim for the same applicable guidance to be usable by an internal assistant and an authorized
-external agent. Do not assume identical native skill support, local files, browser tools or
-configuration APIs in every client. A direct external Core connection is distinct from the
-read-only facade, and receiving instructions does not enlarge its grants.
+Use native package directories and the selected read-only bind-mount direction for managed container
+runtimes, with equivalent native directories/links for local execution. Publish current complete
+packages for the selected set. Two profiles using the same provider connection
+must not accidentally receive each other's Hosty export because they share a native config home.
+D3 supplies a stable parent export for each selection context and replaces complete package entries.
+Native discovery links resolve within the consumer namespace; differing concurrent selections use
+separate discovery locations even when credentials are shared. D4 verifies the actual launcher
+integration; historical single-set probes do not prove concurrent delivery.
 
-Use native skill-package directories for Hosty-controlled runtimes, with the confirmed bind-mount
-approach for containerized assistants and equivalent local directories/links for local execution.
-For external clients, investigate local provisioning, discovery metadata, MCP resources or tools,
-and a small client plugin or bootstrap instruction where needed. Those external delivery paths
-remain candidates, not claims about current compatibility. An MCP connection alone is not evidence
-that a new external chat automatically loads Hosty's skills.
+Keep the library independent of credentials and the client UI. Verify both Harness adapters and one
+named external local client with explicit provisioning. Use Codex CLI on the Core host for first
+external acceptance, linking an authorized Core-managed selection export into its native discovery
+path. Make this provisioning available through Core/CLI independently of Harness. A Core MCP
+connection alone does not put files on disk.
+Remote MCP Skills delivery, automatic dependency installation and universal client support are outside
+the initial slice. Native repository/user/built-in skills can coexist; Hosty controls its delivered
+set, not every instruction a native client can discover.
 
-Git-backed distribution is one candidate. The research below identifies existing formats and
-delivery mechanisms; Hosty's repository layout, import policy and installation mechanism remain
-undecided.
+Update/removal changes the files supplied to active and future consumers. Do not preserve superseded
+packages to keep an old session reproducible or turn deletion into a session-start failure. Native
+clients may cache loaded instructions; document their actual behavior rather than require universal
+hot reload. Basic complete-package replacement still must not publish half-written files.
 
 ## Illustrative Journey
 
@@ -232,16 +515,16 @@ This is the owner's desired experience to explore, not an available end-to-end f
 The same skills mechanism should also support non-development work; this journey motivates the
 idea without defining its entire scope.
 
-## Relationships And Tensions To Resolve
+## Integration Boundaries
 
-- **Existing app skills:** move from one reviewed file to full packages without losing attribution
-  or accidentally treating unreviewed referenced files as approved. Decide compatibility with
-  `agent.skillFile`, content limits and the existing shared digest policy.
-- **MCP directory:** reuse its identities and grants where appropriate. Per-assistant skill
+- **Existing app skills:** the owner selected replacement, not permanent compatibility. D2/D6
+  own the coordinated multi-package manifest/read/delivery migration and treatment of old clients,
+  content limits and current contents; current feature.md remains an account of shipped code.
+- **MCP directory:** reuse its identities and grants where appropriate. Profile/session skill
   selection must remain distinct from MCP access and from permission to run bundled scripts.
   A generic language skill need not have an MCP target; app-specific tool guidance needs an honest
   account of which tools the current client can actually use.
-- **Modularity:** compare a Core registry/policy with assistant-specific presentation and native
+- **Modularity:** use the Core-owned library/API with application-owned profiles, presentation and native
   loading. [Agent/model providers](../agent-provider-interface/plan.md) own invocation contracts;
   this feature must not introduce a competing agent runtime or mandatory workflow engine in Core.
 - **Runtime provisioning:** [Assistant Runtime Containment](../assistant-runtime-containment/plan.md)
@@ -378,7 +661,7 @@ These are OpenAI-specific provisioning contracts, not generic MCP installation o
 
 ### What This Means For Hosty
 
-The following are research conclusions and candidates for discussion, not approved decisions:
+The following are historical research conclusions. The 2026-10-26 decisions select Core package ownership, native delivery and app migration; the research is not product acceptance.
 
 - **Reuse the content format.** Agent Skills is a strong candidate for the package boundary. Core
   could keep Hosty assignments, provenance and reviewed revisions outside the portable content,
@@ -415,10 +698,11 @@ Static Hosty findings at the historical inspection baseline:
 
 ### Remaining Evidence
 
-D2 remains open for a Hosty import/update and migration proposal, including identity, full-package
-review and revision retention. The following checks contribute historical evidence to D4.
+The original research left import/update and migration work open, including whole-package review
+and revision retention. Decisions 59-60 remove historical retention and repeated digest acceptance.
+D2 now implements sources/migration; the following checks contribute historical evidence to D4.
 D4 still includes verification against the current Harness pins, other consumers, nested-resource access, script prerequisites, update/resume
-behavior and a verified remote-delivery route. Passing native selection checks does not complete
+behavior and one explicitly provisioned external local client. Remote delivery is outside the selected initial slice. Passing native selection checks does not complete
 that broader investigation.
 
 ## Pinned Harness Client Verification (2026-10-16)
@@ -540,7 +824,8 @@ For these exact versions, **native filesystem packages plus client-specific sele
 verified candidate for controlled Harness workers**. **MCP Skills is not yet a verified common
 delivery mechanism for the two clients.** The owner subsequently preferred directory provisioning
 with coexisting native sources, rather than requiring an exclusive native allowlist. External
-MCP delivery remains a separate question in D4.
+This historical limitation does not block the selected filesystem delivery. Remote MCP Skills
+delivery is excluded from the initial slice; D4 covers native delivery.
 
 The probes establish catalog filtering and explicit native activation, not autonomous workflow
 quality. Each local package contained a nested reference, but nested reads, script execution,
@@ -609,8 +894,8 @@ This first managed-home test ran on macOS with native directories and symlinks. 
 fresh-session discovery with the managed-home layout and unchanged export links. The Docker
 follow-up below tests Linux clients and host-side changes through a bind mount. Neither test
 exercises watcher propagation, active-session reload, resume, profile rotation or concurrent
-package replacement. Remaining runtime integration checks stay in D4; package publication and
-retention stay in D2. Immediate removal of already loaded context remains outside the required
+package replacement. Runtime checks stay in D4 and package publication in D2-D3; decision 59
+removes historical retention. Immediate removal of already loaded context remains outside the required
 behavior agreed above.
 
 ## Docker Bind-Mount Experiment (2026-10-18)
@@ -694,155 +979,72 @@ code, manifest, version or runtime configuration was changed, and the plan remai
 
 ## Deliverables
 
-- [ ] D1. Compare concrete user workflows and internal/external consumers, including one development flow without a plan and one non-development use, and identify the smallest useful scope.
-- [ ] D2. Investigate full skill-package formats and distribution conventions, including nested resources, app/Core/user sources, Git import, revisions, updates and compatibility with existing app skills.
-- [ ] D3. Define configuration ownership and the per-assistant selection identity, shared defaults, exclusions, duplicate-source guidance and an understandable view of Hosty-supplied skills alongside native sources.
-- [ ] D4. Repeat version-sensitive discovery and selection checks against the current Harness pins, then validate native directory provisioning for managed Harness homes and container mounts, fresh-session selection changes, another assistant and an external client; record capabilities, optional live reload and fallback/bootstrap needs.
-- [ ] D5. Map the workspace, optional plan, sandbox, fixture and browser journey to existing feature owners; identify missing integration contracts without duplicating their implementation deliverables.
-- [ ] D6. Consolidate findings and unresolved choices into a reviewable proposal with acceptance scenarios, migration and permission boundaries; obtain explicit owner approval before any implementation scope becomes Ready.
+D1-D6 retain their original responsibility areas, now expressed as implementation outcomes rather
+than preparation of another research proposal. All remain unchecked: no implementation or runtime
+integration is claimed by this edit. Owner decision 60 explicitly removes manual upload.
 
-## Open Questions
+- [ ] D1. Deliver Harness's administrator library journeys over shared Core APIs: catalog/filter/read packages, discover/select Git skills, choose existing Source connections, install, check, update one/update all and remove; show current provenance, removals and failures without upload, package editing or repeated content-acceptance UI.
+- [ ] D2. Implement source/skill persistence and complete-package validation for Git/app sources, shared fetching, manual per-skill/bulk updates and applied upstream removals; migrate agent.skillFile producers, packaging, readers, SDK/schema surfaces, templates and existing selections to agent.skills, including app lifecycle and removal of legacy digest gates.
+- [ ] D3. Implement the application-neutral Core catalog/read/import/check/apply/remove/export API and native current-content delivery; enforce administrator writes, authorized reads and repository connection grants, omit deleted IDs, publish complete replacements and separate differing selection exports without historical revisions or session pins.
+- [ ] D4. Verify both current Harness native adapters and an explicitly provisioned local Codex CLI consumer: full-package references/activation, two concurrent selections on one provider connection, update/removal, private-source failure, publication and resume; record reload limits and prove no historical retention or missing-skill session block.
+- [ ] D5. Integrate assistant-default selection and stable-ID inputs for app-owned profiles while preserving standing instructions and separate tool/script authority; demonstrate development and non-development journeys, reuse workspace/sandbox/optional plan owners and support an independent authorized Core consumer without team orchestration or first-party-ID dependencies.
+- [ ] D6. Complete the coordinated component/app migration inventory and release sequence, record verification and outstanding blockers, update feature.md and current behavior/authoring documentation, retire this plan only after all deliverables pass, and regenerate the index alongside applicable artifact version changes.
 
-The bind-mount choice and fresh-conversation semantics above are settled direction. The remaining
-questions below are grouped for discussion; references to D1-D6 keep all unfinished work in the
-existing deliverables rather than adding an implementation checklist.
+## Implementation Boundaries And Defaults
 
-### 1. Initial Scope And User Experience (D1, D3, D6)
+Product choices are settled. Route/DTO names, storage layout, bounded package-size constants and
+launcher mechanics are engineering choices within the contract above, not further owner questions.
+Use existing Core API, asset validation, Source connection and lifecycle conventions. If evidence
+requires a new dependency or a change to agreed behavior, revise the plan explicitly.
 
-What is the first useful slice: a library and assistant selection screen, a bundled Core workflow,
-or both? Which sources must be usable initially: Core, installed apps, user-uploaded directories,
-Git repositories or direct authoring? Decide whether editing, automatic updates, reusable selection
-profiles and external-client installation belong in that slice. Choose one development example
-without a mandatory plan and one non-development example to keep the library general.
+Core owns package contents and APIs and works without Harness. Harness owns its management UI,
+instructions and assistant/default references. The orchestration plan owns full role/profile UI,
+hierarchy and human-review routing. Support caller-selected skill IDs and differing execution
+contexts now without requiring that larger profile feature. A selected skill remains optional
+guidance unless explicitly requested in invocation instructions; it never grants execution authority.
 
-Where can an administrator browse, import, enable, disable and remove packages? How does the UI
-explain source, revision and whether a package is selected, awaiting review or unavailable? A
-Hosty selection screen must not claim to enumerate every repository/built-in skill a client can
-discover or prove that a selected skill was loaded by the model.
+Validate SKILL.md metadata, contained paths, supported files, bounded sizes and technical name
+uniqueness before publication. Do not analyze semantic conflicts. Checks never remove installed
+packages. Explicit apply can replace/remove them; staged failures preserve current usable content.
 
-### 2. Library Ownership And Assistant Identity (D2, D3)
+Manual upload, package editing, personal pools, automatic Git apply, historical package archives,
+learned memory, remote MCP Skills delivery and a new Node.js dependency are excluded. Possible
+later upload work stays an idea, not hidden unfinished scope in this implementation.
 
-Does Core keep the package bytes and revisions, index provider-owned content, or combine both?
-Should common library management live in Shell while assistants expose their own selection UI?
-Who may modify the library and assignments: only administrators, or also users within a defined
-scope? Are shared defaults needed initially?
+## Implementation Order
 
-The MCP directory already identifies installed assistants and binds assignments to installation
-identity. Decide whether skill selections reuse that identity, what reinstall/removal does to
-them, and whether user-specific overrides are needed. This does not reopen per-model selection;
-provider credential profiles remain native delivery targets for the assistant's shared set.
-
-### 3. Package Identity, Imports And Compatibility (D2)
-
-Define a stable Hosty package identity separately from its display name and native skill name.
-Resolve same-name imports from different sources, multiple skills from one app/repository, nested
-independently selectable skills and dependencies. Agree on the supported portable SKILL.md subset
-and treatment of client-specific metadata without inventing a new content format unnecessarily.
-
-Is Git a one-time importer, an update source, or both? How are repository URL, subdirectory and
-revision recorded? Can users edit an imported package, and is that a fork or an upstream override?
-Choose revision pinning and update behavior for app, Core, Git and uploaded packages. Size/file
-limits, unsupported fields and package-path validation also need a defined import contract.
-
-### 4. Existing App Skills, Review And Permissions (D2, D3, D6)
-
-The existing `agent.skillFile` contract supplies one attributed text file, caps prompt delivery at
-8,000 characters and approves a digest of that text. Full packages need an explicit compatibility
-path: keep that contract alongside packages, adapt it, or migrate it. Decide how to prevent the
-same guidance being injected as legacy prompt text and discovered again as a native package.
-
-What exactly is reviewed and pinned when a package includes scripts, assets and references? Decide
-whether approval covers a complete package revision, how changed files invalidate it, and how
-source attribution survives native loading. Existing shared instruction approval and per-assistant
-selection are different concepts. Keep skill choice distinct from MCP grants and script execution
-authority; app guidance without the relevant tools must be represented accurately.
-
-### 5. Always-Applied Instructions And Optional Skills (D1, D3)
-
-The initial idea uses "skills" for both standing workflow instructions and reusable knowledge.
-Directory discovery does not ensure that an agent activates every optional skill. Decide how a
-user's rule such as "always draft a plan before a feature" reaches the standing instruction channel,
-and which guidance should instead load on demand as a native skill. Harness already has an
-operator system prompt; compare reuse/composition before introducing another instruction surface.
-
-Define how Core defaults, user workflow instructions, app guidance and repository instructions
-compose and how conflicting guidance is explained. Selecting a skill does not enforce a workflow
-or grant operations. Repository requirements and existing operation authority still apply.
-
-### 6. Publishing Updates And Retaining Supporting Files (D2, D4)
-
-Fresh conversations must see a consistent selected revision. Decide how a complete multi-file
-package is staged and published inside the stable mounted parent, including concurrent updates,
-failure recovery, rollback and app removal. The successful sequential add/remove probe does not
-prove a concurrent publication protocol.
-
-When an existing conversation has already loaded instructions, disabling or updating that package
-can still remove a reference or script it expects to read later. Decide whether old supporting
-files remain available for active work and for how long. This is a file-lifetime question, not a
-requirement to retract existing context or add live reload.
-
-### 7. Runtime Integration And External Clients (D4)
-
-Define how the runtime launcher connects the export to newly created or rotated native homes,
-preserving writable per-connection configuration and the shared read-only skills root. Remaining
-verification includes actual Harness lifecycle integration, the intended supported architectures,
-and agent-driven reads/activation of a full package. The experiments already establish discovery
-on the historical tested clients. Repeat version-sensitive checks against the current Harness
-pins before claiming compatibility for the deployed runtime; this remains part of D4.
-
-External clients need a selection identity and explicit provisioning appropriate to their own
-environment. Decide the initial supported external scenario and whether local installation/export
-is sufficient. Remote clients without filesystem access may need another verified delivery/read
-path. Bind mounts do not establish MCP Skills support or automatic skill loading by an external
-client connected to Core; neither MCP Skills implementation nor a bootstrap plugin is selected yet.
-
-### 8. Workflow Recipes And Related Feature Contracts (D1, D5)
-
-Which scripts are executable helpers versus examples, and how are interpreters, dependencies,
-app versions, data shapes and fixture prerequisites described? Use a concrete app recipe to identify
-missing contracts without making the skills library own sandbox execution or browser tooling.
-
-Map workspace, optional plan, sandbox, fixture and browser steps to the existing owners. Plan
-discovery/update contracts and associations stay with the plan-provider Draft; a universal plan
-service or mandatory specification-driven workflow is not a prerequisite for the skills library.
-
-## Suggested Decision Order
-
-The following is a proposal for the next discussion, not an additional owner decision:
-
-1. **Agree on the smallest first use case and ownership (questions 1-2).** A starting proposal is
-   a Core-managed library/export and administrator-selected packages for an existing installed
-   assistant, with shared administration in Shell. Keep user overrides, reusable profiles and
-   richer authoring optional until a concrete need is chosen. Explicitly choose the first source
-   and external-client scope rather than silently dropping the broader goals.
-2. **Define the content and instruction contract (questions 3-5).** A starting proposal is
-   standard-format package directories with Hosty identity, provenance and revision metadata kept
-   outside the portable files; treat standing workflow instructions separately from on-demand
-   skills. Resolve legacy app compatibility and full-package review before deciding import UI or
-   extending app manifests.
-3. **Define revision publication and delivery acceptance (questions 6-7).** Keep the selected
-   bind-mount approach and agree on supporting-file lifetime, new-profile setup and the exact
-   Harness/external-client scenarios that must pass. These follow the product choices rather than
-   requiring another generic transport investigation.
-4. **Validate the chosen slice against real workflows (questions 1 and 8).** Check both development
-   and non-development examples, record related-feature gaps under their owners, and consolidate
-   a reviewable proposal in D6. Only explicit owner approval can promote an implementation scope
-   to Ready. All six exploratory deliverables remain open because none is fully satisfied yet.
+1. Start D2-D3 with catalog/source persistence, full-package validation and Core operations/tests.
+   Reuse public Git transport and explicitly authorized private Source connections.
+2. Deliver D1 and D5's default selection over those APIs. Keep catalog reads, administrator actions,
+   source credentials and optional skill selection distinct.
+3. Wire D3 exports into both native adapters and local Codex CLI, then run D4 against current pins,
+   including real activation and differing concurrent selections rather than path discovery alone.
+4. Complete D2/D6 producer/reader migration and coordinated releases, including old-manifest
+   diagnostics and removal of old content gates. Finish documentation and versions with verified
+   implementation. Keep one feature PR rather than one per phase.
 
 ## Verification And Promotion
 
-Before a build proposal is approved, use concrete packages and client capability evidence to
-evaluate D1-D5. Include a nested reference plus fixture script, a user-added framework skill, two
-assistants with different selections, a disabled/updated skill, and an external client requiring
-explicit setup. Compare both a plan-driven journey and one with no plan. Distinguish available
-guidance, loaded guidance and observed agent behavior; configured skills do not guarantee actions.
+Ready requires approval of this implementation plan, not a previously working implementation.
+Runtime checks below are acceptance during delivery. Historical experiments do not complete D4.
+All unfinished implementation remains in D1-D6.
 
-Keep this document Draft while the choices remain open. The owner direction, documentation survey
-and bounded native-client checks leave the exploratory deliverables open and authorize no
-implementation. This uses the existing Draft document type; it introduces no separate ideas
-format or documentation-workflow change.
+| Area | Required acceptance |
+| --- | --- |
+| Package/import | SKILL.md, nested reference and script/example; selective installation from a multi-skill repository; no upload route/UI; technical name/path/size validation. |
+| Updates | Checks never apply; one-skill update leaves another unchanged; Update all reuses source downloads without installing new skills; upstream deletion is shown and applied explicitly; network/authentication/validation errors preserve current copies. |
+| Private source | Explicit existing supported Source connection; rejected unauthorized/unsupported bindings; revoked access blocks remote reads without deleting installed files; no repository credentials exposed to consumers. |
+| Delivery | Two differing contexts on one provider connection, both Harness runtimes and local Codex CLI; full-package reads and actual activation; current files on resume, no historical retention, missing IDs omitted and native reload limits recorded. |
+| App migration | Multiple packages, stable keys across directory moves, app update/removal reflected in delivery, no repeated digest gates or duplicate legacy instructions, migrated selections preserved and additional packages unselected. |
+| Composition | A framework skill and multi-package app, development and non-development tasks, editable standing instructions and unchanged tool/script permissions; APIs usable without Harness and by an unrelated authorized app. |
 
-For this documentation-only capture, run `node scripts/docs-index.mjs --fix`,
-`node scripts/docs-index.mjs --check`, the documentation-validator tests and `git diff --check`.
-Product builds and deployed-runtime tests are not applicable until product code changes. The
-isolated native-client research probes above are separate from those product checks.
+Run affected builds/unit tests in the registered worktree and integration/browser checks in a
+Core-managed sandbox with separate test data and normal identity. Test real provisioning for both
+native adapters and local Codex CLI. Do not copy live credentials or ordinary app data to make a
+test pass; report missing authorized test inputs. Inventory external app migrations explicitly and
+do not claim complete rollout while any required migration remains unfinished.
+
+The owner approved this plan as Ready on 2026-10-26. Mark In Progress when implementation starts
+and check deliverables only after their required verification passes. The approval-only edit
+requires no version bump or runtime deployment. Run the docs
+index generator/checker, documentation-validator tests and git diff whitespace validation.

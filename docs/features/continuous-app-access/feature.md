@@ -1,6 +1,6 @@
 ---
 created: 2026-10-11
-updated: 2026-10-12
+updated: 2026-10-26
 summary: Silent maintenance of browser and native app sessions, with separately authorized and revocable background delegation.
 components: [apps/core, apps/cli, packages/app-sdk, packages/app-sdk-dotnet, apps/shell, apps/shell-swift, apps/harness, apps/plans]
 ---
@@ -120,7 +120,7 @@ cannot undo completed work or stop an unrestricted OS process.
 
 Grant creation, credential issuance, dispatch and revocation are audited without secrets. Browser
 heartbeats are not audit events. Scheduling and job retry policy belong to
-[AI Agent Bridge](../ai-agent-bridge/plan.md); no scheduler or automatic updater is part of this feature.
+[Durable Agent Jobs](../durable-agent-jobs/plan.md); no scheduler or automatic updater is part of this feature.
 
 ### Control and SDK clients
 

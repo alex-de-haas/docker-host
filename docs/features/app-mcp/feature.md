@@ -1,6 +1,6 @@
 ---
 created: 2026-08-11
-updated: 2026-10-01
+updated: 2026-10-26
 summary: Runtime apps expose domain actions through an MCP endpoint they own, and Core tells agent clients which apps have one.
 components: [apps/core, apps/demo-app]
 ---
@@ -8,7 +8,7 @@ components: [apps/core, apps/demo-app]
 # App-Owned MCP
 
 Runtime apps expose their domain actions to agents through an MCP endpoint they own, and Core tells
-agent clients which apps have one. This is step 4 of the [AI Agent Bridge](../ai-agent-bridge/plan.md)
+agent clients which apps have one. This is step 4 of the [AI Agent Bridge](../ai-agent-bridge/feature.md)
 rollout, and it is the contract [core-mcp](../core-mcp/feature.md) deliberately does not provide:
 Core MCP is control-plane only and never proxies work belonging to an app.
 
