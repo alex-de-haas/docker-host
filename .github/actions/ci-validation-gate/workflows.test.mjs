@@ -4,7 +4,7 @@ import test from 'node:test';
 
 const workflowDirectory = new URL('../../workflows/', import.meta.url);
 const publications = [
-  'harness-worker-image.yml', 'shell-image.yml', 'marketplace-image.yml', 'plans-image.yml',
+  'harness-worker-image.yml', 'shell-image.yml', 'marketplace-image.yml', 'documents-image.yml',
   'demo-app-image.yml', 'telemetry-backend-image.yml', 'telemetry-ui-image.yml',
   'cli-release.yml', 'cardputer-release.yml', 'publish-app-sdk.yml', 'publish-app-sdk-dotnet.yml',
 ];

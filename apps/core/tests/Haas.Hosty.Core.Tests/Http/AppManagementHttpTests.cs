@@ -101,7 +101,7 @@ public sealed class AppManagementHttpTests
     public async Task DocumentationReadGrant_DoesNotPermitFullSourceOperations(string route)
     {
         await using var host = await CoreHttpHarness.StartAsync();
-        using var client = await CreateAppClient(host, "hosty.plans", [CoreAppPermissions.SourcesRead]);
+        using var client = await CreateAppClient(host, "hosty.documents", [CoreAppPermissions.SourcesRead]);
         await AssertError(await client.GetAsync(route), HttpStatusCode.Forbidden, "app_permission_required");
     }
 

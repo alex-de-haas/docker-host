@@ -1,8 +1,8 @@
 ---
 created: 2026-10-11
-updated: 2026-10-25
+updated: 2026-10-26
 summary: Explicit navigation and tool policy, manifest navigation, and retained tool instances shared by Shell, desktop hosts and standalone apps.
-components: [packages/app-sdk, apps/core, apps/shell, apps/plans, apps/demo-app, apps/harness, apps/marketplace, apps/telemetry-ui, apps/shell-swift]
+components: [packages/app-sdk, apps/core, apps/shell, apps/documents, apps/demo-app, apps/harness, apps/marketplace, apps/telemetry-ui, apps/shell-swift]
 ---
 
 # SDK UI Composition

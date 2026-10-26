@@ -1,8 +1,8 @@
 ---
 created: 2026-10-08
-updated: 2026-10-11
+updated: 2026-10-26
 summary: SDK-owned React overlay combines session and required-permission readiness, hides blocked content and preserves same-user state through recovery.
-components: [packages/app-sdk, apps/shell, apps/marketplace, apps/plans, apps/demo-app, apps/harness, apps/telemetry-ui]
+components: [packages/app-sdk, apps/shell, apps/marketplace, apps/documents, apps/demo-app, apps/harness, apps/telemetry-ui]
 ---
 
 # Hosty Overlay

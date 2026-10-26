@@ -1,8 +1,8 @@
 ---
 created: 2026-10-07
-updated: 2026-10-25
+updated: 2026-10-26
 summary: Local external agents use authorized Core-owned worktrees, separate plan progress, and read-only pull request tracking through Harness and Core.
-components: [apps/core, apps/plans]
+components: [apps/core, apps/documents]
 ---
 
 # External Development Workspaces

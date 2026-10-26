@@ -1,6 +1,6 @@
 ---
 created: 2026-10-05
-updated: 2026-10-23
+updated: 2026-10-26
 summary: Workflow documents carry YAML frontmatter and stable deliverable IDs, checked by one validator shared by every Hosty repository.
 components: [scripts, docs]
 ---
@@ -17,7 +17,7 @@ describes the tooling that enforces them.
 
 docker-host, project-manager, media-server, torrent-engine, transcode-engine and solitaire follow
 the workflow. Each carries the same Documentation section in its `AGENTS.md` and a byte-identical
-copy of `scripts/docs-index.mjs`; the canonical copy lives here, so a change lands in docker-host
+copies of `scripts/docs-index.mjs` and `scripts/docs-format.mjs`; the canonical copy lives here, so a change lands in docker-host
 first and is then copied. CI runs `node scripts/docs-index.mjs --check` in every repository.
 `hosty-catalog` has no `docs/`.
 
@@ -41,6 +41,25 @@ first and is then copied. CI runs `node scripts/docs-index.mjs --check` in every
 - `ideas.md` carries no status, deliverables or task checkboxes. Concrete work moves into the owning
   feature plan, with a link retained from the ideas document.
 - Every `feature.md` ends with a `## Testing Expectations` section.
+
+## Idea Reservations And Shared References
+
+Ideas use headings beginning with stable I<n> identifiers. A source comment in docs/ideas.md reserves
+its highest allocated number: `<!-- idea-id-high-water: 17 -->`. New ideas take the next number;
+removing I4 adds it to `<!-- retired-idea-ids: I4 -->`. The counter and retired IDs never decrease
+or disappear, including when the last idea is removed. These comments reserve identifiers without
+retaining removed idea contents or creating a history database.
+
+The validator compares reservations with HEAD for working edits. CI supplies DOCS_BASE_REF from the
+pull request base or previous push; --base explicitly selects the baseline. With divergent branches,
+the merge base distinguishes newly allocated IDs and detects conflicting allocations. The unpublished
+idea receives a new ID before integration. Existing idea titles may still be edited. Missing explicit
+Git history fails rather than silently skipping the baseline check.
+
+Shared docs-format.mjs supplies document kinds, Unicode/duplicate heading anchors, relative links,
+question detection, idea metadata and generated-index semantics. The validator checks linked files
+and Markdown anchors while ignoring code examples. Documents uses the same semantics on each exact
+source version and derives backlinks without a separate relationship store.
 
 ## Validator
 

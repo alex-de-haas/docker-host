@@ -1,6 +1,6 @@
 ---
 created: 2026-09-29
-updated: 2026-10-21
+updated: 2026-10-26
 summary: Apps discover and call confirmed speech, translation and assistant providers with short-lived Core credentials.
 components: [apps/core, packages/app-sdk, packages/app-sdk-dotnet, apps/whisper, apps/harness]
 ---
@@ -57,7 +57,7 @@ Core 0.125.0 also includes `uiSurfaces` for assistants: declared panel, navigati
 endpoint identities, paths and resolved browser URLs. Consumers validate handoff destinations
 against these surfaces without an additional `apps.read` grant or an assumption that API and UI
 share an origin. SDK 0.24.0 exposes this additive field; older Core omits it. Plans 0.4.0 uses it
-for [document discussions](../plan-tracking/feature.md#discuss-a-document).
+for [document discussions](../documents-app/feature.md#discuss-a-document).
 Stopped providers remain discoverable but cannot receive a new credential. A running speech process
 can still be loading its model; its capabilities response distinguishes inference readiness.
 

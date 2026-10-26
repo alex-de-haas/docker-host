@@ -1,8 +1,8 @@
 ---
 created: 2026-10-11
-updated: 2026-10-12
+updated: 2026-10-26
 summary: Silent maintenance of browser and native app sessions, with separately authorized and revocable background delegation.
-components: [apps/core, apps/cli, packages/app-sdk, packages/app-sdk-dotnet, apps/shell, apps/shell-swift, apps/harness, apps/plans]
+components: [apps/core, apps/cli, packages/app-sdk, packages/app-sdk-dotnet, apps/shell, apps/shell-swift, apps/harness, apps/documents]
 ---
 
 # Continuous App Access

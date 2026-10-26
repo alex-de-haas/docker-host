@@ -9,7 +9,7 @@ const cli = 'apps/cli/src/Haas.Hosty.Cli/Haas.Hosty.Cli.csproj';
 const coreTests = 'apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj';
 const cliTests = 'apps/cli/tests/Haas.Hosty.Cli.Tests/Haas.Hosty.Cli.Tests.csproj';
 const windowsFilter = 'FullyQualifiedName~WindowsProcessControlTests|FullyQualifiedName~StopAsync_OnWindowsKillsAdoptedJobDescendantAfterShellExited|FullyQualifiedName~CoreDevelopmentTests|FullyQualifiedName~ExplicitStop|FullyQualifiedName~SourceDocuments_ReferenceMetadataSupportsLfAndCrLf|FullyQualifiedName~WorkspaceGit_|FullyQualifiedName~JsonStorageTests';
-export const suites = Object.freeze(['activation', 'dependencies', 'sessions', 'windows', 'transport', 'worker', 'whisper']);
+export const suites = Object.freeze(['activation', 'dependencies', 'sessions', 'windows', 'transport', 'worker', 'whisper', 'documents']);
 const usage = 'Usage: npm run test:integration -- <' + suites.join('|') + '> [--dry-run]\n'
   + 'Runs one explicitly selected local suite. Builds its fixtures first; no automatic retries.\n'
   + 'activation: .NET, Git, Python, Docker; isolated managed Core Return and recovery\n'
@@ -17,6 +17,7 @@ const usage = 'Usage: npm run test:integration -- <' + suites.join('|') + '> [--
   + 'sessions: .NET, Git, Python, Docker; shared workspaces with isolated users and Harness\n'
   + 'windows: Windows and .NET; focused process, path and shared receipt tests\n'
   + 'transport: .NET, Python, Docker; isolated Core/container network checks\n'
+  + 'documents: .NET, Git, Python, Docker; current docs, workspace progress and scoped events in a managed Core\n'
   + 'worker: Docker; builds the manifest-matching worker image and checks its lifecycle\n'
   + 'whisper: .NET; downloads the pinned model and runs native CPU inference\n'
   + '--dry-run prints prerequisites and commands without running them.';
@@ -57,6 +58,13 @@ export function suitePlan(suite, { platform = process.platform, node = process.e
         command('dotnet', ['test', coreTests, '--filter', windowsFilter]),
         command('dotnet', ['test', cliTests, '--filter', 'FullyQualifiedName~SharedReceiptSharingTests']),
       ] };
+    case 'documents': {
+      const image = JSON.parse(readFileSync(new URL('../apps/documents/manifest.json', import.meta.url), 'utf8')).services[0].runtimes.docker.image;
+      return { prerequisites: [dotnet, command('git', ['--version']), pythonCheck, docker], steps: [
+        build(core), build(cli), command('docker', ['build', '-f', 'apps/documents/Dockerfile', '-t', image.repository + ':' + image.tag, '.']),
+        command(python, ['scripts/check-workspace-activation.py', '.', 'documents', '--managed']),
+      ] };
+    }
     case 'transport':
       return { prerequisites: [dotnet, pythonCheck, docker], steps: [build(core),
         command(python, ['scripts/check-docker-core-transport.py', 'apps/core/src/Haas.Hosty.Core/bin/Debug/net10.0/hosty-core.dll']),
