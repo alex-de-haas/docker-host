@@ -1,6 +1,6 @@
 ---
 created: 2026-10-26
-updated: 2026-10-26
+updated: 2026-10-27
 summary: A shared Core library of complete Git and app skill packages with manual updates, stable selections and current-file exports for native agents.
 components: [apps/core, apps/cli, apps/harness]
 ---
@@ -66,6 +66,9 @@ keeps one current package state and updates selected export directories after pu
 The export parent remains stable for existing bind mounts. Each package uses a complete-directory
 replacement; native readers can briefly observe a missing path between renames. Package replacement removes stale
 files; startup recovery reconstructs registered exports and clears temporary staging/fetch data.
+Temporary checkout cleanup clears Windows read-only attributes without following links. If a
+fetch directory remains locked or inaccessible during startup, Core logs a warning and retains
+it for the next recovery; the installed library and reconstructed exports remain available.
 There are no historical package revisions or conversation pins. A native client may retain text
 already loaded in its conversation; updating/removing files cannot retract that text.
 
@@ -143,6 +146,8 @@ Missing selections produce an empty or reduced current export rather than preven
 
 - Cover complete packages, path/YAML/size validation, source selection and moved commits, manual
   updates, upstream removal, failed private reads, name collisions and app lifecycle publication.
+- Cover read-only Git pack cleanup on Windows, retained locked fetch directories during startup,
+  cleanup retry, and preservation of library contents and link targets.
 - Verify administrator/app-grant boundaries, revoked access, independent consumers, export
   ownership, current contents, missing IDs and recovery without historical packages.
 - Exercise Harness profile and explicit session selections independently of MCP access and instructions;

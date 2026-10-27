@@ -4,7 +4,7 @@ using System.Text;
 namespace Haas.Hosty.Core;
 
 /// <summary>One current-content library with serialized publication and independent native exports.</summary>
-internal sealed class AgentSkillLibrary(CoreDataPaths paths, IAgentSkillGit git, ISourceGitAccess access, IClock clock)
+internal sealed class AgentSkillLibrary(CoreDataPaths paths, IAgentSkillGit git, ISourceGitAccess access, IClock clock, ILogger<AgentSkillLibrary>? logger = null)
 {
     private readonly SemaphoreSlim gate = new(1, 1);
     private string Root => Path.Combine(paths.CoreRoot, "skills");
@@ -277,7 +277,12 @@ internal sealed class AgentSkillLibrary(CoreDataPaths paths, IAgentSkillGit git,
             var staging = Path.Combine(Root, "staging");
             if (Directory.Exists(staging)) Directory.Delete(staging, true);
             var fetch = Path.Combine(Root, "fetch");
-            if (Directory.Exists(fetch)) Directory.Delete(fetch, true);
+            try { AgentSkillCheckoutCleanup.Delete(fetch); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // Fetch leftovers are disposable; an external lock must not prevent Core startup.
+                logger?.LogWarning(ex, "Could not remove temporary skill checkouts at {Path}; retained for the next recovery.", fetch);
+            }
         }
         finally { gate.Release(); }
     }
