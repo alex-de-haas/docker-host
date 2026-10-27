@@ -261,7 +261,7 @@ it("refreshes PR status when only the inventory publication revision changes", a
   await render(inventory);
   expect(container.textContent).toContain("CI unknown");
   details.worktrees[0].pullRequests[0].observation = {
-    at: new Date().toISOString(), state: "merged", reviewDecision: "APPROVED", unresolvedThreads: 0,
+    at: new Date().toISOString(), state: "merged", draft: false, reviewDecision: "APPROVED", unresolvedThreads: 0,
     checks: [{ name: "CI", state: "SUCCESS" }],
   };
   await render({ ...inventory, worktrees: inventory.worktrees.map(t => ({ ...t, observationRevision: "source:1:1" })) });
