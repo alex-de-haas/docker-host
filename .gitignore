@@ -83,3 +83,6 @@ apps/*/CLAUDE.md
 /docs/features/app-sandbox-runtimes/*-logs.zip
 /docs/features/app-sandbox-runtimes/*-source.patch
 /docs/features/assistant-runtime-containment/*-evidence.json
+
+# Isolated Harness production generations
+/apps/harness/.local-runtime/

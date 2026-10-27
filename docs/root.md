@@ -139,6 +139,7 @@ Plans: 13 In Progress · 1 Blocked · 46 Draft · 7 On Hold.
 - [Global (Shared) Host-Path Mounts](features/global-mounts/feature.md) — A host-level library of shared host folders that apps attach by reference.
 - [Harness Context Usage](features/harness-context-usage/feature.md) — Current context-window usage for Claude and Codex conversations, with durable replay and a compact composer indicator.
 - [Harness Development UI](features/harness-development-ui/feature.md) — Harness combines conversation navigation, multi-repository workspace details, sandbox previews and verified lifecycle actions.
+- [Harness Local Production Runtime](features/harness-local-runtime/feature.md) — Harness local production starts reuse isolated compiled API and worker bundles with a static UI and locked runtime dependencies.
 - [Harness Session Retention](features/harness-session-retention/feature.md) — Harness expires reconciled chats, protects attached development sessions and recovers previously accepted cleanup without deleting shared source implicitly.
 - [Harness Work Orchestration](features/harness-work-orchestration/plan.md) — Participant bindings and optional task coordination, hierarchy, decisions and artifacts in Harness, reusing independent agent profiles. · Draft, 0/6, updated 2026-10-26
 - [Host Networking](features/host-networking/feature.md) — A docker service can run with network host to share the host network namespace, for peer-to-peer workloads the bridge NAT throttles.

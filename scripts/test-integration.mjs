@@ -9,7 +9,7 @@ const cli = 'apps/cli/src/Haas.Hosty.Cli/Haas.Hosty.Cli.csproj';
 const coreTests = 'apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj';
 const cliTests = 'apps/cli/tests/Haas.Hosty.Cli.Tests/Haas.Hosty.Cli.Tests.csproj';
 const windowsFilter = 'FullyQualifiedName~WindowsProcessControlTests|FullyQualifiedName~StopAsync_OnWindowsKillsAdoptedJobDescendantAfterShellExited|FullyQualifiedName~CoreDevelopmentTests|FullyQualifiedName~ExplicitStop|FullyQualifiedName~SourceDocuments_ReferenceMetadataSupportsLfAndCrLf|FullyQualifiedName~WorkspaceGit_|FullyQualifiedName~JsonStorageTests';
-export const suites = Object.freeze(['activation', 'dependencies', 'sessions', 'windows', 'transport', 'worker', 'whisper', 'opus', 'documents', 'desktop']);
+export const suites = Object.freeze(['activation', 'dependencies', 'sessions', 'windows', 'transport', 'worker', 'whisper', 'opus', 'documents', 'desktop', 'harness-local']);
 const usage = 'Usage: npm run test:integration -- <' + suites.join('|') + '> [--dry-run]\n'
   + 'Runs one explicitly selected local suite. Builds its fixtures first; no automatic retries.\n'
   + 'activation: .NET, Git, Python, Docker; isolated managed Core Return and recovery\n'
@@ -19,6 +19,7 @@ const usage = 'Usage: npm run test:integration -- <' + suites.join('|') + '> [--
   + 'transport: .NET, Python, Docker; isolated Core/container network checks\n'
   + 'desktop: .NET, Git, Python, Docker; role-aware desktop and lifecycle in a managed Core\n'
   + 'documents: .NET, Git, Python, Docker; current docs, workspace progress and scoped events in a managed Core\n'
+  + 'harness-local: .NET, Git, Python, Node/npm, Docker; managed Core production local startup and recovery\n'
   + 'worker: Docker; builds the manifest-matching worker image and checks its lifecycle\n'
   + 'whisper: .NET; downloads the pinned model and runs native CPU inference\n'
   + 'opus: Node 24 and uv; builds the app and runs pinned native OPUS-MT Big inference\n'
@@ -35,6 +36,12 @@ export function suitePlan(suite, { platform = process.platform, node = process.e
   const pythonCheck = command(python, ['--version']);
   const build = project => command('dotnet', ['build', project]);
   switch (suite) {
+    case 'harness-local':
+      return { prerequisites: [dotnet, command('git', ['--version']), pythonCheck, docker,
+        command(node, ['--version']), command(node, ['-e', "require('node:child_process').execSync('npm --version', {stdio:'inherit'})"])], steps: [
+        build(core), build(cli),
+        command(python, ['scripts/check-workspace-activation.py', '.', 'harness-local', '--managed']),
+      ] };
     case 'activation':
       return { prerequisites: [dotnet, command('git', ['--version']), pythonCheck, docker], steps: [
         build(core), build(cli),

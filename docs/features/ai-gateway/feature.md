@@ -1,6 +1,6 @@
 ---
 created: 2026-08-09
-updated: 2026-10-26
+updated: 2026-10-27
 summary: Hosty Harness, the optional administrator assistant app hosting operator chat sessions on a host-resident agent harness.
 components: [apps/harness, apps/shell]
 ---
@@ -90,21 +90,17 @@ See [assistant MCP delegation](../delegated-token-exchange/feature.md).
 
 ## Gateway App
 
-- `apps/harness`: headless Node/TypeScript system app with two `localCommand` profiles:
-  `local` (default, `npm run start`) and `dev` (`development: true`, `npm run dev` / `tsx watch`).
-  The development profile watches backend source changes and restarts the gateway process; active
-  harness turns can be interrupted by that restart. Both profiles use the same data/cache directories,
-  assigned port and healthcheck. The settings UI remains a static export built by setup at startup;
-  its source edits need a rebuild/restart rather than backend watch alone. The gateway spawns harness
-  processes on the host, so it never runs in a container. That leaves a session's approved commands
-  with the host user's authority — an accepted, deferred risk that
-  [assistant runtime containment](../assistant-runtime-containment/plan.md) addresses. Distributed
-  with `defaultEnabled: false`: the assistant is opt-in and removable. Port comes from
-  `HOSTY_PORT_HTTP`, data lives in `HOSTY_APP_DATA_DIR`, and each harness session starts in a
-  workspace of its own under `HOSTY_APP_CACHE_DIR` — see
-  [assistant-attachments](../assistant-attachments/feature.md). Outside Core, with no cache directory
-  injected, every session shares `HOSTY_HARNESS_WORKDIR` (a temp directory by default, no longer
-  the home directory) and the gateway warns once that it does.
+- `apps/harness` is a system runtime app with API and worker services. Docker is the default
+  profile and uses prebuilt service images. The reviewed `local` profile starts compiled
+  production JavaScript and a static UI from a reusable isolated generation; see
+  [Harness Local Production Runtime](../harness-local-runtime/feature.md).
+  The `dev` profile (`development: true`) uses editable source and watches backend changes.
+  Its backend restarts can interrupt active turns; frontend source changes still need a
+  rebuild/restart. The profiles retain app-owned data/cache, Core-assigned ports and healthchecks.
+  Provider execution and containment are described in
+  [Shared Docker Runtime](../assistant-shared-docker-runtime/feature.md).
+  Without Core cache injection, sessions share `HOSTY_HARNESS_WORKDIR` (a temporary directory
+  by default), and the gateway warns once.
 - `GET /api/apps` returns the display name behind each MCP server name. A server name is the app id
   with dots replaced and a hash appended when that changed it — unique on the wire and unreadable in
   a transcript, where an operator otherwise reads `com-haas-media-server-f9a077 · add_torrent`. The
@@ -153,16 +149,13 @@ See [assistant MCP delegation](../delegated-token-exchange/feature.md).
   skill selections locally. [Settings experience](../settings-experience/feature.md) defines recovery and ownership.
   Switching tabs preserves unsaved prompt
   text and ongoing provider-login polling.
-- **The build runs at every start, from a clean cache.** The app is `localCommand`, so its manifest
-  `setup` step installs both workspaces and runs `build:web` before the service command. The reviewed
-  `local` profile uses `npm ci` to install the committed dependency lock without rewriting it; a
-  mismatched lock fails setup instead of silently changing dependencies. The editable `dev` profile
-  retains `npm install`. A `prebuild` script deletes `web/.next` first, because Turbopack's persistent
-  cache there survives a failed
-  build and keeps replaying its resolution failures: once a build failed for genuinely missing
-  packages, installing them did not fix it, and the app stayed broken through every restart. `.next`
-  holds only intermediate state for this app — the served bytes are in `out-build` — so discarding
-  it costs a cold build of about a second and removes the whole class of poisoned-cache failures.
+- The reviewed `local` profile prepares a production bundle on first use or when relevant
+  inputs/output change, then reuses it across starts without npm or compilation. Preparation
+  installs the committed dependency lock in an isolated snapshot; a mismatched lock fails
+  without rewriting the checkout. Docker includes the export in its image.
+  The editable `dev` setup retains `npm install` and `build:web`.
+  Web builds remove `web/.next` before compilation to avoid replaying failed Turbopack cache
+  entries; source builds export to `out-build`, and local production packages that output as `web`.
 - The page shell is served unauthenticated and contains no account data. Its API requires current
   administrator identity. The common SDK opens Core login through top-level navigation or an
   app-owned popup and exchanges the one-use code at Harness. The app-local cookie supports ordinary
@@ -571,8 +564,9 @@ session links include the owning app. See [assistant provider permissions](../as
   the root it names, and one naming neither falls back to JSON.
 - Capabilities: every harness reports `autoAllow` and `denyReason`, asserted on health alongside
   the other flags.
-- Runtime profiles: Core validates both `local` and `dev`; `local` stays the default, only `dev`
-  declares development, and both bind the same data/cache environment targets. Backend watch does
+- Runtime profiles: Core validates `docker`, `local` and `dev`; `docker` is the default, only `dev`
+  declares development, and the profiles retain declared data/cache targets. Backend watch does
   not imply hot reload for the statically exported settings UI.
-- Repeating the reviewed `local` setup installs the committed lock and builds the UI without changing
+- The reviewed `local` setup reuses complete production output; cold preparation installs the
+  committed lock and builds the UI in an isolated snapshot without changing
   tracked source files, including the root `package-lock.json`.

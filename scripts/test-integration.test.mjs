@@ -100,3 +100,11 @@ test('console entry point returns a nonzero exit for an invalid suite', () => {
   assert.equal(result.status, 2);
   assert.match(result.stdout, /Unknown integration suite/);
 });
+
+test('Harness local acceptance uses managed Core and the native runtime without building Docker app images', () => {
+  const plan = suitePlan('harness-local', { platform: 'darwin' });
+  assert.deepEqual(plan.steps.slice(0, 2).map(step => step.args[0]), ['build', 'build']);
+  assert.deepEqual(plan.steps[2].args, ['scripts/check-workspace-activation.py', '.', 'harness-local', '--managed']);
+  assert.ok(plan.prerequisites.some(step => step.args.some(arg => arg.includes('npm --version'))));
+  assert.ok(!plan.steps.some(step => step.file === 'docker'));
+});
