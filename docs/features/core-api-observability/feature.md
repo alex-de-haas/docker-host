@@ -173,7 +173,9 @@ nonblocking writer's documented contention drops, including at a 100% root sampl
   app-level aggregation, unavailable states and consumer-scoped shared subscriptions.
 - Standard SDK tests verify a custom child span and correlated log, parent sampling, demand expiry,
   revocation, bounded/replayable capture, escaped-Unicode wire limits and sanitization. Routine
-  supervisor health probes must not emit client spans. HTTP tests enforce installed-reader grants.
+  supervisor health probes must not emit client spans. SDK tests with process-wide listeners run
+  separately from parallel HTTP fixtures so exact span counts cannot include unrelated requests.
+  HTTP tests enforce installed-reader grants.
 - Backend tests cover parsing, durable cursor transactions, replay/restart deduplication, reserved
   provenance isolation, caller filters and correlation across retained time ranges. UI tests cover
   caller filters, coverage and both navigation directions, including missing traces.

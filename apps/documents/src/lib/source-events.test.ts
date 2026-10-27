@@ -30,3 +30,15 @@ it('older Core reports manual freshness and does not repeatedly request an unsup
   vi.useFakeTimers();page();request.mockResolvedValue(new Response(null,{status:501}));const health=vi.fn();const stop=observeSources(null,vi.fn(),health);await flush();
   await vi.advanceTimersByTimeAsync(120000);expect(request).toHaveBeenCalledOnce();expect(health).toHaveBeenCalledWith(expect.stringContaining('Refresh manually'));stop();
 });
+
+it('source hints retain their repository scope and malformed hints resynchronize',async()=>{
+  page();let output!:ReadableStreamDefaultController<Uint8Array>;
+  request.mockImplementation(async()=>new Response(new ReadableStream({start(controller){output=controller;}})));
+  const changed=vi.fn(),stop=observeSources(null,changed,vi.fn());await flush();
+  const id='a'.repeat(64);
+  output.enqueue(new TextEncoder().encode(`event: source.changed\ndata: {"repositories":["${id}","${id}"]}\n\n`));await flush();
+  expect(changed).toHaveBeenLastCalledWith([id]);
+  output.enqueue(new TextEncoder().encode('event: source.changed\ndata: {"repositories":[42]}\n\n'));await flush();
+  expect(changed).toHaveBeenLastCalledWith(undefined);
+  stop();output.close();await flush();
+});

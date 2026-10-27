@@ -68,18 +68,32 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
     return () => clearInterval(timer);
   }, []);
   const [detailRefresh, setDetailRefresh] = useState(0);
-  const detailVersion = workflowIsActive(state) ? workspace : `${workspace.id}:${state.revision}:${state.closure ?? ""}:${state.state}`;
+  // Inventory responses create new objects even when only a different workspace changed.
+  // Retain details until this workspace's source, consumer, lease or PR facts change.
+  const detailVersion = JSON.stringify([workspace.id, state.revision, state.closure, state.state,
+    workflowIsActive(state) ? workspace.worktrees : null]);
   const refreshed = useRef(0);
+  const loadedDetails = useRef<string | null>(null);
+  const detailRequest = useRef<{ version: string; abort: AbortController } | null>(null);
   const loadDetails = useEffectEvent((signal: AbortSignal, fresh: boolean) => Promise.all(workspace.worktrees.map(t =>
     developmentRequest<Worktree>(`/${workspace.id}/worktrees/${t.id}${fresh ? "?refresh=true" : ""}`, undefined, signal))));
+  useEffect(() => () => {
+    detailRequest.current?.abort.abort(); detailRequest.current = null; loadedDetails.current = null;
+  }, [workspace.id]);
   useEffect(() => {
-    const abort = new AbortController();
     const fresh = refreshed.current !== detailRefresh; refreshed.current = detailRefresh;
+    if (!fresh && (loadedDetails.current === detailVersion || detailRequest.current?.version === detailVersion)) return;
+    detailRequest.current?.abort.abort(); loadedDetails.current = null;
+    const abort = new AbortController();
+    const request = { version: detailVersion, abort }; detailRequest.current = request;
     void loadDetails(abort.signal, fresh)
-      .then(values => { if (!abort.signal.aborted) { setTrees(values); setLoadError(""); } })
-      .catch(e => { if (!abort.signal.aborted) { setTrees([]); setLoadError(e.message); } });
-    return () => abort.abort();
-  }, [detailVersion, detailRefresh]);
+      .then(values => {
+        if (!abort.signal.aborted) { loadedDetails.current = detailVersion; setTrees(values); setLoadError(""); }
+      })
+      .catch(e => { if (!abort.signal.aborted) { loadedDetails.current = null; setTrees([]); setLoadError(e.message); } })
+      .finally(() => { if (detailRequest.current === request) detailRequest.current = null; });
+    // A failed read retries on the next inventory; identical successful/in-flight reads are reused.
+  }, [workspace, detailVersion, detailRefresh]);
   const run = async (kind: string, retry = false) => {
     if (executing.current || recovering || (pending && !retry)) return; executing.current = true; setBusy(true); setError(""); setLeaseRefusal(false);
     const request = retry && pending ? pending : { kind, requestId: crypto.randomUUID(), expectedRevision: state.revision };

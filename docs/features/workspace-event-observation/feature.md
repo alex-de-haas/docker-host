@@ -1,6 +1,6 @@
 ---
 created: 2026-10-19
-updated: 2026-10-21
+updated: 2026-10-27
 summary: Core observes workspace changes through filesystem and mutation events, while Harness consumes authorized SSE updates.
 components: [apps/core, apps/harness]
 ---
@@ -31,7 +31,25 @@ so ordinary directory writes do not trigger recovery scans.
 
 ## Inspection And Authority
 
-Inventory reads retained observations. Worktree detail reads reuse cached commits, original-base
+Inventory reads retained observations. Parsed workspace, name, workflow and participation records
+share a bounded cache (512 entries, 16 MiB weighted budget). On Linux and macOS each read checks
+native device/inode identity, size and nanosecond mtime/ctime; atomic replacement, deletion and
+same-size edits with restored mtime invalidate the parsed value. Unsupported platforms and files
+retain uncached reads. Errors and missing records never become cached authorization. Inventory
+operations resolve the development root once within that read, without retaining resolved paths
+across requests. Source grants, membership and lifecycle admission remain current checks.
+
+Documents workspace inventories reuse document-change summaries only for a healthy, settled
+observation generation and the same tracked target commit. Concurrent readers share the scan;
+source/target changes invalidate it. Documentation filesystem hints also invalidate summaries for
+ignored Markdown without forcing a Git scan for an ignored file. Paused, recovering and unobserved
+worktrees retain fresh checks, and direct content reads and mutations keep their path/Git validation. Each authorized
+repository resolves its current target once per response rather than once per worktree. Summary
+reuse does not skip current source authorization before and after inspection. Publication writes
+advance a separate UI revision, so Harness refreshes PR check, review and merge facts without
+invalidating the retained Git inspection or scheduling another source scan.
+
+Worktree detail reads reuse cached commits, original-base
 file changes and line statistics until the observed source/generation changes. Identical observations
 preserve timestamps and do not rewrite records. Consumer and recorded PR facts remain independently
 refreshed. Cache reads revalidate current source authority before and after inspection; cached data
@@ -103,6 +121,10 @@ cancellation failure does not suppress stream recovery or older-Core compatibili
 ## Testing Expectations
 
 - Quiet observation and repeated detail reads perform no scan or record rewrite.
+- Workspace record reuse remains bounded and detects rename, replacement, deletion, corruption,
+  ownership/membership changes and same-size edits with restored mtime.
+- Repeated settled Documents inventories share their Git/document scan; local edits, target advances
+  and unavailable observation invalidate it, while current access checks remain in force.
 - External writes, atomic replacement, rename/delete, staging, commits and target refs invalidate
   the correct worktree; ignored bursts cannot conceal tracked changes.
 - Busy owner locks, events during scans, missing roots, watcher failure and restart retain recovery.

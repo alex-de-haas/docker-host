@@ -16,7 +16,7 @@ internal static class SourceDocumentStream
             var scope = request.Query["repositoryId"].ToString();
             var repositoryId = string.IsNullOrEmpty(scope) ? null : scope;
             var targets = await documents.ObserveTargetsAsync(user, repositoryId, ct);
-            var allowed = await documents.AuthorizedWorkspaceIdsAsync(user, repositoryId, ct);
+            var allowed = await documents.AuthorizedWorkspaceRepositoriesAsync(user, repositoryId, ct);
             response.ContentType = "text/event-stream";
             response.Headers.CacheControl = "no-store";
             response.Headers["X-Accel-Buffering"] = "no";
@@ -34,18 +34,29 @@ internal static class SourceDocumentStream
                 catch (OperationCanceledException) when (!ct.IsCancellationRequested) { heartbeat = true; }
                 if (await auth.RequireAsync(request, appId, ct) != user) break;
                 heartbeat |= System.Diagnostics.Stopwatch.GetElapsedTime(lastTargetObservation) >= TimeSpan.FromSeconds(30);
-                var current = await documents.AuthorizedWorkspaceIdsAsync(user, repositoryId, ct);
+                var current = await documents.AuthorizedWorkspaceRepositoriesAsync(user, repositoryId, ct);
                 var currentTargets = heartbeat ? await documents.ObserveTargetsAsync(user, repositoryId, ct) : targets;
                 if (heartbeat) lastTargetObservation = System.Diagnostics.Stopwatch.GetTimestamp();
-                var changed = !current.SetEquals(allowed) || subscription.Dropped != dropped || currentTargets != targets;
+                var changed = !current.OrderBy(p => p.Key, StringComparer.Ordinal).SequenceEqual(allowed.OrderBy(p => p.Key, StringComparer.Ordinal))
+                    || subscription.Dropped != dropped || currentTargets != targets;
+                var repositories = new HashSet<string>(StringComparer.Ordinal);
                 targets = currentTargets;
                 dropped = subscription.Dropped;
                 while (subscription.Reader.TryRead(out var envelope))
-                    if (envelope.Name == CoreEventHub.WorkspaceChanged
-                        && (envelope.Data == "*" || current.Contains(envelope.Data) || allowed.Contains(envelope.Data))) changed = true;
+                {
+                    if (envelope.Name != CoreEventHub.WorkspaceChanged) continue;
+                    if (envelope.Data == "*") changed = true;
+                    else if (current.TryGetValue(envelope.Data, out var repository)) repositories.Add(repository);
+                }
                 allowed = current;
-                // No workspace IDs/source payloads cross the stream. Every snapshot read revalidates access.
+                // Scoped hints contain only currently authorized repository IDs, never workspace IDs
+                // or source bytes. Older clients can still treat any hint as a full invalidation.
                 if (changed) await response.WriteAsync("event: source.changed\ndata: {}\n\n", ct);
+                else if (repositories.Count > 0)
+                {
+                    var ids = System.Text.Json.JsonSerializer.Serialize(repositories.Order(StringComparer.Ordinal).ToArray(), CoreJsonSerializerContext.Default.StringArray);
+                    await response.WriteAsync("event: source.changed\ndata: {\"repositories\":" + ids + "}\n\n", ct);
+                }
                 else if (heartbeat) await response.WriteAsync("event: stream.ping\ndata: {}\n\n", ct);
                 await response.Body.FlushAsync(ct);
             }

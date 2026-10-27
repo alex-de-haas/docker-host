@@ -74,7 +74,7 @@ internal sealed partial class DevelopmentWorkspaceService
 
     private string WorkflowPath(WorkspaceOwner owner) => System.IO.Path.Combine(Root, "workflows", Hash(OwnerIdentity(owner)) + ".json");
     internal async Task<WorkspaceWorkflow> WorkflowAsync(WorkspaceOwner owner, CancellationToken ct)
-        => await JsonStorage.ReadAsync<WorkspaceWorkflow>(WorkflowPath(owner), ct) ?? new();
+        => await recordCache.ReadAsync<WorkspaceWorkflow>(WorkflowPath(owner), ct) ?? new();
     private async Task SaveWorkflow(WorkspaceOwner owner, WorkspaceWorkflow value)
     {
         var previous = await WorkflowAsync(owner, default);

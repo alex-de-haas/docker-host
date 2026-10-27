@@ -280,6 +280,11 @@ try:
     if managed:
         parent = (root, origin, jar, browser, csrf)
         environment_request = {'requestId':str(uuid.uuid4()), 'label':'Workspace activation acceptance', 'mode':'source', 'projectPath':str(workspace/project)}
+        if scenario == 'documents':
+            child_mode = os.environ.get('HOSTY_DOCUMENTS_CHILD_MODE', 'source')
+            assert child_mode in ('source', 'current'), 'Documents comparison supports source or current Core only'
+            if child_mode == 'current':
+                environment_request.update(mode='current', projectPath=None)
         if scenario == 'observability' and os.environ.get('HOSTY_OBSERVABILITY_AOT') == '1':
             assert os.environ.get('HOSTY_ACTIVATION_CORE'), 'AOT smoke requires an explicitly published Core executable'
             environment_request.update(mode='current', projectPath=None)
@@ -298,6 +303,16 @@ try:
         csrf = request('/api/auth/csrf')['token']
         initial = request('/control/v1/core/status',control=True)
         say('Started a parent-managed child Core and logged in with its separate test account')
+    if scenario == 'shell':
+        assert managed, 'Shell acceptance requires a managed child Core'
+        import importlib.util
+        sys.dont_write_bytecode = True
+        spec = importlib.util.spec_from_file_location('shell_runtime_acceptance', workspace/'apps/shell/test/runtime_acceptance.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        module.check(globals())
+        success = True
+        sys.exit(0)
     if scenario == 'observability':
         assert managed, 'Observability acceptance requires a managed child Core'
         sys.dont_write_bytecode = True

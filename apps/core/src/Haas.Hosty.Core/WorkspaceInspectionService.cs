@@ -11,6 +11,7 @@ internal sealed partial class WorkspaceInspectionService(DevelopmentWorkspaceSer
     private readonly SemaphoreSlim[] detailGates = Enumerable.Range(0, 64).Select(_ => new SemaphoreSlim(1, 1)).ToArray();
     public async Task<WorkspaceInventory> ListAsync(string userId, CancellationToken ct, bool ownedOnly = false, string callerAppId = "")
     {
+        using var scope = workspaces.ReadScope();
         var installed = await apps.ListAppRecordsAsync(ct);
         var allowed = new List<DevelopmentWorkspace>();
         foreach (var tree in (await workspaces.ListAsync(null, true, ct)).Workspaces)
@@ -219,7 +220,7 @@ internal sealed partial class WorkspaceInspectionService(DevelopmentWorkspaceSer
             }).ToArray(), tree.Observation,
             tree.Operations.Select(o => new InspectionOperation(o.Id, o.Kind, o.State, o.Error)).ToArray(), tree.Leases,
             tree.PullRequests.Where(SafeUrl).Select(url => new InspectionPullRequest(url, null, null, "No verified provider observation.")).ToArray(), [], [])
-        { HasSandboxConsumers = tree.SandboxConsumers.Length > 0, ObservationRevision = tree.SourceStamp + ":" + (observationState?.Generation(tree.Id) ?? 0), ObservationHealth = observationState?.Health(tree.Id) ?? "unknown" };
+        { HasSandboxConsumers = tree.SandboxConsumers.Length > 0, ObservationRevision = tree.SourceStamp + ":" + (observationState?.Generation(tree.Id) ?? 0) + ":" + (observationState?.PublicationGeneration(tree.Id) ?? 0), ObservationHealth = observationState?.Health(tree.Id) ?? "unknown" };
 
     private async Task<InspectionConsumer[]> ConsumersAsync(DevelopmentWorkspace tree, IReadOnlyList<AppRecord> installed, CancellationToken ct)
     {

@@ -91,7 +91,8 @@ try {
   console.log(`\nCore published Native AOT for ${runtime} with no new trim/AOT warnings.`);
   await smoke(output);
 } finally {
-  rmSync(output, { recursive: true, force: true });
+  // Windows can retain transient image/scanner handles after the child has closed.
+  rmSync(output, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 }
 
 function defaultRuntime() {

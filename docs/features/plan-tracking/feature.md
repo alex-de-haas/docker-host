@@ -1,6 +1,6 @@
 ---
 created: 2026-10-07
-updated: 2026-10-26
+updated: 2026-10-27
 summary: Core source-document access, target freshness and workspace projections for Documents and other authorized readers.
 components: [apps/core, apps/documents, apps/harness, apps/shell, packages/app-sdk]
 ---
@@ -109,8 +109,18 @@ Core caches immutable Git tree metadata, document listings and blob bytes in a s
 same snapshot share their work. Cold full listings read blobs through Git's binary `cat-file
 --batch` protocol; warm listings avoid rebuilding the snapshot. Focused detail listings read only
 the requested document and its reference metadata. Every request still resolves current access,
-public proof and the target/base version before using cached values. Mutable worktree bytes and
-their reference metadata are read afresh and never enter this immutable cache.
+public proof and the target/base version before using cached values. Mutable worktree bytes use a
+separate 32 MiB LRU. On macOS and Linux every access checks the native file type, device/inode, size,
+nanosecond modification and change times. Unchanged files reuse bytes and concurrent readers share
+a read; an in-place edit with restored mtime, replacement, deletion or type change invalidates them.
+The native type check avoids spawning one process per document. Unsupported metadata APIs use the
+uncached regular-file-checked path. Contained paths and source authority are revalidated on every
+request, and reference metadata is computed against the current source context.
+
+Source-event authorization validates current grants and membership without spawning Git validation
+for every workspace on every hint. Actual document requests retain registered-tree validation.
+Scoped event data contains authorized repository IDs only; unknown/global changes retain the empty
+full-invalidation payload for older clients.
 
 The app's source client allows 75 seconds for fetch, queued transport and local metadata work;
 caller cancellation still interrupts the request. This covers Core's 30-second fetch budget without
@@ -147,6 +157,9 @@ hosty.plans app without copying its grants. See [Documents](../documents-app/fea
 - Core tests cover repository/branch discovery, private grants and revocation, public-proof isolation,
   bounded UTF-8/reference metadata, stale commits and SHAs, cache authority, worktree deletion and
   separate base/target/local facts. Unrelated reader app IDs use the same contract.
+- Mutable-cache tests cover cold/warm reads, concurrent readers and cancellation, budget eviction,
+  same-size edits with restored mtime, atomic replacement, deletion and symlink/special-file refusal.
+  Exercise native metadata on macOS and Linux; unsupported metadata keeps uncached behavior.
 - Stream tests cover administrator and app/source permissions, scoped hints and revocation. Shared
   fetch tests verify coalescing, the freshness window, provider failures and caller cancellation.
 - Documents tests cover parser/cache/MCP parity, exact version selection, independent workspace

@@ -4,7 +4,7 @@ import { appFetch } from "@hosty-sdk/app/browser-auth";
 // retry with backoff; old Core versions retain entry/refresh/visibility reads without polling Git.
 export function observeSources(
   repository: string | null,
-  changed: () => void,
+  changed: (repositories?: string[]) => void,
   health: (state: string) => void,
 ) {
   let stopped = false,
@@ -39,8 +39,17 @@ export function observeSources(
           while ((end = pending.indexOf("\n\n")) >= 0) {
             const event = pending.slice(0, end);
             pending = pending.slice(end + 2);
-            if (/^event: (?:source.changed|stream.ready)$/m.test(event))
-              changed();
+            if (/^event: stream.ready$/m.test(event)) changed();
+            if (/^event: source.changed$/m.test(event)) {
+              let repositories: string[] | undefined;
+              try {
+                const data = JSON.parse(event.split("\n").find(line => line.startsWith("data: "))?.slice(6) ?? "{}");
+                if (Array.isArray(data.repositories) && data.repositories.length > 0 && data.repositories.length <= 256 &&
+                    data.repositories.every((id: unknown) => typeof id === "string" && /^[a-f0-9]{64}$/.test(id)))
+                  repositories = [...new Set<string>(data.repositories)];
+              } catch { /* Old or malformed hints safely request a complete resynchronization. */ }
+              changed(repositories);
+            }
             if (/^event: stream.revoked$/m.test(event)) {
               health("Source access changed. Refresh to sign in again.");
               changed();

@@ -45,14 +45,16 @@ it("coalesces rename events received during an old inventory read into one follo
   let finishOld!: (response: Response) => void;
   transport.read.mockImplementationOnce(() => new Promise<Response>(resolve => { finishOld = resolve; }))
     .mockResolvedValueOnce(response("Simplify runtime selection"));
-  await act(async () => { stream.emit("app.changed"); await vi.advanceTimersByTimeAsync(300); });
+  await act(async () => { stream.emit("app.changed"); await vi.advanceTimersByTimeAsync(5000); });
   expect(transport.read).toHaveBeenCalledTimes(baseline + 1);
   await act(async () => {
     stream.emit("workspace.changed"); stream.emit("workspace.changed"); stream.emit("workspace.changed");
-    await vi.advanceTimersByTimeAsync(300);
+    await vi.advanceTimersByTimeAsync(5000);
   });
   expect(transport.read).toHaveBeenCalledTimes(baseline + 1);
   await act(async () => finishOld(response("Small fix")));
+  expect(transport.read).toHaveBeenCalledTimes(baseline + 1);
+  await act(async () => vi.advanceTimersByTimeAsync(5000));
   expect(transport.read).toHaveBeenCalledTimes(baseline + 2);
   expect(container.textContent).toBe("Simplify runtime selection");
   await act(async () => vi.advanceTimersByTimeAsync(1000));
@@ -63,9 +65,9 @@ it("aborts cleanup and suppresses the queued rename reread when its consumer unm
   const baseline = transport.read.mock.calls.length;
   let finishOld!: (response: Response) => void;
   transport.read.mockImplementationOnce(() => new Promise<Response>(resolve => { finishOld = resolve; }));
-  await act(async () => { stream.emit("app.changed"); await vi.advanceTimersByTimeAsync(300); });
+  await act(async () => { stream.emit("app.changed"); await vi.advanceTimersByTimeAsync(5000); });
   const signal = transport.read.mock.calls.at(-1)![1].signal as AbortSignal;
-  await act(async () => { stream.emit("workspace.changed"); await vi.advanceTimersByTimeAsync(300); });
+  await act(async () => { stream.emit("workspace.changed"); await vi.advanceTimersByTimeAsync(5000); });
   await act(async () => { root.unmount(); mounted = false; });
   expect(signal.aborted).toBe(true); expect(stream.readyState).toBe(Source.CLOSED);
   await act(async () => finishOld(response("Old name")));
@@ -92,7 +94,7 @@ it("updates the Core-only workspace name through the shared workspace stream", a
   expect(container.textContent).toBe("Small Core fix");
   const baseline = transport.read.mock.calls.length;
   transport.read.mockImplementation(async () => coreResponse("Simplify Core source display"));
-  await act(async () => { stream.emit("workspace.changed"); await vi.advanceTimersByTimeAsync(300); });
+  await act(async () => { stream.emit("workspace.changed"); await vi.advanceTimersByTimeAsync(5000); });
   expect(container.textContent).toBe("Simplify Core source display");
   expect(transport.read).toHaveBeenCalledTimes(baseline + 1);
   expect(transport.read.mock.calls.every(([url]) => url.endsWith("/activation-workspaces"))).toBe(true);
@@ -143,3 +145,93 @@ for (const inventory of ["execution targets", "workspace sources", "Core workspa
     expect(Source.instances.at(-1)!.url).not.toContain("workspaces");
   });
 }
+
+it("bounds continuous changes and performs one trailing read without polling a quiet page", async () => {
+  const stream = await mount();
+  const baseline = transport.read.mock.calls.length;
+  for (let i = 0; i < 60; i++) {
+    await act(async () => { stream.emit("workspace.changed"); stream.emit("app.changed"); await vi.advanceTimersByTimeAsync(500); });
+  }
+  expect(transport.read.mock.calls.length - baseline).toBe(6);
+  await act(async () => vi.advanceTimersByTimeAsync(60_000));
+  expect(transport.read.mock.calls.length - baseline).toBe(6);
+  await act(async () => { stream.emit("workspace.changed"); });
+  expect(transport.read.mock.calls.length - baseline).toBe(7);
+});
+it("retains backoff during event storms and recovers without another hint", async () => {
+  const stream = await mount();
+  transport.read.mockResolvedValue(new Response(null, { status: 503 }));
+  const baseline = transport.read.mock.calls.length;
+  await act(async () => { stream.emit("workspace.changed"); await vi.advanceTimersByTimeAsync(5000); });
+  expect(transport.read.mock.calls.length - baseline).toBe(1);
+  for (let i = 0; i < 7; i++) {
+    await act(async () => { stream.emit("workspace.changed"); await vi.advanceTimersByTimeAsync(1000); });
+  }
+  expect(transport.read.mock.calls.length - baseline).toBe(4);
+  transport.read.mockImplementation(async () => response("Recovered"));
+  await act(async () => vi.advanceTimersByTimeAsync(8000));
+  expect(container.textContent).toBe("Recovered");
+  const recovered = transport.read.mock.calls.length;
+  await act(async () => vi.advanceTimersByTimeAsync(60_000));
+  expect(transport.read).toHaveBeenCalledTimes(recovered);
+});
+it("suspends queued reads while hidden and refreshes immediately on visibility and page restoration", async () => {
+  const stream = await mount();
+  const baseline = transport.read.mock.calls.length;
+  await act(async () => { stream.emit("workspace.changed"); });
+  await act(async () => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    document.dispatchEvent(new Event("visibilitychange"));
+    Source.instances.at(-1)!.emit("app.changed");
+    await vi.advanceTimersByTimeAsync(60_000);
+  });
+  expect(transport.read).toHaveBeenCalledTimes(baseline);
+  transport.read.mockImplementation(async () => response("Visible again"));
+  await act(async () => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  expect(container.textContent).toBe("Visible again");
+  const visible = transport.read.mock.calls.length;
+  await act(async () => { window.dispatchEvent(new PageTransitionEvent("pagehide", { persisted: true })); await vi.advanceTimersByTimeAsync(60_000); });
+  expect(transport.read).toHaveBeenCalledTimes(visible);
+  transport.read.mockImplementation(async () => response("Restored page"));
+  await act(async () => window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true })));
+  expect(container.textContent).toBe("Restored page");
+});
+it("refreshes immediately after reconnect even within the background cooldown", async () => {
+  await mount();
+  const baseline = transport.read.mock.calls.length;
+  transport.read.mockImplementation(async () => response("Reconnected"));
+  await act(async () => Source.instances.at(-1)!.open());
+  expect(transport.read.mock.calls.length).toBeGreaterThan(baseline);
+  expect(container.textContent).toBe("Reconnected");
+});
+it("cancels a delayed background read on unmount", async () => {
+  const stream = await mount();
+  const baseline = transport.read.mock.calls.length;
+  await act(async () => stream.emit("workspace.changed"));
+  await act(async () => { root.unmount(); mounted = false; });
+  await act(async () => vi.advanceTimersByTimeAsync(60_000));
+  expect(transport.read).toHaveBeenCalledTimes(baseline);
+});
+it("does not restore workspace interest from a response that finishes while the page is hidden", async () => {
+  let finish!: (response: Response) => void;
+  transport.read.mockImplementationOnce(() => new Promise<Response>(resolve => { finish = resolve; }));
+  await act(async () => root.render(<Probe />));
+  await act(async () => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    document.dispatchEvent(new Event("visibilitychange"));
+    finish(response("Old view"));
+    await vi.advanceTimersByTimeAsync(60_000);
+  });
+  expect(transport.read).toHaveBeenCalledTimes(1);
+  expect(Source.instances.some(source => source.url.includes("workspaces"))).toBe(false);
+  transport.read.mockImplementation(async () => response("Fresh view"));
+  await act(async () => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  expect(container.textContent).toBe("Fresh view");
+  expect(Source.instances.at(-1)!.url).toContain("workspaces");
+});

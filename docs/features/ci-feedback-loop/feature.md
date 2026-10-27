@@ -67,6 +67,7 @@ npm run test:integration -- harness-local
 npm run test:integration -- whisper
 npm run test:integration -- opus
 npm run test:integration -- desktop
+npm run test:integration -- shell
 ```
 
 The `desktop` suite builds Desktop and exercises normal password login, role-based app access, assignment revocation and lifecycle authorization in the existing parent-managed child Core. `HOSTY_DESKTOP_BROWSER=1` retains that same sandbox for manual UI acceptance until its completion marker is written; the owner then Finishes the environment and verifies removal.
@@ -84,6 +85,7 @@ GitHub Actions. Its small command-construction tests remain in the CI policy job
 | dependencies | Requires .NET, Python and Docker; builds Core/CLI and checks dependency waits, recovery, cancellation and boot in a parent-owned isolated Core. |
 | transport | Requires .NET, Python and Docker; builds Core and runs its isolated real-Docker listener/transport fixture. |
 | worker | Requires Docker; builds the worker image named by the current manifest and runs its process/mount/control fixtures. |
+| shell | Requires .NET, Git, Python and Docker; builds Shell and verifies password identity and workspace inventory in a managed child Core. `HOSTY_SHELL_BROWSER_REVIEW` names a private temporary browser checkpoint; its `.continue` marker resumes Finish cleanup. |
 | harness-local | Requires Node/npm, .NET, Git, Python and Docker for the parent-managed child Core; verifies native production cold/warm startup, password/app identity, compiled assets, recovery and Finish cleanup. |
 | tasks | Requires .NET, Git, Python and Docker; builds Core/CLI and Harness images, verifies human/profile/independent-provider tasks, explicit MCP results, cancellation, existing workspaces and restart in a managed child Core. `HOSTY_TASKS_BROWSER=1` adds the Playwright browser journey. |
 | sessions | Requires .NET, Git, Python and Docker; builds Core/CLI and both Harness images, then runs multi-user workspace acceptance in a parent-managed child Core with separate password-authenticated users and data. |

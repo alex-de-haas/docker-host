@@ -26,7 +26,7 @@ internal sealed partial class DevelopmentWorkspaceService
     // and membership are separate records, never synthetic owner credentials.
     internal async Task<WorkspaceParticipation?> ReadParticipationAsync(string workspaceId, CancellationToken ct)
     {
-        var value = await JsonStorage.ReadAsync<WorkspaceParticipation>(ParticipationPath(workspaceId), ct);
+        var value = await recordCache.ReadAsync<WorkspaceParticipation>(ParticipationPath(workspaceId), ct);
         if (value is null) return null;
         if (value.Id != workspaceId || value.AllocationOwner is null || value.AllocationOwner.IsExternal ||
             WorkspaceIdFor(value.AllocationOwner) != workspaceId || value.Revision < 1 ||

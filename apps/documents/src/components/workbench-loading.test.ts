@@ -30,10 +30,15 @@ const listingRequests = () => requests.filter(request => request.url === "/api/r
 const pending = (url: string) => requests.find(request => request.url === url && !request.settled)!;
 async function answer(request: Pending, body: unknown, status = 200) {
   await act(async () => { request.settled = true; request.resolve(Response.json(body, { status })); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(0); });
 }
 async function render(query = mocks.query) {
   mocks.query = query;
   await act(async () => root.render(createElement(DocumentsWorkbench)));
+  await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+}
+async function cooldown() {
+  await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
 }
 async function event() {
   await act(async () => { changed(); await vi.advanceTimersByTimeAsync(201); });
@@ -72,6 +77,8 @@ it("finishes all six repositories without resetting progress when live events ar
   }
   expect(progress()).toBe("");
   expect(container.querySelector('[data-testid="loaded"]')?.textContent).toBe(repositories.map(item => item.id).join(","));
+  expect(listingRequests()).toHaveLength(1);
+  await cooldown();
   expect(listingRequests()).toHaveLength(2);
   await answer(pending("/api/repositories"), { repositories });
   for (let index = 0; index < 6; index++) await repository(index);
@@ -92,13 +99,15 @@ it("retains a manual forced refresh queued with live and visibility updates, eve
   await repository(0, true); await repository(1, true);
   expect(progress()).toBe("");
   expect(listingRequests()).toHaveLength(2);
-  await event(); await answer(pending("/api/repositories"), { repositories: [] });
+  await event(); await cooldown(); await answer(pending("/api/repositories"), { repositories: [] });
   expect(progress()).toBe("");
 });
 
 it("retries a failed repository listing when an event arrived while it was pending", async () => {
   await render(); await event();
   await answer(pending("/api/repositories"), { message: "Source unavailable" }, 503);
+  expect(listingRequests()).toHaveLength(1);
+  await cooldown();
   expect(listingRequests()).toHaveLength(2);
   await answer(pending("/api/repositories"), { repositories: [] });
   expect(container.querySelector('[data-testid="error"]')?.textContent).toBe("");
@@ -112,6 +121,8 @@ it("finishes a document read before revalidating and cancels it when the selecte
   await event(); await event();
   expect(requests).toHaveLength(1); expect(initial.signal.aborted).toBe(false);
   await answer(initial, { repository: repositories[0], path, document: null, workspaces: [], error: null });
+  expect(requests).toHaveLength(1);
+  await cooldown();
   expect(requests).toHaveLength(2);
   const revalidation = requests[1];
   await render(new URLSearchParams({ repository: "repo-0", document: path, workspace: "other" }));

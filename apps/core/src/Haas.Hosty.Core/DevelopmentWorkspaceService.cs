@@ -16,7 +16,26 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
 {
     private readonly ConcurrentDictionary<string, SemaphoreSlim> gates = new(StringComparer.Ordinal);
     internal SourceRepositoryFetchCoordinator Fetches { get; } = fetches ?? new(clock);
-    private string Root => MountPathPolicy.ResolveRealPath(System.IO.Path.Combine(paths.CoreRoot, "development"));
+    private readonly WorkspaceRecordCache recordCache = new();
+    private readonly AsyncLocal<string?> readRoot = new();
+    private string Root => readRoot.Value ?? MountPathPolicy.ResolveRealPath(System.IO.Path.Combine(paths.CoreRoot, "development"));
+    // Resolve the trusted root once within a read operation, never retain a resolved path across
+    // requests or lifecycle actions. Nested inventory/authority reads share that same root.
+    internal IDisposable ReadScope()
+    {
+        var previous = readRoot.Value;
+        readRoot.Value = Root;
+        return new ReadRootScope(readRoot, previous);
+    }
+    private sealed class ReadRootScope(AsyncLocal<string?> slot, string? previous) : IDisposable
+    {
+        public void Dispose() => slot.Value = previous;
+    }
+    internal (int Reads, int Hits, int Entries, long Bytes) RecordCacheStatistics => recordCache.Statistics;
+    internal string? StableObservationKey(DevelopmentWorkspace tree)
+        => observationState is not null && observationState.Health(tree.Id) == "watching"
+            && !observationState.NeedsObservation(tree.Id)
+            ? tree.SourceStamp + ":" + observationState.Generation(tree.Id) + ":" + observationState.DocumentGeneration(tree.Id) : null;
     private string Records => System.IO.Path.Combine(Root, "workspaces");
     private string RepoPath(string id) => System.IO.Path.Combine(Root, "repositories", id + ".git");
     internal string RepositoryPath(string repository) => RepoPath(Hash(repository));
@@ -74,8 +93,9 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
     }
     internal async Task<DevelopmentWorkspace> Read(string id, WorkspaceOwner? owner, CancellationToken ct)
     {
+        using var scope = ReadScope();
         Id(id);
-        var w = await JsonStorage.ReadAsync<DevelopmentWorkspace>(RecordPath(id), ct) ?? throw Error("not_found", "Workspace not found.");
+        var w = await recordCache.ReadAsync<DevelopmentWorkspace>(RecordPath(id), ct) ?? throw Error("not_found", "Workspace not found.");
         if (w.Owner is null || w.Apps is null || w.Leases is null || w.Operations is null
             || w.Apps.Any(a => a is null) || w.Operations.Any(o => o is null))
             throw Error("ownership_invalid", "Workspace activity metadata is incomplete.");
@@ -92,9 +112,11 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
         => ListRecordsAsync(owner, includeReleased, ct);
     private async Task<WorkspaceList> ListRecordsAsync(WorkspaceOwner? owner, bool includeReleased, CancellationToken ct)
         {
-            if (!Directory.Exists(Records)) return new WorkspaceList([]);
+            using var scope = ReadScope();
+            var records = Records;
+            if (!Directory.Exists(records)) return new WorkspaceList([]);
             var found = new List<DevelopmentWorkspace>();
-            foreach (var file in Directory.EnumerateFiles(Records, "*.json"))
+            foreach (var file in Directory.EnumerateFiles(records, "*.json"))
             {
                 try
                 {

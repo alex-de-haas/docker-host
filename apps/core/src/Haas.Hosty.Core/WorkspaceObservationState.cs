@@ -11,6 +11,8 @@ internal sealed class WorkspaceObservationState(CoreEventHub events, TimeSpan? r
         public long Generation = 1;
         public long Observed;
         public long Scans;
+        public long Documents;
+        public long Publications;
         public long RetryAfter;
         public string Health = "starting";
     }
@@ -21,6 +23,8 @@ internal sealed class WorkspaceObservationState(CoreEventHub events, TimeSpan? r
     internal IEnumerable<string> Dirty => entries.Where(p => CanObserve(p.Key) && p.Value.Health != "paused").Select(p => p.Key).ToArray();
     internal long ScanCount(string id) => entries.TryGetValue(id, out var entry) ? Interlocked.Read(ref entry.Scans) : 0;
     internal long Generation(string id) => Interlocked.Read(ref entries.GetOrAdd(id, _ => new()).Generation);
+    internal long DocumentGeneration(string id) => Interlocked.Read(ref entries.GetOrAdd(id, _ => new()).Documents);
+    internal void DocumentsChanged(string id) => Interlocked.Increment(ref entries.GetOrAdd(id, _ => new()).Documents);
     internal bool NeedsObservation(string id) => !entries.TryGetValue(id, out var e) || Interlocked.Read(ref e.Generation) != Interlocked.Read(ref e.Observed);
     internal bool CanObserve(string id) => NeedsObservation(id) && (!entries.TryGetValue(id, out var entry)
         || Environment.TickCount64 >= Interlocked.Read(ref entry.RetryAfter));
@@ -67,6 +71,13 @@ internal sealed class WorkspaceObservationState(CoreEventHub events, TimeSpan? r
         events.PublishWorkspaceChange(id);
     }
     internal void Publish(string id) => events.PublishWorkspaceChange(id);
+    internal long PublicationGeneration(string id) => Interlocked.Read(ref entries.GetOrAdd(id, _ => new()).Publications);
+    internal void PublicationChanged(string id)
+    {
+        // Provider facts invalidate UI details without scheduling another source/Git scan.
+        Interlocked.Increment(ref entries.GetOrAdd(id, _ => new()).Publications);
+        events.PublishWorkspaceChange(id);
+    }
     internal void Remove(string id)
     {
         entries.TryRemove(id, out _);

@@ -11,6 +11,9 @@ import threading
 import urllib.parse
 import urllib.request
 import uuid
+import subprocess
+import statistics
+from concurrent.futures import ThreadPoolExecutor
 
 
 def check(context):
@@ -29,6 +32,12 @@ def check(context):
     target = remote/relative
     target.parent.mkdir(parents=True)
     target.write_text(markdown(3))
+    probe = os.environ.get('HOSTY_DOCUMENTS_CPU_PROBE') == '1'
+    if probe:
+        for index in range(249):
+            page = remote/f'docs/reviews/2026-10-27-load-{index}.md'
+            page.parent.mkdir(parents=True, exist_ok=True)
+            page.write_text(f'# Load fixture {index}\n\n' + 'Stable source content.\n' * 50)
     manifest = json.loads((workspace/'apps/documents/manifest.json').read_text())
     manifest['source']['repository'] = context['repository']
     # Keep manifest-relative skills and assets beside the fixture manifest.
@@ -114,6 +123,58 @@ def check(context):
         assert selected['workspace']['hasLocalChanges'] is True
         assert selected['workspace']['pullRequests'] == []
         say('PASS: password identity, Docker Documents, scoped SSE, target 3/10 and uncommitted workspace 5/10')
+        if probe:
+            catalog_path = '/repositories/'+repository
+            app_get(catalog_path)  # Warm authorized target/worktree snapshots and app projections.
+            pid = request('/api/core/development')['launch']['processId']
+            samples, timings = [], []
+            finished = threading.Event()
+            def cpu_seconds():
+                text = subprocess.check_output(['ps','-p',str(pid),'-o','time='], text=True).strip()
+                days, _, clock = text.rpartition('-')
+                return (int(days)*86400 if days else 0) + sum(float(part)*60**i for i,part in enumerate(reversed(clock.split(':'))))
+            def sample_cpu():
+                previous, started = cpu_seconds(), time.monotonic()
+                while not finished.wait(.5):
+                    current, now = cpu_seconds(), time.monotonic()
+                    samples.append(100*(current-previous)/(now-started)); previous, started = current, now
+            sampler = threading.Thread(target=sample_cpu, daemon=True)
+            sampler.start()
+            before, started = cpu_seconds(), time.monotonic()
+            try:
+                def refresh_catalog(_):
+                    at = time.monotonic(); result = app_get(catalog_path)
+                    assert result.get('state') != 'unavailable', result.get('error')
+                    return time.monotonic()-at
+                with ThreadPoolExecutor(max_workers=3) as pool:
+                    for count in (3, 3, 2):
+                        timings.extend(pool.map(refresh_catalog, range(count)))
+                        time.sleep(.5)
+            finally:
+                elapsed, consumed = time.monotonic()-started, cpu_seconds()-before
+                finished.set(); sampler.join(timeout=2)
+            metrics = {'documents':sum(1 for item in (remote/'docs').rglob('*.md') if item.is_file() and not item.is_symlink()),'refreshes':8,'concurrency':3,'wallSeconds':round(elapsed,3),'coreCpuSeconds':round(consumed,3),
+                'meanCoreCpuPercent':round(100*consumed/elapsed,1),'peakHalfSecondCpuPercent':round(max(samples,default=0),1),
+                'medianCatalogSeconds':round(statistics.median(timings),3)}
+            say('CPU_PROBE: '+json.dumps(metrics,sort_keys=True))
+            if report := os.environ.get('HOSTY_DOCUMENTS_CPU_REPORT'):
+                pathlib.Path(report).write_text(json.dumps(metrics,indent=2)+'\n')
+        if review := os.environ.get('HOSTY_DOCUMENTS_BROWSER_REVIEW'):
+            # Disposable test credentials only; never put this file in the repository or log it.
+            review_path = pathlib.Path(review)
+            descriptor = os.open(review_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(descriptor,'w') as output:
+                json.dump({'origin':origin,'appUrl':link,'email':'activation-fixture@example.test','password':password,
+                           'dataRoot':str(root),'pid':request('/api/core/development')['launch']['processId']},output)
+            say('BROWSER_REVIEW_READY: '+str(review_path))
+            continuation = pathlib.Path(review+'.continue')
+            try:
+                deadline = time.monotonic()+600
+                while not continuation.exists():
+                    if time.monotonic()>deadline: raise TimeoutError('Browser review was not completed within ten minutes')
+                    time.sleep(.5)
+            finally:
+                review_path.unlink(missing_ok=True); continuation.unlink(missing_ok=True)
         integrated_content = selected['document']['content']
         head = commit(path, 'Complete two fixture deliverables')
         run(['git','fetch',str(path),tree['branch']], remote)

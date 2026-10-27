@@ -241,6 +241,69 @@ it.each([
   expect(detailCalls().slice(4).every(([path]) => !path?.includes("refresh=true"))).toBe(true);
 });
 
+it("retains active details across identical inventories and refreshes changed source or lease facts", async () => {
+  const w = workspace(); replies(w);
+  const render = (value: DevelopmentWorkspace) => act(async () => root.render(<WorkspaceDetails workspace={value} title="Active" refresh={vi.fn()} />));
+  const reads = () => vi.mocked(developmentRequest).mock.calls.filter(([path]) => path?.includes("/worktrees/"));
+  await render(w); expect(reads()).toHaveLength(2);
+  await render(JSON.parse(JSON.stringify(w))); expect(reads()).toHaveLength(2);
+  await render({ ...w, name: "New title", updatedAt: "2026-10-27" }); expect(reads()).toHaveLength(2);
+  const changed = { ...w, worktrees: w.worktrees.map(t => ({ ...t, observationRevision: "new-source" })) };
+  await render(changed); expect(reads()).toHaveLength(4);
+  await render({ ...changed, worktrees: changed.worktrees.map(t => ({ ...t, leases: ["lease"] })) }); expect(reads()).toHaveLength(6);
+});
+
+it("refreshes PR status when only the inventory publication revision changes", async () => {
+  const inventory = workspace();
+  inventory.worktrees = inventory.worktrees.map(t => ({ ...t, observationRevision: "source:1:0" }));
+  const details = structuredClone(inventory); replies(details);
+  const render = (value: DevelopmentWorkspace) => act(async () => root.render(<WorkspaceDetails workspace={value} title="PR status" refresh={vi.fn()} />));
+  await render(inventory);
+  expect(container.textContent).toContain("CI unknown");
+  details.worktrees[0].pullRequests[0].observation = {
+    at: new Date().toISOString(), state: "merged", draft: false, reviewDecision: "APPROVED", unresolvedThreads: 0,
+    checks: [{ name: "CI", state: "SUCCESS" }],
+  };
+  await render({ ...inventory, worktrees: inventory.worktrees.map(t => ({ ...t, observationRevision: "source:1:1" })) });
+  await expandCards();
+  expect(container.textContent).toContain("Merged");
+  expect(container.textContent).toContain("Approved");
+  expect(container.querySelector('[aria-label="one #1: CI 1/1, show checks"]')).not.toBeNull();
+});
+
+it("keeps an identical pending detail read and cancels it when source changes", async () => {
+  const w = workspace(); replies(w);
+  const fallback = vi.mocked(developmentRequest).getMockImplementation()!;
+  const pending: AbortSignal[] = [];
+  vi.mocked(developmentRequest).mockImplementation((path, body, signal) => {
+    if (path?.includes("/worktrees/")) { pending.push(signal!); return new Promise(() => {}); }
+    return fallback(path, body, signal);
+  });
+  const render = (value: DevelopmentWorkspace) => act(async () => root.render(<WorkspaceDetails workspace={value} title="Pending" refresh={vi.fn()} />));
+  await render(w); expect(pending).toHaveLength(2);
+  await render(JSON.parse(JSON.stringify(w))); expect(pending).toHaveLength(2);
+  expect(pending.every(signal => !signal.aborted)).toBe(true);
+  await render({ ...w, worktrees: w.worktrees.map(t => ({ ...t, observationRevision: "changed" })) });
+  expect(pending).toHaveLength(4); expect(pending.slice(0, 2).every(signal => signal.aborted)).toBe(true);
+  await act(async () => root.render(null)); expect(pending.every(signal => signal.aborted)).toBe(true);
+});
+
+it("does not accept a stale pending result when inventory returns to its previous source", async () => {
+  const w = workspace(); replies(w);
+  const render = (value: DevelopmentWorkspace) => act(async () => root.render(<WorkspaceDetails workspace={value} title="Reverted" refresh={vi.fn()} />));
+  await render(w);
+  const fallback = vi.mocked(developmentRequest).getMockImplementation()!;
+  const pending: AbortSignal[] = [];
+  vi.mocked(developmentRequest).mockImplementation((path, body, signal) => {
+    if (path?.includes("/worktrees/")) { pending.push(signal!); return new Promise(() => {}); }
+    return fallback(path, body, signal);
+  });
+  await render({ ...w, worktrees: w.worktrees.map(t => ({ ...t, observationRevision: "changed" })) });
+  expect(pending).toHaveLength(2);
+  await render(w); expect(pending).toHaveLength(4);
+  expect(pending.slice(0, 2).every(signal => signal.aborted)).toBe(true);
+});
+
 it("keeps one lease recovery panel across inventory refreshes", async () => {
   const w = workspace(); w.owner.kind = "external"; w.worktrees[0].leases = ["lease"];
   replies(w);

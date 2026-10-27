@@ -1,9 +1,9 @@
 "use client";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { CATALOG_SCOPE_KEY, catalogUrl, documentView, restoreCatalogScope } from "@/lib/navigation";
 import { observeSources } from "@/lib/source-events";
-import { useSourceReload } from "@/lib/use-source-reload";
+import { createRefreshQueue, recordSourceChange, changedRepositories, type SourceChange } from "@/lib/refresh-queue";
 import { CatalogView } from "./catalog-view";
 import { appFetch } from "@hosty-sdk/app/browser-auth";
 import { deliverableChanges, lineDiff, mapBounded, planLink } from "@/lib/model";
@@ -49,16 +49,14 @@ export function DocumentsWorkbench() {
     }
     try { sessionStorage.setItem(CATALOG_SCOPE_KEY, JSON.stringify({ repository: scoped.get("repository"), app: scoped.get("app") })); } catch { /* Preferences are optional. */ }
   }, [query]);
-  const [epoch, setEpoch] = useState(0);
+  const [change, setChange] = useState<SourceChange>({ revision: 0, full: 0, repositories: {} });
   const [refreshEpoch, setRefreshEpoch] = useState(0);
   const [live, setLive] = useState("Connecting live updates…");
   const documentPath = query.get("document");
   const repositoryId = query.get("repository");
   const workspaceId = query.get("workspace");
   useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const stop = observeSources(repositoryId, () => { if (!timer) timer=setTimeout(()=>{timer=null;setEpoch(value=>value+1);},200); }, setLive);
-    return () => {stop();if(timer)clearTimeout(timer);};
+    return observeSources(repositoryId, repositories => setChange(previous => recordSourceChange(previous, repositories)), setLive);
   }, [repositoryId]);
   function navigate(url: string) {
     const destination = new URL(url, window.location.origin);
@@ -79,40 +77,67 @@ export function DocumentsWorkbench() {
   function refresh() { setRefreshEpoch(value => value + 1); }
   return <main className={`mx-auto flex max-w-[1500px] flex-col px-4 py-4 text-sm sm:px-6 lg:px-8 ${documentPath && repositoryId ? "h-dvh min-h-0 gap-2 overflow-hidden" : "gap-4"}`}>
     <p role="status" className="shrink-0 text-xs text-muted-foreground">{live}</p>
-    {documentPath && repositoryId ? <Detail key={`${repositoryId}:${documentPath}`} repositoryId={repositoryId} path={documentPath} workspaceId={workspaceId} epoch={epoch} refreshEpoch={refreshEpoch} navigate={navigate} onRefresh={refresh} /> : <Overview query={new URLSearchParams(query.toString())} epoch={epoch} refreshEpoch={refreshEpoch} navigate={navigate} onRefresh={refresh} />}
+    {documentPath && repositoryId ? <Detail key={`${repositoryId}:${documentPath}`} repositoryId={repositoryId} path={documentPath} workspaceId={workspaceId} change={change} refreshEpoch={refreshEpoch} navigate={navigate} onRefresh={refresh} /> : <Overview query={new URLSearchParams(query.toString())} change={change} refreshEpoch={refreshEpoch} navigate={navigate} onRefresh={refresh} />}
   </main>;
 }
-function Overview({ query, epoch, refreshEpoch, navigate, onRefresh }: { query: URLSearchParams; epoch: number; refreshEpoch: number; navigate: (url: string) => void; onRefresh: () => void }) {
+function Overview({ query, change, refreshEpoch, navigate, onRefresh }: { query: URLSearchParams; change: SourceChange; refreshEpoch: number; navigate: (url: string) => void; onRefresh: () => void }) {
   const [repositories, setRepositories] = useState<SourceRepository[]>([]);
   const [loaded, setLoaded] = useState<Record<string, RepositoryDocuments>>({});
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState<{ completed: number; total: number | null } | null>({ completed: 0, total: null });
+  const firstEpoch = useRef(refreshEpoch);
   const firstLoadCompleted = useRef(false);
-  const load = useCallback(async (signal: AbortSignal, refresh: boolean) => {
-    const showLoading = refresh || !firstLoadCompleted.current;
-    if (showLoading) setLoading({ completed: 0, total: null });
-    try {
-      const { repositories: items } = await read<{ repositories: SourceRepository[] }>("/api/repositories", signal);
-      if (signal.aborted) return;
-      setRepositories(items); setError(null);
-      if (showLoading) setLoading({ completed: 0, total: items.length });
-      await mapBounded(items, 3, async repository => {
-        let result: RepositoryDocuments;
-        try { result = await read<RepositoryDocuments>(`/api/repositories/${encodeURIComponent(repository.id)}${refresh ? "?refresh=true" : ""}`, signal); }
-        catch (failure) { result = { repository, plans: [], workspaces: [], state: "unavailable", error: (failure as Error).message }; }
-        if (!signal.aborted) {
-          setLoaded(previous => ({ ...previous, [result.repository.id]: result }));
-          if (showLoading) setLoading(previous => previous ? { ...previous, completed: previous.completed + 1 } : null);
-          setRepositories(previous => previous.map(item => item.id === repository.id ? result.repository : item));
-          if (result.repository.id !== repository.id) {
-            canonicalRepositoryUrl(repository.id, result.repository.id);
-          }
+  const refreshQueue = useRef<ReturnType<typeof createRefreshQueue> | null>(null);
+  const seenChange = useRef(0);
+  useEffect(() => {
+    let known: SourceRepository[] = [];
+    const queue = createRefreshQueue(async ({ repositories: changed, manual }, signal) => {
+      const showLoading = manual || !firstLoadCompleted.current;
+      if (showLoading) setLoading({ completed: 0, total: null });
+      try {
+        // Scoped workspace hints leave unrelated repositories and their cached view untouched.
+        // A reconnect, catalog change or unknown repository still reconciles the whole catalog.
+        const complete = !changed || changed.some(id => !known.some(item => item.id === id));
+        if (complete) {
+          const result = await read<{ repositories: SourceRepository[] }>("/api/repositories", signal);
+          if (signal.aborted) return;
+          known = result.repositories;
+          setRepositories(known);
         }
-      });
-    } catch (failure) { if (!signal.aborted) { setError((failure as Error).message); setRepositories([]); setLoaded({}); } }
-    finally { if (!signal.aborted) { firstLoadCompleted.current = true; setLoading(null); } }
+        setError(null);
+        const items = complete ? known : known.filter(item => changed!.includes(item.id));
+        if (showLoading) setLoading({ completed: 0, total: items.length });
+        await mapBounded(items, 3, async repository => {
+          if (signal.aborted) return;
+          let result: RepositoryDocuments;
+          try { result = await read<RepositoryDocuments>(`/api/repositories/${encodeURIComponent(repository.id)}${manual ? "?refresh=true" : ""}`, signal); }
+          catch (failure) { result = { repository, plans: [], workspaces: [], state: "unavailable", error: (failure as Error).message }; }
+          if (!signal.aborted) {
+            setLoaded(previous => ({ ...previous, [result.repository.id]: result }));
+            if (showLoading) setLoading(previous => previous ? { ...previous, completed: previous.completed + 1 } : null);
+            known = known.map(item => item.id === repository.id ? result.repository : item);
+            setRepositories(known);
+            if (result.repository.id !== repository.id) canonicalRepositoryUrl(repository.id, result.repository.id);
+          }
+        });
+      } catch (failure) {
+        if (!signal.aborted) { setError((failure as Error).message); setRepositories([]); setLoaded({}); known = []; }
+      } finally {
+        if (!signal.aborted) { firstLoadCompleted.current = true; setLoading(null); }
+      }
+    });
+    refreshQueue.current = queue;
+    queue.request();
+    return () => { queue.dispose(); refreshQueue.current = null; };
   }, []);
-  useSourceReload(load, epoch, refreshEpoch);
+  useEffect(() => {
+    if (change.revision > seenChange.current) refreshQueue.current?.request(changedRepositories(change, seenChange.current));
+    seenChange.current = change.revision;
+  }, [change]);
+  useEffect(() => {
+    if (refreshEpoch !== firstEpoch.current) refreshQueue.current?.request(undefined, true);
+    firstEpoch.current = refreshEpoch;
+  }, [refreshEpoch]);
   const loadingMessage = loading ? loading.total === null ? "Loading sources…" : `Loading repositories… ${loading.completed}/${loading.total}` : null;
   const unavailableRepositories = Object.fromEntries(repositories.flatMap(repository => {
     const result = loaded[repository.id];
@@ -121,16 +146,32 @@ function Overview({ query, epoch, refreshEpoch, navigate, onRefresh }: { query: 
   return <CatalogView repositories={repositories} loaded={loaded} query={query} loading={loadingMessage} error={error} navigate={navigate} refresh={onRefresh} unavailableRepositories={unavailableRepositories} />;
 }
 
-function Detail({ repositoryId, path, workspaceId, epoch, refreshEpoch, navigate, onRefresh }: { repositoryId: string; path: string; workspaceId: string | null; epoch: number; refreshEpoch: number; navigate: (url: string) => void; onRefresh: () => void }) {
+function Detail({ repositoryId, path, workspaceId, change, refreshEpoch, navigate, onRefresh }: { repositoryId: string; path: string; workspaceId: string | null; change: SourceChange; refreshEpoch: number; navigate: (url: string) => void; onRefresh: () => void }) {
   const [detail, setDetail] = useState<PlanDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const load = useCallback(async (signal: AbortSignal, refresh: boolean) => {
-    try {
-      const result = await read<PlanDetail>(`/api/document?${new URLSearchParams({ repository: repositoryId, path, ...(workspaceId ? { workspace: workspaceId } : {}), ...(refresh ? { refresh: "true" } : {}) })}`, signal);
-      if (!signal.aborted) { setDetail(result); setError(null); canonicalRepositoryUrl(repositoryId, result.repository.id); }
-    } catch (failure) { if (!signal.aborted) { setDetail(null); setError((failure as Error).message); } }
+  const firstEpoch = useRef(refreshEpoch);
+  const refreshQueue = useRef<ReturnType<typeof createRefreshQueue> | null>(null);
+  const seenChange = useRef(0);
+  useEffect(() => {
+    const queue = createRefreshQueue(async ({ manual }, signal) => {
+      try {
+        const result = await read<PlanDetail>(`/api/document?${new URLSearchParams({ repository: repositoryId, path, ...(workspaceId ? { workspace: workspaceId } : {}), ...(manual ? { refresh: "true" } : {}) })}`, signal);
+        if (!signal.aborted) { setDetail(result); setError(null); canonicalRepositoryUrl(repositoryId, result.repository.id); }
+      } catch (failure) { if (!signal.aborted) { setDetail(null); setError((failure as Error).message); } }
+    });
+    refreshQueue.current = queue;
+    queue.request();
+    return () => { queue.dispose(); refreshQueue.current = null; };
   }, [repositoryId, path, workspaceId]);
-  useSourceReload(load, epoch, refreshEpoch);
+  useEffect(() => {
+    const repositories = changedRepositories(change, seenChange.current);
+    if (change.revision > seenChange.current && (!repositories || repositories.includes(repositoryId))) refreshQueue.current?.request();
+    seenChange.current = change.revision;
+  }, [change, repositoryId]);
+  useEffect(() => {
+    if (refreshEpoch !== firstEpoch.current) refreshQueue.current?.request(undefined, true);
+    firstEpoch.current = refreshEpoch;
+  }, [refreshEpoch]);
   const current = detail?.path === path ? detail : null;
   return <>
     <div className="shrink-0"><DiscussPlan key={`${repositoryId}:${path}:${workspaceId ?? "target"}`} detail={current} workspaceId={workspaceId}
