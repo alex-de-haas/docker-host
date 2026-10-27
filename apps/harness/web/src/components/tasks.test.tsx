@@ -74,3 +74,23 @@ it("keeps a confirmed mutation usable when the following list refresh fails", as
   expect([...container.querySelectorAll("button")].find(b => b.textContent === "New task")!.disabled).toBe(false);
   expect(container.textContent).toContain("HRN-1 · Ready");
 });
+
+it.each(["Ready", "Cancelled"] as const)("preserves and recovers dirty input after a background transition to %s", async status => {
+  await mount();
+  const title = container.querySelector<HTMLInputElement>("input")!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(title, "Preserved local title");
+    title.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  task = { ...task, status, revision: 2, title: "Saved title" };
+  await act(async () => { stream.enqueue(new TextEncoder().encode("event: changed\ndata: {}\n\n")); });
+  const preserved = container.querySelector<HTMLInputElement>("input");
+  expect(preserved?.value).toBe("Preserved local title");
+  expect(preserved?.matches(":disabled")).toBe(true);
+  expect([...container.querySelectorAll("button")].find(b => b.textContent === "Save draft")?.disabled).toBe(true);
+  await click("Discard edits");
+  expect(container.textContent).toContain("Saved title");
+  await click("New task");
+  expect(container.querySelector<HTMLInputElement>("input")?.value).toBe("");
+  expect(container.querySelector<HTMLInputElement>("input")?.disabled).toBe(false);
+});

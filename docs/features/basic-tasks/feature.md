@@ -124,14 +124,16 @@ execution and passes through existing MCP policy; it cannot complete another tas
 
 Ready atomically saves dispatch intent, execution ID, selected option and input snapshot. Harness
 acceptance records a fingerprint and creates a replayable idle conversation before any native work.
-The profile snapshot survives deletion of the original profile. New attempts validate a fresh
+The profile, provider and model selection are locked at acceptance, before dispatch. The snapshot
+survives deletion of the original profile. New attempts validate a fresh
 selection. Missing profiles/connections fail explicitly without fallback.
 
 Receipts distinguish `accepted`, `running`, `awaiting_input`, `cancelling`, `completed`, `failed`,
 `cancelled` and `interrupted`, with revision, timestamps, stop confirmation and optional result/error
 or session reference. Cross-app session links use an absolute HTTP(S) UI URL; another app’s
 relative route is not opened against Harness. Completion requires both an explicit outcome and verified native exit.
-Task conversations reject unrelated new messages; the task lifecycle owns new attempts. Existing
+Task conversations reserve first-message admission for the executor even when a client knows the
+execution ID, and reject unrelated new messages; the task lifecycle owns new attempts. Existing
 question/approval controls can resume the current live attempt.
 
 The provider observes active receipts and retries transport failures with bounded backoff up to
@@ -152,7 +154,9 @@ completion does not Finish workspaces/sandboxes or remove resources.
 
 The Tasks UI exposes manual work, profile/executor selection, live/pinned references, review/rework,
 retry/reopen/cancel, results and attempt history. SSE changes trigger authorized state reads; reconnect
-and foreground recovery reread state. Unsaved input remains intact. Uncertain mutations retain the
+and foreground recovery reread state. Unsaved input remains visible when a background transition
+closes Draft editing; saving is disabled and Discard edits restores navigation without a reload.
+Uncertain mutations retain the
 exact request/body and offer Retry original request. A failed list refresh after a confirmed
 mutation preserves the confirmed state without locking the editor in an uncertain command.
 Shutdown closes task streams and drains dispatch before stopping active native sessions.
@@ -182,10 +186,10 @@ managed runtime/browser journey. Changes are not deployed to the operator's live
 | `dotnet test apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj` with provider/manifest filters | 22 passed. |
 | `npm run build --workspace @hosty-sdk/app` and `npm test --workspace @hosty-sdk/app` | Build passed; 712 tests passed. |
 | `dotnet build packages/app-sdk-dotnet/HostySdk.App/HostySdk.App.csproj` | net8.0 and net10.0 passed. |
-| `npm run sdk:dotnet:test` | 68 passed. |
+| `npm run sdk:dotnet:test` | 70 passed, including create/edit requests with an explicit null assignee. |
 | `npm run harness:lint` | API/web TypeScript and web ESLint passed. |
-| `npm test --workspace @haas/hosty-harness` | Full suite passed: 164 files, 1756 tests. |
-| `npm test --workspace @haas/hosty-harness -- src/tasks web/src/components/tasks.test.tsx src/worker/native-environment.test.ts` | Final affected suite passed: 5 files, 27 tests, including the subsequent workspace-clear and confirmed-refresh regressions. |
+| `npm test --workspace @haas/hosty-harness` | Full suite passed: 164 files, 1763 tests after the review fixes. |
+| `npm test --workspace @haas/hosty-harness -- src/tasks src/profiles web/src/components/tasks.test.tsx web/src/components/session-model.test.tsx web/src/components/session-profile.test.tsx` | Review-fix suite passed: 9 files, 52 tests, including accepted-task selection/dispatch locks and draft recovery after Ready/Cancelled transitions. |
 | `node --test scripts/test-integration.test.mjs` | 13 passed. |
 | `HOSTY_TASKS_BROWSER=1 HOSTY_TASKS_BROWSER_CHANNEL=chrome npm run test:integration -- tasks` | Core/CLI/API/Worker builds and complete managed API/browser acceptance passed; the installed Playwright module was selected through HOSTY_TASKS_PLAYWRIGHT_MODULE. |
 | `node scripts/check-versions.mjs`, `node scripts/docs-index.mjs --check --base c46f00a3ebe0536a918f5420fad859f41f913920`, `git diff --check` | Passed. |
@@ -194,7 +198,9 @@ The managed run verifies human review/rework, a profile execution with no worksp
 result versus an ordinary turn, cancellation during native work, an existing retained workspace,
 an independent SDK producer/executor, cancel-before-accept fencing and restart without replacement
 attempts. Chrome verifies password login, Core app identity, UI creation/start/review/result, SSE
-preservation of unsaved input and reload. Parent Finish confirmed child resource removal; test
+preservation of unsaved input, recovery after a concurrent Draft-to-Ready transition, and reload.
+The complete managed journey passed again after the review fixes. Parent Finish confirmed child
+resource removal; test
 processes, ports, fixture data and synthetic credentials were removed.
 
 The native provider is a scripted protocol fixture: paid/live-model behavior and quality were not
@@ -202,20 +208,23 @@ exercised. Cross-platform runtime suites and the full repository test matrix wer
 this acceptance targets the affected components on macOS/Docker. Existing Core/compiler and .NET
 SDK XML-comment warnings remain; builds completed without errors.
 
-Artifact versions: platform 0.158.1 → 0.159.0; Harness API/web/Worker 0.73.0 → 0.74.0;
-TypeScript SDK 0.35.1 → 0.36.0; .NET SDK 0.10.0 → 0.11.0. Other artifacts retain their versions.
+Artifact versions: platform 0.158.1 → 0.159.1; Harness API/web/Worker 0.73.0 → 0.74.1;
+TypeScript SDK 0.35.1 → 0.36.0; .NET SDK 0.10.0 → 0.11.1. Other artifacts retain their versions.
 
 ## Testing Expectations
 
 - Core provider contract tests cover empty registries, unrelated app IDs, confirmed roles,
   independent categories, installation binding, current user access and revoked grants.
 - Both SDKs cover explicit selection, credential destinations, replay and changed installations.
+  The .NET client preserves explicit null assignees when creating or editing an unassigned Draft.
 - Harness tests cover concurrent numbering, prefix collisions, replay/current access, six statuses,
   default review policy, review revision/rework, retained outcomes, explicit task completion,
   cancel-before-accept, unknown exit, profile deletion, pre-admission failure and credential-free
   observation/cancellation recovery. Worker tests keep only declared session MCP bearers across the
   native boundary and exclude app/Worker authority.
-- UI tests cover SSE draft preservation and identical replay after a lost mutation response.
+- UI tests cover SSE draft preservation, accessible discard/copy recovery after a background status
+  change, and identical replay after a lost mutation response. Accepted task sessions lock their
+  profile/model before dispatch and admit their first message only through the task executor.
 - `npm run test:integration -- tasks` builds Core/CLI and both Harness images, then exercises the
   real API/Worker/MCP journey in a parent-managed child Core with separate password-authenticated
   users and data. A scripted Codex protocol fixture avoids paid providers while using real session

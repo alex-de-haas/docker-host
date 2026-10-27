@@ -78,3 +78,10 @@ it("scopes catalog labels and errors to the current session and connection, incl
   expect(api.getSessionModels).toHaveBeenCalledTimes(2);
   expect(api.setSessionModel).not.toHaveBeenCalled();
 });
+
+it("keeps an accepted task's model and effort selectors locked while its chat is idle", async () => {
+  await act(async () => root.render(<SessionModel session={{ ...record, taskExecutionId: "task-attempt" }} busy={false} onChange={changed} onSavingChange={saving} />));
+  expect(container.querySelector<HTMLButtonElement>('[aria-label="Model"]')!.disabled).toBe(true);
+  expect(container.querySelector<HTMLButtonElement>('[aria-label="Reasoning effort"]')!.disabled).toBe(true);
+  expect(api.setSessionModel).not.toHaveBeenCalled();
+});

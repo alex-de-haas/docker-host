@@ -103,3 +103,23 @@ it("allows an explicit retry after a known rejection before native admission", a
   expect(await executor.get(id, actor)).toMatchObject({ state: "failed", stopConfirmed: true, error: { message: "Selected connection unavailable" } });
   expect(sent).not.toHaveBeenCalled();
 });
+
+it("keeps an accepted task's profile and model immutable before dispatch", async () => {
+  const id = randomUUID(), accepted = await executor.accept(id, input, actor);
+  const sid = accepted.sessionRef!.id;
+  await expect(manager.setProfile(sid, { profileId: null, expectedRevision: 0 }))
+    .rejects.toMatchObject({ code: "profile_locked" });
+  await expect(manager.setModel(sid, { selection: { model: null }, expectedRevision: 0 }))
+    .rejects.toMatchObject({ code: "task_managed_session" });
+  await executor.tick();
+  expect(runOptions?.systemPrompt).toContain("Write carefully");
+});
+it("reserves the task's first message for its executor even when a caller knows the execution ID", async () => {
+  const id = randomUUID(), accepted = await executor.accept(id, input, actor);
+  await expect(manager.postMessage(accepted.sessionRef!.id, "Replace the task instructions", undefined, [], { actorUserId: "owner", clientRequestId: id }))
+    .rejects.toMatchObject({ code: "task_managed_session" });
+  expect(sent).not.toHaveBeenCalled();
+  await executor.tick();
+  expect(sent).toHaveBeenCalledTimes(1);
+  expect(sent.mock.calls[0]?.[0]).toContain(input.input.markdown);
+});

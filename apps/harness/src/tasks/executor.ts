@@ -175,7 +175,7 @@ export class HarnessTaskExecutor {
         const session = (await this.manager.getSession(r.sessionId))!;
         const input = r.input!.input;
         await this.manager.postMessage(r.sessionId, `${input.title}\n\n${input.markdown}\n\nTask resource references (context, not permission):\n${JSON.stringify(input.resources)}\n\nReport the explicit task outcome with task_result using a UUID requestId and result { markdown, resources }. Then finish this turn. A chat reply alone does not complete the task.`,
-          authority.credential, [], { actorUserId: authority.actor.userId!, clientRequestId: r.receipt.executionId, expectedRevision: session.appContextRevision ?? 0, selectionRevision: session.selectionRevision ?? 0 });
+          authority.credential, [], { taskDispatch: true, actorUserId: authority.actor.userId!, clientRequestId: r.receipt.executionId, expectedRevision: session.appContextRevision ?? 0, selectionRevision: session.selectionRevision ?? 0 });
       }
       if (!r.cancellation && r.launchRequested) {
         const session = await this.manager.getSession(r.sessionId);

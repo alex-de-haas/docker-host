@@ -800,7 +800,7 @@ export class SessionManager {
       const now = new Date().toISOString();
       const title = normalizeTitle(input.title);
       const record: SessionRecord = {
-        ...(this.profiles ? { agentProfile: selectedProfile, profileLocked: false } : {}),
+        ...(this.profiles ? { agentProfile: selectedProfile, profileLocked: !!input.taskExecutionId } : {}),
         ...(selectedProfile ? { executionSelection: { model: selectedProfile.model, reasoningEffort: selectedProfile.reasoningEffort } } : {}),
         skillIds: selectedProfile?.skillIds ?? input.skillIds as string[] | undefined ?? (this.profiles ? [] : (await this.settings?.read())?.skillIds),
         ...(input.taskExecutionId ? { taskExecutionId: input.taskExecutionId } : {}),
@@ -938,7 +938,7 @@ export class SessionManager {
   }
 
   async sessionProviderLocked(record: SessionRecord): Promise<boolean> {
-    return record.providerLocked === true || Boolean(record.harnessSessionId) || (await this.store.readEvents(record.id)).some(e => e.type === "user_message");
+    return record.providerLocked === true || Boolean(record.taskExecutionId) || Boolean(record.harnessSessionId) || (await this.store.readEvents(record.id)).some(e => e.type === "user_message");
   }
 
   async modelCatalog(id: string) {
@@ -991,6 +991,7 @@ export class SessionManager {
       const session = await this.requireLive(id);
       if (session.record.workerRun || ["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) throw new SessionBusyError();
       if (input.expectedRevision !== (session.record.selectionRevision ?? 0)) throw new AppContextError(409, "selection_conflict", "Model selection changed. Refresh this chat before retrying.");
+      if (session.record.taskExecutionId) throw new AppContextError(409, "task_managed_session", "An accepted task keeps its model selection. Start a new task attempt to change it.");
       const proposed = input.selection;
       if (!proposed || typeof proposed !== "object" || Array.isArray(proposed) || Object.keys(proposed).some(key => !["model", "reasoningEffort"].includes(key)))
         throw new AppContextError(400, "invalid_selection", "Choose a model and reasoning effort.");
@@ -1019,6 +1020,7 @@ export class SessionManager {
     return this.serialize(id, async () => {
       if (!this.connections) throw new ConnectionError(409, "providers_unavailable", "Provider selection is unavailable.");
       const session = await this.requireLive(id);
+      if (session.record.taskExecutionId) throw new AppContextError(409, "task_managed_session", "An accepted task keeps its provider. Start a new task attempt to change it.");
       const locked = await this.sessionProviderLocked(session.record);
       if (session.record.agentProfile?.connectionId && connectionId !== session.record.connectionId)
         throw new ConnectionError(409, "profile_provider", "Choose another profile or no profile before starting to change the provider.");
@@ -1507,7 +1509,7 @@ export class SessionManager {
     });
   }
 
-  async postMessage(id: string, text: string, credential?: string, attachments: string[] = [], context: { selectionRevision?: unknown; expectedRevision?: unknown; withoutDetails?: boolean; dispatchId?: string; workspaceCredential?: string | null; clientRequestId?: unknown; actorUserId?: string } = {}): Promise<MessageReceipt | void> {
+  async postMessage(id: string, text: string, credential?: string, attachments: string[] = [], context: { taskDispatch?: boolean; selectionRevision?: unknown; expectedRevision?: unknown; withoutDetails?: boolean; dispatchId?: string; workspaceCredential?: string | null; clientRequestId?: unknown; actorUserId?: string } = {}): Promise<MessageReceipt | void> {
     const clientRequestId = context.clientRequestId === undefined ? undefined : this.messageRequest(context.clientRequestId);
     const actorUserId = clientRequestId ? this.messageActor(context.actorUserId) : undefined;
     const fingerprint = clientRequestId ? createHash("sha256").update(JSON.stringify({
@@ -1529,7 +1531,7 @@ export class SessionManager {
           return result;
         }
       }
-      if (session.record.taskExecutionId && clientRequestId !== session.record.taskExecutionId)
+      if (session.record.taskExecutionId && (!context.taskDispatch || clientRequestId !== session.record.taskExecutionId))
         throw new AppContextError(409, "task_managed_session", "Use the task lifecycle to start a new attempt. This conversation belongs to one immutable task execution.");
       if (session.record.associationRequests?.some(request => request.state === "pending"))
         throw new AppContextError(409, "workspace_association_pending", "Retry the pending workspace attachment or detachment before sending another message.");

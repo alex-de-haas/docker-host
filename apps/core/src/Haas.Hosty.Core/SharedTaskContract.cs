@@ -1,4 +1,6 @@
 // Platform-owned wire types; linked into HostySdk.App so Core and .NET applications share v1.
+using System.Text.Json.Serialization;
+
 namespace HostySdk.App;
 
 /// <summary>An explicitly selected provider installation and interface.</summary>
@@ -12,7 +14,8 @@ public record HostyTaskResource(string Kind, string Owner, string Id, HostyTaskR
 /// <summary>A human user or an application with an opaque executor option.</summary>
 public record HostyTaskAssignee(string Kind, string? UserId = null, HostyTaskProviderRef? Executor = null, string? OptionId = null, string? Name = null);
 /// <summary>Task work description and explicit, optional existing resources.</summary>
-public record HostyTaskInput(string Title, string Markdown, HostyTaskAssignee? Assignee, HostyTaskResource[] Resources, bool RequiresReview = false, string? WorkspaceId = null);
+public record HostyTaskInput(string Title, string Markdown,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] HostyTaskAssignee? Assignee, HostyTaskResource[] Resources, bool RequiresReview = false, string? WorkspaceId = null);
 /// <summary>Authenticated attribution, supplied by the server rather than trusted from request bodies.</summary>
 public record HostyTaskActor(string? UserId, string? AppId, string? InstallationId = null);
 /// <summary>An explicit task outcome, distinct from completion of a model turn.</summary>

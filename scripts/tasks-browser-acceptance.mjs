@@ -69,7 +69,26 @@ try {
   await page.reload();
   await page.getByRole('button', { name: /Browser lifecycle acceptance/ }).click();
   await page.getByRole('button', { name: 'Reopen', exact: true }).waitFor();
-  console.log('PASS: Chromium password login, Core launch identity, UI create/start/review/result, SSE draft preservation and reload');
+  await page.getByRole('button', { name: 'Reopen', exact: true }).click();
+  await page.getByLabel('Title', { exact: true }).fill('Preserved after background status change');
+  const tasks = await (await page.request.get(config.harness+'/api/tasks/v1/tasks?limit=100')).json();
+  const current = tasks.tasks.find(t => t.title === 'Browser lifecycle acceptance');
+  assert.equal(current.status, 'Draft');
+  const ready = await page.request.post(config.harness+'/api/tasks/v1/tasks/'+current.ref.id+'/actions', {
+    headers: { Origin: config.harness }, data: { requestId: randomUUID(), expectedRevision: current.revision, action: 'ready' },
+  });
+  assert.equal(ready.status(), 200);
+  await page.getByText('This task is no longer a Draft.', { exact: false }).waitFor();
+  assert.equal(await page.getByLabel('Title', { exact: true }).inputValue(), 'Preserved after background status change');
+  assert.equal(await page.getByLabel('Title', { exact: true }).isDisabled(), true);
+  assert.equal(await page.getByRole('button', { name: 'Save draft', exact: true }).isDisabled(), true);
+  await page.getByRole('button', { name: 'Discard edits', exact: true }).click();
+  await page.getByRole('button', { name: 'Start work', exact: true }).click();
+  await page.getByLabel('Result · Markdown', { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'New task', exact: true }).click();
+  assert.equal(await page.getByLabel('Title', { exact: true }).inputValue(), '');
+  assert.deepEqual(errors, []);
+  console.log('PASS: Chromium password login, Core launch identity, UI create/start/review/result, SSE draft preservation/recovery and reload');
 } catch (error) {
   console.error('Browser page:', new URL(page.url()).pathname);
   console.error('Browser errors:', errors);

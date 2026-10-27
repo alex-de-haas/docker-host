@@ -127,7 +127,8 @@ export function Tasks() {
         <div className="flex items-center justify-between"><div className="text-sm text-muted-foreground">{creating ? "New task" : `${selectedTask!.number} · ${selectedTask!.cancelRequested ? "Cancelling" : selectedTask!.status}`}</div>
           {selectedTask && <span className="text-xs text-muted-foreground">Revision {selectedTask.revision}</span>}</div>
         {selectedTask?.blocked && <p role="status" className="rounded-md bg-muted p-3 text-sm">{selectedTask.blocked.message}</p>}
-        {editable ? <div className="space-y-4">
+        {editable || dirty ? <div className="space-y-4">
+          <fieldset className="space-y-4" disabled={!editable}>
           <label className="block space-y-1 text-sm">Title<Input value={draft.title} maxLength={200} onChange={e => edit({ title: e.target.value })} disabled={busy || uncertain} /></label>
           <label className="block space-y-1 text-sm">Description · Markdown<Textarea className="min-h-40" value={draft.markdown} maxLength={32000} onChange={e => edit({ markdown: e.target.value })} disabled={busy || uncertain} /></label>
           <div className="grid gap-4 sm:grid-cols-2"><label className="block text-sm">Assignee<select className={selectClass} disabled={!directory || busy || uncertain} value={draft.assignee?.kind === "human" ? `human:${draft.assignee.userId}` : draft.assignee?.kind === "app" ? `app:${key(draft.assignee.executor)}` : ""} onChange={e => void selectAssignee(e.target.value)}>
@@ -144,8 +145,10 @@ export function Tasks() {
             <Input aria-label="Resource revision" placeholder="Revision (leave blank for live reference)" value={resource.version.mode === "pinned" ? resource.version.revision : ""} onChange={e => setResource({ ...resource, version: e.target.value ? { mode: "pinned", revision: e.target.value } : { mode: "live" } })} />
             <Button variant="outline" disabled={!resource.owner || !resource.id || draft.resources.length >= 32 || busy || uncertain} onClick={() => { edit({ resources: [...draft.resources, resource] }); setResource({ kind: "external", owner: "", id: "", version: { mode: "live" } }); }}>Add reference</Button>
           </div></details>
-          {dirty && selectedTask && baseRevision !== selectedTask.revision && <p className="text-sm text-muted-foreground">This task changed while you were editing. Your input is preserved; reload before saving.</p>}
-          <div className="flex gap-2"><Button disabled={busy || uncertain || !directory || !creating && !dirty} onClick={() => void save()}>Save draft</Button>{dirty && <Button variant="outline" disabled={uncertain} onClick={() => { setDirty(false); setDraft(selectedTask ? inputOf(selectedTask) : empty()); }}>Discard edits</Button>}</div>
+          </fieldset>
+          {dirty && !editable && <p role="status" className="text-sm text-muted-foreground">This task is no longer a Draft. Your unsaved input is preserved for copying. Discard edits to continue.</p>}
+          {editable && dirty && selectedTask && baseRevision !== selectedTask.revision && <p className="text-sm text-muted-foreground">This task changed while you were editing. Your input is preserved; reload before saving.</p>}
+          <div className="flex gap-2"><Button disabled={!editable || busy || uncertain || !directory || !creating && !dirty} onClick={() => void save()}>Save draft</Button>{dirty && <Button variant="outline" disabled={busy || uncertain} onClick={() => { setDirty(false); setDraft(selectedTask ? inputOf(selectedTask) : empty()); setError(null); }}>Discard edits</Button>}</div>
         </div> : <div className="space-y-3"><h2 className="text-xl font-semibold">{selectedTask!.title}</h2><p className="text-sm text-muted-foreground">{selectedTask!.assignee?.name ?? (selectedTask!.assignee?.kind === "human" ? selectedTask!.assignee.userId : selectedTask!.assignee?.executor.appId)}</p><Markdown text={selectedTask!.markdown} />
           {!!selectedTask!.resources.length && <ul className="space-y-1 text-sm">{selectedTask!.resources.map((r, i) => <li key={i} className="break-all">{r.kind}: {r.label ?? r.id} · {r.owner} · {r.version.mode === "live" ? "Live" : r.version.revision}</li>)}</ul>}{selectedTask!.workspaceId && <p className="text-sm text-muted-foreground">Workspace: {directory?.workspaces.workspaces.find(w => w.id === selectedTask!.workspaceId)?.name ?? selectedTask!.workspaceId}</p>}</div>}
         {selectedTask && <div className="space-y-3">
