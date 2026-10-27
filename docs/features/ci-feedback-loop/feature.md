@@ -110,7 +110,20 @@ integration uses isolated data, normal setup/login and the supported Core-manage
 
 ## Publication
 
-Image and native-release workflows react to completed main push CI and validate its exact source identity before selecting an affected artifact from that CI run's saved selection manifest. Retained format-1 manifests from before local integration separation remain readable: only the five known retired profiles are accepted, with consistent required membership and no duplicates; current CI still rejects those profiles. Publication does not recompute a smaller last-commit diff that could omit earlier changes in a multi-commit push. Failed, cancelled and non-push runs cannot authorize automatic publication. Unrelated completed runs are short no-ops, avoiding idle publication runners during ordinary CI. The two SDK workflows retain their path-filtered push triggers and wait for the exact main result: their trusted-publisher execution and automatic provenance stay tied to the package source revision.
+Image and native-release workflows react to completed main push CI and validate its exact source identity before selecting an affected artifact from that CI run's saved selection manifest. Retained format-1 manifests from before local integration separation remain readable: only the five known retired profiles are accepted, with consistent required membership and no duplicates; current CI still rejects those profiles. Publication does not recompute a smaller last-commit diff that could omit earlier changes in a multi-commit push. Failed, cancelled and non-push runs cannot authorize automatic publication. Unrelated image publication runs are short no-ops, avoiding idle publication runners during ordinary CI. The two SDK workflows retain their path-filtered push triggers and wait for the exact main result: their trusted-publisher execution and automatic provenance stay tied to the package source revision.
+
+Core/CLI publication also checks for native changes since the last completed `cli-dev` release when
+the successful push's own manifest selects no native component. It compares the validated source
+against the release notes' `Published commit:` receipt using the shared CI path policy. Failed or
+stale publication therefore remains pending and the next successful main CI can recover it, including
+a push that only changes another app. Recovery still runs all Core/CLI tests, all five production RID
+builds, provenance and the independent main-tip guard.
+
+The receipt advances only after every release asset uploads successfully; the mutable tag and
+`target_commitish` are not completion evidence. A missing or older release without a receipt triggers
+one conservative recovery build. API errors, malformed receipts and diverged comparisons fail
+visibly. A comparison at GitHub's 300-file cap selects a build because omitted files may affect native
+artifacts; an older source cannot move a newer release backwards.
 
 Manual recovery remains restricted to main and requires successful push CI for that exact SHA. Artifact-specific production builds and tests remain where CI output is not a complete reusable artifact. A host Next.js build is not a multi-platform OCI image, and a managed Core build is not a five-RID production release.
 
@@ -180,5 +193,6 @@ three invited/password-authenticated users in a parent-managed child Core. See
 - Local launcher tests cover explicit selection, prerequisite and command failures, unsupported platforms, shell-free arguments, native inference opt-in and side-effect-free previews.
 - Gate tests cover failed classification, missing/cancelled/failed/required-skipped jobs, workflow coverage and bounded process startup for large changesets without weakening required results.
 - Publication tests cover exact main identity, stale source, current run attempts, failed or missing CI, complete verified artifact consumption, and required signing identity/source/workflow fields.
+- Native recovery tests cover cumulative unpublished changes, legacy/missing receipts, unchanged releases, renamed/shared paths, truncated comparisons, API failures and failure before the completion receipt is written.
 - GitHub Actions syntax and composite shell scripts are linted; docs/index and version checks run on every PR.
 - Hosted operating-system and publication results are reported separately from local static/unit validation. Branch protection migrates only after a successful hosted aggregate.

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { classifyPaths } from '../../../scripts/ci-policy.mjs';
-import { publicationSelected, selectPublication, validateSelection } from './select-publication.mjs';
+import { publicationSelected, selectPublication, selectPublicationWithRecovery, validateSelection } from './select-publication.mjs';
 
 const source = 'a'.repeat(40), beforePush = 'b'.repeat(40);
 const evidence = paths => {
@@ -82,4 +82,41 @@ test('retained pre-migration selection can still publish its verified component'
     { required: historical.required.filter(job => job !== 'core') },
     { sourceSha: 'c'.repeat(40) },
   ]) assert.throws(() => validateSelection({ ...historical, ...mismatch }, source), /manifest/);
+});
+
+test('native recovery uses cumulative changes only after validating unrelated successful CI evidence', async () => {
+  const requests = [];
+  const release = { repository: 'owner/repo', releaseTag: 'cli-dev', request: async path => {
+    requests.push(path);
+    return path.includes('/compare/')
+      ? { status: 'ahead', base_commit: { sha: beforePush }, merge_base_commit: { sha: beforePush },
+          files: [{ filename: 'apps/core/src/Haas.Hosty.Core/CoreTracing.cs', status: 'modified' }] }
+      : { tag_name: 'cli-dev', body: `Published commit: ${beforePush}` };
+  } };
+  const options = { context, components: ['core', 'cli'], readManifest: () => evidence(['apps/documents/src/main.ts']) };
+  assert.equal(await selectPublicationWithRecovery(options, release), true);
+  assert.equal(requests.length, 2);
+  requests.length = 0;
+  await assert.rejects(selectPublicationWithRecovery({ ...options,
+    readManifest: () => ({ ...evidence([]), sourceSha: beforePush }) }, release), /manifest/);
+  assert.equal(requests.length, 0, 'recovery cannot bypass the validated source manifest');
+});
+
+test('manual, already-selected and non-native publications do not look up the native release', async () => {
+  const native = { repository: 'owner/repo', releaseTag: 'cli-dev',
+    request: async () => assert.fail('release lookup is unnecessary') };
+  assert.equal(await selectPublicationWithRecovery({ context, components: ['core', 'cli'],
+    readManifest: () => evidence(['apps/core/src/Program.cs']) }, native), true);
+  assert.equal(await selectPublicationWithRecovery({ context: { event: 'workflow_dispatch', sha: source },
+    components: ['core', 'cli'], readManifest: () => assert.fail('manual publication needs no selection') }, native), true);
+  assert.equal(await selectPublicationWithRecovery({ context, components: ['shell'],
+    readManifest: () => evidence(['apps/documents/src/main.ts']) }), false);
+});
+
+test('recovery failures cannot silently suppress publication or select an unrelated image', async () => {
+  const native = { repository: 'owner/repo', releaseTag: 'cli-dev',
+    request: async () => { throw new Error('GitHub unavailable'); } };
+  const options = { context, components: ['core', 'cli'], readManifest: () => evidence([]) };
+  await assert.rejects(selectPublicationWithRecovery(options, native), /unavailable/);
+  await assert.rejects(selectPublicationWithRecovery({ ...options, components: ['shell'] }, native), /only available/);
 });

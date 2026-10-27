@@ -45,6 +45,7 @@ jobs:
         with:
           token: ${{ github.token }}
           components: core,cli
+          native-release-tag: cli-dev
 
   # Gate publishing on the tests for exactly what this workflow ships (Core + CLI). Without it a commit
   # whose tests fail still force-retags `cli-dev` — the default install/update target — and re-uploads
@@ -327,19 +328,23 @@ jobs:
           Rolling development release for Hosty CLI and Core.
 
           Commit: ${PUBLISH_SOURCE_SHA}
+          Published commit: ${PUBLISH_SOURCE_SHA}
 
           Assets are overwritten by the CLI release workflow on each main build.
           EOF
 
           if gh release view cli-dev >/dev/null 2>&1; then
-            gh release edit cli-dev \
-              --title "Hosty development build" \
-              --notes-file release-notes.md \
-              --prerelease
             gh release upload cli-dev dist/* --clobber
           else
             gh release create cli-dev dist/* \
               --title "Hosty development build" \
-              --notes-file release-notes.md \
+              --notes "Publication in progress; no completed source receipt yet." \
               --prerelease
           fi
+
+          # Record completion last. Failed uploads leave the previous receipt so a later
+          # successful main CI run can recover even when its own push changes no native files.
+          gh release edit cli-dev \
+            --title "Hosty development build" \
+            --notes-file release-notes.md \
+            --prerelease

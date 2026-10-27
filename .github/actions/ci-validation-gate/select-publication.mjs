@@ -1,5 +1,6 @@
 import { appendFileSync, readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
+import { pendingNativeRelease, nativeReleaseRequest } from './native-release.mjs';
 import { ALL_JOBS, COMPONENTS, evaluateGate } from '../../../scripts/ci-policy.mjs';
 
 // Retained format-1 evidence can describe checks removed from today's workflow.
@@ -57,12 +58,26 @@ export function selectPublication({ context, components, manifestPath,
   return publicationSelected(context.event, components, manifest, context.sha);
 }
 
+export async function selectPublicationWithRecovery(options, nativeRelease = {}) {
+  const selected = selectPublication(options);
+  if (selected || !nativeRelease.releaseTag) return selected;
+  if (options.components.some(component => !['core', 'cli'].includes(component))) {
+    throw new Error('Native release recovery is only available to Core/CLI publication.');
+  }
+  return pendingNativeRelease({ ...nativeRelease, sourceSha: options.context.sha });
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
-    const publish = selectPublication({
+    const publish = await selectPublicationWithRecovery({
       context: { event: process.env.GITHUB_EVENT_NAME, sha: process.env.CI_GATE_SOURCE_SHA },
       components: (process.env.CI_GATE_COMPONENTS ?? '').split(',').map(value => value.trim()),
       manifestPath: process.env.CI_GATE_SELECTION_PATH,
+    }, {
+      repository: process.env.GITHUB_REPOSITORY, releaseTag: process.env.CI_GATE_NATIVE_RELEASE_TAG,
+      request: path => nativeReleaseRequest({
+        token: process.env.CI_GATE_TOKEN, apiUrl: process.env.GITHUB_API_URL,
+      })(path),
     });
     if (!process.env.GITHUB_OUTPUT) throw new Error('Missing GitHub Actions output file.');
     appendFileSync(process.env.GITHUB_OUTPUT, `publish=${publish}\n`);
