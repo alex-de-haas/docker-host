@@ -1,3 +1,5 @@
+import { profileConfig, type ProfileStore } from "../profiles/store.js";
+import type { AgentProfileConfig } from "../profiles/types.js";
 import { prepareSkills, skillRequest, validSkillIds } from "../skills.js";
 import { resolveAppSession } from "../app-session.js";
 import { contextActions, contextEvent, contextMetadataNotice, searchContext, validateContextInput, type ContextAction, type ContextReceipt } from "./app-context-tools.js";
@@ -153,6 +155,7 @@ export class SessionManager {
     private readonly development: DevelopmentClient | null = null,
     readonly worker: WorkerClient | null = null,
     private readonly executionMode?: "native" | "docker",
+    readonly profiles: ProfileStore | null = null,
   ) {
     this.mcpPolicy = new McpToolPolicy(settings,
       (id, event) => this.serialize(id, async () => {
@@ -753,6 +756,8 @@ export class SessionManager {
   }
 
   async createSession(input: {
+    profileId?: unknown;
+    profileRevision?: unknown;
     skillIds?: unknown;
     title?: string;
     context?: Record<string, string>;
@@ -768,7 +773,7 @@ export class SessionManager {
       const requestId = input.clientRequestId;
       if (requestId !== undefined && (typeof requestId !== "string" || !/^[a-zA-Z0-9-]{1,128}$/.test(requestId)))
         throw new AppContextError(400, "request_id_invalid", "Invalid creation request id.");
-      const fingerprint = JSON.stringify({ ...(input.skillIds !== undefined ? { skillIds: input.skillIds } : {}), title: normalizeTitle(input.title), context: input.context ?? null, appIds, ...(input.connectionId !== undefined ? { connectionId: input.connectionId } : {}) });
+      const fingerprint = JSON.stringify({ ...(input.profileId !== undefined ? { profileId: input.profileId, profileRevision: input.profileRevision } : {}), ...(input.skillIds !== undefined ? { skillIds: input.skillIds } : {}), title: normalizeTitle(input.title), context: input.context ?? null, appIds, ...(input.connectionId !== undefined ? { connectionId: input.connectionId } : {}) });
       if (typeof requestId === "string") {
         const existing = (await this.store.listRecords()).find(r => r.createdBy === input.createdBy && r.creationRequest?.id === requestId);
         if (existing) {
@@ -777,11 +782,18 @@ export class SessionManager {
         }
       }
       await validateSelection(this.providers, appIds);
-      const binding = await this.connections?.binding(input.connectionId);
+      if (input.profileId !== undefined && !this.profiles) throw new AppContextError(409, "profiles_unavailable", "Profiles are unavailable.");
+      const selectedProfile = this.profiles ? await this.profiles.select(input.profileId === undefined && (input.connectionId !== undefined || input.skillIds !== undefined) ? null : input.profileId, input.profileRevision) : null;
+      if (selectedProfile && (input.skillIds !== undefined || input.connectionId !== undefined))
+        throw new AppContextError(400, "profile_overrides", "Select a profile or supply manual connection and skill settings.");
+      const binding = await this.connections?.binding(selectedProfile?.connectionId ?? input.connectionId);
+      await this.validateProfileSelection(selectedProfile, binding?.connectionId);
       const now = new Date().toISOString();
       const title = normalizeTitle(input.title);
       const record: SessionRecord = {
-        skillIds: input.skillIds as string[] | undefined ?? (await this.settings?.read())?.skillIds,
+        ...(this.profiles ? { agentProfile: selectedProfile, profileLocked: false } : {}),
+        ...(selectedProfile ? { executionSelection: { model: selectedProfile.model, reasoningEffort: selectedProfile.reasoningEffort } } : {}),
+        skillIds: selectedProfile?.skillIds ?? input.skillIds as string[] | undefined ?? (this.profiles ? [] : (await this.settings?.read())?.skillIds),
         retentionVersion: 1,
         executionMode: this.executionMode ?? (await this.settings?.read())?.executionMode ?? "native",
         id: input.reservedHandoffId ?? randomUUID(),
@@ -925,6 +937,45 @@ export class SessionManager {
     return this.connections.models(session.record.connectionId);
   }
 
+  private async validateProfileSelection(config: AgentProfileConfig | null, connectionId?: string): Promise<void> {
+    if (!config || !config.model && !config.reasoningEffort) return;
+    if (!connectionId || !this.connections) throw new ConnectionError(409, "provider_required", "Choose a provider for this profile's model.");
+    const { validateSelection } = await import("../worker/models.js");
+    validateSelection({ model: config.model, reasoningEffort: config.reasoningEffort }, await this.connections.models(connectionId));
+  }
+
+  async validateProfile(input: unknown): Promise<AgentProfileConfig> {
+    const config = profileConfig(input);
+    const binding = await this.connections?.binding(config.connectionId ?? undefined);
+    if (config.connectionId && !binding) throw new ConnectionError(409, "provider_required", "Choose an available provider connection.");
+    await this.validateProfileSelection(config, binding?.connectionId);
+    return config;
+  }
+
+  async setProfile(id: string, input: Record<string, unknown>): Promise<SessionRecord> {
+    return this.serialize(id, async () => {
+      if (!this.profiles) throw new AppContextError(409, "profiles_unavailable", "Profiles are unavailable.");
+      const session = await this.requireLive(id);
+      if (session.run || session.record.workerRun || session.record.profileLocked || await this.sessionProviderLocked(session.record))
+        throw new AppContextError(409, "profile_locked", "A started chat keeps its profile. Start a new chat to use another.");
+      if (input.expectedRevision !== (session.record.selectionRevision ?? 0)) throw new AppContextError(409, "selection_conflict", "Chat settings changed. Refresh before selecting again.");
+      if (input.profileId === undefined) throw new AppContextError(400, "profile_invalid", "Choose a profile or no profile.");
+      const profile = await this.profiles.select(input.profileId, input.profileRevision);
+      const binding = await this.connections?.binding(profile?.connectionId ?? undefined);
+      await this.validateProfileSelection(profile, binding?.connectionId);
+      // Persist one complete configuration before notifying observers; the send path uses this lock.
+      const next: SessionRecord = { ...session.record, agentProfile: profile, profileLocked: false,
+        skillIds: profile?.skillIds ?? [], executionSelection: { model: profile?.model ?? null, reasoningEffort: profile?.reasoningEffort ?? null },
+        selectionRevision: (session.record.selectionRevision ?? 0) + 1, updatedAt: new Date().toISOString() };
+      delete next.connectionId; delete next.connectionRevision; delete next.connectionIdentity; delete next.harnessKind;
+      delete next.instructionSnapshot;
+      if (binding) Object.assign(next, binding);
+      await this.store.saveRecord(next); session.record = next;
+      await this.append(id, { type: "session_profile_changed", profileId: profile?.id ?? null, revision: next.selectionRevision });
+      return next;
+    });
+  }
+
   async setModel(id: string, input: Record<string, unknown>): Promise<SessionRecord> {
     return this.serialize(id, async () => {
       const session = await this.requireLive(id);
@@ -959,6 +1010,8 @@ export class SessionManager {
       if (!this.connections) throw new ConnectionError(409, "providers_unavailable", "Provider selection is unavailable.");
       const session = await this.requireLive(id);
       const locked = await this.sessionProviderLocked(session.record);
+      if (session.record.agentProfile?.connectionId && connectionId !== session.record.connectionId)
+        throw new ConnectionError(409, "profile_provider", "Choose another profile or no profile before starting to change the provider.");
       if (session.run || (locked && session.record.connectionId)) throw new ConnectionError(409, "provider_locked", "A started chat keeps its provider. Start a new chat to switch.");
       if (locked && !confirmLegacy) throw new ConnectionError(409, "provider_legacy_confirmation", "Confirm which provider and account originally ran this older chat.");
       const binding = await this.connections.binding(connectionId);
@@ -1566,6 +1619,14 @@ export class SessionManager {
           delete session.record.handoffDispatch.error;
         }
         session.record.handoffDraft = undefined;
+        if (session.record.profileLocked !== undefined || session.record.agentProfile) {
+          if (session.record.instructionSnapshot === undefined) {
+            const common = await this.settings?.read();
+            session.record.instructionSnapshot = [common?.workflowPrompt ?? DEFAULT_WORKFLOW_PROMPT, common?.systemPrompt,
+              session.record.agentProfile?.instructions].filter(value => value?.trim()).join("\n\n");
+          }
+          session.record.profileLocked = true;
+        }
         await this.store.saveRecord(session.record);
         if (clientRequestId) {
           // This boundary precedes transcript publication and provider start/send. A crash here is
@@ -1598,7 +1659,7 @@ export class SessionManager {
           // mid-conversation swap would leave a transcript whose halves ran under different rules. An
           // edit takes effect in the next session, which the settings UI states plainly.
           const instructions = await this.settings?.read();
-          const operatorPrompt = [instructions?.workflowPrompt ?? DEFAULT_WORKFLOW_PROMPT, instructions?.systemPrompt].filter(Boolean).join("\n\n");
+          const operatorPrompt = session.record.instructionSnapshot ?? [instructions?.workflowPrompt ?? DEFAULT_WORKFLOW_PROMPT, instructions?.systemPrompt].filter(Boolean).join("\n\n");
           const mcpServers = await this.buildMcpServers(session);
           session.mcpSignature = JSON.stringify([mcpServers ?? {}, session.mcpTargetSignature]);
           // Standing instructions are prompt text; selected skill packages use native discovery.

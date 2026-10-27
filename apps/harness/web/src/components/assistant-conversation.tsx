@@ -2,6 +2,7 @@
 import { ContextUsageIndicator } from "@/components/context-usage";
 import { applyContextUsage, emptyContextUsage } from "@/lib/context-usage";
 import { HostyNavigationBoundary } from "@hosty-sdk/app/react";
+import { SessionProfile } from "@/components/session-profile";
 import { SessionModel } from "@/components/session-model";
 import { SessionAutonomy } from "@/components/session-autonomy";
 import { SessionExecutionIndicator } from "@/components/session-execution-indicator";
@@ -137,10 +138,14 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const openContextAfterMenu = useRef(false);
   const onSessionChange = useCallback((record: AssistantSession) => {
     const merge = (current: AssistantSession) => current.id !== record.id ? current : {
-      ...((record.appContextRevision ?? 0) >= (current.appContextRevision ?? 0) && activityTime(record) >= activityTime(current)
+      ...((record.appContextRevision ?? 0) >= (current.appContextRevision ?? 0)
+        && (record.selectionRevision ?? 0) >= (current.selectionRevision ?? 0) && activityTime(record) >= activityTime(current)
         && (record.lastEventSeq === undefined || current.lastEventSeq === undefined || record.lastEventSeq >= current.lastEventSeq) ? record : current),
       lastEventSeq: Math.max(record.lastEventSeq ?? 0, current.lastEventSeq ?? 0) || undefined,
       updatedAt: activityTime(record) >= activityTime(current) ? record.updatedAt : current.updatedAt,
+      // Admission is permanent even if a pre-admission mutation reply arrives before its status event.
+      ...(current.profileLocked === true ? { profileLocked: true } : {}),
+      ...(current.providerLocked === true ? { providerLocked: true } : {}),
     };
     setSession(current => current ? merge(current) : current);
     setSessions(current => current.map(merge));
@@ -275,6 +280,15 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
 
     const abort = new AbortController();
     let settingsRefresh = 0;
+    let settingsPending = false;
+    let latestModelRevision = record.selectionRevision ?? 0;
+    const refreshSettings = () => {
+      const revision = ++settingsRefresh;
+      settingsPending = true;
+      void getSession(record.id).then(value => {
+        if (!abort.signal.aborted && revision === settingsRefresh && activeSessionId.current === record.id) onSessionChange(value);
+      }).catch(() => {}).finally(() => { if (revision === settingsRefresh) settingsPending = false; });
+    };
     streamAbortRef.current = abort;
     void streamEvents(
       record.id,
@@ -289,7 +303,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
           setActivity(current => current?.epoch === update.epoch && current.revision >= update.revision ? current : update);
           return;
         }
-        if (event.type === "session_provider_changed" || event.type === "session_autonomy_changed") {
+        if (event.type === "session_profile_changed" || event.type === "session_provider_changed" || event.type === "session_autonomy_changed") {
           const settings: Partial<AssistantSession> = event.type === "session_autonomy_changed"
             ? (event.autonomy === "normal" || event.autonomy === "autonomous" ? { autonomy: event.autonomy } : {})
             : typeof event.connectionId === "string" && typeof event.connectionRevision === "number"
@@ -297,10 +311,13 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
               ? { connectionId: event.connectionId, connectionRevision: event.connectionRevision, harnessKind: event.harnessKind, providerLocked: event.providerLocked } : {};
           const applySettings = (current: AssistantSession) => current.id === record.id && event.seq >= (current.lastEventSeq ?? 0) && activityTime({ updatedAt: event.ts }) >= activityTime(current)
             ? { ...current, ...settings, updatedAt: event.ts, lastEventSeq: event.seq } : current;
-          setSessions(current => current.map(applySettings));
-          setSession(current => current ? applySettings(current) : current);
-          const revision = ++settingsRefresh;
-          void getSession(record.id).then(value => { if (!abort.signal.aborted && revision === settingsRefresh && activeSessionId.current === record.id) onSessionChange(value); }).catch(() => {});
+          // Profile notifications carry only a revision. Apply the fetched configuration atomically;
+          // their later event timestamp must not make the saved record appear stale.
+          if (event.type !== "session_profile_changed") {
+            setSessions(current => current.map(applySettings));
+            setSession(current => current ? applySettings(current) : current);
+          }
+          refreshSettings();
           void getHealth(record.id).then(value => { if (activeSessionId.current === record.id) setHealth(value); }).catch(() => {});
           return;
         }
@@ -310,9 +327,24 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
           const apply = (current: AssistantSession) => current.id === record.id && revision > (current.selectionRevision ?? 0)
             ? { ...current, executionSelection: selection, selectionRevision: revision } : current;
           setSession(current => current ? apply(current) : current); setSessions(current => current.map(apply));
+          // A model event can overtake a pending profile snapshot. Replace that request so the
+          // complete profile/provider configuration catches up without rolling back the selection.
+          if (revision > latestModelRevision) {
+            latestModelRevision = revision;
+            refreshSettings();
+          }
           return;
         }
-        if (event.type === "user_message") setSession(current => current?.id === record.id ? { ...current, ...(current.providerLocked !== undefined ? { providerLocked: true } : {}) } : current);
+        // A status/context update can make an in-flight settings snapshot too old to merge.
+        // Replace only pending reads; ordinary conversation activity does not poll settings.
+        if (settingsPending && (event.type === "user_message" || event.type === "app_context_changed"
+          || event.type === "session_status" && event.historical !== true)) refreshSettings();
+        if (event.type === "user_message") {
+          const lock = (current: AssistantSession) => current.id === record.id
+            ? { ...current, ...(current.providerLocked !== undefined ? { providerLocked: true } : {}), ...(current.profileLocked !== undefined ? { profileLocked: true } : {}) } : current;
+          setSession(current => current ? lock(current) : current);
+          setSessions(current => current.map(lock));
+        }
         if (event.type === "app_context_changed") {
           const revision = Number(event.appContextRevision);
           setSessions(current => current.map(item => item.id === record.id && revision > (item.appContextRevision ?? 0)
@@ -1200,11 +1232,16 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                         </DropdownMenuGroup>
                       </DropdownMenuContent>
                     </DropdownMenu>
-                    {session?.connectionId && <SessionModel key={`${session.id}:${session.connectionId}:${session.connectionRevision}`} session={{ ...session, status }} busy={sending || stopping || mentionSaving || contextSaving || providerSaving}
+                    {session?.profileLocked !== undefined && <SessionProfile key={`profile:${session.id}`} session={session} busy={sending || stopping || mentionSaving || contextSaving || providerSaving}
+                      onSavingChange={onProviderSaving} onChange={record => {
+                        onSessionChange(record);
+                        void getHealth(record.id).then(value => { if (activeSessionId.current === record.id) setHealth(value); }).catch(() => {});
+                      }} />}
+                    {session?.connectionId && <SessionModel key={`model:${session.id}:${session.connectionId}:${session.connectionRevision}`} session={{ ...session, status }} busy={sending || stopping || mentionSaving || contextSaving || providerSaving}
                       onSavingChange={onProviderSaving} onChange={onSessionChange} />}
-                    {session && <SessionAutonomy key={session.id} session={{ ...session, status }} busy={sending || stopping || mentionSaving || contextSaving || providerSaving}
+                    {session && <SessionAutonomy key={`autonomy:${session.id}`} session={{ ...session, status }} busy={sending || stopping || mentionSaving || contextSaving || providerSaving}
                       onSavingChange={onProviderSaving} onChange={onSessionChange} />}
-                    {session && session.providerLocked !== undefined && <SessionProvider key={`${session.id}:${session.connectionId}:${session.connectionRevision}`} session={session} busy={sending || mentionSaving || contextSaving || providerSaving} onSavingChange={onProviderSaving} onChange={record => {
+                    {session && session.providerLocked !== undefined && <SessionProvider key={`provider:${session.id}:${session.connectionId}:${session.connectionRevision}`} session={session} busy={sending || mentionSaving || contextSaving || providerSaving} onSavingChange={onProviderSaving} onChange={record => {
                       onSessionChange(record);
                       void getHealth(record.id).then(value => { if (activeSessionId.current === record.id) setHealth(value); }).catch(() => {});
                     }} />}

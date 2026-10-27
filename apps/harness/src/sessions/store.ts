@@ -27,6 +27,10 @@ export type SessionStatus =
 export type SessionAutonomy = "normal" | "autonomous";
 
 export interface SessionRecord {
+  agentProfile?: import("../profiles/types.js").AgentProfile | null;
+  profileLocked?: boolean;
+  /** Standing instructions captured once; skill package contents remain current. */
+  instructionSnapshot?: string;
   skillIds?: string[];
   skillExportId?: string;
   executionSelection?: import("../worker/contracts.js").ExecutionSelection;

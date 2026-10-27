@@ -18,7 +18,13 @@ scripts remain independent.
 Harness Settings → Skills displays names, descriptions, source provenance, installed commits/app
 versions and package files. Administrators can filter and read packages, discover a Git repository
 or subdirectory, select packages, install them, check updates, update individually or together,
-and remove Git packages. Private Git uses the acting administrator's existing Source connection.
+and remove Git packages. **Add skills** opens a two-step dialog: repository and source connection,
+then discovered package selection. A text field above the results filters names and descriptions
+as the administrator types, without changing selected packages hidden by the filter. The results
+use rows separated by thin dividers and scroll independently while the filter, **Back**, **Cancel**
+and **Install selected** stay visible. Back restores the source form; rediscovering the same source and
+commit preserves selected packages. Cancel closes the whole dialog and preserves its draft.
+Successful installation closes it and refreshes the catalog. Private Git uses the acting administrator's existing Source connection.
 Connection ownership and revocation are checked by Core; secrets are absent from catalog results.
 There is no manual archive upload, package editor, personal library or automatic update.
 
@@ -70,8 +76,9 @@ Hosty delivery, not filesystem permissions or unrelated user/repository/built-in
 
 ## Harness And External Clients
 
-Harness stores assistant-default stable IDs and accepts explicit `skillIds` when creating a
-session. An app-owned profile can supply its own IDs through this same input. A session captures
+Harness [agent profiles](../agent-profiles/feature.md) store explicit skill selections. The Skills
+tab manages the common catalog; profiles own selection. Session creation also accepts explicit
+`skillIds` for manual consumers without a profile. A session captures
 its selection while receiving current contents whenever Core updates those packages. Provider
 credential connections do not own skill selections. Deleted IDs do not block session creation.
 
@@ -138,7 +145,7 @@ Missing selections produce an empty or reduced current export rather than preven
   updates, upstream removal, failed private reads, name collisions and app lifecycle publication.
 - Verify administrator/app-grant boundaries, revoked access, independent consumers, export
   ownership, current contents, missing IDs and recovery without historical packages.
-- Exercise Harness defaults and explicit selections independently of MCP access and instructions;
+- Exercise Harness profile and explicit session selections independently of MCP access and instructions;
   verify concurrent native profiles, references, update/removal and retained conversation history.
 - Build Core/CLI, Harness UI and migrated producers; run affected unit/integration suites and
   real native discovery/activation checks against the pinned Codex and Claude versions.

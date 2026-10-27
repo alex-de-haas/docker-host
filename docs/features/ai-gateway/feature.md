@@ -136,7 +136,8 @@ See [assistant MCP delegation](../delegated-token-exchange/feature.md).
 ## Settings Surface
 
 - The manifest declares one `ui.settings` surface, listed as **Hosty Harness** under Shell's
-  Settings. Its app-owned page has **Agent providers**, **Translation providers**, **Instructions and retention** and **MCP access** tabs.
+  Settings. Its app-owned page has **Agent profiles**, **Agent providers**, **Translation providers**,
+  **Instructions and retention**, **Skills** and **MCP access** tabs.
   The iframe fills the workspace, so dialogs cover both the content and its internal tabs while
   the Shell header and sidebar remain accessible. Pages are served from the same Node process.
 - Why here and not in Shell: the assistant is optional, removable and replaceable, so a settings
@@ -148,8 +149,8 @@ See [assistant MCP delegation](../delegated-token-exchange/feature.md).
   fields, inputs, selects, switches, alerts and empty states. Layout uses Tailwind utilities and
   semantic theme tokens; the root stylesheet holds theme definitions and the SDK launch-mode
   chrome rule. MCP access uses expandable provider rows and tool-level controls, a local draft and one
-  Save. Core confirms provider/tool access in a batch; Harness saves invocation defaults and skill
-  acceptance locally. [Settings experience](../settings-experience/feature.md) defines recovery and ownership.
+  Save. Core confirms provider/tool access in a batch; Harness saves invocation defaults and profile
+  skill selections locally. [Settings experience](../settings-experience/feature.md) defines recovery and ownership.
   Switching tabs preserves unsaved prompt
   text and ongoing provider-login polling.
 - **The build runs at every start, from a clean cache.** The app is `localCommand`, so its manifest
@@ -172,14 +173,17 @@ See [assistant MCP delegation](../delegated-token-exchange/feature.md).
   Harness server proxy. Core retains saved secrets and enforces `apps.sources.full`, current administrator
   and owner checks. Saved tokens are not returned to the page. See
   [User source connections](../user-profile-connections/feature.md).
-- **System prompt.** Operator text appended to the harness's own instruction sources, capped at 8000
+- **Common instructions.** Operator text appended to the harness's own instruction sources, capped at 8000
   characters. It applies to the **next session**, not the running one: the prompt is a session's
   instruction set, and swapping it mid-conversation would leave a transcript whose halves ran under
   different instructions.
 - **MCP access** comes from the [Core Agent MCP Directory](../agent-mcp-directory/feature.md).
   Core enforces assistant-specific grants; Harness owns per-call approval preferences.
 - **Skills** come from the [shared Core library](../agent-skills/feature.md). Settings → Skills manages
-  packages and assistant defaults; session creation also accepts explicit stable IDs. Native files
+  packages; [Agent profiles](../agent-profiles/feature.md) select skills alongside a connection,
+  model, reasoning effort and role instructions. Profile selection is fixed after first dispatch,
+  and common/role instructions survive profile deletion and session restart. Manual session creation
+  also accepts explicit stable IDs. Native files
   are delivered independently of the provider connection, MCP access and standing instructions.
 - Sessions refresh their assistant-specific directory before every turn. The forwarding proxy checks policy and resolves
   the current target URL before each request, then obtains a fresh token. Core outages retain the

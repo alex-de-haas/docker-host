@@ -1,3 +1,5 @@
+import { ProfileStore } from "./profiles/store.js";
+import { hasSkillLibrary, migrateSkillSelection, skillRequest, type SkillCatalog } from "./skills.js";
 import { ToolActivityReporter } from "@hosty-sdk/app/tool-activity/server";
 import { startHarnessToolActivity, ToolActivityOwners } from "./tool-activity.js";
 import path from "node:path";
@@ -56,6 +58,12 @@ const proxy: McpProxy = new McpProxy((sessionId, appId) => manager.mintAppToken(
 // resolves to ::1 first has cost this project a hang before (docs/features/observability).
 proxy.allowRemoteWorker = Boolean(worker);
 const proxyBaseUrl = config.executionMode === "docker" ? "http://api:3400" : `http://127.0.0.1:${config.port}`;
+const profiles = new ProfileStore(config.dataDir, async () => {
+  await migrateSkillSelection(settings);
+  const previous = await settings.read();
+  return { name: "General", description: "General-purpose assistant", instructions: "", connectionId: null,
+    model: null, reasoningEffort: null, skillIds: previous.skillIds ?? [] };
+}, async () => hasSkillLibrary() ? (await skillRequest<SkillCatalog>("")).skills.map(skill => skill.id) : null);
 const manager: SessionManager = new SessionManager(
   store,
   adapter,
@@ -71,6 +79,7 @@ const manager: SessionManager = new SessionManager(
   new DevelopmentClient(config.coreOrigin, config.appId, config.serviceToken),
   worker,
   config.executionMode,
+  profiles,
 );
 
 // Older Core launches have no installation identity; activity becomes available after an app restart.

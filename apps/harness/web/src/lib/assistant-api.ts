@@ -23,6 +23,8 @@ export type AssistantQuestion = {
 };
 
 export type AssistantSession = {
+  agentProfile?: import("../../../src/profiles/types").AgentProfile | null;
+  profileLocked?: boolean;
   executionSelection?: { model: string | null; reasoningEffort: string | null };
   selectionRevision?: number;
   appCreations?: { input: Record<string, unknown>; state: "pending" | "observed" | "rejected"; prompt?: string }[];
@@ -105,7 +107,7 @@ export async function listSessions(): Promise<AssistantSession[]> {
 export async function createWorkspaceSession(input: { workspaceId: string; requestId: string; expectedRevision: number }): Promise<AssistantSession> {
   return (await call("/workspace-sessions", { method: "POST", body: JSON.stringify(input) })).json();
 }
-export async function createSession(input: { connectionId?: string; title?: string; context?: Record<string, string>; appIds?: string[]; clientRequestId?: string } = {}): Promise<AssistantSession> {
+export async function createSession(input: { profileId?: string | null; profileRevision?: number; connectionId?: string; title?: string; context?: Record<string, string>; appIds?: string[]; clientRequestId?: string } = {}): Promise<AssistantSession> {
   return (await call("/sessions", { method: "POST", body: JSON.stringify(input) })).json() as Promise<AssistantSession>;
 }
 
