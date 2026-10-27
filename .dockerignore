@@ -9,3 +9,6 @@ npm-debug.log*
 README.md
 
 **/.next-dev
+
+# Local production generations never belong in Docker build contexts.
+**/.local-runtime

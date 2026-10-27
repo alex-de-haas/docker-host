@@ -3,7 +3,7 @@
   "id": "hosty.harness",
   "name": "Hosty Harness",
   "description": "Hosty assistant with Docker and Local production runtimes, managed Claude and Codex connections, chat and settings.",
-  "version": "0.72.0",
+  "version": "0.73.0",
   "role": "system",
   "source": {
     "type": "git",
@@ -34,7 +34,7 @@
         "local": {
           "type": "localCommand",
           "workingDirectory": "apps/harness",
-          "command": "npm run start",
+          "command": "node scripts/local-runtime.mjs start api",
           "ports": [
             {
               "key": "http",
@@ -50,7 +50,8 @@
             "timeoutSeconds": 5
           },
           "environment": {
-            "HOSTY_HARNESS_RUNTIME": "native"
+            "HOSTY_HARNESS_RUNTIME": "native",
+            "NODE_ENV": "production"
           }
         },
         "dev": {
@@ -77,7 +78,7 @@
         },
         "docker": {
           "type": "docker",
-          "image": "ghcr.io/alex-de-haas/hosty-harness:0.72.0",
+          "image": "ghcr.io/alex-de-haas/hosty-harness:0.73.0",
           "environment": {
             "HOSTY_HARNESS_RUNTIME": "docker",
             "PORT": "3400"
@@ -118,8 +119,8 @@
         "local": {
           "type": "localCommand",
           "workingDirectory": "apps/harness",
-          "setup": "npm --prefix ../.. ci && npm run build:web",
-          "command": "npm run worker",
+          "setup": "node scripts/local-runtime.mjs prepare",
+          "command": "node scripts/local-runtime.mjs start worker",
           "ports": [
             {
               "key": "worker",
@@ -135,7 +136,8 @@
             "timeoutSeconds": 5
           },
           "environment": {
-            "HOSTY_HARNESS_RUNTIME": "native"
+            "HOSTY_HARNESS_RUNTIME": "native",
+            "NODE_ENV": "production"
           }
         },
         "dev": {
@@ -163,7 +165,7 @@
         },
         "docker": {
           "type": "docker",
-          "image": "ghcr.io/alex-de-haas/hosty-harness-worker:0.72.0",
+          "image": "ghcr.io/alex-de-haas/hosty-harness-worker:0.73.0",
           "environment": {
             "HOSTY_HARNESS_RUNTIME": "docker",
             "PORT": "3401"

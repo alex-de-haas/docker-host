@@ -292,6 +292,16 @@ try:
         csrf = request('/api/auth/csrf')['token']
         initial = request('/control/v1/core/status',control=True)
         say('Started a parent-managed child Core and logged in with its separate test account')
+    if scenario == 'harness-local':
+        assert managed, 'Harness local acceptance requires a managed child Core'
+        import importlib.util
+        sys.dont_write_bytecode = True
+        spec = importlib.util.spec_from_file_location('harness_local_acceptance', workspace/'apps/harness/test/local_runtime_acceptance.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        module.check(globals())
+        success = True
+        sys.exit(0)
     if scenario == 'desktop':
         assert managed, 'Desktop acceptance requires a managed child Core'
         sys.dont_write_bytecode = True
