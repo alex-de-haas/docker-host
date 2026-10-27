@@ -88,7 +88,9 @@ bodies and exception messages are not copied into retained spans.
 
 Contract version 1 reports run/capture identity, sampling, observation time, sequence range, next
 cursor, pagination and drop/truncation counts. Reads are replayable and non-destructive. Core restart,
-expired/ahead cursors and resumed capture expose coverage changes. This is a bounded diagnostic
+expired/ahead cursors and resumed capture expose coverage changes. When capture resumes after
+overflow, the latest gap reason can be `cursor_expired`; the changed capture-start identity remains
+visible alongside it. This is a bounded diagnostic
 buffer, not a durable audit trail and not retroactive capture.
 
 Telemetry pulls about every 10 seconds, drains at most four 500-span pages per tick, and backs off
@@ -129,6 +131,40 @@ fixed SDK listeners; it is not a claim about active tracing or a universal host 
 candidate launch took 893 ms; these are local diagnostic measurements, not a startup guarantee.
 The existing-counter increment test allocates zero bytes across 10,000 warmed increments.
 
+Controlled HTTP measurements used the same authenticated directory endpoint, Docker caller,
+eight workers and Native AOT Core, with no concurrent local builds/tests. Each of 31 alternating
+rounds measured 10,000 requests after 2,000 warm-up requests. The 100% diagnostic stress mode ran
+separately for 11 rounds after the default comparison.
+
+| Mode | Median batch ms | Median p95 ms | Batch min–max ms |
+| --- | ---: | ---: | ---: |
+| Accounting disabled, sampling 0 | 719.84 | 0.7792 | 628.24–3849.82 |
+| Counters, sampling 0 | 704.35 | 0.7437 | 615.40–3644.02 |
+| Counters, sampling 10% | 725.21 | 0.7653 | 638.84–2977.59 |
+| Counters, sampling 100% (separate stress) | 876.09 | 1.0800 | 725.72–1374.57 |
+
+Counters and default sampling meet the 2%/5% median elapsed-time and p95 acceptance targets in
+this run. Negative differences are measurement noise, not a speedup claim. The wide batch ranges
+show shared-host variability; these numbers are not production latency guarantees. An initial
+comparison interleaving 100% stress showed about 6% p95 regression, exceeding the 5% target. The final method
+separates that stress to avoid its retained-span/ingestion/GC work affecting the next default sample;
+the short-span writer also avoids unnecessary serialization while enforcing the same wire limit.
+
+Supplementary paired runs observed 1.40/1.41/1.41 CPU seconds per 10,000 requests for disabled,
+counters and 10% modes, with peak Core RSS around 272 MiB under load. With a visible Dashboard,
+median batch times were 692/696/691 ms and p95 0.675/0.624/0.658 ms (11 rounds). With Telemetry stopped
+and demand expired, disabled/counter medians were 795/764 ms and p95 0.866/0.853 ms (31 rounds).
+A separate pre-instrumentation 0.158.1 managed environment measured 903 ms and 0.763 ms p95
+(31 rounds, batch range 645–972 ms); this is a cross-process reference, not an isolated SDK-cost
+measurement. Exact counters, HTTP stream openings and warning windows are also verified independently
+of sampled trace totals.
+
+The managed outgoing-span check uses a server-side operation filter and bounded polling. A tight
+unfiltered test poll generated enough Core authorization traces to displace its target from the
+newest-500 result list; correcting that test noise preserves the assertion that an actual incoming
+server span and its outgoing client child are both retained. Bounded retries accommodate the
+nonblocking writer's documented contention drops, including at a 100% root sample ratio.
+
 ## Testing Expectations
 
 - Monotonic window, concurrent increment, warning/recovery and installation/run reset tests cover
@@ -136,13 +172,16 @@ The existing-counter increment test allocates zero bytes across 10,000 warmed in
 - Resource and Shell tests preserve old/new payload compatibility, independent CPU timestamps,
   app-level aggregation, unavailable states and consumer-scoped shared subscriptions.
 - Standard SDK tests verify a custom child span and correlated log, parent sampling, demand expiry,
-  revocation, bounded/replayable capture and sanitization. HTTP tests enforce installed-reader grants.
+  revocation, bounded/replayable capture, escaped-Unicode wire limits and sanitization. Routine
+  supervisor health probes must not emit client spans. HTTP tests enforce installed-reader grants.
 - Backend tests cover parsing, durable cursor transactions, replay/restart deduplication, reserved
   provenance isolation, caller filters and correlation across retained time ranges. UI tests cover
   caller filters, coverage and both navigation directions, including missing traces.
 - `npm run test:integration -- observability` runs normal setup/login in a parent-managed child Core
   with dedicated Docker Shell, caller and Telemetry services. `HOSTY_OBSERVABILITY_BROWSER=1` holds
   previews for visual QA; `HOSTY_OBSERVABILITY_PERF=1` adds repeated controlled HTTP comparisons.
+  `HOSTY_OBSERVABILITY_BASELINE=1` requires an explicit existing `HOSTY_ACTIVATION_CORE` binary
+  and compares the same caller workload without assuming the new diagnostics API.
   Owner Finish removes child resources; raw credentials and diagnostics stay outside the repository.
 - Publish and smoke-test Native AOT on supported release toolchains. Measure sampling/counter
   overhead separately from background builds and report variance, startup and memory limitations.

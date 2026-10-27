@@ -37,19 +37,18 @@ D12 owns their removal; it does not choose a new provider schema or authorize ru
 Agree the contract before implementation. Provider selection, endpoint compatibility, readiness,
 authorization and collector configuration ownership must be explicit and independent of app IDs.
 
-## Core API diagnostics, owner direction 2026-10-27
+## Core API diagnostics, delivered 2026-10-27
 
-[Core API Activity and Tracing](../core-api-observability/plan.md) owns the approved extension:
-minimal app-level counters and Shell warnings, standard Core instrumentation, authenticated trace
-pull, verified caller app attributes and correlated Core logs. Service attribution is excluded.
-It revises the baseline no-SDK choice below for standard instrumentation while retaining pull
-transport, bounded memory and independence from any installed collector. Native AOT and overhead
-must be verified. Feature documentation remains a statement of current behavior until it ships.
+[Core API activity and tracing](../core-api-observability/feature.md) provides minimal app-level
+counters and Shell warnings, standard Core instrumentation, authenticated trace pull, verified
+caller app attributes and correlated Core logs. Service attribution is excluded. This revises the
+original no-SDK choice while retaining pull transport, bounded memory and independence from any
+installed collector. Native AOT and measured overhead are covered by that feature's acceptance.
 
-The shared bidirectional trace/log navigation remains D4 here and is consumed by that plan; complete
-it alongside Core diagnostics if still open. D1 still owns general producer authentication and D12
-still owns replacement of legacy provider wiring. The Core diagnostics contract adds no fixed
-Telemetry app ID dependency and does not duplicate those deliverables.
+The shared bidirectional trace/log navigation is completed as D4 here. D1 still owns general
+producer authentication and D12 still owns replacement of legacy provider wiring. The Core
+diagnostics contract adds no fixed Telemetry app ID dependency and does not duplicate those
+remaining deliverables.
 
 ## Target behavior
 
@@ -110,7 +109,7 @@ reserved Core producer is accepted only through its authenticated pull paths.
       filterable by the same `apps` / `severity` / `q` parameters as the query reads.
 - [ ] D3. **UI live tail.** Structured logs and Traces consume the stream through the UI's server routes;
       reconnect and backfill on drop; Metrics stay on the existing poll (charts do not benefit).
-- [x] D4. **trace→log correlation links** in the telemetry UI, both directions. This shared navigation also serves [Core API diagnostics](../core-api-observability/plan.md); preserve producer/caller distinction and explain sampled-out, expired or missing traces.
+- [x] D4. **trace→log correlation links** in the telemetry UI, both directions. This shared navigation also serves [Core API diagnostics](../core-api-observability/feature.md); preserve producer/caller distinction and explain sampled-out, expired or missing traces.
 - [x] D5. **Fleet resource views.** Implemented in [Unified runtime resource usage](../runtime-resource-usage/feature.md).
       The owner decision on 2026-09-25 replaces the earlier snapshot-only heat-map: Dashboard uses
       the same Docker/localCommand sampler as telemetry, with a short bounded history in Core RAM.

@@ -175,6 +175,28 @@ public sealed class CoreApiObservabilityTests : IDisposable
         time.Advance(60); Assert.Empty(buffer.Read(buffer.RunId, 0, 500).Spans); Assert.False(buffer.IsCapturing);
     }
     [Fact]
+    public void SpanWireLimit_AccountsForEscapedUnicodeAndSequenceWidth()
+    {
+        var buffer = new CoreTraceBuffer(time, Settings()); buffer.Renew(App());
+        using (var small = new Activity("fixture").SetIdFormat(ActivityIdFormat.W3C).Start())
+        {
+            small.SetTag("http.route", new string('漢', 256)); small.Stop(); buffer.Add(small);
+        }
+        using (var oversized = new Activity("fixture").SetIdFormat(ActivityIdFormat.W3C).Start())
+        {
+            foreach (var key in new[] { "http.route", "network.protocol.version", "error.type" })
+                oversized.SetTag(key, new string('漢', 256));
+            oversized.Stop(); buffer.Add(oversized);
+        }
+        var page = buffer.Read(null, 0, 100);
+        var retained = Assert.Single(page.Spans);
+        Assert.True(System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(retained with { Sequence = long.MaxValue },
+            CoreJsonSerializerContext.Default.CoreSpanRecord).Length <= CoreTraceBuffer.MaxSpanBytes);
+        Assert.Equal(1, page.TruncatedSpans);
+        Assert.Equal(1, page.DroppedSpans);
+    }
+
+    [Fact]
     public void CorrelatedLogs_DoNotFoldAcrossTraces_AndBackgroundLogsKeepNullIds()
     {
         var ring = new CoreLogRing(10); var now = time.GetUtcNow();
@@ -217,6 +239,40 @@ public sealed class CoreApiObservabilityTests : IDisposable
         var log = Assert.Single(logs.Ring(CoreLogRingKind.Hosty).Read(10, LogLevel.Trace));
         Assert.Equal(traceId, log.TraceId); Assert.Equal(step.SpanId, log.SpanId); Assert.Equal(App().Id, log.CallerAppId);
     }
+    [Fact]
+    public async Task StandardHttpClientTracing_ExcludesSupervisorHealthProbes()
+    {
+        var settings = Settings();
+        await settings.UpdateAsync(new Dictionary<string, string?> { [CoreDiagnosticSettings.Sampling] = "1" });
+        var services = new ServiceCollection(); services.AddSingleton(settings); services.AddLogging();
+        CoreTracing.Configure(services);
+        await using var provider = services.BuildServiceProvider();
+        _ = provider.GetRequiredService<TracerProvider>();
+        var traces = provider.GetRequiredService<CoreTraceBuffer>(); traces.Renew(App());
+        using var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var server = Task.Run(async () =>
+        {
+            for (var i = 0; i < 2; i++)
+            {
+                using var connection = await listener.AcceptTcpClientAsync(timeout.Token);
+                await using var stream = connection.GetStream();
+                using var reader = new StreamReader(stream, leaveOpen: true);
+                while (await reader.ReadLineAsync(timeout.Token) is { Length: > 0 }) { }
+                await stream.WriteAsync("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"u8.ToArray(), timeout.Token);
+            }
+        }, timeout.Token);
+        using var client = new HttpClient();
+        using var response = await client.GetAsync($"http://127.0.0.1:{port}/ordinary", timeout.Token);
+        response.EnsureSuccessStatusCode();
+        Assert.True(await new NetworkHealthProbe().ProbeAsync(new("http", "127.0.0.1", port, "/", TimeSpan.FromSeconds(5)), timeout.Token));
+        await server;
+        var span = Assert.Single(traces.Read(null, 0, 100).Spans);
+        Assert.Equal("Client", span.Kind);
+    }
+
     private sealed class LogClock : IClock { public DateTimeOffset UtcNow => DateTimeOffset.UtcNow; }
     public void Dispose() { if (Directory.Exists(root)) Directory.Delete(root, true); }
     private sealed class ManualTime : TimeProvider

@@ -19,7 +19,11 @@ def check(context):
     origin, password, cli = (context[k] for k in ('origin', 'password', 'cli'))
     caller = 'test.observability.caller'
     resources = lambda: request('/api/core/resources')['apiActivity']
-    assert resources()['apps'] == {}, 'An empty registry must have no fabricated app traffic'
+    baseline = os.environ.get('HOSTY_OBSERVABILITY_BASELINE') == '1'
+    if baseline:
+        assert os.environ.get('HOSTY_ACTIVATION_CORE'), 'The baseline requires an explicit existing Core executable'
+    else:
+        assert resources()['apps'] == {}, 'An empty registry must have no fabricated app traffic'
 
     def install(value, name):
         folder = base/name; folder.mkdir()
@@ -107,6 +111,17 @@ http.createServer(async(q,s)=>{try {
     client = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     def fixture(path):
         with client.open(fixture_origin+path, timeout=180) as response: return json.load(response)
+    if baseline:
+        # Compare an installed pre-instrumentation executable through the same managed lifecycle,
+        # caller image, authenticated API and Docker network. No new API is assumed in this mode.
+        fixture('/burst?count=10000')
+        runs = [fixture('/burst?count=10000') for _ in range(31)]
+        assert all(run['ok'] == 10000 for run in runs)
+        summary = {'medianMs':statistics.median(run['elapsedMs'] for run in runs),
+            'medianP95Ms':statistics.median(run['p95Ms'] for run in runs),
+            'minMs':min(run['elapsedMs'] for run in runs),'maxMs':max(run['elapsedMs'] for run in runs)}
+        say('BASELINE PERFORMANCE '+json.dumps(summary))
+        return
     before = resources()['apps'][caller]['totalRequests']
     result = fixture('/burst?count=250'); assert result['ok'] == 250, result
     snapshot = wait_for(lambda: (s if (s:=resources())['apps'][caller]['warning'] is not None else None), 15)
@@ -141,16 +156,38 @@ http.createServer(async(q,s)=>{try {
     assert logs['rangeSeconds'] == 0
     say('PASS: standard incoming spans, verified caller filter, Core producer, full sampling and trace-specific log query')
 
-    request('/api/apps/install/plan', {'manifestPath':fixture_origin+'/manifest.json','selectedRuntime':'docker','autostart':False})
-    all_traces = lambda: telemetry_browser.get('/api/observability/traces?apps=hosty.core&range=3600&limit=500')
+    install_plan = {'manifestPath':fixture_origin+'/manifest.json','selectedRuntime':'docker','autostart':False}
+    all_traces = lambda: telemetry_browser.get('/api/observability/traces?apps=hosty.core&range=3600&limit=500&q=install')
+    next_outgoing_probe = 0.0
     def outgoing():
+        nonlocal next_outgoing_probe
+        if time.monotonic() < next_outgoing_probe: return None
+        next_outgoing_probe = time.monotonic() + 0.5
         for trace in all_traces()['traces']:
-            if 'install' not in trace.get('rootName','') and 'install' not in trace.get('name',''): continue
+            if 'install' not in trace.get('rootName', ''): continue
             d = telemetry_browser.get('/api/observability/traces/'+trace['traceId'])
-            if any(s['kind'].lower()=='client' for s in d['spans']): return d
+            parents = {s['spanId'] for s in d['spans'] if s['kind'].lower() == 'server'
+                and 'install' in s.get('name', '')}
+            if any(s['kind'].lower() == 'client' and s.get('parentSpanId') in parents for s in d['spans']):
+                return d
         return None
-    outbound = wait_for(outgoing, 45)
-    assert any(s.get('parentSpanId') for s in outbound['spans'] if s['kind'].lower()=='client')
+    # Filter before the newest-500 result limit: each query authorizes through Core, so a
+    # tight unfiltered test poll can displace the very install trace being awaited.
+    # The bounded nonblocking writer deliberately permits contention drops, even at 100% root
+    # sampling. Require a real parent/client pair but allow a bounded number of fresh attempts.
+    outbound = None
+    for attempt in range(4):
+        request('/api/apps/install/plan', install_plan)
+        try:
+            outbound = wait_for(outgoing, 12)
+            break
+        except TimeoutError:
+            if attempt == 3:
+                page = all_traces()
+                say('Missing outbound pair; coverage: '+json.dumps(page.get('coreTracing', {})))
+                say('Observed Core trace names: '+json.dumps(sorted({t.get('rootName', t.get('name', '')) for t in page['traces']})))
+                raise
+    assert outbound is not None
     say('PASS: standard HttpClient span retains its incoming request parent')
 
     unhealthy = json.loads(json.dumps(value))
@@ -173,7 +210,7 @@ http.createServer(async(q,s)=>{try {
     if os.environ.get('HOSTY_OBSERVABILITY_PERF') == '1':
         # Same process, endpoint, caller, network and eight concurrent workers. Alternate modes
         # to reduce warm-up/order bias; these HTTP measurements include the fixed SDK listeners.
-        modes = [('disabled','0','0'), ('counters','1','0'), ('sampled10','1','0.1'), ('sampled100','1','1')]
+        modes = [('disabled','0','0'), ('counters','1','0'), ('sampled10','1','0.1')]
         measurements = {name: [] for name, _, _ in modes}
         fixture('/burst?count=500')
         for repeat in range(31):
@@ -182,6 +219,14 @@ http.createServer(async(q,s)=>{try {
                     'HOSTY_CORE_TRACE_SAMPLE_RATIO':ratio}}, method='PUT', confirm_settings=True)
                 fixture('/burst?count=2000')
                 measurements[name].append(fixture('/burst?count=10000'))
+        # Keep deliberate 100% tracing stress out of the default-mode comparison: its
+        # retained spans and subsequent ingest/GC can affect the following measurement.
+        request('/api/core/settings', {'settings':{'HOSTY_API_ACTIVITY_ENABLED':'1',
+            'HOSTY_CORE_TRACE_SAMPLE_RATIO':'1'}}, method='PUT', confirm_settings=True)
+        measurements['sampled100'] = []
+        for _ in range(11):
+            fixture('/burst?count=2000')
+            measurements['sampled100'].append(fixture('/burst?count=10000'))
         summary = {name: {'medianMs':statistics.median(r['elapsedMs'] for r in samples),
             'medianP95Ms':statistics.median(r['p95Ms'] for r in samples),
             'minMs':min(r['elapsedMs'] for r in samples),'maxMs':max(r['elapsedMs'] for r in samples)}
@@ -203,16 +248,24 @@ http.createServer(async(q,s)=>{try {
         assert (base/'finish-ui').exists(), 'Browser checks were not acknowledged'
         access.unlink()
 
+    previous_coverage = traces()['coreTracing']
     run([cli,'--data-root',root,'apps','stop','hosty.telemetry'])
     before = resources()['apps'][caller]['totalRequests']
-    assert fixture('/burst?count=10')['ok'] == 10
-    assert resources()['apps'][caller]['totalRequests']-before == 10
+    # Exercise buffer overflow as well as the absence of a consumer. Capture's 30-second
+    # grace period still applies, so a resumed reader may also have an expired cursor.
+    assert fixture('/burst?count=2500')['ok'] == 2500
+    assert resources()['apps'][caller]['totalRequests']-before == 2500
     # Let both authorized reader leases expire without renewing either one.
     time.sleep(31)
     resumed = fixture('/traces')
     assert resumed['captureStartedAt'] != independent['captureStartedAt']
     start('hosty.telemetry')
-    wait_for(lambda: traces()['coreTracing'].get('lastGapReason') == 'capture_resumed', 60)
+    def resumed_coverage():
+        coverage = traces()['coreTracing']
+        return (coverage['gapCount'] > previous_coverage['gapCount']
+            and coverage['captureStartedAt'] != previous_coverage['captureStartedAt']
+            and coverage.get('lastGapReason') in ('capture_resumed', 'cursor_expired'))
+    wait_for(resumed_coverage, 60)
     assert resources()['runId'] == run_id
     say('PASS: counters survive stopped Telemetry; expired capture resumes with an explicit stored coverage gap')
     # Restart only through the owning parent. Keep the durable request ID for uncertain outcomes.

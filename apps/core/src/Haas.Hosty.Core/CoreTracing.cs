@@ -111,6 +111,7 @@ internal sealed class CoreTraceBuffer(TimeProvider time, CoreSettingsService set
 {
     internal const int MaxSpans = 2000, MaxBytes = 8 * 1024 * 1024, MaxSpanBytes = 4096;
     internal const int MaxAgeSeconds = 60, DemandSeconds = 30;
+    private static readonly string[] AttributeNames = ["http.request.method", "http.route", "http.response.status_code", "network.protocol.version", "error.type"];
     private readonly object gate = new();
     private readonly Queue<Entry> entries = new();
     private readonly Dictionary<string, Demand> demands = new(StringComparer.Ordinal);
@@ -156,12 +157,24 @@ internal sealed class CoreTraceBuffer(TimeProvider time, CoreSettingsService set
     {
         if (!IsCapturing) return;
         var record = Sanitize(activity);
-        var size = JsonSerializer.SerializeToUtf8Bytes(record, CoreJsonSerializerContext.Default.CoreSpanRecord).Length;
+        var textLength = record.Name.Length + record.TraceId.Length + record.SpanId.Length
+            + (record.ParentSpanId?.Length ?? 0) + record.Kind.Length + record.Status.Length;
+        var managedBytes = 512 + 2 * textLength;
+        foreach (var pair in record.Attributes)
+        {
+            textLength += pair.Key.Length + pair.Value.Length;
+            managedBytes += 96 + 2 * (pair.Key.Length + pair.Value.Length);
+        }
+        // A JSON character uses at most six bytes when escaped. The fixed allowance covers field
+        // names, punctuation, timestamps and maximal numeric widths (including the assigned sequence).
+        // Ordinary short spans need no serialization/allocation on the request thread just to count
+        // bytes. Borderline records still use the actual serializer, with a maximal sequence width.
+        var upperWireBytes = 512L + 6L * textLength;
+        var size = upperWireBytes <= MaxSpanBytes ? (int)upperWireBytes
+            : JsonSerializer.SerializeToUtf8Bytes(record with { Sequence = long.MaxValue }, CoreJsonSerializerContext.Default.CoreSpanRecord).Length;
         if (size > MaxSpanBytes) { Interlocked.Increment(ref truncated); Interlocked.Increment(ref dropped); return; }
-        // Charge a conservative managed-object estimate as well as the wire size. UTF-16 strings,
-        // dictionaries and queue entries must not turn an 8 MiB wire cap into unbounded heap use.
-        size = Math.Max(size, 512 + 2 * (record.Name.Length + record.TraceId.Length + record.SpanId.Length + (record.ParentSpanId?.Length ?? 0))
-            + record.Attributes.Sum(pair => 96 + 2 * (pair.Key.Length + pair.Value.Length)));
+        // Charge both wire size and a conservative managed-object estimate against retention.
+        size = Math.Max(size, managedBytes);
         // Request threads never queue behind a pull reader. A contested diagnostic record is dropped.
         if (!Monitor.TryEnter(gate)) { Interlocked.Increment(ref dropped); return; }
         try
@@ -178,7 +191,7 @@ internal sealed class CoreTraceBuffer(TimeProvider time, CoreSettingsService set
         var attributes = new Dictionary<string, string>(StringComparer.Ordinal);
         // Deliberately do not copy arbitrary tags, baggage, events, URL paths, exception messages or
         // stack traces. These stable fields identify an instrumented boundary without request data.
-        foreach (var key in new[] { "http.request.method", "http.route", "http.response.status_code", "network.protocol.version", "error.type" })
+        foreach (var key in AttributeNames)
         {
             var value = Convert.ToString(activity.GetTagItem(key), CultureInfo.InvariantCulture);
             if (!string.IsNullOrEmpty(value) && value.Length <= 256 && !value.Any(char.IsControl)) attributes[key] = value;
