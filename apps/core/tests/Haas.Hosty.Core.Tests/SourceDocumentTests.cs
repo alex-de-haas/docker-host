@@ -198,12 +198,12 @@ public sealed partial class CoreLifecycleServiceTests
         var other = Assert.Single(entries, e => e.Branch == "other");
         Assert.True(other.WorkspaceDerived);
         await documents.ObserveTargetsAsync(workspace.Owner.UserId, other.Id, default);
-        Assert.Contains(workspace.Id, await documents.AuthorizedWorkspaceIdsAsync(workspace.Owner.UserId, other.Id, default));
-        Assert.Empty(await documents.AuthorizedWorkspaceIdsAsync(workspace.Owner.UserId, Assert.Single(entries, e => e.Branch != "other").Id, default));
+        Assert.Contains(workspace.Id, (await documents.AuthorizedWorkspaceRepositoriesAsync(workspace.Owner.UserId, other.Id, default)).Keys);
+        Assert.Empty((await documents.AuthorizedWorkspaceRepositoriesAsync(workspace.Owner.UserId, Assert.Single(entries, e => e.Branch != "other").Id, default)).Keys);
         var record = Path.Combine(f.Paths.CoreRoot, "development/workspaces", workspace.Id + ".json");
         await JsonStorage.WriteAsync(record, workspace with { State = "releasing" });
         var projection = Assert.Single((await documents.ListWorkspacesAsync("admin", null, default)).Workspaces);
-        Assert.Empty(await documents.AuthorizedWorkspaceIdsAsync(workspace.Owner.UserId, other.Id, default));
+        Assert.Empty((await documents.AuthorizedWorkspaceRepositoriesAsync(workspace.Owner.UserId, other.Id, default)).Keys);
         Assert.Equal("releasing", projection.State);
         Assert.Null(projection.Changes);
         Assert.NotNull(projection.Error);

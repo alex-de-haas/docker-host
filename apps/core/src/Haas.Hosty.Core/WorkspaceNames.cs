@@ -11,7 +11,7 @@ internal sealed partial class DevelopmentWorkspaceService
         => System.IO.Path.Combine(Root, "metadata", WorkspaceIdFor(owner) + ".json");
 
     internal Task<WorkspaceMetadata?> ReadMetadataAsync(WorkspaceOwner owner, CancellationToken ct)
-        => JsonStorage.ReadAsync<WorkspaceMetadata>(MetadataPath(owner), ct);
+        => recordCache.ReadAsync<WorkspaceMetadata>(MetadataPath(owner), ct);
 
     internal async Task<WorkspaceMetadata> MetadataAsync(WorkspaceOwner owner, CancellationToken ct)
         => await ReadMetadataAsync(owner, ct) ?? new();

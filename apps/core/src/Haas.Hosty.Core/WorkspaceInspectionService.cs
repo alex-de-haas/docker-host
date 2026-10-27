@@ -11,6 +11,7 @@ internal sealed partial class WorkspaceInspectionService(DevelopmentWorkspaceSer
     private readonly SemaphoreSlim[] detailGates = Enumerable.Range(0, 64).Select(_ => new SemaphoreSlim(1, 1)).ToArray();
     public async Task<WorkspaceInventory> ListAsync(string userId, CancellationToken ct, bool ownedOnly = false, string callerAppId = "")
     {
+        using var scope = workspaces.ReadScope();
         var installed = await apps.ListAppRecordsAsync(ct);
         var allowed = new List<DevelopmentWorkspace>();
         foreach (var tree in (await workspaces.ListAsync(null, true, ct)).Workspaces)

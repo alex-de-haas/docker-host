@@ -3,6 +3,7 @@ import base64
 import hashlib
 import http.cookiejar
 import json
+import os
 import pathlib
 import re
 import time
@@ -57,6 +58,31 @@ def check(context):
         with client.open(urllib.parse.urljoin(app_origin, asset), timeout=30) as response:
             assert response.status == 200 and len(response.read()) > 0
     say('PASS: production API/worker, password login, Core launch-code identity, sessions API and compiled static assets')
+
+    if review := os.environ.get('HOSTY_HARNESS_BROWSER_REVIEW'):
+        development = request('/api/core/development')
+        source = request('/api/core/source', {'revision':development['source']['revision'], 'overridePath':None,
+            'repository':{'repositoryUrl':context['repository'], 'ref':'main', 'projectPath':context['project'], 'connectionId':None}},
+            method='PUT', confirm_settings=True)
+        lease = str(uuid.uuid4())
+        tree = request('/api/core/source/workspaces', {'requestId':str(uuid.uuid4()), 'taskId':'harness-refresh-acceptance',
+            'leaseId':lease, 'sourceRevision':source['revision'], 'targetBranch':'main', 'name':'Verify bounded workspace refresh'})
+        review_path = pathlib.Path(review)
+        descriptor = os.open(review_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(descriptor, 'w') as output:
+            json.dump({'origin':origin, 'appUrl':link, 'email':'activation-fixture@example.test', 'password':password,
+                'dataRoot':str(root), 'pid':request('/api/core/development')['launch']['processId'],
+                'worktree':tree['path'], 'workspaceId':tree['workspaceId']}, output)
+        say('BROWSER_REVIEW_READY: '+str(review_path))
+        continuation = pathlib.Path(review+'.continue')
+        try:
+            deadline = time.monotonic()+1200
+            while not continuation.exists():
+                if time.monotonic()>deadline: raise TimeoutError('Browser review was not completed within twenty minutes')
+                time.sleep(.5)
+        finally:
+            review_path.unlink(missing_ok=True); continuation.unlink(missing_ok=True)
+            request('/api/development/workspaces/'+tree['id']+'/operations/release-lease', {'requestId':str(uuid.uuid4()), 'leaseId':lease})
 
     app_root = root/'apps'/app
     receipts = list(app_root.rglob('.local-runtime/*/bundle.json'))

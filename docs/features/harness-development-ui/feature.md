@@ -1,6 +1,6 @@
 ---
 created: 2026-10-16
-updated: 2026-10-26
+updated: 2026-10-27
 summary: Harness combines conversation navigation, multi-repository workspace details, sandbox previews and verified lifecycle actions.
 components: [apps/harness, apps/core, apps/shell, packages/app-sdk]
 ---
@@ -10,7 +10,12 @@ components: [apps/harness, apps/core, apps/shell, packages/app-sdk]
 Workspace inventory and source details use [Core observation events](../workspace-event-observation/feature.md).
 The Source workspaces panel shares one authenticated event subscription per document. Harness
 relays Core SSE frames through its browser WebSocket transport. Reconnect and visibility restoration
-resynchronize; idle views issue no periodic Git reads. Explicit refresh and lifecycle actions retain fresh checks.
+resynchronize; idle views issue no periodic Git reads. Sustained hints retain one trailing snapshot
+read, with five seconds between a completed background read and the next one. Stream readiness,
+visibility restoration and explicit refresh bypass that delay. Failed reads retain their retry
+backoff even when more hints arrive. Active workspace details reload only when their own source,
+lease, consumer, PR or workflow facts change, not when an unrelated inventory row changes.
+Explicit refresh and lifecycle actions retain fresh checks.
 
 The web UI uses the [shared Hosty visual foundations](../design-system/feature.md): local IBM Plex
 Sans/JetBrains Mono fonts, ink surfaces, lime interaction states and its app chart accent. Its local

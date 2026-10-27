@@ -279,7 +279,10 @@ try:
     csrf=request('/api/auth/csrf')['token']
     if managed:
         parent = (root, origin, jar, browser, csrf)
-        child = request('/api/core-environments', {'requestId':str(uuid.uuid4()), 'label':'Workspace activation acceptance', 'mode':'source', 'projectPath':str(workspace/project)})
+        child_mode = os.environ.get('HOSTY_DOCUMENTS_CHILD_MODE', 'source') if scenario == 'documents' else 'source'
+        assert child_mode in ('source', 'current'), 'Documents comparison supports source or current Core only'
+        child = request('/api/core-environments', {'requestId':str(uuid.uuid4()), 'label':'Workspace activation acceptance', 'mode':child_mode,
+            **({'projectPath':str(workspace/project)} if child_mode == 'source' else {})})
         child_id = child['id']
         child = request(f'/api/core-environments/{child_id}/operations/start', {'requestId':str(uuid.uuid4()), 'expectedRevision':child['revision']})
         assert child['state'] == 'running', child
@@ -292,6 +295,16 @@ try:
         csrf = request('/api/auth/csrf')['token']
         initial = request('/control/v1/core/status',control=True)
         say('Started a parent-managed child Core and logged in with its separate test account')
+    if scenario == 'shell':
+        assert managed, 'Shell acceptance requires a managed child Core'
+        import importlib.util
+        sys.dont_write_bytecode = True
+        spec = importlib.util.spec_from_file_location('shell_runtime_acceptance', workspace/'apps/shell/test/runtime_acceptance.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        module.check(globals())
+        success = True
+        sys.exit(0)
     if scenario == 'harness-local':
         assert managed, 'Harness local acceptance requires a managed child Core'
         import importlib.util

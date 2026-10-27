@@ -1,6 +1,6 @@
 ---
 created: 2026-10-26
-updated: 2026-10-26
+updated: 2026-10-27
 summary: Read current application documentation, source-defined plans and workspace progress from Git, with version-aware links, attention and assistant drafts.
 components: [apps/documents, apps/core, scripts]
 ---
@@ -89,8 +89,13 @@ idea reservation counter and retired IDs, including merge-base collision checks.
 While a visible consumer is subscribed, Core observes the target through its shared 30-second fetch
 window. Workspace events invalidate only authorized source projections. Streams revalidate access,
 recover dropped events, and keep target observation on schedule during workspace activity. They do
-not repeatedly scan idle worktrees. The client coalesces notifications, reconnects with bounded
-backoff and revalidates on visibility return. Hidden documents close their subscription. Manual
+not repeatedly read unchanged worktree file contents. Workspace hints identify only currently
+authorized repositories; Documents refreshes those repositories without reloading the unrelated
+catalog. Reconnects, dropped events and catalog/target changes still request a full snapshot.
+The client merges notifications into one pending refresh, completes the current load before starting
+the next and leaves five seconds between background loads. Manual Refresh skips that interval
+without canceling a useful in-flight load. Hidden documents abort loads and close their subscription;
+visibility return resynchronizes the complete view. Reconnect uses bounded backoff. Manual
 Refresh requests an explicit target fetch. An older Core without this stream shows a manual-refresh
 notice; failed observations are not advertised as fresh success.
 
@@ -148,6 +153,8 @@ remains usable without Documents and with unrelated third-party reader identitie
 - Run Documents tests, lint, TypeScript and production/Docker builds. Cover every source kind,
   optional/invalid files, filters, links, same-version anchors/backlinks, source changes during reads,
   cache authorization and bounded indexes, workspace removal, draft retry and translation guards.
+- Cover burst coalescing, one active load, accumulated repository scopes across batched renders,
+  manual refresh priority, malformed/legacy hints and hide/resume resynchronization.
 - Run affected Core source-document, source-fetch, stream and workspace-inspection tests, including
   unrelated app IDs, administrator/source permission, revocation, scopes, stale versions and PR facts.
 - Run node --test scripts/docs-index.test.mjs scripts/docs-format.test.mjs and node scripts/docs-index.mjs
@@ -157,6 +164,14 @@ remains usable without Documents and with unrelated third-party reader identitie
   child Core with a separate password account and Git fixture, checks 3/10 target versus 5/10 local
   progress and SSE, integrates the work, removes the workspace, and verifies retained target truth.
   Parent Finish removes its child resources and test credentials.
+- Optional `HOSTY_DOCUMENTS_CPU_PROBE=1` measures eight catalog requests in batches of three
+  against 500 fixture documents. `HOSTY_DOCUMENTS_CPU_REPORT` selects a local JSON report.
+  For equivalent binary comparisons, set `HOSTY_DOCUMENTS_CHILD_MODE=current` and supply the
+  binary through `HOSTY_ACTIVATION_CORE`; both runs still use isolated managed child instances.
+  `HOSTY_DOCUMENTS_BROWSER_REVIEW` selects a private temporary login file for a bounded manual
+  browser checkpoint; create its `.continue` marker to resume cleanup. Never retain that file.
+  Compare total CPU time and request duration as well as sampled peaks; faster parallel work
+  can consume more CPU briefly while reducing total load.
 - Verify normal Core/Shell embedding and standalone links, Home/Ideas/Board/Table, search and keyboard
   navigation, contents/backlinks, dark/narrow reading, exact-version draft handoff, Marketplace
   discovery and Core-confirmed new-ID install. Never copy ordinary provider credentials for a test.

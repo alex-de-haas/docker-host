@@ -1,14 +1,14 @@
 "use client";
 import { openEventStream } from "./event-stream";
 
-type Listener = { sync: () => Promise<void | boolean>; unavailable: () => void; running: boolean; queued: boolean; disposed: boolean; retry?: ReturnType<typeof setTimeout>; retryDelay: number };
+type Listener = { sync: () => Promise<void | boolean>; unavailable: () => void; running: boolean; queued: boolean; disposed: boolean; retry?: ReturnType<typeof setTimeout>; retryDelay: number; nextSync: number; epoch: number };
 const connections = new Map<string, ReturnType<typeof connection>>();
 
 // One authenticated stream per app/tab. Hints coalesce; reconnect and visibility restoration resync.
 export function subscribeWorkspaceEvents(url: string, sync: () => Promise<void | boolean>, unavailable: () => void) {
   let shared = connections.get(url);
   if (!shared) { shared = connection(url); connections.set(url, shared); }
-  const listener: Listener = { sync, unavailable, running: false, queued: false, disposed: false, retryDelay: 1000 };
+  const listener: Listener = { sync, unavailable, running: false, queued: false, disposed: false, retryDelay: 1000, nextSync: 0, epoch: 0 };
   shared.add(listener);
   return () => { listener.disposed = true; shared.remove(listener); };
 }
@@ -23,31 +23,49 @@ function connection(url: string) {
   let ready = false;
   let legacy = false;
   const visible = () => document.visibilityState !== "hidden";
+  // A sustained stream of source writes must not turn into continuous snapshot/Git reads.
+  // Keep one trailing refresh and leave five seconds after each completed background read.
+  function schedule(listener: Listener, immediate = false) {
+    if (listener.disposed) return;
+    listener.queued = true;
+    if (immediate) { listener.nextSync = 0; clearTimeout(listener.retry); listener.retry = undefined; }
+    if (!ready || !visible() || listener.running || listener.retry) return;
+    const wait = Math.max(0, listener.nextSync - Date.now());
+    if (wait) {
+      listener.retry = setTimeout(() => { listener.retry = undefined; schedule(listener); }, wait);
+      return;
+    }
+    void sync(listener);
+  }
   async function sync(listener: Listener) {
-    if (listener.disposed || !ready || !visible()) return;
-    clearTimeout(listener.retry); listener.retry = undefined;
-    if (listener.running) { listener.queued = true; return; }
-    listener.running = true;
+    if (listener.disposed || !ready || !visible() || listener.running) return;
+    listener.queued = false; listener.running = true;
+    const epoch = listener.epoch;
     try {
       if (await listener.sync() === false) throw new Error("Workspace snapshot unavailable");
-      listener.retryDelay = 1000;
-    } catch {
-      if (!listener.disposed) {
-        listener.unavailable();
-        if (ready && visible()) {
-          listener.retry = setTimeout(() => { listener.retry = undefined; void sync(listener); }, listener.retryDelay);
-          listener.retryDelay = Math.min(listener.retryDelay * 2, 30_000);
-        }
+      if (epoch === listener.epoch) {
+        listener.retryDelay = 1000;
+        listener.nextSync = Date.now() + 5000;
       }
-    }
-    finally {
+    } catch {
+      if (!listener.disposed && epoch === listener.epoch) {
+        listener.unavailable();
+        listener.queued = true;
+        listener.nextSync = Date.now() + listener.retryDelay;
+        listener.retryDelay = Math.min(listener.retryDelay * 2, 30_000);
+      }
+    } finally {
       listener.running = false;
-      if (listener.queued && !listener.disposed) { listener.queued = false; void sync(listener); }
+      if (listener.queued) schedule(listener);
     }
   }
-  function changed() {
-    if (debounce) return;
-    debounce = setTimeout(() => { debounce = undefined; for (const listener of listeners) void sync(listener); }, 150);
+  function changed(immediate = false) {
+    if (immediate) {
+      clearTimeout(debounce); debounce = undefined;
+      for (const listener of listeners) schedule(listener, true);
+    } else if (!debounce) {
+      debounce = setTimeout(() => { debounce = undefined; for (const listener of listeners) schedule(listener); }, 150);
+    }
   }
   function touch() {
     clearTimeout(watchdog);
@@ -64,7 +82,7 @@ function connection(url: string) {
         // Independently upgraded clients still read older Core versions. Periodic capability
         // probes do not reload snapshots; entry, manual refresh and visibility restore do.
         fallback = true; ready = true; delay = 1000;
-        if (!legacy) changed();
+        if (!legacy) changed(true);
         legacy = true;
         await response.body?.cancel().catch(() => {});
         return;
@@ -88,11 +106,11 @@ function connection(url: string) {
             if (event === "stream.unsupported") {
               // The socket bridge preserves an older Core's explicit 404/405 capability result.
               fallback = true; ready = true; delay = 1000;
-              if (!legacy) changed();
+              if (!legacy) changed(true);
               legacy = true;
               return;
             }
-            if (event === "stream.ready") { legacy = false; ready = true; delay = 1000; changed(); }
+            if (event === "stream.ready") { legacy = false; ready = true; delay = 1000; changed(true); }
             else if (event === "workspace.changed" && ready) changed();
           }
         }
@@ -105,7 +123,7 @@ function connection(url: string) {
           if (!fallback) {
             ready = false; legacy = false;
             clearTimeout(debounce); debounce = undefined;
-            for (const listener of listeners) { clearTimeout(listener.retry); listener.retry = undefined; listener.queued = false; listener.unavailable(); }
+            for (const listener of listeners) { clearTimeout(listener.retry); listener.retry = undefined; listener.queued = false; listener.epoch++; listener.nextSync = 0; listener.unavailable(); }
           }
           retry = setTimeout(() => { retry = undefined; void open(); }, fallback ? 30_000 : delay);
           if (!fallback) delay = Math.min(delay * 2, 30_000);
@@ -114,7 +132,7 @@ function connection(url: string) {
     }
   }
   function stop() {
-    for (const listener of listeners) { clearTimeout(listener.retry); listener.retry = undefined; }
+    for (const listener of listeners) { clearTimeout(listener.retry); listener.retry = undefined; listener.queued = false; listener.epoch++; listener.nextSync = 0; }
     clearTimeout(retry); retry = undefined; clearTimeout(watchdog); clearTimeout(debounce); debounce = undefined;
     const active = controller; controller = undefined; ready = false; legacy = false; active?.abort();
   }
@@ -127,7 +145,7 @@ function connection(url: string) {
         document.addEventListener("visibilitychange", visibility);
         window.addEventListener("pageshow", pageShow);
         void open();
-      } else if (ready) void sync(listener);
+      } else if (ready) schedule(listener, true);
     },
     remove(listener: Listener) {
       clearTimeout(listener.retry); listener.retry = undefined;
