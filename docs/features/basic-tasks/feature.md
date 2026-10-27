@@ -137,7 +137,9 @@ execution ID, and reject unrelated new messages; the task lifecycle owns new att
 question/approval controls can resume the current live attempt.
 
 The provider observes active receipts and retries transport failures with bounded backoff up to
-30 seconds. It reuses the same execution ID after uncertainty. Cancellation tombstones fence a
+30 seconds. It reuses the same execution ID after uncertainty. A reachable executor clears a
+transient availability block even when its receipt revision is unchanged; only identical current
+evidence can restore that projection, without duplicating attempts or outcomes. Cancellation tombstones fence a
 late PUT, including cancellation before acceptance. A persisted local cancellation continues after
 restart without requiring a fresh credential to stop already-authorized work.
 
@@ -192,7 +194,7 @@ managed runtime/browser journey. Changes are not deployed to the operator's live
 | `dotnet build packages/app-sdk-dotnet/HostySdk.App/HostySdk.App.csproj` | net8.0 and net10.0 passed. |
 | `npm run sdk:dotnet:test` | 70 passed, including create/edit requests with an explicit null assignee. |
 | `npm run harness:lint` | API/web TypeScript and web ESLint passed. |
-| `npm test --workspace @haas/hosty-harness` | Full suite passed: 164 files, 1769 tests after Local recovery fixes; the final executor-only run passed all 18 cases, including the subsequent completion-order safeguard. |
+| `npm test --workspace @haas/hosty-harness` | Full suite passed: 164 files, 1776 tests after Local and availability recovery fixes. |
 | `npm test --workspace @haas/hosty-harness -- src/tasks src/profiles web/src/components/tasks.test.tsx web/src/components/session-model.test.tsx web/src/components/session-profile.test.tsx` | Review-fix suite passed: 9 files, 52 tests, including accepted-task selection/dispatch locks and draft recovery after Ready/Cancelled transitions. |
 | `node --test scripts/test-integration.test.mjs` | 13 passed. |
 | `HOSTY_TASKS_BROWSER=1 HOSTY_TASKS_BROWSER_CHANNEL=chrome npm run test:integration -- tasks` | Core/CLI/API/Worker builds and complete managed API/browser acceptance passed; the installed Playwright module was selected through HOSTY_TASKS_PLAYWRIGHT_MODULE. |
@@ -212,7 +214,7 @@ exercised. Cross-platform runtime suites and the full repository test matrix wer
 this acceptance targets the affected components on macOS/Docker. Existing Core/compiler and .NET
 SDK XML-comment warnings remain; builds completed without errors.
 
-Artifact versions: platform 0.158.1 → 0.159.1; Harness API/web/Worker 0.73.0 → 0.74.2;
+Artifact versions: platform 0.158.1 → 0.159.1; Harness API/web/Worker 0.73.0 → 0.74.3;
 TypeScript SDK 0.35.1 → 0.36.0; .NET SDK 0.10.0 → 0.11.1. Other artifacts retain their versions.
 
 ## Testing Expectations
@@ -224,7 +226,8 @@ TypeScript SDK 0.35.1 → 0.36.0; .NET SDK 0.10.0 → 0.11.1. Other artifacts re
 - Harness tests cover concurrent numbering, prefix collisions, replay/current access, six statuses,
   default review policy, review revision/rework, retained outcomes, explicit task completion,
   cancel-before-accept, unknown exit, profile deletion, pre-admission failure, Local startup rejection,
-  interrupted rejection persistence, confirmed abandonment, failed-stop recovery and credential-free
+  interrupted rejection persistence, confirmed abandonment, failed-stop recovery, unchanged-receipt
+  availability recovery and credential-free
   observation/cancellation recovery. Worker tests keep only declared session MCP bearers across the
   native boundary and exclude app/Worker authority.
 - UI tests cover SSE draft preservation, accessible discard/copy recovery after a background status

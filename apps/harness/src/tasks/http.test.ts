@@ -8,6 +8,7 @@ import type { SessionManager } from "../sessions/manager.js";
 import { TaskService } from "./service.js";
 import type { TaskRecord } from "@hosty-sdk/app/tasks";
 import { TaskStore } from "./store.js";
+import { TaskExecutorClient } from "@hosty-sdk/app/tasks/server";
 const auth = vi.hoisted(() => ({ revoked: false }));
 vi.mock("../auth.js", () => ({
   resolveAdminActor: async (request: { headers: { authorization?: string } }) => auth.revoked ? null : { userId: request.headers.authorization?.slice(7) ?? "owner", via: "delegated-token" },
@@ -20,7 +21,7 @@ beforeEach(async () => {
   directory = await mkdtemp(path.join(os.tmpdir(), "hosty-task-http-")); auth.revoked = false;
   vi.stubEnv("HOSTY_APP_ID", provider.appId); vi.stubEnv("HOSTY_APP_INSTALLATION_ID", provider.installationId);
 });
-afterEach(async () => { await service?.close(); server?.closeAllConnections(); if (server) await new Promise<void>(resolve => server.close(() => resolve())); vi.unstubAllEnvs(); await rm(directory, { recursive: true, force: true }); });
+afterEach(async () => { await service?.close(); server?.closeAllConnections(); if (server) await new Promise<void>(resolve => server.close(() => resolve())); vi.restoreAllMocks(); vi.unstubAllEnvs(); await rm(directory, { recursive: true, force: true }); });
 async function start() {
   service = new TaskService({ store: { dataDir: directory } } as SessionManager);
   server = createServer((req, res) => {
@@ -75,4 +76,28 @@ it("closes task streams and drains dispatch before shutting down native runs", a
   finish(); await closing; await tick; await service.tick();
   expect(dispatch).toHaveBeenCalledTimes(1);
   expect((await call("/tasks")).status).toBe(503);
+});
+
+it("restores an awaiting-input task after the remote executor returns the unchanged receipt", async () => {
+  vi.stubEnv("HOSTY_APP_SERVICE_TOKEN", "synthetic-service-token");
+  await start();
+  vi.spyOn(TaskExecutorClient.prototype, "options").mockResolvedValue({ options: [{ id: "plain", name: "Plain", capabilities: [] }], defaultId: "plain" });
+  const get = vi.spyOn(TaskExecutorClient.prototype, "get").mockImplementation(async executionId => ({ executionId, revision: 2,
+    state: "awaiting_input", stopConfirmed: false, createdAt: "now", updatedAt: "now" }));
+  let task = await (await call("/tasks", "owner", { requestId: randomUUID(), input: { title: "Remote work", markdown: "Ask for input", resources: [],
+    assignee: { kind: "app", executor: { appId: "independent.executor", installationId: "two", key: "default" } } } })).json() as TaskRecord;
+  const ready = await call(`/tasks/${task.ref.id}/actions`, "owner", { requestId: randomUUID(), expectedRevision: task.revision, action: "ready" });
+  expect(ready.status).toBe(200);
+  task = await ready.json() as TaskRecord;
+  await service.tick();
+  expect((await service.store.get(task.ref.id, { userId: "owner", appId: null })).blocked?.reason).toBe("needs_input");
+  get.mockRejectedValueOnce(new Error("Temporary executor outage"));
+  await service.tick();
+  expect((await service.store.get(task.ref.id, { userId: "owner", appId: null })).blocked?.reason).toBe("executor_unavailable");
+  vi.spyOn(Date, "now").mockReturnValue(Date.now() + 31000);
+  await service.tick();
+  const recovered = await (await call(`/tasks/${task.ref.id}`)).json() as TaskRecord;
+  expect(recovered.blocked?.reason).toBe("needs_input");
+  expect(recovered.attempts).toHaveLength(1);
+  expect(recovered.attempts[0]!.receipt!.revision).toBe(2);
 });

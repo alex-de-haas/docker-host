@@ -201,12 +201,21 @@ export class TaskStore {
   observe(id: string, executionId: string, receipt: TaskExecutionReceipt) {
     return this.serial(async () => {
       const s = await this.load(), t = this.find(s, id), a = t.attempts.at(-1);
-      if (!a || a.executionId !== executionId || receipt.executionId !== executionId || a.receipt && receipt.revision <= a.receipt.revision) return t;
+      if (!a || a.executionId !== executionId || receipt.executionId !== executionId) return t;
+      const recoveringAvailability = t.blocked?.reason === "executor_unavailable";
+      if (a.receipt && (receipt.revision < a.receipt.revision || receipt.revision === a.receipt.revision
+        && (!recoveringAvailability || fingerprint(receipt) !== fingerprint(a.receipt)))) return t;
       if (!Number.isSafeInteger(receipt.revision) || receipt.revision < 1 || typeof receipt.stopConfirmed !== "boolean"
         || !["accepted", "running", "awaiting_input", "cancelling", "completed", "failed", "cancelled", "interrupted"].includes(receipt.state)) return taskError("receipt_invalid", "Executor returned an invalid receipt.", 502);
       if (a.receipt?.stopConfirmed && taskExecutionTerminal(a.receipt.state)) return t;
       a.receipt = structuredClone(receipt);
       if (t.status !== "Cancelled") {
+        // Availability is a local projection, not a new execution revision. An identical current
+        // receipt restores it once; older or changed same-revision evidence remains ignored.
+        if (recoveringAvailability) {
+          t.status = receipt.state === "running" ? "InProgress" : "Ready";
+          delete t.blocked;
+        }
         if (t.cancelRequested) {
           if (receipt.stopConfirmed && taskExecutionTerminal(receipt.state)) { t.status = "Cancelled"; t.cancelRequested = false; delete t.blocked; }
         } else if (receipt.state === "completed" && receipt.stopConfirmed && receipt.result) {

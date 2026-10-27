@@ -106,3 +106,27 @@ it("removes an optional workspace before the next immutable dispatch", async () 
   task = await action(task, "ready");
   expect(task.attempts[0]!.request.input.workspaceId).toBeUndefined();
 });
+
+it.each(["accepted", "running", "awaiting_input", "cancelling", "interrupted"] as const)("restores %s after an outage using only identical current evidence", async state => {
+  let task = await action(await create(app), "ready");
+  const current = receipt(task, { state, revision: 4 });
+  const before = await store.observe(task.ref.id, current.executionId, current);
+  await store.unavailable(task.ref.id, "Temporary executor outage");
+  task = await store.get(task.ref.id, actor);
+  expect(task.blocked?.reason).toBe("executor_unavailable");
+  expect(await store.observe(task.ref.id, current.executionId, { ...current, revision: 3 })).toEqual(task);
+  expect(await store.observe(task.ref.id, current.executionId, { ...current, state: "completed", stopConfirmed: true, result: { markdown: "Changed without a new revision", resources: [] } })).toEqual(task);
+  store = new TaskStore(directory, provider);
+  const recovered = await store.observe(task.ref.id, current.executionId, current);
+  expect(recovered.status).toBe(before.status);
+  expect(recovered.blocked).toEqual(before.blocked);
+  expect(recovered.revision).toBe(task.revision + 1);
+  expect(recovered.attempts).toEqual(before.attempts);
+  expect(recovered.outcomes).toEqual(before.outcomes);
+  expect(await store.observe(task.ref.id, current.executionId, current)).toEqual(recovered);
+  const completed = { ...current, revision: 5, state: "completed" as const, stopConfirmed: true, result: { markdown: "One outcome", resources: [] } };
+  task = await store.observe(task.ref.id, current.executionId, completed);
+  expect(task.outcomes).toHaveLength(1);
+  await store.unavailable(task.ref.id, "A later outage must not reopen completed work");
+  expect(await store.observe(task.ref.id, current.executionId, completed)).toEqual(task);
+});
