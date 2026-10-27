@@ -1,8 +1,8 @@
 ---
 status: Draft
 created: 2026-09-26
-updated: 2026-09-26
-summary: A readable summary of the tools and MCP calls an agent used during a session.
+updated: 2026-10-27
+summary: Correlated native invocation evidence and readable summaries of the tools and MCP calls used during a session.
 components: [apps/harness]
 ---
 
@@ -29,8 +29,8 @@ AHP's chat model provides tool-call lifecycle, names, optional intentions and in
 identity and results. Use those primitives for client presentation. Hosty owns aggregation and any
 optional model-written narrative; AHP does not create a reliable session summary on its own. Native
 adapter and controlled MCP-boundary observations must first provide stable invocation/turn ids,
-provider attribution and terminal results. At this baseline, Gateway's normalized `tool_use` event
-does not carry a correlated per-call completion, so a complete result summary requires adapter work.
+provider attribution and terminal results. D4 inventories current native adapter and worker
+evidence before filling any remaining correlation or persistence gaps; older observations do not establish that every gap is still present.
 
 Derive counts and outcomes from recorded events; distinguish pending, denied/cancelled, failed,
 successful and unknown/incomplete invocations. Link retry attempts to a logical operation where
@@ -39,7 +39,7 @@ Record producer-observed timing only when available rather than inventing tool d
 success is not independently verified runtime health, CI success or satisfaction of the user's goal.
 
 If a model produces the readable narrative, label it as generated and retain links to its supporting
-events plus the last included event revision. Refresh after new work and provider switches without
+events plus the last included event revision. Refresh after new work and recovery without
 replacing the underlying history. Show coverage gaps: external-agent reports are reported evidence,
 not a complete trace of that agent's local tool calls. Both internal providers must expose comparable
 coverage or clearly identify unavailable fields.
@@ -50,16 +50,23 @@ exposure, bound retained output and keep access aligned with the underlying sess
 retention and detail limits before implementation. Summaries cannot authorize calls or replace merge,
 test and Complete gates that use actual evidence.
 
-The [shared-history feature](../assistant-shared-history/plan.md) owns normalized invocation IDs,
-terminal states and durable event ingestion. This feature owns their aggregation and presentation;
-it does not build a second adapter event pipeline. Timeline analysis requires independent approval in
-[its own plan](../assistant-timeline-analysis/plan.md) and does not gate this feature.
+Owner decision, 2026-10-27: this plan receives the former Shared History D1 event-foundation work
+as D4. Extend the existing native adapters and Harness journal once, with stable session/turn/call
+IDs, provider/account attribution, schema compatibility and observed terminal evidence. Missing
+legacy results stay unknown. Domain event identities remain independent of wire cursors and SDK
+DTOs; duplicate delivery and append-before-ack recovery must not inflate the journal. Reuse that
+stream for summaries, timeline analysis and AHP; no second adapter pipeline or transcript is added.
+[Agent Providers D2](../agent-provider-interface/plan.md#deliverables) owns its public invocation
+projection; [Durable Agent Jobs D7](../durable-agent-jobs/plan.md#deliverables) owns session command
+and continuation recovery. These transfers remain Draft and do not claim new runtime behavior.
+Timeline analysis requires independent approval in [its own plan](../assistant-timeline-analysis/plan.md) and does not gate this feature.
 
 ## Deliverables
 
 - [ ] D1. Implement deterministic action counts/outcomes and evidence links over the shared invocation stream.
 - [ ] D2. Implement compact and expanded summary UI with coverage, retry and provider attribution.
 - [ ] D3. Implement optional generated narrative with event coverage and redaction/retention rules.
+- [ ] D4. Inventory and complete normalized native invocation/turn IDs, provider/account attribution, terminal evidence and durable ingestion in the existing Harness journal; verify legacy schema recovery, unknown outcomes and duplicate/replayed events for both providers independently, without coupling persistence to AHP or requiring the summary UI.
 
 ## Open Questions
 
@@ -69,7 +76,7 @@ it does not build a second adapter event pipeline. Timeline analysis requires in
 
 ## Verification
 
-- In a session using both internal agents, exercise a successful MCP read, a rejected operation,
+- In separate sessions for each internal provider, exercise a successful MCP read, a rejected operation,
   a failing test followed by a successful retry, and a call interrupted by restart. Verify accurate
   per-call outcomes and grouped counts after reconnect/replay; unknown completion stays unknown.
   Expand the summary to its evidence, check that new work invalidates its coverage marker, secrets

@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-10
-updated: 2026-10-26
+updated: 2026-10-27
 summary: Explore a shared app-facing interface for independently provided agents and models, including multi-model providers and structured results.
 components: [apps/core, apps/harness, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -88,7 +88,7 @@ current ownership of conversations and confirmations or explicitly specify its r
 ## Deliverables
 
 - [ ] D1. Select a real consuming-app scenario and compare established API candidates against the owner direction; record the model/agent distinction, selected compatibility scope and unresolved decisions.
-- [ ] D2. Specify discovery, model/capability selection, invocation/results, structured-output validation, streaming/cancellation, retry semantics and versioning, including unsupported-capability behavior.
+- [ ] D2. Specify discovery, model/capability selection, invocation/results, structured-output validation, streaming/cancellation, retry semantics and versioning, including correlated turn/tool outcomes, provider/account-bound resume or reconstruction and explicit unsupported-capability behavior.
 - [ ] D3. Specify provider extraction and caller/user authority, credential handling, tool execution policy, resource/data limits and the migration of existing Harness consumers.
 - [ ] D4. After explicit Ready approval, implement the chosen Core/SDK contract and an independently installable provider, including multiple-model discovery and selection.
 - [ ] D5. Integrate one real app's prompt-to-result feature and prove the same consumer contract against a second provider implementation or conformance fixture; exercise permissions, failures and structured results.
@@ -96,17 +96,31 @@ current ownership of conversations and confirmations or explicitly specify its r
 
 ## Composable Work Coordination (2026-10-26)
 
-This plan remains the sole owner of the public invocation contract. A persistent
-[participant](../agent-participants/plan.md), an app-owned profile, a provider connection and a run
-are distinct. D2-D3 must define bounded context/skill references, task/resource correlation and
-declared resume/reconstruction capabilities without assuming shared host paths or private Harness
-storage. [Artifacts](../shared-artifacts/plan.md) owns retained result references and
+This plan remains the sole owner of the public model/agent invocation contract. Under
+[vision decision 62](../../vision.md), task execution belongs to an app with optional opaque executor
+choices; Harness profiles remain internal configuration, separate from provider connections and runs.
+There is no shared agent-principal prerequisite or portable Harness-profile contract. D2-D3 must
+define bounded context/skill references, provider-qualified task/resource correlation and declared
+resume/reconstruction capabilities without assuming shared host paths or private Harness storage.
+[Artifacts](../shared-artifacts/plan.md) owns retained result references and
 [Decisions](../shared-decisions/plan.md) owns addressed questions; neither reference grants access.
 
 [Durable Agent Jobs](../durable-agent-jobs/plan.md) consumes invocation/results and owns repeated
-execution and parked continuation. [Harness Work Orchestration](../harness-work-orchestration/plan.md)
-owns the first joined task journey. Its business acceptance does not duplicate D5's provider
-compatibility/independence acceptance. Existing D1-D6 remain unchecked and Draft.
+execution and parked continuation. [Basic Tasks](../basic-tasks/feature.md)
+owns the first manual/API task journey; Harness Work Orchestration retains the richer composition. Its business acceptance does not duplicate D5's provider
+compatibility/independence acceptance. Task-provider storage, executor enumeration and task dispatch
+belong to [Basic Tasks](../basic-tasks/feature.md). Its first Harness executor can use the existing
+internal runtime without waiting for this provider extraction. Existing D1-D6 remain unchecked and Draft.
+
+## Recovery Contract Coordination (2026-10-27)
+
+With in-session provider switching retired, D2 retains the public invocation/recovery contract.
+Expose native capability limits and stable invocation/attempt/tool correlation without treating
+one provider's session ID or hidden state as portable. Historical input evidence is not a tool
+request to replay. [Action Summary D4](../assistant-action-summary/plan.md#deliverables) owns the
+existing Harness journal's correlated event foundation; [Durable Agent Jobs D7](../durable-agent-jobs/plan.md#deliverables)
+owns common session commands, same-provider continuation and bounded context. Reuse these as the
+Harness adapter's implementation, without requiring independent providers to share its storage.
 
 ## Dependencies And Boundaries
 

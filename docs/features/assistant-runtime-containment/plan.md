@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-26
-updated: 2026-10-20
+updated: 2026-10-27
 summary: Remaining per-session execution isolation, scoped access and verified shutdown; the shared Docker worker is implemented and verified separately.
 components: [apps/harness, apps/core]
 ---
@@ -187,7 +187,7 @@ Separate the trusted coordinator and its credentials from model-accessible execu
 share infrastructure only where that does not expose another session's files, native home, credentials,
 processes or control interface. One container with every workspace mounted is not an acceptable
 session boundary. Decide container-per-session versus shorter-lived executions before implementation;
-resume, provider switching and cleanup must preserve the same ownership rules.
+resume, explicit cross-session handoffs and cleanup must preserve the same ownership rules.
 
 An isolated mode is the default for deployments covered by the approved support matrix. Retaining
 host-native execution is an explicit administrator choice, clearly identified in the UI. Failure to

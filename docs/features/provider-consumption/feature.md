@@ -1,7 +1,7 @@
 ---
 created: 2026-09-29
-updated: 2026-10-26
-summary: Apps discover and call confirmed speech, translation and assistant providers with short-lived Core credentials.
+updated: 2026-10-27
+summary: Apps discover and call confirmed speech, translation, assistant, task and execution providers with short-lived Core credentials.
 components: [apps/core, packages/app-sdk, packages/app-sdk-dotnet, apps/whisper, apps/harness]
 ---
 
@@ -77,6 +77,17 @@ settings, MCP, agent connections or general Core APIs. Finalization always uses 
 draft-only policy for provider-originated handoffs, regardless of the immediate-handoff setting.
 Only Harness's own operator clients can dispatch immediately. Provider credentials never become
 general delegation.
+
+## Task Providers And Executors
+
+Core 0.159.0 adds independent `tasks` / `task-executor` roles and
+`providers.tasks` / `providers.task-executor` consumer permissions. Both declarations use version 1
+and the existing reviewed installation registry. Attributed calls check user access to both apps at
+issuance and introspection. Applications own task data and execution; Core has no task database.
+The [basic task contract](../basic-tasks/feature.md) defines numbering, lifecycle, replay and stop
+confirmation. TypeScript SDK 0.36.0 and .NET SDK 0.11.0 provide typed task/execution clients. Harness
+keeps profiles private and preserves its administrator boundary. Provider tokens are valid only on
+the corresponding task/executor routes.
 
 ## SDKs
 

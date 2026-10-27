@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-08
-updated: 2026-10-26
+updated: 2026-10-27
 summary: Early ideas for an optional plan-provider interface across Markdown specification-driven plans, task trackers and checklists, with possible MCP tools.
 components: [apps/documents, apps/harness, apps/core, packages/app-sdk]
 ---
@@ -60,16 +60,17 @@ source-of-truth/version semantics instead of parsing an arbitrary description as
 
 ## Shared Work Coordination (2026-10-26)
 
-[Shared Tasks](../shared-tasks/plan.md) owns executable work records and executor assignments;
-this plan retains source-native plan/progress semantics. A document or tracker item can be linked
+[Basic Tasks](../basic-tasks/feature.md) owns Core-defined task contracts with app-owned records and
+human/application executor assignments; this plan retains source-native plan/progress semantics. A document or tracker item can be linked
 to a shared task without becoming the same object. A successful run or completed task must not
 silently check off source deliverables or replace the source owner's acceptance rules.
 
 [Shared Artifacts](../shared-artifacts/plan.md) owns retained materials and readable versioned
 references. Reconcile D2 with approved document revisions and workspace variants, keeping navigation,
-content access and selected agent context distinct. [Harness Work Orchestration](../harness-work-orchestration/plan.md)
-owns the first Documents-to-task execution journey; neither that UI nor this plan creates a second
-task registry or makes plans mandatory for execution. Existing D1-D4 and Draft status remain.
+content access and selected agent context distinct. [Basic Tasks](../basic-tasks/feature.md)
+owns the first manual/API task journey independently of Documents and orchestration. A Documents-to-task action is an optional producer integration
+using provider-qualified task references; it does not create a second registry or make plans mandatory
+for execution. Existing D1-D4 and Draft status remain.
 
 ## Documents App Consumer (2026-10-26)
 

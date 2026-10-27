@@ -1,6 +1,6 @@
 ---
 created: 2026-09-22
-updated: 2026-10-26
+updated: 2026-10-27
 summary: The chat components Harness uses for messages, code blocks, attachments, the composer and collapsible activity.
 components: [apps/harness]
 ---
@@ -171,8 +171,8 @@ and waits for the authoritative status after replay before showing observed exec
 Terminal access failures remove the activity row. A quiet open stream is not treated as disconnected.
 
 This state is transient, separate from recorded tool groups and the proposed durable invocation
-history in [shared history](../assistant-shared-history/plan.md). It supplies no percentage, ETA or
-claim that a tool succeeded. Harness 0.47.0 adds this behavior without Core or Shell API changes.
+history tracked by [Action Summary D4](../assistant-action-summary/plan.md#deliverables). It supplies
+no percentage, ETA or claim that a tool succeeded. Harness 0.47.0 adds this behavior without Core or Shell API changes.
 
 Verification on 2026-10-09 used a real Codex connection in the Core-managed Harness embedded in
 Shell: a slow command, approval wait, completion, reload/reattach during execution and Stop. The

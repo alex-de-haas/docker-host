@@ -146,7 +146,7 @@ internal sealed class BackgroundGrantService(CoreDataPaths paths, AppRegistrySto
                     || !AppManagementAuthorization.HasPermission(caller, policy.Permission))) Deny("Core actions exceed this app's current grants.");
                 break;
             case "provider":
-                if (scope.ProviderKind is not ("assistant" or "speech-to-text") || string.IsNullOrWhiteSpace(scope.Key)
+                if (scope.ProviderKind is not ("assistant" or "speech-to-text" or "tasks" or "task-executor") || string.IsNullOrWhiteSpace(scope.Key)
                     || scope.Actions.Count != 0 || target?.ConfirmedRoles?.Contains(scope.ProviderKind) != true
                     || target.Interfaces?.GetValueOrDefault(scope.ProviderKind)?.Any(i => i.Key == scope.Key) != true
                     || !AppManagementAuthorization.HasPermission(caller, ProviderAccessService.Permission(scope.ProviderKind)))

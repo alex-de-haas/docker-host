@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-16
-updated: 2026-10-26
+updated: 2026-10-27
 summary: Epic for prompt-driven app creation, live iteration, integration with installed apps and optional publication.
 components: [apps/core, apps/harness, apps/shell]
 ---
@@ -11,7 +11,7 @@ components: [apps/core, apps/harness, apps/shell]
 ## Development Session Direction (2026-09-24)
 
 [Shared assistant development sessions](../assistant-development-sessions/plan.md) captures the
-new owner direction for Git-backed work and links independently scoped plans for shared history,
+owner direction for Git-backed work and links independent owners for session recovery/context handoffs,
 session workspaces, source selection and PR lifecycle. It owns cross-feature session acceptance;
 those child features own implementation, while this umbrella retains authoring integration and adaptation.
 The earlier direct-source iteration below remains a manual external-folder recipe. For Git-backed work,

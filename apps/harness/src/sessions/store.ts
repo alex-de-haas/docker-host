@@ -27,6 +27,8 @@ export type SessionStatus =
 export type SessionAutonomy = "normal" | "autonomous";
 
 export interface SessionRecord {
+  taskExecutionId?: string;
+  taskRun?: { started: boolean; exitConfirmed: boolean; error?: string };
   agentProfile?: import("../profiles/types.js").AgentProfile | null;
   profileLocked?: boolean;
   /** Standing instructions captured once; skill package contents remain current. */

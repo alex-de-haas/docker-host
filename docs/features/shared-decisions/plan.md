@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-26
-updated: 2026-10-26
+updated: 2026-10-27
 summary: Persistent addressed decision requests, authorized resolution and durable continuation handoff beyond an individual live session.
 components: [apps/core, apps/harness, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -17,6 +17,12 @@ not provide a shared durable decision record with guaranteed continuation after 
 The preferred candidate is a Core-owned shared record with application-owned presentation and routing.
 This Draft follows [vision decisions 55-56](../../vision.md) and authorizes no implementation.
 
+## Deferred After Basic Tasks (2026-10-27)
+
+The owner defers shared addressed decisions and durable waiting beyond the Ready
+[Basic Tasks](../basic-tasks/feature.md) feature. Simple task review stays in that task lifecycle;
+this plan's D1-D4 and the runner's parked-continuation work remain unimplemented and Draft.
+
 ## Target Behavior
 
 A request identifies its requester, authorized respondent, question/options or response schema,
@@ -24,8 +30,13 @@ related task/session, reviewed material revisions, state and attributed resoluti
 rights when presenting or answering; permission to see a task does not automatically grant access
 to a private conversation or authority to answer its question.
 
-The responsible human can be a default recipient. Team/role routing and escalation stay in the
-coordinator. The actual respondent and routing changes remain visible. Clients can aggregate pending
+An existing human user selected by the task owner/coordinator can be a default recipient.
+Attribute the request to the invoking app and authorizing user/grant, with an optional opaque
+executor-option reference for display; no Core agent principal or shared profile is required.
+Task links are qualified by their task provider. The task-provider decision does not settle this
+plan's separate record/storage choice.
+
+Team/role routing and escalation stay in the coordinator. The actual respondent and routing changes remain visible. Clients can aggregate pending
 requests; notifications point to the record and dismissing a notification does not answer it.
 
 Persist the request/wait relationship before presenting a question. A saved response and its pending
@@ -38,18 +49,27 @@ expired, stale and superseded requests, competing answers and late answers after
 Changed reviewed inputs can invalidate an acceptance; a prior answer cannot silently approve a new
 revision. Keep question resolution distinct from whether subsequent work succeeded.
 
+## Basic Task Review Boundary
+
+[Basic Tasks](../basic-tasks/feature.md) supports requiresReview with Blocked/needs_review and an
+explicit accept/request-changes action under its own lifecycle. That basic review does not require
+this shared inbox, question record or overnight continuation service. Native live question controls
+also retain their current behavior. This plan's D1-D4 own the richer addressed, durable cross-session
+decision feature and remain unfinished; simple task review does not complete them.
+
 ## Dependencies And Ownership
 
 [Durable Agent Jobs](../durable-agent-jobs/plan.md) owns live-versus-parked waiting, resource release,
-restart reconciliation and actual continuation. [Shared History](../assistant-shared-history/plan.md)
-owns recoverable session context and provider cursors. [Agent Providers](../agent-provider-interface/plan.md)
+restart reconciliation and actual continuation; its D7 owns recoverable session context and
+provider/account-bound cursors. [Agent Providers](../agent-provider-interface/plan.md)
 owns native execution capabilities. No hidden model state is promised portable.
 
 [Notifications D6](../notifications/plan.md#deliverables) owns durable event transport; existing
 notifications and channels own delivery. [Harness Work Orchestration](../harness-work-orchestration/plan.md)
 owns the first unified inbox and reviewer routing, including its authenticated answer UI.
-[Agent Participants](../agent-participants/plan.md) and [Artifacts](../shared-artifacts/plan.md) own
-identity and accessible review materials.
+Existing Core users and app identities supply attribution; [Basic Tasks](../basic-tasks/feature.md)
+owns task/executor references and [Artifacts](../shared-artifacts/plan.md) owns accessible materials.
+Harness profiles are internal execution choices, not separately authorized decision principals.
 
 Questions, business acceptance and permission requests may share a UI while retaining their own
 enforcement. [Approval Rules](../assistant-approval-rules/plan.md) and execution authorization own

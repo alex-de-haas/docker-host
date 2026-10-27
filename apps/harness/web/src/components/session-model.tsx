@@ -24,7 +24,7 @@ export function SessionModel({ session, busy, onChange, onSavingChange }: {
   }, [session.id, session.connectionId, session.connectionRevision, binding, retry]);
   const selected = session.executionSelection ?? { model: null, reasoningEffort: null };
   const model = catalog?.models.find(m => m.id === (selected.model ?? catalog.defaultModel));
-  const disabled = busy || saving || !session.connectionId || ["running", "awaiting_approval", "awaiting_question"].includes(session.status);
+  const disabled = !!session.taskExecutionId || busy || saving || !session.connectionId || ["running", "awaiting_approval", "awaiting_question"].includes(session.status);
   async function save(next: typeof selected) {
     if (disabled || savingRef.current) return;
     savingRef.current = true; setSaving(true); onSavingChange(true); setError("");
