@@ -1,6 +1,6 @@
 ---
 created: 2026-10-26
-updated: 2026-10-26
+updated: 2026-10-27
 summary: Read current application documentation, source-defined plans and workspace progress from Git, with version-aware links, attention and assistant drafts.
 components: [apps/documents, apps/core, scripts]
 ---
@@ -38,15 +38,19 @@ Home supports all repositories or one selected repository, application/component
 freshness labels, current workspace activity and recent document updates. Progress and attention
 appear first. Repository overviews form a compact list beside current work; selecting one opens
 the complete root.md in the document reader. Home does not render root document bodies.
-Navigation exposes Vision, Ideas, Features, Plans,
-Reviews and Tooling. The app uses its own documentation navigation and disables the SDK's
-automatic manifest-page menu, avoiding a redundant standalone Documents sidebar. The reader
-keeps its Documentation home link; SDK tools remain available. Optional files have an explicit
+The manifest declares Home, Vision, Ideas, Features, Plans, Reviews and Tooling as separate page
+routes. Shell and Desktop render these pages in their own navigation; standalone Documents uses
+the SDK's standard menu. There is no app-owned duplicate sidebar or Current work status list.
+The repository selector sits beside search and the application filter. Home's status counts link
+to filtered Plans. The reader keeps its Documentation home link; SDK tools remain available. Optional files have an explicit
 empty state. Tool-owned agent.md and store.md are labelled as tooling, outside feature status/progress. Reviews remain dated documents.
 
 Search covers title, summary, content, heading text and source-defined idea/deliverable identifiers.
 Matching headings link to their anchors. Filters and selected view/layout are addressable in the
-URL and survive document navigation and Back. Cmd/Ctrl+K focuses search. Repository loads run
+URL and survive document navigation and Back. Repository and application selectors also persist
+within the tab when a host opens another manifest page; explicit URL values, including an empty
+All selection, take precedence. Legacy `?view=` links remain supported. The SDK coordinator lives
+in the root layout so page navigation retains open tools. Cmd/Ctrl+K focuses search. Repository loads run
 independently with bounded concurrency; failures do not erase successful repositories. Existing
 content stays visible during refresh. Unavailable and invalid documents never appear as completed
 or as valid zero-deliverable plans.
@@ -67,8 +71,8 @@ is disabled. Translation replaces only displayed prose and retains original meta
 
 The supplied Documents artboards determine Home, reader, board and narrow layouts. The app consumes
 shared Hosty light/dark tokens, local IBM Plex Sans/JetBrains Mono, lime focus/progress and existing
-ReUI/ShadCN controls. Sidebar navigation wraps above content on narrow screens; reading and version
-controls remain keyboard accessible. Shared cross-app design acceptance remains owned by
+ReUI/ShadCN controls. The SDK provides a navigation drawer on narrow standalone screens; document
+filters wrap above content. Reading and version controls remain keyboard accessible. Shared cross-app design acceptance remains owned by
 [Design System](../design-system/plan.md); this feature owns Documents-specific acceptance.
 
 ## Validation And Refresh
@@ -156,7 +160,11 @@ remains usable without Documents and with unrelated third-party reader identitie
 - Run npm run test:integration -- documents on a Docker host. It builds the app and starts a managed
   child Core with a separate password account and Git fixture, checks 3/10 target versus 5/10 local
   progress and SSE, integrates the work, removes the workspace, and verifies retained target truth.
-  Parent Finish removes its child resources and test credentials.
+  Parent Finish removes its child resources and test credentials. Set `HOSTY_DOCUMENTS_BROWSER=1`
+  to install Shell in that same child and pause for browser checks. The fixture prints the path to
+  its private browser-access file; create `finish-ui` beside it after checking the UI to trigger cleanup.
+- Verify all seven manifest pages in Shell and standalone, one navigation surface per host, retained
+  selectors and open tools, old query/deep links, Home status links and browser Back/Forward.
 - Verify normal Core/Shell embedding and standalone links, Home/Ideas/Board/Table, search and keyboard
   navigation, contents/backlinks, dark/narrow reading, exact-version draft handoff, Marketplace
   discovery and Core-confirmed new-ID install. Never copy ordinary provider credentials for a test.

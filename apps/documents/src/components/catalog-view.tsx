@@ -2,12 +2,8 @@
 import { useEffect, useRef, useState } from "react";
 import {
   BookOpenIcon,
-  CompassIcon,
   ChevronRightIcon,
-  FileTextIcon,
   GitBranchIcon,
-  LightbulbIcon,
-  ListChecksIcon,
   SearchIcon,
   RefreshCwIcon,
   TriangleAlertIcon,
@@ -32,16 +28,9 @@ import { Alert, AlertTitle, AlertDescription } from "./ui/alert";
 import { Progress, formatTime } from "./plan-metadata";
 import { WorkspaceOwner } from "./workspace-owner";
 import { PlanGrid } from "./plan-grid";
+import { DOCUMENT_VIEWS } from "@/lib/navigation";
 
-const views = [
-  ["home", "Home", BookOpenIcon],
-  ["vision", "Vision", CompassIcon],
-  ["ideas", "Ideas", LightbulbIcon],
-  ["features", "Features", FileTextIcon],
-  ["plans", "Plans", ListChecksIcon],
-  ["reviews", "Reviews", BookOpenIcon],
-  ["tooling", "Tooling", FileTextIcon],
-] as const;
+const views = DOCUMENT_VIEWS;
 export function repositoryName(repository: SourceRepository) {
   try {
     return new URL(repository.repository).pathname
@@ -166,7 +155,7 @@ export function CatalogView({
   function change(key: string, value: string) {
     const next = new URLSearchParams(query);
     next.delete("page");
-    if (value) next.set(key, value);
+    if (value || key === "repository" || key === "app") next.set(key, value);
     else next.delete(key);
     navigate(`/?${next}`);
   }
@@ -265,17 +254,13 @@ export function CatalogView({
       ? repositoryName(selected).split("/").at(-1)
       : "All repositories";
   return (
-    <div className="documents-layout">
-      <aside
-        className="documents-navigation"
-        aria-label="Documentation navigation"
-      >
-        <label className="flex flex-col gap-2 text-xs font-medium">
-          Repository
+    <div className="min-w-0 space-y-6">
+        <div className="flex flex-wrap items-center gap-3" role="search" aria-label="Documentation filters">
           <select
+            aria-label="Repository"
             value={repo}
             onChange={(event) => change("repository", event.target.value)}
-            className="h-9 min-w-0 rounded-md border bg-background px-2 text-sm"
+            className="h-9 w-full min-w-0 rounded-md border bg-background px-2 text-xs sm:w-56"
           >
             <option value="">All repositories</option>
             {repositories.map((item) => (
@@ -284,61 +269,6 @@ export function CatalogView({
               </option>
             ))}
           </select>
-        </label>
-        <nav className="flex gap-1 overflow-x-auto md:flex-col">
-          {views.map(([key, label, Icon]) => (
-            <Button
-              key={key}
-              variant={view === key && !search ? "secondary" : "ghost"}
-              size="sm"
-              className="shrink-0 justify-start"
-              onClick={() => {
-                const next = new URLSearchParams(query);
-                next.set("view", key);
-                next.delete("page");
-                next.delete("q");
-                next.delete("status");
-                navigate(`/?${next}`);
-              }}
-              aria-current={view === key && !search ? "page" : undefined}
-            >
-              <Icon className="size-4" />
-              {label}
-              {key === "plans" && (
-                <span className="ml-auto text-xs tabular-nums">
-                  {plans.length}
-                </span>
-              )}
-            </Button>
-          ))}
-        </nav>
-        <div className="hidden border-t pt-4 md:block">
-          <p className="mb-3 text-xs font-medium text-muted-foreground">
-            CURRENT WORK
-          </p>
-          {STATUSES.map((state) => (
-            <button
-              key={state}
-              className="flex w-full items-center justify-between rounded px-2 py-2 text-left text-xs hover:bg-muted"
-              onClick={() => {
-                const next = new URLSearchParams(query);
-                next.set("view", "plans");
-                next.set("status", state);
-                next.delete("page");
-                next.delete("q");
-                navigate(`/?${next}`);
-              }}
-            >
-              <span>{state}</span>
-              <span className="tabular-nums text-muted-foreground">
-                {counts[state]}
-              </span>
-            </button>
-          ))}
-        </div>
-      </aside>
-      <div className="min-w-0 space-y-6">
-        <div className="flex flex-wrap items-center gap-3">
           <div className="relative min-w-48 flex-1">
             <SearchIcon className="pointer-events-none absolute left-3 top-2.5 size-4 text-muted-foreground" />
             <Input
@@ -423,10 +353,15 @@ export function CatalogView({
           <>
             <div className="flex flex-wrap gap-x-6 gap-y-3 rounded-lg border p-4 text-xs">
               {STATUSES.map((state) => (
-                <span key={state}>
+                <button key={state} className="rounded hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring" onClick={() => {
+                  const next = new URLSearchParams(query);
+                  next.set("view", "plans"); next.set("status", state);
+                  next.delete("page"); next.delete("q");
+                  navigate(`/?${next}`);
+                }}>
                   {state}{" "}
                   <strong className="ml-2 tabular-nums">{counts[state]}</strong>
-                </span>
+                </button>
               ))}
               <span>
                 No open plan{" "}
@@ -815,7 +750,6 @@ export function CatalogView({
             )}
           </section>
         )}
-      </div>
     </div>
   );
 }
