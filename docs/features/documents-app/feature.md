@@ -94,8 +94,12 @@ While a visible consumer is subscribed, Core observes the target through its sha
 window. Workspace events invalidate only authorized source projections. Streams revalidate access,
 recover dropped events, and keep target observation on schedule during workspace activity. They do
 not repeatedly scan idle worktrees. The client coalesces notifications, reconnects with bounded
-backoff and revalidates on visibility return. Hidden documents close their subscription. Manual
-Refresh requests an explicit target fetch. An older Core without this stream shows a manual-refresh
+backoff and revalidates on visibility return. Source notifications and visibility updates let the
+active repository or document read finish, then run one queued revalidation for changes received
+during that read. Initial repository progress continues to completion; background revalidation
+keeps the loaded content visible. Navigating to another document/workspace or leaving the view
+cancels obsolete reads and queued work. Hidden documents close their subscription. Manual
+Refresh requests an explicit target fetch and retains that request when queued behind an active read. An older Core without this stream shows a manual-refresh
 notice; failed observations are not advertised as fresh success.
 
 ## Pull Requests And Actions
@@ -152,6 +156,8 @@ remains usable without Documents and with unrelated third-party reader identitie
 - Run Documents tests, lint, TypeScript and production/Docker builds. Cover every source kind,
   optional/invalid files, filters, links, same-version anchors/backlinks, source changes during reads,
   cache authorization and bounded indexes, workspace removal, draft retry and translation guards.
+- Cover repeated source events during slow repository/document reads, monotonic initial loading
+  progress, coalesced visibility updates, queued manual refresh, failed reads and navigation cancellation.
 - Run affected Core source-document, source-fetch, stream and workspace-inspection tests, including
   unrelated app IDs, administrator/source permission, revocation, scopes, stale versions and PR facts.
 - Run node --test scripts/docs-index.test.mjs scripts/docs-format.test.mjs and node scripts/docs-index.mjs

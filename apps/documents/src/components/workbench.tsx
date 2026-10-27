@@ -1,8 +1,9 @@
 "use client";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { CATALOG_SCOPE_KEY, catalogUrl, documentView, restoreCatalogScope } from "@/lib/navigation";
 import { observeSources } from "@/lib/source-events";
+import { useSourceReload } from "@/lib/use-source-reload";
 import { CatalogView } from "./catalog-view";
 import { appFetch } from "@hosty-sdk/app/browser-auth";
 import { deliverableChanges, lineDiff, mapBounded, planLink } from "@/lib/model";
@@ -86,45 +87,32 @@ function Overview({ query, epoch, refreshEpoch, navigate, onRefresh }: { query: 
   const [loaded, setLoaded] = useState<Record<string, RepositoryDocuments>>({});
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState<{ completed: number; total: number | null } | null>({ completed: 0, total: null });
-  const firstEpoch = useRef(refreshEpoch);
   const firstLoadCompleted = useRef(false);
-  useEffect(() => {
-    const controller = new AbortController();
-    let running = false;
-    let refresh = refreshEpoch !== firstEpoch.current;
-    firstEpoch.current = refreshEpoch;
-    async function load() {
-      if (running) return;
-      running = true;
-      const showLoading = refresh || !firstLoadCompleted.current;
-      if (showLoading) setLoading({ completed: 0, total: null });
-      try {
-        const { repositories: items } = await read<{ repositories: SourceRepository[] }>("/api/repositories", controller.signal);
-        if (controller.signal.aborted) return;
-        setRepositories(items); setError(null);
-        if (showLoading) setLoading({ completed: 0, total: items.length });
-        await mapBounded(items, 3, async repository => {
-          let result: RepositoryDocuments;
-          try { result = await read<RepositoryDocuments>(`/api/repositories/${encodeURIComponent(repository.id)}${refresh ? "?refresh=true" : ""}`, controller.signal); }
-          catch (failure) { result = { repository, plans: [], workspaces: [], state: "unavailable", error: (failure as Error).message }; }
-          if (!controller.signal.aborted) {
-            setLoaded(previous => ({ ...previous, [result.repository.id]: result }));
-            if (showLoading) setLoading(previous => previous ? { ...previous, completed: previous.completed + 1 } : null);
-            setRepositories(previous => previous.map(item => item.id === repository.id ? result.repository : item));
-            if (result.repository.id !== repository.id) {
-              canonicalRepositoryUrl(repository.id, result.repository.id);
-            }
+  const load = useCallback(async (signal: AbortSignal, refresh: boolean) => {
+    const showLoading = refresh || !firstLoadCompleted.current;
+    if (showLoading) setLoading({ completed: 0, total: null });
+    try {
+      const { repositories: items } = await read<{ repositories: SourceRepository[] }>("/api/repositories", signal);
+      if (signal.aborted) return;
+      setRepositories(items); setError(null);
+      if (showLoading) setLoading({ completed: 0, total: items.length });
+      await mapBounded(items, 3, async repository => {
+        let result: RepositoryDocuments;
+        try { result = await read<RepositoryDocuments>(`/api/repositories/${encodeURIComponent(repository.id)}${refresh ? "?refresh=true" : ""}`, signal); }
+        catch (failure) { result = { repository, plans: [], workspaces: [], state: "unavailable", error: (failure as Error).message }; }
+        if (!signal.aborted) {
+          setLoaded(previous => ({ ...previous, [result.repository.id]: result }));
+          if (showLoading) setLoading(previous => previous ? { ...previous, completed: previous.completed + 1 } : null);
+          setRepositories(previous => previous.map(item => item.id === repository.id ? result.repository : item));
+          if (result.repository.id !== repository.id) {
+            canonicalRepositoryUrl(repository.id, result.repository.id);
           }
-        });
-        refresh = false;
-      } catch (failure) { if (!controller.signal.aborted) { setError((failure as Error).message); setRepositories([]); setLoaded({}); } }
-      finally { running = false; if (!controller.signal.aborted) { firstLoadCompleted.current = true; setLoading(null); } }
-    }
-    void load();
-    const refreshVisible = () => { if (document.visibilityState === "visible") void load(); };
-    document.addEventListener("visibilitychange", refreshVisible);
-    return () => { controller.abort(); document.removeEventListener("visibilitychange", refreshVisible); };
-  }, [epoch, refreshEpoch]);
+        }
+      });
+    } catch (failure) { if (!signal.aborted) { setError((failure as Error).message); setRepositories([]); setLoaded({}); } }
+    finally { if (!signal.aborted) { firstLoadCompleted.current = true; setLoading(null); } }
+  }, []);
+  useSourceReload(load, epoch, refreshEpoch);
   const loadingMessage = loading ? loading.total === null ? "Loading sources…" : `Loading repositories… ${loading.completed}/${loading.total}` : null;
   const unavailableRepositories = Object.fromEntries(repositories.flatMap(repository => {
     const result = loaded[repository.id];
@@ -136,27 +124,13 @@ function Overview({ query, epoch, refreshEpoch, navigate, onRefresh }: { query: 
 function Detail({ repositoryId, path, workspaceId, epoch, refreshEpoch, navigate, onRefresh }: { repositoryId: string; path: string; workspaceId: string | null; epoch: number; refreshEpoch: number; navigate: (url: string) => void; onRefresh: () => void }) {
   const [detail, setDetail] = useState<PlanDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const firstEpoch = useRef(refreshEpoch);
-  useEffect(() => {
-    const controller = new AbortController();
-    let running = false;
-    let refresh = refreshEpoch !== firstEpoch.current;
-    firstEpoch.current = refreshEpoch;
-    async function load() {
-      if (running) return;
-      running = true;
-      try {
-        const result = await read<PlanDetail>(`/api/document?${new URLSearchParams({ repository: repositoryId, path, ...(workspaceId ? { workspace: workspaceId } : {}), ...(refresh ? { refresh: "true" } : {}) })}`, controller.signal);
-        if (!controller.signal.aborted) { setDetail(result); setError(null); canonicalRepositoryUrl(repositoryId, result.repository.id); }
-        refresh = false;
-      } catch (failure) { if (!controller.signal.aborted) { setDetail(null); setError((failure as Error).message); } }
-      finally { running = false; }
-    }
-    void load();
-    const refreshVisible = () => { if (document.visibilityState === "visible") void load(); };
-    document.addEventListener("visibilitychange", refreshVisible);
-    return () => { controller.abort(); document.removeEventListener("visibilitychange", refreshVisible); };
-  }, [repositoryId, path, workspaceId, epoch, refreshEpoch]);
+  const load = useCallback(async (signal: AbortSignal, refresh: boolean) => {
+    try {
+      const result = await read<PlanDetail>(`/api/document?${new URLSearchParams({ repository: repositoryId, path, ...(workspaceId ? { workspace: workspaceId } : {}), ...(refresh ? { refresh: "true" } : {}) })}`, signal);
+      if (!signal.aborted) { setDetail(result); setError(null); canonicalRepositoryUrl(repositoryId, result.repository.id); }
+    } catch (failure) { if (!signal.aborted) { setDetail(null); setError((failure as Error).message); } }
+  }, [repositoryId, path, workspaceId]);
+  useSourceReload(load, epoch, refreshEpoch);
   const current = detail?.path === path ? detail : null;
   return <>
     <div className="shrink-0"><DiscussPlan key={`${repositoryId}:${path}:${workspaceId ?? "target"}`} detail={current} workspaceId={workspaceId}

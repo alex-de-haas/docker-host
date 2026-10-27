@@ -3,7 +3,7 @@
   "id": "hosty.documents",
   "name": "Hosty Documents",
   "description": "Current application documentation, plans and workspace progress from Git.",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "role": "system",
   "source": {
     "type": "git",
@@ -34,7 +34,7 @@
           "type": "docker",
           "image": {
             "repository": "ghcr.io/alex-de-haas/hosty-documents",
-            "tag": "0.9.1"
+            "tag": "0.9.2"
           },
           "environment": {
             "PORT": "3000",
