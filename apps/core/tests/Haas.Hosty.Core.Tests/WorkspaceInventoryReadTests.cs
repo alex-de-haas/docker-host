@@ -27,6 +27,31 @@ public sealed partial class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task WorkspaceInventory_PublicationWritesInvalidateDetailsWithoutSchedulingSourceObservation()
+    {
+        var (f, _) = await SourceFixtureAsync();
+        var state = new WorkspaceObservationState(new CoreEventHub());
+        var workspaces = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock, observationState: state);
+        var tree = await workspaces.PrepareAsync(WorkspaceTestOwner(f), WorkspaceRequest(), default);
+        var inspect = new WorkspaceInspectionService(workspaces, f.Apps, f.Clock, observationState: state);
+        state.SetHealth(tree.Id, "watching"); state.Observed(tree.Id, state.Generation(tree.Id));
+        async Task<InspectedWorktree> Inventory() => Assert.Single(Assert.Single((await inspect.ListAsync("admin", default)).Workspaces).Worktrees);
+        var before = await Inventory();
+        var generation = state.Generation(tree.Id);
+        var scans = state.ScanCount(tree.Id);
+        var written = false;
+        Assert.True(await workspaces.WritePublicationAsync(tree.Id, () => { written = true; return Task.CompletedTask; }, default));
+        Assert.True(written);
+        var after = await Inventory();
+        Assert.NotEqual(before.ObservationRevision, after.ObservationRevision);
+        Assert.Equal(after.ObservationRevision, (await Inventory()).ObservationRevision);
+        Assert.Equal(CoreJson.Text(before.Observation), CoreJson.Text(after.Observation));
+        Assert.Equal(generation, state.Generation(tree.Id));
+        Assert.Equal(scans, state.ScanCount(tree.Id));
+        Assert.False(state.NeedsObservation(tree.Id));
+    }
+
+    [Fact]
     public async Task SourceDocuments_WorkspaceInventoryReusesSettledObservationsAndRefreshesEdits()
     {
         var (f, origin, _, _) = await DocumentFixtureAsync();

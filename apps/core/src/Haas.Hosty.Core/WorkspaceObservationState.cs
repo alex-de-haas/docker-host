@@ -12,6 +12,7 @@ internal sealed class WorkspaceObservationState(CoreEventHub events, TimeSpan? r
         public long Observed;
         public long Scans;
         public long Documents;
+        public long Publications;
         public long RetryAfter;
         public string Health = "starting";
     }
@@ -70,6 +71,13 @@ internal sealed class WorkspaceObservationState(CoreEventHub events, TimeSpan? r
         events.PublishWorkspaceChange(id);
     }
     internal void Publish(string id) => events.PublishWorkspaceChange(id);
+    internal long PublicationGeneration(string id) => Interlocked.Read(ref entries.GetOrAdd(id, _ => new()).Publications);
+    internal void PublicationChanged(string id)
+    {
+        // Provider facts invalidate UI details without scheduling another source/Git scan.
+        Interlocked.Increment(ref entries.GetOrAdd(id, _ => new()).Publications);
+        events.PublishWorkspaceChange(id);
+    }
     internal void Remove(string id)
     {
         entries.TryRemove(id, out _);

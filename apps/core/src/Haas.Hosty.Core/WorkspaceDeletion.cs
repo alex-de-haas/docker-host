@@ -85,7 +85,7 @@ internal sealed partial class DevelopmentWorkspaceService
         {
             if (!await CanObservePublicationAsync(id, ct)) return false;
             await write();
-            observationState?.Publish(id);
+            observationState?.PublicationChanged(id);
             return true;
         }, ct);
 

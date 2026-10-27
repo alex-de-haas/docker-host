@@ -253,6 +253,24 @@ it("retains active details across identical inventories and refreshes changed so
   await render({ ...changed, worktrees: changed.worktrees.map(t => ({ ...t, leases: ["lease"] })) }); expect(reads()).toHaveLength(6);
 });
 
+it("refreshes PR status when only the inventory publication revision changes", async () => {
+  const inventory = workspace();
+  inventory.worktrees = inventory.worktrees.map(t => ({ ...t, observationRevision: "source:1:0" }));
+  const details = structuredClone(inventory); replies(details);
+  const render = (value: DevelopmentWorkspace) => act(async () => root.render(<WorkspaceDetails workspace={value} title="PR status" refresh={vi.fn()} />));
+  await render(inventory);
+  expect(container.textContent).toContain("CI unknown");
+  details.worktrees[0].pullRequests[0].observation = {
+    at: new Date().toISOString(), state: "merged", reviewDecision: "APPROVED", unresolvedThreads: 0,
+    checks: [{ name: "CI", state: "SUCCESS" }],
+  };
+  await render({ ...inventory, worktrees: inventory.worktrees.map(t => ({ ...t, observationRevision: "source:1:1" })) });
+  await expandCards();
+  expect(container.textContent).toContain("Merged");
+  expect(container.textContent).toContain("Approved");
+  expect(container.querySelector('[aria-label="one #1: CI 1/1, show checks"]')).not.toBeNull();
+});
+
 it("keeps an identical pending detail read and cancels it when source changes", async () => {
   const w = workspace(); replies(w);
   const fallback = vi.mocked(developmentRequest).getMockImplementation()!;

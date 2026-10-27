@@ -45,7 +45,9 @@ source/target changes invalidate it. Documentation filesystem hints also invalid
 ignored Markdown without forcing a Git scan for an ignored file. Paused, recovering and unobserved
 worktrees retain fresh checks, and direct content reads and mutations keep their path/Git validation. Each authorized
 repository resolves its current target once per response rather than once per worktree. Summary
-reuse does not skip current source authorization before and after inspection.
+reuse does not skip current source authorization before and after inspection. Publication writes
+advance a separate UI revision, so Harness refreshes PR check, review and merge facts without
+invalidating the retained Git inspection or scheduling another source scan.
 
 Worktree detail reads reuse cached commits, original-base
 file changes and line statistics until the observed source/generation changes. Identical observations
