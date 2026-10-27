@@ -971,3 +971,32 @@ it.each(["activation-apply", "execution-select"] as const)("reuses confirmed Loc
     .toBeLessThan(vi.mocked(client.call).mock.invocationCallOrder[dispatch]!);
   await expect(guard()).rejects.toThrow("canceled before dispatch");
 });
+
+it.each([false, true])("retains confirmed Local task exit across lease cleanup failure (restart=%s)", async restart => {
+  const executionId = randomUUID();
+  const record = await manager.createSession({ createdBy: "admin", appIds: ["notes"], taskExecutionId: executionId });
+  await manager.workspaceAction(record.id, "prepare", { appId: "notes" }, "token", "admin");
+  await manager.postMessage(record.id, "work", "token", [], { taskDispatch: true, clientRequestId: executionId, actorUserId: "admin" });
+  const leaseId = (await store.readRecord(record.id))!.developmentLease;
+  expect(leaseId).toBeTruthy();
+  let unavailable = true;
+  vi.mocked(client.activity).mockImplementation(async (_id, _token, input) => {
+    if (input.stopped && unavailable) throw new Error("Core cleanup unavailable");
+    return { workspaceId: null, revision: null, stopRequested: false, state: "unbound" };
+  });
+  starts.at(-1)!.onEvent({ type: "result", status: "success" });
+  await vi.waitFor(async () => expect((await store.readRecord(record.id))?.taskRun?.error).toBe("Core cleanup unavailable"));
+  expect((await store.readRecord(record.id))?.taskRun).toMatchObject({ started: true, exitConfirmed: true });
+  expect(manager.hasLiveTaskRun(record.id)).toBe(false);
+  if (restart) { await manager.shutdown(); manager = build(); }
+  await manager.refreshSessionCredentials(record.id, "admin", "token");
+  await expect(manager.cancelSession(record.id)).rejects.toThrow("Core cleanup unavailable");
+  expect((await store.readRecord(record.id))?.developmentLease).toBe(leaseId);
+  unavailable = false;
+  await manager.cancelSession(record.id);
+  const recovered = (await store.readRecord(record.id))!;
+  expect(recovered.status).toBe("cancelled");
+  expect(recovered.taskRun).toEqual({ started: true, exitConfirmed: true });
+  expect(recovered.developmentLease).toBeUndefined();
+  expect(starts).toHaveLength(1);
+});

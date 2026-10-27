@@ -152,6 +152,9 @@ startup failures persist non-admission before the rejected receipt; recovery hon
 when the final session status write was interrupted. Failures after send remain uncertain.
 Abandonment confirms Local task exit before discarding its run handle; an unconfirmed stop retains
 that handle for recovery and does not prevent the sweep from processing other waiting sessions.
+A failed lease release preserves durable native-exit proof. Stop can retry that cleanup after Core
+recovers, including after Harness restart, without starting another process; successful cleanup clears
+the recorded failure.
 An explicitly queued Local execution selection reuses confirmed task exit, keeps its reviewed MCP
 guard until Core dispatch, then clears the retained policy state. It does not require a second run
 handle or release the same task leases a second time.
@@ -197,7 +200,7 @@ managed runtime/browser journey. Changes are not deployed to the operator's live
 | `dotnet build packages/app-sdk-dotnet/HostySdk.App/HostySdk.App.csproj` | net8.0 and net10.0 passed. |
 | `npm run sdk:dotnet:test` | 70 passed, including create/edit requests with an explicit null assignee. |
 | `npm run harness:lint` | API/web TypeScript and web ESLint passed. |
-| `npm test --workspace @haas/hosty-harness` | Full suite passed: 164 files, 1778 tests after Local, availability recovery and queued activation fixes. |
+| `npm test --workspace @haas/hosty-harness` | Full suite passed: 164 files, 1780 tests after Local, availability recovery, queued activation and lease cleanup fixes. |
 | `npm test --workspace @haas/hosty-harness -- src/tasks src/profiles web/src/components/tasks.test.tsx web/src/components/session-model.test.tsx web/src/components/session-profile.test.tsx` | Review-fix suite passed: 9 files, 52 tests, including accepted-task selection/dispatch locks and draft recovery after Ready/Cancelled transitions. |
 | `node --test scripts/test-integration.test.mjs` | 13 passed. |
 | `HOSTY_TASKS_BROWSER=1 HOSTY_TASKS_BROWSER_CHANNEL=chrome npm run test:integration -- tasks` | Core/CLI/API/Worker builds and complete managed API/browser acceptance passed; the installed Playwright module was selected through HOSTY_TASKS_PLAYWRIGHT_MODULE. |
@@ -217,7 +220,7 @@ exercised. Cross-platform runtime suites and the full repository test matrix wer
 this acceptance targets the affected components on macOS/Docker. Existing Core/compiler and .NET
 SDK XML-comment warnings remain; builds completed without errors.
 
-Artifact versions: platform 0.158.1 → 0.159.1; Harness API/web/Worker 0.73.0 → 0.74.4;
+Artifact versions: platform 0.158.1 → 0.159.1; Harness API/web/Worker 0.73.0 → 0.74.5;
 TypeScript SDK 0.35.1 → 0.36.0; .NET SDK 0.10.0 → 0.11.1. Other artifacts retain their versions.
 
 ## Testing Expectations

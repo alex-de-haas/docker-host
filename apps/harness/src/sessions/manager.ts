@@ -1479,6 +1479,10 @@ export class SessionManager {
     if (retainActivationReview) this.developmentMcp.disconnect(session.record.id);
     else this.developmentMcp.unregister(session.record.id);
     await this.leaseWorkspaces(session, false, outcome);
+    if (session.record.taskRun?.error) {
+      delete session.record.taskRun.error;
+      await this.store.saveRecord(session.record);
+    }
   }
 
   private messageRequest(value: unknown): string {
@@ -2661,7 +2665,9 @@ export class SessionManager {
       try { await this.finishExecution(session, status === "idle" && session.record.workspaceActivation?.state === "queued", preserveWorkerRun, status); }
       catch (error) {
         if (session.record.taskExecutionId) {
-          session.record.taskRun = { started: true, exitConfirmed: false, error: error instanceof Error ? error.message : "Native exit is unconfirmed." };
+          // Cleanup can fail after native exit has already been durably confirmed.
+          session.record.taskRun = { ...session.record.taskRun ?? { started: true, exitConfirmed: false },
+            error: error instanceof Error ? error.message : "Execution cleanup is unconfirmed." };
           await this.store.saveRecord(session.record);
         }
         await this.append(id, { type: "notice", message: "Execution exit or worktree lease release is unconfirmed. Keep source leases and retry Stop after checking the worker service." });
