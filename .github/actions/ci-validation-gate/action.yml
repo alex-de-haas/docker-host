@@ -3,11 +3,14 @@ description: Validates completed main CI and selects affected publication for it
 
 inputs:
   token:
-    description: GitHub token with actions read permission.
+    description: GitHub token with actions read permission and contents read for native release recovery.
     required: true
   components:
     description: Comma-separated shared CI policy components published by this workflow.
     required: true
+  native-release-tag:
+    description: Optional completed native release receipt used to recover unpublished Core/CLI changes.
+    required: false
   timeout-seconds:
     description: Maximum wait for the matching CI run, including its registration delay.
     default: "1800"
@@ -15,7 +18,7 @@ inputs:
 
 outputs:
   publish:
-    description: Whether the validated commit affects this publication's components.
+    description: Whether the validated source selects this publication or has unpublished native changes.
     value: ${{ steps.selection.outputs.publish }}
   run-id:
     description: Successful ci.yml push run for this exact main SHA.
@@ -49,6 +52,8 @@ runs:
       shell: bash
       env:
         CI_GATE_COMPONENTS: ${{ inputs.components }}
+        CI_GATE_NATIVE_RELEASE_TAG: ${{ inputs.native-release-tag }}
+        CI_GATE_TOKEN: ${{ inputs.token }}
         CI_GATE_SOURCE_SHA: ${{ steps.validation.outputs.source-sha }}
         CI_GATE_SELECTION_PATH: ${{ runner.temp }}/hosty-publication-selection/selection.json
       run: node "${GITHUB_ACTION_PATH}/select-publication.mjs"
