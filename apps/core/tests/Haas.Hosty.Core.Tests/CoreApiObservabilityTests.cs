@@ -7,6 +7,12 @@ using OpenTelemetry.Trace;
 
 namespace Haas.Hosty.Core.Tests;
 
+// OpenTelemetry registers process-wide listeners, including HttpClient instrumentation.
+// Keep exact-span assertions isolated from traffic emitted by other test collections.
+[CollectionDefinition("CoreTracingListeners", DisableParallelization = true)]
+public sealed class CoreTracingListenersCollection;
+
+[Collection("CoreTracingListeners")]
 public sealed class CoreApiObservabilityTests : IDisposable
 {
     private readonly string root = Path.Combine(Path.GetTempPath(), "hosty-api-observability-" + Guid.NewGuid().ToString("N"));
