@@ -115,3 +115,9 @@ test('tasks builds both declared Harness images and runs inside a managed child 
   assert.deepEqual(plan.steps.slice(2, 4).map(step => step.args[4]), ['example/harness:1.2.3', 'example/worker:1.2.3']);
   assert.deepEqual(plan.steps.at(-1).args, ['scripts/check-workspace-activation.py', '.', 'tasks', '--managed']);
 });
+
+test('observability builds all affected images and uses the managed child fixture', () => {
+  const plan = suitePlan('observability');
+  assert.equal(plan.steps.filter(step => step.file === 'docker' && step.args[0] === 'build').length, 3);
+  assert.deepEqual(plan.steps.at(-1).args, ['scripts/check-workspace-activation.py', '.', 'observability', '--managed']);
+});

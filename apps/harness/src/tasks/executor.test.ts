@@ -203,3 +203,33 @@ it("waits for the final session status when a started run has confirmed exit", a
   await executor.tick();
   expect(await executor.get(id, actor)).toMatchObject({ state: "completed", stopConfirmed: true });
 });
+
+it("recovers cancellation after graceful Local shutdown without a workspace", async () => {
+  const id = randomUUID(), accepted = await executor.accept(id, input, actor); await executor.tick();
+  await manager.shutdown();
+  expect((await manager.store.readRecord(accepted.sessionRef!.id))?.taskRun).toEqual({ started: true, exitConfirmed: true });
+  manager = openManager(); executor = new HarnessTaskExecutor(manager);
+  await executor.cancel(id, randomUUID(), actor); await executor.tick();
+  expect(await executor.get(id, actor)).toMatchObject({ state: "cancelled", stopConfirmed: true });
+  expect(sent).toHaveBeenCalledTimes(1);
+  expect(stopped).toHaveBeenCalledTimes(1);
+});
+it("records a live outcome while reconciliation is temporarily interrupted", async () => {
+  const id = randomUUID(), accepted = await executor.accept(id, input, actor); await executor.tick();
+  valid.mockRejectedValueOnce(new Error("Core temporarily unavailable"));
+  await executor.tick();
+  expect(await executor.get(id, actor)).toMatchObject({ state: "interrupted", stopConfirmed: false });
+  expect(manager.hasLiveTaskRun(accepted.sessionRef!.id)).toBe(true);
+  await expect(executor.report(accepted.sessionRef!.id, randomUUID(), { markdown: "Outcome during outage", resources: [] })).resolves.toMatchObject({ recorded: true });
+  runOptions!.onEvent({ type: "result", status: "success" });
+  await vi.waitFor(async () => expect((await manager.getSession(accepted.sessionRef!.id))?.status).toBe("idle"));
+  await executor.tick();
+  expect(await executor.get(id, actor)).toMatchObject({ state: "completed", stopConfirmed: true, result: { markdown: "Outcome during outage" } });
+});
+it("rejects a new result when an interrupted execution no longer has a live run", async () => {
+  const id = randomUUID(), accepted = await executor.accept(id, input, actor); await executor.tick();
+  valid.mockRejectedValueOnce(new Error("Core temporarily unavailable"));
+  await executor.tick();
+  await manager.shutdown();
+  await expect(executor.report(accepted.sessionRef!.id, randomUUID(), { markdown: "Late outcome", resources: [] })).rejects.toMatchObject({ code: "execution_closed" });
+});

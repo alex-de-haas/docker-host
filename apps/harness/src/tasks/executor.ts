@@ -119,7 +119,10 @@ export class HarnessTaskExecutor {
           if (record.outcome.requestId !== requestId || fingerprint(record.outcome.result) !== fingerprint(result)) return taskError("result_conflict", "An explicit result is already recorded.");
           return { recorded: true, executionId: record.receipt.executionId };
         }
-        if (record.cancellation || taskExecutionTerminal(record.receipt.state)) return taskError("execution_closed", "This task execution no longer accepts results.");
+        const liveInterrupted = record.receipt.state === "interrupted" && !record.receipt.stopConfirmed
+          && this.manager.hasLiveTaskRun(sessionId);
+        if (record.cancellation || taskExecutionTerminal(record.receipt.state) && !liveInterrupted)
+          return taskError("execution_closed", "This task execution no longer accepts results.");
         record.outcome = { requestId, result }; this.touch(record); await this.save(key, record);
         return { recorded: true, executionId: record.receipt.executionId };
       }

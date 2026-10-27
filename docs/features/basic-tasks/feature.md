@@ -155,6 +155,10 @@ that handle for recovery and does not prevent the sweep from processing other wa
 A failed lease release preserves durable native-exit proof. Stop can retry that cleanup after Core
 recovers, including after Harness restart, without starting another process; successful cleanup clears
 the recorded failure.
+Graceful Harness shutdown also confirms Local task exit when no workspace is attached, preserving
+cancellation recovery after restart. An interrupted receipt still accepts an explicit result from its
+existing live run while reconciliation is unavailable; cancellation, confirmed termination and lost
+run handles keep the result fence closed.
 An explicitly queued Local execution selection reuses confirmed task exit, keeps its reviewed MCP
 guard until Core dispatch, then clears the retained policy state. It does not require a second run
 handle or release the same task leases a second time.
@@ -195,16 +199,16 @@ managed runtime/browser journey. Changes are not deployed to the operator's live
 | Command / scope | Result |
 | --- | --- |
 | `dotnet build` for Core and CLI | Passed; also rebuilt by the integration launcher. |
-| `dotnet test apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj` with provider/manifest filters | 22 passed. |
+| `dotnet test apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj` with provider/manifest/observability filters | 32 passed after integrating current main. |
 | `npm run build --workspace @hosty-sdk/app` and `npm test --workspace @hosty-sdk/app` | Build passed; 712 tests passed. |
 | `dotnet build packages/app-sdk-dotnet/HostySdk.App/HostySdk.App.csproj` | net8.0 and net10.0 passed. |
 | `npm run sdk:dotnet:test` | 70 passed, including create/edit requests with an explicit null assignee. |
 | `npm run harness:lint` | API/web TypeScript and web ESLint passed. |
-| `npm test --workspace @haas/hosty-harness` | Full suite passed: 164 files, 1780 tests after Local, availability recovery, queued activation and lease cleanup fixes. |
+| `npm test --workspace @haas/hosty-harness` | Full suite passed: 164 files, 1783 tests after Local lifecycle, availability recovery, queued activation and lease cleanup fixes. |
 | `npm test --workspace @haas/hosty-harness -- src/tasks src/profiles web/src/components/tasks.test.tsx web/src/components/session-model.test.tsx web/src/components/session-profile.test.tsx` | Review-fix suite passed: 9 files, 52 tests, including accepted-task selection/dispatch locks and draft recovery after Ready/Cancelled transitions. |
-| `node --test scripts/test-integration.test.mjs` | 13 passed. |
+| `node --test scripts/test-integration.test.mjs` | 14 passed, including task and observability suites. |
 | `HOSTY_TASKS_BROWSER=1 HOSTY_TASKS_BROWSER_CHANNEL=chrome npm run test:integration -- tasks` | Core/CLI/API/Worker builds and complete managed API/browser acceptance passed; the installed Playwright module was selected through HOSTY_TASKS_PLAYWRIGHT_MODULE. |
-| `node scripts/check-versions.mjs`, `node scripts/docs-index.mjs --check --base c46f00a3ebe0536a918f5420fad859f41f913920`, `git diff --check` | Passed. |
+| `node scripts/check-versions.mjs`, `node scripts/docs-index.mjs --check --base 84ae98ce928ef663dc779f64c34374527c4f0b46`, `git diff --check` | Passed. |
 
 The managed run verifies human review/rework, a profile execution with no workspace, explicit MCP
 result versus an ordinary turn, cancellation during native work, an existing retained workspace,
@@ -220,7 +224,7 @@ exercised. Cross-platform runtime suites and the full repository test matrix wer
 this acceptance targets the affected components on macOS/Docker. Existing Core/compiler and .NET
 SDK XML-comment warnings remain; builds completed without errors.
 
-Artifact versions: platform 0.158.1 → 0.159.1; Harness API/web/Worker 0.73.0 → 0.74.5;
+Artifact versions: platform 0.159.0 → 0.160.0; Harness API/web/Worker 0.73.0 → 0.74.6;
 TypeScript SDK 0.35.1 → 0.36.0; .NET SDK 0.10.0 → 0.11.1. Other artifacts retain their versions.
 
 ## Testing Expectations

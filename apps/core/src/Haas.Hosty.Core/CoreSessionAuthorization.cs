@@ -359,6 +359,7 @@ internal static class CoreSessionAuthorization
                 Terminal: true);
         }
 
+        CoreApiRequest.OperatorAuthenticated();
         if (touchSession) await TouchSessionAsync(users, session, now, cancellationToken);
         return new CoreSessionAuthorizationResult(user, null);
     }

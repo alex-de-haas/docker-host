@@ -2213,7 +2213,7 @@ export class SessionManager {
     for (const session of this.live.values()) {
       if (session.workspaceActivityTimer) clearTimeout(session.workspaceActivityTimer);
       session.workspaceActivityTimer = undefined;
-      if (!this.worker && session.record.developmentLease && session.run?.stopAndWait) {
+      if (!this.worker && (session.record.developmentLease || session.record.taskExecutionId) && session.run?.stopAndWait) {
         try { await this.finishExecution(session); }
         catch { /* Preserve the exact lease and stopped/unknown evidence for recovery. */ }
       }

@@ -91,7 +91,9 @@ internal sealed class AppRegistryStore(CoreDataPaths paths, CoreEventHub? events
             return null;
         }
 
-        return await ReadRecordAsync(appId, appRoot, cancellationToken);
+        var record = await ReadRecordAsync(appId, appRoot, cancellationToken);
+        CoreApiRequest.AppObserved(record);
+        return record;
     }
 
     // A racing write can leave a fresh record under a stale stamp here (stamp read before the file);

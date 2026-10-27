@@ -45,6 +45,7 @@ internal sealed class AppServiceTokenService(AppServiceSigningKey key)
         var signatureValid = CryptographicOperations.FixedTimeEquals(
             Encoding.UTF8.GetBytes(expected),
             Encoding.UTF8.GetBytes(signature));
+        if (signatureValid) CoreApiRequest.TokenValidated(token, tokenAppId);
         return signatureValid ? tokenAppId : null;
     }
 

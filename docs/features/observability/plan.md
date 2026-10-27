@@ -1,7 +1,7 @@
 ---
 status: In Progress
 created: 2026-07-03
-updated: 2026-10-22
+updated: 2026-10-27
 summary: Remaining observability work, adding telemetry ingest and query auth, live tails and fleet-wide views.
 components: [apps/core, apps/telemetry-backend, apps/telemetry-ui]
 ---
@@ -36,6 +36,19 @@ legacy violations, not requirements alternative providers must imitate. The
 D12 owns their removal; it does not choose a new provider schema or authorize runtime switching.
 Agree the contract before implementation. Provider selection, endpoint compatibility, readiness,
 authorization and collector configuration ownership must be explicit and independent of app IDs.
+
+## Core API diagnostics, delivered 2026-10-27
+
+[Core API activity and tracing](../core-api-observability/feature.md) provides minimal app-level
+counters and Shell warnings, standard Core instrumentation, authenticated trace pull, verified
+caller app attributes and correlated Core logs. Service attribution is excluded. This revises the
+original no-SDK choice while retaining pull transport, bounded memory and independence from any
+installed collector. Native AOT and measured overhead are covered by that feature's acceptance.
+
+The shared bidirectional trace/log navigation is completed as D4 here. D1 still owns general
+producer authentication and D12 still owns replacement of legacy provider wiring. The Core
+diagnostics contract adds no fixed Telemetry app ID dependency and does not duplicate those
+remaining deliverables.
 
 ## Target behavior
 
@@ -73,38 +86,14 @@ A diff against [feature.md](feature.md):
   job the buffer cannot do — post-mortem for a Core that is no longer running. That file also stops
   being 96 % framework chatter and starts carrying timestamps.
 
-### Why pull, and not an OTLP exporter inside Core
+### Core delivery decision
 
-The symmetric-looking option is to give Core the `telemetry` treatment every app gets: an OTel SDK,
-`OTEL_*` config, push to the collector. It is the wrong shape here for four reasons, in descending
-weight:
-
-1. **Core is an AOT binary with one dependency.** `PublishAot` is on and
-   `Haas.Hosty.Core.csproj` carries a single `PackageReference`. The OTel SDK plus an OTLP exporter
-   would be by far the largest dependency the kernel has ever taken, into the build configuration
-   least tolerant of reflection. Recent OTel releases claim AOT compatibility; that is a claim to
-   verify with a publish, not to design around.
-2. **The dependency runs backwards.** Apps get their endpoint injected at start because the collector
-   is already up — Core starts it. Core itself starts *before* the collector exists, so it would have
-   to resolve and rebind the endpoint at runtime, which is not how the standard host wiring is
-   configured.
-3. **It puts a queue to a managed app inside the kernel.** An exporter that blocks, buffers, or
-   retries against the collector is a new failure surface in the process that supervises the
-   collector. An app can afford that coupling; the supervisor should not.
-4. **Ingest is still unauthenticated.** Anything that reaches the OTLP port can already inject
-   records under any `hosty.app.id`, including a synthetic one for Core — that is the **Ingest + query
-   auth** deliverable, now carried by
-   [cross-app-dependencies](../cross-app-dependencies/plan.md). Core's log is the closest thing the
-   host has to an audit trail; routing it through the one door in this system that anybody can knock
-   on inverts its value.
-
-Pull inverts all four: no packages and no AOT risk, no ordering problem (the backend asks when it is
-ready), no queue in the kernel, and auth that already exists — the app service token that guards
-`GET /api/internal/telemetry/metrics`, on a route inside the endpoint-authorization harness. It also
-matches the precedent Core already sets as a telemetry producer. The honest cost is that the backend
-gains a third ingest path: it tails the collector's file sinks today, and would gain an HTTP cursor
-loop against Core. That is real work in the app, paid once, instead of permanent weight in the
-kernel.
+Core logs and spans use authenticated pull. The backend starts reading when it is ready; Core does
+not discover a collector endpoint or retry network export. Standard OpenTelemetry instrumentation
+is now covered by [Core API activity and tracing](../core-api-observability/feature.md), including
+Native AOT gates and bounded, demand-driven trace capture. Logs retain their existing bounded rings
+and single delivery path. General application OTLP ingest authentication remains D1 here; the
+reserved Core producer is accepted only through its authenticated pull paths.
 
 ## Deliverables
 
@@ -120,7 +109,7 @@ kernel.
       filterable by the same `apps` / `severity` / `q` parameters as the query reads.
 - [ ] D3. **UI live tail.** Structured logs and Traces consume the stream through the UI's server routes;
       reconnect and backfill on drop; Metrics stay on the existing poll (charts do not benefit).
-- [ ] D4. **trace→log correlation links** in the telemetry UI, both directions.
+- [x] D4. **trace→log correlation links** in the telemetry UI, both directions. This shared navigation also serves [Core API diagnostics](../core-api-observability/feature.md); preserve producer/caller distinction and explain sampled-out, expired or missing traces.
 - [x] D5. **Fleet resource views.** Implemented in [Unified runtime resource usage](../runtime-resource-usage/feature.md).
       The owner decision on 2026-09-25 replaces the earlier snapshot-only heat-map: Dashboard uses
       the same Docker/localCommand sampler as telemetry, with a short bounded history in Core RAM.
