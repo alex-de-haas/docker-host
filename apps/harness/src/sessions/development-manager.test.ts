@@ -2,6 +2,7 @@ import { coreEnvironmentTools } from "./environment-tools.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, rm, readFile, mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { SessionStore } from "./store.js";
 import { SessionManager } from "./manager.js";
@@ -945,4 +946,28 @@ it.each(["source_unsupported", "source_unavailable", "workspace_forbidden", "ins
   vi.mocked(client.call).mockRejectedValueOnce(new AppContextError(403, code, "Core rejected this source binding"));
   await expect(manager.workspaceAction(session.id, "prepare", { appId: "notes" }, "token", "admin")).rejects.toMatchObject({ code });
   expect((await manager.getSession(session.id))?.appIds).toEqual([]);
+});
+
+it.each(["activation-apply", "execution-select"] as const)("reuses confirmed Local task exit for reviewed %s", async action => {
+  const executionId = randomUUID();
+  const record = await manager.createSession({ createdBy: "admin", appIds: ["notes"], taskExecutionId: executionId });
+  await manager.setAutonomy(record.id, "autonomous", "admin");
+  await manager.workspaceAction(record.id, "prepare", { appId: "notes" }, "token", "admin");
+  await manager.postMessage(record.id, "work", "token", [], { taskDispatch: true, clientRequestId: executionId, actorUserId: "admin" });
+  const input = { workspaceId: tree.id, requestId: randomUUID(), selection: { coreSelected: false }, planDigest: "review" };
+  await manager.mcpPolicy.catalog("review-fixture", "one", [{ name: "activate", inputSchema: { type: "object" } }]);
+  const guard = await manager.mcpPolicy.authorize(record.id, "review-fixture", "one", "request", "activate", input, new AbortController().signal);
+  vi.mocked(client.call).mockClear();
+  await manager.workspaceAction(record.id, action, input, undefined, undefined, guard);
+  await finish(record.id);
+  await vi.waitFor(async () => expect((await store.readRecord(record.id))!.workspaceActivation?.state).toBe("dispatched"));
+  expect((await manager.getSession(record.id))?.taskRun).toMatchObject({ started: true, exitConfirmed: true });
+  expect(manager.hasLiveTaskRun(record.id)).toBe(false);
+  expect(client.call).toHaveBeenCalledWith(record.id, "token", action, input);
+  const stopped = vi.mocked(client.activity).mock.calls.flatMap((call, index) => call[2].stopped ? [index] : []);
+  expect(stopped).toHaveLength(1);
+  const dispatch = vi.mocked(client.call).mock.calls.findIndex(call => call[2] === action);
+  expect(vi.mocked(client.activity).mock.invocationCallOrder[stopped[0]!])
+    .toBeLessThan(vi.mocked(client.call).mock.invocationCallOrder[dispatch]!);
+  await expect(guard()).rejects.toThrow("canceled before dispatch");
 });

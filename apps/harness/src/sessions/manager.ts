@@ -2672,8 +2672,13 @@ export class SessionManager {
     if (session.record.handoffDispatch?.state === "running" && ["failed", "cancelled", "abandoned"].includes(status)) session.record.handoffDispatch.state = "failed";
     if (status === "idle" && session.record.workspaceActivation?.state === "queued" && session.record.executionMode !== "docker") {
       try {
-        if (!session.run?.stopAndWait) throw new Error("This native adapter cannot confirm process exit for activation. Stop it explicitly before dispatch.");
-        await session.run.stopAndWait(); session.run = null;
+        // Task completion already confirms exit and clears the handle before reaching this path.
+        if (session.run) {
+          if (!session.run.stopAndWait) throw new Error("This native adapter cannot confirm process exit for activation. Stop it explicitly before dispatch.");
+          await session.run.stopAndWait(); session.run = null;
+        } else if (!session.record.taskRun?.exitConfirmed) {
+          throw new Error("This native adapter cannot confirm process exit for activation. Stop it explicitly before dispatch.");
+        }
         session.record.developmentLeaseState = "stopped";
         await this.store.saveRecord(session.record);
       } catch (error) {
@@ -2683,7 +2688,8 @@ export class SessionManager {
         return; // Retain the running state and activity lease until explicit recovery confirms exit.
       }
     }
-    if (status === "idle" && session.record.developmentLease && !this.worker) await this.finishExecution(session);
+    if (status === "idle" && session.record.developmentLease && !this.worker && !session.record.taskExecutionId)
+      await this.finishExecution(session, session.record.workspaceActivation?.state === "queued");
     if (status === "running" && session.record.taskExecutionId) session.record.taskRun = { started: true, exitConfirmed: false };
     session.record.status = status;
     if (["running", "awaiting_approval", "awaiting_question"].includes(status)) this.scheduleWorkspaceActivity(session);
@@ -2713,7 +2719,7 @@ export class SessionManager {
         await this.append(id, { type: "notice", message: `Workspace activation was not confirmed: ${session.record.workspaceActivation.error}` });
       } finally {
         this.activationGuards.delete(id);
-        if (session.record.executionMode === "docker") this.developmentMcp.unregister(id);
+        this.developmentMcp.unregister(id);
         await this.store.saveRecord(session.record);
       }
     }
