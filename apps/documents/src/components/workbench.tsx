@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
+import { CATALOG_SCOPE_KEY, catalogUrl, documentView, restoreCatalogScope } from "@/lib/navigation";
 import { observeSources } from "@/lib/source-events";
 import { CatalogView } from "./catalog-view";
 import { appFetch } from "@hosty-sdk/app/browser-auth";
@@ -30,7 +31,23 @@ async function read<T>(url: string, signal: AbortSignal): Promise<T> {
   return response.json() as Promise<T>;
 }
 export function DocumentsWorkbench() {
-  const query = useSearchParams();
+  const urlQuery = useSearchParams(), pathname = usePathname();
+  const query = useMemo(() => {
+    const next = new URLSearchParams(urlQuery.toString());
+    next.set("view", documentView(pathname, next));
+    return next;
+  }, [urlQuery, pathname]);
+  useEffect(() => {
+    if (query.has("document")) return;
+    let stored: string | null = null;
+    try { stored = sessionStorage.getItem(CATALOG_SCOPE_KEY); } catch { /* URL-only navigation remains available. */ }
+    const scoped = restoreCatalogScope(query, stored);
+    const destination = catalogUrl(scoped) + window.location.hash;
+    if (destination !== window.location.pathname + window.location.search + window.location.hash) {
+      window.history.replaceState(null, "", destination);
+    }
+    try { sessionStorage.setItem(CATALOG_SCOPE_KEY, JSON.stringify({ repository: scoped.get("repository"), app: scoped.get("app") })); } catch { /* Preferences are optional. */ }
+  }, [query]);
   const [epoch, setEpoch] = useState(0);
   const [refreshEpoch, setRefreshEpoch] = useState(0);
   const [live, setLive] = useState("Connecting live updates…");
@@ -53,9 +70,9 @@ export function DocumentsWorkbench() {
     } else if (documentPath) {
       for (const key of ["view", "q", "app", "status", "layout", "page"]) if (query.has(key)) destination.searchParams.set(key, query.get(key)!);
       const original = query.get("catalogRepository");
-      if (original !== null) { if (original) destination.searchParams.set("repository", original); else destination.searchParams.delete("repository"); }
+      if (original !== null) { destination.searchParams.set("repository", original); }
     }
-    window.history.pushState(null, "", destination.pathname + destination.search + destination.hash);
+    window.history.pushState(null, "", catalogUrl(destination.searchParams) + destination.hash);
     window.scrollTo({ top: 0 });
   }
   function refresh() { setRefreshEpoch(value => value + 1); }

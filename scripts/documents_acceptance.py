@@ -3,6 +3,8 @@ import base64
 import hashlib
 import http.cookiejar
 import json
+import os
+import time
 import pathlib
 import queue
 import threading
@@ -27,12 +29,13 @@ def check(context):
     target = remote/relative
     target.parent.mkdir(parents=True)
     target.write_text(markdown(3))
-    commit(remote, 'Add isolated document fixture')
-    run(['git', 'update-server-info'], remote)
     manifest = json.loads((workspace/'apps/documents/manifest.json').read_text())
     manifest['source']['repository'] = context['repository']
-    manifest_path = base/'documents-manifest.json'
+    # Keep manifest-relative skills and assets beside the fixture manifest.
+    manifest_path = remote/'apps/documents/manifest.json'
     manifest_path.write_text(json.dumps(manifest))
+    commit(remote, 'Add isolated document fixture')
+    run(['git', 'update-server-info'], remote)
     app = manifest['id']
     run([cli, '--data-root', root, 'apps', 'install', manifest_path, '--runtime', 'docker', '--no-autostart'])
     run([cli, '--data-root', root, 'apps', 'start', app])
@@ -58,6 +61,19 @@ def check(context):
     call(app_origin, '/api/auth/app-code', {'code':code,'codeVerifier':verifier})
     context['diagnostic_secrets'].update(cookie.value for cookie in jar)
     def app_get(path): return call(app_origin, '/api'+path)
+    navigation = app_get('/hosty/ui/navigation')
+    entries = navigation['entries']
+    assert [entry['label'] for entry in entries] == ['Home', 'Vision', 'Ideas', 'Features', 'Plans', 'Reviews', 'Tooling']
+    assert [entry['route'] for entry in entries] == ['/', '/vision', '/ideas', '/features', '/plans', '/reviews', '/tooling']
+    for entry in entries:
+        assert entry['icon'], 'Each section declares a packaged icon'
+        icon = urllib.parse.urlparse(entry['icon'])
+        # The fixture's password session belongs to its explicit Core origin.
+        with client.open(origin+icon.path+('?' + icon.query if icon.query else ''), timeout=30) as response:
+            assert b'<svg' in response.read()
+        with client.open(app_origin+entry['route'], timeout=30) as response:
+            assert response.status == 200
+    say('PASS: seven manifest navigation entries resolve to served Documents pages')
     repositories = app_get('/repositories')['repositories']
     repository = next(row for row in repositories if row['repository'] == context['repository'])['id']
     detail_path = '/document?'+urllib.parse.urlencode({'repository':repository, 'path':relative})
@@ -117,3 +133,23 @@ def check(context):
         stop.set()
         stream.close()
         thread.join(timeout=2)
+
+    if os.environ.get('HOSTY_DOCUMENTS_BROWSER') == '1':
+        shell_manifest = workspace/'apps/shell/manifest.json'
+        run([cli, '--data-root', root, 'apps', 'install', shell_manifest, '--runtime', 'docker', '--no-autostart'])
+        shell = json.loads(shell_manifest.read_text())['id']
+        run([cli, '--data-root', root, 'apps', 'start', shell])
+        wait_for(lambda: request('/api/apps/'+shell+'/health')['status'] == 'healthy', 180)
+        shell_link = json.loads(run([cli, '--data-root', root, 'apps', 'open', app, '--mode', 'shell', '--format', 'json']))['url']
+        access = base/'browser-access.json'
+        access.write_text(json.dumps({'core':origin, 'url':link, 'shell':shell_link,
+            'email':'activation-fixture@example.test', 'password':password}))
+        os.chmod(access, 0o600)
+        say('UI READY: '+str(access)+'; create finish-ui after browser checks')
+        try:
+            deadline = time.time()+1800
+            while time.time()<deadline and not (base/'finish-ui').exists():
+                time.sleep(.5)
+            assert (base/'finish-ui').exists(), 'Browser acceptance did not acknowledge completion'
+        finally:
+            access.unlink(missing_ok=True)
