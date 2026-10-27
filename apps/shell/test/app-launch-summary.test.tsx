@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({ read: vi.fn() }));
 vi.mock("../src/app/shell/core-transport.js", () => ({ fetchCore: mocks.read }));
 vi.mock("../src/app/shell/resources/resource-usage", () => ({
   ResourceUsageProvider: ({ children }: { children: ReactNode }) => <div data-resource-provider>{children}</div>,
+  ApiActivityDetails: ({ appId }: { appId: string }) => <section data-api-activity={appId}>Core API activity</section>,
   ResourceUsage: ({ service }: { service: string }) => <span data-resource-service={service}>Observed resource reading</span>,
 }));
 let root: Root, container: HTMLDivElement, currentApp: CoreApp;
@@ -42,9 +43,10 @@ it("uses only observed service health and keeps declared but unobserved services
   expect(container.querySelector('a[href="/dashboard"]')).not.toBeNull();
 });
 
-it.each(["stopped", "unknown"])("does not subscribe to resource readings when the app is %s", async runtimeState => {
+it.each(["stopped", "unknown"])("keeps app API activity available without fabricating service readings when the app is %s", async runtimeState => {
   await render({ ...app, runtimeState, health: { status: "healthy", observedAt: "2026-10-21T00:00:00Z", services: [{ service: "api", status: "running" }] } });
-  expect(container.querySelector('[data-resource-provider]')).toBeNull();
+  expect(container.querySelector('[data-resource-provider]')).not.toBeNull();
+  expect(container.querySelector('[data-api-activity]')).not.toBeNull();
   expect(container.querySelector('[data-resource-service]')).toBeNull();
   expect(container.textContent).toContain("Resource readings unavailable");
 });
@@ -61,7 +63,8 @@ it("keeps dependencies separate from app state and does not infer missing readin
   expect(container.textContent).toContain("Endpoint unresolved");
   expect(container.textContent).toContain("Not installed");
   expect(container.textContent).toContain("No service observations are available");
-  expect(container.querySelector('[data-resource-provider]')).toBeNull();
+  expect(container.querySelector('[data-resource-provider]')).not.toBeNull();
+  expect(container.querySelector('[data-api-activity]')).not.toBeNull();
 });
 
 
@@ -132,7 +135,7 @@ it("reports independent failures without replacing known health with fabricated 
   expect(container.textContent).toContain("Digest details are unavailable");
   expect(container.textContent).toContain("Cached plan is invalid");
   expect(container.querySelector('[aria-label="Service unobserved"]')?.textContent).toContain("Unknown");
-  expect(container.querySelector("[data-resource-provider]")).toBeNull();
+  expect(container.querySelector("[data-resource-provider]")).not.toBeNull();
   expect([...container.querySelectorAll("button")].find(button => button.textContent === "Refresh services")?.disabled).toBe(false);
 });
 

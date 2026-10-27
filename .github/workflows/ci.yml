@@ -348,24 +348,39 @@ jobs:
         run: npm run core:test
 
   core-aot:
-    name: Core NativeAOT
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+    name: Core NativeAOT (${{ matrix.rid }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     needs: changes
     if: needs.changes.outputs.core_aot == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            rid: osx-arm64
+          - os: macos-15-intel
+            rid: osx-x64
+          - os: ubuntu-24.04-arm
+            rid: linux-arm64
+          - os: ubuntu-latest
+            rid: linux-x64
+          - os: windows-latest
+            rid: win-x64
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.changes.outputs.sha }}
       - uses: ./.github/actions/setup-dotnet
       - name: Ensure NativeAOT prerequisites
+        if: runner.os == 'Linux'
         run: |
           if ! command -v clang >/dev/null || ! dpkg-query -W -f='${Status}' zlib1g-dev 2>/dev/null | grep -q 'install ok installed'; then
             sudo apt-get update
             sudo apt-get install -y clang zlib1g-dev
           fi
       - name: Publish Core and reject new trim/AOT warnings
-        run: npm run core:aot
+        run: npm run core:aot -- ${{ matrix.rid }}
 
   cli:
     name: CLI

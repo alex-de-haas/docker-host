@@ -1,12 +1,8 @@
 "use client";
 
-import { HostyNextOverlay as HostyOverlay } from "@hosty-sdk/app/next";
-import { DocumentsWorkbench } from "./workbench";
+import type { ReactNode } from "react";
+import { HostyNextOverlay } from "@hosty-sdk/app/next";
 
-export function DocumentsSession() {
-  return (
-    <HostyOverlay navigation={{ renderer: "custom" }}>
-      <DocumentsWorkbench />
-    </HostyOverlay>
-  );
+export function DocumentsSession({ children }: { children: ReactNode }) {
+  return <HostyNextOverlay>{children}</HostyNextOverlay>;
 }

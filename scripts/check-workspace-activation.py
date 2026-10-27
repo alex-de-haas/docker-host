@@ -279,10 +279,18 @@ try:
     csrf=request('/api/auth/csrf')['token']
     if managed:
         parent = (root, origin, jar, browser, csrf)
-        child_mode = os.environ.get('HOSTY_DOCUMENTS_CHILD_MODE', 'source') if scenario == 'documents' else 'source'
-        assert child_mode in ('source', 'current'), 'Documents comparison supports source or current Core only'
-        child = request('/api/core-environments', {'requestId':str(uuid.uuid4()), 'label':'Workspace activation acceptance', 'mode':child_mode,
-            **({'projectPath':str(workspace/project)} if child_mode == 'source' else {})})
+        environment_request = {'requestId':str(uuid.uuid4()), 'label':'Workspace activation acceptance', 'mode':'source', 'projectPath':str(workspace/project)}
+        if scenario == 'documents':
+            child_mode = os.environ.get('HOSTY_DOCUMENTS_CHILD_MODE', 'source')
+            assert child_mode in ('source', 'current'), 'Documents comparison supports source or current Core only'
+            if child_mode == 'current':
+                environment_request.update(mode='current', projectPath=None)
+        if scenario == 'observability' and os.environ.get('HOSTY_OBSERVABILITY_AOT') == '1':
+            assert os.environ.get('HOSTY_ACTIVATION_CORE'), 'AOT smoke requires an explicitly published Core executable'
+            environment_request.update(mode='current', projectPath=None)
+        if scenario == 'observability':
+            environment_request['limits'] = {'memoryBytes':8589934592, 'cpus':4, 'pids':1024}
+        child = request('/api/core-environments', environment_request)
         child_id = child['id']
         child = request(f'/api/core-environments/{child_id}/operations/start', {'requestId':str(uuid.uuid4()), 'expectedRevision':child['revision']})
         assert child['state'] == 'running', child
@@ -303,6 +311,13 @@ try:
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         module.check(globals())
+        success = True
+        sys.exit(0)
+    if scenario == 'observability':
+        assert managed, 'Observability acceptance requires a managed child Core'
+        sys.dont_write_bytecode = True
+        from observability_acceptance import check
+        check(globals())
         success = True
         sys.exit(0)
     if scenario == 'harness-local':

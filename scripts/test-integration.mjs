@@ -9,7 +9,7 @@ const cli = 'apps/cli/src/Haas.Hosty.Cli/Haas.Hosty.Cli.csproj';
 const coreTests = 'apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj';
 const cliTests = 'apps/cli/tests/Haas.Hosty.Cli.Tests/Haas.Hosty.Cli.Tests.csproj';
 const windowsFilter = 'FullyQualifiedName~WindowsProcessControlTests|FullyQualifiedName~StopAsync_OnWindowsKillsAdoptedJobDescendantAfterShellExited|FullyQualifiedName~CoreDevelopmentTests|FullyQualifiedName~ExplicitStop|FullyQualifiedName~SourceDocuments_ReferenceMetadataSupportsLfAndCrLf|FullyQualifiedName~WorkspaceGit_|FullyQualifiedName~JsonStorageTests';
-export const suites = Object.freeze(['activation', 'dependencies', 'sessions', 'windows', 'transport', 'worker', 'whisper', 'opus', 'documents', 'desktop', 'harness-local', 'shell']);
+export const suites = Object.freeze(['activation', 'dependencies', 'sessions', 'windows', 'transport', 'worker', 'whisper', 'opus', 'documents', 'desktop', 'harness-local', 'shell', 'observability']);
 const usage = 'Usage: npm run test:integration -- <' + suites.join('|') + '> [--dry-run]\n'
   + 'Runs one explicitly selected local suite. Builds its fixtures first; no automatic retries.\n'
   + 'activation: .NET, Git, Python, Docker; isolated managed Core Return and recovery\n'
@@ -17,6 +17,7 @@ const usage = 'Usage: npm run test:integration -- <' + suites.join('|') + '> [--
   + 'sessions: .NET, Git, Python, Docker; shared workspaces with isolated users and Harness\n'
   + 'windows: Windows and .NET; focused process, path and shared receipt tests\n'
   + 'transport: .NET, Python, Docker; isolated Core/container network checks\n'
+  + 'observability: .NET, Git, Python, Docker; Core API counters, trace/log delivery and isolated Telemetry\n'
   + 'desktop: .NET, Git, Python, Docker; role-aware desktop and lifecycle in a managed Core\n'
   + 'documents: .NET, Git, Python, Docker; current docs, workspace progress and scoped events in a managed Core\n'
   + 'shell: .NET, Git, Python, Docker; isolated Shell identity and workspace inventory with browser review\n'
@@ -37,6 +38,14 @@ export function suitePlan(suite, { platform = process.platform, node = process.e
   const pythonCheck = command(python, ['--version']);
   const build = project => command('dotnet', ['build', project]);
   switch (suite) {
+    case 'observability':
+      return { prerequisites: [dotnet, command('git', ['--version']), pythonCheck, docker], steps: [
+        build(core), build(cli),
+        command('docker', ['build', '-f', 'apps/shell/Dockerfile', '-t', 'hosty-observability-shell:acceptance', '.']),
+        command('docker', ['build', '-f', 'apps/telemetry-backend/Dockerfile', '-t', 'hosty-observability-backend:acceptance', '.']),
+        command('docker', ['build', '-f', 'apps/telemetry-ui/Dockerfile', '-t', 'hosty-observability-ui:acceptance', '.']),
+        command(python, ['scripts/check-workspace-activation.py', '.', 'observability', '--managed']),
+      ] };
     case 'harness-local':
       return { prerequisites: [dotnet, command('git', ['--version']), pythonCheck, docker,
         command(node, ['--version']), command(node, ['-e', "require('node:child_process').execSync('npm --version', {stdio:'inherit'})"])], steps: [

@@ -31,6 +31,8 @@ internal sealed record TelemetryBackendOptions
     // has no runtime to inject OTEL_* into and nothing else can produce this stream. Null when unset,
     // which simply means Core's logs are not ingested — every other signal is unaffected.
     public string? CoreLogsPullUrl { get; init; }
+    public string? CoreTracesPullUrl { get; init; }
+    public TimeSpan CoreTracesPullInterval { get; init; } = TimeSpan.FromSeconds(10);
 
     // The collector's file sinks on the shared volume (logs/traces ingest), tailed continuously.
     public required string LogsFilePath { get; init; }
@@ -96,6 +98,9 @@ internal sealed record TelemetryBackendOptions
             CoreLogsPullUrl = FirstNonEmpty(
                 Environment.GetEnvironmentVariable("HOSTY_TELEMETRY_CORE_LOGS_URL"),
                 Append(Environment.GetEnvironmentVariable("HOSTY_CORE_ORIGIN"), "/api/internal/telemetry/logs")),
+            CoreTracesPullUrl = FirstNonEmpty(
+                Environment.GetEnvironmentVariable("HOSTY_TELEMETRY_CORE_TRACES_URL"),
+                Append(Environment.GetEnvironmentVariable("HOSTY_CORE_ORIGIN"), "/api/internal/telemetry/traces")),
             LogsFilePath = FirstNonEmpty(Environment.GetEnvironmentVariable("HOSTY_TELEMETRY_LOGS_FILE"))
                 ?? Path.Combine(appData, "otlp-logs", "logs.jsonl"),
             TracesFilePath = FirstNonEmpty(Environment.GetEnvironmentVariable("HOSTY_TELEMETRY_TRACES_FILE"))

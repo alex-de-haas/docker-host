@@ -105,6 +105,7 @@ Plans: 13 In Progress · 1 Blocked · 46 Draft · 7 On Hold.
 - [Container Capabilities And Devices](features/container-capabilities/feature.md) — A docker service can add named Linux capabilities and device nodes under /dev, opt-in per service and never as --privileged.
 - [Continuous App Access](features/continuous-app-access/feature.md) — Silent maintenance of browser and native app sessions, with separately authorized and revocable background delegation.
 - [Core API](features/core-api/feature.md) — Core's browser and control APIs and the serialization rules every endpoint must follow.
+- [Core API activity and tracing](features/core-api-observability/feature.md) — Exact per-app Core API counters and Shell warnings, with demand-driven standard Core traces and correlated logs retained by Telemetry.
 - [Core App Shell](features/core-app-shell/feature.md) — Shell is the Core-managed browser UI app that authenticates users and embeds app pages.
 - [Core Confirmation Design](features/core-confirmation-design/feature.md) — Shared local typography, light and dark cards, accessible forms and outcomes for Core authentication and trusted operation confirmations.
 - [Core Development Mode](features/core-dev-target/feature.md) — Run Core from source in Debug, restart into isolated build generations and switch back to the installed release. · [plan](features/core-dev-target/plan.md): In Progress, 0/3, updated 2026-10-23
@@ -164,7 +165,7 @@ Plans: 13 In Progress · 1 Blocked · 46 Draft · 7 On Hold.
 - [Notifications](features/notifications/feature.md) — A Core-owned per-user notification inbox with app and Core producers and live delivery to any client. · [plan](features/notifications/plan.md): Draft, 0/7, updated 2026-10-26
 - [OAuth Core Control Scopes](features/oauth-core-control-scopes/feature.md) — OAuth consent can grant Core MCP lifecycle and update scopes in addition to read.
 - [Object Links](features/object-links/plan.md) — Typed app-owned object links with Core target resolution and SDK host placement, leaving shared-object viewers and defaults as separately approved extensions. · Draft, 0/5, updated 2026-10-20
-- [Feature: Observability (telemetry collection, storage, and UI)](features/observability/feature.md) — OpenTelemetry from apps flows to a collector, an SQLite-backed telemetry backend and the telemetry UI app. · [plan](features/observability/plan.md): In Progress, 7/12, updated 2026-10-22
+- [Feature: Observability (telemetry collection, storage, and UI)](features/observability/feature.md) — OpenTelemetry from apps flows to a collector, an SQLite-backed telemetry backend and the telemetry UI app. · [plan](features/observability/plan.md): In Progress, 8/12, updated 2026-10-27
 - [Plan Provider Interface](features/plan-provider-interface/plan.md) — Early ideas for an optional plan-provider interface across Markdown specification-driven plans, task trackers and checklists, with possible MCP tools. · Draft, 0/4, updated 2026-10-26
 - [Plan Tracking](features/plan-tracking/feature.md) — Core source-document access, target freshness and workspace projections for Documents and other authorized readers.
 - [Private App Sources](features/private-app-sources/feature.md) — Core reads private repository manifests and sources through explicitly selected personal provider connections.

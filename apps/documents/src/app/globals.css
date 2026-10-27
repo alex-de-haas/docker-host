@@ -83,12 +83,9 @@
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; }
 }
 
-.documents-layout { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 32px; }
-.documents-navigation { display: flex; flex-direction: column; gap: 20px; align-self: start; position: sticky; top: 16px; }
 .document-prose-layout { display: grid; grid-template-columns: minmax(0, 1fr) 210px; gap: 32px; align-items: start; }
 .document-prose-layout aside { position: sticky; top: 8px; }
 .markdown :is(h1,h2,h3,h4,h5,h6) { scroll-margin-top: 16px; }
 html[data-hosty-launch="embedded"] .hosty-shell-chrome,
 html[data-hosty-launch="native"] .hosty-shell-chrome { display: none; }
 @media (max-width: 1100px) { .document-prose-layout { grid-template-columns: minmax(0, 1fr); } .document-prose-layout aside { position: static; } }
-@media (max-width: 767px) { .documents-layout { grid-template-columns: minmax(0, 1fr); gap: 20px; } .documents-navigation { position: static; gap: 12px; } }

@@ -1,6 +1,6 @@
 ---
 created: 2026-06-28
-updated: 2026-10-24
+updated: 2026-10-27
 summary: OpenTelemetry from apps flows to a collector, an SQLite-backed telemetry backend and the telemetry UI app.
 components: [apps/telemetry, apps/telemetry-backend, apps/telemetry-ui, apps/core]
 ---
@@ -247,15 +247,16 @@ while the failure was still happening. This is the metric heartbeat's shape, app
 response carries Core's run id, and when that changes the cursor resets to zero, because Core's rings
 are in memory and a restarted Core numbers from 1 again.
 
-**Core does not run an OpenTelemetry SDK**, and the direction is the point. Core is an AOT binary with
-a single package reference; it starts *before* the collector it would export to; an exporter queue
-would put a managed app inside the kernel's failure path; and OTLP ingest is still unauthenticated, so
-a pushed record attributed to the host could be forged by anything that reaches the port. Pulling
-inverts all four and reuses auth that already exists.
+**Core standard tracing also uses authenticated pull.** The pinned OpenTelemetry SDK supplies
+ASP.NET Core/HttpClient instrumentation and a stable internal ActivitySource. Capture is demand-driven
+and bounded; Telemetry persists pages and replay cursors. `hosty.caller.app.id` identifies the verified
+caller without changing the `hosty.core` producer. Core log records retain trace/span/caller identity
+through the existing log pull, with no second log exporter. See
+[Core API activity and tracing](../core-api-observability/feature.md) for settings, bounds and coverage.
 
 `hosty.core` is **reserved, not registered**. The store, the query routes, and the MCP tool schemas all
 treat an app id as an opaque key with no roster validation, so Core rides the same columns with no
-schema change — which matters, because the backend has no migration mechanism. What it costs instead
+roster registration. The Core trace extension adds its own idempotent SQLite column/index migration. What it costs instead
 is a handful of deliberate special cases: the telemetry UI names it and injects it into the logs and
 traces resource filters (the roster-driven dropdowns would otherwise leave its records visible under
 "All resources" and impossible to isolate), the fleet responses exclude it from the *app* count they
@@ -289,15 +290,19 @@ instrumentation, and a stopped app all look the same:
 
 - `GET /api/apps/{appId}/metrics?range=<seconds>` — one app's series (name, labels, timestamped points).
 - `GET /api/apps/{appId}/otlp-logs?range&severity&limit` — one app's structured records.
-- `GET /api/observability/logs?range&severity&limit&apps&q` — records merged across apps, with the
+- `GET /api/observability/logs?range&severity&limit&apps&q&callerAppId&traceId` — records merged across apps, with the
   severity floor and a case-insensitive body search applied, ordered chronologically and capped
   across apps.
-- `GET /api/observability/traces?range&limit&apps&q` — the window's spans grouped by trace id into
+- `GET /api/observability/traces?range&limit&apps&q&callerAppId` — the window's spans grouped by trace id into
   summaries (root span name/kind/app, falling back to the earliest span for a partial trace and
   flagged via `hasRootSpan`; start, duration, span/error counts, contributing apps), newest first.
 - `GET /api/observability/traces/{traceId}` — every stored span of one trace, merged across apps,
   each tagged with its source app, ordered by start time. An unknown or aged-out id yields an empty
-  span list, never a 404.
+  span list with an unavailable explanation, never a 404.
+
+`callerAppId` filters verified Core callers independently of producer. A `traceId` log query searches
+all retained time ranges, retaining other filters. Both list/detail responses expose the latest Core
+capture coverage. Trace details link to related logs, and correlated logs link back to the trace.
 
 Traces are fleet-shaped by nature — one distributed trace's spans can come from several apps — so
 unlike metrics and logs they have no per-app twin.

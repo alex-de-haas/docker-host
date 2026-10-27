@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+import { CoreTraceCoverageNote } from "@/components/observability/core-trace-coverage";
 import { appFetch } from "@hosty-sdk/app/browser-auth";
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -48,7 +50,7 @@ const TRACE_TOGGLE_ICON_CENTER_PX = 7;
 const TRACE_DETAIL_ROOT_ICON_OFFSET_PX = 5;
 const TRACE_DETAIL_GUIDE_CONTENT_GAP_PX = 16;
 
-type LoadedTracesQuery = { appId: string; range: number; text: string };
+type LoadedTracesQuery = { appId: string; range: number; text: string; caller: string };
 type ListState = { loading: boolean; error: string | null; response: FleetTracesResponse | null; loadedQuery: LoadedTracesQuery | null };
 type DetailState = { loading: boolean; error: string | null; response: TraceDetailResponse | null };
 
@@ -56,14 +58,15 @@ type DetailState = { loading: boolean; error: string | null; response: TraceDeta
 // every resource (GET /api/observability/traces), each opening into a span waterfall
 // (GET /api/observability/traces/{traceId}). A distributed trace's spans can come from several apps,
 // so both reads are fleet-shaped; the resource filter narrows which apps' spans start a trace.
-export function ObservabilityTracesPage({ apps: roster }: { apps: TelemetryApp[] }) {
+export function ObservabilityTracesPage({ apps: roster, initialTraceId = null, initialCaller = "" }: { apps: TelemetryApp[]; initialTraceId?: string | null; initialCaller?: string }) {
   // See the logs page: Core is a telemetry source with no roster entry behind it.
   const apps = withCoreSource(roster);
   const [selectedAppId, setSelectedAppId] = useState<string>(ALL);
   const [rangeSeconds, setRangeSeconds] = useState(900);
   const [query, setQuery] = useState("");
+  const [caller, setCaller] = useState(initialCaller);
   const [list, setList] = useState<ListState>({ loading: true, error: null, response: null, loadedQuery: null });
-  const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
+  const [selectedTraceId, setSelectedTraceId] = useState<string | null>(initialTraceId);
   const [detail, setDetail] = useState<DetailState>({ loading: false, error: null, response: null });
   const listRootRef = useRef<HTMLDivElement>(null);
   const returnFocusTraceRef = useRef<string | null>(null);
@@ -79,11 +82,12 @@ export function ObservabilityTracesPage({ apps: roster }: { apps: TelemetryApp[]
   // request updates state, so a slower earlier response can't overwrite newer results or errors.
   const listRequestRef = useRef(0);
   const loadTraces = useCallback(
-    async (appId: string, range: number, text: string) => {
+    async (appId: string, range: number, text: string, caller: string) => {
       const token = ++listRequestRef.current;
       setList((current) => ({ ...current, loading: true, error: null }));
       try {
         const params = new URLSearchParams({ range: String(range), limit: "100" });
+        if (caller.trim()) params.set("callerAppId", caller.trim());
         if (appId !== ALL) {
           params.set("apps", appId);
         }
@@ -100,7 +104,7 @@ export function ObservabilityTracesPage({ apps: roster }: { apps: TelemetryApp[]
         if (token !== listRequestRef.current) {
           return;
         }
-        setList({ loading: false, error: null, response: payload, loadedQuery: { appId, range, text: trimmed } });
+        setList({ loading: false, error: null, response: payload, loadedQuery: { appId, range, text: trimmed, caller } });
       } catch (error) {
         if (isAuthRequiredError(error) || token !== listRequestRef.current) {
           return;
@@ -148,11 +152,13 @@ export function ObservabilityTracesPage({ apps: roster }: { apps: TelemetryApp[]
     [],
   );
 
+  useEffect(() => { if (initialTraceId) void loadTrace(initialTraceId); }, [initialTraceId, loadTrace]);
+
   // Refetch on any filter change; debounce so typing in the search box does not hammer Core.
   useEffect(() => {
-    const handle = setTimeout(() => void loadTraces(selectedAppId, rangeSeconds, query), 300);
+    const handle = setTimeout(() => void loadTraces(selectedAppId, rangeSeconds, query, caller), 300);
     return () => clearTimeout(handle);
-  }, [loadTraces, selectedAppId, rangeSeconds, query]);
+  }, [loadTraces, selectedAppId, rangeSeconds, query, caller]);
 
   useEffect(() => {
     if (selectedTraceId !== null || returnFocusTraceRef.current === null) {
@@ -177,7 +183,7 @@ export function ObservabilityTracesPage({ apps: roster }: { apps: TelemetryApp[]
       <TraceWaterfall
         traceId={selectedTraceId}
         state={detail}
-        onBack={() => setSelectedTraceId(null)}
+        onBack={() => { setSelectedTraceId(null); window.history.replaceState(null, "", "/traces"); }}
         onRefresh={() => void loadTrace(selectedTraceId)}
       />
     );
@@ -186,7 +192,7 @@ export function ObservabilityTracesPage({ apps: roster }: { apps: TelemetryApp[]
   const traces = list.response?.traces ?? [];
   const loadedQuery = list.loadedQuery;
   const showingPrevious = loadedQuery !== null && (list.loading || list.error !== null
-    || loadedQuery.appId !== selectedAppId || loadedQuery.range !== rangeSeconds || loadedQuery.text !== query.trim());
+    || loadedQuery.caller !== caller || loadedQuery.appId !== selectedAppId || loadedQuery.range !== rangeSeconds || loadedQuery.text !== query.trim());
   const loadedResource = loadedQuery?.appId === ALL ? "All resources"
     : apps.find(app => app.id === loadedQuery?.appId)?.displayName ?? loadedQuery?.appId;
   const loadedRange = RANGES.find(range => range.seconds === loadedQuery?.range)?.label;
@@ -203,7 +209,7 @@ export function ObservabilityTracesPage({ apps: roster }: { apps: TelemetryApp[]
           <Button
             variant="outline"
             size="sm"
-            onClick={() => void loadTraces(selectedAppId, rangeSeconds, query)}
+            onClick={() => void loadTraces(selectedAppId, rangeSeconds, query, caller)}
             disabled={list.loading}
           >
             <RefreshCw className={cn("h-4 w-4", list.loading && "animate-spin text-info")} />
@@ -234,6 +240,8 @@ export function ObservabilityTracesPage({ apps: roster }: { apps: TelemetryApp[]
           </DropdownMenuContent>
         </DropdownMenu>
 
+        <Input value={caller} onChange={event => setCaller(event.target.value)} placeholder="Calling app ID (Core)" aria-label="Calling app ID" className="w-56" />
+
         <div role="group" aria-label="Time range" className="flex gap-1">
           {RANGES.map((range) => (
             <Button
@@ -260,6 +268,8 @@ export function ObservabilityTracesPage({ apps: roster }: { apps: TelemetryApp[]
           />
         </div>
       </div>
+
+      <CoreTraceCoverageNote coverage={list.response?.coreTracing} />
 
       {list.error && (
         <RequestError>{list.error}</RequestError>
@@ -425,6 +435,7 @@ function TraceWaterfall({
               <ArrowLeft className="h-4 w-4" />
               All traces
             </Button>
+            <Button asChild variant="outline" size="sm"><Link href={`/logs?traceId=${encodeURIComponent(traceId)}`}>Related logs</Link></Button>
             <Button variant="outline" size="sm" onClick={onRefresh} disabled={state.loading}>
               <RefreshCw className={cn("h-4 w-4", state.loading && "animate-spin text-info")} />
               Refresh
@@ -432,6 +443,8 @@ function TraceWaterfall({
           </div>
         }
       />
+
+      <CoreTraceCoverageNote coverage={response?.coreTracing} />
 
       {state.error && (
         <RequestError>{state.error}</RequestError>
@@ -448,8 +461,8 @@ function TraceWaterfall({
       ) : !response || response.spans.length === 0 ? (
         <EmptyState
           icon={Waypoints}
-          title="Trace not found"
-          description="The trace has no stored spans — it may have aged out of the live window (last hour)."
+          title="Trace not retained"
+          description={response?.unavailableReason ?? "No retained spans. The trace may be sampled out, outside capture, dropped or past retention."}
         />
       ) : (
         <div className="space-y-4">
@@ -680,7 +693,8 @@ function SpanDetails({
         <dl className="grid grid-cols-2 gap-x-4 gap-y-2.5 sm:grid-cols-3">
           <DetailField label="Span ID" value={span.spanId} />
           <DetailField label="Parent" value={span.parentSpanId || "—"} />
-          <DetailField label="Service" value={span.appName || span.appId} mono={false} />
+          <DetailField label="Producer" value={span.appName || span.appId} mono={false} />
+          {span.appId === "hosty.core" && span.attributes["hosty.caller.app.id"] && <DetailField label="Calling app" value={span.attributes["hosty.caller.app.id"]} />}
           <DetailField label="Kind" value={span.kind} mono={false} />
           <DetailField label="Start offset" value={`+${formatDuration(span.startUnixMs - traceStartMs)}`} />
           <DetailField label="Duration" value={formatDuration(span.durationMs)} />
