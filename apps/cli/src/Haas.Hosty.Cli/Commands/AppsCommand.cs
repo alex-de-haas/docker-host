@@ -575,6 +575,8 @@ internal sealed partial class AppsCommand(CommandContext context)
         context.Console.MarkupLine($"[green]{Markup.Escape(response.Status)}:[/] {Markup.Escape(response.App.Id)}");
         context.Console.MarkupLine($"[grey]Runtime:[/] {Markup.Escape(response.App.SelectedRuntime ?? "none")} / {Markup.Escape(response.App.RuntimeState)}");
         context.Console.MarkupLine($"[grey]Autostart:[/] {(response.App.Autostart ? "enabled" : "disabled")}");
+        if (!string.IsNullOrWhiteSpace(response.App.LastError))
+            context.Console.MarkupLine($"[yellow]{Markup.Escape(response.App.LastError)}[/]");
         if (response.Backup is not null)
         {
             context.Console.MarkupLine($"[grey]Backup:[/] {Markup.Escape(response.Backup.BackupId)}");

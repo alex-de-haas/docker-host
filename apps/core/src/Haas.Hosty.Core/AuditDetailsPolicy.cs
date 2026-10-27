@@ -8,7 +8,7 @@ internal static class AuditDetailsPolicy
         "email role expiresAt invitationId roleChanged revokedSessionCount removedAssignmentCount trigger assignedAppIds " +
         "label kind audience scopes client reason callerAppId targetAppId callingAppId codeAppId channel requestedUser " +
         "existingUser tool retentionDays purged");
-    private static readonly HashSet<string> LifecycleFields = Fields("via tool operation operationId");
+    private static readonly HashSet<string> LifecycleFields = Fields("via tool operation operationId consumerAppId");
     private static readonly HashSet<string> ApprovalFields = Fields(
         "requestId caller hostPathChange operation removalOptions assistantTarget assistantAccessEnabled assistantInstructions selectedOptionalPermissions environmentConsentSaved");
     private static readonly HashSet<string> AppReportFields = Fields("sessionId toolName actor deletedBy createdBy autonomy mode waitedMs");

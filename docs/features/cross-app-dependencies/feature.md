@@ -1,6 +1,6 @@
 ---
 created: 2026-06-22
-updated: 2026-10-25
+updated: 2026-10-26
 summary: Apps declare dependencies on other installed apps, Core injects their URLs and reports their state.
 components: [apps/core, apps/shell]
 ---
@@ -23,8 +23,9 @@ authentication** in this model.
 
 ## Non-goals
 
-- **Auto-install / auto-start.** Core does not install a missing dependency or start a stopped one.
-  Each provider still follows its own lifecycle and autostart preference.
+- **Auto-install.** Core does not install a missing dependency. Installed required providers start
+  automatically for an admitted consumer through their normal selected runtime and authority checks;
+  optional providers remain independent.
 - **App-to-app authorization.** Declaring (or not declaring) a dependency does not grant or deny
   access at the network layer; it only drives discovery + the reported state.
 
