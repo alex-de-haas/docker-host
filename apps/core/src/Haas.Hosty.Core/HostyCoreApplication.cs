@@ -41,6 +41,7 @@ internal static class HostyCoreApplication
 
         builder.Services.AddSingleton<CoreSettingsStore>();
         builder.Services.AddSingleton<CoreSettingsService>();
+        CoreTracing.Configure(builder.Services);
         // AuthLifetimes resolves live from the settings service (edited from the Shell platform panel),
         // so a TTL change applies without a restart: idle windows immediately, absolute windows for
         // grants/sessions issued afterward. Transient so each per-request injection re-reads the current
@@ -263,6 +264,7 @@ internal static class HostyCoreApplication
         app.UseForwardedHeaders();
         app.Use(LocalBrowserNavigation.InvokeAsync);
         app.UseRouting();
+        app.Use(CoreApiRequest.InvokeAsync);
         app.UseCors();
         app.Use(LifecycleAuditFilter.RecordEarlyRefusalAsync);
         app.Use(AppManagementAuthorization.InvokeAsync);
@@ -275,7 +277,7 @@ internal static class HostyCoreApplication
         SandboxAuthEndpoints.Map(app);
         UiPanelEndpoints.Map(app);
 
-        app.MapGet("/healthz", () => CoreJson.Json(new HealthResponse("ok")));
+        app.MapGet("/healthz", () => CoreJson.Json(new HealthResponse("ok"))).WithMetadata(new CoreDiagnosticsTransport());
         app.MapGet("/api/core/status", async (
             HttpRequest request,
             HostyCoreRuntimeConfig config,
@@ -432,6 +434,7 @@ internal static class HostyCoreApplication
         HostInitializationEndpoints.Map(app);
         CoreSettingsEndpoints.Map(app);
         CoreLogEndpoints.Map(app);
+        CoreTracing.Map(app);
         RuntimeResourceEndpoints.Map(app);
         CoreRestartEndpoints.Map(app);
         CoreWorkspaceEndpoints.Map(app);
@@ -484,6 +487,7 @@ internal static class HostyCoreApplication
             return CoreJson.Json(new ErrorResponse("control_unauthorized", "Local control secret is missing or invalid."), statusCode: StatusCodes.Status401Unauthorized);
         }
 
+        CoreApiRequest.OperatorAuthenticated();
         return action();
     }
 
@@ -495,6 +499,7 @@ internal static class HostyCoreApplication
             return CoreJson.Json(new ErrorResponse("control_unauthorized", "Local control secret is missing or invalid."), statusCode: StatusCodes.Status401Unauthorized);
         }
 
+        CoreApiRequest.OperatorAuthenticated();
         return await action();
     }
 

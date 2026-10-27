@@ -5,16 +5,16 @@ namespace Haas.Hosty.Core;
 
 internal sealed record RuntimeResourceSample(string AppId, string Service, string Runtime,
     DateTimeOffset Timestamp, double? CpuPercent, double? MemoryBytes, double? MemoryPercent = null);
-internal sealed record ResourceUsageFrame(DateTimeOffset Timestamp, IReadOnlyList<RuntimeResourceSample> Services, long Sequence = 0);
+internal sealed record ResourceUsageFrame(DateTimeOffset Timestamp, IReadOnlyList<RuntimeResourceSample> Services, long Sequence = 0, ApiActivitySnapshot? ApiActivity = null);
 internal sealed record ResourceUsageResponse(string RunId, DateTimeOffset Now, int LogicalProcessors,
-    IReadOnlyList<ResourceUsageFrame> History, long Sequence = 0);
+    IReadOnlyList<ResourceUsageFrame> History, long Sequence = 0, ApiActivitySnapshot? ApiActivity = null);
 internal sealed record ResourceUsageEvent(string RunId, long Sequence, DateTimeOffset Timestamp,
     int LogicalProcessors, ResourceUsageFrame Frame);
 
 // RAM only. A single producer serves both the live Dashboard and the slower telemetry scrape.
 internal sealed class RuntimeResourceSampler(
     AppRegistryStore apps, DockerStatsExposition docker, LocalResourceReader local,
-    CoreEventHub events, IClock clock, ILogger<RuntimeResourceSampler> logger, AppManifestService manifests) : BackgroundService
+    CoreEventHub events, IClock clock, ILogger<RuntimeResourceSampler> logger, AppManifestService manifests, CoreApiActivity? apiActivity = null) : BackgroundService
 {
     private readonly object gate = new();
     private readonly Queue<ResourceUsageFrame> history = new();
@@ -24,6 +24,7 @@ internal sealed class RuntimeResourceSampler(
     private DateTimeOffset lastSample;
     private DateTimeOffset lastDocker;
     private volatile ResourceUsageFrame? latestFrame;
+    private volatile IReadOnlyList<RuntimeResourceSample> latestSamples = [];
     private int dockerFailures;
     private DateTimeOffset? lastDockerWarning;
     internal static readonly TimeSpan Retention = TimeSpan.FromMinutes(5);
@@ -36,7 +37,7 @@ internal sealed class RuntimeResourceSampler(
         get
         {
             var frame = latestFrame;
-            if (frame is null) return "";
+            if (frame is null) return apiActivity?.PrometheusText() ?? "";
             var now = clock.UtcNow;
             var builder = new StringBuilder();
             // Check freshness at scrape time too: an in-flight probe can outlive a cached sample.
@@ -50,6 +51,7 @@ internal sealed class RuntimeResourceSampler(
                 if (sample.Runtime == "docker" && sample.MemoryPercent is { } percent)
                     DockerStatsExposition.AppendSample(builder, "container.memory.percent", sample.AppId, sample.Service, percent);
             }
+            builder.Append(apiActivity?.PrometheusText());
             return builder.ToString();
         }
     }
@@ -65,7 +67,7 @@ internal sealed class RuntimeResourceSampler(
             // at most this grace period; no per-browser sampling loop or unbounded lease dictionary.
             if (!stream) viewedUntil = clock.UtcNow.AddSeconds(20);
             Prune(clock.UtcNow);
-            return new(runId, clock.UtcNow, Environment.ProcessorCount, history.Where(f => previousRunId != runId || after is null || f.Timestamp > after).ToArray(), sequence);
+            return new(runId, clock.UtcNow, Environment.ProcessorCount, history.Where(f => previousRunId != runId || after is null || f.Timestamp > after).ToArray(), sequence, apiActivity?.Read());
         }
     }
 
@@ -73,11 +75,32 @@ internal sealed class RuntimeResourceSampler(
     {
         lock (gate)
         {
-            frame = frame with { Sequence = ++sequence };
+            frame = frame with { Sequence = ++sequence, ApiActivity = frame.ApiActivity ?? apiActivity?.Read() };
             history.Enqueue(frame);
             Prune(frame.Timestamp);
             latestFrame = frame;
             events.PublishResources(new(runId, sequence, frame.Timestamp, Environment.ProcessorCount, frame));
+        }
+    }
+
+    // CPU/RAM keep their original measurement timestamps while API activity remains live.
+    internal void PublishActivity()
+    {
+        if (apiActivity is null || !HasViewers) return;
+        lock (gate)
+        {
+            if (latestFrame is { } previous && clock.UtcNow - previous.Timestamp < TimeSpan.FromSeconds(3)) return;
+            Record(new(clock.UtcNow, latestSamples, ApiActivity: apiActivity.Read()));
+        }
+    }
+
+    private void PublishMeasurements(DateTimeOffset at, IReadOnlyList<RuntimeResourceSample> samples)
+    {
+        latestSamples = samples;
+        lock (gate)
+        {
+            if (apiActivity is not null && latestFrame is { } previous && at - previous.Timestamp < TimeSpan.FromSeconds(3)) return;
+            Record(new(at, samples));
         }
     }
 
@@ -180,6 +203,7 @@ internal sealed class RuntimeResourceSampler(
                 if (!viewed && !AppRuntimeStates.IsUp(telemetry?.RuntimeState))
                 {
                     latestFrame = null;
+                    latestSamples = [];
                     local.Reset();
                     continue;
                 }
@@ -199,7 +223,7 @@ internal sealed class RuntimeResourceSampler(
                 samples.RemoveAll(s => s.AppId != "hosty.core" && !installed.Contains(s.AppId));
                 foreach (var app in roster)
                     await ReconcileAppAsync(samples, app, at, stoppingToken);
-                Record(new(at, samples));
+                PublishMeasurements(at, samples);
                 if (viewed) events.PublishAppEvent("resources.changed");
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }

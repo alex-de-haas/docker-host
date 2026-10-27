@@ -74,6 +74,7 @@ internal static class McpEndpoints
                     var actor = await http.RequestServices.GetRequiredService<AssistantMcpAccess>()
                         .ValidateAsync(bearer, AgentMcpDirectory.CoreId, http.RequestAborted);
                     if (actor is null) return CoreJson.Json(new ErrorResponse("mcp_access_denied", "Assistant MCP access is no longer valid."), 403);
+                    CoreApiRequest.Authenticate(actor.Caller);
                     bool Has(string permission) => AppManagementAuthorization.HasPermission(actor.Caller, permission);
                     // Tool names are protocol input, never authority. Unknown tools fail closed.
                     if (HttpMethods.IsPost(http.Request.Method))
@@ -128,6 +129,7 @@ internal static class McpEndpoints
                             statusCode: StatusCodes.Status403Forbidden);
                     }
 
+                    CoreApiRequest.ExternalAuthenticated();
                     // Read-only, whatever the actor's role. A delegated token carries sub, role and
                     // audience — never the scopes of the credential it descends from — so the
                     // on-behalf-of path cannot prove the standing grant mutations require. Inferring
@@ -141,6 +143,7 @@ internal static class McpEndpoints
                     state, bearer, clock.UtcNow, lifetimes, AccessTokenScopes.CoreAudience);
                 if (scoped is not null)
                 {
+                    CoreApiRequest.ExternalAuthenticated();
                     // A scope narrows what a credential may do; it never widens who may hold one.
                     // This surface is administrator-only, so the actor is still required to be an
                     // administrator — re-read here rather than trusted from issuance, because a role

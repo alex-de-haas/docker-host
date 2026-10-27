@@ -1,9 +1,19 @@
+export type ApiActivityWarning = { reason: string; since: string; requests: number; threshold: number; windowSeconds: number };
+export type AppApiActivity = {
+  totalRequests: number; totalEligibleRequests: number; requests10s: number; requests60s: number;
+  eligibleRequests10s: number; eligibleRequests60s: number; warning: ApiActivityWarning | null; recoveredAt: string | null;
+};
+export type ApiActivitySnapshot = {
+  runId: string; observedAt: string; enabled: boolean; coverage: string;
+  sustainedThreshold: number; burstThreshold: number; recoverySeconds: number;
+  apps: Record<string, AppApiActivity>; unattributed: Record<string, AppApiActivity>;
+};
 export type ResourceSample = {
   appId: string; service: string; runtime: string; timestamp: string;
   cpuPercent: number | null; memoryBytes: number | null;
 };
-export type ResourceFrame = { timestamp: string; services: ResourceSample[]; sequence?: number };
-export type ResourceSnapshot = { runId: string; now: string; logicalProcessors: number; history: ResourceFrame[]; sequence?: number };
+export type ResourceFrame = { timestamp: string; services: ResourceSample[]; sequence?: number; apiActivity?: ApiActivitySnapshot | null };
+export type ResourceSnapshot = { runId: string; now: string; logicalProcessors: number; history: ResourceFrame[]; sequence?: number; apiActivity?: ApiActivitySnapshot | null };
 export type ResourceEvent = { runId: string; sequence: number; timestamp: string; logicalProcessors: number; frame: ResourceFrame };
 export type ResourcePoint = { timestamp: number; cpu: number | null; memory: number | null };
 export const RETENTION_MS = 5 * 60_000;
@@ -49,3 +59,25 @@ export function formatMemory(bytes: number | null): string {
   return bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(1)} GiB` : `${Math.round(bytes / 1024 ** 2)} MiB`;
 }
 export function formatCpu(cpu: number | null): string { return cpu === null ? "—" : `${cpu.toFixed(1)}%`; }
+
+export function currentApiActivity(snapshot: ResourceSnapshot | null, appId?: string): AppApiActivity | null {
+  const activity = snapshot?.apiActivity ?? snapshot?.history.at(-1)?.apiActivity;
+  if (!activity?.enabled || !snapshot || Date.parse(snapshot.now) - Date.parse(activity.observedAt) > STALE_MS) return null;
+  if (appId) return activity.apps[appId] ?? null;
+  const apps = Object.values(activity.apps);
+  return apps.reduce<AppApiActivity>((total, app) => ({
+    totalRequests: total.totalRequests + app.totalRequests,
+    totalEligibleRequests: total.totalEligibleRequests + app.totalEligibleRequests,
+    requests10s: total.requests10s + app.requests10s, requests60s: total.requests60s + app.requests60s,
+    eligibleRequests10s: total.eligibleRequests10s + app.eligibleRequests10s,
+    eligibleRequests60s: total.eligibleRequests60s + app.eligibleRequests60s,
+    warning: total.warning ?? app.warning, recoveredAt: null,
+  }), { totalRequests: 0, totalEligibleRequests: 0, requests10s: 0, requests60s: 0,
+    eligibleRequests10s: 0, eligibleRequests60s: 0, warning: null, recoveredAt: null });
+}
+export function apiActivitySeries(snapshot: ResourceSnapshot | null, appId?: string) {
+  return (snapshot?.history ?? []).map(frame => ({
+    timestamp: Date.parse(frame.timestamp),
+    calls: currentApiActivity(snapshot ? { ...snapshot, now: frame.timestamp, apiActivity: frame.apiActivity, history: [frame] } : null, appId)?.requests60s ?? null,
+  }));
+}

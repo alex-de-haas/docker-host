@@ -279,7 +279,13 @@ try:
     csrf=request('/api/auth/csrf')['token']
     if managed:
         parent = (root, origin, jar, browser, csrf)
-        child = request('/api/core-environments', {'requestId':str(uuid.uuid4()), 'label':'Workspace activation acceptance', 'mode':'source', 'projectPath':str(workspace/project)})
+        environment_request = {'requestId':str(uuid.uuid4()), 'label':'Workspace activation acceptance', 'mode':'source', 'projectPath':str(workspace/project)}
+        if scenario == 'observability' and os.environ.get('HOSTY_OBSERVABILITY_AOT') == '1':
+            assert os.environ.get('HOSTY_ACTIVATION_CORE'), 'AOT smoke requires an explicitly published Core executable'
+            environment_request.update(mode='current', projectPath=None)
+        if scenario == 'observability':
+            environment_request['limits'] = {'memoryBytes':8589934592, 'cpus':4, 'pids':1024}
+        child = request('/api/core-environments', environment_request)
         child_id = child['id']
         child = request(f'/api/core-environments/{child_id}/operations/start', {'requestId':str(uuid.uuid4()), 'expectedRevision':child['revision']})
         assert child['state'] == 'running', child
@@ -292,6 +298,13 @@ try:
         csrf = request('/api/auth/csrf')['token']
         initial = request('/control/v1/core/status',control=True)
         say('Started a parent-managed child Core and logged in with its separate test account')
+    if scenario == 'observability':
+        assert managed, 'Observability acceptance requires a managed child Core'
+        sys.dont_write_bytecode = True
+        from observability_acceptance import check
+        check(globals())
+        success = True
+        sys.exit(0)
     if scenario == 'harness-local':
         assert managed, 'Harness local acceptance requires a managed child Core'
         import importlib.util
