@@ -74,12 +74,12 @@ read.MapGet("/apps/{appId}/otlp-logs", (string appId, int? range, int? severity,
     => Results.Ok(query.GetOtlpLogs(appId, range, severity, limit)));
 
 // Cross-resource OTLP logs merged across apps.
-read.MapGet("/observability/logs", (int? range, int? severity, int? limit, string? apps, string? q, TelemetryQueryService query)
-    => Results.Ok(query.GetFleetLogs(range, severity, limit, ParseAppFilter(apps), q)));
+read.MapGet("/observability/logs", (int? range, int? severity, int? limit, string? apps, string? q, string? callerAppId, string? traceId, TelemetryQueryService query)
+    => Results.Ok(query.GetFleetLogs(range, severity, limit, ParseAppFilter(apps), q, callerAppId, traceId)));
 
 // Cross-resource trace summaries merged across apps.
-read.MapGet("/observability/traces", (int? range, int? limit, string? apps, string? q, TelemetryQueryService query)
-    => Results.Ok(query.GetFleetTraces(range, limit, ParseAppFilter(apps), q)));
+read.MapGet("/observability/traces", (int? range, int? limit, string? apps, string? q, string? callerAppId, TelemetryQueryService query)
+    => Results.Ok(query.GetFleetTraces(range, limit, ParseAppFilter(apps), q, callerAppId)));
 
 // One trace's spans merged across apps.
 read.MapGet("/observability/traces/{traceId}", (string traceId, TelemetryQueryService query)

@@ -93,6 +93,7 @@ test("workflow scheduling edits do not rebuild unrelated clients, artifact workf
   assertSelection([".github/workflows/cardputer-release.yml"], ["cardputer-shell"], [], ["actionlint"]);
   assertSelection([".github/workflows/harness-worker-image.yml"], ["harness"], [], ["actionlint"]);
   assertSelection([".github/workflows/cli-release.yml"], ["core", "cli"], ["core-aot"], ["actionlint"]);
+  assertSelection(["scripts/observability_acceptance.py"], ["core", "cli", "shell", "telemetry-backend", "telemetry-ui"]);
   assertSelection([".github/actions/publish-guard/guard.sh"], [], [], ["actionlint"]);
 });
 

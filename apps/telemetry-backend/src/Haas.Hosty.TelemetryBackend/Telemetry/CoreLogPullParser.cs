@@ -7,7 +7,7 @@ namespace Haas.Hosty.TelemetryBackend;
 internal sealed record ParsedCoreLogPull(string RunId, long NextCursor, IReadOnlyList<ParsedOtlpLog> Records);
 
 // Parses Core's log-pull payload. Core is the host kernel, not an installed app, so it has no
-// `hosty.app.id` of its own and no OpenTelemetry SDK to stamp one — the records arrive as Core's own
+// `hosty.app.id` of its own and no app producer identity — the records arrive as Core's own
 // small JSON shape and are attributed here to the reserved id every read path already keys by.
 //
 // Walks the tree with JsonDocument (AOT-safe, no reflection) and never throws: a malformed payload
@@ -109,6 +109,8 @@ internal static class CoreLogPullParser
             }
         }
 
+        if (ReadString(record, "callerAppId") is { } caller) attributes["hosty.caller.app.id"] = caller;
+
         return new ParsedOtlpLog(
             CoreAppId,
             new OtlpLogRecord(
@@ -117,8 +119,8 @@ internal static class CoreLogPullParser
                 level.ToUpperInvariant(),
                 message,
                 attributes,
-                TraceId: null,
-                SpanId: null));
+                TraceId: ReadString(record, "traceId"),
+                SpanId: ReadString(record, "spanId")));
     }
 
     private static string? ReadString(JsonElement element, string property)

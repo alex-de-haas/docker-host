@@ -108,3 +108,9 @@ test('Harness local acceptance uses managed Core and the native runtime without 
   assert.ok(plan.prerequisites.some(step => step.args.some(arg => arg.includes('npm --version'))));
   assert.ok(!plan.steps.some(step => step.file === 'docker'));
 });
+
+test('observability builds all affected images and uses the managed child fixture', () => {
+  const plan = suitePlan('observability');
+  assert.equal(plan.steps.filter(step => step.file === 'docker' && step.args[0] === 'build').length, 3);
+  assert.deepEqual(plan.steps.at(-1).args, ['scripts/check-workspace-activation.py', '.', 'observability', '--managed']);
+});

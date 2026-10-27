@@ -1,6 +1,6 @@
 ---
 created: 2026-09-25
-updated: 2026-10-22
+updated: 2026-10-27
 summary: One Core resource sampler for containers, local process trees and Core itself, shared by Dashboard and Telemetry.
 components: [apps/core, apps/shell, apps/telemetry-ui]
 ---
@@ -11,6 +11,15 @@ Core owns one resource sampler for Docker containers, Local Command service proc
 Core itself. Dashboard and Telemetry consume the same observations. Dashboard needs no Telemetry
 installation, no application instrumentation, and no database. Telemetry's existing SQLite
 retention remains unchanged; no new persistence is introduced in Core or Shell.
+
+## Core API activity
+
+[Core API counters](../core-api-observability/feature.md) are independent of resource acquisition.
+The additive app-level `apiActivity` field in snapshots and history/SSE frames carries exact totals,
+rolling counts and warning state. No per-service replication occurs. A current activity snapshot
+is available without CPU/RAM history. Visible resource consumers receive activity frames even when
+Docker acquisition stalls; copied CPU/RAM samples retain their original timestamps and freshness.
+Dashboard and app details use the shared resource provider for calls/minute, warnings and history.
 
 ## Acquisition and ownership
 

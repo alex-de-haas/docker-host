@@ -368,6 +368,9 @@ internal static class CoreJson
 // Core's own buffered log records, for the Dashboard's Core logs dialog.
 [JsonSerializable(typeof(CoreLogsResponse))]
 [JsonSerializable(typeof(CoreLogPullResponse))]
+[JsonSerializable(typeof(CoreTracePullResponse))]
+[JsonSerializable(typeof(CoreSpanRecord))]
+[JsonSerializable(typeof(ApiActivitySnapshot))]
 [JsonSerializable(typeof(StopResponse))]
 [JsonSerializable(typeof(CoreRestartResponse))]
 [JsonSerializable(typeof(CoreDevelopmentState))]

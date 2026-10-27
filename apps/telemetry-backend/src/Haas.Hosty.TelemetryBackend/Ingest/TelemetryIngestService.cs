@@ -10,7 +10,7 @@ namespace Haas.Hosty.TelemetryBackend;
 // backend (Phase 2). It does NOT collect docker stats or docker logs — those need host Docker access
 // and stay in Core, which pushes them to the collector as a producer. Best-effort throughout: an
 // unreachable collector or absent file yields no data for that tick and is skipped silently.
-internal sealed class TelemetryIngestService(
+internal sealed partial class TelemetryIngestService(
     TelemetryBackendOptions options,
     SqliteTelemetryStore store,
     ILogger<TelemetryIngestService> logger,
@@ -121,6 +121,8 @@ internal sealed class TelemetryIngestService(
             lastCoreLogsPullUtc = now;
         }
 
+        if (now >= nextCoreTracePull) await PullCoreTracesAsync(now, cancellationToken);
+
         // Prune on its own cadence, not every tick — and in bounded slices, never as one blocking
         // pass: each tick spends at most PruneStepBudget, and an unfinished pass resumes next tick
         // (tailing above always runs first, so a heavy pass cannot stall the tail).
@@ -188,6 +190,8 @@ internal sealed class TelemetryIngestService(
                 continue;
             }
 
+            // Only the authenticated Core scrape can produce the reserved Core source/counters.
+            if (url != options.DockerMetricsScrapeUrl && (appId == CoreLogPullParser.CoreAppId || sample.Name.StartsWith("hosty_core_api_", StringComparison.Ordinal))) continue;
             IReadOnlyDictionary<string, string> labels = EmptyLabels;
             if (sample.Labels.Count > 1)
             {
@@ -262,7 +266,7 @@ internal sealed class TelemetryIngestService(
     }
 
     // Core's own log records, the one stream whose producer is the host kernel. Core keeps them in
-    // memory and we ask for them; it deliberately runs no OpenTelemetry SDK and pushes nothing (see
+    // memory and we ask for them; standard tracing shares this pull-based delivery model (see
     // docs/features/observability/feature.md).
     internal async Task PullCoreLogsAsync(DateTimeOffset now, CancellationToken cancellationToken)
     {

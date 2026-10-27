@@ -25,7 +25,7 @@ export type OtlpLogRecord = {
   spanId?: string | null;
 };
 export type FleetOtlpLogRecord = OtlpLogRecord & { appId: string; appName: string };
-export type FleetOtlpLogsResponse = { rangeSeconds: number; appCount: number; records: FleetOtlpLogRecord[] };
+export type FleetOtlpLogsResponse = { rangeSeconds: number; appCount: number; records: FleetOtlpLogRecord[]; coreTracing?: CoreTraceCoverage | null };
 
 // ── Traces ──────────────────────────────────────────────────────────────────────────────────────
 export type TraceAppRef = { appId: string; appName: string };
@@ -42,7 +42,7 @@ export type FleetTraceSummary = {
   errorCount: number;
   apps: TraceAppRef[];
 };
-export type FleetTracesResponse = { rangeSeconds: number; appCount: number; traces: FleetTraceSummary[] };
+export type FleetTracesResponse = { rangeSeconds: number; appCount: number; traces: FleetTraceSummary[]; coreTracing?: CoreTraceCoverage | null };
 export type TraceDetailSpan = {
   appId: string;
   appName: string;
@@ -61,13 +61,15 @@ export type TraceDetailResponse = {
   startUnixMs: number;
   durationMs: number;
   spans: TraceDetailSpan[];
+  coreTracing?: CoreTraceCoverage | null;
+  unavailableReason?: string | null;
 };
 
 // ── Backend (pre-enrichment) shapes ────────────────────────────────────────────────────────────────
 // The backend keys by appId only; the UI server routes map these into the *appName-enriched shapes
 // above. Kept in sync with apps/telemetry-backend/.../Query/QueryResponses.cs.
 export type BackendFleetLogRecord = OtlpLogRecord & { appId: string };
-export type BackendFleetLogsResponse = { rangeSeconds: number; appCount: number; records: BackendFleetLogRecord[] };
+export type BackendFleetLogsResponse = { rangeSeconds: number; appCount: number; records: BackendFleetLogRecord[]; coreTracing?: CoreTraceCoverage | null };
 export type BackendTraceSummary = {
   traceId: string;
   rootName: string;
@@ -80,11 +82,20 @@ export type BackendTraceSummary = {
   errorCount: number;
   appIds: string[];
 };
-export type BackendTracesResponse = { rangeSeconds: number; appCount: number; traces: BackendTraceSummary[] };
+export type BackendTracesResponse = { rangeSeconds: number; appCount: number; traces: BackendTraceSummary[]; coreTracing?: CoreTraceCoverage | null };
 export type BackendTraceDetailSpan = Omit<TraceDetailSpan, "appName">;
 export type BackendTraceDetailResponse = {
   traceId: string;
   startUnixMs: number;
   durationMs: number;
   spans: BackendTraceDetailSpan[];
+  coreTracing?: CoreTraceCoverage | null;
+  unavailableReason?: string | null;
+};
+
+export type CoreTraceCoverage = {
+  contractVersion: number; runId: string; capturing: boolean; captureStartedAt: string | null;
+  rootSampleRatio: number; observedAt: string; firstAvailableSequence: number; lastSequence: number;
+  droppedSpans: number; truncatedSpans: number; state: string;
+  lastGapReason: string | null; lastGapAt: string | null; gapCount: number;
 };

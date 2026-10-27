@@ -12,7 +12,7 @@ import { isAuthRequiredRedirectError, readCoreError, redirectToCoreLoginIfAuthRe
 import { isAppUp } from "../runtime-states";
 import { Alert, EmptyState, StatusBadge } from "../ui";
 import { HostyLoader } from "../../../../../../shared/web/hosty-states";
-import { ResourceUsage, ResourceUsageProvider } from "../resources/resource-usage";
+import { ApiActivityDetails, ResourceUsage, ResourceUsageProvider } from "../resources/resource-usage";
 
 type ServiceDetails = {
   key: string;
@@ -94,7 +94,6 @@ export function AppLaunchSummary({ app, coreOrigin, serviceRevision = 0 }: { app
   const dependencies = app.dependencies ?? [];
   const canReadResources = isAppUp(app.runtimeState) && app.operationStatus !== "updating";
   const rows = [...services.values()].sort((a, b) => a.service.localeCompare(b.service));
-  const hasReadings = canReadResources && rows.some(service => !["stopped", "exited", "unknown"].includes(service.status));
   const loading = !current || current.healthLoading || current.updateLoading;
   const body = <section aria-labelledby={"app-services-" + app.id} className="overflow-hidden rounded-xl border bg-card">
     <div className="flex flex-wrap items-center justify-between gap-3 border-b bg-muted/25 px-4 py-3">
@@ -153,6 +152,9 @@ export function AppLaunchSummary({ app, coreOrigin, serviceRevision = 0 }: { app
         <div className="flex flex-wrap gap-1.5"><Badge variant="outline">{!dependency.installed ? "Not installed" : dependency.ready === true ? "Ready" : dependency.ready === false ? "Not ready" : dependency.running ? "Running · readiness unavailable" : "Stopped"}</Badge>{dependency.endpoints?.some(endpoint => !endpoint.resolved) && <Badge variant="outline">Endpoint unresolved</Badge>}</div>
       </div>) : <p className="px-4 py-5 text-sm text-muted-foreground">This app declares no application dependencies.</p>}</div>
     </section>
-    {hasReadings ? <ResourceUsageProvider coreOrigin={coreOrigin}>{body}</ResourceUsageProvider> : body}
+    <ResourceUsageProvider coreOrigin={coreOrigin}>
+      <div className="rounded-xl border bg-card p-4"><ApiActivityDetails appId={app.id} /></div>
+      {body}
+    </ResourceUsageProvider>
   </div>;
 }

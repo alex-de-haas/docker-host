@@ -113,6 +113,8 @@ export function classifyPaths(paths, { versionOnlyPaths = [] } = {}) {
       add("ci-policy", reason("local integration command contract"));
     } else if (path === "scripts/check-workspace-activation.py") {
       add(["core", "cli"], reason("native acceptance fixture"));
+    } else if (path === "scripts/observability_acceptance.py") {
+      add(["core", "cli", "shell", "telemetry-backend", "telemetry-ui"], reason("managed observability acceptance fixture"));
     } else if (path === "scripts/check-core-aot.mjs") {
       add(["core", "core-aot"], reason("NativeAOT compatibility gate"));
     } else if (path === "scripts/check-docker-core-transport.py") {

@@ -549,7 +549,7 @@ internal static class LifecycleEndpoints
                 return CoreJson.Json(new ErrorResponse("app_permission_required", "Telemetry collection requires apps.read and core.read."), 403);
 
             return Results.Text(exposition.CurrentPrometheusText, "text/plain; version=0.0.4");
-        });
+        }).WithMetadata(new CoreDiagnosticsTransport());
 
         // `refresh=true` forces a plan rebuild; otherwise a fresh cached plan is projected without
         // network work (plan-first updates, docs/features/runtime-app-update/feature.md).
