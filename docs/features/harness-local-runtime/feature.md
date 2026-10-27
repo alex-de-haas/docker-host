@@ -41,7 +41,9 @@ or another app's dependency tree. The build environment excludes application cre
 Node loader options and static-output overrides.
 
 An atomic directory lock serializes preparers. A recorded exited process permits abandoned-lock
-recovery; a live process is waited for with a bounded timeout. A complete output inventory is
+recovery; a live process is waited for with a bounded timeout. Recovery removes only the exited
+owner's unique marker and an empty directory, so interruption or concurrent recovery cannot
+strand a recovery claim or delete a replacement owner's lock. A complete output inventory is
 published with the generation only after build success and input revalidation. Missing output
 cannot be concealed by a stale success marker. Failed builds leave prior successful generations
 intact; an incomplete generation is retained under a unique name before its replacement is
@@ -62,9 +64,9 @@ into its image, while `dev` retains its editable source setup/watch recipe.
 ## Verified Acceptance
 
 On 2026-10-27, the managed child-Core suite passed on macOS arm64 with Node 24.18.0 and npm 11.16.0.
-With no app generation and an already populated host npm cache, first app start took 31.363 seconds;
-warm restart took 1.935 seconds without installation or compilation. Missing static-output recovery
-took 21.827 seconds. These include Core lifecycle/readiness and do not measure empty npm-cache
+With no app generation and an already populated host npm cache, first app start took 28.556 seconds;
+warm restart took 1.961 seconds without installation or compilation. Missing static-output recovery
+took 23.248 seconds. These include Core lifecycle/readiness and do not measure empty npm-cache
 downloads or startup of the test Core itself. Normal password/launch-code authentication, static
 assets, contained provider dependencies, fresh process identity and Finish cleanup passed.
 Windows and Linux lifecycle acceptance and paid provider turns were not run.
@@ -72,8 +74,8 @@ Windows and Linux lifecycle acceptance and paid provider turns were not run.
 ## Testing Expectations
 
 - Verify complete unchanged reuse without invoking the builder; source/Node/platform invalidation;
-  failed preparation; concurrent preparation; exited-owner recovery; and missing/truncated output
-  or removed dependency links.
+  failed preparation; concurrent preparation; exited-owner and interrupted-recovery cleanup;
+  missing/truncated output; and removed dependency links.
 - Check standalone lock derivation preserves reviewed dependency entries and excludes SDK peers,
   workspace links and the TS loader. Build production output and run Harness lint/unit tests.
 - Run `npm run test:integration -- harness-local` on the target platform. It builds Core/CLI and uses

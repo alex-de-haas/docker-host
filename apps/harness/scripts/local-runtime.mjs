@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { mkdir, readFile, writeFile, readdir, lstat, stat, copyFile, rename, rm, open, readlink } from "node:fs/promises";
+import { mkdir, readFile, writeFile, readdir, lstat, stat, copyFile, rename, rm, rmdir, readlink } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -69,43 +69,51 @@ export async function completeBundle(directory, key) {
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function lock(store) {
   const directory = path.join(store, "prepare.lock");
-  const candidate = path.join(store, ".lock-" + randomUUID());
+  const id = randomUUID();
+  const candidate = path.join(store, ".lock-" + id);
+  const ownerFile = "owner-" + id + ".json";
   await mkdir(candidate);
-  await writeFile(path.join(candidate, "owner.json"), JSON.stringify({ pid: process.pid }));
+  await writeFile(path.join(candidate, ownerFile), JSON.stringify({ pid: process.pid }));
   const deadline = Date.now() + 300_000;
+  async function removeEmptyLock() {
+    try { await rmdir(directory); }
+    catch (error) {
+      // A new owner may have atomically published its nonempty directory in the meantime.
+      if (!["ENOENT", "ENOTEMPTY", "EEXIST"].includes(error.code)) throw error;
+    }
+  }
   try {
     while (true) {
       try {
-        // Publish the owner with the lock; an interrupted acquisition never leaves an empty lock.
+        // Publish the unique owner with the lock; recovery never needs its own shared marker.
         await rename(candidate, directory);
-        return async () => { await rm(directory, { recursive: true, force: true }); };
+        return async () => {
+          await rm(path.join(directory, ownerFile), { force: true });
+          await removeEmptyLock();
+        };
       } catch (error) {
         if (!["EEXIST", "ENOTEMPTY", "EPERM"].includes(error.code)) throw error;
-        let claim;
         try {
-          // Only one contender may recover this abandoned lock. Re-read the owner after claiming:
-          // another preparer may already have replaced the old directory with its live lock.
-          claim = await open(path.join(directory, "recover"), "wx");
-          const owner = JSON.parse(await readFile(path.join(directory, "owner.json"), "utf8"));
-          if (!Number.isSafeInteger(owner.pid) || owner.pid <= 0) throw new Error("Invalid preparation lock owner.");
-          try { process.kill(owner.pid, 0); }
-          catch (probe) {
-            if (probe.code === "ESRCH") {
-              const abandoned = directory + ".abandoned-" + randomUUID();
-              await rename(directory, abandoned);
-              await claim.close(); claim = null;
-              await rm(abandoned, { recursive: true, force: true });
-              continue;
+          const entries = await readdir(directory);
+          if (!entries.length) await removeEmptyLock();
+          else {
+            if (entries.length !== 1 || !/^owner-[a-f0-9-]{36}\.json$/.test(entries[0]))
+              throw new Error("Invalid preparation lock contents.");
+            const ownerPath = path.join(directory, entries[0]);
+            const owner = JSON.parse(await readFile(ownerPath, "utf8"));
+            if (!Number.isSafeInteger(owner.pid) || owner.pid <= 0) throw new Error("Invalid preparation lock owner.");
+            try { process.kill(owner.pid, 0); }
+            catch (probe) {
+              if (probe.code === "ESRCH") {
+                // Delete only this exited owner's unique file. Concurrent recovery or a crash
+                // between unlink and rmdir cannot remove a replacement owner's nonempty lock.
+                await rm(ownerPath, { force: true });
+                await removeEmptyLock();
+              } else if (probe.code !== "EPERM") throw probe;
             }
-            if (probe.code !== "EPERM") throw probe;
           }
         } catch (probe) {
-          if (!["EEXIST", "ENOENT"].includes(probe.code)) throw probe;
-        } finally {
-          if (claim) {
-            await claim.close();
-            await rm(path.join(directory, "recover"), { force: true });
-          }
+          if (probe.code !== "ENOENT") throw probe;
         }
         if (Date.now() >= deadline) throw new Error("Timed out waiting for Harness production preparation.");
         await wait(100);

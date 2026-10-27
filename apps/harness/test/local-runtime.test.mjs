@@ -79,15 +79,16 @@ it("does not pass app identity, settings or loader overrides into build processe
   } finally { process.env = before; }
 });
 
-it("recovers an interrupted preparer only after its recorded process has exited", async () => {
+it.each([false, true])("recovers an interrupted preparer, including interrupted cleanup (%s)", async interruptedCleanup => {
   const f = await fixture();
   const { spawnSync } = await import("node:child_process");
   const exited = spawnSync(process.execPath, ["-e", ""]);
   expect(exited.status).toBe(0);
   const lock = path.join(f.options.store, "prepare.lock");
   await mkdir(lock, { recursive: true });
-  await writeFile(path.join(lock, "owner.json"), JSON.stringify({ pid: exited.pid }));
-  await Promise.all([prepare(f.options), prepare(f.options)]);
+  if (!interruptedCleanup)
+    await writeFile(path.join(lock, "owner-00000000-0000-0000-0000-000000000001.json"), JSON.stringify({ pid: exited.pid }));
+  await Promise.all(Array.from({ length: 8 }, () => prepare(f.options)));
   expect(f.builds()).toBe(1);
 });
 it("rebuilds after npm workspace or executable links disappear", async () => {
