@@ -1,3 +1,4 @@
+import { TaskService } from "./tasks/service.js";
 import { isSkillManagementRoute, manageSkills, migrateSkillSelection, validSkillIds } from "./skills.js";
 import { createHash } from "node:crypto";
 import { WorkerApiError } from "./worker/contracts.js";
@@ -67,7 +68,8 @@ export function createGatewayServer(
   facade: McpFacade | null = null,
   connections: ConnectionService | null = null,
   internal?: (request: IncomingMessage, response: ServerResponse) => Promise<boolean>,
-): Server {
+): Server & { stopTaskDispatch: () => Promise<void> } {
+  const tasks = new TaskService(manager);
   const handoffs = new HandoffStore(manager, settings, providers);
   const eventStreams = new EventStreamTransport(manager);
   const translations = connections && settings ? new TranslationService(connections, settings) : null;
@@ -79,7 +81,7 @@ export function createGatewayServer(
   const timer = setInterval(() => { void handoffs.sweep().catch(error => console.error("[handoff] cleanup failed", error)); }, 60_000);
   timer.unref();
   const server = createServer((request, response) => {
-    void recovered.then(async () => { if (await internal?.(request, response)) return; return route(request, response, manager, adapter, settings, providers, proxy, facade, connections, handoffs, translations, eventStreams); }).catch((error) => {
+    void recovered.then(async () => { if (await internal?.(request, response)) return; return route(request, response, manager, adapter, settings, providers, proxy, facade, connections, handoffs, translations, eventStreams, tasks); }).catch((error) => {
       if (response.destroyed) return;
       if (error instanceof ProviderError) { sendJson(response, error.status, { code: error.code, message: error.message }); return; }
       if (error instanceof SessionBusyError) {
@@ -107,10 +109,11 @@ export function createGatewayServer(
     });
   });
   eventStreams.attach(server);
+  const taskServer = Object.assign(server, { stopTaskDispatch: () => tasks.close() });
   const close = server.close.bind(server);
-  server.close = ((callback?: (error?: Error) => void) => { eventStreams.close(); return close(callback); }) as typeof server.close;
-  server.on("close", () => clearInterval(timer));
-  return server;
+  server.close = ((callback?: (error?: Error) => void) => { void tasks.close(); eventStreams.close(); return close(callback); }) as typeof server.close;
+  server.on("close", () => { clearInterval(timer); tasks.close(); });
+  return taskServer;
 }
 
 class PayloadTooLargeError extends Error {}
@@ -128,6 +131,7 @@ async function route(
   handoffs: HandoffStore,
   translations: TranslationService | null,
   eventStreams: EventStreamTransport,
+  tasks: TaskService,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", "http://gateway.local");
   const method = request.method ?? "GET";
@@ -264,6 +268,16 @@ async function route(
 
     sendJson(response, 404, { code: "not_found", message: "Unknown route." });
     return;
+  }
+
+  // Task provider credentials are valid only on their declared category surface. Cookie writes
+  // retain the same origin check as all other operator APIs.
+  if (url.pathname.startsWith("/api/tasks/v1") || url.pathname.startsWith("/api/task-executor/v1")) {
+    const bearer = readBearer(request);
+    if (!bearer && method !== "GET" && method !== "HEAD" && !isSameOriginRequest(request)) {
+      sendJson(response, 403, { code: "cross_site_request_blocked", message: "Use the Harness origin for cookie-authenticated changes." }); return;
+    }
+    if (await tasks.route(request, response, url, () => readJson(request))) return;
   }
 
   // Everything under /api is operator surface: admin-only by decision, no anonymous reads. Two

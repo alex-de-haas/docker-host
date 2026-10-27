@@ -82,6 +82,20 @@ export class ProviderClient {
       return { token: fresh.token };
     });
   }
+  /** Bounded task protocol transport. The selected installation is checked on every operation. */
+  async taskRequest<T>(provider: import("./tasks.js").TaskProviderRef, kind: "tasks" | "task-executor",
+    route: string, method: string, input?: unknown, userToken?: () => Promise<string>, signal?: AbortSignal): Promise<T> {
+    const allowed = kind === "tasks"
+      ? /^(?:\/capabilities|\/tasks(?:\?[a-zA-Z0-9%=&_-]*|\/[a-zA-Z0-9-]+(?:\/actions)?)?)$/
+      : /^(?:\/options|\/executions\/[a-zA-Z0-9-]+(?:\/cancel)?)$/;
+    if (!allowed.test(route) || !["GET", "POST", "PATCH", "PUT"].includes(method))
+      throw new ProviderError("task_route_invalid", "Use a version-one task operation.", 400);
+    const binding = await this.connect({ ...provider, kind }, signal, await userToken?.());
+    return read<T>(await fetch(`${binding.url}${route}`, { method, redirect: "error", cache: "no-store",
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000),
+      headers: { authorization: `Bearer ${binding.token}`, "content-type": "application/json" },
+      body: input === undefined ? undefined : JSON.stringify(input) }));
+  }
   /** Provider-side validation checks live grants on every request; never cache this result. */
   validate(token: string, kind: ProviderKind, key = "default", signal?: AbortSignal): Promise<ProviderInvocation> {
     return this.coreRequest("/provider/introspect", { token, kind, key }, signal);

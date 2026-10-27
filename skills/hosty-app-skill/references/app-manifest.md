@@ -225,7 +225,7 @@ Declare platform interfaces the app exposes for other components to discover wit
 }
 ```
 
-Core validates names and keys as kebab tokens, unique keys per interface and absolute paths. An `assistant`, `speech-to-text` or `translation` declaration also requires a positive integer `version` and a list of unique capability names; clients support version 1 and refuse unsupported versions. Core preserves these fields through installation, persistence, update and discovery, and surfaces the declarations on the apps API with each declaration resolved to a ready-to-call URL, so clients can gate features on an installed provider — e.g. Shell identifies assistants by the confirmed `assistant` role plus the `assistant` interface. Declaring an interface does not grant the app anything; it is discovery metadata. See `docs/features/ai-agent-bridge/feature.md` ("Manifest Interfaces And Registry").
+Core validates names and keys as kebab tokens, unique keys per interface and absolute paths. An `assistant`, `speech-to-text`, `translation`, `tasks` or `task-executor` declaration also requires a positive integer `version` and a list of unique capability names; clients support version 1 and refuse unsupported versions. Core preserves these fields through installation, persistence, update and discovery, and surfaces the declarations on the apps API with each declaration resolved to a ready-to-call URL, so clients can gate features on an installed provider — e.g. Shell identifies assistants by the confirmed `assistant` role plus the `assistant` interface. Declaring an interface does not grant the app anything; it is discovery metadata. See `docs/features/ai-agent-bridge/feature.md` ("Manifest Interfaces And Registry").
 
 The version-1 base contract accepts prompt text and app IDs through prepare/finalize, returning a conversation reference and provider-owned UI destination. `attachments` adds raw uploads of any type, with a guaranteed floor of ten files of 10,000,000 bytes each. Use `@hosty-sdk/app/assistant` and retain request/upload identities across retries. See `docs/features/hosty-harness-rename/feature.md` for routes, expiry and recovery. Interface metadata is separate from endpoint transport and UI navigation.
 
@@ -277,6 +277,16 @@ against Core using the server SDK; service tokens never go to callers or another
 baseline recording format is 16 kHz mono PCM16 WAV. See
 `docs/features/provider-consumption/feature.md` for routes, limits, cancellation and assistant usage.
 `providers.agent` is not an accepted permission or interface in this release.
+
+### Tasks And Task Execution
+
+A task store declares `provides: ["tasks"]` and `interfaces.tasks`; an executor independently declares
+`provides: ["task-executor"]` and `interfaces["task-executor"]`. Each entry has an endpoint, path, key,
+version 1 and capabilities. Consumers request `providers.tasks` and/or `providers.task-executor`.
+Core defines the common contract and checks current installation/user/app authority; apps own storage
+and execution. Do not infer an executor from its app ID or expose another app's private profiles.
+Use the TypeScript `/tasks/server` or .NET task clients and preserve request/execution IDs on replay.
+See `docs/features/basic-tasks/feature.md` for the HTTP protocol, explicit outcome and stop confirmation.
 
 ### MCP Interface
 

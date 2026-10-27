@@ -108,3 +108,10 @@ test('Harness local acceptance uses managed Core and the native runtime without 
   assert.ok(plan.prerequisites.some(step => step.args.some(arg => arg.includes('npm --version'))));
   assert.ok(!plan.steps.some(step => step.file === 'docker'));
 });
+
+test('tasks builds both declared Harness images and runs inside a managed child Core', () => {
+  const plan = suitePlan('tasks', { readManifest: manifest });
+  assert.deepEqual(plan.steps.slice(0, 2).map(step => step.args[0]), ['build', 'build']);
+  assert.deepEqual(plan.steps.slice(2, 4).map(step => step.args[4]), ['example/harness:1.2.3', 'example/worker:1.2.3']);
+  assert.deepEqual(plan.steps.at(-1).args, ['scripts/check-workspace-activation.py', '.', 'tasks', '--managed']);
+});

@@ -1,7 +1,7 @@
 ---
 status: In Progress
 created: 2026-09-25
-updated: 2026-10-21
+updated: 2026-10-27
 summary: Remaining host and recipe acceptance and optional remote preview.
 components: [apps/core, apps/harness, apps/shell, packages/app-sdk]
 ---
@@ -541,7 +541,7 @@ The [offline daemon acceptance](../../reviews/2026-10-15-offline-sandbox-daemon-
 | Host and architecture support | macOS arm64 plus Linux arm64 containers; CI unit/AOT coverage | Native Linux-host, Windows Docker and local amd64-worker acceptance remain unverified |
 
 Dependent umbrella plans now link the composed journey rather than listing it as wholly missing.
-Their app-creation, provider-switching, feedback, broader merge/release and redesign deliverables retain their
+Their app-creation, cross-session handoff, feedback, broader merge/release and redesign deliverables retain their
 own approval and verification requirements. These links do not close or approve those Draft plans.
 
 ## Local Coverage Ledger (D27)

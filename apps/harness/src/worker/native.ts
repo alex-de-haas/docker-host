@@ -31,7 +31,7 @@ export async function prepareNativeProfile(home: string, kind: "claude" | "codex
   const groups = new Set<number>();
   const transport: AgentProcessTransport = { spawn(provider, args, options) {
     const executable = provider === "codex" ? resolveCodexCommand() : "/opt/hosty-worker/claude";
-    const env = Object.fromEntries(Object.entries(options.env).filter(([key]) => !key.startsWith("HOSTY_") && !["HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR"].includes(key)));
+    const env = nativeEnvironment(options.env, args);
     const child = spawn(isNodeEntry(executable) ? process.execPath : executable, isNodeEntry(executable) ? [executable, ...args] : args,
       { cwd: options.cwd, env: { ...env, GIT_OPTIONAL_LOCKS: "0", GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "safe.directory", GIT_CONFIG_VALUE_0: options.cwd, HOME: root, [provider === "codex" ? "CODEX_HOME" : "CLAUDE_CONFIG_DIR"]: root }, uid, gid: uid, detached: true, stdio: "pipe" });
     if (child.pid) groups.add(child.pid);
@@ -90,4 +90,14 @@ async function stopGroup(group: number): Promise<void> {
     await new Promise(resolve => setTimeout(resolve, 100));
   }
   if (signal(0)) throw new Error("The known agent process group has not exited; retain its execution claim.");
+}
+
+/** Only session MCP bearers explicitly referenced by the native command cross the Worker boundary. */
+export function nativeEnvironment(environment: NodeJS.ProcessEnv, args: string[]): NodeJS.ProcessEnv {
+  const proxyVariables = new Set(args.flatMap(arg => {
+    const match = /^mcp_servers\.[A-Za-z0-9_-]+\.bearer_token_env_var="(HOSTY_MCP_BEARER_[A-Z0-9_]+)"$/.exec(arg);
+    return match ? [match[1]!] : [];
+  }));
+  return Object.fromEntries(Object.entries(environment).filter(([key]) =>
+    (!key.startsWith("HOSTY_") || proxyVariables.has(key)) && !["HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR"].includes(key)));
 }

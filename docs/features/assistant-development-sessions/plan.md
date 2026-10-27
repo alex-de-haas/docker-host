@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-24
-updated: 2026-10-26
+updated: 2026-10-27
 summary: Umbrella for assistant sessions that own a conversation, its source workspaces, tests and pull requests.
 components: [apps/harness, apps/core, apps/shell]
 ---
@@ -11,9 +11,9 @@ components: [apps/harness, apps/core, apps/shell]
 ## Goal
 
 Make a Hosty assistant session the durable home of a conversation and its optional source changes,
-tests and pull requests. Plan with one connected agent, review with another and continue with shared
-context. This umbrella owns cross-feature integration and acceptance; each feature below has an
-independent Draft and approval boundary. No separate user-facing development task entity is added.
+tests and pull requests. Plan, implement and review in separate conversations with selected
+context handoffs and an explicitly shared workspace where appropriate. This umbrella owns
+cross-feature integration and acceptance; each feature below has an independent Draft and approval boundary. No separate user-facing development task entity is added.
 
 ## Owner Direction
 
@@ -24,7 +24,8 @@ independent Draft and approval boundary. No separate user-facing development tas
   a recognized app early; prefer a clear confirmation when adding development access. Do not make
   the agent invent unregistered working folders or branches.
 - Keep the existing diff experience. Show changes per app and their repository, including local,
-  committed, pushed and PR state. One feature normally occupies one session and one PR per repository.
+  committed, pushed and PR state. One feature normally uses one workspace and one PR per repository;
+  several sessions may participate without combining their private histories.
 - Prefer Hosty-managed source over arbitrary operator source overrides. Each repository workspace
   records its exact base commit and branch; multiple apps in one repository share that workspace.
 - Let the operator select a session's source for testing from the app UI, without asking an agent
@@ -34,8 +35,9 @@ independent Draft and approval boundary. No separate user-facing development tas
 - Merge does not finalize a session. Observe required post-merge checks and artifacts, permit
   scoped corrective work, and only then Complete. Completed sessions are retained for inspection;
   unrelated subsequent work starts a new session, optionally with context from the old one.
-- Switching between connected internal Codex/Claude agents is a frequent, primary use case.
-  Preserve a single visible conversation and identify the author of each response.
+- Owner revision, 2026-10-27: use separate Codex/Claude sessions and explicit selected-context
+  handoffs. Retire switching providers inside one conversation; preserve each session's attribution
+  and private history. See [vision decision 61](../../vision.md) and the transfer map below.
 - External direct editing uses Core-prepared source through the local Hosty connector/MCP.
   Owner clarification on 2026-10-16 treats this as a supported development client path, without
   requiring a Harness conversation. Session-context exchange remains a separate optional workflow;
@@ -74,7 +76,7 @@ Three roles stay distinct:
   sessions between assistants, and neither the shared interface nor AHP creates universal sessions.
 - **Harness as a session backend.** Several UIs connected to Harness share its authoritative session
   journal. Another app may use Harness's session backend and supply only its own UI, such as a side
-  panel. It must not have to reimplement context assembly, provider switching or conversation storage
+  panel. It must not have to reimplement context assembly, session recovery or conversation storage
   to change presentation. This is an optional capability of the `assistant` interface. Its
   cross-app authentication and the sessions such a UI may see still need design. The current
   embedded first-party UI does not prove turnkey third-party client support.
@@ -120,14 +122,15 @@ in [app UI surfaces](../app-ui-surfaces/feature.md#shells-chrome), without unins
 Use one optional workspace for the session's development work, containing multiple repository
 worktrees. Earlier repository-workspace wording in this document refers to today's per-repository
 records; the [workspace model](../assistant-session-workspaces/feature.md) owns grouping and
-compatibility. Sessions and context remain assistant-owned, with successive agent execution inside
-the same session. Workspaces does not become a provider or a second conversation engine.
+compatibility. Sessions and context remain assistant-owned; different agents can work in separate
+sessions attached to the same workspace. Workspaces does not become a provider or a second
+conversation engine.
 
 Vision decision 52 and the owner clarification of 2026-10-25 supersede exclusive session
 ownership. The [workspace sessions feature](../workspace-sessions/feature.md) provides independent
 workspace identity, explicit user membership, concurrent private sessions and their lifecycle
-migration. Provider switching within a conversation remains independent and is not required for
-sessions to share source; its unbuilt deliverables remain here.
+migration. The 2026-10-27 decision retires in-conversation provider switching and uses explicit
+selected-context handoffs between those sessions; shared source does not expose their transcripts.
 
 The standalone [Workspaces app is retired](../workspaces-app/feature.md). Harness displays
 workspace changes and PR observations through the existing Core inspection contract. Testing and browser execution use the independent Core Sandbox feature under acceptance; plan associations
@@ -154,7 +157,7 @@ consume that same API. The [shared Docker runtime](../assistant-shared-docker-ru
 Codex/Claude execution. The [D9 Git acceptance](../../reviews/2026-10-15-sandbox-d9-git-acceptance.md)
 records one real Codex conversation publishing a test PR through Core, observing CI, fixing review,
 recovering from a Harness crash and finishing its child sandbox with source preserved. It does not
-verify provider switching within this conversation or the broader D1-D2 matrix. PR #599 subsequently
+verify cross-session handoffs or the broader D1-D2 matrix. PR #599 subsequently
 merged and published Core/CLI 0.135.1 and Demo 0.17.2; the
 [local continuation](../../reviews/2026-10-15-sandbox-d9-local-acceptance.md) verifies those releases,
 reconciles the local sandbox ledger and records Sandbox D27. The [cold-engine continuation](../../reviews/2026-10-15-sandbox-d9-cold-engine-acceptance.md)
@@ -165,9 +168,9 @@ acceptance remains in Sandbox D9. This does not close this umbrella plan's remai
 [Feedback](../app-feedback-inbox/plan.md) adds optional durable collections and explicit assistant
 organization into several sessions/workspaces. Independent changes may use parallel worktrees/PRs;
 source access, execution authority and repository commit rules still apply to every child.
-Provider switching and the broader acceptance below remain tracked requirements of this umbrella,
-but are not prerequisites for the one-provider first demonstration. Partial integration does not
-close this plan.
+Cross-session handoffs and the broader acceptance below remain tracked requirements of this
+umbrella, but are not prerequisites for the one-provider first demonstration. Partial integration
+does not close this plan.
 
 ## Unified Harness Experience (Owner Revision, 2026-10-16)
 
@@ -215,6 +218,25 @@ decision after practical acceptance. [Source recovery](../runtime-source-workflo
 while that direction is evaluated. This recovered clarification does not reopen shipped Sandbox behavior or approve implementation
 of the remaining Draft adapters.
 
+## Retired Switching Plan And Requirement Owners (2026-10-27)
+
+The owner abandons the Shared Assistant History And Provider Switching plan; its deletion is not
+completion. Existing shared-workspace sessions and planned orchestration replace its product
+scenario. The original deliverable IDs below are historical references, not new deliverables here.
+
+| Former requirement | Remaining owner and scope |
+| --- | --- |
+| D1: correlated events, attribution and recovery | [Action Summary D4](../assistant-action-summary/plan.md#deliverables) extends the existing journal/native adapters; [Agent Providers D2](../agent-provider-interface/plan.md#deliverables) defines the public projection. |
+| D2: idempotent session commands and multi-client recovery | [Durable Agent Jobs D7](../durable-agent-jobs/plan.md#deliverables), shared by ordinary chats and runner-backed continuation. |
+| D3: native execution identity/cursors | Durable Agent Jobs D7 and Agent Providers D2 retain same-provider/account resume or reconstruction; cross-provider native-context migration is abandoned. |
+| D4: bounded context and relevant intervening work | Durable Agent Jobs D7 retains same-session context/summary coverage; [Shared Artifacts D2-D4](../shared-artifacts/plan.md#deliverables) owns selected cross-session materials and handoffs. |
+| D5: switching within one conversation | Abandoned without replacement or a completion claim. |
+| D6: session/material visibility | [Harness Work Orchestration D7](../harness-work-orchestration/plan.md#deliverables) owns access policy and integration; Shared Artifacts D2-D4 enforce selected-material access. Private transcripts remain private unless separately authorized; no automatic whole-conversation sharing is introduced. |
+
+All receiving plans remain Draft with unchecked work. This documentation change approves neither
+their implementation nor a new runtime/session migration. Historical review archives retain their
+dated baseline; their former recommendations are not the current product direction.
+
 ## Common Invariants
 
 These apply to the linked plans. Draft records intent; Ready requires explicit owner approval in
@@ -239,9 +261,10 @@ Uncommitted changes in the operator's main checkout are not part of this baselin
 
 - [Provider connections](../ai-gateway-providers/feature.md) currently bind a started conversation
   to one connection/native session. `SessionManager.setConnection` rejects switching after work
-  starts. This Draft proposes replacing that restriction, not describing existing functionality.
-- Gateway persists its own events and a native harness session id. Native resume is not equivalent
-  to giving a returning agent the intervening discussion from a different provider.
+  starts. The 2026-10-27 decision retains that boundary; between-turn model/effort controls within
+  the selected connection keep their existing behavior.
+- Harness persists its own events and native execution identity. Same-provider recovery and
+  explicit cross-session handoffs have separate owners; native hidden context is not portable.
 - [App context](../assistant-app-context/feature.md), [source workflows](../runtime-source-workflows/feature.md)
   and [mixed runtimes](../mixed-development-runtimes/feature.md) already provide associations,
   source inspection/diffs, managed source/overrides and development profiles. They do not provide
@@ -268,12 +291,14 @@ Uncommitted changes in the operator's main checkout are not part of this baselin
 | [Assistant provider permissions](../assistant-provider-permissions/feature.md) | Confirmed assistant role and approved permission instead of interface-derived authority; every assistant as its own Shell tab; ships before the rename |
 | [Agent MCP directory](../agent-mcp-directory/feature.md) | Core-owned policy for which apps' MCP servers agents use, published without credentials; agents call apps directly and Core never proxies |
 | [AHP client interface](../assistant-ahp/plan.md) | Bounded client/ingress spike and replaceable projection over Hosty sessions; existing web REST/SSE remains |
-| [Shared history and switching](../assistant-shared-history/plan.md) | Hosty session journal/adapters, provider context reconciliation and session sharing |
+| [Durable jobs D7](../durable-agent-jobs/plan.md#deliverables) | Common session commands, same-provider continuation and bounded context |
+| [Shared artifacts](../shared-artifacts/plan.md) | Explicit attributed context and result handoffs between sessions |
+| [Harness orchestration D7](../harness-work-orchestration/plan.md#deliverables) | Session/material visibility and destination access across consumers |
 | [Harness development UI](../harness-development-ui/feature.md) | Full-page and panel continuity, unified source/PR/preview presentation and Workspaces UI migration |
 | [Harness retention](../harness-session-retention/feature.md) | Separate quick-chat and verified completed-development expiry, with manual removal and recovery |
 | [Session workspaces](../assistant-session-workspaces/feature.md) | Registered linked worktrees, agent instructions, diffs and cleanup; Core API authorization remains required, new filesystem isolation is deferred |
 | [PR lifecycle](../assistant-pr-lifecycle/feature.md) | Publish/review/Merge/Complete, credentials, CI, ordered dependencies and corrective PRs |
-| [Action summary](../assistant-action-summary/plan.md) | Evidence-linked aggregation/UI over Hosty invocation events |
+| [Action summary](../assistant-action-summary/plan.md) | Correlated native events and durable ingestion (D4), with evidence-linked aggregation/UI |
 | [Timeline analysis](../assistant-timeline-analysis/plan.md) | Later analysis over the event foundation; does not gate basic shared sessions or summary |
 | [Feedback inbox](../app-feedback-inbox/plan.md) | Independent ordinary-user intake and admin triage/batch delivery outside the privileged Harness process |
 | [External context exchange](../assistant-external-session-context/plan.md) | Later explicit local-agent read/prepare/report workflow |
@@ -293,7 +318,7 @@ App publication owns installable releases/feeds/catalog work; PR publication is 
 
 Owner revision, 2026-09-26: retain the existing Hosty session implementation and evolve its
 internal journal/commands for the requested functionality. Evaluate AHP early as a client-facing
-adapter through a bounded spike; adoption does not gate provider switching, workspaces or PRs.
+adapter through a bounded spike; adoption does not gate session recovery, context handoffs, workspaces or PRs.
 Keep the current web REST/SSE contract. The Swift client targets the official AHP SDK if the
 client/auth/reconnect spike succeeds. A future web migration is optional, not part of this plan.
 Rename, feedback, analytics, external context and synthetic evaluation retain separate approvals.
@@ -311,13 +336,15 @@ Rename, feedback, analytics, external context and synthetic evaluation retain se
 - What contract revisions bind session, workspace, runtime and publication observations across
   service restarts? Detailed storage/security choices belong to their owning plans.
 - Which independently approved features constitute the first complete integrated release? Later
-  evaluation and analysis features are not implicit prerequisites for provider switching.
+  evaluation and analysis features are not implicit prerequisites for the development journey.
 
 ## Cross-Feature Acceptance
 
-Plan with Codex, review/amend with Claude and return to Codex in one durable session. Authorize a
-source edit, obtain the registered workspace, inspect both complete and local diffs, run a verified
-test environment and publish the resulting PRs. Apply review fixes, observe merge/post-merge results
+Plan with Codex, review/amend with Claude in a separate session and continue in the original or
+an explicitly created implementation session. Use an authorized shared workspace and attributed
+summary/material handoffs; do not share private transcripts or migrate native provider state.
+Authorize a source edit, obtain the registered workspace, inspect both complete and local diffs,
+run a verified test environment and publish the resulting PRs. Apply review fixes, observe merge/post-merge results
 and Complete while preserving any workspace still consumed by a runtime. Reconnect from another
 authorized client after a service restart and verify history, attribution and current permissions.
 

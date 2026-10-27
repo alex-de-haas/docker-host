@@ -160,7 +160,7 @@ const shutdown = (): void => {
   clearInterval(sweepTimer);
   clearInterval(abandonTimer);
   server.close();
-  void stopToolActivity().then(() => manager.shutdown()).then(() => connections?.shutdown()).finally(() => process.exit(0));
+  void stopToolActivity().then(() => server.stopTaskDispatch()).then(() => manager.shutdown()).then(() => connections?.shutdown()).finally(() => process.exit(0));
 };
 process.on("SIGTERM", shutdown);
 process.on("SIGINT", shutdown);

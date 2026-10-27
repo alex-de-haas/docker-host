@@ -101,6 +101,7 @@ interface LiveSession {
 }
 
 export class SessionManager {
+  taskAction?: (sessionId: string, action: string, input: Record<string, unknown>, credential?: string) => Promise<unknown>;
   readonly mcpPolicy: McpToolPolicy;
   readonly developmentMcp = new DevelopmentMcp(async (id, action, input, dispatchGuard) => {
     const session = this.live.get(id);
@@ -337,6 +338,13 @@ export class SessionManager {
   }
 
   async workspaceAction(id: string, action: DevelopmentAction, input: Record<string, unknown>, credential?: string, userId?: string, dispatchGuard?: () => Promise<void>): Promise<unknown> {
+    if (action.startsWith("task-")) {
+      const session = await this.requireLive(id);
+      if (userId && session.record.createdBy !== userId) throw new AppContextError(403, "task_forbidden", "This session belongs to another user.");
+      if (!this.taskAction) throw new AppContextError(503, "tasks_unavailable", "Tasks are unavailable.");
+      await dispatchGuard?.();
+      return this.taskAction(id, action, input, credential ?? session.workspaceCredential ?? session.credential ?? undefined);
+    }
     if (contextActions.includes(action as ContextAction)) return this.contextAction(id, action as ContextAction, input, credential, userId, dispatchGuard);
     if (action.startsWith("environment-")) return this.environmentAction(id, action as CoreEnvironmentAction, input, credential, userId);
     if (action.startsWith("sandbox-")) return this.sandboxWorkspaceAction(id, action as SandboxAction, input, credential, userId);
@@ -766,6 +774,7 @@ export class SessionManager {
     clientRequestId?: unknown;
     connectionId?: unknown;
     reservedHandoffId?: string;
+    taskExecutionId?: string;
   }): Promise<SessionRecord> {
     return this.serialize("create", async () => {
       if (input.skillIds !== undefined && !validSkillIds(input.skillIds)) throw new AppContextError(400, "skills_invalid", "Choose stable skill IDs from the Core catalog.");
@@ -773,7 +782,7 @@ export class SessionManager {
       const requestId = input.clientRequestId;
       if (requestId !== undefined && (typeof requestId !== "string" || !/^[a-zA-Z0-9-]{1,128}$/.test(requestId)))
         throw new AppContextError(400, "request_id_invalid", "Invalid creation request id.");
-      const fingerprint = JSON.stringify({ ...(input.profileId !== undefined ? { profileId: input.profileId, profileRevision: input.profileRevision } : {}), ...(input.skillIds !== undefined ? { skillIds: input.skillIds } : {}), title: normalizeTitle(input.title), context: input.context ?? null, appIds, ...(input.connectionId !== undefined ? { connectionId: input.connectionId } : {}) });
+      const fingerprint = JSON.stringify({ ...(input.taskExecutionId ? { taskExecutionId: input.taskExecutionId } : {}), ...(input.profileId !== undefined ? { profileId: input.profileId, profileRevision: input.profileRevision } : {}), ...(input.skillIds !== undefined ? { skillIds: input.skillIds } : {}), title: normalizeTitle(input.title), context: input.context ?? null, appIds, ...(input.connectionId !== undefined ? { connectionId: input.connectionId } : {}) });
       if (typeof requestId === "string") {
         const existing = (await this.store.listRecords()).find(r => r.createdBy === input.createdBy && r.creationRequest?.id === requestId);
         if (existing) {
@@ -794,6 +803,7 @@ export class SessionManager {
         ...(this.profiles ? { agentProfile: selectedProfile, profileLocked: false } : {}),
         ...(selectedProfile ? { executionSelection: { model: selectedProfile.model, reasoningEffort: selectedProfile.reasoningEffort } } : {}),
         skillIds: selectedProfile?.skillIds ?? input.skillIds as string[] | undefined ?? (this.profiles ? [] : (await this.settings?.read())?.skillIds),
+        ...(input.taskExecutionId ? { taskExecutionId: input.taskExecutionId } : {}),
         retentionVersion: 1,
         executionMode: this.executionMode ?? (await this.settings?.read())?.executionMode ?? "native",
         id: input.reservedHandoffId ?? randomUUID(),
@@ -1415,6 +1425,12 @@ export class SessionManager {
       throw new WorkerError("provider_in_use", "Stop this provider's active work before changing its credentials.");
   }
 
+  hasLiveTaskRun(id: string): boolean { return !!this.live.get(id)?.run; }
+  async workspaceInventory(credential: string): Promise<unknown> {
+    if (!this.development) throw new AppContextError(503, "workspaces_unavailable", "Workspaces require Core.");
+    return this.development.inspection(credential);
+  }
+
   async runtimeStatus(): Promise<unknown> {
     const health = await this.worker?.capabilities().then(value => ({ available: true, ...value }))
       .catch(() => ({ available: false, reason: "Worker service is unavailable. Check its normal service status in Core." }));
@@ -1426,7 +1442,7 @@ export class SessionManager {
   }
 
   private async finishExecution(session: LiveSession, retainActivationReview = false, preserveWorkerRun = false, outcome = session.record.status): Promise<void> {
-    if (!this.worker && !session.record.developmentLease) return;
+    if (!this.worker && !session.record.developmentLease && !session.record.taskExecutionId) return;
     if (!session.run && !this.worker && session.record.developmentLease && session.record.developmentLeaseState !== "stopped") {
       const credential = session.workspaceCredential ?? session.credential;
       if (!credential || !this.development) throw new WorkerError("exit_unconfirmed", "The previous native execution cannot be verified. Source leases remain held.", 503);
@@ -1441,9 +1457,12 @@ export class SessionManager {
       session.record.developmentLeaseState = "stopped";
       await this.store.saveRecord(session.record);
     }
+    if (session.record.taskRun?.started && !session.record.taskRun.exitConfirmed && !session.run && !this.worker)
+      throw new WorkerError("exit_unconfirmed", "The previous task execution has no confirmed native exit.", 503);
     if (session.run) {
       if (!session.run.stopAndWait) throw new WorkerError("exit_unconfirmed", "Execution exit cannot be confirmed. Source leases remain held.", 503);
       await session.run.stopAndWait();
+      if (session.record.taskExecutionId) session.record.taskRun = { started: true, exitConfirmed: true };
       session.record.developmentLeaseState = "stopped";
       await this.store.saveRecord(session.record);
       if (!preserveWorkerRun) session.run = null;
@@ -1510,6 +1529,8 @@ export class SessionManager {
           return result;
         }
       }
+      if (session.record.taskExecutionId && clientRequestId !== session.record.taskExecutionId)
+        throw new AppContextError(409, "task_managed_session", "Use the task lifecycle to start a new attempt. This conversation belongs to one immutable task execution.");
       if (session.record.associationRequests?.some(request => request.state === "pending"))
         throw new AppContextError(409, "workspace_association_pending", "Retry the pending workspace attachment or detachment before sending another message.");
       if (session.record.retentionCleanup) throw new AppContextError(409, "cleanup_pending", "Workspace cleanup has started. Recover deletion before starting a new conversation.");
@@ -1750,7 +1771,7 @@ export class SessionManager {
   private async buildMcpServers(session: LiveSession, knownCandidates?: McpProvider[]): Promise<Record<string, unknown> | undefined> {
     const raw = await this.buildAppMcpServers(session, knownCandidates);
     const appServers = raw && Object.fromEntries(Object.entries(raw).map(([key, server]) => [key, { ...(server as object), hostyPolicy: true }]));
-    const servers = !this.development?.available || !this.proxyBaseUrl || !(session.workspaceCredential ?? session.credential)
+    const servers = !this.proxyBaseUrl || !session.record.taskExecutionId && (!this.development?.available || !(session.workspaceCredential ?? session.credential))
       ? appServers : { ...appServers, ...this.developmentMcp.config(session.record.id, this.proxyBaseUrl, session.record.workerRun && this.worker?.callbackKey(session.record.workerRun.id, "workspaces")) };
     return servers;
   }
@@ -2107,7 +2128,7 @@ export class SessionManager {
 
   private async cancelSessionLocked(id: string): Promise<void> {
     const session = await this.requireLive(id);
-    if (this.worker || session.record.developmentLease) await this.finishExecution(session);
+    if (this.worker || session.record.developmentLease || session.record.taskExecutionId) await this.finishExecution(session);
     session.runEpoch = undefined;
     this.setActivity(session, null);
     if (session.run) {
@@ -2472,7 +2493,7 @@ export class SessionManager {
         if (!persisted) await this.append(id, { ...event });
         // The run is dead: drop it so the next message starts a fresh harness (resuming the
         // captured harness session when possible) instead of feeding a terminated input stream.
-        if (this.worker || session.record.developmentLease) await this.finishExecution(session, false, event.workerRunId !== undefined, "failed");
+        if (this.worker || session.record.developmentLease || session.record.taskExecutionId) await this.finishExecution(session, false, event.workerRunId !== undefined, "failed");
         const failedRun = session.run;
         if (event.workerRunId === undefined) session.run = null;
         session.pendingApprovals.clear();
@@ -2625,9 +2646,13 @@ export class SessionManager {
       return;
     }
 
-    if (this.worker && !["running", "awaiting_approval", "awaiting_question"].includes(status)) {
+    if ((this.worker || session.record.taskExecutionId) && !["running", "awaiting_approval", "awaiting_question"].includes(status)) {
       try { await this.finishExecution(session, status === "idle" && session.record.workspaceActivation?.state === "queued", preserveWorkerRun, status); }
       catch (error) {
+        if (session.record.taskExecutionId) {
+          session.record.taskRun = { started: true, exitConfirmed: false, error: error instanceof Error ? error.message : "Native exit is unconfirmed." };
+          await this.store.saveRecord(session.record);
+        }
         await this.append(id, { type: "notice", message: "Execution exit or worktree lease release is unconfirmed. Keep source leases and retry Stop after checking the worker service." });
         throw error;
       }
@@ -2648,6 +2673,7 @@ export class SessionManager {
       }
     }
     if (status === "idle" && session.record.developmentLease && !this.worker) await this.finishExecution(session);
+    if (status === "running" && session.record.taskExecutionId) session.record.taskRun = { started: true, exitConfirmed: false };
     session.record.status = status;
     if (["running", "awaiting_approval", "awaiting_question"].includes(status)) this.scheduleWorkspaceActivity(session);
     if (!["running", "awaiting_approval", "awaiting_question"].includes(status)) this.setActivity(session, null);

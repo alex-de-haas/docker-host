@@ -1,5 +1,5 @@
-/** Provider categories supported by Core. Agent execution is intentionally not part of this contract. */
-export type ProviderKind = "speech-to-text" | "assistant" | "translation";
+/** Provider categories supported by Core. Task execution does not expose model/profile configuration. */
+export type ProviderKind = "speech-to-text" | "assistant" | "translation" | "tasks" | "task-executor";
 export type ProviderDescriptor = {
   appId: string; displayName: string; kind: ProviderKind; key: string;
   version: number | null; capabilities: string[]; url: string | null; available: boolean;

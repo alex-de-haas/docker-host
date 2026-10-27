@@ -177,6 +177,16 @@ function handle(msg) {
     }
     if (process.env.HOSTY_TEST_EXTERNAL_SANDBOX && policy.networkAccess !== "enabled") fail("missing external network policy");
     currentTurnText = String(msg.params?.input?.[0]?.text ?? "");
+    if (currentTurnText.includes("TASK_ACCEPTANCE:")) {
+      send({ id: msg.id, result: {} });
+      send({ method: "turn/started", params: { threadId: activeThreadId, turn: { id: "task-turn" } } });
+      if (currentTurnText.includes("TASK_ACCEPTANCE:WAIT")) return;
+      void taskOutcome(currentTurnText).then(() => {
+        send({ method: "item/completed", params: { threadId: activeThreadId, item: { type: "agentMessage", id: "task-result", text: "Scripted task fixture completed." } } });
+        send({ method: "turn/completed", params: { threadId: activeThreadId, turn: { id: "task-turn", status: "completed" } } });
+      }).catch(error => fail(error.message));
+      return;
+    }
     if (currentTurnText.startsWith("[Hosty operator instructions]")) currentTurnText = currentTurnText.slice(currentTurnText.lastIndexOf("\n\n") + 2);
     send({ jsonrpc: "2.0", id: msg.id, result: {} });
 
@@ -349,4 +359,24 @@ function handle(msg) {
     send({ jsonrpc: "2.0", id: msg.id, result: {} });
   }
 }
+}
+
+// Exercise the real session MCP transport and approval gate; never write task/session state.
+async function taskOutcome(text) {
+  if (text.includes("TASK_ACCEPTANCE:NO_OUTCOME")) return;
+  const config = Object.fromEntries(argv.filter(a => a.startsWith("mcp_servers.")).map(a => {
+    const split = a.indexOf("="); return [a.slice(0, split), JSON.parse(a.slice(split + 1))];
+  }));
+  const key = Object.keys(config).find(k => k.endsWith(".url") && k.includes("hosty-workspaces"));
+  if (!key) throw new Error("Task fixture did not receive the session MCP server");
+  const token = process.env[config[key.replace(/url$/, "bearer_token_env_var")]];
+  const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+  const { StreamableHTTPClientTransport } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
+  const client = new Client({ name: "task-acceptance-fixture", version: "1" });
+  await client.connect(new StreamableHTTPClientTransport(new URL(config[key]), { requestInit: { headers: { Authorization: `Bearer ${token}` } } }));
+  const tools = await client.listTools();
+  if (!tools.tools.some(t => t.name === "task_result")) throw new Error("Task result tool missing");
+  const result = await client.callTool({ name: "task_result", arguments: { requestId: crypto.randomUUID(), result: { markdown: "Verified explicit task outcome from the scripted native adapter.", resources: [] } } });
+  if (result.isError) throw new Error("Task result tool refused: " + JSON.stringify(result.content));
+  await client.close();
 }

@@ -9,6 +9,38 @@ namespace Haas.Hosty.Core.Tests.Http;
 
 public sealed class ProviderHttpTests
 {
+    [Theory]
+    [InlineData("tasks", CoreAppPermissions.TaskProviders)]
+    [InlineData("task-executor", CoreAppPermissions.TaskExecutors)]
+    public async Task TaskCategoriesAreIndependentConfirmedAndInstallationBound(string kind, string permission)
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        var apps = host.Services.GetRequiredService<AppRegistryStore>();
+        var access = host.Services.GetRequiredService<ProviderAccessService>();
+        var caller = Record("unrelated.producer") with { GrantedCorePermissions = [permission] };
+        await apps.UpsertAppAsync(caller);
+        Assert.Empty((await access.ListAsync(caller, kind, default)).Providers);
+        var target = Speech("independent.supplier") with {
+            ConfirmedRoles = [kind],
+            Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> {
+                [kind] = [new("plain", "api", "/v1", 1, ["markdown"])] }
+        };
+        await apps.UpsertAppAsync(target with { ConfirmedRoles = [] });
+        Assert.Empty((await access.ListAsync(caller, kind, default)).Providers);
+        await apps.UpsertAppAsync(target);
+        var descriptor = Assert.Single((await access.ListAsync(caller, kind, default)).Providers);
+        Assert.Equal(target.InstalledAt.ToString("O"), descriptor.InstallationId);
+        var issued = await access.IssueAsync(caller, kind, new(target.Id, "plain"), null, default);
+        var invocation = await access.ValidateAsync(target, new(issued.Token, kind, "plain"), default);
+        Assert.Equal(caller.Id, invocation.CallerAppId);
+        Assert.Null(invocation.UserId);
+        await Assert.ThrowsAsync<AppIdentityException>(() => access.ValidateAsync(target, new(issued.Token, kind == "tasks" ? "task-executor" : "tasks", "plain"), default));
+        await Assert.ThrowsAsync<AppIdentityException>(() => access.ValidateAsync(target with { InstalledAt = target.InstalledAt.AddSeconds(1) }, new(issued.Token, kind, "plain"), default));
+        await apps.UpsertAppAsync(caller with { GrantedCorePermissions = [], PermissionRevision = "revoked" });
+        await Assert.ThrowsAsync<AppIdentityException>(() => access.ValidateAsync(target, new(issued.Token, kind, "plain"), default));
+        Assert.Contains(kind, PlatformCapabilities.RequestedRoles([kind]));
+    }
+
     [Fact]
     public async Task TranslationSupportsTwoStaticKeysWithScopedAuthorityAndLiveRevocation()
     {

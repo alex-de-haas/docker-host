@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-25
-updated: 2026-09-29
+updated: 2026-10-27
 summary: A native Swift client for Hosty Harness sessions, approvals and changes, aimed at phone use.
 components: [apps/harness]
 ---
@@ -23,7 +23,8 @@ retire it or add generic app side panels to it. The web Shell remains available 
 ## Dependencies And Ownership
 
 [Shared assistant development sessions](../assistant-development-sessions/plan.md) is the umbrella.
-Its children own [AHP](../assistant-ahp/plan.md), [provider switching](../assistant-shared-history/plan.md),
+Its related features own [AHP](../assistant-ahp/plan.md), [session recovery](../durable-agent-jobs/plan.md#deliverables),
+[explicit context handoffs](../shared-artifacts/plan.md),
 [workspaces](../assistant-session-workspaces/feature.md), [PR lifecycle](../assistant-pr-lifecycle/feature.md),
 [action summary](../assistant-action-summary/plan.md) and later
 [timeline analysis](../assistant-timeline-analysis/plan.md). This client consumes their advertised
@@ -45,9 +46,10 @@ app manifest.
 2. **Open a session.** List existing sessions with titles, activity and pending input. Create a new
    session or open the same one used in the web client. Load history and current state from the host.
 3. **Talk to the agent.** Send messages and supported attachments, stream responses/tool activity,
-   and choose an available internal agent for subsequent work. Codex/Claude switching consumes the
-   server's shared-history contract; no model-provider credentials or agent process are needed on
-   the phone. The client can interrupt a turn using the server's supported operation.
+   and choose an available profile/provider before a new session starts. Other providers use
+   separate sessions, with explicit context handoffs when that server capability is available.
+   No model-provider credentials or agent process are needed on the phone. The client can interrupt
+   a turn using the server's supported operation.
 4. **Respond to requests.** Present permission requests and agent questions with the actual target,
    proposed action and relevant input; submit a decision tied to the pending server request.
    Expired, already-resolved and revoked requests cannot be approved from a stale screen.
@@ -91,7 +93,7 @@ Owner revision, 2026-09-26: target the official Swift AHP SDK through Hosty's ex
 adapter, subject to the iOS/auth/ingress/reconnect spike. Hosty's existing session model remains
 authoritative, and the web client keeps REST/SSE. A native REST/SSE implementation is not selected;
 if the AHP spike fails, reconsider native delivery with the owner before choosing another route.
-Internal-agent switching and optional workspace/PR views use advertised Hosty capabilities.
+Pre-start agent selection, optional context handoffs and workspace/PR views use advertised Hosty capabilities.
 
 Hosty-specific actions such as source selection and PR completion consume the server's advertised
 extension/API contract. The spike must choose their native mapping and authorization route; do not
@@ -99,7 +101,7 @@ pretend they are universal AHP methods or bypass policy with direct GitHub/SSH c
 
 Use stable session/turn/request ids and server ordering. After disconnect, reconcile snapshots and
 replay; an uncertain send/approval must be resolved by operation identity/state, not blindly resent.
-Define unsent-draft versus accepted-message UI. Handle agent switching on another client and remote
+Define unsent-draft versus accepted-message UI. Handle pre-start selection changes on another client and remote
 approval resolution without duplicate submissions. Authorization remains server-enforced regardless
 of a button's visibility. Store credentials per environment in Keychain and handle revocation.
 
@@ -135,7 +137,7 @@ release boundary before Ready.
 - [ ] D4. Implement session notification routing, web fallback and dual-client banner deduplication;
       define the notification release boundary and integrate device registration if push is selected.
 - [ ] D5. Implement native session list/history/composer, streamed activity, supported attachments and
-      internal-agent selection with preserved drafts and server-authoritative state.
+      pre-start profile/provider selection with preserved drafts and server-authoritative state.
 - [ ] D6. Implement permission/question presentation and replies, cancellation, stale-request handling
       and consistent state when another client resolves the same request.
 - [ ] D7. Implement repository/file/diff views and advertised session actions/status; reuse server
@@ -161,8 +163,10 @@ first release, native-link ownership and coexistence with Swift Shell notificati
 
 - From a phone, connect to a remote Hosty, open an existing session, read history, send a request,
   inspect changed files/diffs, answer an agent question and approve/deny a concrete pending action.
-- Plan with Codex, review with Claude and return to Codex in one server session; observe the same
-  conversation from the web client and verify the phone shows current provider/activity.
+- Open separate Codex and Claude sessions in an authorized shared workspace; verify each keeps its
+  own history/provider and matches the web view. When explicit context handoffs are advertised,
+  consume selected materials without exposing another private transcript or changing providers
+  inside a started conversation; report the optional capability as unavailable otherwise.
 - Start work, background/disconnect the client, then return: server execution continues, history
   catches up, and uncertain sends/decisions do not execute twice. Test an approval resolved on web.
 - Exercise unavailable host, incompatible protocol, missing optional capability, expired/revoked

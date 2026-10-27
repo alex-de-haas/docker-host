@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-26
-updated: 2026-10-26
+updated: 2026-10-27
 summary: Durable draft app observations, administrator triage and reviewed batch delivery with optional assistant grouping into development sessions.
 components: [apps/shell, apps/harness, packages/app-sdk]
 ---
@@ -135,8 +135,10 @@ conversation. This is feedback intake and triage, not a general project-manageme
 
 The session receives the reviewed batch through its normal history/context model and can expose it
 to AHP clients with authorized attachment access. AHP is not the user feedback store or an automatic
-authorization route from a regular app user to an agent. This feature requires independent approval and owns capture/intake and batch delivery; shared history
-feature owns receiving the normal session input.
+authorization route from a regular app user to an agent. This feature requires independent
+approval and owns capture/intake and batch delivery;
+[Durable Agent Jobs D7](../durable-agent-jobs/plan.md#deliverables) owns the common idempotent session
+input path and [Shared Artifacts](../shared-artifacts/plan.md) owns selected context handoffs.
 
 ## Capture Feasibility And Reporter Updates
 
@@ -188,7 +190,8 @@ release includes no element picker or screenshots, and this feedback plan remain
 Reuse [Core notifications](../notifications/feature.md) for safe reporter receipt/outcome messages;
 any reporter detail view still needs an authorized record endpoint. Do not expose private session
 content through a status link. Administrator triage and batch dispatch require access to the
-destination session under the shared-history visibility policy.
+destination session under [Harness Orchestration D7](../harness-work-orchestration/plan.md#deliverables)
+visibility rules. Workspace membership alone never grants private transcript or attachment access.
 
 The feature name `app-feedback-inbox` is distinct from `shell-operation-feedback`, which describes
 lifecycle operation UI. This inbox collects evidence and hands it to development sessions; it is
@@ -199,7 +202,7 @@ plan's scope; this feature hands reviewed evidence to assistant sessions only.
 
 - [ ] D1. Implement narrow authenticated intake and durable evidence in the selected Core/separate-app location.
 - [ ] D2. Validate and implement in-app DOM element/region selection and supported image capture paths, with element/comment and text/context fallbacks and evidence preview.
-- [ ] D3. Implement administrator triage, reviewed batch and direct-send paths with idempotent session delivery.
+- [ ] D3. Implement administrator triage, reviewed batch and direct-send paths with idempotent session delivery and current destination-session/material access checks.
 - [ ] D4. Implement per-item outcomes, authorized reporter notifications and evidence retention/access.
 - [ ] D5. Implement durable multi-comment drafts and attachment recovery across navigation/reload, explicit save state, failed-save buffering, edit/remove and idempotent grouped submission without agent execution.
 - [ ] D6. Implement explicitly authorized assistant grouping/delegation of selected feedback using the shared execution owner, with item/session/workspace/PR links, bounded independent parallel work and safe retry/cancellation.
