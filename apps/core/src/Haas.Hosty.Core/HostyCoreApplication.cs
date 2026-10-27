@@ -153,6 +153,7 @@ internal static class HostyCoreApplication
         // guard reads it, so it must be registered for that guard to exist at all.
         builder.Services.AddSingleton<PublicOriginOwnership>();
         builder.Services.AddSingleton<RuntimePortAllocator>();
+        builder.Services.AddSingleton<DependencyStartAuthorization>();
         builder.Services.AddSingleton<CoreLifecycleService>();
         builder.Services.AddSingleton<LocalCommandProcessRegistry>();
         builder.Services.AddSingleton<CoreDevelopmentService>();

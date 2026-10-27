@@ -66,7 +66,8 @@ internal sealed partial class CoreLifecycleService(
     PrivateSourceService? privateSources = null,
     CorePublicOriginResolver? coreOrigins = null,
     AuditStore? audit = null,
-    AppSkillPackages? appSkills = null)
+    AppSkillPackages? appSkills = null,
+    DependencyStartAuthorization? dependencyAuthorization = null)
 {
     private async Task ValidatePrivateSelectionAsync(RuntimeAppManifestSelection selection, CancellationToken ct)
     {
@@ -112,8 +113,12 @@ internal sealed partial class CoreLifecycleService(
 
     internal async Task<T> WithAppLockAsync<T>(string appId, Func<Task<T>> operation, CancellationToken cancellationToken, bool allowDevelopment = false, bool developmentOperation = false, bool startsDevelopmentRuntime = false, bool resumeWaitingDevelopment = false)
     {
+        var capturedAuthority = dependencyAuthority.Value ?? (dependencyAuthorization is null ? null
+            : await dependencyAuthorization.CaptureAsync(cancellationToken));
         var mutex = apps.OperationLock(appId);
         await mutex.WaitAsync(cancellationToken);
+        var previousAuthority = dependencyAuthority.Value;
+        dependencyAuthority.Value = capturedAuthority;
         try
         {
             if (!developmentOperation && await apps.GetAppAsync(appId, cancellationToken) is { } installed &&
@@ -134,6 +139,7 @@ internal sealed partial class CoreLifecycleService(
         }
         finally
         {
+            dependencyAuthority.Value = previousAuthority;
             mutex.Release();
         }
     }
@@ -972,7 +978,12 @@ internal sealed partial class CoreLifecycleService(
         => OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
 
     public Task<AppLifecycleResponse> StartAsync(string appId, CancellationToken cancellationToken = default)
-        => WithAppLockAsync(appId, () => StartCoreAsync(appId, afterOwnStop: false, cancellationToken), cancellationToken, allowDevelopment: true, startsDevelopmentRuntime: true);
+        => WithAppLockAsync(appId, async () =>
+        {
+            await RequireAppAsync(appId, cancellationToken);
+            await apps.UpdateAppAsync(appId, app => app with { DependencyStart = null, DependencyBorrowedStart = false }, cancellationToken);
+            return await StartCoreAsync(appId, afterOwnStop: false, cancellationToken);
+        }, cancellationToken, allowDevelopment: true, startsDevelopmentRuntime: true);
 
     // `afterOwnStop` marks the start half of a stop->start pair this same operation performed (update
     // apply, runtime switch, dev-mode toggle, operator backup) — as opposed to a cold start, where the app
@@ -1095,6 +1106,8 @@ internal sealed partial class CoreLifecycleService(
             var updated = await apps.UpdateAppAsync(appId, current => current with
             {
                 RuntimeState = result.RuntimeState,
+                DependencyStart = null,
+                DependencyBorrowedStart = false,
                 AppliedConfigurationHash = configurationApplied ? appliedConfigurationHash : current.AppliedConfigurationHash,
                 ActiveMountPaths = configurationApplied ? context.Mounts.Where(m => !m.ManagedCollection).Select(m => m.HostPath).Distinct().ToArray() : current.ActiveMountPaths,
                 ActiveSourcePaths = configurationApplied ? HostPathAuthority.CodePaths(context.App with { ActiveSourcePaths = null }).Select(MountPathPolicy.ResolveRealPath).Distinct().ToArray() : current.ActiveSourcePaths,
@@ -1141,7 +1154,17 @@ internal sealed partial class CoreLifecycleService(
     }
 
     public Task<AppLifecycleResponse> StopAsync(string appId, CancellationToken cancellationToken = default)
-        => WithAppLockAsync(appId, () => StopCoreAsync(appId, cancellationToken), cancellationToken, allowDevelopment: true);
+        => WithAppLockAsync(appId, async () =>
+        {
+            await RequireAppAsync(appId, cancellationToken);
+            await apps.UpdateAppAsync(appId, app => app with
+            {
+                DependencyStart = null,
+                DependencyBorrowedStart = false,
+                DependencyStopVersion = Guid.NewGuid().ToString("N"),
+            }, cancellationToken);
+            return await StopCoreAsync(appId, cancellationToken);
+        }, cancellationToken, allowDevelopment: true);
 
     private async Task<AppLifecycleResponse> StopCoreAsync(string appId, CancellationToken cancellationToken)
     {
@@ -1448,7 +1471,12 @@ internal sealed partial class CoreLifecycleService(
     }
 
     public Task<AppLifecycleResponse> RestartAsync(string appId, CancellationToken cancellationToken = default)
-        => WithAppLockAsync(appId, () => RestartCoreAsync(appId, cancellationToken), cancellationToken, allowDevelopment: true, startsDevelopmentRuntime: true);
+        => WithAppLockAsync(appId, async () =>
+        {
+            await RequireAppAsync(appId, cancellationToken);
+            await apps.UpdateAppAsync(appId, app => app with { DependencyStart = null, DependencyBorrowedStart = false }, cancellationToken);
+            return await RestartCoreAsync(appId, cancellationToken);
+        }, cancellationToken, allowDevelopment: true, startsDevelopmentRuntime: true);
 
     private async Task<AppLifecycleResponse> RestartCoreAsync(string appId, CancellationToken cancellationToken, bool preserveOperationStatus = false)
     {
@@ -1540,6 +1568,8 @@ internal sealed partial class CoreLifecycleService(
             var updated = await apps.UpdateAppAsync(appId, current => current with
             {
                 RuntimeState = start.RuntimeState,
+                DependencyStart = null,
+                DependencyBorrowedStart = false,
                 AppliedConfigurationHash = configurationApplied ? appliedConfigurationHash : current.AppliedConfigurationHash,
                 ActiveMountPaths = configurationApplied ? context.Mounts.Where(m => !m.ManagedCollection).Select(m => m.HostPath).Distinct().ToArray() : current.ActiveMountPaths,
                 ActiveSourcePaths = configurationApplied ? HostPathAuthority.CodePaths(context.App with { ActiveSourcePaths = null }).Select(MountPathPolicy.ResolveRealPath).Distinct().ToArray() : current.ActiveSourcePaths,
@@ -2063,6 +2093,8 @@ internal sealed partial class CoreLifecycleService(
 
         auditOperation ??= new LifecycleAuditOperation(appId, "update", null, "core");
         await auditOperation.AcceptAsync(audit, clock);
+        dependencyAuthority.Value ??= dependencyAuthorization is null ? new("operator")
+            : await dependencyAuthorization.CaptureAsync(cancellationToken);
         var run = ExecuteBackgroundUpdateAsync(appId, request, hostLifetime?.ApplicationStopping ?? CancellationToken.None, requireRoutine, auditOperation);
         runningBackgroundUpdates[appId] = run;
         _ = RemoveWhenCompleteAsync(appId, run);
@@ -3641,13 +3673,17 @@ internal sealed partial class CoreLifecycleService(
     public async Task<IReadOnlyList<AppBackgroundLifecycleResult>> StartAutostartAppsAsync(CancellationToken cancellationToken = default)
     {
         var results = new List<AppBackgroundLifecycleResult>();
+        bootDependencyAttempts.Value = new();
         try
         {
             var records = await apps.ListAppRecordsAsync(cancellationToken);
             var admitted = new HashSet<string>(StringComparer.Ordinal);
             // Preserve capability barriers. A blocked consumer does not hold its tier open, so a
             // provider in a later tier can start; only already-admitted tiers may resume before boot ends.
-            var tiers = records.Where(app => app.Kind == "runtime" && (app.Autostart ?? true) &&
+            var roots = records.Where(app => app.Kind == "runtime" && (app.Autostart ?? true)).ToArray();
+            var requested = roots.Select(app => app.Id).ToHashSet(StringComparer.Ordinal);
+            foreach (var root in roots) requested.UnionWith(RequiredProviders(root, records, includeRunning: true));
+            var tiers = records.Where(app => app.Kind == "runtime" && requested.Contains(app.Id) &&
                     localProcesses?.HasApp(app.Id) != true)
                 .GroupBy(app => PlatformCapabilities.StartPriority(app.Provides))
                 .OrderByDescending(tier => tier.Key);
@@ -3655,13 +3691,14 @@ internal sealed partial class CoreLifecycleService(
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 admitted.UnionWith(tier.Select(app => app.Id));
-                results.AddRange(await ScheduleDependencyStartsAsync(tier, "autostart", false, cancellationToken));
+                results.AddRange(await ScheduleDependencyStartsAsync(tier, "autostart", false, cancellationToken, roots));
                 await ResumeWaitingAppsAsync(cancellationToken, admitted);
             }
             return results;
         }
         finally
         {
+            bootDependencyAttempts.Value = null;
             dependencyStartupReady.TrySetResult();
         }
     }
@@ -3670,8 +3707,11 @@ internal sealed partial class CoreLifecycleService(
     {
         var results = new List<AppBackgroundLifecycleResult>();
         var records = await apps.ListAppRecordsAsync(cancellationToken);
+        var required = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var root in records.Where(app => app.Kind == "runtime" && (app.Autostart ?? true)))
+            required.UnionWith(RequiredProviders(root, records, includeRunning: true));
         foreach (var app in records.Where(app =>
-            string.Equals(app.Kind, "runtime", StringComparison.Ordinal) &&
+            string.Equals(app.Kind, "runtime", StringComparison.Ordinal) && !required.Contains(app.Id) &&
             !(app.Autostart ?? true) && localProcesses?.HasApp(app.Id) != true).OrderByDescending(app => app.Id, StringComparer.Ordinal))
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -4193,6 +4233,8 @@ internal sealed partial class CoreLifecycleService(
             {
                 RuntimeState = operation == "dependency-start" && current.RuntimeState == AppRuntimeStates.Waiting
                     ? AppRuntimeStates.Stopped : current.RuntimeState,
+                DependencyStart = operation == "dependency-start" ? null : current.DependencyStart,
+                DependencyBorrowedStart = operation == "dependency-start" ? false : current.DependencyBorrowedStart,
                 OperationStatus = "failed",
                 LastOperation = operation,
                 LastError = message,
@@ -4216,6 +4258,8 @@ internal sealed partial class CoreLifecycleService(
             await apps.UpdateAppAsync(appId, current => current with
             {
                 RuntimeState = runtimeState,
+                DependencyStart = null,
+                DependencyBorrowedStart = false,
                 Health = null,
                 OperationStatus = "failed",
                 LastOperation = operation,

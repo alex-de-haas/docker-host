@@ -21,6 +21,24 @@ public sealed class AppsCommandTests : IDisposable
     }
 
     [Fact]
+    public async Task StartShowsDependencyBlockerAsPlainText()
+    {
+        using var server = new FakeCoreServer("""
+            {"status":"waiting","app":{"id":"example.consumer","displayName":"Consumer","version":"1.0.0",
+            "kind":"runtime","system":false,"source":"manifest","selectedRuntime":"docker","autostart":false,
+            "operationStatus":"waiting","runtimeState":"waiting","capabilities":[],
+            "lastError":"example.consumer -> example.provider: configure [API_KEY] before starting."}}
+            """);
+        WriteCoreDiscovery(server);
+        var (console, output) = CreateConsole();
+        console.Profile.Width = 180;
+        Assert.Equal(0, await CommandLine.RunAsync(["apps", "start", "example.consumer"], console));
+        await server.WaitForRequestAsync();
+        Assert.Contains("waiting", output.ToString());
+        Assert.Contains("example.provider: configure [API_KEY]", output.ToString());
+    }
+
+    [Fact]
     public async Task GuideDefaultsToOverview()
     {
         using var server = new FakeCoreServer("""
