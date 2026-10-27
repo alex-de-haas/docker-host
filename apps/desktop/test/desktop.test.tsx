@@ -24,6 +24,11 @@ async function click(label: string) {
   const target = [...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.getAttribute("aria-label") === label || button.textContent === label);
   expect(target, `button ${label}`).toBeDefined(); await act(async () => target!.click());
 }
+async function openDockMenu(label: string) {
+  const target = container.querySelector<HTMLButtonElement>(`.dock-item[aria-label="${label}"]`);
+  expect(target, `dock button ${label}`).not.toBeNull();
+  await act(async () => target!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 200, clientY: 200 })));
+}
 it("keeps the same app document through minimize, focus and theme changes; close does not stop it", async () => {
   await render(); await click("Notes"); expect(container.querySelector('a[target="_blank"]')).toBeNull(); expect(container.querySelector('[aria-label="Notes window menu"]')).toBeNull(); const frame = container.querySelector('iframe[title="Notes"]'); expect(frame).not.toBeNull();
   await click("Minimize Notes"); expect(container.querySelector('iframe[title="Notes"]')).toBe(frame);
@@ -40,15 +45,15 @@ it("opens one waiting window and coalesces repeated starts", async () => {
 });
 it("hides stopped apps and lifecycle actions for an ordinary user", async () => {
   api.readDesktop.mockResolvedValue({ user: { ...user, role: "host.user" }, apps: [notes, stopped] });
-  await render(); expect(container.textContent).not.toContain("Music"); await click("Notes"); await click("Window");
+  await render(); expect(container.textContent).not.toContain("Music"); await click("Notes"); await openDockMenu("Notes");
   expect(container.textContent).not.toContain("Stop for everyone"); expect(container.textContent).not.toContain("Restart for everyone");
 });
 it("requires the explicit shared-runtime action while cancel keeps the app running", async () => {
-  await render(); await click("Notes"); await click("Window");
+  await render(); await click("Notes"); await openDockMenu("Notes");
   const stop = [...container.querySelectorAll<HTMLButtonElement>('button[role="menuitem"]')].find(button => button.textContent === "Stop for everyone…");
   await act(async () => stop!.click()); expect(container.querySelector('[role="alertdialog"]')?.textContent).toContain("everyone");
   expect(api.lifecycle).not.toHaveBeenCalled(); await click("Cancel"); expect(api.lifecycle).not.toHaveBeenCalled();
-  await click("Window");
+  await openDockMenu("Notes");
   await act(async () => [...container.querySelectorAll<HTMLButtonElement>('button[role="menuitem"]')].find(button => button.textContent === "Stop for everyone…")!.click());
   await click("Stop for everyone"); expect(api.lifecycle).toHaveBeenCalledWith("notes", "stop");
 });

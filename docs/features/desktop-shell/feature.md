@@ -1,6 +1,6 @@
 ---
 created: 2026-10-26
-updated: 2026-10-26
+updated: 2026-10-27
 summary: Hosty Desktop provides movable application windows, a glass dock, personal appearance and role-aware app access beside the management Shell.
 components: [apps/desktop]
 ---
@@ -28,7 +28,7 @@ starts its runtime, with pending/error feedback. Repeat clicks share the same op
 Selected-page service readiness determines when to mount the application frame.
 
 Closing a window only removes its browser view. Administrators can explicitly stop or
-restart the shared runtime from the dock context menu or the menu bar's Window menu; the confirmation states that the operation affects
+restart the shared runtime from the dock context menu; the confirmation states that the operation affects
 everyone. Ordinary users have no lifecycle controls, and Core remains the authorization boundary.
 
 ## Desktop Interaction
@@ -45,8 +45,10 @@ hover/focus icons and focus rings without changing the dock's visible size.
 App-name tooltips render in the desktop overlay outside that scroll area, stay inside the
 viewport and wrap long names. They follow their icon during scrolling and resizing, support
 keyboard focus, and dismiss on Escape or interaction. Applications and Appearance are built-in windows.
-Search is available from the menu bar and Command-K/Control-K. Window menus also expose
-keyboard-accessible maximize and tile actions.
+Search is available from the menu bar and Command-K/Control-K. Dock context menus expose maximize and tile actions.
+When all windows are closed or minimized, the desktop displays only its wallpaper, menu bar
+and dock. The menu bar contains the Hosty launcher, active application name, search, theme,
+account and clock controls.
 
 Window geometry, open/minimized state, dock preferences and appearance are saved in localStorage
 under the Core user ID. Invalid stored data and inaccessible application IDs are discarded.
@@ -61,7 +63,7 @@ retain the visible desktop and expose retry feedback; identity gating belongs to
 ## Window Tools And Assistant Context
 
 Window title bars show icons from Core's authorized panel catalog. The former overflow
-menu and external-tab actions are absent; window actions remain in the dock and menu bar.
+menu and external-tab actions are absent; window actions remain in the dock context menus and window controls.
 The application frame receives hidden navigation/tool-launcher hints, avoiding a duplicate
 Tools button inside the document. Administrators can see unavailable tools with a hint to
 start their app from the dock; ordinary users see available tools only.

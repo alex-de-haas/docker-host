@@ -40,17 +40,11 @@ h1,h2,p { margin-top: 0; }
 .menubar-right { gap: 12px; }
 .brand-button { display: flex; align-items: center; gap: 8px; padding: 0; font-weight: 650; font-size: 12px; letter-spacing: .7px; }
 .active-app-name { font-size: 12px; font-weight: 650; max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.menubar-text { padding: 5px 3px; font-size: 12px; }
 .menubar-icon { display: grid; place-items: center; width: 29px; height: 28px; border-radius: 6px; }
-.menubar-icon:hover,.menubar-text:hover { background: var(--hover); }
+.menubar-icon:hover { background: var(--hover); }
 .account-button { display: flex; align-items: center; gap: 7px; font-size: 11px; padding: 0 5px; }
 .avatar { display: grid; place-items: center; width: 23px; height: 23px; border-radius: 50%; background: rgba(255,255,255,.3); border: 1px solid var(--line); font-size: 9px; font-weight: 600; }
 .desktop-clock { font-size: 11px; display: flex; gap: 9px; white-space: nowrap; }
-.desktop-welcome { position: absolute; top: 43%; left: 50%; transform: translate(-50%,-50%); text-align: center; color: white; width: min(580px,90vw); text-shadow: 0 2px 20px #0006; }
-.welcome-label { font-size: 10px; letter-spacing: 2px; font-weight: 600; opacity: .85; }
-.desktop-welcome h1 { font-size: clamp(26px,3.1vw,43px); font-weight: 450; letter-spacing: -1.7px; margin: 18px 0 13px; }
-.desktop-welcome p { font-size: 14px; opacity: .85; }
-.desktop-welcome button { display: inline-flex; align-items: center; gap: 10px; padding: 12px 18px; margin-top: 14px; color: #fff; background: #ffffff25; border: 1px solid #ffffff60; border-radius: 30px; backdrop-filter: blur(20px); }
 .desktop-window { position: absolute; display: flex; flex-direction: column; border-radius: 16px; background: var(--glass); border: 1px solid var(--line); -webkit-backdrop-filter: blur(36px) saturate(1.25); backdrop-filter: blur(36px) saturate(1.25); box-shadow: var(--shadow),var(--material-shadow); min-width: 0; }
 .desktop-window.inactive { box-shadow: 0 12px 45px #07162625,var(--material-shadow); }
 .desktop-window.inactive .window-titlebar { opacity: .75; }
@@ -167,7 +161,7 @@ h1,h2,p { margin-top: 0; }
 .desktop-toast { position: fixed; z-index: 900; right: 20px; top: 50px; max-width: min(430px,calc(100vw - 40px)); background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); padding: 15px; display: flex; align-items: flex-start; gap: 12px; font-size: 12px; line-height: 1.6; }.desktop-toast>svg { flex-shrink: 0; margin-top: 2px; }.desktop-toast button { padding: 2px; display: grid; place-items: center; }
 @media (max-width: 900px) { .account-button>span:last-child { display: none; }.window-sidebar { width: 155px; }.application-library { padding: 27px; }.settings-document { padding: 25px; } }
 @media (max-width: 699px) {
-  .menubar { padding: 0 12px; }.menubar-left { gap: 13px; }.menubar-right { gap: 4px; }.brand-button span,.desktop-clock,.menubar-text,.theme-toggle { display: none; }.active-app-name { max-width: 150px; }
+  .menubar { padding: 0 12px; }.menubar-left { gap: 13px; }.menubar-right { gap: 4px; }.brand-button span,.desktop-clock,.theme-toggle { display: none; }.active-app-name { max-width: 150px; }
   .desktop-window { border-radius: 12px; }.window-titlebar { padding: 0 14px; gap: 18px; height: 45px; min-height: 45px; }.window-sidebar { width: 54px; min-width: 54px; padding: 14px 6px; }.window-sidebar button { font-size: 0; padding: 12px; gap: 0; }.window-sidebar button span,.sidebar-caption,.window-sidebar .sidebar-external { display: none; }
   .settings-document { padding: 25px 20px; }.settings-document h1,.library-heading h1 { font-size: 25px; }.settings-intro { line-height: 1.6; }.theme-options { gap: 5px; }.theme-options button { flex-direction: column; padding: 10px 4px; }.wallpaper-options { grid-template-columns: 1fr; }.wallpaper-thumbnail { height: 110px; }.appearance-layout .window-sidebar { display: none; }
   .application-library { padding: 25px 20px; }.library-count { display: none; }.application-grid { grid-template-columns: repeat(auto-fill,minmax(100px,1fr)); gap: 20px 8px; }.application-tile .app-icon { width: 54px; height: 54px; }.dock-item .app-icon { width: 43px; height: 43px; border-radius: 12px; }.dock-apps { max-width: calc(100vw - 180px); gap: 5px; }.dock { gap: 4px; border-radius: 19px; }.dock-wrap { bottom: 15px; }.dock-separator { margin-left: 1px; margin-right: 1px; }.resize-handle { display: none; }.spotlight input { font-size: 15px; }

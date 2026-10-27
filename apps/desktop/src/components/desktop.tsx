@@ -141,7 +141,6 @@ function WorkspaceDesktop({ user, apps, ownId, coreOrigin, refresh, connectionEr
     <header className="menubar">
       <div className="menubar-left"><button className="brand-button" onClick={() => open(APPLICATIONS)} aria-label="Hosty applications"><DesktopMark size={20} /><span>HOSTY</span></button>
         <span className="active-app-name">{activeTitle.replace(/^Hosty /, "")}</span>
-        <button className="menubar-text" onClick={() => activeWindow ? context(activeWindow.id, 220, 44) : open(APPLICATIONS)}>Window</button>
       </div>
       <div className="menubar-right"><button className="menubar-icon" title="Search applications (⌘K / Ctrl+K)" aria-label="Open Spotlight" onClick={() => setSearch("")}><Search size={17} /></button>
         <button className="menubar-icon theme-toggle" title={`Switch to ${theme === "light" ? "dark" : "light"} theme`} aria-label="Toggle theme" onClick={() => update({ theme: theme === "light" ? "dark" : "light" })}>{theme === "light" ? <Moon size={16} /> : <Sun size={16} />}</button>
@@ -150,7 +149,6 @@ function WorkspaceDesktop({ user, apps, ownId, coreOrigin, refresh, connectionEr
       </div>
     </header>
 
-    {!workspace.windows.some(win => !win.minimized) && <div className="desktop-welcome"><span className="welcome-label">YOUR OWN LITTLE CORNER</span><h1>Make room for what matters.</h1><p>Your applications are right here when you need them.</p><button onClick={() => open(APPLICATIONS)}><Grid2X2 size={17} />Open applications<ChevronRight size={16} /></button></div>}
     {snap && <div className={`snap-preview snap-${snap}`} />}
     {[...workspace.windows].sort((a, b) => a.id.localeCompare(b.id)).map(win => {
       const app = apps.find(item => item.id === win.id);
