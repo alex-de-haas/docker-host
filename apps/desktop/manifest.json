@@ -3,7 +3,7 @@
   "id": "hosty.desktop",
   "name": "Hosty Desktop",
   "description": "A personal desktop for your Hosty applications.",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "role": "system",
   "source": {
     "type": "git",
@@ -34,7 +34,7 @@
           "type": "docker",
           "image": {
             "repository": "ghcr.io/alex-de-haas/hosty-desktop",
-            "tag": "0.1.3"
+            "tag": "0.1.4"
           },
           "environment": {
             "PORT": "3000",
