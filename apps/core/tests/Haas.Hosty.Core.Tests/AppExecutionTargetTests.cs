@@ -57,6 +57,38 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.True(Directory.Exists(second.Path));
     }
 
+    [Fact]
+    public async Task ExecutionTargets_NewSkillMountDoesNotApplyToPreviousWorkspaceStop()
+    {
+        var (f, owner, workspaces, first, _, _) = await LocalHandoffFixture();
+        await AddManifestPackageRuntime(f, first);
+        var second = await AnotherExecutionTree(f, owner, workspaces, first);
+        await f.Service.StartAsync("test.created");
+        await f.Service.ExecuteTargetAsync(await ExecutionRequest(f, owner, "workspace", first), default);
+        await EditDevManifest(second.Path, manifest =>
+        {
+            manifest["corePermissions"] = new System.Text.Json.Nodes.JsonArray("apps.skills.read");
+            manifest["externalMounts"] = new System.Text.Json.Nodes.JsonObject
+            {
+                ["skills"] = new System.Text.Json.Nodes.JsonObject
+                {
+                    ["kind"] = "agent-skills", ["scope"] = "instance", ["mode"] = "ro",
+                    ["required"] = true, ["service"] = manifest["services"]![0]!["key"]!.GetValue<string>()
+                }
+            };
+        });
+        var request = await ExecutionRequest(f, owner, "workspace", second);
+        var review = await f.Service.ExecuteTargetAsync(request, default);
+        Assert.Equal("review-required", review.State);
+        await f.Service.ApproveWorkspaceManifestAsync(review.Review!.WorkspaceManifest!, owner.UserId, [], default);
+        Assert.Equal("completed", (await f.Service.ExecuteTargetAsync(request, default)).State);
+        var app = (await f.Apps.GetAppAsync("test.created"))!;
+        Assert.Equal("running", app.RuntimeState);
+        Assert.Equal(second.Path, app.SourceState!.LocalOverridePath);
+        Assert.Contains(app.MountSlots!, slot => slot.Kind == "agent-skills");
+        Assert.Equal("completed", (await f.Service.ExecuteTargetAsync(await ExecutionRequest(f, owner, "package"), default)).State);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

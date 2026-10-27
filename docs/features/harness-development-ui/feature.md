@@ -1,6 +1,6 @@
 ---
 created: 2026-10-16
-updated: 2026-10-25
+updated: 2026-10-26
 summary: Harness combines conversation navigation, multi-repository workspace details, sandbox previews and verified lifecycle actions.
 components: [apps/harness, apps/core, apps/shell, packages/app-sdk]
 ---
@@ -776,6 +776,11 @@ The model catalog has explicit failure recovery. Read results and errors belong 
 session, provider connection and connection revision; binding changes hide previous choices and
 errors immediately. A disconnected session has no unusable Retry models action. Retrying the
 catalog does not save a new model selection.
+
+The composer selects a shared [agent profile](../agent-profiles/feature.md) before the first message.
+This applies its connection/model/reasoning, role instructions and skills together. After start the
+profile remains fixed while existing model/reasoning controls remain available between turns.
+Settings exposes one reusable profile editor alongside providers, common instructions and skills.
 
 ## Identity Readiness And Credential Recovery
 

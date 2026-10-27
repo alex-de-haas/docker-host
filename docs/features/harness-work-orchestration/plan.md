@@ -2,7 +2,7 @@
 status: Draft
 created: 2026-10-26
 updated: 2026-10-26
-summary: Compose shared work capabilities in Harness with agent profiles, optional hierarchy, task coordination and one tasks, decisions and artifacts experience.
+summary: Participant bindings and optional task coordination, hierarchy, decisions and artifacts in Harness, reusing independent agent profiles.
 components: [apps/harness, apps/documents]
 ---
 
@@ -21,21 +21,14 @@ here. This plan owns application behavior and integration, not those underlying 
 
 ## Target Behavior
 
-Configure app-owned agent profiles with role instructions, provider/model preferences, skill references
-and execution defaults. Bind a profile to a persistent participant when needed; keep it separate from
-provider credentials and native sessions. Shared Skills' 2026-10-26 decision gives Core one
-administrator-managed package pool and gives Harness its profiles/instructions and selected references.
-Resolve selected skill IDs to current installed packages, independently of model/provider connection.
-Use an assistant default before profiles are configured. Do not pin conversations to old package
-revisions or retain deleted skills; missing selections do not block creation/resume. Native clients
-control when updated files are loaded. Profile customization does not edit/fork skill packages,
-create personal libraries or rewrite instructions already loaded in a session.
-The [selected skills contract](../agent-skills/feature.md#api-and-delivery)
-uses stable skill IDs in profiles and current content in execution exports, following vision decision 59.
-New app packages appear in the common catalog without being automatically added to profiles.
-Decision 60 limits initial sources to Git/app packages and removes repeated content-digest acceptance
-on updates; there is no manual upload flow. Shared Skills delivers the assistant-default and generic
-selection contract without requiring this plan's full profile UI.
+Reuse [Shared Agent Profiles](../agent-profiles/feature.md) for connection/model/effort choices,
+role instructions and explicit skill sets. Bind configurations to persistent participants where
+needed, separately from credentials, session history and authority. Reuse its controlled editor in
+a joined personalized-agent form. Profiles do not require a project, app or workspace binding.
+
+Core's [skill library](../agent-skills/feature.md) owns complete Git/app packages and current-content
+exports. New packages remain unselected; missing IDs do not block delivery/resume. No separate
+package pool, package editing, historical pinning or repeated digest approval belongs here.
 
 Let a user assign work directly or let a configured coordinator break it into visible child tasks.
 Agent reporting hierarchy and task parentage are independent. Human participants can configure roles,
@@ -53,6 +46,15 @@ existing sessions, workspaces and previews. Decisions aggregates authorized ques
 answers against reviewed inputs; artifacts exposes the shared catalog's permitted results. Final
 tab names and layout remain open. Reuse existing panels where useful, but a new widget/composition
 framework is not a dependency. Core must not know these routes or treat Harness's app ID as authority.
+
+## Independent Profile Feature (2026-10-26)
+
+The owner approved and independently delivered [Shared Agent Profiles](../agent-profiles/feature.md) as a standalone feature with
+Harness chat as its first consumer. It owns configuration, storage/API, shared editing, explicit
+skills, simple deletion and pre-start selection. A later personalized-agent form can compose that
+editor directly with participant fields; a mandatory separate profile setup step is not selected.
+The owner leaves Organization packaging open. This plan retains personalized participant binding,
+hierarchy, task routing and the complete orchestration experience, and remains Draft.
 
 ## First Cross-App Composition
 
@@ -83,9 +85,9 @@ prove team access. Memory, UI framework extraction and full Paperclip parity are
 
 ## Deliverables
 
-- [ ] D1. Define app-owned profile revisions, participant bindings, hierarchy and human-review routing; specify the selected Core-pool/profile-reference/current-content boundary with Shared Skills, preserving administrative package management and distinguishing configuration from permission.
+- [ ] D1. Define persistent participant bindings, hierarchy and human-review routing using Shared Agent Profiles; retain configuration/identity/permission boundaries and describe reuse in one personalized-agent editor.
 - [ ] D2. Specify and integrate, after Ready approval, the first Documents-to-Harness single-task journey using shared APIs, one artifact, one addressed decision, parked continuation and result observation.
-- [ ] D3. Implement the selected Harness profile/task/decision/artifact presentation over shared contracts and existing session/workspace views, including accessible review materials and current authorization.
+- [ ] D3. Implement the selected Harness task/decision/artifact and personalized-agent presentation over shared contracts, reusing the profile editor and existing session/workspace views, including accessible review materials and current authorization.
 - [ ] D4. Implement optional task decomposition and hierarchy-driven delegation with visible assignments, explicit handoffs, bounded fan-out and workspace reuse/independent-work policy through the common runner and resource APIs.
 - [ ] D5. Verify the first journey and optional hierarchy cases, a human QA reviewer, separate bugfix/PR, a non-development task and an independent API consumer; prove no private-store coupling or first-party-ID privilege.
 - [ ] D6. Record shipped application behavior and limits in feature.md, reconcile the umbrella and underlying owners without marking their unfinished deliverables complete, and regenerate the index.
@@ -98,8 +100,6 @@ rule. Accept D5 only with the applicable authority and runtime prerequisites, no
 
 ## Open Questions
 
-- Which initial roles and profile fields are useful without prescribing a business workflow?
-- How are profile/default references represented in the API and native export layout without mixing simultaneous profiles? Consumers receive current installed packages; deleted references are omitted and native reload behavior is observed rather than enforced.
 - Which views belong in existing Harness navigation, and which can reuse available panels?
 - How do routing, overlapping work, child cancellation and acceptance aggregation behave?
 - When would a separate application provide enough value to justify UI composition/extraction?
