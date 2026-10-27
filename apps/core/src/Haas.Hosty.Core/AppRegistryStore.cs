@@ -475,7 +475,10 @@ internal sealed record AppRecord(
     IReadOnlyList<string>? ActiveSourcePaths = null,
     AppLaunchProgress? LaunchProgress = null,
     string? AppliedSourceManifestDigest = null,
-    string? DevModeId = null)
+    string? DevModeId = null,
+    DependencyStartIntent? DependencyStart = null,
+    string? DependencyStopVersion = null,
+    bool DependencyBorrowedStart = false)
 {
     [System.Text.Json.Serialization.JsonIgnore]
     public string BrowserOriginScope { get; init; } = "";

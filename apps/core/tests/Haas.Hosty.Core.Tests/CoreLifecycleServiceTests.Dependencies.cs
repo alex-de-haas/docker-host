@@ -306,7 +306,6 @@ public sealed partial class CoreLifecycleServiceTests
     {
         var f = await LifecycleFixture.CreateAsync();
         await InstallDependencyFixtureAsync(f, "org.example.consumer", "org.example.provider");
-        await InstallDependencyFixtureAsync(f, "org.example.provider", autostart: false);
         using var service = new DependencyStartupService(f.Apps, f.Service, NullLogger<DependencyStartupService>.Instance);
         await service.StartAsync(CancellationToken.None);
         try
@@ -319,7 +318,7 @@ public sealed partial class CoreLifecycleServiceTests
                 if (context.App.Id == "org.example.consumer") started.TrySetResult();
                 return Task.CompletedTask;
             };
-            await f.Service.StartAsync("org.example.provider");
+            await InstallDependencyFixtureAsync(f, "org.example.provider", autostart: false);
             await started.Task.WaitAsync(TimeSpan.FromSeconds(10));
             await WaitUntilAsync(async () => (await f.Apps.GetAppAsync("org.example.consumer"))!.RuntimeState == "running");
         }
@@ -386,5 +385,210 @@ public sealed partial class CoreLifecycleServiceTests
         await f.Service.StartAsync("org.example.provider");
         await f.Service.ResumeWaitingAppsAsync();
         Assert.Equal(4, f.Adapter.StartCount);
+    }
+
+    [Fact]
+    public async Task DependencyCascade_StartsTransitiveDisabledProvidersAfterRecovery()
+    {
+        var f = await LifecycleFixture.CreateAsync();
+        await InstallDependencyFixtureAsync(f, "org.example.consumer", "org.example.middle", autostart: false);
+        await InstallDependencyFixtureAsync(f, "org.example.middle", "org.example.leaf", autostart: false);
+        await InstallDependencyFixtureAsync(f, "org.example.leaf", autostart: false);
+        await InstallDependencyFixtureAsync(f, "org.example.unrelated", autostart: false);
+        var order = new ConcurrentQueue<string>();
+        f.Adapter.StartContextProbe = (context, _) => { order.Enqueue(context.App.Id); return Task.CompletedTask; };
+        Assert.Equal("waiting", (await f.Service.StartAsync("org.example.consumer")).Status);
+        await f.RecreateService().ResumeWaitingAppsAsync();
+        Assert.Equal(["org.example.leaf", "org.example.middle", "org.example.consumer"], order);
+        Assert.Null((await f.Apps.GetAppAsync("org.example.consumer"))!.DependencyStart);
+        Assert.All(await f.Apps.ListAppRecordsAsync(), app => Assert.False(app.Autostart));
+        Assert.Equal("stopped", (await f.Apps.GetAppAsync("org.example.unrelated"))!.RuntimeState);
+    }
+
+    [Fact]
+    public async Task DependencyCascade_SharedProviderStartsOnceAndCancelledRootStaysStopped()
+    {
+        var f = await LifecycleFixture.CreateAsync();
+        await InstallDependencyFixtureAsync(f, "org.example.a", "org.example.provider");
+        await InstallDependencyFixtureAsync(f, "org.example.b", "org.example.provider");
+        await InstallDependencyFixtureAsync(f, "org.example.provider", autostart: false);
+        await f.Service.StartAsync("org.example.a");
+        await f.Service.StartAsync("org.example.b");
+        await f.Service.StopAsync("org.example.a");
+        await Task.WhenAll(f.Service.ResumeWaitingAppsAsync(), f.Service.ResumeWaitingAppsAsync());
+        Assert.Equal(2, f.Adapter.StartCount);
+        Assert.Equal("stopped", (await f.Apps.GetAppAsync("org.example.a"))!.RuntimeState);
+        Assert.Equal("running", (await f.Apps.GetAppAsync("org.example.b"))!.RuntimeState);
+    }
+
+    [Fact]
+    public async Task DependencyCascade_CancelledOnlyRootDoesNotStartItsProvider()
+    {
+        var f = await LifecycleFixture.CreateAsync();
+        await InstallDependencyFixtureAsync(f, "org.example.consumer", "org.example.provider");
+        await InstallDependencyFixtureAsync(f, "org.example.provider");
+        await f.Service.StartAsync("org.example.consumer");
+        await f.Service.StopAsync("org.example.consumer");
+        await f.Service.ResumeWaitingAppsAsync();
+        Assert.Equal(0, f.Adapter.StartCount);
+    }
+
+    [Fact]
+    public async Task DependencyCascade_ExplicitProviderStopRequiresFreshConsumerStart()
+    {
+        var f = await LifecycleFixture.CreateAsync();
+        await InstallDependencyFixtureAsync(f, "org.example.consumer", "org.example.provider");
+        await InstallDependencyFixtureAsync(f, "org.example.provider");
+        await f.Service.StartAsync("org.example.consumer");
+        await f.Service.StopAsync("org.example.provider");
+        await f.RecreateService().ResumeWaitingAppsAsync();
+        Assert.Equal(0, f.Adapter.StartCount);
+        Assert.Contains("explicitly stopped", (await f.Apps.GetAppAsync("org.example.consumer"))!.LastError);
+        await f.Service.StartAsync("org.example.consumer");
+        await f.Service.ResumeWaitingAppsAsync();
+        Assert.Equal(2, f.Adapter.StartCount);
+    }
+
+    [Fact]
+    public async Task DependencyCascade_StopAfterMissingProviderInstallationWinsOverPendingStart()
+    {
+        var f = await LifecycleFixture.CreateAsync();
+        await InstallDependencyFixtureAsync(f, "org.example.consumer", "org.example.provider");
+        await f.Service.StartAsync("org.example.consumer");
+        await InstallDependencyFixtureAsync(f, "org.example.provider");
+        await f.Service.StopAsync("org.example.provider");
+        await f.RecreateService().ResumeWaitingAppsAsync();
+        Assert.Equal(0, f.Adapter.StartCount);
+        Assert.Contains("explicitly stopped", (await f.Apps.GetAppAsync("org.example.consumer"))!.LastError);
+        await f.Service.StartAsync("org.example.consumer");
+        await f.Service.ResumeWaitingAppsAsync();
+        Assert.Equal(2, f.Adapter.StartCount);
+    }
+
+    [Fact]
+    public async Task DependencyCascade_FailedSharedProviderDoesNotRetryUntilNewStart()
+    {
+        var f = await LifecycleFixture.CreateAsync();
+        await InstallDependencyFixtureAsync(f, "org.example.a", "org.example.provider");
+        await InstallDependencyFixtureAsync(f, "org.example.b", "org.example.provider");
+        await InstallDependencyFixtureAsync(f, "org.example.provider");
+        await f.Service.StartAsync("org.example.a");
+        await f.Service.StartAsync("org.example.b");
+        f.Adapter.FailOnStartCount = 1;
+        await f.Service.ResumeWaitingAppsAsync();
+        await f.RecreateService().ResumeWaitingAppsAsync();
+        Assert.Equal(1, f.Adapter.StartCount);
+        Assert.All((await f.Apps.ListAppRecordsAsync()).Where(app => app.Id != "org.example.provider"), app =>
+        {
+            Assert.Equal("waiting", app.RuntimeState);
+            Assert.Contains("org.example.provider", app.LastError);
+        });
+        f.Adapter.FailOnStartCount = null;
+        await f.Service.StartAsync("org.example.a");
+        await f.Service.ResumeWaitingAppsAsync();
+        Assert.Equal(4, f.Adapter.StartCount);
+        Assert.Equal("running", (await f.Apps.GetAppAsync("org.example.b"))!.RuntimeState);
+    }
+
+    [Fact]
+    public async Task DependencyCascade_OptionalProviderRemainsStopped()
+    {
+        var f = await LifecycleFixture.CreateAsync();
+        await InstallDependencyFixtureAsync(f, "org.example.consumer", "org.example.provider", required: false);
+        await InstallDependencyFixtureAsync(f, "org.example.provider");
+        await f.Service.StartAsync("org.example.consumer");
+        await f.Service.ResumeWaitingAppsAsync();
+        Assert.Equal(1, f.Adapter.StartCount);
+        Assert.Equal("stopped", (await f.Apps.GetAppAsync("org.example.provider"))!.RuntimeState);
+    }
+
+    [Fact]
+    public async Task DependencyCascade_BootStartsDisabledRequiredProvidersOnly()
+    {
+        var f = await LifecycleFixture.CreateAsync();
+        await InstallDependencyFixtureAsync(f, "org.example.consumer", "org.example.provider");
+        await InstallDependencyFixtureAsync(f, "org.example.provider", autostart: false);
+        await InstallDependencyFixtureAsync(f, "org.example.unrelated", autostart: false);
+        await f.Service.StopAutostartDisabledAppsAsync();
+        await f.Service.StartAutostartAppsAsync();
+        Assert.Equal(2, f.Adapter.StartCount);
+        Assert.False((await f.Apps.GetAppAsync("org.example.provider"))!.Autostart);
+        Assert.Equal("stopped", (await f.Apps.GetAppAsync("org.example.unrelated"))!.RuntimeState);
+    }
+
+    [Fact]
+    public async Task DependencyCascade_ConfigurationBlockDoesNotLoop()
+    {
+        var f = await LifecycleFixture.CreateAsync();
+        await InstallDependencyFixtureAsync(f, "org.example.consumer", "org.example.provider");
+        var path = await f.WriteManifestAsync("1.0.0", id: "org.example.provider",
+            settingsJson: "\"settings\": [{\"key\":\"API_KEY\",\"type\":\"string\",\"secret\":true,\"required\":true}],");
+        await f.Service.InstallAsync(new AppInstallRequest(path));
+        await f.Service.StartAsync("org.example.consumer");
+        await f.Service.ResumeWaitingAppsAsync();
+        await f.Service.ResumeWaitingAppsAsync();
+        Assert.Equal(0, f.Adapter.StartCount);
+        Assert.Contains("configuration", (await f.Apps.GetAppAsync("org.example.consumer"))!.LastError);
+    }
+
+    [Fact]
+    public async Task DependencyCascade_BoundsProviderStartsAndRechecksCancellationInTheQueue()
+    {
+        var f = await LifecycleFixture.CreateAsync();
+        for (var index = 0; index < 5; index++)
+        {
+            await InstallDependencyFixtureAsync(f, $"org.example.consumer{index}", $"org.example.provider{index}");
+            await InstallDependencyFixtureAsync(f, $"org.example.provider{index}");
+            await f.Service.StartAsync($"org.example.consumer{index}");
+        }
+        var full = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var entered = 0;
+        f.Adapter.StartContextProbe = async (context, ct) =>
+        {
+            Assert.DoesNotContain("4", context.App.Id);
+            if (context.App.Id.Contains("provider"))
+            {
+                if (Interlocked.Increment(ref entered) == 4) full.TrySetResult();
+                await release.Task.WaitAsync(ct);
+            }
+        };
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var resume = f.Service.ResumeWaitingAppsAsync(timeout.Token);
+        try
+        {
+            await full.Task.WaitAsync(timeout.Token);
+            Assert.Equal(4, f.Adapter.StartCount);
+            await f.Service.StopAsync("org.example.consumer4", timeout.Token);
+        }
+        finally { release.TrySetResult(); await resume; }
+        Assert.Equal(8, f.Adapter.StartCount);
+        Assert.Equal("stopped", (await f.Apps.GetAppAsync("org.example.provider4"))!.RuntimeState);
+    }
+
+    [Fact]
+    public async Task DependencyCascade_ActivationSelectionDoesNotAdmitUnselectedProvider()
+    {
+        var f = await LifecycleFixture.CreateAsync();
+        await InstallDependencyFixtureAsync(f, "org.example.consumer", "org.example.provider");
+        await InstallDependencyFixtureAsync(f, "org.example.provider");
+        // Empty reviewed selection exercises the same scope used around activation's app locks.
+        await f.Service.WithActivationAppLocksAsync([], () => f.Service.StartAsync("org.example.consumer"), default);
+        await f.Service.ResumeWaitingAppsAsync();
+        Assert.Equal(0, f.Adapter.StartCount);
+        Assert.Contains("outside the reviewed workspace activation", (await f.Apps.GetAppAsync("org.example.consumer"))!.LastError);
+    }
+
+    [Fact]
+    public async Task DependencyCascade_BootPreservesRunningDisabledTransitiveProviders()
+    {
+        var f = await LifecycleFixture.CreateAsync();
+        await InstallDependencyFixtureAsync(f, "org.example.consumer", "org.example.middle");
+        await InstallDependencyFixtureAsync(f, "org.example.middle", "org.example.leaf", autostart: false);
+        await InstallDependencyFixtureAsync(f, "org.example.leaf", autostart: false);
+        await f.Service.StartAsync("org.example.consumer");
+        await f.Service.ResumeWaitingAppsAsync();
+        Assert.Empty(await f.Service.StopAutostartDisabledAppsAsync());
+        Assert.All(await f.Apps.ListAppRecordsAsync(), app => Assert.Equal("running", app.RuntimeState));
     }
 }

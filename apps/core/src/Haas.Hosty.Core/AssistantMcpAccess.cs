@@ -89,6 +89,30 @@ internal sealed class AssistantMcpAccess(AppRegistryStore apps, AppServiceTokenS
             if (parts.Length != 2 || !signing.Verify(Encoding.UTF8.GetBytes(Prefix + parts[0]), Decode(parts[1]))) return null;
             var claims = JsonSerializer.Deserialize(Decode(parts[0]), CoreJson.TypeInfo<AssistantMcpClaims>());
             if (claims is null || claims.Audience != audience || claims.Expires <= clock.UtcNow.ToUnixTimeSeconds()) return null;
+            return await ValidateClaimsAsync(claims, audience, ct);
+        }
+        catch (Exception ex) when (ex is FormatException or JsonException or CryptographicException or ArgumentException or AppIdentityException)
+        { return null; }
+    }
+
+    internal AssistantMcpClaims? ReadVerifiedClaims(string token)
+    {
+        try
+        {
+            if (token.Length > 8192 || !token.StartsWith(Prefix, StringComparison.Ordinal)) return null;
+            var parts = token[Prefix.Length..].Split('.');
+            if (parts.Length != 2 || !signing.Verify(Encoding.UTF8.GetBytes(Prefix + parts[0]), Decode(parts[1]))) return null;
+            return JsonSerializer.Deserialize(Decode(parts[0]), CoreJson.TypeInfo<AssistantMcpClaims>());
+        }
+        catch (Exception ex) when (ex is FormatException or JsonException or CryptographicException or ArgumentException)
+        { return null; }
+    }
+
+    internal async Task<AssistantMcpActor?> ValidateClaimsAsync(AssistantMcpClaims claims, string audience, CancellationToken ct)
+    {
+        try
+        {
+            if (claims.Audience != audience || claims.Expires <= clock.UtcNow.ToUnixTimeSeconds()) return null;
             var link = await RequireLinkAsync(claims.Caller, audience, ct, claims.DiscoveryOnly);
             if (link.Caller.InstalledAt != claims.CallerInstallation || link.Target?.InstalledAt != claims.TargetInstallation
                 || link.Grant.Revision != claims.GrantRevision) return null;
