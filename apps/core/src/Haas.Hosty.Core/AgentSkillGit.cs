@@ -4,7 +4,7 @@ internal sealed class AgentSkillCheckout(string path, string commit) : IDisposab
 {
     public string Path { get; } = path;
     public string Commit { get; } = commit;
-    public void Dispose() { if (Directory.Exists(Path)) Directory.Delete(Path, true); }
+    public void Dispose() => AgentSkillCheckoutCleanup.Delete(Path);
 }
 
 internal interface IAgentSkillGit
@@ -44,10 +44,10 @@ internal sealed class AgentSkillGit(CoreDataPaths paths, ISourceGitAccess access
             var commit = await RunAsync(directory, ["rev-parse", "--verify", "FETCH_HEAD^{commit}"], ct);
             await RunAsync(directory, ["-c", "core.hooksPath=", "checkout", "--detach", "--force", commit, "--"], ct);
             // Fetch metadata is not part of a portable package, including a package at repository root.
-            Directory.Delete(System.IO.Path.Combine(directory, ".git"), true);
+            AgentSkillCheckoutCleanup.Delete(System.IO.Path.Combine(directory, ".git"));
             return new(directory, commit);
         }
-        catch { Directory.Delete(directory, true); throw; }
+        catch { AgentSkillCheckoutCleanup.Delete(directory); throw; }
     }
 
     private static async Task<string> RunAsync(string directory, IReadOnlyList<string> arguments, CancellationToken ct)

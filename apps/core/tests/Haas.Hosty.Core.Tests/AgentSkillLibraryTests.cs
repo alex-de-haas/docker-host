@@ -16,7 +16,7 @@ public sealed class AgentSkillLibraryTests : IDisposable
             Path.Combine(root, "sources"), Path.Combine(root, "auth"), Path.Combine(root, "audit")), git, new NoCredentials(), new Clock());
     }
 
-    public void Dispose() { Directory.Delete(root, true); }
+    public void Dispose() => AgentSkillCheckoutCleanup.Delete(root);
 
     private static AgentSkillPackage Package(string name, string value = "first") =>
         AgentSkillPackages.Validate([
@@ -232,6 +232,99 @@ public sealed class AgentSkillLibraryTests : IDisposable
         var contents = await File.ReadAllTextAsync(Path.Combine(root, "core/skills/library.json"));
         Assert.DoesNotContain(Convert.ToBase64String(Encoding.UTF8.GetBytes("first")), contents);
         Assert.Single(Directory.GetDirectories(export.Path));
+    }
+
+    [Fact]
+    public async Task RecoveryRemovesReadOnlyGitPacksWithoutChangingInstalledSkills()
+    {
+        await library.ReplaceAppAsync("one", "1", new Dictionary<string, AgentSkillPackage> { ["guide"] = Package("guide") }, default);
+        var export = await library.ExportAsync("control", new("current", [AgentSkillLibrary.Id("app", "one", "guide")]), default);
+        var statePath = Path.Combine(root, "core/skills/library.json");
+        var before = await File.ReadAllBytesAsync(statePath);
+        var fetch = Path.Combine(root, "core/skills/fetch");
+        var pack = Path.Combine(fetch, "interrupted/.git/objects/pack/pack-test.idx");
+        Directory.CreateDirectory(Path.GetDirectoryName(pack)!);
+        await File.WriteAllTextAsync(pack, "read-only Git pack index");
+        File.SetAttributes(pack, File.GetAttributes(pack) | FileAttributes.ReadOnly);
+        try
+        {
+            await library.RecoverExportsAsync(default);
+            Assert.False(Directory.Exists(fetch));
+            Assert.Equal(before, await File.ReadAllBytesAsync(statePath));
+            Assert.Equal("first", await File.ReadAllTextAsync(Path.Combine(export.Path, "guide/references/result.txt")));
+            Assert.Single((await library.CatalogAsync(default)).Skills);
+        }
+        finally { if (File.Exists(pack)) File.SetAttributes(pack, FileAttributes.Normal); }
+    }
+
+    [Fact]
+    public async Task RecoveryRetainsLockedFetchFilesAndRetriesAfterReleaseOnWindows()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        await library.ReplaceAppAsync("one", "1", new Dictionary<string, AgentSkillPackage> { ["guide"] = Package("guide") }, default);
+        var fetch = Path.Combine(root, "core/skills/fetch");
+        Directory.CreateDirectory(fetch);
+        var file = Path.Combine(fetch, "locked");
+        await File.WriteAllTextAsync(file, "pending cleanup");
+        using (new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            await library.RecoverExportsAsync(default);
+            Assert.True(File.Exists(file));
+            Assert.Single((await library.CatalogAsync(default)).Skills);
+        }
+        await library.RecoverExportsAsync(default);
+        Assert.False(Directory.Exists(fetch));
+    }
+
+    [Fact]
+    public void CheckoutDisposalRemovesReadOnlyFiles()
+    {
+        var checkout = Path.Combine(root, "checkout");
+        Directory.CreateDirectory(Path.Combine(checkout, ".git/objects/pack"));
+        var file = Path.Combine(checkout, ".git/objects/pack/pack-test.pack");
+        File.WriteAllText(file, "temporary pack");
+        File.SetAttributes(file, File.GetAttributes(file) | FileAttributes.ReadOnly);
+        try
+        {
+            new AgentSkillCheckout(checkout, "test").Dispose();
+            Assert.False(Directory.Exists(checkout));
+        }
+        finally { if (File.Exists(file)) File.SetAttributes(file, FileAttributes.Normal); }
+    }
+
+    [Fact]
+    public async Task CheckoutCleanupDoesNotFollowLinksOrChangeTheirTargets()
+    {
+        var outside = Path.Combine(root, "outside");
+        var checkout = Path.Combine(root, "checkout");
+        Directory.CreateDirectory(outside);
+        Directory.CreateDirectory(checkout);
+        var file = Path.Combine(outside, "keep");
+        File.WriteAllText(file, "preserved");
+        File.SetAttributes(file, File.GetAttributes(file) | FileAttributes.ReadOnly);
+        var attributes = File.GetAttributes(file);
+        try
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                // Junctions exercise the reparse boundary without requiring symlink privileges.
+                var start = new System.Diagnostics.ProcessStartInfo("cmd.exe") { UseShellExecute = false };
+                foreach (var argument in new[] { "/c", "mklink", "/J", Path.Combine(checkout, "directory-link"), outside })
+                    start.ArgumentList.Add(argument);
+                var result = await ProcessRunner.RunAsync(start, TimeSpan.FromSeconds(10), default);
+                Assert.Equal(0, result.ExitCode);
+            }
+            else
+            {
+                Directory.CreateSymbolicLink(Path.Combine(checkout, "directory-link"), outside);
+                File.CreateSymbolicLink(Path.Combine(checkout, "file-link"), file);
+            }
+            new AgentSkillCheckout(checkout, "test").Dispose();
+            Assert.False(Directory.Exists(checkout));
+            Assert.Equal("preserved", File.ReadAllText(file));
+            Assert.Equal(attributes, File.GetAttributes(file));
+        }
+        finally { File.SetAttributes(file, FileAttributes.Normal); }
     }
 
     [Fact]
