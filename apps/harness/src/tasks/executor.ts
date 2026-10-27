@@ -181,7 +181,10 @@ export class HarnessTaskExecutor {
         const session = await this.manager.getSession(r.sessionId);
         if (!session) { r.receipt.state = "interrupted"; r.receipt.stopConfirmed = false; r.receipt.error = { code: "session_missing", message: "The execution session is unavailable; native exit is unconfirmed." }; }
         else if (session.taskRun?.error) { r.receipt.state = "interrupted"; r.receipt.stopConfirmed = false; r.receipt.error = { code: "exit_unconfirmed", message: session.taskRun.error }; }
-        else if (["awaiting_question", "awaiting_approval"].includes(session.status)) r.receipt.state = "awaiting_input";
+        else if (session.taskRun?.exitConfirmed && !session.taskRun.started) {
+          r.receipt.state = "failed"; r.receipt.stopConfirmed = true;
+          r.receipt.error = { code: "admission_failed", message: "The task was rejected before native execution started." };
+        } else if (["awaiting_question", "awaiting_approval"].includes(session.status)) r.receipt.state = "awaiting_input";
         else if (session.status === "running") {
           r.receipt.state = "running";
           // A native process lost across a Harness restart has no safe replacement.

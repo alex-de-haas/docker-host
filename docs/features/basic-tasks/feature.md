@@ -145,7 +145,11 @@ User credentials remain in memory. Restart observes existing Worker/session evid
 but unsent attempt waits for its owner to authenticate again, then resumes with the original ID.
 Remote observation/dispatch similarly needs fresh authority. Recovery never stores an operator
 credential or invents a replacement native run. Unknown termination stays visible and prevents
-another attempt. A proven rejection before native admission permits explicit retry.
+another attempt. A proven rejection before native admission permits explicit retry. Caught Local
+startup failures persist non-admission before the rejected receipt; recovery honors this proof even
+when the final session status write was interrupted. Failures after send remain uncertain.
+Abandonment confirms Local task exit before discarding its run handle; an unconfirmed stop retains
+that handle for recovery and does not prevent the sweep from processing other waiting sessions.
 
 A selected existing workspace is checked through current Core membership and attached with the
 participation revision. Association retries retain their original request/arguments. Existing leases
@@ -188,7 +192,7 @@ managed runtime/browser journey. Changes are not deployed to the operator's live
 | `dotnet build packages/app-sdk-dotnet/HostySdk.App/HostySdk.App.csproj` | net8.0 and net10.0 passed. |
 | `npm run sdk:dotnet:test` | 70 passed, including create/edit requests with an explicit null assignee. |
 | `npm run harness:lint` | API/web TypeScript and web ESLint passed. |
-| `npm test --workspace @haas/hosty-harness` | Full suite passed: 164 files, 1763 tests after the review fixes. |
+| `npm test --workspace @haas/hosty-harness` | Full suite passed: 164 files, 1769 tests after Local recovery fixes; the final executor-only run passed all 18 cases, including the subsequent completion-order safeguard. |
 | `npm test --workspace @haas/hosty-harness -- src/tasks src/profiles web/src/components/tasks.test.tsx web/src/components/session-model.test.tsx web/src/components/session-profile.test.tsx` | Review-fix suite passed: 9 files, 52 tests, including accepted-task selection/dispatch locks and draft recovery after Ready/Cancelled transitions. |
 | `node --test scripts/test-integration.test.mjs` | 13 passed. |
 | `HOSTY_TASKS_BROWSER=1 HOSTY_TASKS_BROWSER_CHANNEL=chrome npm run test:integration -- tasks` | Core/CLI/API/Worker builds and complete managed API/browser acceptance passed; the installed Playwright module was selected through HOSTY_TASKS_PLAYWRIGHT_MODULE. |
@@ -208,7 +212,7 @@ exercised. Cross-platform runtime suites and the full repository test matrix wer
 this acceptance targets the affected components on macOS/Docker. Existing Core/compiler and .NET
 SDK XML-comment warnings remain; builds completed without errors.
 
-Artifact versions: platform 0.158.1 → 0.159.1; Harness API/web/Worker 0.73.0 → 0.74.1;
+Artifact versions: platform 0.158.1 → 0.159.1; Harness API/web/Worker 0.73.0 → 0.74.2;
 TypeScript SDK 0.35.1 → 0.36.0; .NET SDK 0.10.0 → 0.11.1. Other artifacts retain their versions.
 
 ## Testing Expectations
@@ -219,7 +223,8 @@ TypeScript SDK 0.35.1 → 0.36.0; .NET SDK 0.10.0 → 0.11.1. Other artifacts re
   The .NET client preserves explicit null assignees when creating or editing an unassigned Draft.
 - Harness tests cover concurrent numbering, prefix collisions, replay/current access, six statuses,
   default review policy, review revision/rework, retained outcomes, explicit task completion,
-  cancel-before-accept, unknown exit, profile deletion, pre-admission failure and credential-free
+  cancel-before-accept, unknown exit, profile deletion, pre-admission failure, Local startup rejection,
+  interrupted rejection persistence, confirmed abandonment, failed-stop recovery and credential-free
   observation/cancellation recovery. Worker tests keep only declared session MCP bearers across the
   native boundary and exclude app/Worker authority.
 - UI tests cover SSE draft preservation, accessible discard/copy recovery after a background status

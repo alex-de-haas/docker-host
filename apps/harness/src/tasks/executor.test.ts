@@ -25,7 +25,7 @@ beforeEach(async () => {
   profiles = new ProfileStore(dir, async () => ({ name: "Writer", description: "", instructions: "Write carefully", connectionId: null, model: null, reasoningEffort: null, skillIds: [] }), async () => []);
   manager = openManager(); executor = new HarnessTaskExecutor(manager);
 });
-afterEach(async () => { await manager.shutdown(); await rm(dir, { recursive: true, force: true }); });
+afterEach(async () => { await manager.shutdown(); vi.restoreAllMocks(); await rm(dir, { recursive: true, force: true }); });
 it("accepts durably without running inline, then replays after profile deletion and restart", async () => {
   const id = randomUUID(), a = await executor.accept(id, input, actor); expect(a.state).toBe("accepted"); expect(sent).not.toHaveBeenCalled();
   const directory = await profiles.read(); await profiles.remove(directory.defaultId!, directory.revision);
@@ -122,4 +122,84 @@ it("reserves the task's first message for its executor even when a caller knows 
   await executor.tick();
   expect(sent).toHaveBeenCalledTimes(1);
   expect(sent.mock.calls[0]?.[0]).toContain(input.input.markdown);
+});
+
+it.each(["workspace", "adapter"] as const)("recovers a definite local %s startup rejection without replacing its attempt", async failure => {
+  if (failure === "workspace") vi.spyOn(manager.store, "ensureWorkspace").mockRejectedValueOnce(new Error("Workspace preparation failed"));
+  else vi.spyOn(adapter, "start").mockImplementationOnce(() => { throw new Error("Native startup failed"); });
+  const id = randomUUID(), accepted = await executor.accept(id, input, actor);
+  await executor.tick();
+  expect(await manager.messageReceipt(accepted.sessionRef!.id, id, "owner")).toMatchObject({ state: "rejected" });
+  expect(await executor.get(id, actor)).toMatchObject({ state: "failed", stopConfirmed: true });
+  expect(sent).not.toHaveBeenCalled();
+  executor = new HarnessTaskExecutor(manager);
+  await executor.tick();
+  expect(await executor.accept(id, input, actor)).toMatchObject({ state: "failed", stopConfirmed: true });
+  await manager.cancelSession(accepted.sessionRef!.id);
+  await executor.accept(randomUUID(), input, actor);
+  await executor.tick();
+  expect(sent).toHaveBeenCalledTimes(1);
+});
+it("keeps failed local send admission uncertain until native exit is confirmed", async () => {
+  sent.mockImplementationOnce(() => { throw new Error("Lost send acknowledgement"); });
+  const id = randomUUID(), accepted = await executor.accept(id, input, actor);
+  await executor.tick();
+  expect(await manager.messageReceipt(accepted.sessionRef!.id, id, "owner")).toMatchObject({ state: "unknown" });
+  expect(await executor.get(id, actor)).toMatchObject({ state: "interrupted", stopConfirmed: false });
+  expect(manager.hasLiveTaskRun(accepted.sessionRef!.id)).toBe(true);
+  await executor.cancel(id, randomUUID(), actor); await executor.tick();
+  expect(await executor.get(id, actor)).toMatchObject({ state: "cancelled", stopConfirmed: true });
+});
+it.each([false, true])("confirms local abandoned-task exit and continues past a failed stop (%s)", async failFirstStop => {
+  const executions: { id: string; sessionId: string }[] = [];
+  for (let i = 0; i < 2; i++) {
+    const id = randomUUID(), accepted = await executor.accept(id, input, actor); await executor.tick();
+    const sessionId = accepted.sessionRef!.id;
+    runOptions!.onEvent({ type: "question_request", questionId: randomUUID(), questions: [{ question: "Continue?", header: "Confirm", options: [{ label: "Yes", description: "Continue the task" }], multiSelect: false }] });
+    await vi.waitFor(async () => expect((await manager.getSession(sessionId))?.status).toBe("awaiting_question"));
+    executions.push({ id, sessionId });
+  }
+  if (failFirstStop) stopped.mockRejectedValueOnce(new Error("Native exit is not confirmed"));
+  const day = 24 * 60 * 60 * 1000;
+  expect(await manager.sweepAbandoned(day, Date.now() + 2 * day)).toEqual(executions.slice(failFirstStop ? 1 : 0).map(e => e.sessionId));
+  if (failFirstStop) {
+    expect(manager.hasLiveTaskRun(executions[0]!.sessionId)).toBe(true);
+    expect((await manager.getSession(executions[0]!.sessionId))?.status).toBe("awaiting_question");
+    expect(await manager.sweepAbandoned(day, Date.now() + 2 * day)).toEqual([executions[0]!.sessionId]);
+  }
+  await executor.tick();
+  for (const execution of executions) {
+    expect((await manager.getSession(execution.sessionId))?.status).toBe("abandoned");
+    expect(await executor.get(execution.id, actor)).toMatchObject({ state: "failed", stopConfirmed: true });
+    expect(manager.hasLiveTaskRun(execution.sessionId)).toBe(false);
+  }
+});
+
+it("recovers persisted no-run proof even when the failed-status update did not complete", async () => {
+  const saveReceipt = manager.store.saveMessageReceipt.bind(manager.store);
+  vi.spyOn(manager.store, "saveMessageReceipt").mockImplementation(async (sessionId, receipt) => {
+    await saveReceipt(sessionId, receipt);
+    if (receipt.state === "rejected") throw new Error("Stopped before updating the session status");
+  });
+  vi.spyOn(adapter, "start").mockImplementationOnce(() => { throw new Error("Native startup failed"); });
+  vi.spyOn(manager, "messageReceipt").mockRejectedValueOnce(new Error("Receipt temporarily unavailable"));
+  const id = randomUUID(), accepted = await executor.accept(id, input, actor); await executor.tick();
+  expect((await manager.getSession(accepted.sessionRef!.id))?.status).toBe("running");
+  executor = new HarnessTaskExecutor(manager);
+  await executor.tick();
+  expect(await executor.get(id, actor)).toMatchObject({ state: "failed", stopConfirmed: true });
+  expect(sent).not.toHaveBeenCalled();
+});
+
+it("waits for the final session status when a started run has confirmed exit", async () => {
+  const id = randomUUID(), accepted = await executor.accept(id, input, actor); await executor.tick();
+  await executor.report(accepted.sessionRef!.id, randomUUID(), { markdown: "Explicit outcome", resources: [] });
+  const session = (await manager.getSession(accepted.sessionRef!.id))!;
+  vi.spyOn(manager, "getSession").mockResolvedValueOnce({ ...session, status: "running", taskRun: { started: true, exitConfirmed: true } });
+  await executor.tick();
+  expect(await executor.get(id, actor)).toMatchObject({ state: "running", stopConfirmed: false });
+  runOptions!.onEvent({ type: "result", status: "success" });
+  await vi.waitFor(async () => expect((await manager.getSession(accepted.sessionRef!.id))?.status).toBe("idle"));
+  await executor.tick();
+  expect(await executor.get(id, actor)).toMatchObject({ state: "completed", stopConfirmed: true });
 });

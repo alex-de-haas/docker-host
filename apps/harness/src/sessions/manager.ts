@@ -1750,6 +1750,14 @@ export class SessionManager {
       } catch (error) {
         // A caught failure before send is definitive; a crash or failure during send remains unknown.
         if (messageReceipt && !dispatched) {
+          if (session.record.taskExecutionId && !this.worker && !session.run) {
+            // Running records dispatch intent before setup. A caught local failure without a
+            // returned run handle admits no native execution; persist that proof before rejection.
+            // Crashes and failures after send keep their existing uncertain admission marker.
+            session.record.taskRun = { started: false, exitConfirmed: true };
+            session.record.developmentLeaseState = "stopped";
+            await this.store.saveRecord(session.record);
+          }
           const known = error instanceof AppContextError || error instanceof ConnectionError || error instanceof WorkerError;
           await this.store.saveMessageReceipt(id, { ...messageReceipt, state: "rejected", error: {
             code: known ? error.code.slice(0, 80) : "message_dispatch_failed",
@@ -2621,8 +2629,9 @@ export class SessionManager {
       await this.serialize(id, async () => {
         if (!isWaitingStatus(session.record.status) || now - Date.parse(session.record.updatedAt) < maxWaitMs) return;
         const waitedMs = now - Date.parse(session.record.updatedAt);
-        if (session.record.executionMode === "docker") {
-          // Do not release the provider or pending approvals while a detached writer may still run.
+        if (session.record.executionMode === "docker" || session.record.taskExecutionId) {
+          // Keep Local task handles too until native exit is confirmed; a failed stop must not
+          // strand this attempt or prevent the sweep from processing other waiting sessions.
           try { await this.finishExecution(session); } catch { return; }
         }
         session.runEpoch = undefined;
