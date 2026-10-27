@@ -98,7 +98,9 @@ authorized repositories; Documents refreshes those repositories without reloadin
 catalog. Reconnects, dropped events and catalog/target changes still request a full snapshot.
 The client merges notifications into one pending refresh, completes the current load before starting
 the next and leaves five seconds between background loads. Manual Refresh skips that interval
-without canceling a useful in-flight load. Hidden documents abort loads and close their subscription;
+without canceling a useful in-flight load. Initial repository progress continues to completion;
+background revalidation keeps loaded content visible. Navigation to another document or workspace
+and leaving the view cancel obsolete reads and queued work. Hidden documents abort loads and close their subscription;
 visibility return resynchronizes the complete view. Reconnect uses bounded backoff. Manual
 Refresh requests an explicit target fetch. An older Core without this stream shows a manual-refresh
 notice; failed observations are not advertised as fresh success.
@@ -159,6 +161,8 @@ remains usable without Documents and with unrelated third-party reader identitie
   cache authorization and bounded indexes, workspace removal, draft retry and translation guards.
 - Cover burst coalescing, one active load, accumulated repository scopes across batched renders,
   manual refresh priority, malformed/legacy hints and hide/resume resynchronization.
+- Cover repeated source events during slow repository/document reads, monotonic initial loading
+  progress, queued manual refresh after failures, failed listings and navigation cancellation.
 - Run affected Core source-document, source-fetch, stream and workspace-inspection tests, including
   unrelated app IDs, administrator/source permission, revocation, scopes, stale versions and PR facts.
 - Run node --test scripts/docs-index.test.mjs scripts/docs-format.test.mjs and node scripts/docs-index.mjs
