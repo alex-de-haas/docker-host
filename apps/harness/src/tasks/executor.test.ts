@@ -21,11 +21,12 @@ const adapter: HarnessAdapter = { name: "controlled", capabilities: { questions:
   start: options => { runOptions = options; return { send: sent, resolveApproval: () => true, resolveQuestion: () => true, setMcpServers: async () => false, interrupt: async () => {}, stop: stopped, stopAndWait: stopped } satisfies HarnessRun; } };
 function openManager() { return new SessionManager(new SessionStore(dir), adapter, new AuditReporter(null, null, "example.harness"), dir, new SettingsStore(dir), null, null, null, "http://localhost:1234", null, null, null, null, undefined, profiles); }
 beforeEach(async () => {
+  vi.stubEnv("HOSTY_PUBLIC_ORIGIN_HTTP", "https://harness.example.test");
   dir = await mkdtemp(path.join(os.tmpdir(), "hosty-executor-")); runOptions = undefined; vi.clearAllMocks();
   profiles = new ProfileStore(dir, async () => ({ name: "Writer", description: "", instructions: "Write carefully", connectionId: null, model: null, reasoningEffort: null, skillIds: [] }), async () => []);
   manager = openManager(); executor = new HarnessTaskExecutor(manager);
 });
-afterEach(async () => { await manager.shutdown(); vi.restoreAllMocks(); await rm(dir, { recursive: true, force: true }); });
+afterEach(async () => { await manager.shutdown(); vi.restoreAllMocks(); vi.unstubAllEnvs(); await rm(dir, { recursive: true, force: true }); });
 it("accepts durably without running inline, then replays after profile deletion and restart", async () => {
   const id = randomUUID(), a = await executor.accept(id, input, actor); expect(a.state).toBe("accepted"); expect(sent).not.toHaveBeenCalled();
   const directory = await profiles.read(); await profiles.remove(directory.defaultId!, directory.revision);
@@ -232,4 +233,17 @@ it("rejects a new result when an interrupted execution no longer has a live run"
   await executor.tick();
   await manager.shutdown();
   await expect(executor.report(accepted.sessionRef!.id, randomUUID(), { markdown: "Late outcome", resources: [] })).rejects.toMatchObject({ code: "execution_closed" });
+});
+
+it("returns an absolute conversation URL to another application and a relative link to Harness", async () => {
+  const external = await executor.accept(randomUUID(), input, actor);
+  expect(external.sessionRef?.path).toBe(`https://harness.example.test/assistant?session=${external.sessionRef!.id}`);
+  const local = await executor.accept(randomUUID(), input, { ...actor, scope: "hosty.harness:standalone", actor: { ...actor.actor, appId: "hosty.harness", installationId: "standalone" } });
+  expect(local.sessionRef?.path).toBe(`/assistant?session=${local.sessionRef!.id}`);
+});
+it.each(["", "file:///tmp/harness", "https://user:password@harness.test"])("omits an unusable cross-app conversation origin: %s", async origin => {
+  vi.stubEnv("HOSTY_PUBLIC_ORIGIN_HTTP", origin);
+  const receipt = await executor.accept(randomUUID(), input, actor);
+  expect(receipt.state).toBe("accepted");
+  expect(receipt.sessionRef).toBeUndefined();
 });

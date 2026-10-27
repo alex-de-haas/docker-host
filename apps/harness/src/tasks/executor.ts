@@ -37,6 +37,17 @@ export class HarnessTaskExecutor {
     if (!record || record.scope !== authority.scope || !sameActor(record.actor, authority.actor)) return taskError("execution_not_found", "Execution not found.", 404);
     return record;
   }
+  private conversationPath(sessionId: string, authority: ExecutionAuthority): string | null {
+    const route = `/assistant?session=${encodeURIComponent(sessionId)}`;
+    const local = !authority.actor.appId || authority.actor.appId === (process.env.HOSTY_APP_ID ?? "hosty.harness")
+      && authority.actor.installationId === (process.env.HOSTY_APP_INSTALLATION_ID ?? "standalone");
+    if (local) return route;
+    try {
+      const origin = new URL(process.env.HOSTY_PUBLIC_ORIGIN_HTTP ?? "");
+      if (!["http:", "https:"].includes(origin.protocol) || origin.username || origin.password) return null;
+      return new URL(route, origin).href;
+    } catch { return null; }
+  }
   private touch(record: Execution) { record.receipt.revision++; record.receipt.updatedAt = new Date().toISOString(); }
   async options() {
     const directory = await this.manager.profiles?.read();
@@ -67,7 +78,8 @@ export class HarnessTaskExecutor {
           title: input.title, profileId: value.executorOptionId, taskExecutionId: id });
         if (!session.agentProfile) return taskError("profile_required", "Select a Harness profile before starting a task.");
         record.sessionId = session.id;
-        record.receipt.sessionRef = { id: session.id, path: `/assistant?session=${encodeURIComponent(session.id)}` };
+        const conversation = this.conversationPath(session.id, authority);
+        if (conversation) record.receipt.sessionRef = { id: session.id, path: conversation };
       } catch (error) {
         record.receipt.state = "failed"; record.receipt.stopConfirmed = true;
         record.receipt.error = { code: (error as { code?: string }).code ?? "admission_failed", message: error instanceof Error ? error.message : "Task admission failed." };

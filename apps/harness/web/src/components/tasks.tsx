@@ -25,10 +25,11 @@ export function Tasks() {
   const [result, setResult] = useState(""), [feedback, setFeedback] = useState("");
   const [resource, setResource] = useState<TaskResource>({ kind: "external", owner: "", id: "", version: { mode: "live" } });
   const [uncertain, setUncertain] = useState(false);
+  const assigneeRequest = useRef(0);
   const pending = useRef<{ route: string; method: string; body: string } | null>(null);
   const selectedTask = rows.find(t => t.ref.id === selected);
   const draft = !dirty && !creating && selectedTask ? inputOf(selectedTask) : storedDraft;
-  const edit = (patch: Partial<TaskInput>) => { if (!dirty) setBaseRevision(selectedTask?.revision ?? 0); setDraft({ ...draft, ...patch }); setDirty(true); };
+  const edit = (patch: Partial<TaskInput>) => { if (!dirty) setBaseRevision(selectedTask?.revision ?? 0); setDraft(current => ({ ...(!dirty && !creating && selectedTask ? inputOf(selectedTask) : current), ...patch })); setDirty(true); };
   const refresh = useCallback(async () => {
     let cursor: string | null = null; const tasks: TaskRecord[] = [];
     do { const page: TaskPage = await (await call(`/tasks/v1/tasks?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`)).json(); tasks.push(...page.tasks); cursor = page.nextCursor; } while (cursor);
@@ -58,16 +59,18 @@ export function Tasks() {
     void stream();
     const visible = () => { if (document.visibilityState === "visible") void refresh().catch(e => setError(e.message)); };
     document.addEventListener("visibilitychange", visible);
-    return () => { controller.abort(); clearTimeout(retry); document.removeEventListener("visibilitychange", visible); };
+    return () => { assigneeRequest.current++; controller.abort(); clearTimeout(retry); document.removeEventListener("visibilitychange", visible); };
   }, [refresh]);
   const choose = (t?: TaskRecord) => {
     if (dirty || uncertain) { setError("Save or discard the current draft before changing tasks."); return; }
+    assigneeRequest.current++;
     setSelected(t?.ref.id ?? null); setCreating(!t); setDraft(t ? inputOf(t) : empty()); setBaseRevision(t?.revision ?? 0);
     setResult(""); setFeedback(""); setError(null);
   };
   const send = async (route?: string, method?: string, body?: unknown) => {
     if (!pending.current && route && method) pending.current = { route, method, body: JSON.stringify(body) };
     if (!pending.current) return;
+    assigneeRequest.current++;
     setBusy(true); setError(null);
     try {
       const op = pending.current;
@@ -93,20 +96,26 @@ export function Tasks() {
       ...(name === "accept" || name === "request_changes" ? { resultInputRevision: selectedTask.resultInputRevision, feedback } : {}) });
   };
   const selectAssignee = async (value: string) => {
+    const request = ++assigneeRequest.current;
     if (!directory) return;
     if (!value) { edit({ assignee: null }); return; }
     if (value.startsWith("human:")) { const u = directory.users.find(u => u.id === value.slice(6))!; edit({ assignee: { kind: "human", userId: u.id, name: u.displayName ?? u.email ?? u.id } }); return; }
     const executor = directory.executors.find(e => key(e) === value.slice(4)); if (!executor) return;
+    const ref = { appId: executor.appId, installationId: executor.installationId, key: executor.key };
+    edit({ assignee: { kind: "app", executor: ref } });
     try {
-      let options = executor.options;
+      let options = executor.options, defaultId = executor.defaultId;
       if (!options) {
         const loaded: TaskExecutorOptions = await (await call("/tasks/v1/executor-options", { method: "POST", body: JSON.stringify(executor) })).json();
-        options = loaded.options; executor.options = options; executor.defaultId = loaded.defaultId;
-        setDirectory({ ...directory });
+        if (request !== assigneeRequest.current) return;
+        options = loaded.options; defaultId = loaded.defaultId;
+        setDirectory(current => current && ({ ...current, executors: current.executors.map(e => key(e) === key(ref) ? { ...e, options: loaded.options, defaultId: loaded.defaultId } : e) }));
       }
-      const option = options.find(o => o.id === executor.defaultId) ?? options[0];
-      edit({ assignee: { kind: "app", executor: { appId: executor.appId, installationId: executor.installationId, key: executor.key }, ...(option ? { optionId: option.id, name: option.name } : {}) } });
-    } catch (e) { setError(e instanceof Error ? e.message : "Executor unavailable."); }
+      if (request !== assigneeRequest.current) return;
+      const option = options.find(o => o.id === defaultId) ?? options[0];
+      setDraft(current => current.assignee?.kind === "app" && key(current.assignee.executor) === key(ref)
+        ? { ...current, assignee: { kind: "app", executor: ref, ...(option ? { optionId: option.id, name: option.name } : {}) } } : current);
+    } catch (e) { if (request === assigneeRequest.current) setError(e instanceof Error ? e.message : "Executor unavailable."); }
   };
   const editable = creating || selectedTask?.status === "Draft";
   const selectedExecutor = draft.assignee?.kind === "app" ? directory?.executors.find(e => key(e) === key(draft.assignee?.kind === "app" ? draft.assignee.executor : directory!.provider)) : undefined;
@@ -148,7 +157,7 @@ export function Tasks() {
           </fieldset>
           {dirty && !editable && <p role="status" className="text-sm text-muted-foreground">This task is no longer a Draft. Your unsaved input is preserved for copying. Discard edits to continue.</p>}
           {editable && dirty && selectedTask && baseRevision !== selectedTask.revision && <p className="text-sm text-muted-foreground">This task changed while you were editing. Your input is preserved; reload before saving.</p>}
-          <div className="flex gap-2"><Button disabled={!editable || busy || uncertain || !directory || !creating && !dirty} onClick={() => void save()}>Save draft</Button>{dirty && <Button variant="outline" disabled={busy || uncertain} onClick={() => { setDirty(false); setDraft(selectedTask ? inputOf(selectedTask) : empty()); setError(null); }}>Discard edits</Button>}</div>
+          <div className="flex gap-2"><Button disabled={!editable || busy || uncertain || !directory || !creating && !dirty} onClick={() => void save()}>Save draft</Button>{dirty && <Button variant="outline" disabled={busy || uncertain} onClick={() => { assigneeRequest.current++; setDirty(false); setDraft(selectedTask ? inputOf(selectedTask) : empty()); setError(null); }}>Discard edits</Button>}</div>
         </div> : <div className="space-y-3"><h2 className="text-xl font-semibold">{selectedTask!.title}</h2><p className="text-sm text-muted-foreground">{selectedTask!.assignee?.name ?? (selectedTask!.assignee?.kind === "human" ? selectedTask!.assignee.userId : selectedTask!.assignee?.executor.appId)}</p><Markdown text={selectedTask!.markdown} />
           {!!selectedTask!.resources.length && <ul className="space-y-1 text-sm">{selectedTask!.resources.map((r, i) => <li key={i} className="break-all">{r.kind}: {r.label ?? r.id} · {r.owner} · {r.version.mode === "live" ? "Live" : r.version.revision}</li>)}</ul>}{selectedTask!.workspaceId && <p className="text-sm text-muted-foreground">Workspace: {directory?.workspaces.workspaces.find(w => w.id === selectedTask!.workspaceId)?.name ?? selectedTask!.workspaceId}</p>}</div>}
         {selectedTask && <div className="space-y-3">

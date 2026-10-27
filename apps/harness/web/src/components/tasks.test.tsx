@@ -94,3 +94,55 @@ it.each(["Ready", "Cancelled"] as const)("preserves and recovers dirty input aft
   expect(container.querySelector<HTMLInputElement>("input")?.value).toBe("");
   expect(container.querySelector<HTMLInputElement>("input")?.disabled).toBe(false);
 });
+
+async function delayedExecutor() {
+  const original = vi.mocked(call).getMockImplementation()!;
+  let resolve!: (response: Response) => void;
+  vi.mocked(call).mockImplementation(async (url, init) => {
+    if (url === "/tasks/v1/executor-options") return new Promise<Response>(r => { resolve = r; });
+    const response = await original(url, init);
+    if (url !== "/tasks/v1/directory") return response;
+    const directory = await response.json(); directory.executors[0].options = null;
+    return Response.json(directory);
+  });
+  await mount();
+  await act(async () => {
+    const select = container.querySelector<HTMLOptionElement>('option[value="app:example.tasks:one:default"]')!.closest("select")!;
+    select.value = "app:example.tasks:one:default"; select.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  return () => act(async () => { resolve(Response.json({ options: [{ id: "writer", name: "Writer" }], defaultId: "writer" })); });
+}
+it("preserves title and description edits while executor options load", async () => {
+  const complete = await delayedExecutor();
+  await act(async () => {
+    const title = container.querySelector<HTMLInputElement>("input")!;
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(title, "Latest title");
+    title.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () => {
+    const description = container.querySelector<HTMLTextAreaElement>("textarea")!;
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(description, "Latest description");
+    description.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await complete();
+  expect(container.querySelector<HTMLInputElement>("input")!.value).toBe("Latest title");
+  expect(container.querySelector<HTMLTextAreaElement>("textarea")!.value).toBe("Latest description");
+  expect(container.querySelector<HTMLOptionElement>('option[value="writer"]')!.selected).toBe(true);
+});
+it("ignores an old executor response after choosing a person", async () => {
+  const complete = await delayedExecutor();
+  await act(async () => {
+    const select = container.querySelector<HTMLOptionElement>('option[value="human:owner"]')!.closest("select")!;
+    select.value = "human:owner"; select.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await complete();
+  expect(container.querySelector<HTMLOptionElement>('option[value="human:owner"]')!.selected).toBe(true);
+});
+it("marks executor selection dirty immediately and ignores responses after discarding and navigating", async () => {
+  const complete = await delayedExecutor();
+  expect([...container.querySelectorAll("button")].some(b => b.textContent === "Discard edits")).toBe(true);
+  await click("Discard edits"); await click("New task");
+  await complete();
+  expect(container.querySelector<HTMLInputElement>("input")!.value).toBe("");
+  expect(container.querySelector<HTMLOptionElement>('option[value="human:owner"]')!.closest("select")!.value).toBe("");
+});

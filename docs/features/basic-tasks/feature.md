@@ -204,7 +204,7 @@ managed runtime/browser journey. Changes are not deployed to the operator's live
 | `dotnet build packages/app-sdk-dotnet/HostySdk.App/HostySdk.App.csproj` | net8.0 and net10.0 passed. |
 | `npm run sdk:dotnet:test` | 70 passed, including create/edit requests with an explicit null assignee. |
 | `npm run harness:lint` | API/web TypeScript and web ESLint passed. |
-| `npm test --workspace @haas/hosty-harness` | Full suite passed: 164 files, 1783 tests after Local lifecycle, availability recovery, queued activation and lease cleanup fixes. |
+| `npm test --workspace @haas/hosty-harness` | Full suite passed: 164 files, 1790 tests after lifecycle, availability recovery, draft race and cross-app link fixes. |
 | `npm test --workspace @haas/hosty-harness -- src/tasks src/profiles web/src/components/tasks.test.tsx web/src/components/session-model.test.tsx web/src/components/session-profile.test.tsx` | Review-fix suite passed: 9 files, 52 tests, including accepted-task selection/dispatch locks and draft recovery after Ready/Cancelled transitions. |
 | `node --test scripts/test-integration.test.mjs` | 14 passed, including task and observability suites. |
 | `HOSTY_TASKS_BROWSER=1 HOSTY_TASKS_BROWSER_CHANNEL=chrome npm run test:integration -- tasks` | Core/CLI/API/Worker builds and complete managed API/browser acceptance passed; the installed Playwright module was selected through HOSTY_TASKS_PLAYWRIGHT_MODULE. |
@@ -212,7 +212,7 @@ managed runtime/browser journey. Changes are not deployed to the operator's live
 
 The managed run verifies human review/rework, a profile execution with no workspace, explicit MCP
 result versus an ordinary turn, cancellation during native work, an existing retained workspace,
-an independent SDK producer/executor, cancel-before-accept fencing and restart without replacement
+an independent SDK producer/executor, a cross-app conversation URL, cancel-before-accept fencing and restart without replacement
 attempts. Chrome verifies password login, Core app identity, UI creation/start/review/result, SSE
 preservation of unsaved input, recovery after a concurrent Draft-to-Ready transition, and reload.
 The complete managed journey passed again after the review fixes. Parent Finish confirmed child
@@ -224,8 +224,13 @@ exercised. Cross-platform runtime suites and the full repository test matrix wer
 this acceptance targets the affected components on macOS/Docker. Existing Core/compiler and .NET
 SDK XML-comment warnings remain; builds completed without errors.
 
-Artifact versions: platform 0.159.0 → 0.160.0; Harness API/web/Worker 0.73.0 → 0.74.6;
+Artifact versions: platform 0.159.0 → 0.160.0; Harness API/web/Worker 0.73.0 → 0.74.7;
 TypeScript SDK 0.35.1 → 0.36.0; .NET SDK 0.10.0 → 0.11.1. Other artifacts retain their versions.
+
+Executor selection marks the draft dirty immediately. Delayed option responses preserve subsequent
+title/description edits and are ignored after another selection, discard, navigation or submission.
+External task providers receive an absolute conversation link built from Core's public Harness
+endpoint; same-app links remain relative. An unavailable or invalid public origin omits the link.
 
 ## Testing Expectations
 

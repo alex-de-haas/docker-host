@@ -158,7 +158,18 @@ def check(context):
     assert call(fixture_origin,'/invoke',invocation,extra={'X-Hosty-User-Token':identity})['state']=='cancelled'
     invocation.update(operation='accept',input={'taskRef':{**external,'id':str(uuid.uuid4())},'taskRevision':1,'executorOptionId':profile['id'],'input':{'title':'Must never launch','markdown':'TASK_ACCEPTANCE:RESULT','requiresReview':False,'resources':[]}})
     assert call(fixture_origin,'/invoke',invocation,extra={'X-Hosty-User-Token':identity})['state']=='cancelled'
-    say('PASS: independent SDK producer/executor, attributed Core tokens and cancel-before-accept fencing')
+    invocation.update(id=str(uuid.uuid4()),operation='accept')
+    invocation['input']['input'].update(title='Cross-app conversation',markdown='TASK_ACCEPTANCE:WAIT')
+    accepted=call(fixture_origin,'/invoke',invocation,extra={'X-Hosty-User-Token':identity})
+    conversation=accepted['sessionRef']['path']; parsed=urllib.parse.urlparse(conversation); harness=urllib.parse.urlparse(app_origin)
+    assert parsed.scheme==harness.scheme and parsed.netloc==harness.netloc and parsed.path=='/assistant', conversation
+    assert urllib.parse.parse_qs(parsed.query)['session']==[accepted['sessionRef']['id']]
+    with client.open(conversation,timeout=30) as response: assert response.status==200 and response.read()
+    invocation.update(operation='cancel',requestId=str(uuid.uuid4()))
+    call(fixture_origin,'/invoke',invocation,extra={'X-Hosty-User-Token':identity})
+    invocation.update(operation='get')
+    wait_for(lambda: call(fixture_origin,'/invoke',invocation,extra={'X-Hosty-User-Token':identity})['stopConfirmed'],30)
+    say('PASS: independent SDK producer/executor, cross-app conversation URL, attributed Core tokens and cancel-before-accept fencing')
     recovering=settle(action(create('Interrupted native work',assignee,markdown='TASK_ACCEPTANCE:WAIT'),'ready'),'InProgress',False)
     recovery_id=recovering['attempts'][0]['executionId']
     run([cli,'--data-root',root,'apps','restart',app]); wait_for(lambda: request('/api/apps/'+app+'/health')['status']=='healthy',180); login_app()
