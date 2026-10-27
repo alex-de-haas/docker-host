@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-26
-updated: 2026-09-29
+updated: 2026-10-27
 summary: Evaluate AHP as a replaceable external client interface over Hosty's existing session implementation.
 components: [apps/harness]
 ---
@@ -18,9 +18,9 @@ protocol adoption; other Hosty session features do not depend on adopting AHP.
 Hosty's SessionManager and SessionStore remain responsible for sessions, execution and persistence.
 The existing `record.json` and append-only `events.ndjson` are the starting point, extended for
 product requirements rather than replaced with upstream protocol state. The
-[shared-history feature](../assistant-shared-history/plan.md) owns required event improvements and
-provider switching. This plan owns only the AHP projection, inbound command adapter, connection
-authorization and external-client interoperability. It remains Draft pending scope approval.
+[Action Summary D4](../assistant-action-summary/plan.md#deliverables) owns correlated journal events;
+[Durable Agent Jobs D7](../durable-agent-jobs/plan.md#deliverables) owns common session recovery.
+This plan owns only the AHP projection, inbound command adapter, connection authorization and external-client interoperability. It remains Draft pending scope approval.
 
 ## Architecture And Ownership
 
@@ -55,9 +55,9 @@ is stable. The spike proves session reads, message streaming, questions/approval
 and multi-client consistency with both existing native providers.
 
 AHP session state carries one provider identity. Propose a stable Hosty provider on the wire;
-Codex/Claude execution and account identity remain Hosty facts. Test custom-agent selection and
-attribution as a mapping, not native-provider context migration. `Message.origin` describes the
-initiating actor and `Message.agent` selects a custom agent; neither alone establishes attribution
+Codex/Claude execution and account identity remain Hosty facts. Test pre-start custom-agent
+selection and attribution while respecting the started-session provider lock; do not imply native
+context migration. `Message.origin` describes the initiating actor and `Message.agent` selects a custom agent; neither alone establishes attribution
 for every assistant response. Unsupported generic-client controls should be reported explicitly.
 
 Changesets are release-candidate in the inspected reference. Defer their projection to the
@@ -91,8 +91,8 @@ resume operation does not prove the native process is still running or recoverab
    without duplicate sends or side effects. Repeat across AHP-adapter restart.
 3. Resolve a pending approval from the phone and observe it in the REST/SSE web UI; race the same
    decision from both clients and execute the action at most once.
-4. Exercise both native providers; when Hosty switching is available, assess its presentation in a
-   generic client such as ahpc. Switching itself remains owned by the Hosty shared-history plan.
+4. Exercise each native provider in its own session, including pre-start agent selection and
+   attribution in a generic client such as ahpc. Do not require switching a started conversation.
 5. Determine whether VS Code Agents can connect to a third-party AHP host by URL with Hosty auth.
    Record supported versions and observed limitations; documentation about VS Code's own agent host
    is not evidence that this arbitrary-host client scenario works.
@@ -105,15 +105,15 @@ do not automatically replace the internal model or design another new protocol.
 
 Evaluate hosting an upstream agent host as an alternative to native Hosty adapters before Ready.
 Record how either approach preserves Hosty identity/MCP grants, authoritative session history,
-provider switching, workspace ownership and restart behavior. Current proposal keeps the existing
+separate provider sessions, workspace ownership and restart behavior. Current proposal keeps the existing
 Hosty executor integration; upstream-host examples are references, not an assumed drop-in runtime.
 
 ## Deliverables
 
 - [ ] D1. Complete the pinned Swift/ingress/reconnect/approval spike and document generic-client and
   upstream-host alternatives with evidence and a scoped adoption decision.
-- [ ] D2. Define the Hosty-to-AHP mapping and required internal event fields with the shared-history
-  owner, keeping transport-specific types out of Hosty persistence/execution.
+- [ ] D2. Define the Hosty-to-AHP mapping and required internal event fields with Action Summary D4
+  and Durable Agent Jobs D7, keeping transport-specific types out of Hosty persistence/execution.
 - [ ] D3. Implement the authenticated AHP projection and inbound command adapter for the selected first
   surface over existing session services, with common permission and operation-identity checks.
 - [ ] D4. Implement protocol version negotiation, projection fixtures, replay/snapshot recovery and

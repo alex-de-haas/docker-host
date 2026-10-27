@@ -40,8 +40,10 @@ internal static class CoreAppPermissions
     public const string ReadSkills = "apps.skills.read";
     public const string SpeechProviders = "providers.speech-to-text";
     public const string TranslationProviders = "providers.translation";
+    public const string TaskProviders = "providers.tasks";
+    public const string TaskExecutors = "providers.task-executor";
     public const string AssistantProviders = "providers.assistant";
-    public static readonly string[] Known = [ReadCredentials, RevokeCredentials, RequestMcpAccess, WorkspaceCore, Install, ReadApps, ReadPanels, AppLogs, Notifications, AppLifecycle, ConfigureApps, ReadCore, UpdateCore, CoreLifecycle, ConfigureCore, CoreLogs, ReadUsers, ManageUsers, Sources, SourcesRead, WorkspacesRead, WorkspacesCleanup, SandboxesRead, SandboxesManage, CoreEnvironmentsRead, CoreEnvironmentsManage, CoreEnvironmentsInspect, CoreEnvironmentsOperate, SandboxesInspect, SandboxesOperate, SourceConnections, ReadSkills, ManageSkills, SpeechProviders, TranslationProviders, AssistantProviders];
+    public static readonly string[] Known = [ReadCredentials, RevokeCredentials, RequestMcpAccess, WorkspaceCore, Install, ReadApps, ReadPanels, AppLogs, Notifications, AppLifecycle, ConfigureApps, ReadCore, UpdateCore, CoreLifecycle, ConfigureCore, CoreLogs, ReadUsers, ManageUsers, Sources, SourcesRead, WorkspacesRead, WorkspacesCleanup, SandboxesRead, SandboxesManage, CoreEnvironmentsRead, CoreEnvironmentsManage, CoreEnvironmentsInspect, CoreEnvironmentsOperate, SandboxesInspect, SandboxesOperate, SourceConnections, ReadSkills, ManageSkills, SpeechProviders, TranslationProviders, AssistantProviders, TaskProviders, TaskExecutors];
 
     // The old name grants exactly the same authority. Other retired permissions remain unsupported.
     public static string Normalize(string permission) => permission == LegacySources ? Sources : permission;
@@ -98,6 +100,8 @@ internal static class CoreAppPermissions
         ManageUsers => "Manage users and their access",
         SpeechProviders => "List and use all current and future speech-to-text providers",
         TranslationProviders => "Send text to all current and future translation providers, using their configured accounts",
+        TaskProviders => "Create, read and manage tasks through authorized task providers",
+        TaskExecutors => "Submit tasks to authorized executors and observe or cancel their executions",
         AssistantProviders => "Create draft assistant conversations on your behalf",
         RequestMcpAccess => "Request user-reviewed changes to this assistant installation’s MCP access; cannot approve changes",
         ReadSkills => "Read shared agent skills and prepare native skill exports",

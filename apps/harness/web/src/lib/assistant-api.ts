@@ -25,6 +25,7 @@ export type AssistantQuestion = {
 export type AssistantSession = {
   agentProfile?: import("../../../src/profiles/types").AgentProfile | null;
   profileLocked?: boolean;
+  taskExecutionId?: string;
   executionSelection?: { model: string | null; reasoningEffort: string | null };
   selectionRevision?: number;
   appCreations?: { input: Record<string, unknown>; state: "pending" | "observed" | "rejected"; prompt?: string }[];

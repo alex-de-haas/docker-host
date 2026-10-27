@@ -1,6 +1,6 @@
 ---
 created: 2026-10-23
-updated: 2026-10-26
+updated: 2026-10-27
 ---
 
 # Ideas
@@ -835,16 +835,17 @@ The umbrella and the separate [capability Drafts](features/composable-agent-syst
 preferred shared task/agent-participant model, explicit artifact handoffs and a common Decisions
 surface. One document can initiate one task, whose responsible participant creates visible child
 tasks and assignments. A coordinator keeps its extra workflow state and agent hierarchy separately.
-Task and agent hierarchies are independent; persistent agent participants are shared identities,
-while profiles and concrete invocations have their own lifetimes.
+Task and agent hierarchies are independent. Decisions 62-64 select existing users/apps and opaque
+executor choices; Harness profiles remain internal configurations with lifetimes distinct from runs.
 
 Related delegated work normally reuses a selected workspace. An unrelated defect discovered during
 feature work can instead have an explicit independent workspace and PR, with a human decision about
 urgency or hotfix targeting. Avoid accidental duplicate workspace creation; do not enforce one
 workspace on every task tree. Choosing child versus related task remains an app workflow decision.
 
-The [Harness Work Orchestration Draft](features/harness-work-orchestration/plan.md) now explores the first combined Tasks, Decisions and Artifacts experience inside Harness; separate clients can also consume
-the common contracts. Decisions can reach a responsible human or a team reviewer rather than only
+The [Basic Tasks](features/basic-tasks/feature.md) feature provides the first manual/API task journey.
+The [Harness Work Orchestration Draft](features/harness-work-orchestration/plan.md) retains the later
+combined Tasks, Decisions and Artifacts experience; separate clients can also consume the contracts. Decisions can reach a responsible human or a team reviewer rather than only
 the person watching a chat. A quick reply continues live work; an overnight wait preserves the
 question and resumable state, and the eventual answer triggers continuation. Exact packaging,
 schema and resource-wait policy remain Draft questions. Basic artifacts support these handoffs;

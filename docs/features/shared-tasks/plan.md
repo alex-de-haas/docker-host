@@ -1,84 +1,84 @@
 ---
 status: Draft
 created: 2026-10-26
-updated: 2026-10-26
-summary: Shared observable tasks, assignments, child relationships and resource bindings with replaceable executors and app-owned workflow state.
-components: [apps/core, apps/documents, apps/harness, packages/app-sdk, packages/app-sdk-dotnet]
+updated: 2026-10-27
+summary: Deferred automatic workspace allocation, reuse and reverse observation across tasks, building on the independent basic task contract.
+components: [apps/core, apps/harness, packages/app-sdk, packages/app-sdk-dotnet]
 ---
 
-# Shared Tasks And Executor Bindings
+# Task Workspace Coordination
 
-## Goal And Baseline
+## Remaining Scope And Ownership
 
-Let one app create work and another execute it while all authorized consumers observe the same
-task and its children. Current plan/deliverable views and session/run records are not a general
-Core task contract. Documents denotes the intended evolution of Plans, not shipped behavior.
+On 2026-10-27 the owner split the independently shippable
+[Basic Tasks And Execution](../basic-tasks/feature.md) feature and explicitly approved its Ready status.
+That feature now provides the task schema, provider numbering, six statuses, Core/SDK APIs, task storage,
+direct execution, Harness task UI and simple result review. This stable feature folder retains only
+automatic task/workspace coordination for later design. [Vision decision 64](../../vision.md)
+records the split; this remaining plan is Draft and is not a dependency of basic task delivery.
 
-The preferred candidate is a small Core-owned task record with a replaceable executor. Compare
-provider-owned storage against the same create/read/observe use case before settling the contract.
-This separate Draft follows [vision decisions 55-56](../../vision.md); it authorizes no implementation.
+Basic Tasks supports optional resource references and explicit selection of an existing authorized
+workspace. This plan extends that baseline with allocation/reuse across related tasks and reverse
+observation. It does not implement another task store, checkout backend, model runner or permissions
+system. Task trees and agent hierarchy remain in
+[Harness Work Orchestration](../harness-work-orchestration/plan.md).
 
 ## Target Behavior
 
-Keep shared fields small: identity/revision, description, creator/owner, assignments, executor
-binding, lifecycle view, parent/related-task relationships and input/result/resource references.
-An originating app, target app and execution app are distinct relationships. Apps retain their
-private decomposition/review state; compare schema-versioned extension data with private storage.
+Related source work normally reuses a selected workspace. Define an allocation scope and durable
+request identity so concurrent requests and retries resolve one authorized binding without duplicate
+worktrees. Allow an explicit independent binding for an unrelated bugfix and PR; task parentage must
+not force one workspace per tree. Preserve discovery/related-task context without implying that the
+same source resource or branch must serve both pieces of work.
 
-Documents can create one task from an approved document revision. A coordinator may create visible
-children, assign participants and attach results. Other consumers see permitted state and assignments
-without accessing its private workflow or conversations. A completed run does not itself accept a
-task's business result. A task can span runs; ordinary work need not use a repository or workspace.
+Task-to-workspace bindings retain the task provider and workspace owner identities. Coordinate reverse
+task observation without moving task records into Core or requiring all task providers to share
+storage. Reassignment and reparenting do not silently move active consumers or reset source. Handle
+an unavailable/removed task provider, changed membership and stale references explicitly.
 
-Define command identity, concurrent updates, cancellation, stale results and unavailable/removed
-executors. Default executor selection applies to new work; existing bindings do not silently change.
-Only the designated owner can update its execution evidence. State changes produce authorized events
-through [Notifications D6](../notifications/plan.md#deliverables), with consistent state/event publication.
+Reuse current Core workspace preparation, association, activity leases, sandbox and publication APIs.
+Choose a stable allocation key and reconcile uncertain operations before retrying. A task completion
+does not Finish a sandbox, remove a workspace or publish changes. Shared source does not imply private
+transcript access, safe concurrent same-file edits or authority beyond current app/user grants.
 
-Related delegated source work normally inherits a selected workspace binding. Define the allocation
-scope so concurrent requests and retries resolve one authorized workspace. Allow an explicit separate
-binding for an independent bugfix and PR; task parentage must not enforce one workspace per tree.
-Specify reparenting and reassignment behavior without silently moving existing consumers. Source
-sharing grants no transcript access or automatic same-file write isolation.
+## Transfer Record (2026-10-27)
 
-## Dependencies And Ownership
+| Original deliverable | Current owner |
+| --- | --- |
+| D1-D2: common schema, provider/executor contracts, lifecycle and launch | [Basic Tasks D1-D2](../basic-tasks/feature.md#requirement-transfer) |
+| D4: Core/SDK and Harness task-provider implementation | [Basic Tasks D2-D3](../basic-tasks/feature.md#requirement-transfer) |
+| D3: optional references and explicit existing workspace selection | [Basic Tasks D1/D3/D4](../basic-tasks/feature.md#requirement-transfer); automatic allocation/reuse/reverse observation remains D3 here |
+| D5: basic task checks/documentation | [Basic Tasks D5-D6](../basic-tasks/feature.md#requirement-transfer); workspace-coordination acceptance remains D5 here |
 
-- [Agent Participants](../agent-participants/plan.md) owns persistent identity;
-  [Agent Providers](../agent-provider-interface/plan.md) owns execution invocation.
-- [Durable Agent Jobs](../durable-agent-jobs/plan.md) owns scheduled/retryable execution, not the task
-  registry. [Harness Work Orchestration](../harness-work-orchestration/plan.md) owns decomposition
-  and the first Documents-to-Harness business journey.
-- [Artifacts](../shared-artifacts/plan.md) owns result references; [Decisions](../shared-decisions/plan.md)
-  owns human questions. Neither task metadata nor an event is permission to read linked content.
-- [Plan Provider](../plan-provider-interface/plan.md) retains document/progress semantics;
-  [Default Applications](../default-applications/plan.md) retains generic selection mechanisms.
-- Existing workspace, membership, lease, sandbox and publication features own resource operations.
-  This plan adds task bindings and allocation coordination, not another checkout backend.
+D1, D2 and D4 are retired by transfer, not marked implemented, and their IDs must not be reused.
+D3 and D5 retain their original identifiers for the remaining work. The accepted numbering, lifecycle
+and launch contract has one canonical home in Basic Tasks; this plan does not duplicate it.
+
+## Dependencies
+
+- [Basic Tasks](../basic-tasks/feature.md) supplies qualified task/executor identity and explicit resources.
+- [Harness Work Orchestration D4](../harness-work-orchestration/plan.md#deliverables) owns delegation,
+  writer coordination and when a workflow chooses related versus independent source work.
+- [Workspace sessions](../workspace-sessions/feature.md), existing preparation/lease/sandbox APIs and
+  their remaining plans retain resource ownership and supported execution modes.
+- [Shared Artifacts](../shared-artifacts/plan.md) owns durable selected materials; source association
+  does not imply saved result bytes or cross-session visibility.
 
 ## Deliverables
 
-- [ ] D1. Compare storage alternatives and define the shared lifecycle, assignment/relationship model, executor binding and bounded extension policy, including behavior after an executor disappears.
-- [ ] D2. Define authorized mutations and observation with Notifications D6, request/revision identities, cancellation, stale/late results and default-executor selection; reconcile task/run acceptance boundaries.
-- [ ] D3. Define and implement, after Ready approval, task-to-workspace binding and atomic reuse through existing resource APIs, including explicit independent work, concurrent allocation, reparenting and current membership checks.
-- [ ] D4. After explicit Ready approval, implement the selected shared store/API/SDK and appropriate agent tools with authorized task/child reads and state events; verify independent producer and executor clients without shared private storage.
-- [ ] D5. Verify duplicate submissions, lost responses, concurrent updates, executor removal, revoked access and separate bugfix bindings; document shipped behavior in feature.md and reconcile consuming plans.
-
-## Proposed Sequence
-
-Agree D1-D2 alongside participant identity and provider invocation. Resolve D3 before delegating
-source work; implement D4 against the shared event contract. The first consumer can be one task and
-one executor, with child tasks added after that path is verified.
+- [ ] D3. Define and implement, after Ready approval, automatic task-to-workspace allocation/reuse and reverse task observation through existing resource APIs, including explicit independent work, concurrent allocation, retry recovery, reparenting/reassignment and current membership checks.
+- [ ] D5. Verify the full coordination flow with concurrent related tasks, deliberate independent bugfix/PR bindings, restart/lost responses, provider removal, revoked membership and active consumers; document shipped behavior in feature.md, reconcile Basic Tasks and orchestration, and regenerate the index.
 
 ## Open Questions
 
-- Which minimal lifecycle and relationship constraints are shared, and which remain workflow-specific?
-- What allocation scope prevents duplicate workspaces without obstructing deliberate independent work?
-- How are executor compatibility, missing ownership, reassignment and extension schema evolution handled?
-- Which content references must be pinned when creating work, and which may be explicitly live?
+- What allocation scope/key distinguishes related work from intentionally independent work?
+- Which owner maintains reverse task observations and recovers unavailable provider data?
+- How do reparenting/reassignment, cancellation and active consumers affect allocation and cleanup?
 
 ## Verification
 
-For this Draft, validate documents and links. Future checks cover two independent app clients,
-visible children with filtered permissions, restart/reconnect, cancelled work receiving a late result,
-intentional independent workspaces versus accidental duplicates, and tasks without source resources.
-Use existing managed-workspace/sandbox checks when implementation reaches those APIs.
+Documentation checks validate the split and links without claiming implementation. Runtime acceptance
+uses registered workspaces and managed sandboxes with normal authority. Prove retries/concurrent
+requests recover one intended allocation, independent work stays separate, source/results survive
+unrelated cleanup, and task links never grant transcript or filesystem access. Basic task acceptance
+does not complete D3/D5; these remain deferred until separately designed and approved.

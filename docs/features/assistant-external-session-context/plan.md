@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-26
-updated: 2026-10-07
+updated: 2026-10-27
 summary: Let an authenticated local external agent read a Hosty session, work in its registered folders and save a report back.
 components: [apps/harness]
 ---
@@ -13,8 +13,9 @@ The umbrella's common invariants apply; this feature has independent scope and r
 
 ## Target Behavior
 
-This is lower priority than internal switching and remote clients. Support an authenticated local
-external agent receiving environment + session id (or selecting it), reading shared history and
+This optional external-client path is independent of the retired in-session switching proposal.
+Support an authenticated local external agent receiving environment + session id (or selecting it),
+reading explicitly authorized session evidence and
 registered paths, performing requested work, and explicitly saving an attributed report/summary.
 Local external worktree registration is owned by
 [external development workspaces](../external-development-workspaces/feature.md). This context-exchange
@@ -24,7 +25,10 @@ No server-hosted model needs to be started merely to register external developme
 Hosty independently observes diffs and Git/PR facts. Saving external context must not implicitly
 start an internal turn. Prefer available transcript fragments with source ids when explicitly
 requested; label model-written summaries as summaries, not complete imported history. Deduplicate
-repeated uploads. Automatic Codex transcript extraction/synchronization is excluded from this scope.
+repeated uploads. Automatic Codex transcript extraction/synchronization is excluded from this scope. Reuse
+[Shared Artifacts](../shared-artifacts/plan.md) for selected attributed context handoffs and
+[Harness Orchestration D7](../harness-work-orchestration/plan.md#deliverables) for session/material
+access. A shared workspace alone gives no access to another session's private history.
 
 Use AHP for supported reads and MCP/API for Hosty-specific preparation/report operations. AHPX's
 current `session import` saves a local CLI record; it does not upload history to the live server.

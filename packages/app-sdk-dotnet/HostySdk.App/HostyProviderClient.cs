@@ -7,7 +7,7 @@ namespace HostySdk.App;
 
 /// <summary>A confirmed, versioned provider and its current availability.</summary>
 public sealed record HostyProvider(string AppId, string DisplayName, string Kind, string Key,
-    int? Version, string[] Capabilities, string? Url, bool Available);
+    int? Version, string[] Capabilities, string? Url, bool Available, string? InstallationId = null);
 /// <summary>The app's reviewed permission declarations and effective grants.</summary>
 public sealed record HostyProviderPermissions(string[] Required, string[] Optional, string[] Granted);
 /// <summary>Authority for one provider invocation, revalidated against live Core state.</summary>
@@ -116,12 +116,31 @@ public sealed class HostyProviderClient(HttpClient http, HostyAppOptions options
         finally { request.Content = null; }
     }
 
+    /// <summary>Send a bounded task operation to an explicitly selected installation.</summary>
+    public async Task<HttpResponseMessage> SendTaskAsync(HostyTaskProviderRef provider, string kind, string? userToken,
+        HttpMethod method, string route, HttpContent? content = null, CancellationToken cancellationToken = default)
+    {
+        var pattern = kind == "tasks" ? @"^(?:/capabilities|/tasks(?:\?[a-zA-Z0-9%=&_-]*|/[a-zA-Z0-9-]+(?:/actions)?)?)$"
+            : kind == "task-executor" ? @"^(?:/options|/executions/[a-zA-Z0-9-]+(?:/cancel)?)$" : "(?!)";
+        if (!System.Text.RegularExpressions.Regex.IsMatch(route, pattern)
+            || method != HttpMethod.Get && method != HttpMethod.Post && method != HttpMethod.Put && method != HttpMethod.Patch)
+            throw new ArgumentException("Use a version-one task operation.", nameof(route));
+        var selection = new HostyProvider(provider.AppId, "", kind, provider.Key, 1, [], null, false, provider.InstallationId);
+        var binding = await ConnectAsync(selection, kind, userToken, cancellationToken);
+        using var request = ProviderRequest(binding, method, route);
+        request.Content = content;
+        try { return await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken); }
+        finally { request.Content = null; }
+    }
+
     private async Task<ProviderBinding> ConnectAsync(HostyProvider provider, string kind, string? userToken, CancellationToken ct)
     {
         if (provider.Kind != kind) throw new ArgumentException("Provider category does not match the operation.", nameof(provider));
         var binding = await CoreAsync<ProviderBinding>($"/providers/{kind}/token", new ProviderSelection(provider.AppId, provider.Key), userToken, ct);
         if (binding.Provider.Version != 1 || binding.Provider.Url is null)
             throw new HostyProviderException("provider_incompatible", "Provider does not support interface version 1.", 409);
+        if (provider.InstallationId is not null && binding.Provider.InstallationId != provider.InstallationId)
+            throw new HostyProviderException("provider_changed", "The selected provider installation changed.", 409);
         return binding;
     }
     private HttpRequestMessage ProviderRequest(ProviderBinding binding, HttpMethod method, string suffix)
@@ -163,7 +182,7 @@ public sealed class HostyProviderClient(HttpClient http, HostyAppOptions options
     }
     private static void RequireKind(string kind)
     {
-        if (kind is not ("speech-to-text" or "assistant" or "translation")) throw new ArgumentException("Unknown provider category.", nameof(kind));
+        if (kind is not ("speech-to-text" or "assistant" or "translation" or "tasks" or "task-executor")) throw new ArgumentException("Unknown provider category.", nameof(kind));
     }
 }
 

@@ -1,6 +1,6 @@
 ---
 created: 2026-10-26
-updated: 2026-10-26
+updated: 2026-10-27
 summary: Shared Harness agent configurations with connection, model, reasoning, role instructions and explicit skills, selectable before a conversation starts.
 components: [apps/harness]
 ---
@@ -14,10 +14,12 @@ settings. Generalists and specialists use the same configuration. Permissions an
 approvals remain independent of profiles and their instructions.
 
 Profiles are Harness-owned application data and use its administrator API. They are separate from
-provider credentials, persistent participants and conversations. The configuration type and controlled
-`AgentProfileForm` component are reusable without a second configuration editor. Participant binding,
-hierarchy and task coordination belong to [Harness Work Orchestration](../harness-work-orchestration/plan.md)
-and the [Agent Participants](../agent-participants/plan.md) contract; neither is implemented here.
+provider credentials and conversations, and are shared within Harness rather than exported to other
+applications. The configuration type and controlled `AgentProfileForm` component are reusable without
+a second configuration editor. [Basic Tasks](../basic-tasks/feature.md) exposes profiles as opaque
+executor choices and snapshots the selected configuration into each accepted execution. Profiles
+remain private to Harness; task providers receive no configuration or credentials. Richer
+coordination belongs to [Harness Work Orchestration](../harness-work-orchestration/plan.md).
 
 ## Editing And Defaults
 

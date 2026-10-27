@@ -298,6 +298,30 @@ PCM16 WAV. Browser microphone consent is separate from Core permission.
 credentials and the acting user's access. It does not expose general agent execution.
 See [Provider consumption](../../docs/features/provider-consumption/feature.md) for the full contract.
 
+## Tasks And Execution Providers
+
+Core 0.159.0 and SDK 0.36.0 support independent `tasks` and `task-executor` categories. Request
+`providers.tasks` or `providers.task-executor`, select an app/installation/key explicitly and use
+server-only clients. Models, credentials and Harness profile internals are not shared task fields.
+
+```ts
+import { ProviderClient } from "@hosty-sdk/app/providers/server";
+import { TaskClient, TaskExecutorClient } from "@hosty-sdk/app/tasks/server";
+const providers = new ProviderClient();
+const tasks = new TaskClient(providers, selectedTaskProvider, getCurrentUserToken);
+const draft = await tasks.create({ requestId, input: {
+  title: "Summarize the meeting", markdown: "List decisions and next steps.",
+  assignee: { kind: "app", executor: selectedExecutor, optionId }, resources: [],
+} });
+await tasks.action(draft.ref, { requestId: readyRequestId, expectedRevision: draft.revision, action: "ready" });
+const executions = new TaskExecutorClient(providers, selectedExecutor, getCurrentUserToken);
+const receipt = await executions.get(executionId);
+```
+
+Retain each UUID and exact body after a timeout. Clients do not retry mutations implicitly. A task
+provider persists execution intent before PUT; completed model output alone is not a task result.
+See [Basic Tasks](../../docs/features/basic-tasks/feature.md) for the protocol and authority boundaries.
+
 ### Assistant MCP credentials
 
 MCP handlers use `introspectMcpToken` from `@hosty-sdk/app/scoped-token` for online validation of

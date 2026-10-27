@@ -1,8 +1,8 @@
 ---
 status: Draft
 created: 2026-10-26
-updated: 2026-10-26
-summary: Durable agent job execution, schedules, retry and resource budgets, notifications and recoverable decision waits using existing authority and resource APIs.
+updated: 2026-10-27
+summary: Durable jobs and recoverable Harness sessions with scheduling, bounded context, same-provider continuation, budgets and decision waits.
 components: [apps/harness, apps/core, packages/app-sdk, packages/app-sdk-dotnet]
 ---
 
@@ -24,12 +24,19 @@ run evidence; PR lifecycle has its own observations. None is a general scheduled
 Reuse them as appropriate without creating another transcript, source registry or business task store.
 
 The runner is an application or authorized client, initially proposed inside Harness. Core owns
-common authority/resource contracts and candidate shared tasks, not the scheduling/model loop.
-A job represents accepted execution work and may link a shared task, session and provider run.
+common authority/resource and task contracts; task providers own task storage. Core does not own
+the scheduling/model loop. A job represents accepted execution work and may link a shared task, session and provider run.
 Not every task needs a schedule and not every monitoring job needs a development workspace.
 
-Persist acceptance, caller/participant, executor, delegation/resource scope, input revisions, budget,
-status, last observation, next due time and audit correlation. Accept once per request identity;
+The separately approved [Basic Tasks plan, D1-D3](../basic-tasks/feature.md#requirement-transfer), owns persisted task
+dispatch, the three-operation receipt contract and the Harness adapter over existing journals.
+The 2026-10-27 split makes that feature independent of this whole runner. This plan consumes that
+acceptance/evidence for general jobs, automatic retries, schedules and parked waits rather than adding another task launch
+path. Its existing D1-D7 remain unimplemented; current Worker recovery is not completion of them.
+
+Persist acceptance, invoking app and authorizing user/grant, executor and opaque option, provider-qualified
+task reference, delegation/resource scope, input/configuration revisions, budget, status, last
+observation, next due time and audit correlation. Accept once per request identity;
 claim execution durably so competing workers do not own the same attempt. Reconcile lost responses
 and uncertain provider results before retrying side effects. Define cancellation and terminal evidence
 separately from task acceptance. A receipt proves accepted work, not completed work.
@@ -40,7 +47,9 @@ restart. Notify through existing notification APIs on meaningful progress, compl
 needed attention; persist delivery/retry outcome without blocking execution or fabricating delivery.
 
 Consume current background grants and revalidate at dispatch/resume. Pause or stop when delegation
-expires, assignment or participant access is removed, role changes or the action contract changes.
+expires, assignment or app/user access is removed, or the action contract changes. Profile roles
+are instructional; they do not introduce separate principals, grants or per-profile tool restrictions.
+Define removed executor/profile handling without silently changing an accepted configuration.
 Existing grant revocation cannot undo completed effects or prove an unrestricted process stopped.
 Keep credentials outside model-visible state; resource leases last until native consumers stop.
 
@@ -51,17 +60,46 @@ while the executor is offline. Reconcile answer/parking races and restart; consu
 starting competing continuations. Cancelled work cannot revive. Unsupported native resume uses the
 approved recorded-context path or reports an explicit unsupported outcome.
 
+## Session Recovery Transfer (2026-10-27)
+
+[Vision decision 61](../../vision.md) retires switching providers inside one conversation. D7
+receives the still-needed session command, continuation and bounded-context requirements from
+former Shared History D2-D4. These extend Harness's existing SessionManager/SessionStore and apply
+to ordinary chats as well as runner-backed work; a chat does not acquire a task or schedule merely
+to recover. The runner consumes the same services instead of maintaining another transcript.
+
+Persist accepted message/approval/cancel identities and revisions, reconcile uncertain responses
+and competing clients, and distinguish accepted, interrupted, unknown and terminal observations.
+Keep native execution IDs and consumed-event cursors bound to the exact provider connection and
+account. Resume that execution only when supported; otherwise reconstruct for the same provider
+from authorized recorded context or report an explicit unsupported result. Never reuse native IDs
+under another account, silently change providers or replay prior tool effects or stale approvals.
+
+Bound model input using recent turns, a versioned summary with explicit coverage and retrievable
+earlier evidence/attachments, while retaining the visible transcript under the assistant's policy.
+Re-read current source/plan revisions after another session changes them and mark stale observations.
+Pending waits retain the checkpoint and referenced inputs through ordinary idle expiry; cleanup
+and revoked access remain explicit. Context limits, summary policy and attachment retention need
+design before Ready. [Shared Artifacts](../shared-artifacts/plan.md) owns selected cross-session
+handoffs; it neither imports a whole private transcript nor transfers provider-native hidden state.
+
 ## Dependencies And Ownership
 
 - [Agent Providers](../agent-provider-interface/plan.md) owns invocation, results, cancellation and
-  capability declarations; [Shared History](../assistant-shared-history/plan.md) owns context/cursors.
+  capability declarations for separately provided model/agent execution. The initial Harness task
+  path can use its internal runtime; extraction is not a prerequisite. D7 here owns Harness session
+  commands, context and continuation cursors;
+  [Action Summary D4](../assistant-action-summary/plan.md#deliverables) owns the shared journal/event foundation.
 - [Shared Decisions](../shared-decisions/plan.md) owns question/response records;
   [Notifications D6](../notifications/plan.md#deliverables) owns durable subscriptions. The runner
   owns consumption, scheduling, deduplication and reconciliation, not a new event bus.
-- [Shared Tasks](../shared-tasks/plan.md) owns task/child state and workspace bindings;
-  [Artifacts](../shared-artifacts/plan.md) owns retained results.
-- [Harness Work Orchestration](../harness-work-orchestration/plan.md) owns agent hierarchy, business
-  decomposition and workflow policy. It submits work to this runner rather than building a scheduler.
+- [Basic Tasks](../basic-tasks/feature.md) owns task state, explicit resources and the task executor
+  adapter; its contract leaves records with a task-provider app. [Task Workspace Coordination](../shared-tasks/plan.md)
+  owns automatic source binding/reuse. [Artifacts](../shared-artifacts/plan.md) owns retained content.
+  Neither task ownership nor an executor-option label is a new credential.
+- [Harness Work Orchestration](../harness-work-orchestration/plan.md) owns hierarchy, child-task
+  relationships, decomposition and workflow policy. General scheduled/retryable work uses this
+  runner; Basic Tasks direct dispatch does not require it or create a competing scheduler.
 - Registered workspaces, publication, Sandbox and [Execution Authorization](../assistant-execution-authorization/plan.md)
   keep their existing APIs and authority. Source jobs reuse collision/lease checks and isolated
   validation; this plan creates no second development task registry or automatic merge permission.
@@ -71,23 +109,29 @@ approved recorded-context path or reports an explicit unsupported outcome.
 ## Deliverables
 
 - [ ] D1. Define durable job/attempt/wait identity, accepted-command ownership, scheduling and cancellation states, persisted observations, audit correlation and boundaries with tasks, sessions and provider runs.
-- [ ] D2. Define current-grant dispatch, revocation/assignment/role/contract-change behavior and recovery from uncertain effects; specify schedule/missed-run policy, concurrency, retry/backoff, time and cost budgets.
+- [ ] D2. Define current-grant dispatch, revocation/assignment/executor-option/contract-change behavior and recovery from uncertain effects; specify schedule/missed-run policy, concurrency, retry/backoff, time and cost budgets.
 - [ ] D3. After explicit Ready approval, implement persistence, claims, scheduling and retry/recovery over provider and resource APIs, including notification delivery bookkeeping and observable stopped/failed outcomes.
-- [ ] D4. Implement recoverable live/parked decision waits and response-triggered continuation with Shared Decisions and Shared History, preserving pending inputs, stopped-consumer lease discipline and cancellation.
+- [ ] D4. Implement recoverable live/parked decision waits and response-triggered continuation with Shared Decisions and the D7 session recovery contract, preserving pending inputs, stopped-consumer lease discipline and cancellation.
 - [ ] D5. Verify recurring monitoring and one authorized source job, restart/duplicate claims, lost provider responses, expired/revoked grants, budget exhaustion and failed notification delivery; cover overnight and response/parking races without duplicate effects.
-- [ ] D6. Document shipped behavior and compatibility in feature.md, reconcile consumers and remove this plan when all deliverables pass; preserve the historical Bridge D11 transfer without claiming it shipped earlier.
+- [ ] D6. Document shipped behavior and compatibility in feature.md, reconcile consumers and remove this plan when all deliverables pass; preserve the historical Bridge D11 and session-recovery transfers without claiming they shipped earlier.
+- [ ] D7. Define, implement after Ready approval, and verify common idempotent Harness session commands, provider/account-bound continuation cursors and bounded recoverable context over the existing journal; cover ordinary chats and parked jobs, multi-client send/approval races, restart, unsupported resume, summary coverage, changed source and retention/revocation without duplicate tool effects.
 
 ## Proposed Sequence
 
 Resolve D1-D2 alongside invocation and event contracts. Build one explicit durable job before adding
 schedules and retries; then integrate decision waits. Verify general monitoring and source work
-separately. The first Harness composition consumes this implementation without requiring a team hierarchy.
+separately. The first Harness manual Ready flow needs durable acceptance, attempt claims and result
+reconciliation; schedules, team hierarchy and parked decisions are later consumers, not creation
+prerequisites. Basic Tasks and its Harness adapter can deliver direct commands over existing Worker
+evidence before this general runner. This plan owns additional job scheduling/attempt policy and
+parked continuation; it consumes the same task-execution receipts where work is task-backed.
 
 ## Open Questions
 
 - What persistence/claim mechanism fits one host and separately deployed compatible executors?
 - Which retry classes are safe, and which uncertain effects require reconciliation or human attention?
-- Which provider capabilities support native resume, reconstruction or neither?
+- Which provider capabilities support native resume, reconstruction or neither, and what context
+  budget, summary coverage and attachment/checkpoint retention fit each supported path?
 - What are the resource-wait default, missed-schedule policy, cancellation propagation and aggregate budget rules?
 
 ## Verification
@@ -95,5 +139,7 @@ separately. The first Harness composition consumes this implementation without r
 For this Draft, validate documents and links. Future tests must interrupt acceptance, dispatch,
 response persistence and parking, then recover with no lost accepted work or duplicate side effects.
 Exercise authorized success beside denial, revocation while waiting, disconnected observers,
-notification failures and a stopped executor. Source scenarios use registered workspaces and managed
-sandboxes; passing a sandbox never authorizes merge, production rollout or unrelated cleanup.
+notification failures and a stopped executor. Repeat D7 with Codex and Claude in separate ordinary
+chats, with no scheduler and with AHP disabled; preserve native attribution, visible history and
+current permissions after restart, and leave unknown effects unresolved rather than retrying them.
+Source scenarios use registered workspaces and managed sandboxes; passing a sandbox never authorizes merge, production rollout or unrelated cleanup.

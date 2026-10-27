@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-06-16
-updated: 2026-10-26
+updated: 2026-10-27
 summary: Expose notifications to non-browser clients and add delivery channels that reach users outside any client.
 components: [apps/core]
 ---
@@ -18,17 +18,21 @@ the existing service rather than a redesign.
 
 ## Composable Work Coordination (2026-10-26)
 
-D6 remains the shared durable-event owner for [tasks](../shared-tasks/plan.md),
+D6 remains the shared durable-event owner for [tasks](../basic-tasks/feature.md),
 [decisions](../shared-decisions/plan.md) and [job execution](../durable-agent-jobs/plan.md).
 Their owners define domain transitions and consistency with their state; D6 defines authorized
 producer/consumer registration, versioned delivery, retention and cursor/gap recovery. Resolve
-app-produced facts without trusting an app's claimed user, participant or resource access.
+app-produced facts without trusting an app's claimed user, executor option or resource access.
 Do not build a second bus in the orchestration application.
 
 UI consumers may reconcile current state after reconnect; transition-dependent automation needs
 durable delivery and idempotent consumption. A human notification is a separate consumer, not an
 execution command or proof that a decision was answered. D7 retains its external-channel scope;
-the first Harness task journey does not require shipping every notification channel.
+the first Harness task journey does not require shipping every notification channel or D6 itself.
+Under [vision decision 63](../../vision.md), Ready persists a direct execution command with its task
+state; request receipts and reconciliation provide its reliability. HTTP reads and SSE refresh with
+state reload handle the initial UI. D6 remains necessary for later transition-driven subscriptions;
+this narrower dispatch record is not a second general-purpose event bus.
 
 ## Deliverables
 

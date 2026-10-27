@@ -329,6 +329,13 @@ try:
         check(globals())
         success = True
         sys.exit(0)
+    if scenario == 'tasks':
+        assert managed, 'Task acceptance requires a managed child Core'
+        sys.dont_write_bytecode = True
+        from tasks_acceptance import check
+        check(globals())
+        success = True
+        sys.exit(0)
     if scenario == 'sessions':
         assert managed, 'Session acceptance requires a managed child Core'
         sys.dont_write_bytecode = True
@@ -566,8 +573,8 @@ finally:
                 child = request(f'/api/core-environments/{child_id}/operations/finish', {'requestId':str(uuid.uuid4()), 'expectedRevision':child['revision']})
                 assert child['state'] == 'finished', child
                 say('Parent Finish confirmed child resource removal')
-                if globals().get('desktop_fixture_image'):
-                    run(['docker', 'image', 'rm', desktop_fixture_image])
+                for fixture_image in [globals().get('desktop_fixture_image'), globals().get('task_fixture_image')]:
+                    if fixture_image: run(['docker', 'image', 'rm', fixture_image])
             except Exception as error:
                 cleanup_error = error
                 success = False

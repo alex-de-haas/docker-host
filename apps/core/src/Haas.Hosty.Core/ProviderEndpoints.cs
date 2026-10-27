@@ -29,6 +29,8 @@ internal sealed class ProviderAccessService(AppRegistryStore apps, AppServiceTok
         "speech-to-text" => CoreAppPermissions.SpeechProviders,
         "translation" => CoreAppPermissions.TranslationProviders,
         "assistant" => CoreAppPermissions.AssistantProviders,
+        "tasks" => CoreAppPermissions.TaskProviders,
+        "task-executor" => CoreAppPermissions.TaskExecutors,
         _ => throw new AppIdentityException("provider_kind_invalid", "Unknown provider category."),
     };
 
@@ -110,6 +112,8 @@ internal sealed class ProviderAccessService(AppRegistryStore apps, AppServiceTok
             if (userId is null) throw new AppIdentityException("app_identity_required", "Assistant requests require the acting user's credential.");
             await identity.RequireAccessibleUserAsync(provider.Id, userId, ct);
         }
+        if (kind is "tasks" or "task-executor" && userId is not null)
+            await identity.RequireAccessibleUserAsync(provider.Id, userId, ct);
         var expires = clock.UtcNow.AddMinutes(2);
         var claims = new ProviderTokenClaims(caller.Id, provider.Id, kind, input.Key, caller.InstalledAt,
             provider.InstalledAt, caller.PermissionRevision, provider.PermissionRevision, userId, expires.ToUnixTimeSeconds(), activityHash);
@@ -154,7 +158,7 @@ internal sealed class ProviderAccessService(AppRegistryStore apps, AppServiceTok
         {
             var actor = await identity.RequireAccessibleUserAsync(caller.Id, userId, ct);
             role = actor.User.Role;
-            if (input.Kind == "assistant") await identity.RequireAccessibleUserAsync(provider.Id, userId, ct);
+            if (input.Kind is "assistant" or "tasks" or "task-executor") await identity.RequireAccessibleUserAsync(provider.Id, userId, ct);
         }
         return new(caller.Id, caller.InstalledAt.ToString("O"), claims.UserId, role, input.Kind, input.Key);
     }
