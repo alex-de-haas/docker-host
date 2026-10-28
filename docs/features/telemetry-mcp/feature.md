@@ -1,6 +1,6 @@
 ---
 created: 2026-08-17
-updated: 2026-09-10
+updated: 2026-10-28
 summary: Stored logs, traces and resource metrics exposed as an MCP interface behind a scoped credential.
 components: [apps/telemetry-backend, apps/core]
 ---
@@ -15,36 +15,26 @@ searchable log store — ask for more lines rather than expecting to filter"*. T
 
 ## Reading Is Authenticated
 
-Every route under `/api` on the telemetry backend requires a token Core signed. Before this, the query
-API carried none at all, which is why nothing could be built on top of it: the
-[app-MCP](../app-mcp/feature.md) contract is "Core authenticates, the app authorizes", and an app with
-no authentication cannot honour it.
+The query API accepts this app's own `hosty_app_identity` credential and legacy short-lived
+`hosty_delegated` credentials addressed to this app. Their signatures are verified locally using
+`HOSTY_DELEGATED_TOKEN_PUBLIC_KEY`; a missing key refuses these reads. The UI is a sibling service
+of this app, so another app's correctly signed identity still cannot read the fleet's telemetry.
 
-Two shapes of caller, one verification key:
+The separate `/api/mcp` route also accepts external scoped/OAuth credentials and the assistant's
+`hosty_mcp.1` credential. It uses `HostyScopedTokenClient.IntrospectMcpAsync` from the .NET app SDK
+on every request, including initialization, notifications and catalog reads. A tool call supplies
+its tool name to Core so discovery-only credentials and disabled tools remain restricted.
+Core validates the audience, user, parent session and assistant-target relationship. The backend
+requires an active administrator with `mcp:read`; it does not cache that result. Revocation applies
+to the next request. An invalid credential returns 401, insufficient authority returns 403, and
+unavailable introspection returns 503 without treating the credential as invalid.
 
-| Caller | Presents | Checked |
-| --- | --- | --- |
-| An app (the telemetry UI) | `hosty_app_identity`, minted at start | signature, **and that it names this very app** |
-| A user, through MCP | `hosty_delegated`, short-TTL | signature, audience is this app, not expired |
+MCP-only credentials do not authorize ordinary query routes. Those routes retain their local group
+filter, while MCP owns its explicit authentication handler. `/healthz` remains public for liveness.
+Ordinary UI queries keep their offline verification; scoped and assistant MCP calls need Core.
 
-**An app identity is only ever this app's own.** Core injects one into every app, so "correctly
-signed" is nowhere near sufficient: accepting any would let any installed app read the whole fleet's
-telemetry with no administrator anywhere in the story. The legitimate app caller is the telemetry UI,
-and it is a sibling *service* of this same app — Core mints identity per app — so its token names this
-app id. Everything else goes down the delegated path, where a user and a role are checked.
-
-The key is the **public half of Core's existing delegated-token pair**, which Core already injected
-into every app as `HOSTY_DELEGATED_TOKEN_PUBLIC_KEY`. Verification is local: Core is not in the read
-path, so a query costs no round trip and keeps working while Core restarts.
-
-**The gate is a group filter, not a per-route check.** A route added later is closed by default —
-the failure mode of the per-route style is the endpoint someone forgets. `/healthz` is deliberately
-outside it: a health check that needed a credential would make an unauthenticated backend look *dead*
-rather than *closed*, and Core polls it to decide whether the app is up.
-
-**An unconfigured backend refuses everything.** If Core injected no key, every read is refused with a
-message saying so. Falling through to "allow" would have made the whole feature a no-op on exactly
-the deployments where the key failed to arrive, and looked identical to working.
+Legacy delegated tokens retain compatibility with local CLI clients. Core restricts issuance for
+this system app to administrators; the backend checks the signature, audience and expiry.
 
 ## The App Identity Credential
 
@@ -66,9 +56,8 @@ same shape and trust level as the service token beside it. A TTL without a refre
 bounded leak at the price of telemetry that silently stops after N days on a long-running host: one is
 a risk, the other is a certainty.
 
-**Administrator-only reads are inherited, not re-implemented.** `apps/telemetry` is `role: system`, so
-Core refuses to mint a delegated token for it to anyone who is not a host administrator. A second copy
-of that rule here is the copy that would go stale.
+**Legacy administrator-only reads rely on Core issuance.** `apps/telemetry` is `role: system`, so
+Core refuses to mint a delegated token for it to anyone who is not a host administrator. The online MCP path also requires the current administrator role returned by introspection.
 
 ## The Tools
 
@@ -164,6 +153,13 @@ a remote backend directly. With the CLI local-only, the path is `hosty mcp` on t
 the connector then exports these tools like any other app's.
 
 ## Testing Expectations
+
+- **Current MCP credentials.** Assistant and scoped tokens use MCP-purpose introspection, with the
+  called tool name when applicable. Each request revalidates; revocation, missing scope, non-admin
+  roles and unavailable Core are covered. Ordinary query authentication rejects MCP-only tokens.
+- **Core-managed integration.** The observability suite signs a test administrator into a disposable
+  assistant app through normal app-code exchange, then exercises Core's MCP catalog path against the
+  Docker Telemetry backend. It checks all four tools and their read-only annotations.
 
 - **Initialization transport acknowledgement.** Executing the initialized notification's HTTP
   result returns 202 with no response body or content type.

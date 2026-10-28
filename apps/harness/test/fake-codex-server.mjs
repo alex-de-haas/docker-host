@@ -283,6 +283,20 @@ function handle(msg) {
       return;
     }
 
+    if (currentTurnText.startsWith("startup-notices")) {
+      const event = (name, status, error = null) => send({ method: "mcpServer/startupStatus/updated", params: { name, status, error, threadId: activeThreadId } });
+      event("telemetry", "starting");
+      event("telemetry", "failed", "HTTP 401");
+      event("telemetry", "starting");
+      event("telemetry", "failed", "HTTP 401");
+      event("other", "failed", "HTTP 401");
+      if (currentTurnText.includes("recover")) {
+        event("telemetry", "ready");
+        event("telemetry", "failed", "HTTP 401");
+        event("telemetry", "failed", "HTTP 503");
+      }
+    }
+
     if (currentTurnText.includes("mcp")) {
       // Shape verified with `app-server generate-ts` on Codex 0.153.4 (2026-09-16).
       const failed = currentTurnText.includes("failed");

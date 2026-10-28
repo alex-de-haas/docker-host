@@ -180,6 +180,7 @@ class CodexRun implements HarnessRun {
   // Items whose approval the operator refused. Codex still emits item/completed for them, so
   // without this the transcript would claim a refused command ran.
   private readonly deniedItems = new Set<string>();
+  private readonly mcpStartupFailures = new Map<string, string>();
   private readonly queue: string[] = [];
   private nextId = 1;
   private buffer = "";
@@ -589,13 +590,18 @@ class CodexRun implements HarnessRun {
     if (message.method === "mcpServer/startupStatus/updated") {
       const params = message.params as { name?: unknown; status?: unknown; error?: unknown; failureReason?: unknown } | undefined;
       const status = typeof params?.status === "string" ? params.status : "";
+      const name = typeof params?.name === "string" ? params.name : "an app";
+      if (status === "ready") this.mcpStartupFailures.delete(name);
       if (status && status !== "starting" && status !== "ready") {
-        const name = typeof params?.name === "string" ? params.name : "an app";
         const reason = typeof params?.failureReason === "string" && params.failureReason
           ? params.failureReason
           : typeof params?.error === "string" && params.error
             ? params.error
             : status;
+        // Repeated startup attempts can report the same unavailable provider. Keep one notice
+        // until it recovers or the reason changes; a new process has its own startup state.
+        if (this.mcpStartupFailures.get(name) === reason) return;
+        this.mcpStartupFailures.set(name, reason);
         // A notice, not an error: this provider is optional, and the session keeps whatever else
         // started. Reporting it as an error would drop the run and fail the session over one app.
         this.emit({ type: "notice", message: `MCP server "${name}" did not start (${reason}). Its tools are unavailable for this session.` });
