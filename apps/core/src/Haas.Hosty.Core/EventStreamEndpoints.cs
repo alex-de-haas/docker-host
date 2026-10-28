@@ -46,13 +46,17 @@ internal static class EventStreamEndpoints
             async user =>
             {
                 var topics = request.Query["topics"].ToString().Split(',');
+                var sandboxes = topics.Contains("sandboxes", StringComparer.Ordinal);
                 var resources = topics.Contains("resources", StringComparer.Ordinal);
                 var toolActivity = topics.Contains("tool-activity", StringComparer.Ordinal);
                 var workspaces = topics.Contains("workspaces", StringComparer.Ordinal);
-                if ((resources || workspaces) && !AppAccessPolicy.IsAdmin(user))
-                    return CoreJson.Json(new ErrorResponse("admin_required", "Resource and workspace subscriptions require a Host administrator."), 403);
+                if ((resources || workspaces || sandboxes) && !AppAccessPolicy.IsAdmin(user))
+                    return CoreJson.Json(new ErrorResponse("admin_required", "Resource, workspace and sandbox subscriptions require a Host administrator."), 403);
                 if (workspaces && AppManagementAuthorization.RequireAdditional(request, CoreAppPermissions.WorkspacesRead) is { } denied)
                     return denied;
+                if (sandboxes)
+                    foreach (var permission in new[] { CoreAppPermissions.CoreEnvironmentsInspect, CoreAppPermissions.SandboxesInspect })
+                        if (AppManagementAuthorization.RequireAdditional(request, permission) is { } sandboxDenied) return sandboxDenied;
                 // The /api/events delegated policy already requires core.read + apps.read (and
                 // notifications), a superset of /api/core/resources. Resolve it again during delivery.
                 response.Headers.ContentType = "text/event-stream";
@@ -65,7 +69,7 @@ internal static class EventStreamEndpoints
                 using var subscription = events.Subscribe(
                     user.Id,
                     AppAccessPolicy.IsAdmin(user),
-                    CoreSessionAuthorization.ReadSessionId(request), resources, workspaces, toolActivity);
+                    CoreSessionAuthorization.ReadSessionId(request), resources, workspaces, toolActivity, sandboxes);
                 using var streamCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, applicationStopping);
                 var streamToken = streamCts.Token;
                 var inspection = workspaces ? request.HttpContext.RequestServices.GetRequiredService<WorkspaceInspectionService>() : null;
@@ -90,7 +94,27 @@ internal static class EventStreamEndpoints
                     // A subscription captures its audience at creation. End it when the role changes,
                     // even if the user can still access the calling app, before delivering queued data.
                     return current.Error is null && current.Caller?.User.Role == user.Role &&
-                        (!workspaces || current.Caller is { } caller && AppManagementAuthorization.HasPermission(caller.App, CoreAppPermissions.WorkspacesRead));
+                        (!workspaces || current.Caller is { } caller && AppManagementAuthorization.HasPermission(caller.App, CoreAppPermissions.WorkspacesRead)) &&
+                        (!sandboxes || current.Caller is { } sandboxCaller &&
+                            AppManagementAuthorization.HasPermission(sandboxCaller.App, CoreAppPermissions.CoreEnvironmentsInspect) &&
+                            AppManagementAuthorization.HasPermission(sandboxCaller.App, CoreAppPermissions.SandboxesInspect));
+                }
+
+                long sandboxRevision = 0;
+                string? lastSandboxData = null;
+                async Task WriteSandboxesAsync()
+                {
+                    if (!sandboxes || sandboxRevision == subscription.SandboxRevision) return;
+                    var revision = subscription.SandboxRevision;
+                    var snapshot = await SandboxStreamSnapshot.ReadAsync(request.HttpContext.RequestServices, user.Id, streamToken);
+                    // Projection may await storage/source checks: revalidate before releasing its data.
+                    if (!await IsStillAuthorizedAsync()) { subscription.Complete(); return; }
+                    var data = CoreJson.Text(snapshot);
+                    if (data != lastSandboxData)
+                        await response.WriteAsync($"event: sandbox.snapshot\ndata: {data}\n\n", streamToken);
+                    lastSandboxData = data;
+                    // Retry failed inventories on the normal heartbeat without a browser polling loop.
+                    sandboxRevision = snapshot.CoreError is null && snapshot.AppError is null ? revision : 0;
                 }
 
                 try
@@ -101,14 +125,16 @@ internal static class EventStreamEndpoints
                     await response.WriteAsync(": connected\n\n", streamToken);
                     // Older Core ignores the topic query and sends no acknowledgement. New clients
                     // must see this before retiring their legacy hint/GET path.
-                    if (resources || workspaces || toolActivity)
+                    if (resources || workspaces || toolActivity || sandboxes)
                     {
                         var capabilities = new List<string>();
                         if (resources) capabilities.Add("\"resources\":1");
                         if (workspaces) capabilities.Add("\"workspaces\":1");
                         if (toolActivity) capabilities.Add("\"toolActivity\":1");
+                        if (sandboxes) capabilities.Add("\"sandboxes\":1");
                         await response.WriteAsync($"event: stream.ready\ndata: {{{string.Join(",", capabilities)}}}\n\n", streamToken);
                     }
+                    await WriteSandboxesAsync();
                     await response.Body.FlushAsync(streamToken);
 
                     while (true)
@@ -128,6 +154,7 @@ internal static class EventStreamEndpoints
                         }
                         catch (OperationCanceledException) when (!streamToken.IsCancellationRequested)
                         {
+                            await WriteSandboxesAsync();
                             await response.WriteAsync(": ping\n\n", streamToken);
                             await response.Body.FlushAsync(streamToken);
                             continue;
@@ -143,6 +170,7 @@ internal static class EventStreamEndpoints
                             if (!await IsStillAuthorizedAsync())
                                 return Results.Empty;
 
+                            if (envelope.Name == CoreEventHub.SandboxSnapshot) continue;
                             if (envelope.Name == CoreEventHub.WorkspaceChanged)
                             {
                                 if (!workspaces) continue;
@@ -160,6 +188,7 @@ internal static class EventStreamEndpoints
                             }
                         }
 
+                        await WriteSandboxesAsync();
                         await response.Body.FlushAsync(streamToken);
                     }
                 }

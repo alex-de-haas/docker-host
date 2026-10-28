@@ -1,6 +1,6 @@
 namespace Haas.Hosty.Core;
 
-internal sealed class SandboxStore(CoreDataPaths paths)
+internal sealed class SandboxStore(CoreDataPaths paths, CoreEventHub? events = null)
 {
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, SemaphoreSlim> gates = new(StringComparer.Ordinal);
     internal SemaphoreSlim Gate(string id) { SandboxValidation.Id(id); return gates.GetOrAdd(id, _ => new(1, 1)); }
@@ -31,8 +31,11 @@ internal sealed class SandboxStore(CoreDataPaths paths)
     }
     public Task<SandboxInstance?> ReadAsync(string id, CancellationToken ct)
         => JsonStorage.ReadAsync<SandboxInstance>(Path.Combine(InstanceRoot(id), "instance.json"), ct);
-    public Task WriteAsync(SandboxInstance instance, CancellationToken ct)
-        => JsonStorage.WriteAsync(Path.Combine(InstanceRoot(instance.Id), "instance.json"), instance, true, ct);
+    public async Task WriteAsync(SandboxInstance instance, CancellationToken ct)
+    {
+        await JsonStorage.WriteAsync(Path.Combine(InstanceRoot(instance.Id), "instance.json"), instance, true, ct);
+        events?.PublishSandboxChange(instance.Owner.UserId);
+    }
     public async Task<SandboxInstance[]> ListAsync(CancellationToken ct)
     {
         var root = Path.Combine(Root, "instances");
@@ -79,9 +82,10 @@ internal sealed class SandboxStore(CoreDataPaths paths)
         var root = DataRoot(id);
         if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
     }
-    public void RemoveMetadata(string id)
+    public void RemoveMetadata(string id, string? userId = null)
     {
         var root = InstanceRoot(id);
         if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        if (userId is not null) events?.PublishSandboxChange(userId);
     }
 }

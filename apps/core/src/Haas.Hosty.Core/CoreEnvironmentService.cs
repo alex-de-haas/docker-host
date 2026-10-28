@@ -30,13 +30,14 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
             throw new SandboxException("environment_forbidden", "The environment belongs to another caller.", 403);
         return record;
     }
-    public async Task<CoreEnvironmentList> ListAsync(SandboxActor actor, CancellationToken ct)
+    public async Task<CoreEnvironmentList> ListAsync(SandboxActor actor, CancellationToken ct, bool observe = true)
     {
         var records = await store.ListAsync(ct);
         var observed = new List<CoreEnvironmentView>();
         var digests = new Dictionary<string, Task<string>>(StringComparer.Ordinal);
         foreach (var record in records.Where(r => r.Owner.UserId == actor.UserId && (actor.AppId is null || r.Owner.SameOwner(actor) && (actor.GrantId is null || r.Consent?.GrantId == actor.GrantId && r.Consent.ScopeId == actor.ScopeId))))
         {
+            if (!observe) { observed.Add(await ViewAsync(record, ct, digests)); continue; }
             var gate = Gate(record.Id);
             if (!await gate.WaitAsync(0, ct)) { observed.Add(await ViewAsync((await store.ReadAsync(record.Id, ct))!, ct, digests)); continue; }
             try
@@ -48,7 +49,7 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
             }
             finally { gate.Release(); }
         }
-        return new(observed, consent is null ? [] : await consent.ListAsync(actor, ct, digests));
+        return new(observed, !observe || consent is null ? [] : await consent.ListAsync(actor, ct, digests));
     }
     public async Task<CoreEnvironmentView> ReadAsync(SandboxActor actor, string id, CancellationToken ct)
     {
@@ -493,6 +494,8 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
                 if (record.State is "finished" or "finishing" or "cleanup-failed" || record.RootDeletionStarted) continue;
                 try
                 {
+                    // Runtime state must remain current without a browser reading the inventory.
+                    record = await ObserveAsync(record, ct);
                     var usage = await runtime.InspectResourcesAsync(record, store.Root(record.Id), ct);
                     if (usage is null) continue;
                     record = record with { Usage = usage };

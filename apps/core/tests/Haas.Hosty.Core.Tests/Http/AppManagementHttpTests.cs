@@ -5,7 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Haas.Hosty.Core.Tests.Http;
 
-public sealed class AppManagementHttpTests
+public sealed partial class AppManagementHttpTests
 {
     [Theory]
     [InlineData("example.console")]
