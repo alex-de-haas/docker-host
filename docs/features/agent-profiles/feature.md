@@ -1,6 +1,6 @@
 ---
 created: 2026-10-26
-updated: 2026-10-27
+updated: 2026-10-28
 summary: Shared Harness agent configurations with connection, model, reasoning, role instructions and explicit skills, selectable before a conversation starts.
 components: [apps/harness]
 ---
@@ -31,19 +31,21 @@ Unavailable connections/models produce errors rather than substitutions. Failed 
 saved selections. Profile-list loading is independent of connection discovery.
 
 Common instructions remain under Instructions and retention. Role instructions are additional
-standing guidance. Skill packages remain optional native guidance, with no implication that each
-skill must activate on every turn. The Skills tab manages packages; it has no assistant-wide
+standing guidance. [Core platform context](../core-platform-skills/feature.md) is included for every
+agent; the profile editor shows its package checked and disabled with Core version provenance.
+Additional packages, including `hosty-app-skill`, remain optional native guidance, with no implication
+that each package must activate on every turn. The Skills tab manages packages; it has no assistant-wide
 selection checkboxes. The legacy settings mutation rejects skill selection with `skill_selection_moved`.
 
 On first profile-store access, General captures the previously selected assistant skills and becomes
 the default. Existing skill migration runs before that capture. Initialization occurs once; deleting
 all profiles does not recreate General. Creating another profile does not change the default.
-Deleting the default clears it. A chat without a profile uses common instructions and no implicitly
-selected skills. Explicit session `skillIds` remain supported for manual/API consumers.
+Deleting the default clears it. A chat without a profile receives the platform introduction and
+package, common instructions and no implicitly selected additional skills. Explicit session `skillIds` remain supported for manual/API consumers.
 
 Names are unique ignoring case, with a 100-character limit. Descriptions allow 2,000 characters and
 role instructions 8,000. A collection holds at most 200 profiles. Skill references use existing Core
-stable IDs while the interface shows unique native names. Successful catalog reads prune deleted
+stable IDs while the interface shows native names and Core provenance. Successful catalog reads prune deleted
 IDs from editable profiles and persist the removal. Catalog outages retain selections. Skill files
 keep current-content export semantics; profile snapshots do not preserve removed package bytes.
 
@@ -154,6 +156,8 @@ Verified on macOS, 2026-10-26, for Harness 0.71.0 → 0.72.0:
 
 - Preserve one-time initialization, empty collections, explicit defaults and persisted configurations;
   reject malformed storage, duplicate names, unsupported fields and stale concurrent writes.
+- Include platform context with and without a profile, while retaining optional development-skill
+  choices and showing the base package as included in every profile.
 - Reconcile confirmed skill deletion without erasing choices during a catalog outage.
 - Reject delayed profile snapshots and mutation responses after a newer model event; refresh the
   full configuration and preserve the draft and latest revision for the next send across two tabs.

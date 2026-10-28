@@ -66,7 +66,7 @@ A profile with `development: true` can use `type: docker` or `type: mixed`. Mixe
 
 Docker source recipes declare `sourceMount: { path: ".", target: "/workspace", mode: "ro", caches: ["bin", "obj"] }`, a `command`, and either `image` or `build: { context: ".", dockerfile: "Dockerfile.dev", revision: "1" }`. Paths are contained in the authorized checkout; workingDirectory is relative to the source mount. Cache directories use isolated Docker volumes. Core creates missing empty mountpoint directories in the host checkout before mounting it read-only; its account needs permission to create them. Existing files are preserved and symlink/file collisions are rejected. Setup/command become CMD, preserving the image entrypoint (including VPN initialization). Build environments lock by image ID; change the build revision through manifest review to rebuild. Source mounts require a local Docker engine. Image/build/mount/privilege/network edits require review even in development.
 
-`source.paths` optionally lists source files or directories relative to the repository root for source inspection/discard; do not include unrelated monorepo code. Service-specific data/cache targets use `service` alongside the profile's `runtime` key. See [Mixed Development Runtimes](../../../docs/features/mixed-development-runtimes/feature.md) for the full contract and example.
+`source.paths` optionally lists source files or directories relative to the repository root for source inspection/discard; do not include unrelated monorepo code. Service-specific data/cache targets use `service` alongside the profile's `runtime` key. See [Mixed Development Runtimes](https://github.com/alex-de-haas/docker-host/blob/main/docs/features/mixed-development-runtimes/feature.md) for the full contract and example.
 
 ### Service Dependencies
 
@@ -149,7 +149,7 @@ path values (container paths in Docker, host paths in Local), not the operator-b
 Core exposes development trees and read-only repository metadata; no operator path or global-mount
 assignment is accepted. It exposes all managed trees, not a session sandbox. Use ordinary specific
 workspace activity leases while processes use a tree. `agentWorker` is retired and rejected.
-See [Harness services](../../../docs/features/assistant-shared-docker-runtime/feature.md).
+See [Harness services](https://github.com/alex-de-haas/docker-host/blob/main/docs/features/assistant-shared-docker-runtime/feature.md).
 
 ## External Mounts
 

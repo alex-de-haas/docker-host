@@ -1690,8 +1690,9 @@ export class SessionManager {
           const mcpServers = await this.buildMcpServers(session);
           session.mcpSignature = JSON.stringify([mcpServers ?? {}, session.mcpTargetSignature]);
           // Standing instructions are prompt text; selected skill packages use native discovery.
-          const systemPrompt = [docker ? DOCKER_SYSTEM_PROMPT : HOST_SYSTEM_PROMPT, operatorPrompt?.trim()].filter(Boolean).join("\n\n");
           const skillExport = this.settings && this.providers ? await prepareSkills(id, this.settings, session.record.skillIds) : undefined;
+          const systemPrompt = [skillExport?.platformIntroduction?.text.trim(),
+            docker ? DOCKER_SYSTEM_PROMPT : HOST_SYSTEM_PROMPT, operatorPrompt?.trim()].filter(Boolean).join("\n\n");
           if (skillExport) {
             session.record.skillExportId = skillExport.id;
             session.record.skillIds ??= (await this.settings!.read()).skillIds ?? [];

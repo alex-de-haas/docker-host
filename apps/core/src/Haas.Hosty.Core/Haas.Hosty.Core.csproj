@@ -22,6 +22,8 @@
   <ItemGroup>
     <Compile Include="../../../../shared/*.cs" Link="%(Filename)%(Extension)" />
     <EmbeddedResource Include="Browser/*" />
+    <EmbeddedResource Include="../../../../skills/hosty-platform/**/*" LogicalName="Hosty.AgentSkills/hosty-platform/%(RecursiveDir)%(Filename)%(Extension)" />
+    <EmbeddedResource Include="../../../../skills/hosty-app-skill/**/*" LogicalName="Hosty.AgentSkills/hosty-app-skill/%(RecursiveDir)%(Filename)%(Extension)" />
     <EmbeddedResource Include="AppBootstrap/*" LogicalName="Hosty.AppBootstrap.%(Filename)%(Extension)" />
     <EmbeddedResource Include="AppDevelopmentGuide/*.md" LogicalName="Hosty.AppDevelopmentGuide.%(Filename)%(Extension)" />
     <EmbeddedResource Include="../../sandbox-browser/seccomp.json" LogicalName="Hosty.SandboxBrowser.seccomp.json" />

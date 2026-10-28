@@ -10,7 +10,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 
-type Skill = { id: string; name: string; description: string; sourceKind: string; appId?: string; appVersion?: string;
+type Skill = { id: string; name: string; description: string; sourceKind: string; coreVersion?: string; appId?: string; appVersion?: string;
   repository?: string; ref?: string; path: string; commit?: string; fileCount: number; bytes: number };
 type Candidate = { path: string; name: string; description: string; fileCount: number; bytes: number };
 type Discovery = { repository: string; ref: string; commit: string; skills: Candidate[] };
@@ -82,7 +82,7 @@ export function SkillLibrary() {
     setNotice("Installed skills updated. Native clients pick up the current files when they reload them.");
   }
   const gitIds = skills.filter(skill => skill.sourceKind === "git").map(skill => skill.id);
-  const visible = skills.filter(skill => `${skill.name} ${skill.description} ${skill.repository ?? skill.appId ?? ""}`.toLowerCase().includes(filter.toLowerCase()));
+  const visible = skills.filter(skill => `${skill.name} ${skill.description} ${skill.sourceKind} ${skill.coreVersion ?? ""} ${skill.repository ?? skill.appId ?? ""}`.toLowerCase().includes(filter.toLowerCase()));
 
   const discoveryQuery = discoveryFilter.trim().toLowerCase();
   const visibleCandidates = discovery?.skills.filter(skill =>
@@ -93,7 +93,7 @@ export function SkillLibrary() {
     <div className="flex flex-wrap items-start justify-between gap-4">
       <div className="flex min-w-0 flex-1 flex-col gap-2">
       <h2 className="text-lg font-semibold">Skills</h2>
-      <p className="text-sm text-muted-foreground">One shared library from Git repositories and installed apps. Choose each agent’s skills in Agent profiles. Instructions and tool permissions are configured separately.</p>
+      <p className="text-sm text-muted-foreground">One shared library from Core, Git repositories and installed apps. Choose each agent’s skills in Agent profiles. Instructions and tool permissions are configured separately.</p>
       </div>
       <DialogTrigger asChild><Button disabled={busy}>Add skills</Button></DialogTrigger>
     </div>
@@ -118,7 +118,7 @@ export function SkillLibrary() {
             <div className="min-w-0 space-y-1">
               <h3 className="font-medium">{skill.name}</h3>
               <p className="text-sm text-muted-foreground">{skill.description}</p>
-              <p className="break-all text-xs text-muted-foreground">{skill.sourceKind === "app"
+              <p className="break-all text-xs text-muted-foreground">{skill.sourceKind === "core" ? `Core · ${skill.coreVersion}` : skill.sourceKind === "app"
                 ? `App · ${skill.appId} · ${skill.appVersion}`
                 : `Git · ${skill.repository} · ${skill.ref} · ${skill.commit?.slice(0, 12)}`}</p>
               <p className="text-xs text-muted-foreground">{skill.fileCount} files · {Math.ceil(skill.bytes / 1024)} KiB</p>

@@ -1,6 +1,10 @@
-# Local Runtime App Development
+# Development Runtimes And Live Trials
 
-Use this reference when validating a local runtime app through Hosty without publishing a new Docker image.
+Use this reference for supported local/source runtime profiles. Default runtime acceptance uses a
+Core-managed sandbox or child Core with separate users and data. An ordinary-data development
+trial is a separate operator-authorized operation: use the installed app's unified development
+controls to enter, restart or Return. Return restores runtime selection; it does not reset Git or
+restore application data. Preserve live edits and the recorded recovery state.
 
 ## Purpose
 
@@ -10,12 +14,11 @@ Separate local target commands are not part of the current workflow. Do not crea
 
 ## Repository Demo Loop
 
-For this repository's demo app:
+In an already prepared test instance, with the registered source worktree:
 
 ```bash
-npm run core:dev
-hosty apps install apps/demo-app --runtime dev
-hosty apps start com.haas.demo-app
+hosty --data-root <test-instance-root> apps install <managed-worktree>/apps/demo-app/manifest.json --runtime dev
+hosty --data-root <test-instance-root> apps start com.haas.demo-app
 ```
 
 The demo app manifest declares local command services under the `dev` runtime profile:
@@ -23,12 +26,12 @@ The demo app manifest declares local command services under the `dev` runtime pr
 - `frontend` runs from `apps/demo-app` on a Core-assigned public app UI port;
 - `backend` runs from `apps/demo-app` on a Core-assigned internal API port.
 
-Use the normal lifecycle while iterating:
+Use that test instance's normal lifecycle while iterating:
 
 ```bash
-hosty apps logs com.haas.demo-app
-hosty apps restart com.haas.demo-app
-hosty apps switch-runtime-plan com.haas.demo-app --runtime docker
+hosty --data-root <test-instance-root> apps logs com.haas.demo-app
+hosty --data-root <test-instance-root> apps restart com.haas.demo-app
+hosty --data-root <test-instance-root> apps switch-runtime-plan com.haas.demo-app --runtime docker
 ```
 
 ## Identity Helpers
@@ -36,18 +39,18 @@ hosty apps switch-runtime-plan com.haas.demo-app --runtime docker
 For direct app-origin endpoint probes, request an app identity token for an existing Hosty user:
 
 ```bash
-TOKEN="$(hosty apps identity com.haas.demo-app --user user@docker-host.local --format token)"
+TOKEN="$(hosty --data-root <test-instance-root> apps identity com.haas.demo-app --user user@docker-host.local --format token)"
 curl -H "X-Docker-Host-Identity: $TOKEN" <assigned-demo-app-origin>/api/auth/identity
 ```
 
 For launch validation, ask Core for an app open link:
 
 ```bash
-hosty apps open com.haas.demo-app --user user@docker-host.local --mode shell
-hosty apps open com.haas.demo-app --user user@docker-host.local --mode standalone
+hosty --data-root <test-instance-root> apps open com.haas.demo-app --user user@docker-host.local --mode shell
+hosty --data-root <test-instance-root> apps open com.haas.demo-app --user user@docker-host.local --mode standalone
 ```
 
-These helpers use Core-owned users, assignments, access policy, and signing keys. They are diagnostics and launch helpers, not replacements for checking the actual Shell or gateway user flow.
+These helpers use the selected test Core's users, assignments and access policy. They are diagnostics and launch helpers, not replacements for checking the actual Shell or gateway user flow.
 
 ## App Manifest Shape
 

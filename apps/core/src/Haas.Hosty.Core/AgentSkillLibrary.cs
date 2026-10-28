@@ -14,8 +14,16 @@ internal sealed class AgentSkillLibrary(CoreDataPaths paths, IAgentSkillGit git,
     internal static string Id(params string[] parts) =>
         Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join('\n', parts))));
 
-    private Task<AgentSkillLibraryState?> ReadAsync(CancellationToken ct) =>
-        JsonStorage.ReadAsync<AgentSkillLibraryState>(StatePath, ct);
+    private async Task<AgentSkillLibraryState> ReadAsync(CancellationToken ct)
+    {
+        var stored = await JsonStorage.ReadAsync<AgentSkillLibraryState>(StatePath, ct) ?? AgentSkillLibraryState.Empty;
+        // The executable is authoritative for Core packages, including after an upgrade or rollback.
+        // Keep legacy same-name user packages intact; only conflicting export selections are refused.
+        return stored with { Skills = stored.Skills.Where(s => s.Info.SourceKind != "core").Concat(CoreAgentSkills.Entries).ToArray() };
+    }
+
+    private static AgentSkillLibraryState Stored(AgentSkillLibraryState state) =>
+        state with { Skills = state.Skills.Where(s => s.Info.SourceKind != "core").ToArray() };
 
     public async Task<AgentSkillCatalog> CatalogAsync(CancellationToken ct)
     {
@@ -106,6 +114,7 @@ internal sealed class AgentSkillLibrary(CoreDataPaths paths, IAgentSkillGit git,
             return Entry(Id("git", request.Source.Repository, request.Source.Ref, p), package,
                 "git", null, null, request.Source.Repository, request.Source.Ref, p, checkout.Commit, grant);
         }).ToArray();
+        CoreAgentSkills.RejectReservedNames(entries.Select(e => e.Info.Name));
         await gate.WaitAsync(ct);
         try
         {
@@ -131,6 +140,8 @@ internal sealed class AgentSkillLibrary(CoreDataPaths paths, IAgentSkillGit git,
         try { baseline = await ReadAsync(ct) ?? AgentSkillLibraryState.Empty; }
         finally { gate.Release(); }
         var selected = baseline.Skills.Where(s => request.SkillIds.Contains(s.Info.Id, StringComparer.Ordinal)).ToArray();
+        if (selected.Any(s => s.Info.SourceKind == "core"))
+            throw new AppLifecycleException("skill_core_managed", "Core skills update with Core.");
         if (selected.Any(s => s.Info.SourceKind != "git"))
             throw AgentSkillPackages.Invalid("App skills update with their supplying app.");
         var updates = new List<AgentSkillUpdate>();
@@ -152,6 +163,8 @@ internal sealed class AgentSkillLibrary(CoreDataPaths paths, IAgentSkillGit git,
                     else
                     {
                         var package = await AgentSkillPackages.ReadAsync(directory, ct, entry.Info.Path.Length != 0);
+                        if (!package.Name.Equals(entry.Info.Name, StringComparison.OrdinalIgnoreCase))
+                            CoreAgentSkills.RejectReservedNames([package.Name]);
                         replacements[entry.Info.Id] = entry with
                         {
                             Info = entry.Info with { Name = package.Name, Description = package.Description, Commit = checkout.Commit,
@@ -192,6 +205,8 @@ internal sealed class AgentSkillLibrary(CoreDataPaths paths, IAgentSkillGit git,
         try
         {
             var state = await ReadAsync(ct) ?? AgentSkillLibraryState.Empty;
+            if (state.Skills.Any(s => s.Info.Id == id && s.Info.SourceKind == "core"))
+                throw new AppLifecycleException("skill_core_managed", "Core skills are part of Core and cannot be removed independently.");
             if (state.Skills.Any(s => s.Info.Id == id && s.Info.SourceKind == "app"))
                 throw AgentSkillPackages.Invalid("Remove app skills by updating or removing their supplying app.");
             await PublishAsync(state with { Skills = state.Skills.Where(s => s.Info.Id != id).ToArray() }, ct);
@@ -201,10 +216,12 @@ internal sealed class AgentSkillLibrary(CoreDataPaths paths, IAgentSkillGit git,
 
     public async Task ValidateAppAsync(string appId, IReadOnlyDictionary<string, AgentSkillPackage> packages, CancellationToken ct)
     {
+        CoreAgentSkills.RejectReservedNames(packages.Values.Select(p => p.Name));
         await gate.WaitAsync(ct);
         try
         {
             var state = await ReadAsync(ct) ?? AgentSkillLibraryState.Empty;
+            state = Stored(state);
             var names = state.Skills.Where(s => s.Info.AppId != appId).Select(s => s.Info.Name).Concat(packages.Values.Select(p => p.Name)).ToArray();
             if (names.Distinct(StringComparer.OrdinalIgnoreCase).Count() != names.Length)
                 throw new AppLifecycleException("skill_name_conflict", "A different package already uses an app skill's native name.");
@@ -217,6 +234,7 @@ internal sealed class AgentSkillLibrary(CoreDataPaths paths, IAgentSkillGit git,
     public async Task ReplaceAppAsync(string appId, string version,
         IReadOnlyDictionary<string, AgentSkillPackage> packages, CancellationToken ct, Func<Task>? commitApp = null)
     {
+        CoreAgentSkills.RejectReservedNames(packages.Values.Select(p => p.Name));
         var entries = packages.Select(p => Entry(Id("app", appId, p.Key), p.Value, "app", appId, version,
             null, null, p.Key, null, null)).ToArray();
         await gate.WaitAsync(ct);
@@ -233,18 +251,20 @@ internal sealed class AgentSkillLibrary(CoreDataPaths paths, IAgentSkillGit git,
 
     public async Task<AgentSkillExportResult> ExportAsync(string owner, AgentSkillExportRequest request, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(request.ContextId) || request.ContextId.Length > 256 || request.SkillIds is null || request.SkillIds.Length > 200 || request.SkillIds.Any(string.IsNullOrWhiteSpace))
-            throw AgentSkillPackages.Invalid("An export requires a context ID and at most 200 skills.");
+        if (string.IsNullOrWhiteSpace(request.ContextId) || request.ContextId.Length > 256 || request.SkillIds is null || request.SkillIds.Length > 200 + CoreAgentSkills.Entries.Length || request.SkillIds.Any(string.IsNullOrWhiteSpace))
+            throw AgentSkillPackages.Invalid("An export accepts at most 200 optional skills plus the Core packages.");
         var id = Id(owner, request.ContextId);
         await gate.WaitAsync(ct);
         try
         {
             var state = await ReadAsync(ct) ?? AgentSkillLibraryState.Empty;
-            var export = new AgentSkillExport(id, owner, request.SkillIds.Distinct(StringComparer.Ordinal).ToArray());
+            var selected = request.IncludePlatform ? request.SkillIds.Append(CoreAgentSkills.PlatformId) : request.SkillIds;
+            var export = new AgentSkillExport(id, owner, selected.Distinct(StringComparer.Ordinal).ToArray());
             state = state with { Exports = state.Exports.Where(e => e.Id != id).Append(export).ToArray() };
             if (state.Exports.Length > 1000) throw AgentSkillPackages.Invalid("Release unused skill exports before creating more.");
             await PublishAsync(state, ct, exports: [export]);
-            return new(id, ExportPath(export), Selected(state, export).Select(s => s.Info).ToArray());
+            return new(id, ExportPath(export), Selected(state, export).Select(s => s.Info).ToArray(),
+                request.IncludePlatform ? CoreAgentSkills.Introduction() : null);
         }
         finally { gate.Release(); }
     }
@@ -257,15 +277,20 @@ internal sealed class AgentSkillLibrary(CoreDataPaths paths, IAgentSkillGit git,
             var state = await ReadAsync(ct) ?? AgentSkillLibraryState.Empty;
             var export = state.Exports.FirstOrDefault(e => e.Id == id && e.Owner == owner);
             if (export is null) return;
-            await JsonStorage.WriteAsync(StatePath, state with { Exports = state.Exports.Where(e => e.Id != id).ToArray() }, restrictToOwner: true, ct);
+            await JsonStorage.WriteAsync(StatePath, Stored(state) with { Exports = state.Exports.Where(e => e.Id != id).ToArray() }, restrictToOwner: true, ct);
             if (Directory.Exists(ExportPath(export))) Directory.Delete(ExportPath(export), true);
         }
         finally { gate.Release(); }
     }
 
     private string ExportPath(AgentSkillExport export) => Path.Combine(Root, "exports", Id(export.Owner), export.Id);
-    private static AgentSkillEntry[] Selected(AgentSkillLibraryState state, AgentSkillExport export) =>
-        state.Skills.Where(s => export.SkillIds.Contains(s.Info.Id, StringComparer.Ordinal)).ToArray();
+    private static AgentSkillEntry[] Selected(AgentSkillLibraryState state, AgentSkillExport export)
+    {
+        var selected = state.Skills.Where(s => export.SkillIds.Contains(s.Info.Id, StringComparer.Ordinal)).ToArray();
+        if (selected.GroupBy(s => s.Info.Name, StringComparer.OrdinalIgnoreCase).Any(g => g.Count() > 1))
+            throw new AppLifecycleException("skill_name_conflict", "The selection includes a legacy package with the same native name as a Core skill. Deselect the legacy package before using the Core package.");
+        return selected;
+    }
 
     public async Task RecoverExportsAsync(CancellationToken ct)
     {
@@ -289,6 +314,7 @@ internal sealed class AgentSkillLibrary(CoreDataPaths paths, IAgentSkillGit git,
 
     private static void ValidateState(AgentSkillLibraryState state)
     {
+        state = Stored(state);
         if (state.Skills.Length > 200 || state.Skills.Sum(s => s.Info.Bytes) > MaxLibraryBytes)
             throw AgentSkillPackages.Invalid("The shared library is limited to 200 skills and 64 MiB.");
         if (state.Skills.GroupBy(s => s.Info.Name, StringComparer.OrdinalIgnoreCase).Any(g => g.Count() > 1))
@@ -305,7 +331,7 @@ internal sealed class AgentSkillLibrary(CoreDataPaths paths, IAgentSkillGit git,
         {
             foreach (var export in exports ?? state.Exports)
                 prepared.Add((export, await PrepareExportAsync(state, export, ct)));
-            await JsonStorage.WriteAsync(stateStage, state, restrictToOwner: true, ct);
+            await JsonStorage.WriteAsync(stateStage, Stored(state), restrictToOwner: true, ct);
             ct.ThrowIfCancellationRequested();
             if (commitApp is not null) await commitApp();
             // Once committed, finish publication even if the requesting client disconnects. The
