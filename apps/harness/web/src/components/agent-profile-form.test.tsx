@@ -43,3 +43,15 @@ it("shows Core provenance and keeps platform guidance included while app develop
   await act(async () => checks[1]!.click());
   expect(change).toHaveBeenCalledWith({ ...config, skillIds: ["skill-a", "development"] });
 });
+
+it("shows incompatible Ollama models with the server reason and preserves exact tags", async () => {
+  vi.mocked(connectionModels).mockResolvedValue({revision:"ollama",models:[
+    {id:"qwen:27b",label:"qwen:27b",efforts:[{id:"false",label:"Off"}]},
+    {id:"embed:latest",label:"embed:latest",efforts:[],unavailableReason:"No tool support"}
+  ]});
+  await render();
+  const options=[...container.querySelectorAll("option")];
+  expect(options.find(o=>o.value==="qwen:27b")?.disabled).toBe(false);
+  expect(options.find(o=>o.value==="embed:latest")).toMatchObject({disabled:true});
+  expect(container.textContent).toContain("No tool support");
+});

@@ -47,7 +47,7 @@ export function AgentProfileForm({ value, onChange, connections, defaultConnecti
         <select id={`${uid}-model`} className={selectClass} disabled={disabled || !connectionId} value={value.model ?? ""} onChange={e => update({ model: e.target.value || null, reasoningEffort: null })}>
           <option value="">Agent default</option>
           {value.model && !catalog?.models.some(m => m.id === value.model) && <option value={value.model}>{value.model}{catalog ? " (unavailable)" : ""}</option>}
-          {catalog?.models.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
+          {catalog?.models.map(m => <option key={m.id} value={m.id} disabled={Boolean(m.unavailableReason)}>{m.label}{m.unavailableReason ? ` — ${m.unavailableReason}` : ""}</option>)}
         </select></div>
       <div className="space-y-1"><label htmlFor={`${uid}-effort`} className="text-sm font-medium">Reasoning effort</label>
         <select id={`${uid}-effort`} className={selectClass} disabled={disabled || !connectionId} value={value.reasoningEffort ?? ""} onChange={e => update({ reasoningEffort: e.target.value || null })}>

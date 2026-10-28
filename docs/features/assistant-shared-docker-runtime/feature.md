@@ -18,9 +18,14 @@ Retired `agentWorker` manifests fail validation explicitly.
 
 The API image contains the web export and conversation/MCP coordinator. The Worker image contains
 the provider SDKs, Codex CLI 0.162.1, Claude SDK 0.3.296 and its packaged Claude CLI, Node 24, Git
-2.56.0, Python, ripgrep and .NET SDK 10. Images and Harness packages share version 0.65.2. Worker
+2.56.0, Python, ripgrep and .NET SDK 10. Images and Harness packages share version 0.77.0. Worker
 does not need host agent CLIs, a Docker socket or another Docker daemon. `tini` supplies ordinary
 container signal/reaping behavior; the application starts known child processes directly.
+
+The Ollama adapter calls an external server over HTTP; Worker contains no Ollama server, CLI or
+model weights. Its command/file helpers use the same unprivileged execution identity and process
+cleanup boundary. Native and Docker defaults, scoped tools and durable adapter state are described
+in [provider connections](../ai-gateway-providers/feature.md#ollama-agent-adapter).
 
 Docker admits one execution at a time, including translation and waiting for input. Local admits
 up to 32, subject to provider connection claims. Worker refusal is an explicit error. Normal and

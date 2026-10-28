@@ -6,7 +6,7 @@ export const MAX_COMMAND_BYTES = 1024 * 1024;
 export const MAX_EVENT_BYTES = 64 * 1024 * 1024;
 export const REPLAY_MS = 7 * 24 * 60 * 60 * 1000;
 export type ExecutionSelection = { model: string | null; reasoningEffort: string | null };
-export type ModelChoice = { id: string; label: string; efforts: Array<{ id: string; label: string }>; defaultEffort?: string; suggested?: boolean };
+export type ModelChoice = { id: string; label: string; efforts: Array<{ id: string; label: string }>; defaultEffort?: string; suggested?: boolean; unavailableReason?: string };
 export type ModelCatalog = { revision: string; models: ModelChoice[]; defaultModel?: string; unavailableReason?: string };
 export type ResourceReference = { kind: "conversation"; id: string } | { kind: "worktree"; id: string; revision: string; path?: string };
 export type WorkerRunRequest = {
@@ -42,8 +42,8 @@ export function validateRun(value: unknown): asserts value is WorkerRunRequest {
   const r = value as WorkerRunRequest;
   if (!r || ![undefined, "chat", "translation", "task"].includes(r.operation) || !safeIdentity(r.conversationId) || !r.binding || !safeIdentity(r.binding.connectionId)
     || !Number.isSafeInteger(r.binding.connectionRevision) || r.binding.connectionRevision < 1
-    || !["codex", "claude"].includes(r.binding.harnessKind) || typeof r.input !== "string" || !r.input.trim()
-    || !r.selection || ![r.selection.model, r.selection.reasoningEffort].every(v => v === null || typeof v === "string" && /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(v))
+    || !["codex", "claude", "ollama"].includes(r.binding.harnessKind) || typeof r.input !== "string" || !r.input.trim()
+    || !r.selection || ![r.selection.model, r.selection.reasoningEffort].every(v => v === null || typeof v === "string" && /^[A-Za-z0-9][A-Za-z0-9._/:-]{0,255}$/.test(v))
     || !r.resource || !safeIdentity(r.resource.id) || !["conversation", "worktree"].includes(r.resource.kind)
     || !r.options || ![undefined, "normal", "autonomous"].includes(r.options.autonomy)
     || !Array.isArray(r.autoAllowedPrefixes) || r.autoAllowedPrefixes.some(p => typeof p !== "string" || !/^mcp__[A-Za-z0-9_-]+__$/.test(p)))

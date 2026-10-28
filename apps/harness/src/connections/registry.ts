@@ -23,12 +23,14 @@ import type {
 } from "../harness/adapter.js";
 import { ClaudeHarnessAdapter } from "../harness/claude.js";
 import { CodexHarnessAdapter } from "../harness/codex.js";
+import { OllamaHarnessAdapter, OLLAMA_CAPABILITIES } from "../harness/ollama/index.js";
+import { ollamaUrl } from "../harness/ollama/client.js";
 import type { ConnectionSecrets } from "./secrets.js";
 import { cleanAgentEnvironment, CodexLogin } from "./codex-login.js";
 import { translationEnvironment, type TranslationRuntime } from "../translation/native.js";
 
-export type AgentKind = "claude" | "codex";
-export type AuthMethod = "api-key" | "claude-token" | "chatgpt" | "host-login";
+export type AgentKind = "claude" | "codex" | "ollama";
+export type AuthMethod = "api-key" | "claude-token" | "chatgpt" | "host-login" | "none";
 export interface AgentConnection {
   id: string;
   name: string;
@@ -37,6 +39,7 @@ export interface AgentConnection {
   revision: number;
   secretKey: string;
   hostDirectory?: string;
+  baseUrl?: string;
   importSource?: string;
   dockerImportIdentity?: string;
 }
@@ -127,15 +130,16 @@ export class AgentConnections {
             typeof c.name !== "string" ||
             !c.name.trim() ||
             typeof c.secretKey !== "string" ||
-            !/^agent\.[a-z0-9-]+$/.test(c.secretKey) ||
+            !(c.kind === "ollama" ? c.secretKey === "" : /^agent\.[a-z0-9-]+$/.test(c.secretKey)) ||
             !Number.isSafeInteger(c.revision) ||
             c.revision < 1 ||
-            !["claude", "codex"].includes(c.kind) ||
+            !["claude", "codex", "ollama"].includes(c.kind) ||
             !(
-              c.kind === "claude"
+              c.kind === "ollama" ? ["none"] : c.kind === "claude"
                 ? ["api-key", "claude-token"]
                 : ["api-key", "host-login", "chatgpt"]
             ).includes(c.auth) ||
+            (c.baseUrl !== undefined && (c.kind !== "ollama" || typeof c.baseUrl !== "string" || ollamaUrl(c.baseUrl) !== c.baseUrl)) ||
             (c.auth === "host-login" &&
               (typeof c.hostDirectory !== "string" ||
                 !path.isAbsolute(c.hostDirectory))),
@@ -180,6 +184,7 @@ export class AgentConnections {
   async list(): Promise<{
     connections: Array<AgentConnection & HarnessAvailability>;
     defaultId: string | null;
+    ollamaDefaultUrl: string;
   }> {
     const state = await this.load();
     const connections = await Promise.all(
@@ -188,7 +193,7 @@ export class AgentConnections {
         let reason: string | undefined;
         try {
           if (
-            connection.auth !== "host-login" &&
+            connection.auth !== "host-login" && connection.auth !== "none" &&
             !(await this.secretGet(connection.secretKey))
           ) {
             available = false;
@@ -205,7 +210,7 @@ export class AgentConnections {
         return { ...connection, available, ...(reason ? { reason } : {}) };
       }),
     );
-    return { connections, defaultId: state.defaultId };
+    return { connections, defaultId: state.defaultId, ollamaDefaultUrl: ollamaUrl(undefined, this.applicationMode === "docker") };
   }
   async get(id: string): Promise<AgentConnection> {
     const connection = (await this.load()).connections.find((c) => c.id === id);
@@ -337,9 +342,9 @@ export class AgentConnections {
         if (
           !name ||
           name.length > 100 ||
-          !["claude", "codex"].includes(String(kind)) ||
+          !["claude", "codex", "ollama"].includes(String(kind)) ||
           !(
-            kind === "claude"
+            kind === "ollama" ? ["none"] : kind === "claude"
               ? ["api-key", "claude-token"]
               : ["api-key", "chatgpt", "host-login"]
           ).includes(String(auth))
@@ -366,6 +371,12 @@ export class AgentConnections {
             "provider_secret_invalid",
             "Enter a non-empty credential of at most 16,000 bytes.",
           );
+        if (auth === "none" && input.secret !== undefined) throw new ConnectionError(400, "provider_secret_invalid", "Ollama connections do not use credentials.");
+        let baseUrl: string | undefined;
+        if (kind === "ollama") {
+          try { const value = input.baseUrl ?? previous?.baseUrl; baseUrl = value === "" || value === undefined ? undefined : ollamaUrl(value); }
+          catch (error) { throw new ConnectionError(400, "provider_url_invalid", (error as Error).message); }
+        }
         const hostDirectory =
           auth === "host-login"
             ? typeof input.hostDirectory === "string"
@@ -383,7 +394,7 @@ export class AgentConnections {
           );
         const changed =
           input.secret !== undefined ||
-          (previous !== null && hostDirectory !== previous.hostDirectory);
+          (previous !== null && (hostDirectory !== previous.hostDirectory || baseUrl !== previous.baseUrl));
         if (changed && previous) this.assertInactive(previous.id);
         const connection: AgentConnection = {
           id: previous?.id ?? randomUUID(),
@@ -392,8 +403,9 @@ export class AgentConnections {
           auth: auth as AuthMethod,
           revision: (previous?.revision ?? 0) + (!previous || changed ? 1 : 0),
           secretKey:
-            changed || !previous ? `agent.${randomUUID()}` : previous.secretKey,
+            auth === "none" ? "" : changed || !previous ? `agent.${randomUUID()}` : previous.secretKey,
           ...(hostDirectory ? { hostDirectory } : {}),
+          ...(baseUrl ? { baseUrl } : {}),
           ...((previous?.importSource ?? importSource)
             ? { importSource: previous?.importSource ?? importSource }
             : {}),
@@ -444,7 +456,7 @@ export class AgentConnections {
           ...state,
           retiredKeys: [
             ...(state.retiredKeys ?? []),
-            ...(changed && previous ? [previous.secretKey] : []),
+            ...(changed && previous?.secretKey ? [previous.secretKey] : []),
           ],
           defaultId: !previous && !importSource && state.connections.length === 0 ? connection.id : state.defaultId,
           connections: [
@@ -481,7 +493,7 @@ export class AgentConnections {
       try {
         for (const login of this.logins.values())
           if (login.connectionId === id) await this.cancelLoginNow(login.id);
-        await this.secrets.delete(connection.secretKey);
+        if (connection.secretKey) await this.secrets.delete(connection.secretKey);
         await this.removeManagedHome(connection);
         const state = await this.load();
         await this.save({
@@ -521,7 +533,7 @@ export class AgentConnections {
     // Only conversation directories enter backups. Native credential/config files stay in cache.
     for (const directory of connection.kind === "codex"
       ? ["sessions", "archived_sessions"]
-      : ["projects"]) {
+      : connection.kind === "claude" ? ["projects"] : []) {
       const durable = path.join(
         this.dataDir,
         "provider-sessions",
@@ -585,6 +597,10 @@ export class AgentConnections {
           "provider_credentials_changed",
           "This connection's credentials changed. Start a new chat to use the updated account.",
         );
+      if (connection.kind === "ollama") return new OllamaHarnessAdapter({
+        url: ollamaUrl(connection.baseUrl, docker),
+        directory: path.join(this.dataDir, "provider-sessions", connection.id, String(connection.revision), "ollama"),
+      });
       if (connection.auth === "host-login") {
         if (
           binding.connectionIdentity !== (await this.hostIdentity(connection))
@@ -663,7 +679,7 @@ export class AgentConnections {
       name: adapter.name,
       capabilities: adapter.capabilities,
       models: adapter.models ? () => adapter.models!() : undefined,
-      probe: () => docker ? Promise.resolve({ available: true }) : adapter.probe(),
+      probe: () => docker && adapter.name !== "ollama" ? Promise.resolve({ available: true }) : adapter.probe(),
       start: (options) => {
         if (this.translationActive.has(binding.connectionId))
           throw new ConnectionError(409, "provider_in_use", "This connection is translating. Retry after it finishes.");
@@ -725,6 +741,7 @@ export class AgentConnections {
       const current = await this.get(binding.connectionId);
       if (current.revision !== binding.connectionRevision || current.kind !== binding.harnessKind)
         throw new ConnectionError(409, "translation_connection_changed", "Select the translation connection again after changing its credentials.");
+      if (current.kind === "ollama") throw new ConnectionError(400, "translation_unsupported", "Select Codex or Claude for translation.");
       if (this.active.get(current.id) || this.translationActive.has(current.id))
         throw new ConnectionError(429, "translation_busy", "This connection is in use. Stop its open chat or choose a dedicated translation connection.");
       if (this.syncErrors.has(current.id))
@@ -778,6 +795,7 @@ export class AgentConnections {
         await writeFile(path.join(home, "auth.json"), originalAuth, { mode: 0o600 });
         env.CODEX_HOME = home;
       } else env.CLAUDE_CONFIG_DIR = home;
+      if (connection.kind === "ollama") throw new Error("Ollama translation is unsupported.");
       return await action({ kind: connection.kind, cwd, home, env });
     } finally {
       try {
@@ -828,6 +846,7 @@ export class AgentConnections {
       );
     await this.serialize(async () => {
       const connection = await this.get(binding.connectionId);
+      if (connection.kind === "ollama") throw new ConnectionError(400, "provider_legacy_invalid", "Ollama cannot adopt a native Codex or Claude session.");
       if (connection.auth === "host-login") return;
       const home = await this.nativeHome(connection);
       // Codex's legacy managed home is migrated at startup. Claude previously used its user's
@@ -914,7 +933,7 @@ export class AgentConnections {
           ? new ClaudeHarnessAdapter({})
           : binding?.harnessKind === "codex"
             ? new CodexHarnessAdapter({ dataDir: this.dataDir })
-            : null;
+            : binding?.harnessKind === "ollama" ? { name: "ollama", capabilities: OLLAMA_CAPABILITIES } : null;
       return {
         ...missing,
         ...(adapter

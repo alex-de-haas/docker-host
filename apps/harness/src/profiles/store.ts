@@ -13,7 +13,7 @@ export function profileConfig(input: unknown): AgentProfileConfig {
   if (Object.keys(v).some(key => !fields.includes(key)) || typeof v.name !== "string" || !v.name.trim() || v.name.trim().length > 100
     || /[\x00-\x1f\x7f]/.test(v.name) || typeof v.description !== "string" || v.description.length > 2000
     || typeof v.instructions !== "string" || v.instructions.length > 8000 || !identifier(v.connectionId)
-    || !identifier(v.model) || !identifier(v.reasoningEffort) || !validSkillIds(v.skillIds)) throw invalid();
+    || !(v.model === null || typeof v.model === "string" && /^[A-Za-z0-9][A-Za-z0-9._/:-]{0,255}$/.test(v.model)) || !identifier(v.reasoningEffort) || !validSkillIds(v.skillIds)) throw invalid();
   return { name: v.name.trim(), description: v.description, instructions: v.instructions,
     connectionId: v.connectionId as string | null, model: v.model as string | null,
     reasoningEffort: v.reasoningEffort as string | null, skillIds: [...v.skillIds] };

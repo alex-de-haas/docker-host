@@ -1,12 +1,13 @@
 import type { ConnectionService } from "../connections/service.js";
 import { ProviderError, type TranslationCapabilities, type TranslationRequest, type TranslationResult } from "@hosty-sdk/app/providers";
 import { ConnectionError } from "../connections/errors.js";
-import type { AgentConnections, AgentKind } from "../connections/registry.js";
+import type { AgentConnections } from "../connections/registry.js";
 import type { SettingsStore } from "../settings/store.js";
 import { MAX_OUTPUT_BYTES, runTranslation } from "./native.js";
 import { markdownParts, validateMarkdownTranslation } from "./markdown.js";
 import { isTranslationModel, TRANSLATION_MODELS } from "./models.js";
 
+type AgentKind = "codex" | "claude";
 export const MAX_CHARACTERS = 128_000;
 export const MAX_BODY_BYTES = 1_048_576;
 export const TIMEOUT_SECONDS = 600;

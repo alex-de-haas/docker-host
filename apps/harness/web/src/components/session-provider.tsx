@@ -113,7 +113,7 @@ export function SessionProvider({ session, busy, onChange, onSavingChange }: {
                   <span className="truncate">{c.name}</span>
                   {c.id === defaultId && <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">Default</span>}
                 </div>
-                <p className="text-xs text-muted-foreground">{c.kind === "codex" ? "Codex" : "Claude"}{c.available ? "" : " · reconnect required"}</p>
+                <p className="text-xs text-muted-foreground">{c.kind === "ollama" ? "Ollama" : c.kind === "codex" ? "Codex" : "Claude"}{c.available ? "" : " · reconnect required"}</p>
               </div>
             </DropdownMenuRadioItem>)}
           </DropdownMenuRadioGroup>

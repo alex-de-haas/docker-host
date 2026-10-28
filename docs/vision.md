@@ -1,6 +1,6 @@
 ---
 created: 2026-08-19
-updated: 2026-10-27
+updated: 2026-10-28
 ---
 
 # Hosty Platform Vision
@@ -1164,6 +1164,32 @@ Decisions 1–5: 2026-08-19.
     as one feature/PR independently of full orchestration, in accordance with repository versioning
     and verification rules. The current documentation update does not claim implementation started,
     runtime acceptance or publication.
+
+65. **Own the Ollama engine and separate agent provider applications (2026-10-28).**
+    The owner selects a Hosty-owned agent engine that calls Ollama directly, rather than using Codex
+    to execute Ollama-backed conversations. The target has independently installed Codex, Ollama and
+    Claude Code provider applications. One provider can expose multiple models; a model is not an app.
+    Harness is a consumer and conversation UI. Core supplies generic discovery, identity, grants and
+    authorized references; agent messages/events flow directly between consumer and provider.
+
+    The initial Ollama adapter uses the already installed host Ollama server through a configurable
+    URL with a runtime-appropriate local default. It does not install/start the inference server,
+    download models or place weights in Worker storage. Provider-app packaging and inference-server
+    packaging are separate decisions. The existing app-cache contract is available for reproducible
+    weights if a managed server is separately designed; no host model-store migration is implied.
+
+    Integrate the adapter into the existing Worker with explicit state and tool dependencies.
+    Do not require a new engine daemon or a switch from Docker to native execution in this feature.
+    This is preparation for extraction, not evidence that current agent processes survive a Harness restart. Shared implementation libraries are allowed; a mandatory
+    central agent runtime in Core or Harness would defeat the lifecycle boundary.
+
+    [Ollama Agent Adapter And Connections](features/ai-gateway-providers/feature.md) owns direct inference,
+    coding/MCP tools, context and durable execution in the initial integration.
+    [Agent And Model Provider Interface](features/agent-provider-interface/plan.md) owns the public
+    contract, separate applications, migration and reconnect acceptance. This decision fixes the
+    direction, superseding the combined-provider/Codex-backed suggestions. The owner subsequently
+    approved the initial external-server adapter for implementation on the same date. Separate
+    application extraction remains Draft; no live runtime switch is authorized.
 
 ## Personal And Shared Environments (owner exploration, 2026-10-23)
 
