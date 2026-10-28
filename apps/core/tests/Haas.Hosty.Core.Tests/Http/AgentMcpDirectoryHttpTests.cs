@@ -31,7 +31,7 @@ public sealed class AgentMcpDirectoryHttpTests
         Assert.True(changed.Targets.Single(t => t.Id == app.Id).Offered);
         Assert.Empty(changed.Targets.Single(t => t.Id == app.Id).Skills);
         await host.Services.GetRequiredService<CoreLifecycleService>().RemoveAsync(app.Id, new AppRemoveRequest(DeleteData: false, IgnoreRuntimeErrors: true));
-        Assert.Empty((await library.CatalogAsync(default)).Skills);
+        Assert.DoesNotContain((await library.CatalogAsync(default)).Skills, skill => skill.SourceKind != "core");
         Assert.DoesNotContain(app.Id, (await host.Services.GetRequiredService<AgentPolicyStore>().ReadAsync()).Targets.Keys);
         await apps.UpsertAppAsync(app with { InstalledAt = app.InstalledAt.AddMinutes(1) });
         Assert.False((await directory.ReadAsync()).Targets.Single(t => t.Id == app.Id).Offered);

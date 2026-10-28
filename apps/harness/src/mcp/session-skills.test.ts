@@ -5,7 +5,7 @@ import path from "node:path";
 import { SessionStore } from "../sessions/store.js";
 import { SettingsStore } from "../settings/store.js";
 import { DEFAULT_WORKFLOW_PROMPT } from "../settings/workflow.js";
-import { HOST_SYSTEM_PROMPT } from "../sessions/host-prompt.js";
+import { HOST_SYSTEM_PROMPT, DOCKER_SYSTEM_PROMPT } from "../sessions/host-prompt.js";
 import { SessionManager } from "../sessions/manager.js";
 import { FakeHarnessAdapter } from "../harness/fake.js";
 import { AuditReporter } from "../audit.js";
@@ -14,6 +14,8 @@ import { McpProxy } from "./proxy.js";
 import type { ProviderDirectory } from "../settings/providers.js";
 import { createHash } from "node:crypto";
 
+import { ProfileStore } from "../profiles/store.js";
+
 const APP = "com-example-notes";
 
 describe("native skills in a session", () => {
@@ -21,8 +23,10 @@ describe("native skills in a session", () => {
   let settings: SettingsStore;
   let manager: SessionManager;
   let adapter: FakeHarnessAdapter;
-  let offered = true;
-  const exports: { contextId: string; skillIds: string[] }[] = [];
+  let offered = true, platform = true;
+  const intro = "Core platform introduction for this running instance.";
+  const platformSkill = { id: "c".repeat(64), name: "hosty-platform", sourceKind: "core", coreVersion: "1.2.3", introductionPath: "references/introduction.md" };
+  const exports: { contextId: string; skillIds: string[]; includePlatform?: boolean }[] = [];
   const skillId = "a".repeat(64), exportId = "e".repeat(64);
 
   const providers = {
@@ -30,7 +34,7 @@ describe("native skills in a session", () => {
       providers: [{ appId: APP, displayName: "Notes", url: `http://${APP}/api/mcp`, running: true, offered }],
       installedAppIds: [APP],
     }),
-    // No Core row: these tests are about app skills, and Core declares none.
+    // MCP provider selection is independent of Core skill delivery.
     core: () => null,
     migrateInstructions: async () => undefined,
 
@@ -39,7 +43,7 @@ describe("native skills in a session", () => {
   } as unknown as ProviderDirectory;
 
   beforeEach(() => {
-    offered = true; exports.length = 0;
+    offered = true; platform = true; exports.length = 0;
     vi.stubEnv("HOSTY_CORE_ORIGIN", "http://core.test");
     vi.stubEnv("HOSTY_APP_ID", "hosty.harness");
     vi.stubEnv("HOSTY_APP_SERVICE_TOKEN", "service");
@@ -64,7 +68,8 @@ describe("native skills in a session", () => {
       const url = String(input);
       if (url.endsWith("/skills/exports")) {
         exports.push(JSON.parse(String(init?.body)));
-        return Response.json({ id: exportId, path: "/core/export", skills: [] });
+        return Response.json({ id: exportId, path: "/core/export", skills: platform ? [platformSkill] : [],
+          ...(platform ? { platformIntroduction: { skillId: platformSkill.id, coreVersion: platformSkill.coreVersion, path: platformSkill.introductionPath, text: intro } } : {}) });
       }
     if (url.includes("/api/auth/apps/revalidate")) return Response.json({ active: true, expiresAt: new Date(Date.now() + 3600_000).toISOString() });
       if (url.includes("/mcp/token")) {
@@ -95,7 +100,7 @@ describe("native skills in a session", () => {
   it("exports selected packages while keeping standing instructions separate", async () => {
     await settings.update({ systemPrompt: "Be brief.", skillIds: [skillId], mcpProviders: { [APP]: true } });
     const prompt = await startSession();
-    expect(prompt).toBe(`${HOST_SYSTEM_PROMPT}\n\n${DEFAULT_WORKFLOW_PROMPT}\n\nBe brief.`);
+    expect(prompt).toBe(`${intro}\n\n${HOST_SYSTEM_PROMPT}\n\n${DEFAULT_WORKFLOW_PROMPT}\n\nBe brief.`);
     expect(prompt).not.toContain("Call list_people first.");
     expect(exports[0]?.skillIds).toEqual([skillId]);
     expect(adapter.lastStart?.skillExportId).toBe(exportId);
@@ -108,9 +113,11 @@ describe("native skills in a session", () => {
     expect(await startSession()).not.toContain(DEFAULT_WORKFLOW_PROMPT);
   });
 
-  it("does not auto-select packages when no defaults were chosen", async () => {
+  it("requests platform context without auto-selecting optional packages", async () => {
     await startSession();
     expect(exports[0]?.skillIds).toEqual([]);
+    expect(exports[0]?.includePlatform).toBe(true);
+    expect(adapter.lastStart?.systemPrompt).toContain(intro);
   });
 
   it("keeps skill selection independent of MCP provider access", async () => {
@@ -153,6 +160,34 @@ describe("native skills in a session", () => {
     expect((await settings.read()).skillIds).toEqual(expected);
     await startSession();
     expect(exports[1]?.skillIds).toEqual(expected);
+  });
+
+  it("retains the existing environment preamble with an older Core", async () => {
+    platform = false;
+    const prompt = await startSession();
+    expect(prompt).toContain(HOST_SYSTEM_PROMPT);
+    expect(prompt).not.toContain(intro);
+  });
+
+  it.each(["native", "docker"] as const)("includes platform context with and without a profile in %s mode", async mode => {
+    await manager.shutdown();
+    await settings.update({ systemPrompt: "Operator instructions", executionMode: mode });
+    const profiles = new ProfileStore(dataDir, async () => ({ name: "Developer", description: "", instructions: "Developer role",
+      connectionId: null, model: null, reasoningEffort: null, skillIds: [skillId] }), async () => [skillId]);
+    const exchange = new TokenExchange("http://core.test", "hosty.harness", "service");
+    const proxy = new McpProxy((sessionId, appId) => manager.mintAppToken(sessionId, appId));
+    manager = new SessionManager(new SessionStore(dataDir), adapter, new AuditReporter(null, null, "hosty.harness"), dataDir,
+      settings, providers, exchange, proxy, "http://127.0.0.1:3400", null, null, null, null, mode, profiles);
+    for (const withProfile of [false, true]) {
+      const record = await manager.createSession({ createdBy: "user_admin", ...(withProfile ? {} : { profileId: null }) });
+      await manager.postMessage(record.id, "hello", "hostyg_seed");
+      const prompt = adapter.lastStart!.systemPrompt!;
+      expect(prompt.startsWith(intro)).toBe(true);
+      expect(prompt).toContain(mode === "docker" ? DOCKER_SYSTEM_PROMPT : HOST_SYSTEM_PROMPT);
+      expect(prompt.indexOf(intro)).toBeLessThan(prompt.indexOf("Operator instructions"));
+      expect(prompt.includes("Developer role")).toBe(withProfile);
+      expect(exports.at(-1)).toMatchObject({ includePlatform: true, skillIds: withProfile ? [skillId] : [] });
+    }
   });
 
   it("rejects caller supplied paths as skill selections", async () => {

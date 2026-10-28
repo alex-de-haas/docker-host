@@ -1,22 +1,24 @@
 ---
 created: 2026-10-26
-updated: 2026-10-27
-summary: A shared Core library of complete Git and app skill packages with manual updates, stable selections and current-file exports for native agents.
+updated: 2026-10-28
+summary: A shared library of Core, Git and app skill packages with stable selections, current-file exports and platform context for native agents.
 components: [apps/core, apps/cli, apps/harness]
 ---
 
 # Shared Agent Skills
 
-Core stores one administrator-managed library for the instance. Git sources and installed apps
-supply complete Agent Skills directories: `SKILL.md` with YAML `name` and `description`, plus
+Core exposes one library for the instance. Its executable ships two built-in packages; Git sources
+and installed apps supply administrator-managed packages. All are complete Agent Skills directories: `SKILL.md` with YAML `name` and `description`, plus
 references, scripts, examples and assets. Hosty metadata stays outside portable package files.
-Skills provide optional native guidance. Standing instructions, tool access and permission to run
-scripts remain independent.
+Native package guidance is selected independently of tool access and permission to run scripts.
+[Core platform skills](../core-platform-skills/feature.md) additionally supply a bounded platform
+introduction to consumers that request it; Harness requests it for every agent.
 
 ## Catalog And Administration
 
 Harness Settings → Skills displays names, descriptions, source provenance, installed commits/app
-versions and package files. Administrators can filter and read packages, discover a Git repository
+versions, `Core · <version>` provenance and package files. Core packages have a Read action and
+update only with Core; their catalog presence does not depend on installed applications. Administrators can filter and read packages, discover a Git repository
 or subdirectory, select packages, install them, check updates, update individually or together,
 and remove Git packages. **Add skills** opens a two-step dialog: repository and source connection,
 then discovered package selection. A text field above the results filters names and descriptions
@@ -36,11 +38,14 @@ that package. Failed source reads preserve installed contents. App packages foll
 app version and disappear when their supplying app is removed.
 
 Stable Git identities include repository, ref and package path; app identities include app ID and
-manifest key. Native package names must be unique across the library. Technical collisions are
-rejected without renaming or overwriting unrelated packages. Hosty does not analyze contradictory
+manifest key. Core identities use the source kind and package name. New packages cannot use
+reserved Core native names. Existing same-name packages survive upgrades, but an export selecting
+both the legacy and Core package fails before replacing existing files. Other technical collisions
+are rejected without renaming or overwriting unrelated packages. Hosty does not analyze contradictory
 instructions. Imports validate YAML, paths, case collisions, regular files and package limits;
 symlinks, traversal and Git metadata are refused. Limits are 512 files/16 MiB per package,
-256 KiB for `SKILL.md`, and 200 packages/64 MiB for the library.
+256 KiB for `SKILL.md`, and 200 packages/64 MiB for the managed library. Core packages are outside
+that capacity; exports and Harness selections accept all 200 managed packages plus both built-ins.
 
 ## API And Delivery
 
@@ -55,8 +60,12 @@ Library writes require a current administrator; app-mediated management addition
 Private repository reads use saved Source grants. Management mutations record actor provenance in
 the audit log. An app cannot release another app's exports.
 
-`POST .../exports` accepts `{ contextId, skillIds }`; repeating a context updates that consumer's
-export. The result contains its ID, native path and available selected metadata. Missing IDs are
+`POST .../exports` accepts `{ contextId, skillIds, includePlatform? }`; repeating a context updates
+that consumer's export. The result contains its ID, native path and available selected metadata.
+`includePlatform: true` adds `hosty-platform` and returns `platformIntroduction` with its stable
+`skillId`, `coreVersion`, reference `path` and bounded `text`. The default preserves explicit selection
+for external consumers. Core catalog entries have `sourceKind: core`, `coreVersion` and an optional
+`introductionPath`; no app identity is required to describe them. Missing IDs are
 omitted. `DELETE .../exports/{id}` releases an unused export. Content reads accept a package-relative
 `path`, return bytes as Base64, and list package file paths.
 
@@ -80,7 +89,10 @@ Hosty delivery, not filesystem permissions or unrelated user/repository/built-in
 ## Harness And External Clients
 
 Harness [agent profiles](../agent-profiles/feature.md) store explicit skill selections. The Skills
-tab manages the common catalog; profiles own selection. Session creation also accepts explicit
+tab manages the common catalog; profiles own optional selection. Harness always requests platform
+context, exports its package and places the introduction before its mode-specific environment and
+operator/role instructions. The profile editor shows this package checked and unavailable for
+deselection; `hosty-app-skill` remains optional. Existing saved optional selections are unchanged. Session creation also accepts explicit
 `skillIds` for manual consumers without a profile. A session captures
 its selection while receiving current contents whenever Core updates those packages. Provider
 credential connections do not own skill selections. Deleted IDs do not block session creation.
@@ -144,6 +156,8 @@ Missing selections produce an empty or reduced current export rather than preven
 
 ## Testing Expectations
 
+- Cover built-ins without installed apps, Core version provenance, protected lifecycle, reserved
+  names, legacy collisions, recovery from packaged bytes and platform-context opt-in.
 - Cover complete packages, path/YAML/size validation, source selection and moved commits, manual
   updates, upstream removal, failed private reads, name collisions and app lifecycle publication.
 - Cover read-only Git pack cleanup on Windows, retained locked fetch directories during startup,

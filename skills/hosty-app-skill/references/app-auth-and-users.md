@@ -37,7 +37,7 @@ HTTPS Core/app hosts must differ; nonce cookies use `__Host-`, Secure, Path=/ an
 requires a literal-IP Core public host different from every app origin. Source development uses Core
 `[::1]` and app `localhost` names. Ports alone do not isolate cookies. Protocol metadata has a strict
 old-Core compatibility path; unknown/transient failures never authorize a downgrade. See
-[the exchange plan](../../../docs/features/app-code-exchange/feature.md).
+[the exchange plan](https://github.com/alex-de-haas/docker-host/blob/main/docs/features/app-code-exchange/feature.md).
 
 ## Core Origin Variables
 
@@ -48,7 +48,7 @@ Two origins are injected; use the right one for the caller:
 
 ## Handling Expired Or Invalid Sessions (Recovery)
 
-> Design reference: [`docs/features/auth-session-lifecycle/feature.md`](../../../docs/features/auth-session-lifecycle/feature.md). Implemented: the 401/403 recovery contract and opaque server-side app session grants (Core stores only the token hash), and sliding idle + absolute session lifetimes. The app identity token is an opaque `hostyg_` value — never assume a JWT — and its `expiresInSeconds` is the grant's absolute lifetime; set the app cookie `Max-Age` from it.
+> Design reference: [`docs/features/auth-session-lifecycle/feature.md`](https://github.com/alex-de-haas/docker-host/blob/main/docs/features/auth-session-lifecycle/feature.md). Implemented: the 401/403 recovery contract and opaque server-side app session grants (Core stores only the token hash), and sliding idle + absolute session lifetimes. The app identity token is an opaque `hostyg_` value — never assume a JWT — and its `expiresInSeconds` is the grant's absolute lifetime; set the app cookie `Max-Age` from it.
 
 An app session ends eventually (idle/absolute expiry, revoke, admin change). The app must **recover, not dead-end** — never render a bare "not authorized" page with no way forward. Classify the revalidation outcome into three cases and act differently:
 

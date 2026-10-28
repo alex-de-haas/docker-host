@@ -1,51 +1,59 @@
 ---
 name: hosty-app-skill
-description: Build, wrap, or update Hosty runtime apps. Use when creating app manifests under schemaVersion app.0.1, publishing app-feeds.0.1 feeds, configuring Docker or localCommand runtime profiles, app data directories and backups, external host-path mounts (externalMounts / catalog roots), Shell UI metadata, Hosty Core identity, app-owned MCP endpoints (interfaces.mcp), scoped app directory access, runtime-app roles, dependencies, OpenTelemetry/telemetry export (telemetry block + OTEL_* env), or validating apps with Core-managed local runtime profiles.
+description: Create, wrap, update and test Hosty applications using the manifest, published SDKs, identity and Core-managed development workflow. Use for application development and Hosty integration.
 ---
 
 # Hosty App Skill
 
-Use this skill to implement Hosty runtime apps in the shape expected by this repository. The supported contract is an app manifest with `schemaVersion: "app.0.1"`.
+Build applications that integrate with Hosty Core. This development skill ships with Core alongside
+`hosty-platform`; it is selected separately for developer profiles. It works from an exported
+package without a checkout of the Hosty repository.
 
-## Workflow
+## Establish The Target Contract
 
-1. Identify whether the user wants to create a new runtime app, wrap an existing app, update an app manifest, add Hosty identity/roles, configure data/backups, or validate an app.
-2. Treat `docs/features/runtime-app-manifest/feature.md`, `docs/features/domain-model/feature.md`, `docs/features/auth-gateway/feature.md`, `apps/core/src/Haas.Hosty.Core/RuntimeAppManifest.cs`, `apps/core/src/Haas.Hosty.Core/CoreLifecycleService.cs`, and `apps/demo-app` as source of truth when implementation details matter.
-3. Use `apps/demo-app/manifest.json` as the manifest shape and `hosty apps install apps/demo-app --runtime dev` as the local directory install pattern.
+Identify the running Core version, language/framework, existing app or new-app request, and the
+capabilities available to this client. Retrieve `get_app_development_guide` over authorized direct
+Core MCP, or `app_creation_guide` in Harness. Start with `overview`, then read the topics relevant
+to the work: `source`, `docker`, `sdk`, `identity`, `preview`, `checks`, `finish`. The response carries
+Core version, guide revision and manifest schema. Refresh it after upgrading Core.
 
-## Running Core Guide
+An already authorized operator can use `hosty --data-root <root> apps guide --topic <id> --format json`.
+Guide reads grant no mutation authority. Do not use another credential or client to bypass a refusal.
+If no guide reader is available, use these packaged references and clearly identify any contract
+that still needs verification. A repository checkout is evidence when available, not a prerequisite
+for using this package.
 
-When working against a running Core, retrieve `get_app_development_guide` over authorized Core MCP
-or `app_creation_guide` in Harness. Start with overview, then request relevant topics. The operator
-CLI equivalent is `hosty --data-root <root> apps guide --topic <id> --format json`. Check the Core
-version, guide revision and manifest schema before applying examples; SDK capabilities differ by
-stack. These readers grant no mutation authority. Do not bypass disabled/refused MCP with a shell
-bridge; an already authorized typed coordinator may use the same control reader. Repository source
-and the references below remain the evidence for changes to the current implementation.
+## Create Or Change An Application
 
-## References
+Use the client's supported app-creation/workspace tools and the repository's instructions. The
+packaged Node/React starter is a default, not a required stack. Prepare or resume the registered
+workspace before edits; preserve the original/shared source checkout. Retain activity leases while
+native consumers run. Select the intended Core/data root explicitly for lifecycle operations.
 
-- Read `references/app-manifest.md` when authoring or reviewing `manifest.json`, runtime profiles, service implementations, settings, storage, dependencies, endpoints, install/update behavior, or backups.
-- Read `references/app-auth-and-users.md` when adding app identity, app-owned roles, or scoped app directory access.
-- Read `references/app-manifest.md` ("MCP Interface") when adding or debugging an app's MCP endpoint — delegated- and scoped-token auth, the handshake's HTTP 202, and read-only annotations.
-- Read `references/app-feeds.md` when publishing or reviewing repository-owned `feeds.json` for Marketplace discovery and Core-managed updates.
-- Read `references/app-launch-mode.md` when the app has a UI, to keep it from drawing the name and page navigation a shell already renders around it.
-- Read `references/demo-app-patterns.md` when validating against the repository Demo App.
-- Read `references/app-implementation-checklist.md` before final verification.
+Read [SDK and app creation](references/sdk-and-app-creation.md) when choosing a stack or integrating
+authentication. Read only the additional references needed for the task:
 
-## Local Validation
+- [Manifest](references/app-manifest.md): schema `app.0.1`, runtime services, settings, data,
+  dependencies, backups and app-owned MCP interfaces.
+- [Identity and users](references/app-auth-and-users.md): browser sign-in, own-app sessions,
+  app-owned roles and scoped directory access.
+- [Development mode](references/app-dev-mode.md): ordinary-data development controls and Return;
+  use only when the operator explicitly requests a live-data trial.
+- [Launch mode](references/app-launch-mode.md): standalone versus embedded UI and navigation.
+- [Feeds](references/app-feeds.md): application feed publishing when requested.
+- [Demo patterns](references/demo-app-patterns.md): source examples when a repository checkout is
+  available. The templates in `assets/app-template` are examples to adapt, not a launch command.
 
-Use Core-managed runtime app lifecycle:
+## Validate And Finish
 
-```bash
-hosty core start
-hosty apps install apps/demo-app --runtime dev
-hosty apps start com.haas.demo-app
-```
+Run affected builds and tests in the registered worktree. For runtime, identity and embedding
+acceptance, use a Core-managed sandbox/child Core with separate data, normal setup/password login
+and advertised preview URLs. A standalone app, a direct diagnostic identity token or an agent
+worker's local server does not prove browser authentication or Shell embedding works.
 
-For direct endpoint probes:
-
-```bash
-TOKEN="$(hosty apps identity com.haas.demo-app --user user@docker-host.local --format token)"
-curl -H "X-Docker-Host-Identity: $TOKEN" <assigned-demo-app-origin>/api/auth/identity
-```
+Follow the running guide's `preview`, `checks` and `finish` topics and the
+[implementation checklist](references/app-implementation-checklist.md). Do not start a second Core
+against an active data root or install a test into the ordinary host by default. Use the supported
+native/system test path where Docker does not apply. Preserve incomplete source, report observed
+results and verification limits, and Finish the owned test environment through its manager.
+Commit, publication and a live-data development trial remain separate authorized actions.

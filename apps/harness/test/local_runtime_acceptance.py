@@ -16,6 +16,20 @@ def check(context):
     base, root, workspace = (context[key] for key in ('base', 'root', 'workspace'))
     run, request, say, wait_for = (context[key] for key in ('run', 'request', 'say', 'wait_for'))
     origin, password, cli = (context[key] for key in ('origin', 'password', 'cli'))
+    # Core guidance is available before any standard app has been installed in the child.
+    core_skills = request('/api/skills')['skills']
+    assert sorted(s['name'] for s in core_skills) == ['hosty-app-skill', 'hosty-platform']
+    assert all(s['sourceKind'] == 'core' and s['coreVersion'] for s in core_skills)
+    dev = next(s for s in core_skills if s['name'] == 'hosty-app-skill')
+    selected = request('/control/v1/skills/exports',
+        {'contextId':'core-platform-acceptance', 'skillIds':[dev['id']], 'includePlatform':True}, control=True)
+    assert len(selected['skills']) == 2 and selected['platformIntroduction']['text']
+    exported = pathlib.Path(selected['path'])
+    assert (exported/'hosty-app-skill/references/sdk-and-app-creation.md').is_file()
+    assert (exported/'hosty-platform/references/introduction.md').read_text() == selected['platformIntroduction']['text']
+    request('/control/v1/skills/exports/'+selected['id'], method='DELETE', control=True)
+    assert not exported.exists()
+    say('PASS: empty-app Core catalog, versioned built-in packages, portable exports and platform introduction')
     manifest = json.loads((workspace/'apps/harness/manifest.json').read_text())
     app = manifest['id']
     manifest['source']['repository'] = context['repository']
@@ -50,6 +64,8 @@ def check(context):
     call(app_origin, '/api/auth/app-code', {'code':code,'codeVerifier':verifier})
     assert call(app_origin, '/api/auth/identity')['status'] == 'active'
     call(app_origin, '/api/sessions')
+    catalog = call(app_origin, '/api/skills')['skills']
+    assert sorted((s['name'], s['coreVersion']) for s in catalog if s['sourceKind'] == 'core') == sorted((s['name'], s['coreVersion']) for s in core_skills)
     with client.open(app_origin+'/assistant/', timeout=30) as response:
         html = response.read().decode()
     assets = re.findall(r'(?:src|href)="([^"]+/_next/[^"]+|/_next/[^"]+)"', html)

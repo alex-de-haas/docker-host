@@ -2,14 +2,18 @@ import { createHash } from "node:crypto";
 import type { SettingsStore } from "./settings/store.js";
 
 export interface SharedSkill {
-  id: string; name: string; description: string; sourceKind: "git" | "app";
+  id: string; name: string; description: string; sourceKind: "git" | "app" | "core";
+  coreVersion?: string | null; introductionPath?: string | null;
   appId?: string | null; appVersion?: string | null; repository?: string | null;
   ref?: string | null; path: string; commit?: string | null; fileCount: number; bytes: number; installedAt: string;
 }
 export interface SkillCatalog { skills: SharedSkill[] }
-export interface SkillExport { id: string; path: string; skills: SharedSkill[] }
+export interface SkillExport { id: string; path: string; skills: SharedSkill[];
+  platformIntroduction?: { skillId: string; coreVersion: string; path: string; text: string } | null;
+}
 export const validSkillIds = (value: unknown): value is string[] =>
-  Array.isArray(value) && value.length <= 200 && value.every(id => typeof id === "string" && /^[a-f0-9]{64}$/.test(id)) && new Set(value).size === value.length;
+  // Core contributes two built-ins in addition to the 200-package managed library.
+  Array.isArray(value) && value.length <= 202 && value.every(id => typeof id === "string" && /^[a-f0-9]{64}$/.test(id)) && new Set(value).size === value.length;
 
 export function hasSkillLibrary(): boolean {
   return Boolean(process.env.HOSTY_CORE_ORIGIN?.trim() && process.env.HOSTY_APP_SERVICE_TOKEN?.trim() && process.env.HOSTY_APP_ID?.trim());
@@ -72,7 +76,15 @@ export async function migrateSkillSelection(store: SettingsStore): Promise<void>
 export async function prepareSkills(contextId: string, store: SettingsStore, selected?: string[]): Promise<SkillExport | undefined> {
   if (!hasSkillLibrary()) return undefined;
   await migrateSkillSelection(store);
-  const result = await skillRequest<SkillExport>("/exports", "POST", { contextId, skillIds: selected ?? (await store.read()).skillIds ?? [] });
+  const result = await skillRequest<SkillExport>("/exports", "POST", { contextId, skillIds: selected ?? (await store.read()).skillIds ?? [], includePlatform: true });
   if (!/^[a-f0-9]{64}$/.test(result.id ?? "") || !Array.isArray(result.skills)) throw new Error("Core returned an invalid skill export.");
+  const intro = result.platformIntroduction;
+  if (intro == null && result.skills.some(skill => skill.sourceKind === "core" && skill.introductionPath))
+    throw new Error("Core omitted the platform introduction.");
+  if (intro != null && (!/^[a-f0-9]{64}$/.test(intro.skillId ?? "") || typeof intro.coreVersion !== "string" || !intro.coreVersion ||
+      typeof intro.path !== "string" || !intro.path || typeof intro.text !== "string" || !intro.text.trim() || Buffer.byteLength(intro.text, "utf8") > 8000 ||
+      !result.skills.some(skill => skill.id === intro.skillId && skill.sourceKind === "core" &&
+        skill.coreVersion === intro.coreVersion && skill.introductionPath === intro.path)))
+    throw new Error("Core returned invalid platform context.");
   return result;
 }

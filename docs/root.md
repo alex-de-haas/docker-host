@@ -47,7 +47,7 @@ Plans: 13 In Progress · 1 Blocked · 44 Draft · 7 On Hold.
 - [Agent MCP Directory](features/agent-mcp-directory/feature.md) — Core enforces installation-bound assistant MCP access and tool exclusions; Harness owns invocation preferences and independent skill selections.
 - [Shared Agent Profiles](features/agent-profiles/feature.md) — Shared Harness agent configurations with connection, model, reasoning, role instructions and explicit skills, selectable before a conversation starts.
 - [Agent And Model Provider Interface](features/agent-provider-interface/plan.md) — Explore a shared app-facing interface for independently provided agents and models, including multi-model providers and structured results. · Draft, 0/6, updated 2026-10-27
-- [Shared Agent Skills](features/agent-skills/feature.md) — A shared Core library of complete Git and app skill packages with manual updates, stable selections and current-file exports for native agents.
+- [Shared Agent Skills](features/agent-skills/feature.md) — A shared library of Core, Git and app skill packages with stable selections, current-file exports and platform context for native agents.
 - [AI Agent Bridge](features/ai-agent-bridge/feature.md) — The umbrella model for Hosty's AI integration, covering component boundaries, execution profiles, token mechanics and the decision log.
 - [Hosty Harness](features/ai-gateway/feature.md) — Hosty Harness, the optional administrator assistant app hosting operator chat sessions on a host-resident agent harness.
 - [Hosty Harness Chat Components](features/ai-gateway-chat-ui/feature.md) — The chat components Harness uses for messages, code blocks, attachments, the composer and collapsible activity.
@@ -112,6 +112,7 @@ Plans: 13 In Progress · 1 Blocked · 44 Draft · 7 On Hold.
 - [Core Extension Model](features/core-extension-model/feature.md) — Current boundaries between runtime apps, confirmed provider roles, Core permissions and platform-owned operations.
 - [Core Lifecycle Parallelism](features/core-lifecycle-parallelism/feature.md) — Core runs per-app lifecycle work concurrently and queries Docker in batches.
 - [Core MCP](features/core-mcp/feature.md) — Core MCP exposes app state, logs and bounded audit search, with explicit grants for lifecycle actions and reviewed updates.
+- [Core Platform Skills](features/core-platform-skills/feature.md) — Core supplies portable platform and app-development skills, versioned catalog provenance and a platform introduction for every Harness agent.
 - [Core's Own Public Origin](features/core-public-origin/feature.md) — Core's public origin is a live setting, editable in Shell and publishable through the Cloudflare provider.
 - [Core Read-Path Caching](features/core-read-path-caching/feature.md) — Core serves hot reads from in-memory caches guarded by on-disk file stamps.
 - [Core Runtime Parameters — Two Launch Flags, Everything Else Lives Inside](features/core-runtime-parameters/feature.md) — Core launches with only a data root and a port, and everything else lives in the instance's settings store.

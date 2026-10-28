@@ -61,12 +61,13 @@ export function AgentProfileForm({ value, onChange, connections, defaultConnecti
       <p id={`${uid}-guidance`} className="text-xs text-muted-foreground">Describe this role&apos;s approach, specialization and expected output. Shared workflow and repository rules belong in Common instructions.</p>
       <Textarea id={`${uid}-instructions`} aria-describedby={`${uid}-guidance`} className="min-h-40" maxLength={8000} value={value.instructions} onChange={e => update({ instructions: e.target.value })} /></div>
     <div className="space-y-3"><label htmlFor={`${uid}-filter`} className="text-sm font-medium">Skills</label>
-      <p className="text-xs text-muted-foreground">Choose guidance this agent can use when relevant. Manage available packages in the shared Skills library.</p>
+      <p className="text-xs text-muted-foreground">Platform guidance is included for every agent. Choose additional guidance this agent can use when relevant. Manage available packages in the shared Skills library.</p>
       <Input id={`${uid}-filter`} value={filter} onChange={e => setFilter(e.target.value)} placeholder="Find skills" />
       {skillsError ? <p role="alert" className="text-sm">{skillsError} Existing selections are retained.</p> : <div className="max-h-64 space-y-2 overflow-y-auto">
         {visible.map(skill => <label key={skill.id} className="flex items-start gap-3 rounded-md border p-3 text-sm">
-          <Checkbox checked={value.skillIds.includes(skill.id)} onCheckedChange={checked => update({ skillIds: checked === true ? [...value.skillIds, skill.id] : value.skillIds.filter(id => id !== skill.id) })} />
-          <span><span className="font-medium">{skill.name}</span><span className="block text-muted-foreground">{skill.description}</span></span>
+          <Checkbox disabled={skill.sourceKind === "core" && !!skill.introductionPath} checked={skill.sourceKind === "core" && !!skill.introductionPath || value.skillIds.includes(skill.id)} onCheckedChange={checked => update({ skillIds: checked === true ? [...value.skillIds, skill.id] : value.skillIds.filter(id => id !== skill.id) })} />
+          <span><span className="font-medium">{skill.name}</span><span className="block text-muted-foreground">{skill.description}</span>
+            {skill.sourceKind === "core" && <span className="block text-xs text-muted-foreground">Core · {skill.coreVersion}{skill.introductionPath ? " · Included for every agent" : ""}</span>}</span>
         </label>)}
         {!visible.length && <p className="text-sm text-muted-foreground">{skills.length ? "No matching skills." : "No skills installed yet."}</p>}
       </div>}

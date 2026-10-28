@@ -40,7 +40,7 @@ public sealed class AgentSkillHttpTests
         Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync(Root + "/")).StatusCode);
         using var client = AppClient(host);
         var catalog = await client.GetFromJsonAsync<JsonElement>(Root + "/");
-        var id = catalog.GetProperty("skills")[0].GetProperty("id").GetString();
+        var id = catalog.GetProperty("skills").EnumerateArray().Single(s => s.GetProperty("name").GetString() == "test-guide").GetProperty("id").GetString();
         var file = await client.GetFromJsonAsync<JsonElement>($"{Root}/{id}/content?path=references%2Fdetails.md");
         Assert.Equal("Complete reference content.", Encoding.UTF8.GetString(file.GetProperty("content").GetBytesFromBase64()));
         Assert.False(catalog.GetProperty("skills")[0].TryGetProperty("sourceGrant", out _));
@@ -70,6 +70,23 @@ public sealed class AgentSkillHttpTests
     }
 
     [Fact]
+    public async Task UnrelatedAppCanRequestCoreContextWithoutSelectingAnAppSkill()
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        await Seed(host);
+        using var client = AppClient(host);
+        using var response = await client.PostAsJsonAsync(Root + "/exports", new { contextId = "platform", skillIds = Array.Empty<string>(), includePlatform = true });
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var export = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var skill = Assert.Single(export.GetProperty("skills").EnumerateArray());
+        Assert.Equal("core", skill.GetProperty("sourceKind").GetString());
+        Assert.Equal(CoreStatusResponse.PlatformVersionString, skill.GetProperty("coreVersion").GetString());
+        var intro = export.GetProperty("platformIntroduction");
+        Assert.Equal(skill.GetProperty("id").GetString(), intro.GetProperty("skillId").GetString());
+        Assert.Equal(CoreAgentSkills.Introduction().Text, intro.GetProperty("text").GetString());
+    }
+
+    [Fact]
     public async Task CoreControlSupportsExternalNativeConsumersWithoutHarness()
     {
         await using var host = await CoreHttpHarness.StartAsync();
@@ -78,7 +95,7 @@ public sealed class AgentSkillHttpTests
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/control/v1/skills/")).StatusCode);
         client.DefaultRequestHeaders.Add("X-Hosty-Control-Secret", host.Services.GetRequiredService<ControlSecret>().Value);
         var catalog = await client.GetFromJsonAsync<JsonElement>("/control/v1/skills/");
-        var id = catalog.GetProperty("skills")[0].GetProperty("id").GetString();
+        var id = catalog.GetProperty("skills").EnumerateArray().Single(s => s.GetProperty("name").GetString() == "test-guide").GetProperty("id").GetString();
         var export = await client.PostAsJsonAsync("/control/v1/skills/exports", new { contextId = "external-codex", skillIds = new[] { id } });
         Assert.Equal(HttpStatusCode.OK, export.StatusCode);
         var value = await export.Content.ReadFromJsonAsync<JsonElement>();

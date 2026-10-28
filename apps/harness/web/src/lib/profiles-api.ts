@@ -2,7 +2,7 @@ import { call } from "./api";
 import type { ModelCatalog, AssistantSession } from "./assistant-api";
 export type { AgentProfileConfig, AgentProfile, ProfileDirectory } from "../../../src/profiles/types";
 import type { AgentProfileConfig, ProfileDirectory } from "../../../src/profiles/types";
-export type ProfileSkill = { id: string; name: string; description: string };
+export type ProfileSkill = { id: string; name: string; description: string; sourceKind?: string; coreVersion?: string; introductionPath?: string | null };
 export const listProfiles = async (): Promise<ProfileDirectory> => (await call("/profiles")).json();
 export const profileSkills = async (): Promise<{ skills: ProfileSkill[] }> => (await call("/skills")).json();
 export const connectionModels = async (id: string): Promise<ModelCatalog> => (await call(`/connections/${encodeURIComponent(id)}/models`)).json();

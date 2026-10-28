@@ -1,6 +1,7 @@
 # Demo App Patterns
 
-Use the repository Demo App as the first-party runtime app validation target.
+Use the repository Demo App as an implementation reference when its source is available.
+For a new app, validate the app itself through the supported creation and preview workflow.
 
 ## Source
 
@@ -11,8 +12,10 @@ Use the repository Demo App as the first-party runtime app validation target.
 
 ## Local Flow
 
+Prepare a Core-managed test instance with separate data and normal login first. Use its actual
+data root and the registered worktree; these commands do not start a preview environment.
+
 ```bash
-hosty core start
-hosty apps install apps/demo-app --runtime dev
-hosty apps start com.haas.demo-app
+hosty --data-root <test-instance-root> apps install <managed-worktree>/apps/demo-app/manifest.json --runtime dev
+hosty --data-root <test-instance-root> apps start com.haas.demo-app
 ```

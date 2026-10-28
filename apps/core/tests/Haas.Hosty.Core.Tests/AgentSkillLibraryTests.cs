@@ -26,6 +26,88 @@ public sealed class AgentSkillLibraryTests : IDisposable
         ], name);
 
     [Fact]
+    public async Task CorePackagesWorkWithoutAppsOrGitAndKeepTheDevelopmentSkillOptional()
+    {
+        git.Fail = true;
+        var catalog = await library.CatalogAsync(default);
+        Assert.Equal(new[] { "hosty-app-skill", "hosty-platform" }, catalog.Skills.Select(s => s.Name).ToArray());
+        Assert.All(catalog.Skills, skill =>
+        {
+            Assert.Equal("core", skill.SourceKind);
+            Assert.Equal(CoreStatusResponse.PlatformVersionString, skill.CoreVersion);
+            Assert.Null(skill.AppId);
+        });
+        var empty = await library.ExportAsync("app:unrelated.consumer", new("empty", []), default);
+        Assert.Empty(empty.Skills);
+        Assert.Null(empty.PlatformIntroduction);
+        var context = await library.ExportAsync("app:unrelated.consumer", new("context", [], IncludePlatform: true), default);
+        Assert.Equal(CoreAgentSkills.PlatformId, Assert.Single(context.Skills).Id);
+        var intro = Assert.IsType<AgentPlatformIntroduction>(context.PlatformIntroduction);
+        var file = await library.ContentAsync(intro.SkillId, intro.Path, default);
+        Assert.Equal(intro.Text, Encoding.UTF8.GetString(file.Content));
+        Assert.Equal(intro.Text, await File.ReadAllTextAsync(Path.Combine(context.Path, "hosty-platform", intro.Path)));
+        var dev = catalog.Skills.Single(s => s.Name == "hosty-app-skill");
+        var selected = await library.ExportAsync("app:unrelated.consumer", new("developer", [dev.Id, CoreAgentSkills.PlatformId], true), default);
+        Assert.Equal(2, selected.Skills.Length);
+        Assert.True(File.Exists(Path.Combine(selected.Path, "hosty-app-skill/references/sdk-and-app-creation.md")));
+        Assert.Equal(0, git.Checkouts);
+    }
+
+    [Fact]
+    public async Task CorePackagesDoNotConsumeTheManagedLibraryCapacity()
+    {
+        var packages = Enumerable.Range(0, 200).ToDictionary(i => "skill-" + i, i => Package("skill-" + i));
+        await library.ReplaceAppAsync("example.full", "1", packages, default);
+        var catalog = await library.CatalogAsync(default);
+        Assert.Equal(202, catalog.Skills.Length);
+        var export = await library.ExportAsync("control", new("all", catalog.Skills.Select(s => s.Id).ToArray(), true), default);
+        Assert.Equal(202, export.Skills.Length);
+        Assert.Equal(202, Directory.GetDirectories(export.Path).Length);
+    }
+
+    [Theory]
+    [InlineData("hosty-platform")]
+    [InlineData("hosty-app-skill")]
+    public async Task CorePackagesCannotBeRemovedUpdatedOrShadowed(string name)
+    {
+        var id = AgentSkillLibrary.Id("core", name);
+        var remove = await Assert.ThrowsAsync<AppLifecycleException>(() => library.RemoveAsync(id, default));
+        Assert.Equal("skill_core_managed", remove.Code);
+        var update = await Assert.ThrowsAsync<AppLifecycleException>(() => library.UpdateAsync("admin", new([id]), true, default));
+        Assert.Equal("skill_core_managed", update.Code);
+        var app = await Assert.ThrowsAsync<AppLifecycleException>(() => library.ReplaceAppAsync("unrelated.producer", "1",
+            new Dictionary<string, AgentSkillPackage> { ["default"] = Package(name) }, default));
+        Assert.Equal("skill_name_conflict", app.Code);
+        git.Packages = new() { ["skills/" + name] = Package(name) };
+        var source = new AgentSkillGitRequest("https://example.test/skills.git");
+        var discovery = await library.DiscoverAsync("admin", source, default);
+        var install = await Assert.ThrowsAsync<AppLifecycleException>(() => library.InstallAsync("admin",
+            new(source, discovery.Commit, ["skills/" + name]), default));
+        Assert.Equal("skill_name_conflict", install.Code);
+        Assert.Equal(2, (await library.CatalogAsync(default)).Skills.Length);
+    }
+
+    [Fact]
+    public async Task RecoveryUsesPackagedBytesAndPreservesLegacySameNameSelections()
+    {
+        var core = CoreAgentSkills.Entries.Single(e => e.Info.Id == CoreAgentSkills.PlatformId);
+        var legacy = new AgentSkillEntry(core.Info with { Id = AgentSkillLibrary.Id("git", "legacy"), SourceKind = "git",
+            CoreVersion = null, IntroductionPath = null }, Package("hosty-platform", "legacy").Files);
+        await JsonStorage.WriteAsync(Path.Combine(root, "core/skills/library.json"), new AgentSkillLibraryState([legacy], []), false, default);
+        var old = await library.ExportAsync("control", new("legacy", [legacy.Info.Id]), default);
+        var conflict = await Assert.ThrowsAsync<AppLifecycleException>(() => library.ExportAsync("control", new("legacy", [legacy.Info.Id], true), default));
+        Assert.Equal("skill_name_conflict", conflict.Code);
+        Assert.Equal("legacy", await File.ReadAllTextAsync(Path.Combine(old.Path, "hosty-platform/references/result.txt")));
+        var current = await library.ExportAsync("control", new("current", [], true), default);
+        var path = Path.Combine(current.Path, "hosty-platform", CoreAgentSkills.IntroductionPath);
+        await File.WriteAllTextAsync(path, "old version");
+        await library.RecoverExportsAsync(default);
+        Assert.Equal(CoreAgentSkills.Introduction().Text, await File.ReadAllTextAsync(path));
+        Assert.Equal("legacy", await File.ReadAllTextAsync(Path.Combine(old.Path, "hosty-platform/references/result.txt")));
+        Assert.Equal(3, (await library.CatalogAsync(default)).Skills.Length);
+    }
+
+    [Fact]
     public async Task SelectedExportsAreIndependentAndFollowCurrentFilesWithoutPinning()
     {
         await library.ReplaceAppAsync("example", "1", new Dictionary<string, AgentSkillPackage>
@@ -54,7 +136,7 @@ public sealed class AgentSkillLibraryTests : IDisposable
         var error = await Assert.ThrowsAsync<AppLifecycleException>(() => library.ReplaceAppAsync("two", "1",
             new Dictionary<string, AgentSkillPackage> { ["guide"] = Package("guide", "wrong") }, default));
         Assert.Equal("skill_name_conflict", error.Code);
-        Assert.Single((await library.CatalogAsync(default)).Skills);
+        Assert.Single((await library.CatalogAsync(default)).Skills.Where(s => s.SourceKind != "core").ToArray());
         Assert.Equal("first", await File.ReadAllTextAsync(Path.Combine(export.Path, "guide/references/result.txt")));
     }
 
@@ -66,21 +148,21 @@ public sealed class AgentSkillLibraryTests : IDisposable
         var discovery = await library.DiscoverAsync("admin", source, default);
         Assert.Equal(2, discovery.Skills.Length);
         await library.InstallAsync("admin", new(source, discovery.Commit, ["skills/first", "skills/second"]), default);
-        var ids = (await library.CatalogAsync(default)).Skills.Select(s => s.Id).ToArray();
+        var ids = (await library.CatalogAsync(default)).Skills.Where(s => s.SourceKind != "core").ToArray().Select(s => s.Id).ToArray();
         git.Commit = "second";
         git.Packages = new() { ["skills/first"] = Package("first", "new") };
         var before = git.Checkouts;
         var check = await library.UpdateAsync("admin", new(ids), false, default);
         Assert.Equal(before + 1, git.Checkouts);
         Assert.Contains(check.Skills, s => s.Removed);
-        Assert.Equal(2, (await library.CatalogAsync(default)).Skills.Length);
+        Assert.Equal(2, (await library.CatalogAsync(default)).Skills.Where(s => s.SourceKind != "core").ToArray().Length);
         await library.UpdateAsync("admin", new(ids), true, default);
-        Assert.Single((await library.CatalogAsync(default)).Skills);
+        Assert.Single((await library.CatalogAsync(default)).Skills.Where(s => s.SourceKind != "core").ToArray());
         git.Fail = true;
         var failed = await library.UpdateAsync("admin", new(ids), false, default);
         Assert.NotNull(Assert.Single(failed.Skills).Error);
         await Assert.ThrowsAsync<AppLifecycleException>(() => library.UpdateAsync("admin", new(ids), true, default));
-        Assert.Single((await library.CatalogAsync(default)).Skills);
+        Assert.Single((await library.CatalogAsync(default)).Skills.Where(s => s.SourceKind != "core").ToArray());
     }
 
     [Fact]
@@ -104,13 +186,13 @@ public sealed class AgentSkillLibraryTests : IDisposable
         var discovered = await current.DiscoverAsync("admin", source, default);
         Assert.Equal("", Assert.Single(discovered.Skills).Path);
         await current.InstallAsync("admin", new(source, discovered.Commit, [""]), default);
-        var skill = Assert.Single((await current.CatalogAsync(default)).Skills);
+        var skill = Assert.Single((await current.CatalogAsync(default)).Skills.Where(s => s.SourceKind != "core").ToArray());
         var export = await current.ExportAsync("control", new("current", [skill.Id]), default);
         Assert.Equal(3, Directory.GetFiles(Path.Combine(export.Path, "root-guide"), "*", SearchOption.AllDirectories).Length);
         access.Revoked = true;
         Assert.NotNull(Assert.Single((await current.UpdateAsync("admin", new([skill.Id]), false, default)).Skills).Error);
         await Assert.ThrowsAsync<AppLifecycleException>(() => current.UpdateAsync("admin", new([skill.Id]), true, default));
-        Assert.Equal(skill, Assert.Single((await current.CatalogAsync(default)).Skills));
+        Assert.Equal(skill, Assert.Single((await current.CatalogAsync(default)).Skills.Where(s => s.SourceKind != "core").ToArray()));
         Assert.Equal("first", await File.ReadAllTextAsync(Path.Combine(export.Path, "root-guide/references/result.txt")));
         access.Revoked = false;
         await Assert.ThrowsAsync<AppLifecycleException>(() => current.UpdateAsync("another-admin", new([skill.Id]), true, default));
@@ -125,7 +207,7 @@ public sealed class AgentSkillLibraryTests : IDisposable
         var discovery = await library.DiscoverAsync("admin", source, default);
         git.Commit = "moved";
         await Assert.ThrowsAsync<AppLifecycleException>(() => library.InstallAsync("admin", new(source, discovery.Commit, ["first"]), default));
-        Assert.Empty((await library.CatalogAsync(default)).Skills);
+        Assert.Empty((await library.CatalogAsync(default)).Skills.Where(s => s.SourceKind != "core").ToArray());
     }
 
     [Theory]
@@ -182,7 +264,7 @@ public sealed class AgentSkillLibraryTests : IDisposable
         await Assert.ThrowsAsync<InvalidOperationException>(() => library.ReplaceAppAsync("one", "2",
             new Dictionary<string, AgentSkillPackage> { ["guide"] = Package("guide", "uncommitted") }, default,
             () => throw new InvalidOperationException("App validation refused")));
-        Assert.Equal("1", Assert.Single((await library.CatalogAsync(default)).Skills).AppVersion);
+        Assert.Equal("1", Assert.Single((await library.CatalogAsync(default)).Skills.Where(s => s.SourceKind != "core").ToArray()).AppVersion);
         Assert.Equal("first", await File.ReadAllTextAsync(Path.Combine(export.Path, "guide/references/result.txt")));
         var committed = false;
         await Assert.ThrowsAsync<AppLifecycleException>(() => library.ReplaceAppAsync("two", "1",
@@ -204,7 +286,7 @@ public sealed class AgentSkillLibraryTests : IDisposable
             new Dictionary<string, AgentSkillPackage> { ["guide"] = Package("guide", "unpublished") }, default,
             () => { committed = true; return Task.CompletedTask; }));
         Assert.False(committed);
-        Assert.Equal("1", Assert.Single((await library.CatalogAsync(default)).Skills).AppVersion);
+        Assert.Equal("1", Assert.Single((await library.CatalogAsync(default)).Skills.Where(s => s.SourceKind != "core").ToArray()).AppVersion);
         Assert.Equal("first", await File.ReadAllTextAsync(Path.Combine(export.Path, "guide/references/result.txt")));
     }
 
@@ -216,7 +298,7 @@ public sealed class AgentSkillLibraryTests : IDisposable
         using var cancellation = new CancellationTokenSource();
         await library.ReplaceAppAsync("one", "2", new Dictionary<string, AgentSkillPackage> { ["guide"] = Package("guide", "committed") },
             cancellation.Token, () => { cancellation.Cancel(); return Task.CompletedTask; });
-        Assert.Equal("2", Assert.Single((await library.CatalogAsync(default)).Skills).AppVersion);
+        Assert.Equal("2", Assert.Single((await library.CatalogAsync(default)).Skills.Where(s => s.SourceKind != "core").ToArray()).AppVersion);
         Assert.Equal("committed", await File.ReadAllTextAsync(Path.Combine(export.Path, "guide/references/result.txt")));
     }
 
@@ -252,7 +334,7 @@ public sealed class AgentSkillLibraryTests : IDisposable
             Assert.False(Directory.Exists(fetch));
             Assert.Equal(before, await File.ReadAllBytesAsync(statePath));
             Assert.Equal("first", await File.ReadAllTextAsync(Path.Combine(export.Path, "guide/references/result.txt")));
-            Assert.Single((await library.CatalogAsync(default)).Skills);
+            Assert.Single((await library.CatalogAsync(default)).Skills.Where(s => s.SourceKind != "core").ToArray());
         }
         finally { if (File.Exists(pack)) File.SetAttributes(pack, FileAttributes.Normal); }
     }
@@ -270,7 +352,7 @@ public sealed class AgentSkillLibraryTests : IDisposable
         {
             await library.RecoverExportsAsync(default);
             Assert.True(File.Exists(file));
-            Assert.Single((await library.CatalogAsync(default)).Skills);
+            Assert.Single((await library.CatalogAsync(default)).Skills.Where(s => s.SourceKind != "core").ToArray());
         }
         await library.RecoverExportsAsync(default);
         Assert.False(Directory.Exists(fetch));

@@ -30,3 +30,16 @@ it("preserves the form when model discovery fails and gives a retry action", asy
   const retry = [...container.querySelectorAll<HTMLButtonElement>("button")].find(n => n.textContent === "Retry models")!;
   await act(async () => retry.click()); expect(connectionModels).toHaveBeenCalledTimes(2);
 });
+
+it("shows Core provenance and keeps platform guidance included while app development remains selectable", async () => {
+  await act(async () => root.render(<AgentProfileForm value={config} onChange={change} connections={[...connections]} defaultConnectionId="a" skills={[
+    { id: "platform", name: "hosty-platform", description: "Operate Hosty", sourceKind: "core", coreVersion: "1.2.3", introductionPath: "references/introduction.md" },
+    { id: "development", name: "hosty-app-skill", description: "Build apps", sourceKind: "core", coreVersion: "1.2.3" },
+  ]} />));
+  const checks = container.querySelectorAll<HTMLButtonElement>('[role="checkbox"]');
+  expect(checks[0]?.disabled).toBe(true); expect(checks[0]?.getAttribute("data-state")).toBe("checked");
+  expect(checks[1]?.disabled).toBe(false); expect(checks[1]?.getAttribute("data-state")).toBe("unchecked");
+  expect(container.textContent).toContain("Core · 1.2.3 · Included for every agent");
+  await act(async () => checks[1]!.click());
+  expect(change).toHaveBeenCalledWith({ ...config, skillIds: ["skill-a", "development"] });
+});

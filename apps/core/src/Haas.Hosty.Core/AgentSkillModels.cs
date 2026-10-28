@@ -3,7 +3,7 @@ namespace Haas.Hosty.Core;
 /// <summary>Portable package metadata; Hosty provenance never changes SKILL.md.</summary>
 internal sealed record AgentSkillInfo(string Id, string Name, string Description, string SourceKind,
     string? AppId, string? AppVersion, string? Repository, string? Ref, string Path, string? Commit,
-    int FileCount, long Bytes, DateTimeOffset InstalledAt);
+    int FileCount, long Bytes, DateTimeOffset InstalledAt, string? CoreVersion = null, string? IntroductionPath = null);
 internal sealed record AgentSkillFile(string Path, byte[] Content, bool Executable = false);
 internal sealed record AgentSkillPackage(string Name, string Description, AgentSkillFile[] Files);
 internal sealed record AgentSkillEntry(AgentSkillInfo Info, AgentSkillFile[] Files, SourceReadGrant? SourceGrant = null);
@@ -21,5 +21,6 @@ internal sealed record AgentSkillInstallRequest(AgentSkillGitRequest Source, str
 internal sealed record AgentSkillUpdateRequest(string[] SkillIds);
 internal sealed record AgentSkillUpdate(string Id, string? CurrentCommit, string? AvailableCommit, bool Removed, string? Error = null);
 internal sealed record AgentSkillUpdates(AgentSkillUpdate[] Skills);
-internal sealed record AgentSkillExportRequest(string ContextId, string[] SkillIds);
-internal sealed record AgentSkillExportResult(string Id, string Path, AgentSkillInfo[] Skills);
+internal sealed record AgentSkillExportRequest(string ContextId, string[] SkillIds, bool IncludePlatform = false);
+internal sealed record AgentPlatformIntroduction(string SkillId, string CoreVersion, string Path, string Text);
+internal sealed record AgentSkillExportResult(string Id, string Path, AgentSkillInfo[] Skills, AgentPlatformIntroduction? PlatformIntroduction = null);
