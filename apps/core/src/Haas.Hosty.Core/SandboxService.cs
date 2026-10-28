@@ -400,7 +400,7 @@ internal sealed class SandboxService(SandboxStore store, ISandboxInputs inputs, 
             {
                 await JsonStorage.WriteAsync(store.ReceiptPath(id), new SandboxReceipt(id, instance.Owner, clock.UtcNow,
                     instance.Operations.Select(o => o with { Message = null }).ToArray(), instance.Input.AppId, instance.Request.Context), true, default);
-                store.RemoveMetadata(id);
+                store.RemoveMetadata(id, instance.Owner.UserId);
             }
             else await store.WriteAsync(instance, default);
             return View(instance);

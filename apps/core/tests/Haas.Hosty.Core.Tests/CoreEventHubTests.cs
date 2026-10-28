@@ -5,6 +5,27 @@ namespace Haas.Hosty.Core.Tests;
 public sealed class CoreEventHubTests
 {
     [Fact]
+    public void SandboxSignals_AreScopedAndSurviveAFullSharedQueue()
+    {
+        var hub = new CoreEventHub();
+        using var own = hub.Subscribe("owner", true, sandboxes: true);
+        using var foreign = hub.Subscribe("foreign", true, sandboxes: true);
+        using var ordinary = hub.Subscribe("owner", true);
+        using var nonAdmin = hub.Subscribe("owner", false, sandboxes: true);
+        var revision = own.SandboxRevision;
+        hub.PublishSandboxChange("owner");
+        for (var i = 0; i < 100; i++) hub.PublishAppEvent(CoreEventHub.AppUpdateCheckChanged, "app");
+        Assert.True(own.Dropped > 0);
+        Assert.Equal(revision + 1, own.SandboxRevision);
+        Assert.Equal(revision, foreign.SandboxRevision);
+        Assert.Equal(revision, ordinary.SandboxRevision);
+        Assert.Equal(revision, nonAdmin.SandboxRevision);
+        Assert.False(nonAdmin.Sandboxes);
+        own.Dispose(); hub.PublishSandboxChange("owner");
+        Assert.Equal(revision + 1, own.SandboxRevision);
+    }
+
+    [Fact]
     public async Task PublishNotification_DeliversToSubscribedUser()
     {
         var fixture = await Fixture.CreateAsync();

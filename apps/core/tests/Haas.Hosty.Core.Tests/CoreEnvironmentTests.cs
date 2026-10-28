@@ -5,6 +5,18 @@ namespace Haas.Hosty.Core.Tests;
 public sealed class CoreEnvironmentTests
 {
     [Fact]
+    public async Task SupervisorObservation_DetectsExitedCoreWithoutAnyInventoryRead()
+    {
+        using var f = new Fixture(); var item = await f.Command(await f.Create(), "start");
+        f.Runtime.ExitAll();
+        await f.Service.ObserveResourcesAsync(default);
+        var record = await f.Store.ReadAsync(item.Id, default);
+        Assert.Equal("stopped", record!.State);
+        Assert.Null(record.Process);
+        Assert.True(record.Revision > item.Revision);
+    }
+
+    [Fact]
     public async Task Create_ReplayAndCrossOwner_KeepIndependentRootsWithoutWorkspace()
     {
         using var f = new Fixture(); var input = new CoreEnvironmentCreate(Guid.NewGuid().ToString(), "QA");

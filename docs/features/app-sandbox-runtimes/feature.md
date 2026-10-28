@@ -1,6 +1,6 @@
 ---
 created: 2026-10-14
-updated: 2026-10-21
+updated: 2026-10-28
 summary: Independent app sandboxes and parent-managed child Core environments with separate data, shared Docker, lifecycle recovery and Harness and Shell controls.
 components: [apps/core, apps/harness, apps/shell, apps/demo-app, packages/app-sdk]
 ---
@@ -356,8 +356,9 @@ port/resource settings. Shell requires environment inspect/operate and sandbox i
 for this surface; per-app sandbox mutation remains an optional permission. Finished child records and
 disposed app receipts are omitted; stopped, failed, unhealthy and incomplete-cleanup instances stay
 visible. A read failure remains visible and preserves the last successful inventory for each type.
-Closed rows still expose start and deletion errors. Polling while visible and refresh on visibility
-recovery reconcile both independent inventories without resetting expanded rows or account drafts.
+Closed rows still expose start and deletion errors. [Shared SSE snapshots](../sandbox-live-updates/feature.md)
+reconcile both inventories without periodic reads while supported and healthy. Reconnect and visibility
+recovery obtain current state without resetting expanded rows or account drafts.
 Existing operation journals and exact request IDs survive reloads and uncertain outcomes; missing
 individual rows are reconciled through their disposal receipts before clearing pending requests.
 
@@ -408,8 +409,8 @@ association when the current operator owns that workspace. External workspaces s
 `GET /api/core-environments/{id}/apps` retains bounded observed app state and authorized preview links.
 Core workspace records, worktrees and existing installations are preserved.
 
-The Shell panel polls only while visible, ignores superseded observations and persists lifecycle
-UUIDs before dispatch. Uncertain outcomes retain the original request for retry. Passwords never
+The Shell panel streams inventory updates while visible, falls back to polling for older Core or
+failed connections, ignores superseded observations and persists lifecycle UUIDs before dispatch. Uncertain outcomes retain the original request for retry. Passwords never
 enter replay storage. Deletion requires confirmation; failed cleanup stays visible until Finish
 succeeds. Source and shared folders are preserved.
 

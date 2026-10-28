@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Frame, FrameHeader, FramePanel } from "@/components/reui/frame";
 import { useConfirmation } from "@/components/reui/confirmation";
 import { cn } from "@/lib/utils";
+import { watchSandboxEvents } from "../events/sandbox-events";
 import { fetchCore } from "../core-transport.js";
 import { CoreRequestError, readCoreErrorDetail } from "../core-api";
 import { useShellActions } from "../shell-context";
@@ -115,15 +116,32 @@ function SandboxInventory({ coreOrigin, apps, workspaces }: { coreOrigin: string
   useEffect(() => {
     alive.current = true;
     const controller = new AbortController();
-    let pending: Promise<void> | null = null, reread = false;
+    let pending: Promise<void> | null = null, reread = false, streamGeneration = 0;
     const current = () => !controller.signal.aborted;
+    let receiptTimer: ReturnType<typeof setTimeout> | undefined;
+    let receiptPending = false, receiptDelay = 1000;
+    const recoverReceipt = async (saved: AppPending) => {
+      if (!current() || receiptPending || receiptTimer || appPendingRef.current?.requestId !== saved.requestId) return;
+      receiptPending = true;
+      try {
+        const receipt = await read<SandboxInstance>(`${coreOrigin}/api/sandbox-instances/${encodeURIComponent(saved.id)}`, controller.signal);
+        if (current() && appPendingRef.current?.requestId === saved.requestId) observeApp(receipt);
+      } catch { /* A lost receipt read must recover even if no further inventory event occurs. */ }
+      finally {
+        receiptPending = false;
+        if (current() && appPendingRef.current?.requestId === saved.requestId) {
+          receiptTimer = setTimeout(() => { receiptTimer = undefined; void recoverReceipt(saved); }, receiptDelay);
+          receiptDelay = Math.min(receiptDelay * 2, 30_000);
+        } else receiptDelay = 1000;
+      }
+    };
     const load = (): Promise<void> => {
       if (!current()) return Promise.resolve();
       if (pending) { reread = true; return pending; }
       setCores(previous => ({ ...previous, loading: true }));
       setIndividual(previous => ({ ...previous, loading: true }));
-      const epoch = readEpoch.current;
-      const valid = () => current() && epoch === readEpoch.current;
+      const epoch = readEpoch.current, generation = streamGeneration;
+      const valid = () => current() && epoch === readEpoch.current && generation === streamGeneration;
       pending = Promise.allSettled([
         read<{ environments: CoreEnvironment[] }>(`${coreOrigin}/api/core-environments`, controller.signal)
           .then(result => {
@@ -140,10 +158,7 @@ function SandboxInventory({ coreOrigin, apps, workspaces }: { coreOrigin: string
             for (const item of result.instances) observeApp(item);
             const saved = appPendingRef.current;
             if (saved && !result.instances.some(item => item.id === saved.id)) {
-              try {
-                const receipt = await read<SandboxInstance>(`${coreOrigin}/api/sandbox-instances/${encodeURIComponent(saved.id)}`, controller.signal);
-                if (valid()) observeApp(receipt);
-              } catch { /* Disappearance alone does not confirm cleanup; keep the exact pending request. */ }
+              void recoverReceipt(saved);
             }
           }).catch(cause => { if (valid()) setIndividual(previous => ({ ...previous, loading: false, error: message(cause) })); }),
       ]).then(() => { if (valid()) setPollVersion(value => value + 1); }).finally(() => {
@@ -171,11 +186,25 @@ function SandboxInventory({ coreOrigin, apps, workspaces }: { coreOrigin: string
       } catch { setAppFeedback({ message: "Cannot read the saved app sandbox request.", failed: true }); }
       void load();
     });
-    const visible = () => { if (document.visibilityState === "visible") void load(); };
-    document.addEventListener("visibilitychange", visible);
-    const timer = setInterval(() => { if (document.visibilityState === "visible") void load(); }, 5000);
+    const stopEvents = watchSandboxEvents(coreOrigin, load, data => {
+      if (!current()) return;
+      streamGeneration++;
+      if (data.environments) {
+        setCores({ loaded: true, loading: false, items: data.environments, error: "" });
+        for (const item of data.environments) observeCore(item);
+      } else setCores(previous => ({ ...previous, loading: false, error: data.coreError || "Core sandbox inventory is unavailable." }));
+      if (data.instances) {
+        setIndividual({ loaded: true, loading: false, items: data.instances, error: "" });
+        for (const item of data.instances) observeApp(item);
+        // Disposal removes the row, but only its durable receipt confirms a pending operation.
+        const saved = appPendingRef.current;
+        if (saved && !data.instances.some(item => item.id === saved.id)) {
+          void recoverReceipt(saved);
+        }
+      } else setIndividual(previous => ({ ...previous, loading: false, error: data.appError || "Application sandbox inventory is unavailable." }));
+    });
     return () => {
-      alive.current = false; controller.abort(); clearInterval(timer); document.removeEventListener("visibilitychange", visible);
+      alive.current = false; controller.abort(); stopEvents(); clearTimeout(receiptTimer);
       if (refreshRef.current === load) refreshRef.current = async () => {};
     };
   }, [coreOrigin, coreKey, appKey, observeCore, observeApp]);
@@ -336,6 +365,14 @@ function CoreSandboxDetails({ item, origin, pollVersion, disabled, request, onRe
 }) {
   const [inventory, setInventory] = useState<EnvironmentApps | null>(null), [error, setError] = useState("");
   const sequence = useRef(0);
+  const [detailVersion, setDetailVersion] = useState(0);
+  useEffect(() => {
+    if (item.state !== "running") return;
+    const refresh = () => { if (document.visibilityState === "visible") setDetailVersion(value => value + 1); };
+    const timer = setInterval(refresh, 5000);
+    document.addEventListener("visibilitychange", refresh);
+    return () => { clearInterval(timer); document.removeEventListener("visibilitychange", refresh); };
+  }, [item.state]);
   useEffect(() => {
     if (item.state !== "running") return;
     const controller = new AbortController(), current = ++sequence.current;
@@ -343,7 +380,7 @@ function CoreSandboxDetails({ item, origin, pollVersion, disabled, request, onRe
       if (!controller.signal.aborted && current === sequence.current) { setInventory(value); setError(""); }
     }).catch(cause => { if (!controller.signal.aborted && current === sequence.current) setError(message(cause)); });
     return () => controller.abort();
-  }, [origin, item.id, item.state, pollVersion]);
+  }, [origin, item.id, item.state, pollVersion, detailVersion]);
   const login = safeUrl(item.previewUrl);
   const transitional = ["building", "starting", "stopping", "finishing"].includes(item.state);
   return <>
@@ -354,7 +391,7 @@ function CoreSandboxDetails({ item, origin, pollVersion, disabled, request, onRe
         : ["stopped", "failed", "quota-exceeded"].includes(item.state) ? <Button type="button" variant="outline" size="sm" disabled={disabled} onClick={() => onCommand("start")}>Start</Button> : null}
       <Button type="button" variant="ghost" size="sm" disabled={disabled || transitional} onClick={onFinish}>{item.state === "cleanup-failed" ? "Retry deletion" : "Delete sandbox"}</Button>
     </div>
-    {item.state === "running" && item.initializationRequested && <EnvironmentInitialization item={item} origin={origin} pollVersion={pollVersion} request={request} />}
+    {item.state === "running" && item.initializationRequested && <EnvironmentInitialization item={item} origin={origin} pollVersion={pollVersion + detailVersion} request={request} />}
     {item.state === "running" ? <>
       {error && <ErrorNotice>Application status: {error}</ErrorNotice>}
       {!inventory ? <p role="status" className="text-sm text-muted-foreground">Reading application status…</p>

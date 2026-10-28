@@ -69,6 +69,39 @@ def check(context):
     assert isinstance(call(app_origin, '/api/core/api/apps/execution-targets')['apps'], list)
     assert isinstance(call(app_origin, '/api/core/api/development/activation-workspaces')['workspaces'], list)
     say('PASS: Docker Shell, password login, Core launch identity and both workspace inventory endpoints')
+    # A different authenticated client changes the managed inventory while Shell keeps one stream.
+    # Payloads must contain final state without any inventory GET by the consumer.
+    def stream_snapshot(stream, predicate):
+        while True:
+            line = stream.readline().decode().strip()
+            if not line: continue
+            if line != 'event: sandbox.snapshot': continue
+            data = stream.readline().decode()
+            assert data.startswith('data: '), data
+            snapshot = json.loads(data[6:])
+            if predicate(snapshot): return snapshot
+    with client.open(app_origin+'/api/core/api/events?topics=sandboxes', timeout=60) as stream:
+        initial_snapshot = stream_snapshot(stream, lambda data: True)
+        assert initial_snapshot['environments'] == [] and initial_snapshot['instances'] == []
+        sandbox = request('/api/core-environments', {'requestId':str(uuid.uuid4()), 'label':'SSE lifecycle QA', 'mode':'current'})
+        def observed(state):
+            return lambda data: any(item['id'] == sandbox['id'] and item['state'] == state for item in data['environments'])
+        stream_snapshot(stream, observed('stopped'))
+        try:
+            for kind, state in [('start', 'running'), ('stop', 'stopped'), ('finish', 'finished')]:
+                sandbox = request('/api/core-environments/'+sandbox['id']+'/operations/'+kind,
+                    {'requestId':str(uuid.uuid4()), 'expectedRevision':sandbox['revision']})
+                assert sandbox['state'] == state, sandbox
+                stream_snapshot(stream, observed(state))
+            assert not pathlib.Path(root/'environments'/sandbox['id']).exists()
+        finally:
+            if sandbox['state'] != 'finished':
+                current = request('/api/core-environments/'+sandbox['id'])
+                request('/api/core-environments/'+sandbox['id']+'/operations/finish',
+                    {'requestId':str(uuid.uuid4()), 'expectedRevision':current['revision']})
+    with client.open(app_origin+'/api/core/api/events?topics=sandboxes', timeout=60) as stream:
+        stream_snapshot(stream, observed('finished'))
+    say('PASS: Shell SSE initial data, external create/start/stop/finish, reconnect and nested sandbox root removal')
     if review := os.environ.get('HOSTY_SHELL_BROWSER_REVIEW'):
         development = request('/api/core/development')
         source = request('/api/core/source', {'revision':development['source']['revision'], 'overridePath':None,

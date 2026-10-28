@@ -61,7 +61,7 @@ and independent selections remain usable. Updating or deleting a Core entry fail
 `skill_core_managed`. Already loaded native conversation history retains its existing limitations:
 changing exported files cannot retract text previously read by the model.
 
-Core/CLI version: **0.160.2 → 0.161.0**. Harness version: **0.74.10 → 0.75.0**. Deploy Core before
+Core/CLI version: **0.160.3 → 0.161.0**. Harness version: **0.74.10 → 0.75.0**. Deploy Core before
 Harness. SDK packages and Shell require no version change for this feature.
 
 ## Verification Evidence
@@ -84,6 +84,10 @@ Verified on macOS on 2026-10-28:
 - After integrating the concurrent telemetry-access fix from main, Harness lint and the production
   build pass again, and the complete suite passes 1,808 tests in 166 files. Conflicts involve only
   version metadata; the feature retains Harness 0.75.0 above main's 0.74.10.
+- After integrating sandbox live updates from main, Core rebuilds and 88 focused tests pass with
+  the filter `AgentSkill|AgentMcpDirectory|SandboxStream|CoreEventHub|CoreEnvironmentTests` applied
+  as `FullyQualifiedName~` alternatives. Only Core version metadata conflicts require resolution;
+  the release remains 0.161.0 above main's 0.160.3.
 - `npm run test:integration -- worker` passes with the manifest-matching Docker worker image.
   Separately, real Codex `skills/list` and Claude's initialization command catalog discover both
   packages from a Core-owned export using fresh native homes. No provider credentials or inference
