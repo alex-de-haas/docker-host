@@ -1,17 +1,12 @@
 import { APP_SESSION_ENDED } from "@hosty-sdk/app/browser-auth";
-import { act, type ReactNode } from "react";
+import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { AppLaunchSummary } from "../src/app/shell/pages/app-launch-summary";
+import { AppLaunchSummary, AppServicesPanel } from "../src/app/shell/pages/app-launch-summary";
 import type { AppHealthResponse, AppUpdateStatusResponse, CoreApp } from "../src/app/shell/types";
 
 const mocks = vi.hoisted(() => ({ read: vi.fn() }));
 vi.mock("../src/app/shell/core-transport.js", () => ({ fetchCore: mocks.read }));
-vi.mock("../src/app/shell/resources/resource-usage", () => ({
-  ResourceUsageProvider: ({ children }: { children: ReactNode }) => <div data-resource-provider>{children}</div>,
-  ApiActivityDetails: ({ appId }: { appId: string }) => <section data-api-activity={appId}>Core API activity</section>,
-  ResourceUsage: ({ service }: { service: string }) => <span data-resource-service={service}>Observed resource reading</span>,
-}));
 let root: Root, container: HTMLDivElement, currentApp: CoreApp;
 let healthReply: () => Promise<Response>, updateReply: () => Promise<Response>;
 const app: CoreApp = {
@@ -28,14 +23,12 @@ beforeEach(() => {
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
 });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); });
-const render = (current: CoreApp, serviceRevision = 0) => act(async () => { currentApp = current; root.render(<AppLaunchSummary app={current} coreOrigin="https://core.test" serviceRevision={serviceRevision} />); });
+const render = (current: CoreApp, serviceRevision = 0) => act(async () => { currentApp = current; root.render(<AppServicesPanel app={current} coreOrigin="https://core.test" serviceRevision={serviceRevision} />); });
 
 it("uses only observed service health and keeps declared but unobserved services unknown", async () => {
   await render({ ...app, health: { status: "healthy", observedAt: "2026-10-21T00:00:00Z", services: [
     { service: "api", status: "running", health: "healthy" }, { service: "worker", status: "exited" },
   ] }, endpoints: [ { key: "ui", service: "web", protocol: "http", public: true }, { key: "api", service: "api", protocol: "http", public: false } ] });
-  expect(container.querySelectorAll('[data-resource-provider]')).toHaveLength(1);
-  expect([...container.querySelectorAll('[data-resource-service]')].map(item => item.getAttribute("data-resource-service"))).toEqual(["api"]);
   const services = container.querySelector('[aria-labelledby="app-services-example.media"]')!;
   expect(services.textContent).toContain("Unknown");
   expect(services.textContent).toContain("web");
@@ -43,28 +36,20 @@ it("uses only observed service health and keeps declared but unobserved services
   expect(container.querySelector('a[href="/dashboard"]')).not.toBeNull();
 });
 
-it.each(["stopped", "unknown"])("keeps app API activity available without fabricating service readings when the app is %s", async runtimeState => {
-  await render({ ...app, runtimeState, health: { status: "healthy", observedAt: "2026-10-21T00:00:00Z", services: [{ service: "api", status: "running" }] } });
-  expect(container.querySelector('[data-resource-provider]')).not.toBeNull();
-  expect(container.querySelector('[data-api-activity]')).not.toBeNull();
-  expect(container.querySelector('[data-resource-service]')).toBeNull();
-  expect(container.textContent).toContain("Resource readings unavailable");
-});
-
 it("keeps dependencies separate from app state and does not infer missing readiness", async () => {
-  await render({ ...app, dependencies: [
+  await act(async () => root.render(<AppLaunchSummary app={{ ...app, dependencies: [
     { appId: "example.database", version: ">=1.0", required: true, installed: true, running: true, ready: true },
     { appId: "example.search", required: false, installed: true, running: true, endpoints: [{ alias: "query", endpointKey: "api", resolved: false }] },
     { appId: "example.missing", required: false, installed: false, running: false },
-  ] });
+  ] }} />));
   expect(container.textContent).toContain("Required · >=1.0");
   expect(container.textContent).toContain("Ready");
   expect(container.textContent).toContain("Running · readiness unavailable");
   expect(container.textContent).toContain("Endpoint unresolved");
   expect(container.textContent).toContain("Not installed");
-  expect(container.textContent).toContain("No service observations are available");
-  expect(container.querySelector('[data-resource-provider]')).not.toBeNull();
-  expect(container.querySelector('[data-api-activity]')).not.toBeNull();
+  expect(container.querySelector('[aria-label="Core API activity"]')).toBeNull();
+  expect(container.querySelector('[aria-labelledby="app-services-example.media"]')).toBeNull();
+  expect(mocks.read).not.toHaveBeenCalled();
 });
 
 
@@ -95,7 +80,6 @@ it("keeps explicit health facts, image drift, candidates and image-only services
   expect(container.querySelector('[aria-label="Service queue"]')?.textContent).toContain("registry unreachable");
   expect(container.querySelector('[aria-label="Service lock-only"]')?.textContent).toContain("Unknown");
   expect(container.querySelector('[aria-label="Service candidate-only"]')?.textContent).toContain("Available");
-  expect([...container.querySelectorAll("[data-resource-service]")].map(item => item.getAttribute("data-resource-service"))).toEqual(["api", "worker"]);
   expect(container.textContent).not.toContain("Service address");
   expect(mocks.read.mock.calls.map(([url]) => url)).toEqual([
     "https://core.test/api/apps/example.media/health", "https://core.test/api/apps/example.media/update-status",
@@ -135,7 +119,6 @@ it("reports independent failures without replacing known health with fabricated 
   expect(container.textContent).toContain("Digest details are unavailable");
   expect(container.textContent).toContain("Cached plan is invalid");
   expect(container.querySelector('[aria-label="Service unobserved"]')?.textContent).toContain("Unknown");
-  expect(container.querySelector("[data-resource-provider]")).not.toBeNull();
   expect([...container.querySelectorAll("button")].find(button => button.textContent === "Refresh services")?.disabled).toBe(false);
 });
 

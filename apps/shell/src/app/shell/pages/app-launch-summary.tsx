@@ -9,10 +9,8 @@ import type { AppHealthResponse, AppUpdateStatusResponse, CoreApp, RuntimeServic
 import { buildRuntimeServiceRows, shortDigest } from "../app-helpers";
 import { fetchCore } from "../core-transport.js";
 import { isAuthRequiredRedirectError, readCoreError, redirectToCoreLoginIfAuthRequired } from "../core-api";
-import { isAppUp } from "../runtime-states";
 import { Alert, EmptyState, StatusBadge } from "../ui";
 import { HostyLoader } from "../../../../../../shared/web/hosty-states";
-import { ApiActivityDetails, ResourceUsage, ResourceUsageProvider } from "../resources/resource-usage";
 
 type ServiceDetails = {
   key: string;
@@ -37,8 +35,8 @@ function ServiceDigestRow({ label, digest, tone }: { label: string; digest: stri
   </div>;
 }
 
-/** Detail reads happen on entry, an app change or an explicit refresh; resource samples remain live. */
-export function AppLaunchSummary({ app, coreOrigin, serviceRevision = 0 }: { app: CoreApp; coreOrigin: string; serviceRevision?: number }) {
+/** Detail reads happen on entry, an app change or an explicit refresh. */
+export function AppServicesPanel({ app, coreOrigin, serviceRevision = 0 }: { app: CoreApp; coreOrigin: string; serviceRevision?: number }) {
   const [refreshRevision, setRefreshRevision] = useState(0);
   const [details, setDetails] = useState<ServiceDetails | null>(null);
   // Summary metrics and SSE snapshots must not trigger repeated health probes. These primitive
@@ -91,13 +89,11 @@ export function AppLaunchSummary({ app, coreOrigin, serviceRevision = 0 }: { app
   for (const name of [...Object.keys(app.artifactLocks ?? {}), ...statusByService.keys()]) {
     if (!services.has(name)) services.set(name, { service: name, status: "unknown", message: null, endpoints: [] } satisfies RuntimeServiceRow);
   }
-  const dependencies = app.dependencies ?? [];
-  const canReadResources = isAppUp(app.runtimeState) && app.operationStatus !== "updating";
   const rows = [...services.values()].sort((a, b) => a.service.localeCompare(b.service));
   const loading = !current || current.healthLoading || current.updateLoading;
-  const body = <section aria-labelledby={"app-services-" + app.id} className="overflow-hidden rounded-xl border bg-card">
+  return <section aria-labelledby={"app-services-" + app.id} className="overflow-hidden rounded-xl border bg-card">
     <div className="flex flex-wrap items-center justify-between gap-3 border-b bg-muted/25 px-4 py-3">
-      <div><h3 id={"app-services-" + app.id} className="flex items-center gap-2 text-sm font-medium"><Box className="size-4 text-muted-foreground" aria-hidden />Services</h3><p className="mt-1 text-xs text-muted-foreground">Observed state and resource use. CPU: 100% is one logical core.</p></div>
+      <div><h3 id={"app-services-" + app.id} className="flex items-center gap-2 text-sm font-medium"><Box className="size-4 text-muted-foreground" aria-hidden />Services</h3><p className="mt-1 text-xs text-muted-foreground">Observed service state and image revisions.</p></div>
       <div className="flex flex-wrap items-center gap-1">
         <Button type="button" variant="ghost" size="sm" disabled={loading} onClick={() => setRefreshRevision(value => value + 1)}>{loading ? <HostyLoader className="size-4" label={null} /> : <RefreshCw className="size-3.5" aria-hidden />}{loading ? "Loading services" : "Refresh services"}</Button>
         <Button asChild variant="ghost" size="sm"><Link href="/dashboard">Dashboard<ArrowUpRight className="size-3.5" /></Link></Button>
@@ -115,7 +111,7 @@ export function AppLaunchSummary({ app, coreOrigin, serviceRevision = 0 }: { app
       const candidate = serviceStatus?.updateAvailable ? normalizeDigest(serviceStatus.candidateDigest) : null;
       const digestRows = Boolean(locked || running || serviceStatus) && !matchedDigest;
       return <article key={service.service} aria-label={"Service " + service.service} className="min-w-0 space-y-3 px-4 py-3">
-        <div className="grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1fr)_auto_minmax(8rem,11rem)] sm:items-center">
+        <div className="grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
           <div className="min-w-0">
             <div className="flex min-w-0 flex-wrap items-center gap-2"><h4 className="break-all font-mono text-sm">{service.service}</h4>
               {serviceHealth?.runtimeType && <Badge variant="outline" className="text-[10px] font-normal">{serviceHealth.runtimeType === "docker" ? "Docker" : serviceHealth.runtimeType === "localCommand" ? "Local" : serviceHealth.runtimeType}{serviceHealth.artifact ? " · " + serviceHealth.artifact : ""}</Badge>}
@@ -125,9 +121,6 @@ export function AppLaunchSummary({ app, coreOrigin, serviceRevision = 0 }: { app
             {service.message && <p className="mt-1 break-words text-xs text-muted-foreground">{service.message}</p>}
           </div>
           <div className="flex flex-wrap gap-1.5">{serviceHealth?.health && <StatusBadge value={serviceHealth.health} />}<StatusBadge value={service.status} /></div>
-          {canReadResources && !["stopped", "exited", "unknown"].includes(service.status)
-            ? <ResourceUsage appId={app.id} service={service.service} label={app.displayName + " · " + service.service} />
-            : <p className="text-xs text-muted-foreground">Resource readings unavailable</p>}
         </div>
         {(serviceHealth?.startedAt || serviceHealth?.restartCount != null) && <dl className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-muted-foreground">
           {serviceHealth.startedAt && <div className="min-w-0"><dt className="inline">Started </dt><dd className="inline break-all"><time dateTime={serviceHealth.startedAt}>{serviceHealth.startedAt}</time></dd></div>}
@@ -144,6 +137,10 @@ export function AppLaunchSummary({ app, coreOrigin, serviceRevision = 0 }: { app
       : !current?.health || !current?.update || current.healthError || current.updateError ? <p role="status" className="px-4 py-5 text-sm text-muted-foreground">Service observations could not be confirmed. Refresh services to try again.</p>
       : <EmptyState className="rounded-none border-0" title="No service observations are available" description="Refresh services to check for new observations." />}</div>
   </section>;
+}
+
+export function AppLaunchSummary({ app }: { app: CoreApp }) {
+  const dependencies = app.dependencies ?? [];
   return <div className="space-y-4">
     <section aria-labelledby={"app-dependencies-" + app.id} className="overflow-hidden rounded-xl border bg-card">
       <div className="border-b bg-muted/25 px-4 py-3"><h3 id={"app-dependencies-" + app.id} className="flex items-center gap-2 text-sm font-medium"><Layers3 className="size-4 text-muted-foreground" aria-hidden />Starts after</h3><p className="mt-1 text-xs text-muted-foreground">Application dependencies declared by this app.</p></div>
@@ -152,9 +149,5 @@ export function AppLaunchSummary({ app, coreOrigin, serviceRevision = 0 }: { app
         <div className="flex flex-wrap gap-1.5"><Badge variant="outline">{!dependency.installed ? "Not installed" : dependency.ready === true ? "Ready" : dependency.ready === false ? "Not ready" : dependency.running ? "Running · readiness unavailable" : "Stopped"}</Badge>{dependency.endpoints?.some(endpoint => !endpoint.resolved) && <Badge variant="outline">Endpoint unresolved</Badge>}</div>
       </div>) : <p className="px-4 py-5 text-sm text-muted-foreground">This app declares no application dependencies.</p>}</div>
     </section>
-    <ResourceUsageProvider coreOrigin={coreOrigin}>
-      <div className="rounded-xl border bg-card p-4"><ApiActivityDetails appId={app.id} /></div>
-      {body}
-    </ResourceUsageProvider>
   </div>;
 }

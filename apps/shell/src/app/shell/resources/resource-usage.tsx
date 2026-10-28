@@ -5,8 +5,11 @@ import { TriangleAlert } from "lucide-react";
 import { CartesianGrid, Line, LineChart, XAxis, YAxis } from "recharts";
 import { Frame, FrameHeader, FramePanel, FrameTitle } from "@/components/reui/frame";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
+import type { CoreApp } from "../types";
+import { isAppUp } from "../runtime-states";
 import { watchResources } from "./resource-stream";
 import { currentApiActivity, apiActivitySeries, cpuScale, elevatedCpu, formatCpu, formatMemory, resourceSeries, type ResourceSnapshot } from "./resource-data";
 
@@ -93,8 +96,8 @@ export function ResourceUsage({ appId, service, label }: { appId?: string; servi
   </Popover>;
 }
 
-function ResourceChart({ points, metric, scale }: { points: ReturnType<typeof resourceSeries>; metric: "cpu" | "memory"; scale?: number }) {
-  return <ChartContainer config={config} className="h-28 w-full" aria-label={`${metric === "cpu" ? "CPU" : "RAM"} usage history`}>
+function ResourceChart({ points, metric, scale, className = "h-28 w-full" }: { points: ReturnType<typeof resourceSeries>; metric: "cpu" | "memory"; scale?: number; className?: string }) {
+  return <ChartContainer config={config} className={className} aria-label={`${metric === "cpu" ? "CPU" : "RAM"} usage history`}>
     <LineChart data={points} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
       <CartesianGrid vertical={false} />
       <XAxis dataKey="timestamp" type="number" domain={["dataMin", "dataMax"]} tickFormatter={timeLabel} tickLine={false} axisLine={false} minTickGap={40} />
@@ -103,6 +106,71 @@ function ResourceChart({ points, metric, scale }: { points: ReturnType<typeof re
       <Line dataKey={metric} stroke={`var(--color-${metric})`} strokeWidth={2} dot={false} isAnimationActive={false} connectNulls={false} />
     </LineChart>
   </ChartContainer>;
+}
+
+/** Mounted only on Metrics so other app sections do not create resource demand. */
+export function AppMetricsPanel({ app, coreOrigin }: { app: CoreApp; coreOrigin: string }) {
+  return <ResourceUsageProvider coreOrigin={coreOrigin}>
+    <div className="space-y-4">
+      <div className="rounded-xl border bg-card p-4"><ApiActivityDetails appId={app.id} /></div>
+      <AppServiceMetrics key={app.id} app={app} />
+    </div>
+  </ResourceUsageProvider>;
+}
+
+function AppServiceMetrics({ app }: { app: CoreApp }) {
+  const { snapshot } = useContext(Resources);
+  const [selectedService, setSelectedService] = useState<string | null>(null);
+  // Include workers without endpoints and declared services still awaiting their first sample.
+  const services = [...new Set([
+    ...(app.health?.services.map(service => service.service) ?? []),
+    ...(app.endpoints?.flatMap(endpoint => endpoint.service ? [endpoint.service] : []) ?? []),
+    ...Object.keys(app.artifactLocks ?? {}),
+    ...(snapshot?.history.at(-1)?.services.filter(sample => sample.appId === app.id).map(sample => sample.service) ?? []),
+  ])].sort((a, b) => a.localeCompare(b));
+  const service = selectedService && services.includes(selectedService) ? selectedService : services[0] ?? null;
+  // Keep selection through new samples; retire it when the selected service disappears.
+  if (service !== selectedService) setSelectedService(service);
+  const status = app.health?.services.find(item => item.service === service)?.status;
+  const active = isAppUp(app.runtimeState) && app.operationStatus !== "updating"
+    && !["stopped", "exited", "unknown"].includes(status ?? "");
+  const details = service ? <ServiceResourceDetails key={service} appId={app.id} service={service} active={active} /> : null;
+  return <section aria-label="Service resources" className="space-y-4">
+    <div><h3 className="text-sm font-medium">Service resources</h3><p className="mt-1 text-xs text-muted-foreground">Last 5 minutes · CPU: 100% = one logical core. Local RAM sums process working sets; shared pages can be counted more than once.</p></div>
+    {services.length > 1 && service ? <Tabs value={service} onValueChange={setSelectedService} className="min-w-0 gap-3">
+      <div className="max-w-full overflow-x-auto overflow-y-hidden pb-1"><TabsList aria-label="Metric service">
+        {services.map(name => <TabsTrigger key={name} value={name} className="font-mono">{name}</TabsTrigger>)}
+      </TabsList></div>
+      <TabsContent value={service} className="min-w-0">{details}</TabsContent>
+    </Tabs> : details ?? <p role="status" className="text-sm text-muted-foreground">No service resource observations are available.</p>}
+  </section>;
+}
+
+function ServiceResourceDetails({ appId, service, active }: { appId: string; service: string; active: boolean }) {
+  const { snapshot, fresh, scale } = useContext(Resources);
+  const points = useMemo(() => resourceSeries(snapshot, appId, service), [snapshot, appId, service]);
+  const latest = fresh && active ? points.at(-1) : undefined;
+  const cpu = latest?.cpu ?? null;
+  const memory = latest?.memory ?? null;
+  const available = points.some(point => point.cpu !== null || point.memory !== null);
+  const cpuPoints = points.filter(point => point.cpu !== null);
+  const mean = cpuPoints.length ? cpuPoints.reduce((sum, point) => sum + point.cpu!, 0) / cpuPoints.length : null;
+  return <Frame aria-label={service + " resources"}>
+    <FrameHeader><FrameTitle className="break-all font-mono">{service}</FrameTitle></FrameHeader>
+    <FramePanel>
+      <div className="grid gap-4 xl:grid-cols-2">
+        <div className="min-w-0 space-y-2"><div className="flex flex-wrap justify-between gap-2 text-xs tabular-nums"><span>CPU {formatCpu(cpu)}</span><span className="text-muted-foreground">Average {formatCpu(mean)}</span></div>
+          {available && <ResourceChart points={points} metric="cpu" scale={scale} className="h-44 w-full" />}
+        </div>
+        <div className="min-w-0 space-y-2"><p className="text-xs tabular-nums">RAM {formatMemory(memory)}</p>
+          {available && <ResourceChart points={points} metric="memory" className="h-44 w-full" />}
+        </div>
+      </div>
+      {!available && <p role="status" className="mt-3 text-xs text-muted-foreground">Waiting for resource samples.</p>}
+      {(!fresh || !active) && <p role="status" className="mt-3 text-xs text-muted-foreground">Live readings unavailable. Retained points are historical.</p>}
+      {fresh && active && elevatedCpu(points) && <p className="mt-3 text-xs text-muted-foreground">CPU activity is above its recent baseline.</p>}
+    </FramePanel>
+  </Frame>;
 }
 
 export function ApiActivityDetails({ appId, chart = true }: { appId?: string; chart?: boolean }) {
