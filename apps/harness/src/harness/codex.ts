@@ -4,6 +4,8 @@ import { toCodexMcpConfig } from "./codex-mcp.js";
 import { codexContextUsage } from "./context-usage.js";
 import { toolResult, shouldRetainToolOutput } from "./tool-result.js";
 import { randomUUID } from "node:crypto";
+import { codexPredictionSupport } from "./prediction-support.js";
+import { suggestionText } from "./prompt-suggestion.js";
 import { codexCommandResult, commandToolUseId } from "./command-result.js";
 import { ActivityTracker, activeTool } from "./activity.js";
 import path from "node:path";
@@ -53,6 +55,8 @@ export class CodexHarnessAdapter implements HarnessAdapter {
   // legacy methods carry a rejection text — and a capability that held for some requests and not
   // others would have the card promising delivery it cannot keep.
   readonly capabilities: HarnessCapabilities = {
+    // Protocol integration exists; actual availability is learned from a native response.
+    promptSuggestions: true,
     questions: false,
     appMcp: true,
     liveReconfigure: false,
@@ -141,6 +145,7 @@ class ReconfigurableCodexRun implements HarnessRun {
   resolveApproval(id: string, decision: "allow" | "deny", message?: string): boolean { return this.active.resolveApproval(id, decision, message); }
   resolveQuestion(): boolean { return false; }
   interrupt(): Promise<void> { return this.active.interrupt(); }
+  async disableSuggestions(): Promise<void> { this.options.promptSuggestions = false; await this.active.disableSuggestions(); }
   async stop(): Promise<void> { this.stopped = true; await this.active.stop(); }
   async stopAndWait(): Promise<void> { this.stopped = true; await this.active.stopAndWait(); }
   async setMcpServers(servers: Record<string, unknown>): Promise<boolean> {
@@ -187,6 +192,9 @@ class CodexRun implements HarnessRun {
   private threadId: string | null = null;
   private ready: Promise<void>;
   private turnActive = false;
+  private predictionTurn: string | null = null;
+  private predictionRuntime: string | null = null;
+  private predictedTurns = new Set<string>();
   private activityTurnId: string | null = null;
   private readonly commandRun = randomUUID();
   private commandTurn = 0;
@@ -331,6 +339,8 @@ class CodexRun implements HarnessRun {
     }
   }
 
+  async disableSuggestions(): Promise<void> { this.options.promptSuggestions = false; this.predictionTurn = null; }
+
   async stopAndWait(): Promise<void> {
     if (this.child.exitCode !== null || this.child.signalCode !== null) return;
     await new Promise<void>((resolve, reject) => {
@@ -358,10 +368,11 @@ class CodexRun implements HarnessRun {
   private selectedModel: string | null = null;
   private selectedEffort: string | null = null;
   private async handshake(): Promise<void> {
-    await this.request(CODEX_METHODS.initialize, {
+    const initialized = await this.request(CODEX_METHODS.initialize, {
       clientInfo: { name: "hosty-harness", version: "1" },
-      capabilities: null,
+      capabilities: this.options.promptSuggestions ? { experimentalApi: true } : null,
     });
+    this.predictionRuntime = codexPredictionSupport.key(resolveCodexCommand(), (initialized as { userAgent?: unknown })?.userAgent);
     this.notify(CODEX_METHODS.initialized, {});
     this.selectedModel = this.options.model ?? null;
     this.selectedEffort = this.options.reasoningEffort ?? null;
@@ -498,7 +509,7 @@ class CodexRun implements HarnessRun {
       const pending = this.pendingRequests.get(message.id)!;
       this.pendingRequests.delete(message.id);
       if (message.error) {
-        pending.reject(new Error(message.error.message ?? "Codex returned an error."));
+        pending.reject(Object.assign(new Error(message.error.message ?? "Codex returned an error."), { code: message.error.code }));
       } else {
         pending.resolve(message.result);
       }
@@ -722,6 +733,15 @@ class CodexRun implements HarnessRun {
     // Read live on 0.150.1 (2026-09-07) by driving a turn with an empty CODEX_HOME, which fails on
     // auth; the turn status vocabulary is `inProgress | completed | failed | declined`, read out of
     // the binary's variant table.
+    if (message.method === "thread/prediction/updated") {
+      if (this.predictionTurn && params.threadId === this.threadId && params.sourceTurnId === this.predictionTurn) {
+        this.predictionTurn = null;
+        const result = params.result as { type?: string; text?: unknown } | undefined;
+        this.emit({ type: "prompt_suggestion", text: result?.type === "completed" ? suggestionText(result.text) : null,
+          ...(result?.type === "failed" ? { reason: "unavailable" as const } : {}) });
+      }
+      return;
+    }
     if (message.method === "turn/completed") {
       const completedTurn = params.turn as { id?: string } | undefined;
       if (this.activityTurnId && completedTurn?.id && completedTurn.id !== this.activityTurnId) return;
@@ -757,6 +777,19 @@ class CodexRun implements HarnessRun {
             }
           : undefined,
       });
+      if (!failed && this.options.promptSuggestions && typeof completedTurn?.id === "string" && params.threadId === this.threadId && !this.predictedTurns.has(completedTurn.id)) {
+        const turnId = this.predictionTurn = completedTurn.id;
+        this.predictedTurns.add(turnId);
+        if (!codexPredictionSupport.shouldRequest(this.predictionRuntime)) {
+          this.predictionTurn = null;
+          this.emit({ type: "prompt_suggestion", text: null, reason: "unsupported" });
+        } else void this.request("thread/prediction/request", { threadId: this.threadId, sourceTurnId: turnId }).catch((error: Error) => {
+          const unsupported = codexPredictionSupport.observeFailure(this.predictionRuntime, error);
+          if (this.stopped || this.predictionTurn !== turnId) return;
+          this.predictionTurn = null;
+          this.emit({ type: "prompt_suggestion", text: null, reason: unsupported ? "unsupported" : "unavailable" });
+        });
+      }
       void this.pump();
       return;
     }

@@ -16,7 +16,7 @@ async function fixture(reserve: () => Promise<() => void> = async () => () => {}
   const identity = await ensureServiceIdentity(path.join(root, "auth"));
   const journal = new WorkerJournal(path.join(root, "independent-provider-storage")); await journal.initialize();
   let options: HarnessStartOptions | undefined, stopped = 0, starts = 0;
-  const capabilities = { questions: true, appMcp: true, autoAllow: true, denyReason: true, liveReconfigure: true };
+  const capabilities = { promptSuggestions: true, questions: true, appMcp: true, autoAllow: true, denyReason: true, liveReconfigure: true };
   const engine = new WorkerEngine(journal, { validateSelection: async () => {}, cwd: async () => root, reserve,
     adapter: async () => ({ name: "fixture", capabilities, probe: async () => ({ available: true }), start: input => {
       options = input; starts++;
@@ -323,4 +323,73 @@ it("recovers a command result appended before the worker cursor without duplicat
   expect(events.filter(event => event.type === "tool_use")).toHaveLength(1);
   expect(JSON.stringify(events)).not.toContain("never-store-output");
   expect(f.starts()).toBe(1); expect(f.stopped()).toBe(1);
+});
+
+it("publishes ephemeral suggestions and preempts collection before a new user send", async () => {
+  const { SessionManager } = await import("./manager.js");
+  const { SessionStore } = await import("./store.js");
+  const { AuditReporter } = await import("../audit.js");
+  const f = await fixture();
+  const store = new SessionStore(path.join(f.root, "coordinator"), path.join(f.root, "cache"));
+  const manager = new SessionManager(store, f.adapter, new AuditReporter(null, null, "hosty.harness"), f.root,
+    null, null, null, null, null, null, null, null, f.client, "docker");
+  cleanups.push(() => manager.shutdown());
+  const record = await manager.createSession({ createdBy: "owner" });
+  await manager.postMessage(record.id, "first", undefined, [], { promptSuggestions: true }); await expect.poll(f.starts).toBe(1);
+  expect(f.options()?.promptSuggestions).toBe(true);
+  f.options()!.onEvent({ type: "assistant_text", text: "answer" });
+  f.options()!.onEvent({ type: "result", status: "success" });
+  await expect.poll(async () => (await store.readRecord(record.id))!.status).toBe("suggesting");
+  expect(f.stopped()).toBe(0);
+  await manager.postMessage(record.id, "second", undefined, [], { promptSuggestions: true });
+  await expect.poll(f.starts).toBe(2); expect(f.stopped()).toBe(1);
+  f.options()!.onEvent({ type: "result", status: "success" });
+  await expect.poll(async () => (await store.readRecord(record.id))!.status).toBe("suggesting");
+  f.options()!.onEvent({ type: "prompt_suggestion", text: "Next?" });
+  await expect.poll(async () => (await store.readRecord(record.id))!.status).toBe("idle");
+  const subscription = await manager.subscribe(record.id, 0, () => {});
+  expect(subscription.replay.find(e => e.type === "session_suggestion")).toMatchObject({ state: "available", text: "Next?", userId: "owner", sessionId: record.id });
+  subscription.unsubscribe();
+  expect((await store.readEvents(record.id)).some(e => ["prompt_suggestion", "session_suggestion", "answer_complete"].includes(e.type))).toBe(false);
+  await manager.setSuggestionPreference("owner", { enabled: false, revision: 0 });
+  const cleared = await manager.subscribe(record.id, 0, () => {}); cleared.unsubscribe();
+  expect(cleared.replay.find(e => e.type === "session_suggestion")).toMatchObject({ state: "empty" });
+  expect(await manager.suggestionPreference("other-user")).toEqual({ enabled: true, revision: 0 });
+  await expect(manager.setSuggestionPreference("owner", { enabled: true, revision: 0 })).rejects.toMatchObject({ code: "preference_changed" });
+});
+
+it("does not re-enable predictions from a stale preference read during run admission", async () => {
+  const { SessionManager } = await import("./manager.js");
+  const { SessionStore } = await import("./store.js");
+  const { AuditReporter } = await import("../audit.js");
+  const f = await fixture();
+  const store = new SessionStore(path.join(f.root, "coordinator"), path.join(f.root, "cache"));
+  const manager = new SessionManager(store, f.adapter, new AuditReporter(null, null, "hosty.harness"), f.root,
+    null, null, null, null, null, null, null, null, f.client, "docker");
+  cleanups.push(() => manager.shutdown());
+  const record = await manager.createSession({ createdBy: "owner" });
+  const previous = await manager.suggestionPreference("owner");
+  let releaseRead!: (value: typeof previous) => void;
+  const staleRead = new Promise<typeof previous>(resolve => { releaseRead = resolve; });
+  const read = vi.spyOn(manager, "suggestionPreference").mockImplementationOnce(() => staleRead);
+  const sending = manager.postMessage(record.id, "first", undefined, [], { promptSuggestions: true });
+  try {
+    await expect.poll(() => read.mock.calls.length).toBe(1);
+    await manager.setSuggestionPreference("owner", { enabled: false, revision: 0 });
+  } finally { releaseRead(previous); }
+  await sending;
+  await expect.poll(f.starts).toBe(1);
+  expect(f.options()?.promptSuggestions).toBe(false);
+  f.options()!.onEvent({ type: "result", status: "success" });
+  await expect.poll(async () => (await store.readRecord(record.id))!.status).toBe("idle");
+  expect(f.stopped()).toBe(1);
+  expect(await manager.suggestionPreference("owner")).toEqual({ enabled: false, revision: 1 });
+  await manager.setSuggestionPreference("owner", { enabled: true, revision: 1 });
+  await manager.postMessage(record.id, "second", undefined, [], { promptSuggestions: true });
+  await expect.poll(f.starts).toBe(2);
+  expect(f.options()?.promptSuggestions).toBe(true);
+  f.options()!.onEvent({ type: "result", status: "success" });
+  await expect.poll(async () => (await store.readRecord(record.id))!.status).toBe("suggesting");
+  f.options()!.onEvent({ type: "prompt_suggestion", text: "Next?" });
+  await expect.poll(async () => (await store.readRecord(record.id))!.status).toBe("idle");
 });

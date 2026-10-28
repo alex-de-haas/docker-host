@@ -1,7 +1,7 @@
 import type { HarnessEvent, HarnessStartOptions } from "../harness/adapter.js";
 import type { ConnectionBinding } from "../connections/registry.js";
 
-export const WORKER_PROTOCOL = 1;
+export const WORKER_PROTOCOL = 2;
 export const MAX_COMMAND_BYTES = 1024 * 1024;
 export const MAX_EVENT_BYTES = 64 * 1024 * 1024;
 export const REPLAY_MS = 7 * 24 * 60 * 60 * 1000;
@@ -11,16 +11,16 @@ export type ModelCatalog = { revision: string; models: ModelChoice[]; defaultMod
 export type ResourceReference = { kind: "conversation"; id: string } | { kind: "worktree"; id: string; revision: string; path?: string };
 export type WorkerRunRequest = {
   skillExportId?: string;
-  operation?: "chat" | "translation";
+  operation?: "chat" | "translation" | "task";
   conversationId: string;
   binding: ConnectionBinding;
   selection: ExecutionSelection;
   resource: ResourceReference;
   input: string;
-  options: Pick<HarnessStartOptions, "autonomy" | "systemPrompt" | "resumeHarnessSessionId" | "mcpServers">;
+  options: Pick<HarnessStartOptions, "autonomy" | "systemPrompt" | "resumeHarnessSessionId" | "mcpServers" | "promptSuggestions">;
   autoAllowedPrefixes: string[];
 };
-export type RunState = "accepted" | "running" | "awaiting_input" | "cancelling" | "completed" | "failed" | "cancelled" | "interrupted";
+export type RunState = "accepted" | "running" | "awaiting_input" | "suggesting" | "cancelling" | "completed" | "failed" | "cancelled" | "interrupted";
 export type WorkerEvent = { runId: string; generation: string; sequence: number; event: HarnessEvent };
 export type WorkerReceipt = {
   runId: string; conversationId: string; generation: string; state: RunState; revision: number;
@@ -40,7 +40,7 @@ export const terminal = (state: RunState): boolean => ["completed", "failed", "c
 
 export function validateRun(value: unknown): asserts value is WorkerRunRequest {
   const r = value as WorkerRunRequest;
-  if (!r || ![undefined, "chat", "translation"].includes(r.operation) || !safeIdentity(r.conversationId) || !r.binding || !safeIdentity(r.binding.connectionId)
+  if (!r || ![undefined, "chat", "translation", "task"].includes(r.operation) || !safeIdentity(r.conversationId) || !r.binding || !safeIdentity(r.binding.connectionId)
     || !Number.isSafeInteger(r.binding.connectionRevision) || r.binding.connectionRevision < 1
     || !["codex", "claude"].includes(r.binding.harnessKind) || typeof r.input !== "string" || !r.input.trim()
     || !r.selection || ![r.selection.model, r.selection.reasoningEffort].every(v => v === null || typeof v === "string" && /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(v))
@@ -50,11 +50,14 @@ export function validateRun(value: unknown): asserts value is WorkerRunRequest {
     throw new WorkerApiError(400, "invalid_run", "Invalid worker run request.");
   if (r.skillExportId !== undefined && (typeof r.skillExportId !== "string" || !/^[a-f0-9]{64}$/.test(r.skillExportId)))
     throw new WorkerApiError(400, "invalid_skills", "Invalid skill export reference.");
-  if (Object.keys(r.options).some(key => !["autonomy", "systemPrompt", "resumeHarnessSessionId", "mcpServers"].includes(key))
+  if (Object.keys(r.options).some(key => !["autonomy", "systemPrompt", "resumeHarnessSessionId", "mcpServers", "promptSuggestions"].includes(key))
     || r.options.systemPrompt !== undefined && typeof r.options.systemPrompt !== "string"
     || r.options.resumeHarnessSessionId !== undefined && !safeIdentity(r.options.resumeHarnessSessionId)
     || r.options.mcpServers !== undefined && (!r.options.mcpServers || typeof r.options.mcpServers !== "object" || Array.isArray(r.options.mcpServers)))
     throw new WorkerApiError(400, "invalid_options", "Invalid provider options.");
+  if (r.options.promptSuggestions !== undefined && typeof r.options.promptSuggestions !== "boolean"
+    || r.options.promptSuggestions === true && r.operation !== "chat")
+    throw new WorkerApiError(400, "invalid_suggestions", "Predictions require an interactive chat operation.");
   if (r.options.mcpServers !== undefined) validateMcpServers(r.options.mcpServers);
   if (r.resource.kind === "conversation" && r.resource.id !== r.conversationId)
     throw new WorkerApiError(400, "invalid_resource", "Conversation resource does not match the run.");

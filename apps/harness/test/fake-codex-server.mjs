@@ -129,10 +129,21 @@ function handle(msg) {
   }
 
   if (msg.method === "initialize") {
-    send({ jsonrpc: "2.0", id: msg.id, result: { userAgent: "fake-codex" } });
+    send({ jsonrpc: "2.0", id: msg.id, result: { userAgent: process.env.HOSTY_TEST_PREDICTION_VERSION ? `fake-codex/${process.env.HOSTY_TEST_PREDICTION_VERSION}` : "fake-codex" } });
     return;
   }
   if (msg.method === "initialized") return;
+  if (msg.method === "thread/prediction/request") {
+    if (currentTurnText === "suggestion-unsupported") { send({ id: msg.id, error: { code: -32601, message: "Method not found" } }); return; }
+    if (msg.params.sourceTurnId !== "prediction-source" || msg.params.threadId !== activeThreadId) fail("prediction identity mismatch");
+    send({ id: msg.id, result: {} });
+    const notification = (threadId, sourceTurnId, result) => send({ method: "thread/prediction/updated", params: { threadId, sourceTurnId, result } });
+    notification("wrong-thread", "prediction-source", { type: "completed", text: "wrong" });
+    notification(activeThreadId, "wrong-turn", { type: "completed", text: "wrong" });
+    notification(activeThreadId, "prediction-source", currentTurnText === "suggestion-failed" ? { type: "failed" }
+      : { type: "completed", text: currentTurnText === "suggestion-null" ? null : "Review the changes" });
+    notification(activeThreadId, "prediction-source", { type: "completed", text: "duplicate" }); return;
+  }
 
   if (msg.method === "config/read") { send({ id: msg.id, result: { config: {} } }); return; }
   if (msg.method === "model/list") { send({ id: msg.id, result: { data: [
@@ -190,6 +201,12 @@ function handle(msg) {
     if (currentTurnText.startsWith("[Hosty operator instructions]")) currentTurnText = currentTurnText.slice(currentTurnText.lastIndexOf("\n\n") + 2);
     send({ jsonrpc: "2.0", id: msg.id, result: {} });
 
+    if (currentTurnText.startsWith("suggestion-")) {
+      send({ method: "turn/started", params: { threadId: activeThreadId, turn: { id: "prediction-source" } } });
+      send({ method: "item/completed", params: { item: { type: "agentMessage", id: "answer", text: "Primary answer" } } });
+      send({ method: "turn/completed", params: { threadId: activeThreadId, turn: { id: "prediction-source", status: "completed" } } });
+      return;
+    }
     if (currentTurnText === "model-selection") {
       send({ method: "item/completed", params: { item: { type: "agentMessage", id: "selection", text: JSON.stringify({ model: msg.params.model, effort: msg.params.effort, thread: msg.params.threadId }) } } });
       send({ method: "turn/completed", params: { threadId: activeThreadId, turn: { id: "selected", status: "completed" } } }); return;

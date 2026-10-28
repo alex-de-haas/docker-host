@@ -1,3 +1,4 @@
+import { suggestionText } from "../harness/prompt-suggestion.js";
 import { sanitizeToolResult } from "../harness/tool-result.js";
 import { sanitizeCommandResult } from "../harness/command-result.js";
 import { safeIdentity, type WorkerEvent, type WorkerReceipt } from "./contracts.js";
@@ -9,6 +10,14 @@ export function validWorkerCommandEnvelope(frame: WorkerEvent): boolean {
 
 /** Preserve durable sequence identity while rebuilding only the bounded command metadata or tool content payload. */
 export function sanitizeWorkerCommandFrame(frame: WorkerEvent): WorkerEvent | null {
+  if (frame.event?.type === "prompt_suggestion" || frame.event?.type === "answer_complete") {
+    if (!validWorkerCommandEnvelope(frame)) return null;
+    const event = frame.event.type === "answer_complete" ? { type: "answer_complete" as const } : {
+      type: "prompt_suggestion" as const, text: suggestionText(frame.event.text),
+      ...(["unsupported", "unavailable", "timeout"].includes(frame.event.reason ?? "") ? { reason: frame.event.reason } : {}),
+    };
+    return { runId: frame.runId, generation: frame.generation, sequence: frame.sequence, event };
+  }
   if (frame.event?.type !== "command_result" && frame.event?.type !== "tool_result") return frame;
   if (!validWorkerCommandEnvelope(frame)) return null;
   const event = frame.event.type === "tool_result" ? sanitizeToolResult(frame.event) : sanitizeCommandResult(frame.event);

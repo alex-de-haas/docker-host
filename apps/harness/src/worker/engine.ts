@@ -1,3 +1,4 @@
+import { SUGGESTION_DEADLINE_MS, suggestionText, successfulResult } from "../harness/prompt-suggestion.js";
 import type { HarnessAdapter, HarnessEvent, HarnessRun } from "../harness/adapter.js";
 import { WorkerJournal } from "./journal.js";
 import { WorkerApiError, terminal, validateRun, validateMcpServers, type WorkerRunRequest, type WorkerControl, type WorkerReceipt } from "./contracts.js";
@@ -11,8 +12,9 @@ export interface WorkerExecution {
 
 /** Application execution orchestration; it owns no Docker or Core lifecycle surface. */
 export class WorkerEngine {
-  private active = new Map<string, { run: HarnessRun; release: () => void; request: WorkerRunRequest }>();
+  private active = new Map<string, { run: HarnessRun; release: () => void; request: WorkerRunRequest; collecting?: NodeJS.Timeout; suggestions?: boolean }>();
   private admitted = new Set<string>();
+  private disabledSuggestions = new Set<string>();
   private starts = new Set<Promise<void>>();
   private closing = false;
   constructor(readonly journal: WorkerJournal, private readonly execution: WorkerExecution, private readonly capacity: number) {}
@@ -20,6 +22,14 @@ export class WorkerEngine {
   async submit(id: string, input: unknown): Promise<WorkerReceipt> {
     if (this.closing) throw new WorkerApiError(503, "worker_stopping", "Worker is stopping.");
     validateRun(input);
+    // Foreground work preempts optional collection, including Docker's single execution slot.
+    const retry = await this.journal.exclusive(() => this.journal.load(id).catch(error => {
+      if (error instanceof WorkerApiError && error.status === 404) return null; throw error;
+    }));
+    if (!retry) for (const [otherId, active] of this.active) {
+      if (active.collecting && (this.admitted.size >= this.capacity || active.request.binding.connectionId === input.binding.connectionId))
+        await this.finishSuggestion(otherId);
+    }
     return this.journal.exclusive(async () => {
       // Observe an existing receipt before admission: a retry is not a new workload.
       const existing = await this.journal.load(id).catch(error => { if (error instanceof WorkerApiError && error.status === 404) return null; throw error; });
@@ -46,15 +56,16 @@ export class WorkerEngine {
       if (!health.available) throw new Error(health.reason ?? "Provider unavailable.");
       await this.journal.exclusive(async () => {
         if ((await this.journal.load(id)).receipt.state === "cancelling") {
-          await this.journal.update(id, "cancelled"); this.admitted.delete(id); release?.(); release = undefined; return;
+          await this.journal.update(id, "cancelled"); this.admitted.delete(id); this.disabledSuggestions.delete(id); release?.(); release = undefined; return;
         }
         await this.journal.update(id, "running");
-        const run = adapter!.start({ ...request.options, sessionId: request.conversationId, cwd,
+        const suggestions = request.options.promptSuggestions === true && adapter!.capabilities.promptSuggestions === true && !this.disabledSuggestions.has(id);
+        const run = adapter!.start({ ...request.options, promptSuggestions: suggestions, sessionId: request.conversationId, cwd,
           ...request.selection,
           isAutoAllowed: tool => request.autoAllowedPrefixes.some(prefix => tool.startsWith(prefix)),
           onEvent: event => { void this.event(id, event); } });
         const claim = release!; let released = false;
-        this.active.set(id, { run, request, release: () => { if (!released) { released = true; claim(); } } }); release = undefined; started = true;
+        this.active.set(id, { run, request, suggestions, release: () => { if (!released) { released = true; claim(); } } }); release = undefined; started = true;
         run.send(request.input);
       });
     } catch (error) {
@@ -67,27 +78,62 @@ export class WorkerEngine {
       await this.journal.exclusive(async () => {
         const state = (await this.journal.load(id)).receipt.state;
         if (terminal(state)) return;
+        const active = this.active.get(id);
+        if (state === "suggesting") {
+          if (event.type === "prompt_suggestion") {
+            await this.journal.append(id, { type: "prompt_suggestion", text: suggestionText(event.text),
+              ...(["unavailable", "unsupported", "timeout"].includes(event.reason ?? "") ? { reason: event.reason } : {}) });
+            await this.finishSuggestionLocked(id);
+          } else if (event.type === "error") await this.finishSuggestionLocked(id);
+          // Prediction output cannot become another transcript/tool/approval/turn.
+          return;
+        }
+        if (event.type === "prompt_suggestion" || event.type === "answer_complete") return;
         await this.journal.append(id, event);
         if (event.type === "approval_request" || event.type === "question_request") await this.journal.update(id, "awaiting_input");
+        if (event.type === "result" && successfulResult(event.status) && active?.suggestions && state !== "cancelling") {
+          active.collecting = setTimeout(() => { void this.finishSuggestion(id, true); }, SUGGESTION_DEADLINE_MS);
+          active.collecting.unref();
+          await this.journal.update(id, "suggesting");
+          await this.journal.append(id, { type: "answer_complete" });
+          return;
+        }
         if (event.type === "result" || event.type === "error") {
-          // Closing a known native client is ordinary lifecycle, not a service restart.
-          const active = this.active.get(id);
-          if (active) { if (active.run.stopAndWait) await active.run.stopAndWait(); else await active.run.stop(); active.release(); this.active.delete(id); }
+          await this.stopNative(id);
           await this.journal.update(id, state === "cancelling" ? "cancelled" : event.type === "error" ? "failed" : "completed");
           this.admitted.delete(id);
         }
       });
     } catch { await this.fail(id, "Worker could not persist or finalize provider output. Execution may require recovery."); }
   }
+  private async stopNative(id: string): Promise<void> {
+    const active = this.active.get(id);
+    if (!active) return;
+    clearTimeout(active.collecting);
+    if (active.run.stopAndWait) await active.run.stopAndWait(); else await active.run.stop();
+    active.release(); this.active.delete(id); this.disabledSuggestions.delete(id);
+  }
+  private async finishSuggestionLocked(id: string, timeout = false): Promise<void> {
+    if ((await this.journal.load(id)).receipt.state !== "suggesting") return;
+    if (timeout) await this.journal.append(id, { type: "prompt_suggestion", text: null, reason: "timeout" });
+    await this.stopNative(id);
+    await this.journal.update(id, "completed");
+    this.admitted.delete(id);
+  }
+  private async finishSuggestion(id: string, timeout = false): Promise<void> {
+    try { await this.journal.exclusive(() => this.finishSuggestionLocked(id, timeout)); }
+    catch { await this.fail(id, "Prediction cleanup could not confirm native execution exit."); }
+  }
   private async fail(id: string, message: string): Promise<void> {
     const active = this.active.get(id);
     let stopped = !active;
     if (active) {
+      clearTimeout(active.collecting);
       try { if (active.run.stopAndWait) await active.run.stopAndWait(); else await active.run.stop(); stopped = true; }
       catch { /* Preserve occupied capacity and the connection claim when exit is uncertain. */ }
     }
     await this.journal.exclusive(async () => { await this.journal.update(id, stopped ? "failed" : "interrupted", message); });
-    if (stopped) { active?.release(); this.active.delete(id); this.admitted.delete(id); }
+    if (stopped) { active?.release(); this.active.delete(id); this.admitted.delete(id); this.disabledSuggestions.delete(id); }
   }
   async respond(id: string, input: WorkerControl): Promise<WorkerReceipt> {
     if (!input || !Number.isSafeInteger(input.eventId) || !Number.isSafeInteger(input.expectedRevision) || typeof input.id !== "string"
@@ -118,8 +164,12 @@ export class WorkerEngine {
     const receipt = await this.journal.exclusive(async () => {
       await this.journal.control(id, controlId, { kind: "cancel" }, async () => {});
       const current = (await this.journal.load(id)).receipt;
-      return terminal(current.state) ? current : this.journal.update(id, "cancelling");
+      return terminal(current.state) || current.state === "suggesting" ? current : this.journal.update(id, "cancelling");
     });
+    if (receipt.state === "suggesting") {
+      await this.finishSuggestion(id);
+      return (await this.journal.load(id)).receipt;
+    }
     const active = this.active.get(id);
     if (!terminal(receipt.state) && active) {
       try {
@@ -129,10 +179,26 @@ export class WorkerEngine {
           const current = (await this.journal.load(id)).receipt;
           if (!terminal(current.state)) await this.journal.update(id, "cancelled");
         });
-        active.release(); this.active.delete(id); this.admitted.delete(id);
+        active.release(); this.active.delete(id); this.admitted.delete(id); this.disabledSuggestions.delete(id);
       } catch { await this.fail(id, "Cancellation could not confirm native execution exit."); }
     }
     return (await this.journal.load(id)).receipt;
+  }
+  async disableSuggestions(id: string, controlId: string): Promise<WorkerReceipt> {
+    return this.journal.exclusive(async () => {
+      await this.journal.control(id, controlId, { kind: "disable_suggestions" }, async record => {
+        if (!terminal(record.receipt.state)) this.disabledSuggestions.add(id);
+        const active = this.active.get(id);
+        if (active) {
+          active.suggestions = false;
+          await active.run.disableSuggestions?.();
+        }
+      });
+      // Change the receipt only after control intent/delivery is persisted; control owns its snapshot.
+      // No foreground cancellation: the original answer remains active until its result.
+      await this.finishSuggestionLocked(id);
+      return (await this.journal.load(id)).receipt;
+    });
   }
   async configure(id: string, servers: Record<string, unknown>, prefixes: string[] = []): Promise<{ applied: boolean }> {
     const active = this.active.get(id);
@@ -146,7 +212,7 @@ export class WorkerEngine {
   async close(): Promise<void> {
     this.closing = true;
     await Promise.allSettled([...this.starts]);
-    await Promise.allSettled([...this.active.keys()].map(id => this.fail(id, "Worker is shutting down.")));
+    await Promise.allSettled([...this.active].map(([id, active]) => active.collecting ? this.finishSuggestion(id) : this.fail(id, "Worker is shutting down.")));
     await this.journal.exclusive(async () => {});
   }
 }

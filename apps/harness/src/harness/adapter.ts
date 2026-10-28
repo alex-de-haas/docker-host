@@ -13,6 +13,8 @@ export interface HarnessAvailability {
 // Both flags exist because the harnesses genuinely differ, and a UI that claims one behavior for
 // both would be lying about one of them.
 export interface HarnessCapabilities {
+  /** Native next-message predictions; account availability is determined by the native response. */
+  promptSuggestions?: boolean;
   /** The harness can ask the operator a question and receive the answer back as a tool result. */
   questions: boolean;
   /**
@@ -53,6 +55,8 @@ export interface HarnessQuestion {
 }
 
 export type HarnessEvent =
+  | import("./prompt-suggestion.js").PromptSuggestion
+  | { type: "answer_complete" }
   | { type: "context_usage"; usage: import("./context-usage.js").ContextUsage | null }
   | { type: "execution_model"; requested: { model: string | null; reasoningEffort: string | null }; reported: { model: string | null; reasoningEffort: string | null } }
   | { type: "activity"; activity: import("./activity.js").HarnessActivity }
@@ -103,6 +107,8 @@ export type HarnessEvent =
   | { type: "error"; message: string };
 
 export interface HarnessStartOptions {
+  promptSuggestions?: boolean;
+  operation?: "chat" | "translation" | "task";
   skillExportId?: string;
   /** Worker-owned isolated discovery home; never supplied by an API caller. */
   nativeHome?: string;
@@ -133,6 +139,9 @@ export interface HarnessStartOptions {
 }
 
 export interface HarnessRun {
+  /** Cancel optional collection and observe confirmed completion, outside the coordinator queue. */
+  finishSuggestions?(): Promise<void>;
+  disableSuggestions?(): Promise<void>;
   send(text: string): void;
   /** Returns false when the approval id is unknown (already resolved or never issued). */
   resolveApproval(approvalId: string, decision: "allow" | "deny", message?: string): boolean | Promise<boolean>;

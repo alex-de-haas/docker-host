@@ -44,6 +44,7 @@ describe("codex harness adapter", () => {
     delete process.env.HOSTY_HARNESS_CODEX_COMMAND;
     delete process.env.HOSTY_FAKE_CODEX_REJECT_RESUME;
     delete process.env.HOSTY_TEST_AUTONOMY;
+    delete process.env.HOSTY_TEST_PREDICTION_VERSION;
     delete process.env.HOSTY_TEST_EXTERNAL_SANDBOX;
   });
 
@@ -57,6 +58,27 @@ describe("codex harness adapter", () => {
     });
     return run;
   }
+
+  it.each(["text", "null", "failed", "unsupported"])("receives a bounded Codex prediction (%s) for the exact native turn", async shape => {
+    run = new CodexHarnessAdapter({ dataDir: authDir }).start({ sessionId: "s1", cwd: process.cwd(), promptSuggestions: true, onEvent: e => events.push(e) });
+    run.send(`suggestion-${shape}`);
+    await waitFor(() => events.find(e => e.type === "prompt_suggestion"), "prediction response");
+    expect(events.filter(e => e.type === "prompt_suggestion")).toEqual([{ type: "prompt_suggestion", text: shape === "text" ? "Review the changes" : null,
+      ...(shape === "failed" ? { reason: "unavailable" } : shape === "unsupported" ? { reason: "unsupported" } : {}) }]);
+    expect(events.filter(e => e.type === "result")).toHaveLength(1);
+    expect(events.filter(e => e.type === "tool_use")).toHaveLength(0);
+  });
+
+  it("detects an upgraded native runtime without a feature flag or repeated requests to the unsupported version", async () => {
+    for (const [version, prompt, reason] of [["1.0.0", "unsupported", "unsupported"], ["1.0.0", "text", "unsupported"], ["1.1.0", "text", undefined]] as const) {
+      process.env.HOSTY_TEST_PREDICTION_VERSION = version; events = [];
+      run = new CodexHarnessAdapter({ dataDir: authDir }).start({ sessionId: "s1", cwd: process.cwd(), promptSuggestions: true, onEvent: e => events.push(e) });
+      run.send(`suggestion-${prompt}`);
+      await waitFor(() => events.find(e => e.type === "prompt_suggestion"), "version-aware native prediction");
+      expect(events.filter(e => e.type === "prompt_suggestion")).toEqual([{ type: "prompt_suggestion", text: reason ? null : "Review the changes", ...(reason ? { reason } : {}) }]);
+      await run.stop(); run = null;
+    }
+  });
 
   it("reports each MCP startup failure once until recovery or a changed cause", async () => {
     const active = start();
@@ -394,6 +416,7 @@ describe("codex binary resolution", () => {
     delete process.env.HOSTY_HARNESS_CODEX_COMMAND;
     delete process.env.HOSTY_FAKE_CODEX_REJECT_RESUME;
     delete process.env.HOSTY_TEST_AUTONOMY;
+    delete process.env.HOSTY_TEST_PREDICTION_VERSION;
     delete process.env.HOSTY_TEST_EXTERNAL_SANDBOX;
   });
 
@@ -425,6 +448,7 @@ describe("codex auth modes", () => {
     delete process.env.HOSTY_HARNESS_CODEX_COMMAND;
     delete process.env.HOSTY_FAKE_CODEX_REJECT_RESUME;
     delete process.env.HOSTY_TEST_AUTONOMY;
+    delete process.env.HOSTY_TEST_PREDICTION_VERSION;
     delete process.env.HOSTY_TEST_EXTERNAL_SANDBOX;
     rmSync(dir, { recursive: true, force: true });
   });

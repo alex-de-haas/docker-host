@@ -11,6 +11,7 @@ import path from "node:path";
 export type SessionStatus =
   | "idle"
   | "running"
+  | "suggesting"
   | "awaiting_approval"
   | "awaiting_question"
   | "cancelled"

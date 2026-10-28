@@ -1,6 +1,7 @@
 import { ContextUsageReader, claudeContextUsage } from "./context-usage.js";
 import { toolResult, toolDuration, shouldRetainToolOutput } from "./tool-result.js";
 import { randomUUID } from "node:crypto";
+import { suggestionText } from "./prompt-suggestion.js";
 import { claudeCommandResult, commandToolUseId, CommandCallHistory } from "./command-result.js";
 import { ActivityTracker, activeTool, type ActiveTool } from "./activity.js";
 import type {
@@ -56,6 +57,7 @@ interface ApprovalContext {
 export class ClaudeHarnessAdapter implements HarnessAdapter {
   readonly name = "claude-agent-sdk";
   readonly capabilities: HarnessCapabilities = {
+    promptSuggestions: true,
     questions: true,
     appMcp: true,
     liveReconfigure: true,
@@ -130,6 +132,8 @@ class ClaudeRun implements HarnessRun {
   private contextReader: ContextUsageReader | null = null;
   private stopped = false;
   private turnActive = false;
+  private suggestionPending = false;
+  private nativeSessionId: string | null = null;
   private readonly commandRun = randomUUID();
   private commandTurn = 0;
   private readonly commandCalls = new Map<string, { id: string; rawId: string }>();
@@ -153,6 +157,7 @@ class ClaudeRun implements HarnessRun {
   }
 
   send(text: string): void {
+    this.suggestionPending = false;
     this.turnActive = true;
     this.commandTurn++;
     this.commandCalls.clear();
@@ -241,6 +246,8 @@ class ClaudeRun implements HarnessRun {
     await this.query?.interrupt().catch(() => undefined);
   }
 
+  async disableSuggestions(): Promise<void> { this.options.promptSuggestions = false; this.suggestionPending = false; }
+
   async stopAndWait(): Promise<void> {
     await this.stop();
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -288,6 +295,7 @@ class ClaudeRun implements HarnessRun {
           permissionMode: this.options.autonomy === "autonomous" ? "bypassPermissions" : "default",
           allowDangerouslySkipPermissions: this.options.autonomy === "autonomous",
           includePartialMessages: true,
+          promptSuggestions: this.options.promptSuggestions === true,
           hooks: {
             PostToolUse: [{ hooks: [async (input: Record<string, unknown>) => this.recordToolDuration(input)] }],
             PostToolUseFailure: [{ hooks: [async (input: Record<string, unknown>) => this.recordToolDuration(input)] }],
@@ -419,6 +427,13 @@ class ClaudeRun implements HarnessRun {
   private dispatch(message: Record<string, unknown>): void {
     if (this.stopped) return;
     const type = message.type;
+    if (type === "prompt_suggestion") {
+      if (this.suggestionPending && message.session_id === this.nativeSessionId) {
+        this.suggestionPending = false;
+        this.options.onEvent({ type: "prompt_suggestion", text: suggestionText(message.suggestion) });
+      }
+      return;
+    }
     if (type === "tool_progress" && this.turnActive && typeof message.tool_use_id === "string") {
       if (this.completedTools.has(message.tool_use_id)) return;
       if (message.tool_name !== ASK_USER_QUESTION) {
@@ -467,6 +482,7 @@ class ClaudeRun implements HarnessRun {
       return;
     }
     if (type === "system" && message.subtype === "init" && typeof message.session_id === "string") {
+      this.nativeSessionId = message.session_id;
       if (this.options.resumeHarnessSessionId && message.session_id !== this.options.resumeHarnessSessionId) {
         this.options.onEvent({ type: "error", message: "Claude did not resume the requested native session; existing history is preserved." });
         void this.stop(); return;
@@ -535,6 +551,7 @@ class ClaudeRun implements HarnessRun {
     }
 
     if (type === "result") {
+      this.suggestionPending = this.options.promptSuggestions === true && message.subtype === "success" && message.is_error !== true;
       this.activity.reset();
       this.turnActive = false;
       this.commandCalls.clear();
@@ -546,7 +563,7 @@ class ClaudeRun implements HarnessRun {
       }
       this.options.onEvent({
         type: "result",
-        status: String(message.subtype ?? "success"),
+        status: message.is_error === true ? "failed" : String(message.subtype ?? "success"),
         costUsd: typeof message.total_cost_usd === "number" ? message.total_cost_usd : undefined,
         usage: usage
           ? {

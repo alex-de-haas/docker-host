@@ -17,8 +17,10 @@ import { SessionCredentials } from "@/components/session-credentials";
 import { SessionSandboxes } from "@/components/session-sandboxes";
 import { SessionWorkspaces } from "@/components/session-workspaces";
 import { SessionProvider } from "@/components/session-provider";
+import { usePromptSuggestions } from "@/lib/prompt-suggestions";
+import { PromptSuggestionCard } from "@/components/prompt-suggestion";
 import { AppMentionInput, type AppMentionInputHandle } from "@/components/app-mention-input";
-import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuCheckboxItem } from "@/components/ui/dropdown-menu";
 import { AppContextPicker, type AppContextPickerHandle } from "@/components/app-context-picker";
 import { ArrowLeft, History, Loader2, MessageSquarePlus, Paperclip, Plus, Blocks, Send, Sparkles, Square, PanelRight, Diamond, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -240,6 +242,15 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
 
   const mentionInputRef = useRef<AppMentionInputHandle>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
+  const suggestions = usePromptSuggestions(session, ready, !!input || pending.length > 0 || uploaded.length > 0);
+  const suggestionsReceive = suggestions.receive;
+  const visibleSuggestion = !running && !sending && !pendingSend && !contextSaving && !mentionSaving && !providerSaving
+    && !composerBlocked && connection === "connected" ? suggestions.suggestion : null;
+  const acceptSuggestion = () => {
+    if (!visibleSuggestion || composerRef.current?.value) return;
+    mentionInputRef.current?.insertPlainText(visibleSuggestion.text!);
+    suggestions.interact();
+  };
 
   /** Attaches to one session and follows its log. Shared by reattach, switch and new. */
   const attach = useCallback((record: AssistantSession) => {
@@ -294,6 +305,8 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
       record.id,
       (event) => {
         if (abort.signal.aborted) return;
+        suggestionsReceive(event);
+        if (event.type === "session_suggestion") return;
         if (event.type === "context_usage") {
           setContextUsage(current => applyContextUsage(current, record.id, event));
           return;
@@ -399,7 +412,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
         if (state === "disconnected") setStreamed("");
       },
     );
-  }, [onSessionChange]);
+  }, [onSessionChange, suggestionsReceive]);
 
   // A full-page selection is also a navigation: Shell must restore that exact session on reload.
   const navigateSelection = useCallback(async (sessionId: string | null, workspaceId?: string | null) => {
@@ -809,7 +822,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
       // Lock the composer before the HTTP response: SSE may confirm (or finish) the turn first.
       if (activeSessionId.current === session.id) setStatus("running");
       request = { version: 1, clientRequestId: crypto.randomUUID(), sessionId: session.id, text: trimmed, draftText: input,
-        attachments: stored, appContextRevision: session.appContextRevision ?? 0, withoutAppDetails, selectionRevision: session.selectionRevision ?? 0 };
+        attachments: stored, ...(suggestions.preference?.enabled === true ? { promptSuggestions: true } : {}), appContextRevision: session.appContextRevision ?? 0, withoutAppDetails, selectionRevision: session.selectionRevision ?? 0 };
       await claimPendingSend(request);
       if (activeSessionId.current === session.id) setPendingSend(request);
       const receipt = await dispatchPendingSend(request);
@@ -836,7 +849,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
       sendingRef.current = false;
       setSending(false);
     }
-  }, [input, pending, pendingSend, sendRecoveryBlocked, running, status, contextSaving, session, uploaded, withoutAppDetails, health?.available, onSessionChange, acceptSend]);
+  }, [input, pending, pendingSend, sendRecoveryBlocked, running, status, contextSaving, session, uploaded, withoutAppDetails, health?.available, onSessionChange, acceptSend, suggestions.preference?.enabled]);
 
   const stop = useCallback(async () => {
     if (!session || !running || sendingRef.current || providerSavingRef.current || stoppingRef.current) return;
@@ -1152,6 +1165,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                   onClick={() => { setSending(true); void retryHandoff(session.id).then(attach).catch(cause => setError(String(cause))).finally(() => setSending(false)); }}>Retry starting</Button>}
               </div>}
             <InputGroup aria-label="Message and context">
+              {visibleSuggestion && <PromptSuggestionCard text={visibleSuggestion.text!} onAccept={acceptSuggestion} onDismiss={suggestions.interact} />}
               <AppMentionInput
                 ref={mentionInputRef}
                 key={session?.id ?? "empty"}
@@ -1161,14 +1175,20 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                 onContextChange={onSessionChange}
                 onBusyChange={onMentionSaving}
                 value={input}
-                onChange={setInput}
+                onChange={text => { suggestions.interact(); setInput(text); }}
+                onCompositionStart={suggestions.interact}
                 onPaste={(event) => {
+                  suggestions.interact();
                   // Leave native paste intact for every text flavor, including HTML-only clipboards.
                   const images = takePastedImages(event.clipboardData);
                   if (images.length === 0) return;
                   setPending((current) => [...current, ...images]);
                 }}
                 onKeyDown={(event) => {
+                  if (visibleSuggestion && !event.nativeEvent.isComposing && event.keyCode !== 229) {
+                    if (event.key === "Escape") { event.preventDefault(); suggestions.interact(); return; }
+                    if (event.key === "Tab" && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) { event.preventDefault(); acceptSuggestion(); return; }
+                  }
                   if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) {
                     event.preventDefault();
                     void send();
@@ -1228,7 +1248,12 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                       }}>
                         <DropdownMenuGroup>
                           <DropdownMenuItem disabled={contextSaving} onSelect={() => { openContextAfterMenu.current = true; }}><Blocks />Add app context</DropdownMenuItem>
-                          <DropdownMenuItem onSelect={() => fileInputRef.current?.click()}><Paperclip />Attach files</DropdownMenuItem>
+                          <DropdownMenuItem onSelect={() => { suggestions.interact(); fileInputRef.current?.click(); }}><Paperclip />Attach files</DropdownMenuItem>
+                          <DropdownMenuCheckboxItem checked={suggestions.preference?.enabled ?? false} disabled={!suggestions.preference || suggestions.saving}
+                            onCheckedChange={() => void suggestions.toggle()}>Prompt suggestions</DropdownMenuCheckboxItem>
+                          {(suggestions.error || suggestions.availability === "unsupported" || suggestions.availability === "unavailable") &&
+                            <p className="max-w-64 px-2 py-1 text-xs text-muted-foreground">{suggestions.error ?? (suggestions.availability === "unsupported"
+                              ? "This provider version does not support suggestions." : "No suggestion is available for this connection and turn.")}</p>}
                         </DropdownMenuGroup>
                       </DropdownMenuContent>
                     </DropdownMenu>
@@ -1247,7 +1272,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                     }} />}
                     {session && <ContextUsageIndicator usage={contextUsage.sessionId === session.id ? contextUsage.usage : null} connected={connection === "connected"} />}
                   </div>
-                  {session && <SpeechInput key={session.id} disabled={sending || !!pendingSend || sendRecoveryBlocked} onText={text => setInput(current => current ? `${current}${/\s$/.test(current) ? "" : " "}${text}` : text)} />}
+                  {session && <SpeechInput key={session.id} onStart={suggestions.interact} disabled={sending || !!pendingSend || sendRecoveryBlocked} onText={text => setInput(current => current ? `${current}${/\s$/.test(current) ? "" : " "}${text}` : text)} />}
                   {running || stopping ? (
                     <Button type="button" size="icon" className="shrink-0" disabled={sending || stopping} onClick={() => void stop()} aria-label="Stop" title="Stop response">
                       {sending || stopping ? <Loader2 className="motion-safe:animate-spin" /> : <Square className="fill-current" />}
