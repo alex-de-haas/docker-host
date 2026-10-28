@@ -52,7 +52,7 @@ setInterval(() => {}, 1000); // The supervisor owns termination, including Windo
   const before=await text(args.path).catch(e=>{if(e.code==="ENOENT")return null;throw e;});
   if(args.old_text==="") { if(before) throw Error("Empty old_text is only valid for a new file"); }
   else if(!before || before.text.split(args.old_text).length!==2) throw Error("old_text must match exactly once");
-  const content=before?before.text.replace(args.old_text,args.new_text):args.new_text;
+  const content=before?before.text.replace(args.old_text,()=>args.new_text):args.new_text;
   if(Buffer.byteLength(content)>1024*1024) throw Error("Patched file exceeds 1 MiB");
   const hash=before?.hash??"missing";
   if(name==="inspect_patch") result={sha256:hash};

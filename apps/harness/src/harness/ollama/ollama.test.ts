@@ -275,6 +275,35 @@ it("binds patch approval to the observed file and rejects changed content", asyn
   });
 });
 
+it.each(["$$", "$&", "$`", "$'"])(
+  "preserves the approved replacement sequence %s literally",
+  async (sequence) => {
+    const oldText = 'const value = "old";',
+      newText = `const value = "${sequence}";`,
+      prefix = "// before\n",
+      suffix = "\n// after\n";
+    const f = fixture([
+      tool("apply_patch", {
+        path: "file.js",
+        old_text: oldText,
+        new_text: newText,
+      }),
+      answer(),
+    ]);
+    const s = await start(f);
+    await writeFile(path.join(s.root, "file.js"), prefix + oldText + suffix);
+    s.run.send("Replace the value");
+    await allow(s.run, s.events);
+    await wait(s.events, "result");
+    expect(await readFile(path.join(s.root, "file.js"), "utf8")).toBe(
+      prefix + newText + suffix,
+    );
+    expect(s.events.find((e) => e.type === "tool_result")).toMatchObject({
+      status: "completed",
+    });
+  },
+);
+
 it("applies an approved patch, waits for an answer, and reports a failed command as failed", async () => {
   const f = fixture([
     tool("apply_patch", {

@@ -218,7 +218,8 @@ Ask / Run unprompted / Disabled rules remain authoritative.
 
 Normal mode requires approval for patches and commands. Approvals/questions bind to their stored
 identity; stale or duplicate answers do not authorize another action. Patches verify the original
-content hash at proposal and immediately before replacement. Dedicated file operations reject
+content hash at proposal and immediately before replacement, and insert replacement text literally,
+including dollar sequences used in shell and JavaScript source. Dedicated file operations reject
 workspace/path/symlink escapes. Newly encountered nested `AGENTS.md` instructions require the
 model to propose the action again. Native shell commands have the selected OS identity's authority;
 path guards on file tools do not sandbox arbitrary shell code. Docker tool children use the selected
@@ -305,5 +306,5 @@ Harness version: **0.76.0 → 0.77.0**. Core and SDK versions are unchanged.
   requires the account owner to complete the browser step; never insert test credentials into a real
   account or expose credentials in test output.
 
-- Keep Ollama contract fixtures deterministic and separate from real model smoke checks. Cover native/Docker execution identity, tool schema and resource guards, pending decision revocation, cancellation, unknown receipts, continuation, context limits and UTF-8 attachment refusal.
+- Keep Ollama contract fixtures deterministic and separate from real model smoke checks. Cover native/Docker execution identity, tool schema and resource guards, pending decision revocation, literal patch replacement, cancellation, unknown receipts, continuation, context limits and UTF-8 attachment refusal.
 - Run `HOSTY_OLLAMA_ACCEPTANCE=1 npm run test:integration -- harness-local` for the managed adapter journey. Add `HOSTY_OLLAMA_BROWSER=1` with an installed Playwright module (or `HOSTY_OLLAMA_PLAYWRIGHT_MODULE`) for browser administration. Set `HOSTY_OLLAMA_URL` only for an authorized existing server smoke check; no models are downloaded.
