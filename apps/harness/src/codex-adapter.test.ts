@@ -58,6 +58,20 @@ describe("codex harness adapter", () => {
     return run;
   }
 
+  it("reports each MCP startup failure once until recovery or a changed cause", async () => {
+    const active = start();
+    active.send("startup-notices");
+    await waitFor(() => events.find(event => event.type === "result"), "first startup failure");
+    expect(events.filter(event => event.type === "notice")).toHaveLength(2);
+    events = [];
+    active.send("startup-notices recover");
+    await waitFor(() => events.find(event => event.type === "result"), "recovered startup failure");
+    const notices = events.filter(event => event.type === "notice");
+    expect(notices).toHaveLength(2);
+    expect(notices[0]).toMatchObject({ message: expect.stringContaining("HTTP 401") });
+    expect(notices[1]).toMatchObject({ message: expect.stringContaining("HTTP 503") });
+  });
+
   it("applies model and effort on resumed native context and resets both to runtime defaults", async () => {
     for (const selection of [{ model: "fixture-other", reasoningEffort: "xhigh" }, { model: null, reasoningEffort: null }]) {
       events = [];

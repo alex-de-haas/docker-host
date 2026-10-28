@@ -81,8 +81,20 @@ def check(context):
 const app = process.env.HOSTY_APP_ID || 'test.observability.caller';
 const core = process.env.HOSTY_CORE_ORIGIN;
 const headers = {Authorization: 'Bearer '+process.env.HOSTY_APP_SERVICE_TOKEN};
+let appGrant;
 http.createServer(async(q,s)=>{try {
  const url = new URL(q.url, 'http://fixture');
+ if(url.pathname==='/api/auth/app-code' && q.method==='POST') {
+  let raw='';for await(const chunk of q)raw+=chunk;
+  const r=await fetch(core+'/api/auth/apps/token',{method:'POST',headers:{...headers,'Content-Type':'application/json'},body:raw});
+  const body=await r.json();if(r.ok){appGrant=body.accessToken;s.end(JSON.stringify({ok:true}));}else{s.statusCode=r.status;s.end(JSON.stringify({error:'Fixture app login failed'}));}return;
+ }
+ if(url.pathname==='/catalog') {
+  const r=await fetch(core+'/api/internal/apps/'+app+'/mcp/catalog/hosty.telemetry',{
+   method:'POST',headers:{...headers,'X-Hosty-User-Token':appGrant}});
+  s.statusCode=r.status;s.setHeader('Content-Type','application/json');s.end(await r.text());return;
+ }
+
  if(url.pathname==='/burst') {
   const n=Math.min(10000,Math.max(1,Number(url.searchParams.get('count')||250))); let next=0,ok=0;
   const timings=[]; const started=performance.now();
@@ -105,7 +117,10 @@ http.createServer(async(q,s)=>{try {
         'services':[{'key':'web','runtimes':{'docker':{'type':'docker','image':image,
             'ports':[{'key':'http','containerPort':3000,'protocol':'http','public':True}]}}}],
         'endpoints':[{'key':'web','service':'web','port':'http','protocol':'http','public':True}],
-        'ui':{'entrypoint':{'endpoint':'web','path':'/'},'icon':'Activity'},'corePermissions':['apps.read','core.read']}
+        'ui':{'entrypoint':{'endpoint':'web','path':'/'},'icon':'Activity'},
+        'provides':['assistant'],
+        'interfaces':{'assistant':[{'key':'default','endpoint':'web','path':'/assistant','version':1,'capabilities':[]}]},
+        'corePermissions':['apps.read','core.read','apps.mcp.access.request']}
     install(value, 'caller'); start(caller)
     fixture_origin = app_origin(link(caller))
     client = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -143,6 +158,14 @@ http.createServer(async(q,s)=>{try {
     install(telemetry, 'telemetry')
     request('/api/core/settings', {'settings':{'HOSTY_CORE_TRACE_SAMPLE_RATIO':'1'}}, method='PUT', confirm_settings=True)
     start('hosty.telemetry'); telemetry_browser = AppBrowser('hosty.telemetry')
+    # The same Core catalog route used by Harness settings mints a discovery-only hosty_mcp.1
+    # credential. Normal password login and app code exchange supply the acting administrator.
+    assistant_browser = AppBrowser(caller)
+    catalog = assistant_browser.get('/catalog')
+    assert {t['name'] for t in catalog['tools']} == {'search_logs','list_traces','get_trace','get_metrics'}, catalog
+    assert all(t['annotations']['readOnlyHint'] for t in catalog['tools'])
+    say('PASS: real assistant MCP credential initializes Telemetry and loads all four tools through Core discovery')
+
     traces = lambda: telemetry_browser.get('/api/observability/traces?apps=hosty.core&range=3600&limit=500&callerAppId='+caller)
     wait_for(lambda: traces().get('coreTracing',{}).get('state') == 'receiving', 60)
     fixture('/burst?count=20')

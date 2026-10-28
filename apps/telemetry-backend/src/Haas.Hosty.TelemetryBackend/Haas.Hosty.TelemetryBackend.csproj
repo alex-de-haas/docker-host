@@ -12,6 +12,7 @@
          PublishAot can be enabled later. See docs/features/observability/feature.md. -->
   </PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="../../../../packages/app-sdk-dotnet/HostySdk.App/HostySdk.App.csproj" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.13" />
     <!-- Override the vulnerable SQLitePCLRaw.lib.e_sqlite3 2.1.11 that Microsoft.Data.Sqlite pulls
          transitively (NU1903 / GHSA-2m69-gcr7-jv3q) with the patched 3.x bundle. -->

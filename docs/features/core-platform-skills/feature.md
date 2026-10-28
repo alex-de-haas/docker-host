@@ -61,7 +61,7 @@ and independent selections remain usable. Updating or deleting a Core entry fail
 `skill_core_managed`. Already loaded native conversation history retains its existing limitations:
 changing exported files cannot retract text previously read by the model.
 
-Core/CLI version: **0.160.2 → 0.161.0**. Harness version: **0.74.9 → 0.75.0**. Deploy Core before
+Core/CLI version: **0.160.2 → 0.161.0**. Harness version: **0.74.10 → 0.75.0**. Deploy Core before
 Harness. SDK packages and Shell require no version change for this feature.
 
 ## Verification Evidence
@@ -81,6 +81,9 @@ Verified on macOS on 2026-10-28:
   pass again, and `npx vitest run apps/harness/src/skills.test.ts apps/harness/src/mcp/session-skills.test.ts`
   passes all 17 tests. Session tests assert introduction delivery and ordering with/without profiles
   in native/Docker modes; component tests verify Core provenance, Read and mandatory/optional selection.
+- After integrating the concurrent telemetry-access fix from main, Harness lint and the production
+  build pass again, and the complete suite passes 1,808 tests in 166 files. Conflicts involve only
+  version metadata; the feature retains Harness 0.75.0 above main's 0.74.10.
 - `npm run test:integration -- worker` passes with the manifest-matching Docker worker image.
   Separately, real Codex `skills/list` and Claude's initialization command catalog discover both
   packages from a Core-owned export using fresh native homes. No provider credentials or inference
