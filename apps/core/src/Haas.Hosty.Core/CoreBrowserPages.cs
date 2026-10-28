@@ -32,7 +32,7 @@ internal static class CoreBrowserPages
 
     public const string Brand = "<header class=\"core-brand\">" + Mark + "<span>Hosty Core</span></header>";
 
-    public static string Approval(string title, string? name, string? version, string caller, string body)
+    public static string Approval(string title, string? name, string? version, string caller, string body, string styles = "")
     {
         static string E(string? value) => WebUtility.HtmlEncode(value ?? "");
         var versionLine = version is null ? "" : $"<p class=\"version\">{E(version)}</p>";
@@ -43,7 +43,7 @@ internal static class CoreBrowserPages
               <meta charset="utf-8">
               <meta name="viewport" content="width=device-width, initial-scale=1">
               <title>{{E(title)}} — Hosty Core</title>
-              <style>{{CommonStyles}}{{ApprovalStyles}}</style>
+              <style>{{CommonStyles}}{{ApprovalStyles}}{{styles}}</style>
             </head>
             <body class="approval-page">
               <div class="core-frame">
