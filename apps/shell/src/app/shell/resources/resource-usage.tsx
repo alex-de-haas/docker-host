@@ -34,6 +34,7 @@ export function ResourceUsage({ appId, service, label }: { appId?: string; servi
   const latest = fresh ? points.at(-1) : undefined;
   const activity = fresh && !service && appId !== "hosty.core" ? currentApiActivity(snapshot, appId) : null;
   const showApi = !service && appId !== "hosty.core";
+  const warningActivity = activity?.warning ? activity : null;
   const cpu = latest?.cpu ?? null;
   const memory = latest?.memory ?? null;
   const elevated = fresh && elevatedCpu(points);
@@ -44,7 +45,7 @@ export function ResourceUsage({ appId, service, label }: { appId?: string; servi
   return <Popover open={open} onOpenChange={setOpen}>
     <PopoverTrigger asChild>
       <Button variant="ghost" size="sm" className="h-auto w-full min-w-0 justify-start gap-1 px-1.5 py-1 text-xs tabular-nums"
-        aria-label={`${label} resources: CPU ${formatCpu(cpu)}, RAM ${formatMemory(memory)}${elevated ? ", above recent CPU baseline" : ""}${showApi ? `, Core API ${activity ? `${activity.requests60s} calls per minute` : "unavailable"}${activity?.warning ? ", high API activity" : ""}` : ""}`}>
+        aria-label={`${label} resources: CPU ${formatCpu(cpu)}, RAM ${formatMemory(memory)}${elevated ? ", above recent CPU baseline" : ""}${warningActivity ? `, Core API ${warningActivity.requests60s} calls per minute, high API activity` : ""}`}>
         <span className="flex w-full min-w-0 flex-col gap-1 font-mono">
           {(["cpu", "memory"] as const).map(metric => <span key={metric} className="grid min-w-0 grid-cols-[1.5rem_minmax(0,1fr)_3.5rem] items-center gap-1.5">
             <span className="w-6 shrink-0 text-[10px] text-muted-foreground">{metric === "cpu" ? "CPU" : "RAM"}</span>
@@ -57,10 +58,10 @@ export function ResourceUsage({ appId, service, label }: { appId?: string; servi
               </LineChart>
             </ChartContainer>
           </span>)}
-          {showApi && <span className="flex items-center gap-1.5">
+          {warningActivity && <span className="flex items-center gap-1.5">
             <span className="w-6 shrink-0 text-[10px] text-muted-foreground">API</span>
-            <span>{activity ? `${activity.requests60s.toLocaleString()} / min` : "—"}</span>
-            {activity?.warning && <TriangleAlert className="ml-auto size-3.5 text-warning-foreground" aria-label="High API activity" />}
+            <span>{warningActivity.requests60s.toLocaleString()} / min</span>
+            <TriangleAlert className="ml-auto size-3.5 text-warning-foreground" aria-label="High API activity" />
           </span>}
         </span>
       </Button>

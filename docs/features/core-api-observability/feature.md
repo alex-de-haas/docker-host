@@ -52,8 +52,10 @@ and 10-/60-second counts, warnings and recovery time. The current snapshot inclu
 with no CPU history. API-only frames preserve each service's actual CPU/RAM measurement timestamp.
 Counts are never copied to services or multiplied by their number.
 
-Dashboard app rows show calls/minute and an accessible warning indicator. Resource popovers and
-app details show the counts, warning reason/threshold and available short history. Subscriptions
+Compact resource summaries show calls/minute and an accessible warning indicator only while Core
+reports an active API activity warning. Normal, recovered and unavailable activity adds no API row
+or API count to the summary's accessible label. Resource popovers and app details keep the counts,
+warning reason/threshold and available short history available on demand. Subscriptions
 follow visible consumers through the existing shared stream; no app polling loop is added. Old
 Core responses, disabled accounting and stale activity appear unavailable rather than zero.
 
