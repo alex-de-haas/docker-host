@@ -46,7 +46,7 @@ export function SessionModel({ session, busy, onChange, onSavingChange }: {
           void save({ model: nextModel, reasoningEffort: effort });
         }}>
           <DropdownMenuRadioItem value="__default__">Agent default</DropdownMenuRadioItem>
-          {catalog?.models.map(m => <DropdownMenuRadioItem key={m.id} value={m.id}>{m.label}</DropdownMenuRadioItem>)}
+          {catalog?.models.map(m => <DropdownMenuRadioItem key={m.id} value={m.id} disabled={Boolean(m.unavailableReason)}>{m.label}{m.unavailableReason ? ` — ${m.unavailableReason}` : ""}</DropdownMenuRadioItem>)}
         </DropdownMenuRadioGroup>
       </DropdownMenuContent></DropdownMenu>
       <DropdownMenu><DropdownMenuTrigger asChild>

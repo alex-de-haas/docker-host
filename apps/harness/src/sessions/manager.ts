@@ -1,3 +1,4 @@
+import { ollamaAttachments } from "../harness/ollama/attachments.js";
 import { SUGGESTION_TTL_MS, suggestionText } from "../harness/prompt-suggestion.js";
 import { SuggestionPreferences } from "./suggestion-preferences.js";
 import { profileConfig, type ProfileStore } from "../profiles/store.js";
@@ -1060,7 +1061,7 @@ export class SessionManager {
       if (!proposed || typeof proposed !== "object" || Array.isArray(proposed) || Object.keys(proposed).some(key => !["model", "reasoningEffort"].includes(key)))
         throw new AppContextError(400, "invalid_selection", "Choose a model and reasoning effort.");
       const selection = { model: null, reasoningEffort: null, ...session.record.executionSelection, ...proposed } as import("../worker/contracts.js").ExecutionSelection;
-      if (!selection || ![selection.model, selection.reasoningEffort].every(value => value === null || typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(value)))
+      if (!selection || ![selection.model, selection.reasoningEffort].every(value => value === null || typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._/:-]{0,255}$/.test(value)))
         throw new AppContextError(400, "invalid_selection", "Choose a model and reasoning effort.");
       if (selection.model || selection.reasoningEffort) {
         const { validateSelection } = await import("../worker/models.js");
@@ -1665,7 +1666,12 @@ export class SessionManager {
           if (info === null || !info.isFile()) {
             throw new Error(`attachment not found: ${name}`);
           }
-          attached.push({ name, path: this.worker ? await this.worker.upload(id, name, file) : file });
+          attached.push({ name, path: this.worker && selectedAdapter.name !== "ollama" ? await this.worker.upload(id, name, file) : file });
+        }
+        let attachedText = "";
+        if (selectedAdapter.name === "ollama") {
+          try { attachedText = await ollamaAttachments(attached); }
+          catch (error) { throw new AppContextError(400, "attachment_unsupported", (error as Error).message); }
         }
         if (context.workspaceCredential !== undefined) {
           session.workspaceCredential = context.workspaceCredential;
@@ -1818,7 +1824,7 @@ export class SessionManager {
           });
         }
         this.scheduleMcpRefresh(id);
-        const prompt = withAttachedPaths(text, attached.map((file) => file.path)) + (this.development?.available ? "\n\n" + workspaceInstructions(await this.developmentMcp.project(session.record.developmentWorkspaces ?? []) as DevelopmentWorkspace[]) : "");
+        const prompt = (selectedAdapter.name === "ollama" ? text + attachedText : withAttachedPaths(text, attached.map((file) => file.path))) + (this.development?.available ? "\n\n" + workspaceInstructions(await this.developmentMcp.project(session.record.developmentWorkspaces ?? []) as DevelopmentWorkspace[]) : "");
         dispatched = true;
         session.run.send(snapshot.apps.length || snapshot.revision > 0 ? withAppContext(prompt, snapshot) : prompt);
         if (context.dispatchId && session.record.handoffDispatch) {

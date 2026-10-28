@@ -60,7 +60,7 @@ export class WorkerEngine {
         }
         await this.journal.update(id, "running");
         const suggestions = request.options.promptSuggestions === true && adapter!.capabilities.promptSuggestions === true && !this.disabledSuggestions.has(id);
-        const run = adapter!.start({ ...request.options, promptSuggestions: suggestions, sessionId: request.conversationId, cwd,
+        const run = adapter!.start({ ...request.options, promptSuggestions: suggestions, sessionId: request.conversationId, cwd, resource: request.resource, workerRunId: id,
           ...request.selection,
           isAutoAllowed: tool => request.autoAllowedPrefixes.some(prefix => tool.startsWith(prefix)),
           onEvent: event => { void this.event(id, event); } });

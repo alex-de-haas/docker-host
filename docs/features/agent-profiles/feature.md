@@ -27,6 +27,8 @@ Settings → Agent profiles supports create, edit, duplicate, delete, set defaul
 The form explains shared working rules versus role specialization, loads models/efforts from the
 selected connection and selects optional guidance from the [Core skill library](../agent-skills/feature.md).
 Changing connection clears provider-specific model/effort values; changing model clears effort.
+Ollama profiles preserve tagged model IDs and advertised thinking values. Incompatible installed
+models are disabled with their server/catalog reason; no compatible model is substituted.
 Unavailable connections/models produce errors rather than substitutions. Failed discovery retains
 saved selections. Profile-list loading is independent of connection discovery.
 

@@ -46,12 +46,12 @@ Plans: 13 In Progress · 1 Blocked · 44 Draft · 7 On Hold.
 - [Agent Background Sessions](features/agent-background-sessions/feature.md) — Assistant sessions that keep working after the tab closes and notify the operator when they wait for a person.
 - [Agent MCP Directory](features/agent-mcp-directory/feature.md) — Core enforces installation-bound assistant MCP access and tool exclusions; Harness owns invocation preferences and independent skill selections.
 - [Shared Agent Profiles](features/agent-profiles/feature.md) — Shared Harness agent configurations with connection, model, reasoning, role instructions and explicit skills, selectable before a conversation starts.
-- [Agent And Model Provider Interface](features/agent-provider-interface/plan.md) — Explore a shared app-facing interface for independently provided agents and models, including multi-model providers and structured results. · Draft, 0/6, updated 2026-10-27
+- [Agent And Model Provider Interface](features/agent-provider-interface/plan.md) — Explore a shared app-facing interface for independently provided agents and models, including multi-model providers and structured results. · Draft, 0/6, updated 2026-10-28
 - [Shared Agent Skills](features/agent-skills/feature.md) — A shared library of Core, Git and app skill packages with stable selections, current-file exports and platform context for native agents.
 - [AI Agent Bridge](features/ai-agent-bridge/feature.md) — The umbrella model for Hosty's AI integration, covering component boundaries, execution profiles, token mechanics and the decision log.
 - [Hosty Harness](features/ai-gateway/feature.md) — Hosty Harness, the optional administrator assistant app hosting operator chat sessions on a host-resident agent harness.
 - [Hosty Harness Chat Components](features/ai-gateway-chat-ui/feature.md) — The chat components Harness uses for messages, code blocks, attachments, the composer and collapsible activity.
-- [Hosty Harness Provider Connections](features/ai-gateway-providers/feature.md) — Named Claude and Codex agent connections that administrators manage in the Harness Providers settings.
+- [Hosty Harness Provider Connections](features/ai-gateway-providers/feature.md) — Named Claude, Codex and external Ollama agent connections with provider selection, scoped tools and durable conversation state.
 - [App Activity Window](features/app-activity-window/feature.md) — Legacy activity-window compatibility and current continuous authority for privileged app operations and assistant conversations.
 - [App Authoring In Hosty](features/app-authoring/plan.md) — Epic for prompt-driven app creation, live iteration, integration with installed apps and optional publication. · Draft, 0/8, updated 2026-10-27
 - [Feature: App Cache Storage](features/app-cache-storage/feature.md) — A Core-managed per-app cache directory that persists across restarts and updates but is never backed up.

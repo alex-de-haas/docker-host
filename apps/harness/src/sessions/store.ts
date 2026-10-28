@@ -70,7 +70,7 @@ export interface SessionRecord {
   connectionId?: string;
   connectionRevision?: number;
   connectionIdentity?: string;
-  harnessKind?: "claude" | "codex";
+  harnessKind?: "claude" | "codex" | "ollama";
   providerLocked?: boolean;
   title: string | null;
   /**

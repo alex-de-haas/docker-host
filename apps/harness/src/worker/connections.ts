@@ -38,6 +38,7 @@ export class RemoteConnections implements ConnectionService {
     return this.client.adapter(binding, health.capabilities, health.name);
   }
   async withTranslationRuntime<T>(binding: ConnectionBinding, action: (runtime: TranslationRuntime) => Promise<T>): Promise<T> {
+    if (binding.harnessKind === "ollama") throw new ConnectionError(400, "translation_unsupported", "Select Codex or Claude for translation.");
     return action({ kind: binding.harnessKind, home: "", cwd: "", env: {}, execute: async (input, signal, options) => {
       const id = randomUUID();
       const request: WorkerRunRequest = { operation: "translation", conversationId: id, binding,

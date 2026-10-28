@@ -75,6 +75,13 @@ def check(context):
             assert response.status == 200 and len(response.read()) > 0
     say('PASS: production API/worker, password login, Core launch-code identity, sessions API and compiled static assets')
 
+    if os.environ.get('HOSTY_OLLAMA_ACCEPTANCE'):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('ollama_acceptance', workspace/'apps/harness/test/ollama_acceptance.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        module.check(context, app_origin, client, call, timed)
+
     if os.environ.get('HOSTY_SUGGESTIONS_BROWSER'):
         import subprocess
         result = subprocess.run(['node', str(workspace/'apps/harness/test/suggestions-browser.mjs')],

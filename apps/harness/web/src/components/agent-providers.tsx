@@ -60,16 +60,22 @@ import { HostyLoader } from "../../../../../shared/web/hosty-states";
 export type AgentConnection = {
   id: string;
   name: string;
-  kind: "claude" | "codex";
-  auth: "api-key" | "claude-token" | "chatgpt" | "host-login";
+  kind: "claude" | "codex" | "ollama";
+  auth: "api-key" | "claude-token" | "chatgpt" | "host-login" | "none";
   revision: number;
   hostDirectory?: string;
+  baseUrl?: string;
   available: boolean;
   reason?: string;
 };
-type Directory = { connections: AgentConnection[]; defaultId: string | null };
+type Directory = {
+  connections: AgentConnection[];
+  defaultId: string | null;
+  ollamaDefaultUrl?: string;
+};
 type Login = ProviderLogin;
 const authLabels = {
+  none: "No authentication",
   "api-key": "API key",
   "claude-token": "Claude Code token",
   chatgpt: "ChatGPT sign-in",
@@ -85,6 +91,7 @@ export function AgentProviders() {
   const [kind, setKind] = useState<AgentConnection["kind"]>("codex");
   const [auth, setAuth] = useState<AgentConnection["auth"]>("chatgpt");
   const [secret, setSecret] = useState("");
+  const [baseUrl, setBaseUrl] = useState("");
   const [hostDirectory, setHostDirectory] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -92,8 +99,13 @@ export function AgentProviders() {
   const [login, setLogin] = useState<Login | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
   // A promise chain rather than async/await, so the mount effect's call is recognizably asynchronous.
-  const refresh = useCallback(() =>
-    call("/connections").then(response => response.json()).then(value => setDirectory(value as Directory)), []);
+  const refresh = useCallback(
+    () =>
+      call("/connections")
+        .then((response) => response.json())
+        .then((value) => setDirectory(value as Directory)),
+    [],
+  );
   useEffect(() => {
     void refresh().catch((e: unknown) =>
       setError(e instanceof Error ? e.message : String(e)),
@@ -150,6 +162,7 @@ export function AgentProviders() {
   const open = (connection: AgentConnection | "new") => {
     setEditing(connection);
     setSecret("");
+    setBaseUrl(connection === "new" ? "" : (connection.baseUrl ?? ""));
     setError(null);
     setNotice(null);
     setName(connection === "new" ? "" : connection.name);
@@ -171,7 +184,10 @@ export function AgentProviders() {
     <section className="grid gap-3" aria-labelledby="agent-providers-heading">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0 flex-1 basis-64">
-          <h2 id="agent-providers-heading" className="text-lg font-semibold tracking-[-0.01em]">
+          <h2
+            id="agent-providers-heading"
+            className="text-lg font-semibold tracking-[-0.01em]"
+          >
             Agent providers
           </h2>
           <p className="text-sm text-muted-foreground">
@@ -200,14 +216,20 @@ export function AgentProviders() {
         </p>
       )}
       {!directory && !error && (
-        <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><HostyLoader label={null} className="size-4 shrink-0" />Loading providers…</p>
+        <p
+          role="status"
+          className="flex items-center gap-2 text-sm text-muted-foreground"
+        >
+          <HostyLoader label={null} className="size-4 shrink-0" />
+          Loading providers…
+        </p>
       )}
       {directory?.connections.length === 0 && !editing && (
         <Empty>
           <EmptyHeader>
             <EmptyTitle>No providers connected</EmptyTitle>
             <EmptyDescription>
-              Add Codex or Claude to start chatting.
+              Add Codex, Claude or Ollama to start chatting.
             </EmptyDescription>
           </EmptyHeader>
         </Empty>
@@ -225,8 +247,12 @@ export function AgentProviders() {
               )}
             </div>
             <p className="text-xs text-muted-foreground">
-              {connection.kind === "codex" ? "Codex" : "Claude"} ·{" "}
-              {authLabels[connection.auth]} ·{" "}
+              {connection.kind === "ollama"
+                ? "Ollama"
+                : connection.kind === "codex"
+                  ? "Codex"
+                  : "Claude"}{" "}
+              · {authLabels[connection.auth]} ·{" "}
               {connection.available
                 ? "Configured"
                 : (connection.reason ?? "Reconnect required")}
@@ -275,13 +301,24 @@ export function AgentProviders() {
                     Set default
                   </DropdownMenuItem>
                 )}
-                {connection.auth === "host-login" && <DropdownMenuItem
-                    onSelect={() => void act(async () => {
-                      await call(`/connections/${connection.id}/prepare-docker`, { method: "POST" });
-                      setNotice("Selected host authorization is ready for Docker.");
-                      await refresh();
-                    })}
-                  >Prepare for Docker</DropdownMenuItem>}
+                {connection.auth === "host-login" && (
+                  <DropdownMenuItem
+                    onSelect={() =>
+                      void act(async () => {
+                        await call(
+                          `/connections/${connection.id}/prepare-docker`,
+                          { method: "POST" },
+                        );
+                        setNotice(
+                          "Selected host authorization is ready for Docker.",
+                        );
+                        await refresh();
+                      })
+                    }
+                  >
+                    Prepare for Docker
+                  </DropdownMenuItem>
+                )}
                 {connection.auth === "chatgpt" && (
                   <DropdownMenuItem
                     disabled={login?.status === "pending"}
@@ -306,7 +343,9 @@ export function AgentProviders() {
                           result.reason ?? "Provider unavailable.",
                         );
                       setNotice(
-                        `${connection.name}: local setup is ready. The provider validates access when a chat runs.`,
+                        connection.kind === "ollama"
+                          ? `${connection.name}: Ollama is reachable from Worker.`
+                          : `${connection.name}: local setup is ready. The provider validates access when a chat runs.`,
                       );
                     })
                   }
@@ -420,6 +459,7 @@ export function AgentProviders() {
                           kind,
                           auth,
                           ...(secret ? { secret } : {}),
+                          ...(kind === "ollama" ? { baseUrl } : {}),
                           ...(auth === "host-login" ? { hostDirectory } : {}),
                         }),
                       },
@@ -443,8 +483,8 @@ export function AgentProviders() {
                 </DialogTitle>
                 <DialogDescription>
                   {editing === "new"
-                    ? "Choose a provider and connect your account."
-                    : "Update this connection’s name or credentials."}
+                    ? "Choose a provider and configure its connection."
+                    : "Update this connection’s name or settings."}
                 </DialogDescription>
               </DialogHeader>
               {error && (
@@ -462,7 +502,13 @@ export function AgentProviders() {
                       onValueChange={(selected: string) => {
                         const value = selected as AgentConnection["kind"];
                         setKind(value);
-                        setAuth(value === "codex" ? "chatgpt" : "api-key");
+                        setAuth(
+                          value === "ollama"
+                            ? "none"
+                            : value === "codex"
+                              ? "chatgpt"
+                              : "api-key",
+                        );
                         setSecret("");
                       }}
                     >
@@ -473,6 +519,7 @@ export function AgentProviders() {
                         <SelectGroup>
                           <SelectItem value="codex">Codex</SelectItem>
                           <SelectItem value="claude">Claude</SelectItem>
+                          <SelectItem value="ollama">Ollama</SelectItem>
                         </SelectGroup>
                       </SelectContent>
                     </Select>
@@ -484,7 +531,13 @@ export function AgentProviders() {
                     <Input
                       id="connection-name"
                       value={name}
-                      placeholder={kind === "codex" ? "My Codex" : "My Claude"}
+                      placeholder={
+                        kind === "ollama"
+                          ? "Local Ollama"
+                          : kind === "codex"
+                            ? "My Codex"
+                            : "My Claude"
+                      }
                       required
                       maxLength={100}
                       disabled={busy}
@@ -509,9 +562,11 @@ export function AgentProviders() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectGroup>
-                        {(kind === "codex"
-                          ? (["chatgpt", "api-key", "host-login"] as const)
-                          : (["api-key", "claude-token"] as const)
+                        {(kind === "ollama"
+                          ? (["none"] as const)
+                          : kind === "codex"
+                            ? (["chatgpt", "api-key", "host-login"] as const)
+                            : (["api-key", "claude-token"] as const)
                         ).map((value) => (
                           <SelectItem key={value} value={value}>
                             {authLabels[value]}
@@ -521,6 +576,30 @@ export function AgentProviders() {
                     </SelectContent>
                   </Select>
                 </Field>
+                {kind === "ollama" && (
+                  <Field data-disabled={busy}>
+                    <FieldLabel htmlFor="connection-url">
+                      Ollama server URL
+                    </FieldLabel>
+                    <Input
+                      id="connection-url"
+                      type="url"
+                      value={baseUrl}
+                      maxLength={2048}
+                      disabled={busy}
+                      placeholder={
+                        directory?.ollamaDefaultUrl ?? "http://127.0.0.1:11434"
+                      }
+                      aria-describedby="connection-url-description"
+                      onChange={(e) => setBaseUrl(e.target.value)}
+                    />
+                    <FieldDescription id="connection-url-description">
+                      Connect to an existing Ollama server. Leave blank to use{" "}
+                      {directory?.ollamaDefaultUrl ?? "the local default"}.
+                      Models stay on that server; Hosty does not download them.
+                    </FieldDescription>
+                  </Field>
+                )}
                 {auth === "chatgpt" && (
                   <p className="text-sm text-muted-foreground">
                     Sign in using your ChatGPT account in the browser. Hosty
@@ -614,11 +693,16 @@ export function AgentProviders() {
               )}
               <DialogFooter>
                 <Button type="submit" size="sm" disabled={busy}>
-                  {busy
-                    ? <><HostyLoader label={null} className="size-4 shrink-0" />Saving…</>
-                    : auth === "chatgpt" && editing === "new"
-                      ? "Add and sign in"
-                      : "Save provider"}
+                  {busy ? (
+                    <>
+                      <HostyLoader label={null} className="size-4 shrink-0" />
+                      Saving…
+                    </>
+                  ) : auth === "chatgpt" && editing === "new" ? (
+                    "Add and sign in"
+                  ) : (
+                    "Save provider"
+                  )}
                 </Button>
                 <Button
                   type="button"

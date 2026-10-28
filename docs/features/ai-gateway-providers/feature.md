@@ -1,7 +1,7 @@
 ---
 created: 2026-09-17
-updated: 2026-10-20
-summary: Named Claude and Codex agent connections that administrators manage in the Harness Providers settings.
+updated: 2026-10-28
+summary: Named Claude, Codex and external Ollama agent connections with provider selection, scoped tools and durable conversation state.
 components: [apps/harness]
 ---
 
@@ -33,10 +33,11 @@ requires a dedicated translation connection or stopping the chat before translat
 | Codex | Existing host login | Select an absolute Codex home accessible to the OS user running Core. The native login remains operator-owned. |
 | Claude | API key | Enter an Anthropic API key. |
 | Claude | Claude Code token | Enter the token produced by `claude setup-token`; replace it when it expires. |
+| Ollama | None | Connect to an already running Ollama server by URL and choose an installed tool-capable model. |
 
 There is no custom Claude OAuth login flow. Provider type and authentication method are fixed for
 an existing connection; create another connection to change them. Secret fields are write-only.
-**Test** checks local adapter/credential setup, not paid inference or remote API entitlements. The
+For Codex/Claude, **Test** checks local adapter/credential setup, not paid inference or remote API entitlements. Ollama Test checks server reachability from Worker. The
 first real turn can still report an expired credential, denied model access or upstream outage.
 Managed conversation directories use junctions on Windows so setup does not require symbolic-link
 privileges; other hosts use directory symlinks. Recognized filesystem failures report their error
@@ -179,6 +180,111 @@ portable authorization is imported. The Docker coordinator uses the saved import
 missing/revoked authorization through normal connection diagnostics. Translation can use the same
 import and saves renewed authorization back to Core. No host directory is mounted to satisfy login.
 
+
+## Ollama Agent Adapter
+
+Ollama connections use the server already installed by the operator. Harness calls its native
+HTTP API directly and runs its own serial agent/tool loop in Worker. Neither Codex nor Claude
+is an Ollama runtime dependency. Harness does not install/start Ollama, download models, change
+`OLLAMA_HOST` or `OLLAMA_MODELS`, or store model weights in app data, cache or Docker volumes.
+
+The modal offers **Ollama**, **No authentication** and an optional **Ollama server URL**.
+An empty URL uses `http://127.0.0.1:11434` in Local or
+`http://host.docker.internal:11434` in Docker. An explicit override stays explicit, including
+loopback. The address is resolved by Worker, not the browser. HTTP(S) URLs cannot contain embedded
+credentials, queries or fragments; redirects are refused. A Docker host mapping does not make a
+loopback-only Linux service reachable. Connection failures ask the operator to correct reachability;
+the adapter does not change the listener, firewall or runtime.
+
+**Test connection** probes `/api/version` from Worker. Catalog discovery uses bounded
+`/api/tags` and `/api/show` requests. Exact installed model tags are retained. Models without
+completion/tool support and cloud-backed entries remain unavailable with a reason. Profiles and
+chat selection use the same catalog; removal of a selected model fails explicitly. Thinking controls
+come from advertised model metadata, including boolean Off, rather than a hard-coded vendor list.
+Ollama does not provide the Codex/Claude translation interfaces or prompt suggestions.
+
+Connections have the existing revision and busy protections. No secret is created for a no-auth
+connection. Endpoint changes cannot silently rebind an old conversation. Ollama does not adopt
+legacy Claude/Codex sessions.
+
+### Tools, Context And Decisions
+
+The adapter streams `/api/chat`, validates complete responses and dispatches complete tool calls
+serially. Partial/truncated responses never dispatch actions. Available local tools read/list/search
+text, apply an exact unique replacement or create a file, run a command, ask a question, read an
+exported skill and discover authorized MCP tools. Tool search exposes up to eight matching MCP
+schemas on the next step; it changes model context, not access. The existing scoped MCP proxy and
+Ask / Run unprompted / Disabled rules remain authoritative.
+
+Normal mode requires approval for patches and commands. Approvals/questions bind to their stored
+identity; stale or duplicate answers do not authorize another action. Patches verify the original
+content hash at proposal and immediately before replacement, and insert replacement text literally,
+including dollar sequences used in shell and JavaScript source. Dedicated file operations reject
+workspace/path/symlink escapes. Newly encountered nested `AGENTS.md` instructions require the
+model to propose the action again. Native shell commands have the selected OS identity's authority;
+path guards on file tools do not sandbox arbitrary shell code. Docker tool children use the selected
+unprivileged execution UID, isolated home and existing Git workspace configuration, without control
+or other provider credentials.
+
+Common/profile instructions, applicable repository instructions and the explicitly exported skill
+index enter each turn. Skill contents are read on demand within the exported package. Text
+attachments are snapshotted as user-provided data, including when conversation uploads and the active
+worktree are different directories. Their combined limit is 32,000 UTF-8 bytes. Images and binary
+documents are rejected before message dispatch; model vision metadata alone does not enable images.
+
+Execution is bounded to 32 model steps, 64 tool calls and 15 active minutes per turn, excluding
+decision waits. A model request has a five-minute deadline; commands default to two minutes and
+allow at most five. Command output is bounded and marked when truncated. The supervisor stops
+and verifies the owned process group before returning a result or releasing execution. Failed
+cleanup retains the claim. This is ordinary process-group ownership, not a new OS containment
+boundary for deliberately detached processes.
+
+Effective model context is at most 32,768 tokens and no greater than the advertised limit; missing
+metadata falls back to 8,192. Requests send that `num_ctx`, reserve output space and estimate input
+conservatively. Older complete turns are compacted in bounded fragments without silently dropping
+their tail. Current instructions, pending decisions and effect receipts remain structured separately.
+An oversized current turn or failed compaction stops with a visible error. Observed prompt usage is
+reported only when supplied; it is distinct from the local context estimate.
+
+### Durable Continuation
+
+Ollama state lives under
+`<data>/provider-sessions/<connection>/<revision>/ollama/<session>.json`.
+Versioned atomic checkpoints bind conversation, resource and selected model, and retain messages,
+summaries and correlated action receipts. Resource identity excludes the changing Git revision. A conversation can enter its first authorized\nworktree on the next turn, with fresh repository instructions and explicit separation of earlier\nrelative paths. Preparing a worktree mid-turn requires finishing that turn before local tools use\nthe new directory; explicit workspace attachment retains Harness's normal context-reset behavior.\nOne writer owns a session. Action intent is saved before
+dispatch and its result before the next model call. Cache removal does not remove this state.
+
+After Worker restart, a new turn continues from the checkpoint. Completed tools are not replayed.
+Interrupted proposed decisions become denied; an action with no durable result remains unknown and
+requires explicit operator reconciliation before continuation. A lost remote response is not proof
+that its effect failed. Stop aborts inference and awaits local command cleanup. Existing
+[Worker receipts](../assistant-shared-docker-runtime/feature.md) govern reconnect and claim retention.
+The adapter currently runs inside Worker; restarting Worker interrupts active execution.
+
+### Ollama Verification
+
+The 2026-10-28 checks cover direct streaming, tool validation, approvals/refusal, questions, changed
+permissions, scoped MCP reconnect, patch races, instructions/skills, compaction, attachments, unknown
+effects, model removal and child-process cleanup. A Core-managed child with separate test identity/data
+verifies normal password login, browser connection administration, a registered source worktree with repository instructions,
+file/command decisions, MCP,
+durable continuation after restart and production bundle recovery. The parent Finish operation
+confirms child/resource removal.
+
+An authenticated Harness turn against the existing Mac Ollama 0.40.12 and
+`qwen3.8:27b-mlx` produces a real model response. This is a connectivity/streaming smoke check,
+not a general coding-quality benchmark. Docker fixtures verify the same tool loop and execution
+UID without vendor credentials. Docker Desktop 29.9.2 (Linux arm64) reaches the host server through
+`host.docker.internal:11434`. Native Windows execution is not exercised by these checks.
+
+`npm run harness:lint` passes with one pre-existing React hook warning in `tasks.tsx`.
+`npm test --workspace @haas/hosty-harness` passes all 1,861 tests in 170 files; the final targeted adapter suite passes all 25 tests, including two additional resource-continuation regressions.
+`npm run test:integration -- worker` and the Ollama-enabled `harness-local` suite pass; the latter
+builds the production API, Worker and static web application. Version consistency, documentation
+index/links and whitespace checks pass.
+
+Harness version: **0.76.0 → 0.77.0**. Core and SDK versions are unchanged.
+
 ## Testing Expectations
 
 - MCP access selection and search do not mutate permissions. Switching applications during a save
@@ -199,3 +305,6 @@ import and saves renewed authorization back to Core. No host directory is mounte
 - Verify settings and chat selection through a Core-managed app and Shell. Real ChatGPT authorization
   requires the account owner to complete the browser step; never insert test credentials into a real
   account or expose credentials in test output.
+
+- Keep Ollama contract fixtures deterministic and separate from real model smoke checks. Cover native/Docker execution identity, tool schema and resource guards, pending decision revocation, literal patch replacement, cancellation, unknown receipts, continuation, context limits and UTF-8 attachment refusal.
+- Run `HOSTY_OLLAMA_ACCEPTANCE=1 npm run test:integration -- harness-local` for the managed adapter journey. Add `HOSTY_OLLAMA_BROWSER=1` with an installed Playwright module (or `HOSTY_OLLAMA_PLAYWRIGHT_MODULE`) for browser administration. Set `HOSTY_OLLAMA_URL` only for an authorized existing server smoke check; no models are downloaded.

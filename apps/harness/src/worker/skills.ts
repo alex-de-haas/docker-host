@@ -12,14 +12,14 @@ export async function resolveSkillExport(root: string | undefined, id: string | 
   return selected;
 }
 
-export async function linkSkillDirectory(home: string, kind: "codex" | "claude", selected: string): Promise<void> {
-  const target = kind === "codex" ? path.join(home, ".agents", "skills") : path.join(home, "skills");
+export async function linkSkillDirectory(home: string, kind: "codex" | "claude" | "ollama", selected: string): Promise<void> {
+  const target = kind !== "claude" ? path.join(home, ".agents", "skills") : path.join(home, "skills");
   await mkdir(path.dirname(target), { recursive: true });
   await symlink(selected, target, process.platform === "win32" ? "junction" : "dir");
 }
 
 /** Only discovery HOME is per run. Codex retains the selected connection's CODEX_HOME/auth/history. */
-export async function skillAdapter(adapter: HarnessAdapter, home: string, kind: "codex" | "claude", selected: string): Promise<HarnessAdapter> {
+export async function skillAdapter(adapter: HarnessAdapter, home: string, kind: "codex" | "claude" | "ollama", selected: string): Promise<HarnessAdapter> {
   const root = await mkdtemp(path.join(os.tmpdir(), "hosty-skills-"));
   try {
     await linkSkillDirectory(root, kind, selected);
