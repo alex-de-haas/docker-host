@@ -9,6 +9,7 @@ import http.cookiejar
 import json
 import os
 import pathlib
+import shutil
 import time
 import urllib.error
 import urllib.parse
@@ -83,12 +84,17 @@ def check(context):
     image = next(service for service in manifest['services'] if service['key'] == 'api')['runtimes']['docker']['image']
     def install_source_fixture(relative, repository, override_id=None, source=True):
         value = json.loads((workspace/relative).read_text())
-        if override_id: value['id'] = override_id
+        if override_id:
+            value['id'] = override_id
+            value.pop('agent', None)  # This synthetic app has no published skill identity.
         if source: value['source']['repository'] = repository
         else: value.pop('source', None)
         for service in value['services']:
             for runtime in service['runtimes'].values():
                 if 'image' in runtime: runtime['image'] = image
+        # This fixture relocates the manifest; preserve its portable skill packages beside it.
+        for skill in value.get('agent', {}).get('skills', []):
+            shutil.copytree((workspace/relative).parent/skill['path'], base/skill['path'], dirs_exist_ok=True)
         target = base/(value['id']+'-manifest.json')
         target.write_text(json.dumps(value))
         run([cli, '--data-root', root, 'apps', 'install', target, '--runtime', 'docker', '--no-autostart'])
@@ -104,6 +110,13 @@ def check(context):
     owner = Browser('activation-fixture@example.test', 'Owner')
     member = Browser('workspace-member@example.test', 'Member', invited=True)
     outsider = Browser('workspace-outsider@example.test', 'Outsider', invited=True)
+    preferences = owner.harness('/preferences/prompt-suggestions')
+    assert preferences == {'enabled':True, 'revision':0}
+    saved = owner.harness('/preferences/prompt-suggestions', {'enabled':False, 'revision':0}, method='PUT')
+    assert saved == {'enabled':False, 'revision':1}
+    assert member.harness('/preferences/prompt-suggestions') == {'enabled':True, 'revision':0}
+    assert owner.harness('/preferences/prompt-suggestions', {'enabled':True, 'revision':0}, method='PUT', expected=409)['code'] == 'preference_changed'
+    say('PASS: personal suggestion preferences are isolated and reject stale writes')
     first = owner.harness('/sessions', {'title': 'Owner implementation'})
     def action(browser, session, kind, **payload):
         return browser.harness('/sessions/'+session['id']+'/workspaces', {'action': kind, **payload})

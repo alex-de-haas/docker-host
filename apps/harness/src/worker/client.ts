@@ -144,10 +144,10 @@ class RemoteRun implements HarnessRun {
     if (this.busy || this.stopped) throw new WorkerApiError(409, "run_busy", "Wait for the current turn to finish.");
     this.busy = true; this.id = this.options.workerRunId ?? randomUUID(); this.controller = new AbortController();
     const id = this.id, signal = this.controller.signal;
-    const request: WorkerRunRequest = { skillExportId: this.options.skillExportId, conversationId: this.options.sessionId, binding: this.binding!,
+    const request: WorkerRunRequest = { operation: this.options.operation ?? "chat", skillExportId: this.options.skillExportId, conversationId: this.options.sessionId, binding: this.binding!,
       selection: { model: this.options.model ?? null, reasoningEffort: this.options.reasoningEffort ?? null },
       resource: this.options.resource ?? { kind: "conversation", id: this.options.sessionId }, input,
-      options: { autonomy: this.options.autonomy, systemPrompt: this.options.systemPrompt, resumeHarnessSessionId: this.resume, mcpServers: this.options.mcpServers },
+      options: { promptSuggestions: this.options.promptSuggestions, autonomy: this.options.autonomy, systemPrompt: this.options.systemPrompt, resumeHarnessSessionId: this.resume, mcpServers: this.options.mcpServers },
       autoAllowedPrefixes: Object.keys(this.options.mcpServers ?? {}).map(name => `mcp__${name}__`).filter(prefix => this.options.isAutoAllowed?.(`${prefix}probe`)) };
     this.submitted = request; this.confirmed = false;
     this.observe(id, signal, request);
@@ -234,6 +234,15 @@ class RemoteRun implements HarnessRun {
     } catch { throw unconfirmed(); }
     if (receipt.state === "interrupted" && !receipt.exitConfirmed) throw unconfirmed();
     this.confirmed = true;
+  }
+  async disableSuggestions(): Promise<void> {
+    if (!this.id || this.confirmed) return;
+    if (this.submitted) await this.client.request(`/v1/runs/${this.id}`, "PUT", this.submitted, true);
+    await this.client.request(`/v1/runs/${this.id}/disable-suggestions`, "POST", { controlId: randomUUID() }, true);
+  }
+  async finishSuggestions(): Promise<void> {
+    await this.interrupt();
+    await this.finished;
   }
   async stop(): Promise<void> {
     await this.interrupt(); this.stopped = true;

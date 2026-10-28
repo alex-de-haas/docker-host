@@ -51,7 +51,7 @@ export function createWorkerServer(engine: WorkerEngine, identity: () => Promise
     }
     const models = url.pathname.match(/^\/v1\/connections\/([A-Za-z0-9-]+)\/models$/);
     if (method === "GET" && models) { json(response, 200, await control.models(models[1]!)); return; }
-    const match = url.pathname.match(/^\/v1\/runs\/([A-Za-z0-9-]+)(?:\/(events|responses|cancel|configuration))?$/);
+    const match = url.pathname.match(/^\/v1\/runs\/([A-Za-z0-9-]+)(?:\/(events|responses|cancel|configuration|disable-suggestions))?$/);
     if (!match) throw new WorkerApiError(404, "not_found", "Unknown worker route.");
     const id = match[1]!;
     if (method === "PUT" && !match[2]) { json(response, 202, await engine.submit(id, await readCommand(request))); return; }
@@ -62,6 +62,10 @@ export function createWorkerServer(engine: WorkerEngine, identity: () => Promise
       json(response, 200, await engine.configure(id, input.servers, input.autoAllowedPrefixes)); return;
     }
     if (method === "POST" && match[2] === "responses") { json(response, 200, await engine.respond(id, await readCommand(request) as WorkerControl)); return; }
+    if (method === "POST" && match[2] === "disable-suggestions") {
+      const input = await readCommand(request) as { controlId: string };
+      json(response, 200, await engine.disableSuggestions(id, input?.controlId)); return;
+    }
     if (method === "POST" && match[2] === "cancel") {
       const input = await readCommand(request) as { controlId: string };
       json(response, 200, await engine.cancel(id, input?.controlId)); return;

@@ -1,3 +1,5 @@
+import { SUGGESTION_TTL_MS, suggestionText } from "../harness/prompt-suggestion.js";
+import { SuggestionPreferences } from "./suggestion-preferences.js";
 import { profileConfig, type ProfileStore } from "../profiles/store.js";
 import type { AgentProfileConfig } from "../profiles/types.js";
 import { prepareSkills, skillRequest, validSkillIds } from "../skills.js";
@@ -58,6 +60,10 @@ export interface SessionListener {
 }
 
 interface LiveSession {
+  suggestionAllowed?: boolean;
+  suggestionContext?: string;
+  suggestion?: { revision: number; attemptId?: string; state: "empty" | "collecting" | "available" | "unavailable"; text?: string; expiresAt?: number; reason?: string };
+  suggestionTimer?: NodeJS.Timeout;
   activityRunStarted?: boolean;
   toolOutputCalls?: Map<string, string | null>;
   runEpoch?: string;
@@ -111,6 +117,8 @@ export class SessionManager {
   });
   private readonly activationGuards = new Map<string, () => Promise<void>>();
   private readonly live = new Map<string, LiveSession>();
+  private readonly suggestionEpoch = randomUUID();
+  private readonly suggestionPreferenceGenerations = new Map<string, number>();
   private readonly operations = new Map<string, Promise<unknown>>();
   private readonly actorCredentialRefreshes = new Map<string, { credential: string }>();
   private serialize<T>(key: string, action: () => Promise<T>): Promise<T> {
@@ -121,6 +129,48 @@ export class SessionManager {
     return next;
   }
 
+
+  private suggestionSignature(session: LiveSession): string {
+    const record = session.record;
+    return JSON.stringify([record.connectionId, record.connectionRevision, record.selectionRevision, record.appContextRevision,
+      record.workspaceAssociation, record.developmentWorkspaces?.map(tree => [tree.id, tree.state, tree.observation?.head])]);
+  }
+  private suggestionEvent(session: LiveSession): StoredEvent {
+    const stale = session.suggestionContext !== undefined && session.suggestionContext !== this.suggestionSignature(session)
+      || session.suggestion?.expiresAt !== undefined && session.suggestion.expiresAt <= Date.now();
+    if (stale) this.clearSuggestion(session);
+    return { seq: -2, ts: new Date().toISOString(), type: "session_suggestion", epoch: this.suggestionEpoch,
+      sessionId: session.record.id, userId: session.record.createdBy, ...session.suggestion ?? { revision: 0, state: "empty" } };
+  }
+  private clearSuggestion(session: LiveSession): void {
+    clearTimeout(session.suggestionTimer); session.suggestionTimer = undefined;
+    session.suggestionAllowed = false; session.suggestionContext = undefined;
+    session.suggestion = { revision: (session.suggestion?.revision ?? 0) + 1, state: "empty" };
+    this.fanOut(session, this.suggestionEvent(session));
+  }
+  private async endSuggestions(id: string): Promise<boolean> {
+    // A remote terminal callback needs the session queue: never await it while holding that queue.
+    const session = this.live.get(id);
+    if (session?.record.status !== "suggesting") return false;
+    await session.run?.finishSuggestions?.();
+    return true;
+  }
+  suggestionPreference(userId: string) { return new SuggestionPreferences(this.store.dataDir).get(userId); }
+  async setSuggestionPreference(userId: string, input: Record<string, unknown>) {
+    return this.serialize(`preference:${userId}`, async () => {
+      const preference = await new SuggestionPreferences(this.store.dataDir).set(userId, input);
+      // Fence a run whose preference read started before this atomic replacement.
+      this.suggestionPreferenceGenerations.set(userId, (this.suggestionPreferenceGenerations.get(userId) ?? 0) + 1);
+      if (!preference.enabled) {
+        for (const session of this.live.values()) if (session.record.createdBy === userId) {
+          this.clearSuggestion(session);
+          await session.run?.disableSuggestions?.();
+          await this.endSuggestions(session.record.id);
+        }
+      }
+      return preference;
+    });
+  }
 
   // Harness events are dispatched without being awaited — the adapter's callback is synchronous and
   // must not block the run. Holding each handler here is what makes `shutdown` mean "no more writes":
@@ -338,6 +388,19 @@ export class SessionManager {
   }
 
   async workspaceAction(id: string, action: DevelopmentAction, input: Record<string, unknown>, credential?: string, userId?: string, dispatchGuard?: () => Promise<void>): Promise<unknown> {
+    try { return await this.workspaceActionInner(id, action, input, credential, userId, dispatchGuard); }
+    finally {
+      const session = this.live.get(id);
+      if (session?.suggestionContext !== undefined && session.suggestionContext !== this.suggestionSignature(session))
+        this.clearSuggestion(session);
+    }
+  }
+
+  private async workspaceActionInner(id: string, action: DevelopmentAction, input: Record<string, unknown>, credential?: string, userId?: string, dispatchGuard?: () => Promise<void>): Promise<unknown> {
+    if (userId && this.live.get(id)?.record.createdBy === userId && this.live.get(id)?.record.status === "suggesting") {
+      await this.endSuggestions(id);
+      this.clearSuggestion(this.live.get(id)!);
+    }
     if (action.startsWith("task-")) {
       const session = await this.requireLive(id);
       if (userId && session.record.createdBy !== userId) throw new AppContextError(403, "task_forbidden", "This session belongs to another user.");
@@ -987,6 +1050,7 @@ export class SessionManager {
   }
 
   async setModel(id: string, input: Record<string, unknown>): Promise<SessionRecord> {
+    if (this.live.get(id)?.record.status === "suggesting") await this.endSuggestions(id);
     return this.serialize(id, async () => {
       const session = await this.requireLive(id);
       if (session.record.workerRun || ["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) throw new SessionBusyError();
@@ -1036,6 +1100,7 @@ export class SessionManager {
   }
 
   async setAppContext(id: string, value: unknown, revision: unknown, actor: string): Promise<SessionRecord> {
+    if (this.live.get(id)?.record.createdBy === actor && this.live.get(id)?.record.status === "suggesting") await this.endSuggestions(id);
     return this.serialize(id, async () => {
       const session = await this.requireLive(id);
       if (session.record.createdBy !== actor) throw new AppContextError(403, "session_forbidden", "This session belongs to another user.");
@@ -1352,6 +1417,7 @@ export class SessionManager {
   }
 
   async setAutonomy(id: string, value: unknown, userId: string): Promise<SessionRecord> {
+    if (this.live.get(id)?.record.createdBy === userId && this.live.get(id)?.record.status === "suggesting") await this.endSuggestions(id);
     if (value !== "normal" && value !== "autonomous")
       throw new AppContextError(400, "autonomy_invalid", "Choose Normal or Autonomous.");
     return this.serialize(id, async () => {
@@ -1513,13 +1579,15 @@ export class SessionManager {
     });
   }
 
-  async postMessage(id: string, text: string, credential?: string, attachments: string[] = [], context: { taskDispatch?: boolean; selectionRevision?: unknown; expectedRevision?: unknown; withoutDetails?: boolean; dispatchId?: string; workspaceCredential?: string | null; clientRequestId?: unknown; actorUserId?: string } = {}): Promise<MessageReceipt | void> {
+  async postMessage(id: string, text: string, credential?: string, attachments: string[] = [], context: { promptSuggestions?: boolean; taskDispatch?: boolean; selectionRevision?: unknown; expectedRevision?: unknown; withoutDetails?: boolean; dispatchId?: string; workspaceCredential?: string | null; clientRequestId?: unknown; actorUserId?: string } = {}): Promise<MessageReceipt | void> {
     const clientRequestId = context.clientRequestId === undefined ? undefined : this.messageRequest(context.clientRequestId);
     const actorUserId = clientRequestId ? this.messageActor(context.actorUserId) : undefined;
     const fingerprint = clientRequestId ? createHash("sha256").update(JSON.stringify({
+      ...(context.promptSuggestions === true ? { promptSuggestions: true } : {}),
       actorUserId, text, attachments, appContextRevision: context.expectedRevision ?? 0,
       withoutAppDetails: context.withoutDetails === true, selectionRevision: context.selectionRevision ?? 0,
     })).digest("hex") : undefined;
+    if (this.live.get(id)?.record.status === "suggesting" && (!clientRequestId || !await this.store.readMessageReceipt(id, clientRequestId))) await this.endSuggestions(id);
     return this.serialize(id, async () => {
       const session = await this.requireLive(id);
       if (clientRequestId) {
@@ -1714,7 +1782,19 @@ export class SessionManager {
 
           this.mcpPolicy.cancel(id); // A new native client starts a fresh JSON-RPC request namespace.
           const runEpoch = session.runEpoch = randomUUID();
+          const preferenceGeneration = this.suggestionPreferenceGenerations.get(session.record.createdBy) ?? 0;
+          session.suggestionAllowed = !!this.worker && context.promptSuggestions === true && !context.taskDispatch
+            && !context.dispatchId && !session.record.taskExecutionId && (await this.suggestionPreference(session.record.createdBy)).enabled
+            && preferenceGeneration === (this.suggestionPreferenceGenerations.get(session.record.createdBy) ?? 0);
+          session.suggestionContext = this.suggestionSignature(session);
+          const unsupported = session.suggestionAllowed && selectedAdapter.capabilities.promptSuggestions === false;
+          if (unsupported) session.suggestionAllowed = false;
+          session.suggestion = { revision: (session.suggestion?.revision ?? 0) + 1, state: unsupported ? "unavailable" : "empty",
+            ...(unsupported ? { reason: "unsupported" } : {}), attemptId: session.record.workerRun?.id };
+          this.fanOut(session, this.suggestionEvent(session));
           session.run = selectedAdapter.start({
+            promptSuggestions: session.suggestionAllowed,
+            operation: session.record.taskExecutionId ? "task" : "chat",
             skillExportId: skillExport?.id,
             workerRunId: session.record.workerRun?.id,
             onWorkerEvent: frame => this.receiveWorkerEvent(session, frame, runEpoch),
@@ -2138,11 +2218,16 @@ export class SessionManager {
   }
 
   async cancelSession(id: string): Promise<void> {
+    const session = this.live.get(id);
+    if (session?.record.status === "suggesting") {
+      this.clearSuggestion(session); await this.endSuggestions(id); return;
+    }
     await this.serialize(id, () => this.cancelSessionLocked(id));
   }
 
   private async cancelSessionLocked(id: string): Promise<void> {
     const session = await this.requireLive(id);
+    this.clearSuggestion(session);
     if (this.worker || session.record.developmentLease || session.record.taskExecutionId) await this.finishExecution(session);
     session.runEpoch = undefined;
     this.setActivity(session, null);
@@ -2205,13 +2290,14 @@ export class SessionManager {
     // Historical statuses still close old approval cards, but only the final snapshot describes
     // current controls and signals replay readiness. Keep the flag out of the durable journal.
     const history = [...replay, ...tail].map(event => event.type === "session_status" ? { ...event, historical: true } : event);
-    return { replay: [...history, this.activityEvent(session), status], unsubscribe: () => session.listeners.delete(wrapped) };
+    return { replay: [...history, this.activityEvent(session), this.suggestionEvent(session), status], unsubscribe: () => session.listeners.delete(wrapped) };
   }
 
   async shutdown(): Promise<void> {
     this.mcpPolicy.close();
     this.stopping = true;
     for (const session of this.live.values()) {
+      clearTimeout(session.suggestionTimer);
       if (session.workspaceActivityTimer) clearTimeout(session.workspaceActivityTimer);
       session.workspaceActivityTimer = undefined;
       if (!this.worker && (session.record.developmentLease || session.record.taskExecutionId) && session.run?.stopAndWait) {
@@ -2434,6 +2520,33 @@ export class SessionManager {
     }
 
     switch (event.type) {
+      case "answer_complete":
+        this.clearRefresh(session);
+        this.proxy?.unregister(id); this.developmentMcp.unregister(id); this.mcpPolicy.cancel(id);
+        await this.setStatus(id, "suggesting", true);
+        if (session.suggestionAllowed) {
+          session.suggestion = { revision: (session.suggestion?.revision ?? 0) + 1, state: "collecting", attemptId: event.workerRunId };
+          this.fanOut(session, this.suggestionEvent(session));
+        } else {
+          // The preference may have been disabled during the primary answer, or this is restart replay.
+          setImmediate(() => { void this.endSuggestions(id).catch(() => undefined); });
+        }
+        return;
+      case "prompt_suggestion": {
+        if (!session.suggestionAllowed || session.record.status !== "suggesting"
+          || session.suggestionContext !== this.suggestionSignature(session)) return;
+        const text = suggestionText(event.text);
+        const expiresAt = Date.now() + SUGGESTION_TTL_MS;
+        session.suggestion = { revision: (session.suggestion?.revision ?? 0) + 1, attemptId: event.workerRunId,
+          state: text ? "available" : "unavailable", ...(text ? { text, expiresAt } : { reason: event.reason ?? "unavailable" }) };
+        session.suggestionAllowed = false;
+        if (text) {
+          session.suggestionTimer = setTimeout(() => this.clearSuggestion(session), SUGGESTION_TTL_MS);
+          session.suggestionTimer.unref();
+        }
+        this.fanOut(session, this.suggestionEvent(session));
+        return;
+      }
       case "activity":
         if (["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) {
           this.setActivity(session, event.activity);
@@ -2501,10 +2614,12 @@ export class SessionManager {
         await this.setStatus(id, "awaiting_question");
         return;
       case "result":
+        if (session.suggestion?.state === "collecting") this.clearSuggestion(session);
         if (!persisted) await this.append(id, { ...event });
         await this.setStatus(id, "idle", event.workerRunId !== undefined);
         return;
       case "error": {
+        this.clearSuggestion(session);
         if (!persisted) await this.append(id, { ...event });
         // The run is dead: drop it so the next message starts a fresh harness (resuming the
         // captured harness session when possible) instead of feeding a terminated input stream.
@@ -2563,6 +2678,8 @@ export class SessionManager {
       && payload.input && typeof payload.input === "object" && !Array.isArray(payload.input)) {
       payload = { ...payload, input: { ...payload.input, password: "[redacted]" } };
     }
+    if (["user_message", "app_context_changed", "model_selection_changed", "session_provider_changed", "session_profile_changed", "session_autonomy_changed", "attachment_added"].includes(payload.type))
+      this.clearSuggestion(session);
     if (payload.type === "user_message") session.toolOutputCalls = undefined;
     session.record.lastEventSeq += 1;
     const event: StoredEvent = {
@@ -2662,7 +2779,7 @@ export class SessionManager {
       return;
     }
 
-    if ((this.worker || session.record.taskExecutionId) && !["running", "awaiting_approval", "awaiting_question"].includes(status)) {
+    if ((this.worker || session.record.taskExecutionId) && !["running", "suggesting", "awaiting_approval", "awaiting_question"].includes(status)) {
       try { await this.finishExecution(session, status === "idle" && session.record.workspaceActivation?.state === "queued", preserveWorkerRun, status); }
       catch (error) {
         if (session.record.taskExecutionId) {
@@ -2711,7 +2828,7 @@ export class SessionManager {
       }
     }
 
-    if (session.record.workspaceActivation?.state === "queued" && !["running", "awaiting_approval", "awaiting_question"].includes(status)) {
+    if (session.record.workspaceActivation?.state === "queued" && !["running", "suggesting", "awaiting_approval", "awaiting_question"].includes(status)) {
       const queued = session.record.workspaceActivation;
       try {
         const credential = session.workspaceCredential ?? session.credential;
@@ -2730,7 +2847,7 @@ export class SessionManager {
         await this.store.saveRecord(session.record);
       }
     }
-    if (session.record.workflowCompletion?.state === "queued" && !["running", "awaiting_approval", "awaiting_question"].includes(status)) {
+    if (session.record.workflowCompletion?.state === "queued" && !["running", "suggesting", "awaiting_approval", "awaiting_question"].includes(status)) {
       const request = session.record.workflowCompletion;
       try {
         const credential = session.workspaceCredential ?? session.credential;

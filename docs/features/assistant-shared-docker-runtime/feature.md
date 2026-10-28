@@ -1,6 +1,6 @@
 ---
 created: 2026-10-15
-updated: 2026-10-21
+updated: 2026-10-28
 summary: Harness runs declared API and Worker services over authenticated HTTP and SSE, with shared Core-owned source access and native model and reasoning-effort selection.
 components: [apps/harness, apps/core, apps/shell]
 ---
@@ -32,7 +32,7 @@ until the operator recreates it through ordinary lifecycle.
 
 ## Direct HTTP And SSE
 
-`src/worker/contracts.ts` defines protocol version 1. The endpoint client depends on a URL,
+`src/worker/contracts.ts` defines protocol version 2. The endpoint client depends on a URL,
 installation identity and credential; its run engine does not depend on Core or container names.
 Hosty connection/resource composition is confined to the provider service. The independently
 listening test fixture exercises the same client with its own journal and no Core connection.
@@ -49,6 +49,7 @@ listening test fixture exercises the same client with its own journal and no Cor
 | `GET /v1/runs/:id/events` | SSE run events with stable run/generation/sequence and cursor replay |
 | `POST /v1/runs/:id/responses` | Correlated approval/question decision with control ID and revision |
 | `POST /v1/runs/:id/cancel` | Idempotent cancellation of known execution |
+| `POST /v1/runs/:id/disable-suggestions` | Suppress optional prediction without cancelling the primary answer |
 | `POST /v1/runs/:id/configuration` | Replace declared MCP callbacks and current auto-approval prefixes |
 | `PUT /v1/conversations/:id/attachments/:name` | Bounded, content-idempotent attachment upload |
 
@@ -71,6 +72,12 @@ does not assume that an old native child exited. Source leases and occupied clai
 termination cannot be confirmed. Cancellation during startup waits for the terminal receipt within a bounded deadline; timeout
 retains the specific source lease. Ordinary cancellation waits for the known CLI and its process
 group; no UID-wide process scan or per-turn container restart is involved.
+
+Opted-in interactive chat runs separate successful answer completion from confirmed native exit.
+The optional `suggesting` phase collects one native next-message suggestion for at most five
+seconds. Foreground submissions preempt this phase before admission, and cancellation preserves
+the successful answer. Connection claims and capacity remain held until native exit is confirmed.
+Task and translation runs cannot opt in. See [Contextual prompt suggestions](../assistant-prompt-suggestions/feature.md).
 
 Commands are limited to 1 MiB, attachments to 20 MiB, individual events/final text to 1 MiB and
 retained run events to 64 MiB. Detailed replay expires after seven days; pruning retains the
@@ -134,7 +141,8 @@ events, keyed by run ID and terminal receipt revision. This identity survives re
 sequence, leaving the receipt revision exclusively for terminal delivery.
 Temporary write failures retry without repeating execution or duplicating transcript entries;
 the run receipt stays recoverable until terminal status and cleanup are saved. New turns and model
-changes stay blocked while that receipt remains. Coordinator shutdown
+changes stay blocked while that receipt remains. During optional prediction, a new turn or model
+change first ends collection and awaits that same terminal persistence and cleanup. Coordinator shutdown
 detaches retrying observers. Failed provider runs retain their original error message.
 
 ## Clean Update And Compatibility

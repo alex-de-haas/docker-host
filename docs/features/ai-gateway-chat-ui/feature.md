@@ -1,6 +1,6 @@
 ---
 created: 2026-09-22
-updated: 2026-10-27
+updated: 2026-10-28
 summary: The chat components Harness uses for messages, code blocks, attachments, the composer and collapsible activity.
 components: [apps/harness]
 ---
@@ -57,7 +57,8 @@ their existing diff presentation and limits.
 ## Composer and App Context
 
 One Input Group contains the full-width text field, selected attachments and a bottom
-action row. A single leftmost **+** menu contains **Add app context** and **Attach files**,
+action row. A single leftmost **+** menu contains **Add app context**, **Attach files** and the
+personal **Prompt suggestions** preference,
 followed by the provider selector. Dictation sits immediately
 before Send on the right. While the agent is running or waiting for approval/an answer, the same button
 shows Stop and cancels the active run through the existing session cancellation API.
@@ -69,7 +70,12 @@ a response, but neither Enter nor form submission sends another message until th
 finishes or stops. Drafts are not queued or sent automatically. The messages API rejects
 busy sessions with HTTP 409 (`session_busy`) before recording another user message.
 When idle, Enter sends, Shift+Enter inserts a newline, and IME composition does not send.
-This layout does not change provider locking or add model selection or starter prompts.
+After a successful answer, the optional native prediction phase allows a new Send to preempt
+collection and wait for native cleanup. A current suggestion appears above an empty connected
+composer as literal text. **Use suggestion** or Tab inserts an editable draft; Escape or **Dismiss**
+hides it. Acceptance never sends automatically. Typed content, IME, pending decisions and restored
+drafts take precedence. See [Contextual prompt suggestions](../assistant-prompt-suggestions/feature.md)
+for provider availability, personal preference and freshness rules.
 
 The app-context popover retains search, paging, the 16-app limit and revision-conflict
 recovery. Selected chips inside the popover retain unavailable-app labels and individual draft-removal controls.

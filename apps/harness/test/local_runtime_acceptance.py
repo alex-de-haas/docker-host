@@ -75,6 +75,13 @@ def check(context):
             assert response.status == 200 and len(response.read()) > 0
     say('PASS: production API/worker, password login, Core launch-code identity, sessions API and compiled static assets')
 
+    if os.environ.get('HOSTY_SUGGESTIONS_BROWSER'):
+        import subprocess
+        result = subprocess.run(['node', str(workspace/'apps/harness/test/suggestions-browser.mjs')],
+            input=json.dumps({'core':origin, 'harness':app_origin, 'email':'activation-fixture@example.test', 'password':password, 'link':link}),
+            text=True, cwd=workspace)
+        assert result.returncode == 0, 'Suggestion browser acceptance failed'
+
     if review := os.environ.get('HOSTY_HARNESS_BROWSER_REVIEW'):
         development = request('/api/core/development')
         source = request('/api/core/source', {'revision':development['source']['revision'], 'overridePath':None,

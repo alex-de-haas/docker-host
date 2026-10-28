@@ -13,7 +13,7 @@ type Roster = { granted: boolean; requestable?: boolean; reviewAvailable?: boole
 type Recording = { controller: AbortController; stream?: MediaStream; recorder?: MediaRecorder; timer?: ReturnType<typeof setTimeout> };
 
 /** Remount per conversation; cleanup invalidates every pending microphone/recognition operation. */
-export function SpeechInput({ disabled, onText }: { disabled: boolean; onText: (text: string) => void }) {
+export function SpeechInput({ disabled, onText, onStart }: { disabled: boolean; onText: (text: string) => void; onStart?: () => void }) {
   const [roster, setRoster] = useState<Roster | null>(null);
   const [selected, setSelected] = useState("");
   const [phase, setPhase] = useState<"idle" | "starting" | "recording" | "transcribing">("idle");
@@ -44,6 +44,7 @@ export function SpeechInput({ disabled, onText }: { disabled: boolean; onText: (
   function cancel() { dispose(active.current); active.current = null; setPhase("idle"); }
   async function start() {
     if (!provider || !provider.available || blocked.current || active.current) return;
+    onStart?.();
     const operation: Recording = { controller: new AbortController() }; active.current = operation;
     const valid = () => active.current === operation && !operation.controller.signal.aborted && !blocked.current;
     setPhase("starting"); setError("");

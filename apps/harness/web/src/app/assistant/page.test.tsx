@@ -12,7 +12,7 @@ vi.mock("@hosty-sdk/app/ui/react", () => ({ useHostyUi: () => ui }));
 
 vi.mock("@/lib/assistant-api", async original => ({
   ...await original<typeof api>(),
-  getHealth: vi.fn(), listSessions: vi.fn(), getSession: vi.fn(), createSession: vi.fn(), deleteSession: vi.fn(),
+  getSuggestionPreference: vi.fn(), setSuggestionPreference: vi.fn(), getHealth: vi.fn(), listSessions: vi.fn(), getSession: vi.fn(), createSession: vi.fn(), deleteSession: vi.fn(),
   listAppNames: vi.fn(), listContextApps: vi.fn(), setSessionApps: vi.fn(), postMessage: vi.fn(), stopSession: vi.fn(), streamEvents: vi.fn(), setSessionAutonomy: vi.fn(), listAgentConnections: vi.fn(), getSessionModels: vi.fn(), renameSession: vi.fn(),
 }));
 vi.mock("@/lib/profiles-api", () => ({ listProfiles: vi.fn(), selectSessionProfile: vi.fn() }));
@@ -36,6 +36,7 @@ beforeEach(() => {
   localStorage.clear();
   window.history.replaceState({}, "", "/assistant");
   record = { id: "session-one", title: "Conversation", status: "idle", createdAt: "" };
+  vi.mocked(api.getSuggestionPreference).mockResolvedValue({ enabled: false, revision: 0 });
   vi.mocked(api.getHealth).mockResolvedValue({ name: "fake", available: true });
   vi.mocked(api.listSessions).mockResolvedValue([record]);
   vi.mocked(api.getSession).mockImplementation(async () => ({ ...record }));
@@ -889,4 +890,40 @@ it("keeps admission locks when a delayed profile save arrives before the status 
   expect(button("Agent profile")?.textContent).toBe("Reviewer");
   expect(button("Agent profile")?.disabled).toBe(true);
   expect(container.querySelector<HTMLButtonElement>('[aria-label="Chat provider"] button')?.disabled).toBe(true);
+});
+
+const suggestionEvent = (extra: Partial<api.AssistantEvent> = {}): api.AssistantEvent => ({ type: "session_suggestion", seq: -2, ts: "", epoch: "server1", revision: 2,
+  sessionId: "session-one", userId: "owner", attemptId: "attempt1", state: "available", text: "Review @app literally", expiresAt: Date.now() + 60_000, ...extra });
+const enableSuggestions = () => { record.createdBy = "owner"; vi.mocked(api.getSuggestionPreference).mockResolvedValue({ enabled: true, revision: 0 }); };
+it("accepts a suggestion as plain editable text with Tab, supports undo and never sends automatically", async () => {
+  enableSuggestions(); await render(); await act(async () => emit(suggestionEvent()));
+  expect(container.textContent).toContain("Use suggestion"); expect(input().value).toBe("");
+  await act(async () => input().dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true })));
+  expect(input().value).toBe("");
+  await act(async () => input().dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true })));
+  expect(input().value).toBe("Review @app literally"); expect(api.postMessage).not.toHaveBeenCalled(); expect(api.setSessionApps).not.toHaveBeenCalled();
+  await act(async () => input().dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true, cancelable: true })));
+  expect(input().value).toBe(""); expect(container.textContent).not.toContain("Use suggestion");
+  await act(async () => emit(suggestionEvent({ revision: 3 })));
+  expect(container.textContent).not.toContain("Use suggestion");
+});
+it.each(["typing", "escape", "composition"])("%s wins over a suggestion and prevents resurrection after reconnect", async action => {
+  enableSuggestions(); await render(); await act(async () => emit(suggestionEvent()));
+  if (action === "typing") { await type("My draft"); await type(""); }
+  if (action === "escape") await act(async () => input().dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
+  if (action === "composition") await act(async () => input().dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true })));
+  await act(async () => { emit({ type: "user_message", seq: 1, ts: "", text: "replayed" }); emit(suggestionEvent({ revision: 3 })); });
+  expect(container.textContent).not.toContain("Use suggestion"); expect(api.postMessage).not.toHaveBeenCalled();
+});
+it("refuses foreign, expired and out-of-order projections and keeps literal text out of messages", async () => {
+  enableSuggestions(); await render();
+  await act(async () => emit(suggestionEvent({ userId: "another-user" })));
+  expect(container.textContent).not.toContain("Use suggestion");
+  await act(async () => emit(suggestionEvent({ revision: 3, expiresAt: Date.now() - 1 })));
+  expect(container.textContent).not.toContain("Use suggestion");
+  await act(async () => emit(suggestionEvent({ revision: 4, text: "<script>test</script>" })));
+  expect(container.textContent).toContain("<script>test</script>"); expect(container.querySelector("script")).toBeNull();
+  await act(async () => emit(suggestionEvent({ revision: 2, text: "stale" })));
+  expect(container.textContent).not.toContain("stale");
+  expect(container.querySelector('[aria-label="Conversation messages"]')?.textContent ?? "").not.toContain("<script>");
 });

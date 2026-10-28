@@ -87,7 +87,9 @@ it("correlates concurrent pending decisions and replays only acknowledged contro
   f.options()!.onEvent({ type: "approval_request", approvalId: "first", toolName: "write", input: {} });
   f.options()!.onEvent({ type: "approval_request", approvalId: "second", toolName: "write", input: {} });
   await expect.poll(async () => (await f.journal.load("decisions")).receipt.pending?.length).toBe(2);
-  const current = (await f.journal.load("decisions")).receipt;
+  // The second append exposes pending=2 before its event finishes updating the receipt revision.
+  // Read behind both queued handlers so the decision uses the fully committed revision.
+  const current = await f.journal.exclusive(async () => (await f.journal.load("decisions")).receipt);
   const input = { kind: "approval" as const, id: "first", decision: "allow" as const, controlId: "answer-1", eventId: current.pending![0]!.sequence, expectedRevision: current.revision };
   const accepted = await f.engine.respond("decisions", input);
   expect(accepted.state).toBe("awaiting_input"); expect(accepted.pending).toHaveLength(1);

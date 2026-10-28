@@ -317,6 +317,13 @@ async function route(
     return;
   }
 
+  if (url.pathname === "/api/preferences/prompt-suggestions" && (method === "GET" || method === "PUT")) {
+    if (actor.via !== "app-session") throw new AppContextError(403, "app_session_required", "Open Harness through Core to manage your preferences.");
+    response.setHeader("Cache-Control", "no-store");
+    sendJson(response, 200, method === "GET" ? await manager.suggestionPreference(actor.userId)
+      : await manager.setSuggestionPreference(actor.userId, await readJson(request))); return;
+  }
+
   if (method === "POST" && url.pathname === "/api/event-stream-tickets") {
     if (actor.via === "provider-token") throw new AppContextError(403, "admin_session_required", "Open Harness through Core to read events.");
     response.setHeader("Cache-Control", "no-store");
@@ -869,7 +876,7 @@ async function route(
       // The presented token seeds the session's delegation chain; see SessionManager.postMessage.
       const receipt = await manager.postMessage(sessionId, body.text, await delegationCredential(request, false), attachments, { selectionRevision: body.selectionRevision, expectedRevision: body.appContextRevision, withoutDetails: body.withoutAppDetails === true,
         workspaceCredential: actor.via === "app-session" ? readAppCredential(request) : undefined,
-        clientRequestId: body.clientRequestId, actorUserId: actor.userId });
+        clientRequestId: body.clientRequestId, actorUserId: actor.userId, promptSuggestions: body.promptSuggestions === true });
       response.setHeader("Cache-Control", "no-store");
       sendJson(response, 202, { accepted: true, ...receipt });
       return;

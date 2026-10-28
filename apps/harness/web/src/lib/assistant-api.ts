@@ -26,6 +26,7 @@ export type AssistantSession = {
   agentProfile?: import("../../../src/profiles/types").AgentProfile | null;
   profileLocked?: boolean;
   taskExecutionId?: string;
+  workspaceAssociation?: { id: string; revision: number } | null;
   executionSelection?: { model: string | null; reasoningEffort: string | null };
   selectionRevision?: number;
   appCreations?: { input: Record<string, unknown>; state: "pending" | "observed" | "rejected"; prompt?: string }[];
@@ -145,12 +146,19 @@ function readMessageReceipt(value: unknown, requestId: string): MessageReceipt {
 export async function getMessageReceipt(sessionId: string, requestId: string): Promise<MessageReceipt> {
   return readMessageReceipt(await (await call(`/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(requestId)}`, { cache: "no-store" })).json(), requestId);
 }
-export async function postMessage(sessionId: string, text: string, attachments: string[] = [], appContextRevision = 0, withoutAppDetails = false, selectionRevision = 0, clientRequestId?: string): Promise<MessageReceipt | void> {
+export async function postMessage(sessionId: string, text: string, attachments: string[] = [], appContextRevision = 0, withoutAppDetails = false, selectionRevision = 0, clientRequestId?: string, promptSuggestions?: boolean): Promise<MessageReceipt | void> {
   const response = await call(`/sessions/${encodeURIComponent(sessionId)}/messages`, {
     method: "POST",
-    body: JSON.stringify({ text, attachments, appContextRevision, withoutAppDetails, selectionRevision, ...(clientRequestId ? { clientRequestId } : {}) }),
+    body: JSON.stringify({ text, attachments, appContextRevision, withoutAppDetails, selectionRevision, ...(promptSuggestions === true ? { promptSuggestions: true } : {}), ...(clientRequestId ? { clientRequestId } : {}) }),
   });
   if (clientRequestId) return readMessageReceipt(await response.json(), clientRequestId);
+}
+
+export async function getSuggestionPreference(): Promise<{ enabled: boolean; revision: number }> {
+  return (await call("/preferences/prompt-suggestions", { cache: "no-store" })).json();
+}
+export async function setSuggestionPreference(enabled: boolean, revision: number): Promise<{ enabled: boolean; revision: number }> {
+  return (await call("/preferences/prompt-suggestions", { method: "PUT", body: JSON.stringify({ enabled, revision }) })).json();
 }
 
 export type StoredAttachment = { name: string; size: number };
