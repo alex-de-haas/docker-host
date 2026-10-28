@@ -1,5 +1,7 @@
 "use client";
 
+import { AppMetricsPanel } from "../resources/resource-usage";
+
 import { AppPermissions } from "./app-permissions";
 import { ConsoleLogsPanel } from "./app-console-logs";
 import { AppUpdatesPanel } from "./app-updates-panel";
@@ -21,7 +23,7 @@ import { Field, FieldLabel } from "@/components/ui/field";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { AppLaunchSummary } from "../pages/app-launch-summary";
+import { AppLaunchSummary, AppServicesPanel } from "../pages/app-launch-summary";
 import { AppNetworkSummary } from "../pages/app-network-summary";
 import Link from "next/link";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -314,6 +316,8 @@ function BackupsPanel({
 const SETTINGS_TABS: { id: SettingsTab; label: string }[] = [
   { id: "app", label: "Launch" },
   { id: "logs", label: "Logs" },
+  { id: "services", label: "Services" },
+  { id: "metrics", label: "Metrics" },
   { id: "parameters", label: "Parameters" },
   { id: "mounts", label: "Folders" },
   { id: "publicOrigins", label: "Network" },
@@ -374,6 +378,8 @@ function SettingsDialog({
         return app.capabilities.includes("logs");
       case "backups":
         return !!backups;
+      case "services":
+      case "metrics":
       case "parameters":
       case "app":
         return true;
@@ -426,6 +432,8 @@ function SettingsDialog({
         </TabsList></div>
       )}
       <TabsContent value={active} className="flex min-h-0 flex-1 flex-col gap-4">
+      {active === "services" && <AppServicesPanel key={app.id} app={app} coreOrigin={coreOrigin} serviceRevision={serviceRevision} />}
+      {active === "metrics" && <AppMetricsPanel key={app.id} app={app} coreOrigin={coreOrigin} />}
       {active === "logs" && app.capabilities.includes("logs") && <ConsoleLogsPanel key={app.id} app={app} coreOrigin={coreOrigin} />}
       {canManageApps && <div className={cn("min-h-0 overflow-y-auto", active !== "permissions" && "hidden")}><AppPermissions key={app.id} app={app} active={active === "permissions"} /></div>}
       {backups && <div className={cn("flex min-h-0 flex-1 flex-col", active !== "backups" && "hidden")}>{backups}</div>}
@@ -439,9 +447,7 @@ function SettingsDialog({
           canManageApps={canManageApps}
           onConfigure={onConfigure}
           onRevealSetting={onRevealSetting}
-          coreOrigin={coreOrigin}
           launchVisible={active === "app"}
-          serviceRevision={serviceRevision}
         />
       </div>
       {hasMounts && (
@@ -501,14 +507,10 @@ function SettingsForm({
   canManageApps,
   onConfigure,
   onRevealSetting,
-  coreOrigin,
   launchVisible,
-  serviceRevision,
 }: {
   app: CoreApp;
-  coreOrigin: string;
   launchVisible: boolean;
-  serviceRevision?: number;
   section: "app" | "parameters" | "publicOrigins";
   busyAction: string | null;
   canManageApps: boolean;
@@ -582,7 +584,7 @@ function SettingsForm({
                 <div className="grid gap-3 border-b px-4 py-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]"><div><p className="text-sm font-medium">Start with host</p><p className="mt-1 text-xs text-muted-foreground">The same startup preference as the Dashboard.</p></div><CheckboxRow label="Start at Core startup" checked={autostartDraft} disabled={!canManageApps} onChange={setAutostartDraft} /></div>
                 <div className="grid gap-3 px-4 py-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]"><p className="text-sm font-medium">Runtime</p><div className="min-w-0 space-y-2"><Badge variant="outline">{app.selectedRuntime || "Not reported"}</Badge><p className="text-xs text-muted-foreground">Runtime and source can be changed from this app’s More menu on the Dashboard.</p><Button asChild variant="outline" size="sm"><Link href="/dashboard">Open Dashboard</Link></Button></div></div>
               </section>
-              {launchVisible && <AppLaunchSummary app={app} coreOrigin={coreOrigin} serviceRevision={serviceRevision} />}
+              {launchVisible && <AppLaunchSummary app={app} />}
             </>}
             {section === "parameters" && (appSettings.length > 0 ? (
               <div className="divide-y overflow-hidden rounded-xl border bg-card [&>div]:px-4 [&>div]:py-4">

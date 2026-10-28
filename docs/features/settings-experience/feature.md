@@ -1,6 +1,6 @@
 ---
 created: 2026-10-20
-updated: 2026-10-26
+updated: 2026-10-28
 summary: Shell unifies personal, host and application settings; Core confirms protected changes while Harness owns invocation preferences and skill selections.
 components: [apps/core, apps/shell, apps/harness, apps/marketplace]
 ---
@@ -45,7 +45,8 @@ Former `/settings?tab=manage:<app-id>&section=<section>` bookmarks migrate to th
 section on the canonical page. Dashboard app-row activation opens this view, replacing the former
 More > Manage application entry and runtime app service expander. Row actions, menus and source/version/resource disclosures
 retain their independent behavior. Core also has no Dashboard expander or inline detail panel.
-Applicable tabs expose Launch, Logs, Parameters, Folders, Network, Permissions, Updates and Backups.
+Applicable tabs expose Launch, Logs, Services, Metrics, Parameters, Folders, Network, Permissions,
+Updates and Backups.
 Logs follows Launch when the app declares the logs capability.
 Existing section IDs remain valid (`app`, `publicOrigins`, `mounts`, `source`); `parameters` addresses
 the typed manifest parameters, including secret replacement controls. Launch saves autostart
@@ -78,18 +79,22 @@ it does not change the active runtime and does not stop a running application.
 
 Settings uses line tabs and label/value/note rows; narrow forms stack their fields without changing
 store ownership. Manage keeps its mounted section forms across tab changes. Launch composes the
-existing autostart form, declared dependency readiness and a union of runtime, health, artifact-lock
-and cached update service inventory, including image-only workers. Service details retain full
-health/runtime messages, start/restart observations, locked/running/candidate image references and
+existing autostart form, runtime information and declared dependency readiness. Services owns the
+union of runtime, health, artifact-lock and cached update service inventory, including image-only
+workers. Service details retain full health/runtime messages, start/restart observations, locked/running/candidate image references and
 drift or matched-revision evidence. Missing observations stay Unknown rather than inheriting the
 app's runtime state; missing candidate/registry information is explicit.
 
-Launch reads detailed health and cached update status on entry, explicit Refresh services and
+Services reads detailed health and cached update status on entry, explicit Refresh services and
 relevant runtime/source/revision changes. These reads do not refresh the registry or poll repeatedly.
-Each read keeps its own visible error, and exit or identity changes abort stale results. Resources
-subscribe only while Launch needs observed active-service readings; stopped/exited/unknown services
-show none. CPU uses the existing one-logical-core convention. General app problems and the readiness
-logs action remain above the Manage tabs. Endpoint editing remains solely in Network.
+Each read keeps its own visible error, and exit or identity changes abort stale results. Metrics
+shows shared Core API activity followed by nested service tabs, each selecting that service's
+CPU/RAM history, including workers without endpoints. Only one service panel is shown at a time;
+a single-service app shows its panel directly. Its shared resource subscription exists only while Metrics is selected. Inactive
+or stale readings display a dash; retained charts are explicitly historical. CPU uses the existing
+one-logical-core convention. Launch and Services contain no resource displays or subscriptions.
+Both new sections have stable `services` and `metrics` deep links and preserve configuration drafts.
+General app problems and the readiness logs action remain above the Manage tabs. Endpoint editing remains solely in Network.
 
 Folders separates primary app data from declared host-folder slots and retains the authorized
 bindings through ReUI selects. Core does not project the primary-data path or size here; size is

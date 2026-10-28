@@ -188,7 +188,7 @@ test("grouped settings URLs keep personal credentials accessible without opening
 
 
 test("app details have a dedicated canonical route with every supported section", () => {
-  for (const section of ["app", "parameters", "permissions", "publicOrigins", "mounts", "source", "backups", "logs"]) {
+  for (const section of ["app", "parameters", "permissions", "publicOrigins", "mounts", "source", "backups", "logs", "services", "metrics"]) {
     const url = new URL(getManageAppHref("com.haas.demo-app", section), "http://x");
     assert.equal(url.pathname, "/apps/com.haas.demo-app");
     assert.equal(url.searchParams.get("section"), section);
@@ -202,7 +202,7 @@ test("app details have a dedicated canonical route with every supported section"
 });
 
 test("old management bookmarks render app details immediately and preserve their section", () => {
-  for (const section of ["app", "parameters", "permissions", "publicOrigins", "mounts", "source", "backups", "logs"]) {
+  for (const section of ["app", "parameters", "permissions", "publicOrigins", "mounts", "source", "backups", "logs", "services", "metrics"]) {
     const search = params(`tab=manage%3Acom.haas.demo-app&section=${section}`);
     const legacy = readShellRoute("/settings", search);
     assert.equal(legacy.view, "dashboard");

@@ -696,7 +696,7 @@ export type AppAction = "start" | "stop" | "restart" | "backup" | "autostart";
 export type DetailView = "backups" | "settings" | "update" | "remove" | "logs";
 
 // Tabs inside the consolidated Settings dialog. Hidden when the app has no matching data.
-export type SettingsTab = "app" | "parameters" | "permissions" | "publicOrigins" | "mounts" | "source" | "backups" | "logs";
+export type SettingsTab = "app" | "parameters" | "permissions" | "publicOrigins" | "mounts" | "source" | "backups" | "logs" | "services" | "metrics";
 // Home is a neutral entry: administrators resolve to Dashboard; ordinary users open apps from
 // navigation. Legacy catalog URLs no longer render a second app list.
 export type ShellView =
