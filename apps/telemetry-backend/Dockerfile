@@ -8,9 +8,12 @@ WORKDIR /repo
 # Restore against just the project + shared build props for a cacheable layer.
 COPY global.json Directory.Build.props ./
 COPY apps/telemetry-backend/src/Haas.Hosty.TelemetryBackend/Haas.Hosty.TelemetryBackend.csproj apps/telemetry-backend/src/Haas.Hosty.TelemetryBackend/
+COPY packages/app-sdk-dotnet/HostySdk.App/HostySdk.App.csproj packages/app-sdk-dotnet/HostySdk.App/
 RUN dotnet restore apps/telemetry-backend/src/Haas.Hosty.TelemetryBackend/Haas.Hosty.TelemetryBackend.csproj
 
 COPY apps/telemetry-backend apps/telemetry-backend
+COPY packages/app-sdk-dotnet/HostySdk.App packages/app-sdk-dotnet/HostySdk.App
+COPY apps/core/src/Haas.Hosty.Core/SharedTaskContract.cs apps/core/src/Haas.Hosty.Core/SharedTaskContract.cs
 RUN dotnet publish apps/telemetry-backend/src/Haas.Hosty.TelemetryBackend/Haas.Hosty.TelemetryBackend.csproj \
     -c Release -o /app --no-restore
 

@@ -1,3 +1,4 @@
+using HostySdk.App;
 using Haas.Hosty.TelemetryBackend;
 using Haas.Hosty.TelemetryBackend.Query;
 
@@ -6,10 +7,9 @@ using Haas.Hosty.TelemetryBackend.Query;
 // mirrors the shapes Core used to serve (appId-keyed; Core's read proxy adds display names).
 //
 // SECURITY (docs/features/telemetry-mcp/feature.md). Reading is authenticated: every route below
-// requires a token Core signed — an app's own identity, or a user's delegated token addressed to this
-// app — verified locally with the public key Core injects. The administrator requirement is inherited
-// rather than re-checked here: telemetry is a system app, so Core will not mint a delegated token for
-// it to anyone who is not one.
+// accepts the app's own identity or a legacy delegated token verified with Core's public key.
+// The MCP route separately validates scoped and assistant MCP credentials online through the SDK;
+// those credentials never grant access to the ordinary query API.
 //
 // Writing is deliberately open to any installed app, and is confined by the network rather than by a
 // credential: the OTLP port binds loopback and containers reach the collector over hosty-telemetry-net,
@@ -26,6 +26,8 @@ builder.WebHost.ConfigureKestrel(kestrel =>
         kestrel.ListenAnyIP(options.QueryPort);
 });
 builder.Services.AddSingleton(options);
+builder.Services.AddHostyScopedTokens(HostyAppOptions.FromConfiguration(builder.Configuration, "hosty.telemetry"));
+builder.Services.AddSingleton<TelemetryMcpAuth>();
 builder.Services.AddSingleton<SqliteTelemetryStore>();
 builder.Services.AddSingleton<TelemetryQueryService>();
 builder.Services.AddSingleton(new TelemetryCallerAuth(
@@ -43,7 +45,7 @@ app.Services.GetRequiredService<SqliteTelemetryStore>();
 // dead rather than look closed, and Core polls this to decide whether the app is up.
 app.MapGet("/healthz", () => Results.Ok(new HealthResponse("ok")));
 
-// One gate over everything else. Applied as a filter rather than repeated per route so a route added
+// The ordinary query API gate. Applied as a filter rather than repeated per route so a route added
 // later is closed by default — the failure of the per-route style is the endpoint someone forgets.
 var read = app.MapGroup("/api").AddEndpointFilter(async (context, next) =>
 {
@@ -85,11 +87,14 @@ read.MapGet("/observability/traces", (int? range, int? limit, string? apps, stri
 read.MapGet("/observability/traces/{traceId}", (string traceId, TelemetryQueryService query)
     => Results.Ok(query.GetTrace(traceId)));
 
-// The app-owned MCP interface, inside the same gate as every other read.
-read.MapPost("/mcp", async (HttpRequest request, TelemetryQueryService query) =>
+// MCP-only credentials are deliberately accepted on this route, outside the ordinary API gate.
+app.MapPost("/api/mcp", async (HttpRequest request, TelemetryQueryService query, TelemetryMcpAuth auth) =>
 {
-    var body = await System.Text.Json.Nodes.JsonNode.ParseAsync(request.Body);
-    return TelemetryMcpEndpoint.Handle(body, query);
+    var body = await System.Text.Json.Nodes.JsonNode.ParseAsync(request.Body, cancellationToken: request.HttpContext.RequestAborted);
+    var tool = body?["method"]?.GetValue<string>() == "tools/call"
+        ? body?["params"]?["name"]?.GetValue<string>() : null;
+    var refusal = await auth.AuthorizeAsync(request.Headers.Authorization.ToString(), tool, request.HttpContext.RequestAborted);
+    return refusal ?? TelemetryMcpEndpoint.Handle(body, query);
 });
 
 app.Run();

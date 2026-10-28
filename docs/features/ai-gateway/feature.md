@@ -1,6 +1,6 @@
 ---
 created: 2026-08-09
-updated: 2026-10-27
+updated: 2026-10-28
 summary: Hosty Harness, the optional administrator assistant app hosting operator chat sessions on a host-resident agent harness.
 components: [apps/harness, apps/shell]
 ---
@@ -256,6 +256,10 @@ uses `bypassPermissions` with explicit SDK opt-in; Normal uses the behavior belo
   and the raw block would render the same options a second time as JSON.
 
 ### Codex
+
+- A failed MCP startup produces a notice while the other tools remain usable. Within a native
+  process, repeated reports of the same failure for the same server produce one notice. Recovery
+  clears that state; a changed cause or a later failure after recovery is reported again.
 
 - Drives `codex app-server` over stdio JSON-RPC. Approvals arrive as *blocking server→client
   requests* (`item/commandExecution/requestApproval`, `item/fileChange/requestApproval`) and the
