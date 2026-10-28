@@ -1,11 +1,16 @@
 ---
 created: 2026-10-16
-updated: 2026-10-27
+updated: 2026-10-28
 summary: Harness combines conversation navigation, multi-repository workspace details, sandbox previews and verified lifecycle actions.
 components: [apps/harness, apps/core, apps/shell, packages/app-sdk]
 ---
 
 # Harness Development UI
+
+Standalone Harness uses the SDK page navigation from its manifest, exposing Harness and Tasks.
+Wide windows show the page sidebar; narrow windows use the Page navigation drawer. Embedded
+and native hosts control navigation visibility through the SDK chrome contract. The conversation
+and workspace list remains available independently of page navigation.
 
 Workspace inventory and source details use [Core observation events](../workspace-event-observation/feature.md).
 The Source workspaces panel shares one authenticated event subscription per document. Harness
@@ -797,6 +802,9 @@ refresh still waits for that selected conversation before confirming success; Co
 privileged command independently. Background scheduling stops during manager shutdown.
 
 ## Testing Expectations
+
+- Verify standalone navigation between Harness and Tasks at wide and narrow widths, active-page
+  selection and host-controlled navigation hiding without losing conversation/workspace controls.
 
 - Cover expired stream admission followed by verified same-actor restoration, durable cursor replay,
   fast recovery races, terminal denial and listener/timer cleanup.

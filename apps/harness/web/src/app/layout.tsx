@@ -45,7 +45,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         */}
         <HostLaunchBridge />
         <HostThemeBridge />
-        <HostyOverlay navigation={{ renderer: "custom" }}>{children}</HostyOverlay>
+        <HostyOverlay>{children}</HostyOverlay>
       </body>
     </html>
   );
