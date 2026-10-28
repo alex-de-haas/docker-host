@@ -43,11 +43,15 @@ function button(parent, title, action) {
   node.onclick = () => run(action, node); return node;
 }
 function input(parent, label, value = '', type = 'text') {
-  const wrapper = element('label', label, parent);
+  const wrapper = element('label', undefined, parent);
+  wrapper.className = type === 'checkbox' ? 'account-choice' : 'account-field';
+  element('span', label, wrapper);
   const node = element('input', undefined, wrapper); node.type = type; node.value = value; return node;
 }
 function select(parent, label, choices) {
-  const wrapper = element('label', label, parent);
+  const wrapper = element('label', undefined, parent);
+  wrapper.className = 'account-field';
+  element('span', label, wrapper);
   const node = element('select', undefined, wrapper);
   for (const [value, label] of choices) { const option = element('option', label, node); option.value = value; }
   return node;
@@ -57,7 +61,13 @@ function form(parent, title, submit) {
   node.onsubmit = event => { event.preventDefault(); void run(() => submit(node), node.querySelector('[type=submit]')); };
   return node;
 }
-function submit(parent, label) { const b = element('button', label, parent); b.type = 'submit'; b.className = 'primary'; }
+function actions(parent) { const node = element('div', undefined, parent); node.className = 'actions'; return node; }
+function submit(parent, label) { const b = element('button', label, actions(parent)); b.type = 'submit'; b.className = 'primary'; }
+function permissionGroup(parent, title) {
+  const node = element('fieldset', undefined, parent); node.className = 'account-choices';
+  element('legend', title, node); return node;
+}
+function fields(parent) { const node = element('div', undefined, parent); node.className = 'account-fields'; return node; }
 function section(title) { const node = element('section'); element('h2', title, node); return node; }
 function row(parent, title, description) {
   const node = element('div', undefined, parent); node.className = 'row';
@@ -80,14 +90,14 @@ async function tokensPage() {
     const result = section('Copy your token now');
     element('p', 'This value is shown only once. Store it securely.', result);
     element('pre', issued.token, result).className = 'token';
-    button(result, 'Hide token', () => result.remove()); result.scrollIntoView();
+    button(actions(result), 'Hide token', () => result.remove()); result.scrollIntoView();
   });
   const label = input(create, 'Token label'); label.required = true;
   const choices = [['', 'Full host role — all operations available to your user']];
   if (session.user?.role === 'host.admin') choices.push(['hosty:core', 'Core MCP']);
   for (const app of roster.apps.filter(a => a.interfaces?.mcp?.length)) choices.push([app.id, `${app.displayName} MCP`]);
   const access = select(create, 'Access', choices);
-  const scopes = element('div', undefined, create);
+  const scopes = permissionGroup(create, 'Core MCP permissions');
   element('p', 'Core MCP always includes read access. Select additional operations explicitly.', scopes);
   const scopeInputs = [['mcp:lifecycle', 'Start, stop and restart apps'], ['mcp:update', 'Update apps and Core'], ['mcp:core-restart', 'Restart Core'], ['mcp:workspaces', 'Create, read and manage your external development workspaces']]
     .map(([scope, label]) => input(scopes, label, scope, 'checkbox'));
@@ -123,12 +133,12 @@ async function backgroundSection(apps) {
   const consumer = select(create, 'App performing the work', apps.map(a => [a.id, a.displayName]));
   const kind = select(create, 'Access type', [['core', 'Manage a selected app'], ['provider', 'Use a selected provider'], ['mcp', 'Call selected MCP tools']]);
   const target = select(create, 'Target', [...apps.map(a => [a.id, a.displayName]), ['hosty:core', 'Core MCP (MCP access only)']]);
-  const coreFields = element('div', undefined, create);
+  const coreFields = permissionGroup(create, 'Allowed operations');
   const actions = ['health', 'update-status', 'update-plan', 'update', 'start', 'stop', 'restart'].map(a => input(coreFields, a, a, 'checkbox'));
-  const providerFields = element('div', undefined, create);
+  const providerFields = fields(create);
   const provider = select(providerFields, 'Provider', [['assistant', 'Assistant'], ['speech-to-text', 'Speech to text']]);
   const key = input(providerFields, 'Interface key', 'default');
-  const mcpFields = element('div', undefined, create);
+  const mcpFields = fields(create);
   const tools = input(mcpFields, 'Exact tool names, separated by commas');
   element('p', 'Each selected tool may use its full argument domain at this target. This does not restrict file paths or workspaces.', mcpFields);
   const expiry = input(create, 'Optional expiry — leave empty for until revoked', '', 'datetime-local');
@@ -144,9 +154,10 @@ async function consentPage() {
   const panel = section(view.clientName);
   element('p', `Acting as ${view.actingUser}. Access to ${view.audienceDisplayName} (${view.audience}).`, panel);
   element('p', `This request expires in ${view.expiresInSeconds} seconds.`, panel);
+  const permissions = permissionGroup(panel, 'Requested permissions');
   const scopes = view.scopes.map(scope => {
     const labels = { 'mcp:read': 'Read MCP information', 'mcp:lifecycle': 'Start, stop and restart applications', 'mcp:update': 'Update applications and Core', 'mcp:core-restart': 'Restart Core', 'mcp:workspaces': 'Create, read and manage your external development workspaces (source files and Git operations)' };
-    const node = input(panel, labels[scope] || scope, scope, 'checkbox'); node.checked = scope === 'mcp:read';
+    const node = input(permissions, labels[scope] || scope, scope, 'checkbox'); node.checked = scope === 'mcp:read';
     if (scope === 'mcp:read') node.disabled = true; return node;
   });
   async function decide(decision) {
@@ -156,8 +167,9 @@ async function consentPage() {
     // The destination comes from Core's validated, parked OAuth request, never the page query.
     location.assign(result.redirectTo);
   }
-  button(panel, 'Deny', () => decide('deny'));
-  button(panel, 'Allow selected access', () => decide('approve')).className = 'primary';
+  const controls = actions(panel);
+  button(controls, 'Deny', () => decide('deny'));
+  button(controls, 'Allow selected access', () => decide('approve')).className = 'primary';
 }
 void run(location.pathname === '/oauth/consent' ? consentPage : location.pathname === '/account/device' ? devicePage
   : location.pathname === '/account/background' ? async () => { const roster = await read('/api/apps'); content.replaceChildren(); await backgroundSection(roster.apps); } : tokensPage);

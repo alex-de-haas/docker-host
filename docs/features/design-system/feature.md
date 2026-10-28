@@ -1,8 +1,8 @@
 ---
 created: 2026-10-21
-updated: 2026-10-26
+updated: 2026-10-28
 summary: Shared web tokens, local fonts and scoped SDK chrome, with Shell, Harness, Marketplace and Telemetry adoption and an in-place credential grid.
-components: [apps/shell, apps/harness, apps/marketplace, apps/documents, apps/telemetry, apps/telemetry-ui, apps/whisper, apps/demo-app, packages/app-sdk, shared/web]
+components: [apps/core, apps/shell, apps/harness, apps/marketplace, apps/documents, apps/telemetry, apps/telemetry-ui, apps/whisper, apps/demo-app, packages/app-sdk, shared/web]
 ---
 
 # Design System
@@ -511,7 +511,18 @@ failure still clears protected content. Closing details restores the opener or s
 Catalog settings loads with explicit retry, saves against its observed source and retains the
 unsaved source on rejection. These presentation changes add no install or permission authority.
 
+Core account forms for access tokens, device connection, background grants and OAuth consent
+use the shared Core typography, theme tokens and controls. Their form styles are embedded with
+the page under the existing inline-style policy. Field labels stack above full-width inputs;
+permission labels wrap beside consistently aligned checkboxes inside named groups. Actions occupy
+the shared footer and stack on narrow screens. Hidden permission groups remain hidden, and issued
+tokens wrap inside a selectable monospace block. Error and success messages use Core status colors.
+
 ## Testing Expectations
+
+- Check token, device, background-grant and OAuth account forms in light/dark themes at desktop
+  and narrow widths, including long labels/tokens, optional permission groups, errors and outcomes.
+  Confirm stylesheet delivery under the page CSP, keyboard focus and unchanged permission defaults.
 
 - Cover independently delayed sandbox inventories, first-read failure/retry, malformed refreshes
   with retained rows, service loading/unavailable/empty results and shared-folder search with retained
