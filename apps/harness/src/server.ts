@@ -71,7 +71,7 @@ export function createGatewayServer(
 ): Server & { stopTaskDispatch: () => Promise<void> } {
   const tasks = new TaskService(manager);
   const handoffs = new HandoffStore(manager, settings, providers);
-  const eventStreams = new EventStreamTransport(manager);
+  const eventStreams = new EventStreamTransport(manager, Date.now, connections);
   const translations = connections && settings ? new TranslationService(connections, settings) : null;
   const recovered = handoffs.sweep().then(() => manager.recoverWorkerRuns()).then(() => manager.recoverMcpApprovals()).catch(error => {
     // A transient directory/storage failure is retried by the periodic sweep. Keep unrelated
@@ -447,6 +447,11 @@ async function route(
     else sendJson(response, 200, await manager.profiles.save(await manager.validateProfile(body.profile), body.expectedRevision, profileMatch[1]!));
     return;
   }
+  const connectionUsage = url.pathname.match(/^\/api\/connections\/([a-zA-Z0-9-]+)\/usage$/);
+  if (connections && connectionUsage && method === "GET") {
+    sendJson(response, 200, await connections.usage(connectionUsage[1]!, url.searchParams.get("refresh") === "true")); return;
+  }
+
   const connectionModels = url.pathname.match(/^\/api\/connections\/([a-zA-Z0-9-]+)\/models$/);
   if (connections && connectionModels && method === "GET") {
     sendJson(response, 200, await connections.models(connectionModels[1]!)); return;

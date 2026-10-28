@@ -284,6 +284,9 @@ builds the production API, Worker and static web application. Version consistenc
 index/links and whitespace checks pass.
 
 Harness version: **0.76.0 → 0.77.0**. Core and SDK versions are unchanged.
+Named connections expose optional quota/credit diagnostics independently of connection health.
+See [Harness Provider Usage Limits](../harness-provider-usage-limits/feature.md) for authentication
+boundaries, account invalidation and the Providers settings control.
 
 ## Testing Expectations
 

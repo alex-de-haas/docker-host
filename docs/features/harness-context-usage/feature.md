@@ -1,6 +1,6 @@
 ---
 created: 2026-10-22
-updated: 2026-10-22
+updated: 2026-10-28
 summary: Current context-window usage for Claude and Codex conversations, with durable replay and a compact composer indicator.
 components: [apps/harness]
 ---
@@ -68,6 +68,10 @@ explanation uses the shared shadcn tooltip.
 
 See [Hosty Harness](../ai-gateway/feature.md) for the conversation surface and
 [Assistant Shared Docker Runtime](../assistant-shared-docker-runtime/feature.md) for execution and recovery.
+
+
+The adjacent [Limits control](../harness-provider-usage-limits/feature.md) describes account quota
+and credits. It does not change this context meter or use billed tokens as account allowance.
 
 ## Testing Expectations
 

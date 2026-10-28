@@ -90,6 +90,10 @@ function handle(msg) {
     if ((msg.method === "turn/start" ? msg.params?.sandboxPolicy?.type : msg.params?.sandbox) !== expected ||
         msg.params?.approvalPolicy !== (autonomous ? "never" : "untrusted")) fail("incorrect explicit autonomy policy");
   }
+  if (msg.method === "account/rateLimits/read") {
+    send({ id: msg.id, result: { rateLimitsByLimitId: { codex: { limitId: "codex", primary: { usedPercent: 12, windowDurationMins: 300, resetsAt: 2000000000 }, secondary: { usedPercent: 25, windowDurationMins: 10080, resetsAt: 2000100000 } } } } });
+    return;
+  }
   if (msg.method === "account/read") {
     send({ jsonrpc: "2.0", id: msg.id, result: { account: null } });
     return;
@@ -210,6 +214,9 @@ function handle(msg) {
     if (currentTurnText === "model-selection") {
       send({ method: "item/completed", params: { item: { type: "agentMessage", id: "selection", text: JSON.stringify({ model: msg.params.model, effort: msg.params.effort, thread: msg.params.threadId }) } } });
       send({ method: "turn/completed", params: { threadId: activeThreadId, turn: { id: "selected", status: "completed" } } }); return;
+    }
+    if (currentTurnText === "provider-usage") {
+      send({ method: "account/rateLimits/updated", params: { rateLimits: { limitId: "codex", primary: { usedPercent: 40, windowDurationMins: 300 } } } });
     }
     if (currentTurnText === "context-usage") {
       send({ method: "turn/started", params: { threadId: activeThreadId, turn: { id: "current" } } });

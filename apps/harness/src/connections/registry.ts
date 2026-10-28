@@ -1,3 +1,6 @@
+import { ConnectionUsage } from "./usage.js";
+import { absentUsage, type ProviderUsage } from "../harness/provider-usage.js";
+import type { HarnessRun } from "../harness/adapter.js";
 import { constants as fsConstants } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import {
@@ -80,12 +83,17 @@ const empty = (): RegistryState => ({
 const safeId = (id: string): boolean => /^[a-zA-Z0-9-]{1,80}$/.test(id);
 
 export class AgentConnections {
+  private readonly usageCache: ConnectionUsage;
+  private readonly usageRuns = new Map<string, Set<HarnessRun>>();
+  private readonly diagnosing = new Set<string>();
+  private readonly diagnosticDone = new Map<string, Promise<void>>();
+  private readonly usageUpdates = new Set<Promise<void>>();
   private state: RegistryState | null = null;
   private active = new Map<string, number>();
   private translationActive = new Set<string>();
   private changing = new Set<string>();
   private assertInactive(id: string): void {
-    if (this.active.get(id))
+    if (this.active.get(id) || this.diagnosing.has(id))
       throw new ConnectionError(
         409,
         "provider_in_use",
@@ -103,6 +111,7 @@ export class AgentConnections {
     private readonly secrets: ConnectionSecrets,
     private readonly applicationMode?: "native" | "docker",
   ) {
+    this.usageCache = new ConnectionUsage(path.join(dataDir, "connection-usage"));
     this.syncTimer = setInterval(() => {
       void this.syncCredentials();
     }, 5000);
@@ -305,6 +314,7 @@ export class AgentConnections {
   }
   async reserve(binding: ConnectionBinding): Promise<() => void> {
     return this.serialize(async () => {
+      await this.diagnosticDone.get(binding.connectionId);
       if (this.translationActive.has(binding.connectionId))
         throw new ConnectionError(409, "provider_in_use", "This connection is translating. Retry after it finishes.");
       const connection = await this.get(binding.connectionId);
@@ -502,6 +512,7 @@ export class AgentConnections {
           connections: state.connections.filter((c) => c.id !== id),
         });
         this.syncErrors.delete(id);
+        this.usageCache.invalidate(id);
       } finally {
         this.changing.delete(id);
       }
@@ -675,13 +686,15 @@ export class AgentConnections {
         ...(connection.auth === "api-key" ? { apiKey: secret } : {}),
       });
     });
+    const usageIdentity = await this.usageKey(binding).catch(() => null);
     return {
       name: adapter.name,
       capabilities: adapter.capabilities,
       models: adapter.models ? () => adapter.models!() : undefined,
+      readUsage: adapter.readUsage ? () => adapter.readUsage!() : undefined,
       probe: () => docker && adapter.name !== "ollama" ? Promise.resolve({ available: true }) : adapter.probe(),
       start: (options) => {
-        if (this.translationActive.has(binding.connectionId))
+        if (this.translationActive.has(binding.connectionId) || this.diagnosing.has(binding.connectionId))
           throw new ConnectionError(409, "provider_in_use", "This connection is translating. Retry after it finishes.");
         const current = this.state?.connections.find(
           (c) => c.id === binding.connectionId,
@@ -710,8 +723,22 @@ export class AgentConnections {
           }
         };
         try {
-          const run = adapter.start(options);
+          const run = adapter.start({ ...options, onEvent: event => {
+            if (event.type === "provider_usage") {
+              if (!released && usageIdentity) {
+                const update = this.acceptUsage(binding, usageIdentity, event.usage);
+                this.usageUpdates.add(update); void update.finally(() => this.usageUpdates.delete(update));
+              }
+              return;
+            }
+            options.onEvent(event);
+          } });
+          const runs = this.usageRuns.get(current.id) ?? new Set<HarnessRun>();
+          runs.add(run); this.usageRuns.set(current.id, runs);
+          const removeRun = () => { runs.delete(run); if (!runs.size) this.usageRuns.delete(current.id); };
+
           return {
+            readUsage: run.readUsage ? () => run.readUsage!() : undefined,
             send: (text) => run.send(text),
             resolveApproval: (id, decision, message) =>
               run.resolveApproval(id, decision, message),
@@ -720,11 +747,11 @@ export class AgentConnections {
             setMcpServers: (servers) => run.setMcpServers(servers),
             ...(run.stopAndWait ? { stopAndWait: async () => {
               await run.stopAndWait!();
-              release();
+              removeRun(); release();
             } } : {}),
             stop: async () => {
               await run.stop();
-              release();
+              removeRun(); release();
             },
           };
         } catch (error) {
@@ -742,7 +769,7 @@ export class AgentConnections {
       if (current.revision !== binding.connectionRevision || current.kind !== binding.harnessKind)
         throw new ConnectionError(409, "translation_connection_changed", "Select the translation connection again after changing its credentials.");
       if (current.kind === "ollama") throw new ConnectionError(400, "translation_unsupported", "Select Codex or Claude for translation.");
-      if (this.active.get(current.id) || this.translationActive.has(current.id))
+      if (this.active.get(current.id) || this.translationActive.has(current.id) || this.diagnosing.has(current.id))
         throw new ConnectionError(429, "translation_busy", "This connection is in use. Stop its open chat or choose a dedicated translation connection.");
       if (this.syncErrors.has(current.id))
         throw new ConnectionError(503, "translation_unavailable", "Reconnect this account before using translation.");
@@ -871,6 +898,63 @@ export class AgentConnections {
       }
     });
   }
+  private async usageKey(binding: ConnectionBinding): Promise<string> {
+    const source = await this.get(binding.connectionId);
+    if (source.kind === "ollama") return createHash("sha256").update(JSON.stringify(binding)).digest("hex");
+    // The existing host-login fallback identifies only an email and starts another helper.
+    // Account telemetry needs file-backed stable identity while a chat owns that login.
+    if (source.auth === "host-login" && this.applicationMode !== "docker") {
+      const auth = JSON.parse(await readFile(path.join(source.hostDirectory!, "auth.json"), "utf8"));
+      if (!auth.OPENAI_API_KEY && (!auth.tokens?.account_id || !auth.tokens?.id_token)) throw new Error("Stable account identity unavailable");
+    }
+    const current = await this.binding(binding.connectionId);
+    if (JSON.stringify(current) !== JSON.stringify(binding)) throw new Error("Connection changed");
+    const connection = await this.get(binding.connectionId);
+    const secret = connection.auth === "host-login" ? null : await this.secretGet(connection.secretKey);
+    if (connection.auth !== "host-login" && !secret) throw new Error("Credential unavailable");
+    let identity = secret ?? binding.connectionIdentity;
+    if (connection.auth === "chatgpt" && secret) {
+      try {
+        const tokens = JSON.parse(secret).tokens;
+        const subject = JSON.parse(Buffer.from(tokens.id_token.split(".")[1], "base64url").toString("utf8")).sub;
+        if (typeof tokens.account_id === "string" && typeof subject === "string") identity = JSON.stringify([tokens.account_id, subject]);
+      } catch { /* An opaque authorization change conservatively invalidates the snapshot. */ }
+    }
+    return createHash("sha256").update(JSON.stringify([binding, identity])).digest("hex");
+  }
+  private async acceptUsage(binding: ConnectionBinding, identity: string, usage: ProviderUsage) {
+    try { const key = await this.usageKey(binding); if (key === identity) { await this.usageCache.cached(binding.connectionId, key); this.usageCache.accept(binding.connectionId, key, usage); } }
+    catch { /* An old process cannot publish observations for a replacement account. */ }
+  }
+  async usage(id: string, refresh = false): Promise<ProviderUsage> {
+    const connection = await this.get(id);
+    if (connection.kind === "ollama") return { ...absentUsage("not_applicable", "local"), connectionRevision: connection.revision };
+    try {
+      if (connection.auth === "host-login" && this.applicationMode !== "docker" && !await lstat(path.join(connection.hostDirectory!, "auth.json")).catch(() => null))
+        return { ...absentUsage("unsupported", "unsupported_auth"), connectionRevision: connection.revision };
+      const binding = await this.binding(id); if (!binding) return absentUsage();
+      const key = await this.usageKey(binding);
+      if (connection.auth === "api-key") return { ...absentUsage("unsupported", "unsupported_auth"), connectionRevision: binding.connectionRevision };
+      const result = await this.usageCache.read(id, key, refresh, async () => {
+        const run = [...(this.usageRuns.get(id) ?? [])].find(candidate => candidate.readUsage);
+        if (run?.readUsage) return run.readUsage();
+        if (this.active.get(id) || this.translationActive.has(id)) return absentUsage("unavailable", "busy");
+        const adapter = await this.adapter(binding);
+        let finish!: () => void;
+        const claimed = await this.serialize(async () => {
+          if (this.active.get(id) || this.translationActive.has(id) || this.diagnosing.has(id) || this.diagnosing.size >= (this.applicationMode === "docker" ? 1 : 2) || this.changing.has(id) || key !== await this.usageKey(binding)) return false;
+          this.diagnosing.add(id);
+          this.diagnosticDone.set(id, new Promise<void>(resolve => { finish = resolve; })); return true;
+        });
+        if (!claimed) return absentUsage("unavailable", "busy");
+        try { return await adapter.readUsage?.() ?? absentUsage("unsupported", "unsupported_sdk"); }
+        finally { this.diagnosing.delete(id); this.diagnosticDone.delete(id); finish(); await adapter.dispose?.(); }
+      }, async () => key === await this.usageKey(binding));
+      if (key !== await this.usageKey(binding)) return absentUsage();
+      return { ...result, connectionRevision: binding.connectionRevision };
+    } catch { this.usageCache.invalidate(id); return absentUsage("unavailable", "temporarily_unavailable"); }
+  }
+
   async fetchLogin(id: string) { return this.loginView(id); }
   private modelCatalogs = new Map<string, { expires: number; value: Promise<import("../worker/contracts.js").ModelCatalog> }>();
   async models(id: string) {
@@ -1018,7 +1102,7 @@ export class AgentConnections {
       for (const connection of (await this.load()).connections.filter(
         (c) => c.auth === "chatgpt" || c.auth === "host-login",
       )) {
-        if (this.translationActive.has(connection.id)) continue;
+        if (this.translationActive.has(connection.id) || this.diagnosing.has(connection.id)) continue;
         try {
           // Missing Core secret is revocation/reconnect, never an invitation to recreate it from cache.
           if (!(await this.secretGet(connection.secretKey))) {
@@ -1289,6 +1373,8 @@ export class AgentConnections {
   }
   async shutdown(): Promise<void> {
     clearInterval(this.syncTimer);
+    await Promise.allSettled([...this.usageUpdates]);
+    await this.usageCache.close();
     for (const login of this.logins.values()) await this.cancelLogin(login.id);
     await this.syncCredentials();
   }

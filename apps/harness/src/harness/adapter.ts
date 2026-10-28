@@ -16,6 +16,7 @@ export interface HarnessCapabilities {
   /** Native next-message predictions; account availability is determined by the native response. */
   promptSuggestions?: boolean;
   /** The harness can ask the operator a question and receive the answer back as a tool result. */
+  usage?: { snapshots: boolean; events: boolean; kinds: import("./provider-usage.js").UsageKind[] };
   questions: boolean;
   /**
    * The harness can be given app MCP servers at all. False means enabled providers reach it in no
@@ -57,6 +58,7 @@ export interface HarnessQuestion {
 export type HarnessEvent =
   | import("./prompt-suggestion.js").PromptSuggestion
   | { type: "answer_complete" }
+  | { type: "provider_usage"; usage: import("./provider-usage.js").ProviderUsage }
   | { type: "context_usage"; usage: import("./context-usage.js").ContextUsage | null }
   | { type: "execution_model"; requested: { model: string | null; reasoningEffort: string | null }; reported: { model: string | null; reasoningEffort: string | null } }
   | { type: "activity"; activity: import("./activity.js").HarnessActivity }
@@ -142,6 +144,7 @@ export interface HarnessRun {
   /** Cancel optional collection and observe confirmed completion, outside the coordinator queue. */
   finishSuggestions?(): Promise<void>;
   disableSuggestions?(): Promise<void>;
+  readUsage?(): Promise<import("./provider-usage.js").ProviderUsage>;
   send(text: string): void;
   /** Returns false when the approval id is unknown (already resolved or never issued). */
   resolveApproval(approvalId: string, decision: "allow" | "deny", message?: string): boolean | Promise<boolean>;
@@ -169,6 +172,7 @@ export interface HarnessAdapter {
   readonly capabilities: HarnessCapabilities;
   probe(): Promise<HarnessAvailability>;
   dispose?(): Promise<void>;
+  readUsage?(): Promise<import("./provider-usage.js").ProviderUsage>;
   models?(): Promise<import("../worker/contracts.js").ModelCatalog>;
   start(options: HarnessStartOptions): HarnessRun;
 }

@@ -115,6 +115,13 @@ export class CodexLogin {
       `${JSON.stringify({ method: "initialized", params: {} })}\n`,
     );
   }
+  async closeAndWait(): Promise<void> {
+    if (!this.child.pid || this.child.exitCode !== null || this.child.signalCode !== null) return;
+    const exited = new Promise<void>(resolve => this.child.once("exit", () => resolve()));
+    this.close();
+    const timer = setTimeout(() => this.child.kill("SIGKILL"), 1000);
+    try { await exited; } finally { clearTimeout(timer); }
+  }
   close(): void {
     this.child.kill("SIGTERM");
     this.fail();

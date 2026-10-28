@@ -1,5 +1,6 @@
 "use client";
 
+import { ProviderUsageIndicator } from "./provider-usage";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Dialog,
@@ -258,6 +259,7 @@ export function AgentProviders() {
                 : (connection.reason ?? "Reconnect required")}
             </p>
           </div>
+          <ProviderUsageIndicator key={connection.id + ":" + connection.revision} connectionId={connection.id} revision={connection.revision} compact={false} />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button

@@ -91,6 +91,7 @@ export async function createProviderService(options: { data: string; cache: stri
     models: id => connections.models(id),
     connection: async (operation, args) => {
       switch (operation) {
+        case "usage": return connections.usage(String(args[0]), args[1] === true);
         case "list": return connections.list();
         case "get": return connections.get(text(args[0]));
         case "binding": return connections.binding(args[0]);
