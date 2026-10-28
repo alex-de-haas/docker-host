@@ -76,6 +76,7 @@ internal static class CoreJson
 [JsonSerializable(typeof(CoreEnvironmentRecord))]
 [JsonSerializable(typeof(CoreEnvironmentView))]
 [JsonSerializable(typeof(CoreEnvironmentList))]
+[JsonSerializable(typeof(SandboxStreamSnapshot))]
 [JsonSerializable(typeof(CoreEnvironmentSetup))]
 [JsonSerializable(typeof(CoreEnvironmentSession))]
 [JsonSerializable(typeof(CoreEnvironmentApiRequest))]

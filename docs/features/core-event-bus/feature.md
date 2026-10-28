@@ -1,6 +1,6 @@
 ---
 created: 2026-07-24
-updated: 2026-10-25
+updated: 2026-10-28
 summary: One authorized SSE stream carries ephemeral domain hints, notifications and opt-in resource measurements and workspace metadata hints.
 components: [apps/core, apps/shell]
 ---
@@ -54,6 +54,7 @@ data: {"name":"app.changed","appId":"com.haas.demo-app","occurredAt":"2026-07-24
 | `apps.update-check.changed` | The fleet update sweep starts or finishes. |
 | `resources.changed` | Legacy resource refresh hint while a viewer is active. |
 | `resources.sample` | A sampler frame, delivered only to authorized subscribers requesting `topics=resources`. |
+| `sandbox.snapshot` | Complete actor-owned sandbox inventories on subscription and relevant persisted changes; opt-in `topics=sandboxes`. |
 | `workspace.changed` | An authorized workspace changes, including display-name updates; opt-in `topics=workspaces` delivery contains an empty refresh hint. |
 | `stream.ready` | Requested topic acknowledgement (`{"resources":1}`, `{"workspaces":1}`, or both) at connection start. |
 | `notification` | A notification is published for the subscriber (payload: the same view `GET /api/notifications` returns). |
@@ -86,6 +87,7 @@ open a window in which a second concurrent sweep could start.
 GET /api/events                    # Named events; live-only
 GET /api/events?topics=resources   # Also receive sequenced resource measurements
 GET /api/events?topics=workspaces  # Also receive authorized workspace metadata hints
+GET /api/events?topics=sandboxes   # Also receive actor-owned sandbox inventory snapshots
 ```
 
 One stream carries both domain events and the session's notifications, so a tab opens one connection
@@ -109,6 +111,11 @@ including role changes and direct-session expiry. Resource subscriptions own fas
 completion/disposal releases it. There is no app producer endpoint. Durable app-facing replay is a
 separate contract tracked by the
 [notifications plan](../notifications/plan.md); the current bus provides no persistence or cursor guarantees.
+
+Sandbox subscriptions additionally require administrator inventory authority, filter by the
+current user and send full state after reconnect. Store writes and removals signal the stream;
+unchanged projections do not emit duplicate frames. See [sandbox live updates](../sandbox-live-updates/feature.md)
+for capability negotiation, recovery and client polling fallback.
 
 ## Shell consumer
 

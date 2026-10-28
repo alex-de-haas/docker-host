@@ -377,3 +377,61 @@ it("retains confirmed inventory after a malformed refresh instead of reporting e
   expect(container.textContent).not.toContain("No sandboxes yet");
   expect(transport.send).not.toHaveBeenCalled();
 });
+
+class SandboxSource extends EventTarget {
+  static OPEN = 1; static CLOSED = 2; static latest: SandboxSource;
+  readyState = 0; onopen: (() => void) | null = null; onerror: (() => void) | null = null;
+  constructor() { super(); SandboxSource.latest = this; }
+  close() { this.readyState = 2; }
+  emit(name: string, data: unknown) { this.dispatchEvent(new MessageEvent(name, { data: JSON.stringify(data) })); }
+  open() { this.readyState = 1; this.onopen?.(); this.emit("stream.ready", { sandboxes: 1 }); }
+}
+it("renders external sandbox changes directly and avoids idle inventory requests", async () => {
+  vi.useFakeTimers(); vi.stubGlobal("EventSource", SandboxSource);
+  try {
+    await render();
+    const initialReads = transport.read.mock.calls.length;
+    await act(async () => { SandboxSource.latest.open(); SandboxSource.latest.emit("sandbox.snapshot", { environments: [child()], instances: [instance()] }); });
+    expect(rows()).toHaveLength(2);
+    await act(async () => vi.advanceTimersByTimeAsync(120_000));
+    expect(transport.read).toHaveBeenCalledTimes(initialReads);
+    await act(async () => SandboxSource.latest.emit("sandbox.snapshot", { environments: [child({ state: "finished" })], instances: [] }));
+    expect(rows()).toHaveLength(0); expect(transport.read).toHaveBeenCalledTimes(initialReads);
+  } finally { vi.useRealTimers(); }
+});
+it("does not let a late initial GET overwrite a newer streamed state", async () => {
+  vi.stubGlobal("EventSource", SandboxSource);
+  let resolve!: (response: Response) => void;
+  transport.read.mockImplementation((url: string) => String(url).endsWith("core-environments")
+    ? new Promise<Response>(done => { resolve = done; }) : Promise.resolve(Response.json({ instances: [] })));
+  await render();
+  await act(async () => { SandboxSource.latest.open(); SandboxSource.latest.emit("sandbox.snapshot", { environments: [child()], instances: [] }); });
+  await act(async () => resolve(Response.json({ environments: [] })));
+  expect(rows()).toHaveLength(1);
+});
+
+it("recovers a lost disposal receipt without further stream events or inventory polling", async () => {
+  vi.useFakeTimers(); vi.stubGlobal("EventSource", SandboxSource);
+  try {
+    const requestId = "d8b9c9a0-220a-41db-ae34-ccadf2f51377";
+    const key = `hosty:sandbox-operation:${origin}`;
+    sessionStorage.setItem(key, JSON.stringify({ id: instanceId, action: "dispose", requestId, expectedRevision: 7 }));
+    let receipts = 0;
+    const original = transport.read.getMockImplementation()!;
+    transport.read.mockImplementation((url: string) => {
+      if (String(url).endsWith(`/sandbox-instances/${instanceId}`)) {
+        if (++receipts === 1) return Promise.reject(new Error("Disconnected"));
+        return Promise.resolve(Response.json(instance({ state: "disposed", operations: [{ id: requestId, kind: "dispose", state: "succeeded" }] })));
+      }
+      return original(url);
+    });
+    await render();
+    await act(async () => { SandboxSource.latest.open(); SandboxSource.latest.emit("sandbox.snapshot", { environments: [], instances: [] }); });
+    expect(sessionStorage.getItem(key)).not.toBeNull();
+    await act(async () => vi.advanceTimersByTimeAsync(1000));
+    expect(sessionStorage.getItem(key)).toBeNull(); expect(receipts).toBe(2);
+    const reads = transport.read.mock.calls.length;
+    await act(async () => vi.advanceTimersByTimeAsync(60_000));
+    expect(transport.read).toHaveBeenCalledTimes(reads);
+  } finally { vi.useRealTimers(); }
+});
