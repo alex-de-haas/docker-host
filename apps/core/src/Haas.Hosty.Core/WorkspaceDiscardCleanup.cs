@@ -4,12 +4,11 @@ internal sealed partial class WorkspaceInspectionService
 {
     internal async Task RequireDiscardAccessAsync(WorkspaceDiscardJournal journal, string userId, CancellationToken ct)
     {
-        if (journal.Actor != userId) throw DevelopmentWorkspaceService.Error("forbidden", "Removal belongs to another operator.");
+        await workspaces.RequireWorkspaceUserAsync(userId, ct);
         if (journal.State == "removed") return;
         var installed = await apps.ListAppRecordsAsync(ct);
         foreach (var tree in journal.Snapshots ?? [])
         {
-            if (tree.Owner.UserId != userId) throw DevelopmentWorkspaceService.Error("forbidden", "Source belongs to another operator.");
             await RequireSourceAsync(tree, userId, installed, ct);
         }
     }

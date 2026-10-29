@@ -66,7 +66,7 @@ export function suitePlan(suite, { platform = process.platform, node = process.e
     case 'tasks':
     case 'sessions': {
       const manifest = readManifest();
-      const images = ['api', 'worker'].map(key => manifest.services.find(service => service.key === key).runtimes.docker.image);
+      const images = ['api', 'worker'].map(key => suite === 'sessions' ? `hosty-harness-${key}-acceptance:local` : manifest.services.find(service => service.key === key).runtimes.docker.image);
       return { prerequisites: [dotnet, command('git', ['--version']), pythonCheck, docker], steps: [
         build(core), build(cli),
         command('docker', ['build', '-f', 'apps/harness/Dockerfile', '-t', images[0], '.']),

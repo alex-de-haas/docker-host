@@ -1,7 +1,7 @@
 ---
 created: 2026-10-16
-updated: 2026-10-26
-summary: Core coordinates workspace pause, verified completion, conservative deletion and separately confirmed physical removal of unwanted unfinished work.
+updated: 2026-10-29
+summary: Core coordinates pause and verified completion independently from unconditional workspace deletion with one informational UI confirmation.
 components: [apps/core, apps/harness]
 ---
 
@@ -33,11 +33,9 @@ its previous PR history.
 The inspection surface exposes GET `/{workspaceId}/workflow`, GET `/{workspaceId}/previews` and POST
 `/{workspaceId}/workflow/{complete|resume|pause|pause-confirm|delete}` beneath
 `/api/internal/apps/{appId}/workspace-inspection`. Requests use the existing service bearer and active
-administrator app identity. Reads require reviewed workspace inspection permission. Management
-uses full source authority, same-user ownership and source authorization for every child;
-contributor membership does not authorize closing the whole workspace.
+administrator app identity. Reads require reviewed workspace inspection permission. Management uses full source authority and the initiating administrator's current rights across all workspaces. Creator and membership do not add an access check.
 
-Attached sessions of the owning user have equivalent workflow routes beneath its existing workspace API.
+Authorized attached sessions have equivalent workflow routes beneath its existing workspace API.
 Commands carry a UUID `requestId` and `expectedRevision`. Replaying a completed request returns its
 current durable outcome; uncertain requests must retain their original identity and arguments.
 
@@ -63,9 +61,8 @@ No new process supervisor or per-session Docker container is introduced.
 A failed stop or lease release retains the worker generation, source and pending Core operation.
 The panel displays Pausing and Retry action. Retry uses the original UUID/revision from Core even
 when browser storage is unavailable, and survives Core/Harness restarts. Direct Pause retries load the persisted worker generation
-before checking ownership, without requiring an earlier health or runtime request. Other mutations cannot
-replace an unfinished pause. Delete controls, including an already-open confirmation dialog,
-remain blocked by a pending pause and preserve its browser recovery journal.
+before checking ownership, without requiring an earlier health or runtime request. Ordinary source mutations cannot replace an unfinished pause. Delete remains available and supersedes
+pending workflow intent after recording its own durable request.
 New publication commands, including PR metadata, merge, completion and policy changes, require
 Resume while closure is Pausing or Paused. Existing request receipts retain replay/recovery instead
 of becoming new publication authority. Publication receipt admission and Pause share the source-owner
@@ -90,7 +87,7 @@ boundary: later authorized sessions still receive the shared worktree root, incl
 closed source. Pause does not make those files read-only or block unrelated sessions; source
 separation belongs to the separately scoped containment work. Native execution without verified stop/lease acknowledgement remains
 a blocker. API admission is not revocation of arbitrary native filesystem access or a guarantee that
-an external process has stopped. Physical deletion retains its stricter independent consumer checks.
+an external process has stopped. Delete coordinates managed consumer shutdown and reports unknown external activity without requiring a pause acknowledgement.
 
 Resume explicitly reopens retained source and clears completion, recorded heads/time and closure.
 It starts no agent or preview automatically. A closed conversation retains readable history and its
@@ -134,8 +131,9 @@ of pause, so a completed-and-closed record still displays its verified completio
 ## Abandoned Activity Leases
 
 Activity leases are durable source protections, not heartbeats or proof of a live agent. They do not
-expire by age. An external client that exits without releasing its lease leaves a blocker; a later
-OAuth principal does not inherit authority to release that owner's lease.
+expire by age. An external client that exits without releasing its lease leaves retained activity evidence.
+Any current workspace manager can release a known lease; deletion retires it automatically without
+claiming that the external process exited.
 
 Harness keeps lease identifiers and worktree paths in collapsed **Activity diagnostics**. The
 operator first requests Pause, fencing new managed work. If activity claims block it, **Confirm
@@ -147,8 +145,7 @@ remain. A stopped sandbox still holds its binding; Delete releases it through Fi
 Core independently rechecks known consumers; confirmation does not terminate processes.
 
 The POST `/{workspaceId}/worktrees/{id}/recover-lease` inspection route requires the existing full
-source grant and active administrator app identity, same-user ownership, source access to every
-repository and closing/closed admission. It supports internal shared workspaces and external owners. It rejects stale/unavailable HEAD,
+source grant and active administrator app identity, plus closing/closed admission. It supports internal shared workspaces and external owners. It rejects stale/unavailable HEAD,
 pending or unknown source operations, active known consumers and unverified native service ownership.
 It never uses lease age or revoked OAuth as evidence of process exit. Arbitrary native execution is
 not exhaustively discoverable, so operator verification remains necessary.
@@ -161,7 +158,7 @@ partial success, reload or an uncertain response. Retry replays successful relea
 it never adds a newly observed lease to the confirmed batch. An earlier single-lease recovery
 journal retains its request identity during migration. A definite stale-head or missing-lease
 refusal requires fresh review. Recovery pauses the workspace without completing or deleting it.
-Dirty work can be paused and explicitly resumed, but still cannot pass ordinary completion or deletion. An operator can separately review and confirm physical discard.
+Dirty work can be paused and resumed. Complete retains its verification conditions; Delete accepts unfinished source and retained leases directly.
 
 The [2026-10-18 acceptance](../../reviews/2026-10-18-workspace-lease-recovery.md) records isolated
 browser recovery, restart, merged cleanup and unfinished-source protection. The separate
@@ -214,196 +211,60 @@ disposed resources no longer appear as active previews.
 
 The [2026-10-19 acceptance](../../reviews/2026-10-19-workspace-resource-controls.md) records browser
 Start/Stop/Delete, retained data, closure across parent restart, revoked-agent-credential recovery,
-dirty-source protection, clean-worktree deletion and complete disposable-stand removal.
+completion checks, explicit workspace deletion and complete disposable-stand removal.
 
-## D2-D3 Acceptance
+## Unified Delete And Recovery
 
-The 2026-10-17 acceptance closes D2-D3 of the completed lifecycle plan. Its
-[report](../../reviews/2026-10-17-workspace-close-acceptance.md) records an active Docker writer stopped
-through the Harness UI, two retained repositories, interrupted stop across Core/Harness restart,
-original-request replay, unchanged file hashes, retained transcript/draft and explicit Resume.
-It uses a deterministic provider with real Core, Harness and Docker; it does not claim a paid model
-run or a host-wide Docker outage. Existing completion, deletion and retention suites cover merged
-and partial outcomes, provider evidence, optional conversation removal and resource cleanup.
+Harness shows one red **Delete workspace…** action for every workspace state, including running,
+paused, completed and failed work. The dialog describes files, local branches, temporary test data,
+unfinished changes and reported activity. Details are advisory: loading or unavailable inspection
+does not prevent confirmation. Cancel makes no mutation. Confirmation sends only the target and
+stable request UUID; no typed name, digest, Commit, Pause, Complete or manual lease release is needed.
 
-## Cleanup And Recovery
+Canonical routes beneath `/api/internal/apps/{appId}/workspace-inspection` are:
 
-Delete requires verified completion and rechecks source before removal. Core records deleting intent,
-then finishes owned child Cores and disposes owned app sandboxes using existing lifecycle services.
-Resources are matched by same user and logical workspace context or owning assistant session. The
-caller also needs the corresponding reviewed resource-management permissions. Context-only resource
-creation is serialized with deletion; deleted work cannot gain a new attached preview.
+- `GET /{workspaceId}/delete/details`: optional consequence inspection.
+- `POST /{workspaceId}/delete`: execute `{ requestId }`.
+- `GET /{workspaceId}/delete/status?requestId=...`: read the durable outcome.
+- `POST /delete`: execute `{ requestId, workspaceIds }` or `{ requestId, all: true }`.
 
-A durable cleanup journal retains each child operation's original UUID/revision. Source cleanup then
-uses existing worktree/branch guards, writer leases and consumer checks. A live or unknown external
-consumer blocks cleanup; the coordinator does not kill arbitrary processes or release their leases.
-Interrupted deletion keeps its pending action and can recover partially removed source using the
-same request. Core verifies the remaining branch/registration before acknowledging release.
+The direct and brokered MCP tool is `delete_workspace`. The retired `cleanup_workspace` tool is not
+advertised. Old accepted discard/cleanup receipts retain recovery routes and IDs; they do not require
+new confirmation. Legacy workflow Delete delegates to the canonical coordinator.
 
-After physical cleanup, Core removes every worktree record and its operation history, the logical
-workflow, matching cleanup jobs, ordinary publication records and external PR snapshots. A temporary
-deletion journal contains the owner and released worktree snapshots while these files are removed;
-it is deleted last. If removal fails partway, that journal preserves enough ownership evidence to
-resume after restart, including when all worktree records are already gone. An authenticated repeat
-Delete of an absent workspace succeeds without recreating a receipt. Missing/unreadable evidence
-never authorizes new source or preview allocation.
+Admission fences new managed source/resource consumers and records exact allocations and per-resource
+requests. Attached child Cores and app sandboxes finish through their existing lifecycle services,
+including legacy session context and resources created by another user. Known app source consumers
+receive lifecycle Stop or Return. Actual failures retain source and the same request for retry.
+Core itself and unknown external execution are reported separately when process exit is unconfirmed;
+source removal does not claim those processes were terminated. Removed worktree leases are retired
+with attributable delete evidence. No arbitrary process is killed based on a lease.
 
-Startup recovery also reconciles older workflows already marked `deleted`. It first verifies that
-source paths, branches, Git registrations, leases and runtime consumers are absent and that owned
-sandbox cleanup finished. Ambiguous or unfinished state remains for diagnosis. This is a startup
-pass, not another recurring sweep. Deleting/deleted work is excluded from PR observation; final
-publication writes serialize with metadata removal, so a late provider response cannot recreate a
-cache file.
+Dirty, untracked, ignored, conflicted and unmerged files do not veto authorized Delete. Registered path,
+repository and allocation checks still prevent removal of unrelated source. Partial preparation with
+no Git metadata can be removed. Deletion removes worktrees, their local branches and workspace metadata;
+published PRs, shared repository caches and ordinary application data retain their own lifetimes.
 
-Deleting a workspace does not delete published PRs or shared repository caches. Independently owned
-child-environment/sandbox lifecycle records, shared-worker generation receipts and audit events keep
-their own retention contracts. Harness can remove its conversation afterwards as an explicit option.
-Manual chat deletion detaches only that chat while preserving shared source. It refuses unfinished
-session-resource cleanup and pending resource operations. Unfinished-work discard uses its own reviewed admission and receipt before reaching final metadata cleanup.
+A durable journal survives partial removal, lost responses and restart. Accepted child operation UUIDs
+and revisions are preserved. Batch deletion freezes original targets and allocation generations;
+retry does not include later workspaces or a recreated allocation. Results distinguish removed source,
+pending failures and consumer outcomes. Browser recovery retains the original request before dispatch.
 
-[Harness retention](../harness-session-retention/feature.md) protects attached chats and uses this
-coordinator only to recover already accepted legacy cleanup. That recovery requires its reviewed
-optional permission in addition to source/resource authority. Unfinished/deferred work, active/waiting sessions and
-unresolved resource state remain protected. Retention cannot substitute age for verified completion.
+Deleting only a chat preserves source and other sessions. Optional chat removal after successful
+workspace Delete remains independent. Retention does not acquire authority for new source deletion:
+it protects attached chats and only recovers already accepted legacy cleanup. User-requested cleanup
+predicates, such as completed and merged, belong to that task and remain conditions on its selection.
 
-A corrective publication after a completed cycle requires a successful Resume after the latest
-workspace completion. Source observation does not reopen work, and an older cycle's Resume
-does not authorize another corrective publication.
-
-Cleanup refreshes a stale resource revision only when Finish/Dispose has no durable operation
-receipt, and saves the replacement request before dispatch. Accepted operations retain their
-original request and revision through recovery. External GitHub completion evidence treats
-canonical owner/repository URL casing consistently with PR observation.
-
-Pause admission and confirmation serialize with workspace resource allocation. An already-admitted
-preview finishes attaching its source consumer before closure; new allocations are refused after
-closing starts. Resource, source-owner and shared-worker gates retain that acquisition order.
-
-## Confirmed Physical Discard
-
-**Discard and remove workspace…** is a separate operator action. It physically removes registered
-Core-owned worktrees, including modified tracked files, untracked files and ignored build outputs;
-their private local branches and Git registrations; and the workspace-owned workflow, source and
-publication metadata. Owned child Cores and app sandboxes are finished/disposed through their
-existing owners before source removal, including their temporary data. No replacement source
-archive or trash copy is created. Shared repository caches and Git object databases, other
-worktrees, installed-application data, external paths, credentials, remote branches and published
-pull requests retain their independent lifecycle.
-
-The inspection surface adds GET `/{workspaceId}/discard/plan`, POST
-`/{workspaceId}/discard/apply` and GET `/{workspaceId}/discard/status?requestId={uuid}`. It requires
-the existing operator management and per-repository source authority, same-user ownership and the
-corresponding permissions for owned resource cleanup. This is not an external-agent MCP tool and
-requires no original agent credential or conversation. Status reads authenticate before validating
-the request ID, including when that query parameter is missing. Discard never marks abandoned work completed.
-Ordinary Complete, Delete, cleanup and retention retain their clean/merged prerequisites.
-
-A removal review names each physical path, local branch, changed/untracked/ignored files, unmerged
-commits and owned temporary resources/data. Its expiring digest binds the operator, workspace
-revision/name, complete repository/resource set, HEADs, worktree bytes and staged index. Apply
-requires the exact display name and reviewed digest/revision with a new request UUID. Any change
-before admission requires a new review and confirmation; HEAD equality alone is insufficient.
-Harness confirms the displayed review with the explicit destructive button, without requiring the
-operator to type its name. The command carries the reviewed name. Keep/Refresh controls sit on
-the left, separated from the destructive action on the right. Initial and refreshed reviews, status
-reads and active removal show an animated busy status. Applying also animates and disables the
-removal button; a status read alone does not claim removal is running. Reduced-motion preferences
-retain the status text with a static indicator.
-Unreadable or oversized inspection is a blocker rather than an empty review. The current limits
-are 50,000 changed/untracked/ignored review entries and 1,000,000 physical entries. Ignored
-directories appear as whole-directory removal scope; their bytes still participate in the
-streamed fingerprint, with cancellation and no fixed byte-volume cap.
-Nested repositories are refused. Symlinks are fingerprinted as links and removed without traversing
-their targets; replaced or ambiguous roots/registrations are refused.
-
-The review exposes live or unknown consumers, unresolved operations and durable writer leases.
-Existing Pause stops the owning Harness execution. External work uses Pause followed by the
-explicit stopped-process acknowledgement and reviewed lease recovery. Runtime Return and sandbox
-Finish/Dispose remain independent controls; absence of the original agent or revoked credentials
-never proves native processes stopped. A Core executing from the source still blocks its removal.
-The coordinator neither kills arbitrary host processes nor releases unrelated activity leases.
-
-Admission saves a durable discard journal and fences new managed work. Resource operations preserve
-their original requests; every repository records progress before destructive cleanup. A timeout,
-failed resource disposal, private-branch lock or restart leaves a recoverable request. Status returns
-the authorized actor's original command, so Harness can resume after losing browser storage.
-If remaining source changes after admission, the operation returns `review-required`, preserves that
-source and exposes already removed trees separately. Continuing requires a fresh review and explicit
-confirmation; retry never expands old consent to new bytes.
-
-Discard review rejects special files such as Unix FIFOs before opening them. Untracked and ignored
-paths receive the same check, preserving source and leaving workspace operations available.
-
-Core reports `removed` only after verifying physical paths, branches, registrations, owned resources
-and workspace metadata are absent. Minimal actor-bound operation/audit receipts remain for replay;
-full source reviews and cleanup snapshots are removed. Harness offers optional conversation deletion
-only after confirmed physical cleanup. Its generic lifecycle Retry never invokes discard or converts
-a refused Complete/Delete into destructive removal.
-
-## Physical Discard Verification
-
-The 2026-10-23 macOS acceptance uses a disposable parent-managed source Core built from the
-registered development worktree. Normal password login and Core-issued app identity exercise
-Harness through Shell and standalone. Private fixture manifests reuse the built source without
-changing the ordinary instance, app setup or provider credentials. Their browser origins carry a
-separate Core instance ID.
-
-The acceptance verifies dirty and clean-unmerged ordinary lifecycle refusals, wrong-name and
-same-HEAD changed-byte confirmation refusals, and physical discard after revoking the original
-external client's credential. A private-branch lock interrupts two-repository cleanup; a managed
-source Core restart preserves the original UUID/body and resumes removal. Assertions cover paths,
-private refs, Git registrations, source/workflow/name/publication metadata and an owned temporary
-child Core/data directory. Repeated apply/status is idempotent. Original repositories, shared Git
-storage, another workspace, ordinary app data and browser-cancelled dirty source remain unchanged.
-Browser checks verify file-list expansion, explicit confirmation of the displayed review, separated
-actions and cancellation through **Keep workspace**.
-
-The reusable [acceptance helper](../../../scripts/check-workspace-discard.py) runs against disposable
-resources, supports isolated `--core-binary` and `--cli-binary` build outputs, and resumes a retained
-stand with `--resume-state`. `--keep` retains the stand for browser inspection; `--finish-state`
-finishes it through its parent owner, stops the fixture server/parent and verifies resource removal.
-The acceptance finishes the retained stand through its original parent owner and verifies the
-child/app/fixture ports, temporary roots, Docker resources and owned Shell build directory are gone.
-The existing live Shell process/start identity and port remain unchanged. It does not use an
-existing workspace as a deletion fixture. Native Windows acceptance is not run
-on the macOS host; the helper refuses unsupported Windows execution.
-
-Verification includes 94 Core discard/workflow/closure/preview/retention cases, 161 Harness
-confirmation/recovery/lease/BFF cases, the exact Core and CLI builds, the Harness production web
-build, lint/type checks, document/link validation and version consistency. The feature shares the
-pending platform 0.150.2 → 0.151.0 and Harness 0.66.0 → 0.67.0 artifact bumps.
+Complete, Pause, Resume and abandoned-lease recovery remain separate actions with their existing
+conditions. None is a prerequisite for Delete.
 
 ## Testing Expectations
 
-- Verify all-repository clean/merged evidence, dirty/current-unmerged rejection and exact-head merge
-  proof, including released historical source and corrective publication after explicit resume.
-- Exercise completion, pause/resume, legacy aliases and retained preview data; source edits do not reopen completed work.
-- Close active Docker work, verify removal before lease release, preserve dirty/untracked bytes,
-  recover the same pending request across service/browser restart and require explicit Resume.
-- Reject new source/worker admissions after closing intent; preserve other owners and prevent
-  interrupted close from racing retention. Refresh worker health after terminal session events.
-- Preserve source on leases, unknown consumers, partial merges, failed authorization and interrupted
-  cleanup; retry with the original UUID/revision and reject conflicting requests.
-- Check resource ownership, allocation/delete serialization and source cleanup after child Finish.
-- Verify full metadata removal, idempotent authenticated Delete, legacy cleanup, multi-repository
-  partial removal and restart recovery; a late PR response must not recreate a removed cache.
-
-- Verify external recovery ownership/grants, explicit exit confirmation, closed admission, exact HEAD,
-  consumer and unresolved-operation guards; preserve other leases and source, replay atomically across
-  restart, and keep the original Close journal independent from recovery.
-- Cover single-confirmation multi-lease closure, cancellation, partial release and original-Close
-  replay without widening the confirmed batch or losing a legacy journal.
-- Verify sandbox Stop/Start data retention, explicit Delete confirmation, resource owner/context and
-  permission checks, closed-start refusal, failed Finish recovery and disposed-context replay.
-- Check named ordinary app consumers and collapsed lease diagnostics through Harness.
-- Do not equate an API state change with termination of native processes or removal of recovery records.
-- Verify reviewed dirty, untracked, ignored and unmerged multi-repository physical discard, including
-  owned temporary data and absence of branches/registrations/metadata, while preserving shared data.
-- Bind confirmation to dirty/staged bytes, authority and resource revisions; preserve source on stale,
-  expired, cross-user, source-substitution, active/unknown consumer and incomplete inspection cases.
-- Interrupt after repository/resource/metadata cleanup, restart and replay the original request; require
-  renewed consent for changed remaining source and compact completed receipts without a source archive.
-- Inject partial metadata-cleanup failures using the persisted deletion journal's order, independent
-  of filesystem enumeration changes caused by atomic record rewrites.
-- Test explicit confirmation without name entry, no mutation on review/cancel, refusal versus uncertainty, recovery after
-  browser storage loss and optional conversation deletion after verified physical removal.
+- Retain pause/completion, exact-head merge evidence and private provider credential checks.
+- Cover direct deletion of dirty source, active/unknown leases, partial preparation and missing paths.
+- Verify immutable allocation identity, symlink refusal, accepted legacy recovery, real managed stop
+  failures, restart and retry, resource cleanup, and bulk replay excluding new allocations.
+- UI tests cover a single red Delete action across states, advisory loading/failure, cancellation,
+  warnings, progress and lost-response recovery. MCP tests cover explicit Ask in Normal/Autonomous,
+  Run unprompted, Disabled/stale dispatch, and no secondary Core confirmation.
+- Run Core/Harness builds and affected tests plus the managed multi-user sessions integration suite.

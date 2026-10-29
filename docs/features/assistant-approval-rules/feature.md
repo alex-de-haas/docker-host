@@ -1,6 +1,6 @@
 ---
 created: 2026-09-29
-updated: 2026-10-11
+updated: 2026-10-29
 summary: A shared per-tool MCP policy for Claude and Codex with Ask, Run unprompted and Disabled controls.
 components: [apps/harness, apps/core]
 ---
@@ -28,9 +28,11 @@ reinstallations do not inherit that automatic grant. Unavailable or incomplete d
 settings and refuses an unverified dispatch. Settings updates serialize with catalog migrations.
 
 The local proxy owns the approval pause. Disabled tools are filtered out of discovery and refused at
-call time; Ask creates one session-owned approval card in Normal mode; Run unprompted dispatches without a card.
-An explicitly selected [Autonomous chat](../assistant-session-autonomy/feature.md) also runs Ask tools
-unprompted, while preserving Disabled and all dispatch rechecks.
+call time; an explicit Ask rule creates one session-owned approval card in Normal and Autonomous modes;
+Run unprompted dispatches without a card. [Autonomous chats](../assistant-session-autonomy/feature.md)
+can automatically dispatch default Ask policy, but never override an explicit per-tool Ask selection.
+Disabled and all dispatch rechecks apply in both modes. Workspace Delete uses this same broker and
+has no second confirmation requirement in Core.
 Native Claude MCP callbacks and marked Codex proxy entries delegate their approval to this broker.
 MCP rules do not relax Core/app authority or repository protection. Native file/command policy is
 selected separately by the chat autonomy control.

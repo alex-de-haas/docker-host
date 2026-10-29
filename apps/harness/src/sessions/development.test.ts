@@ -90,6 +90,24 @@ describe("Core workspaces transport", () => {
     await expect(client.call("session", "user", "app-dev-apply", input)).rejects.toMatchObject({ code: "app_permission_required" });
   });
 
+  it("uses collection authority for inventory and deletion without a primary workspace or Core review", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => new Response(JSON.stringify({ state: "removed" })));
+    vi.stubGlobal("fetch", fetcher);
+    const client = new DevelopmentClient("http://core.test", "hosty.harness", "service");
+    await client.call("empty-session", "initiating-user", "workspace-inventory", {});
+    const command = { requestId: "f4760a85-4309-4001-b8eb-e0bcabdb731f", all: true };
+    await client.call("empty-session", "initiating-user", "delete-workspace", command);
+    expect(String(fetcher.mock.calls[0]![0])).toBe("http://core.test/api/internal/apps/hosty.harness/workspace-inspection");
+    expect(String(fetcher.mock.calls[1]![0])).toBe("http://core.test/api/internal/apps/hosty.harness/workspace-inspection/delete");
+    expect(fetcher.mock.calls[1]![1]).toMatchObject({ method: "POST", body: JSON.stringify(command),
+      headers: { "X-Hosty-User-Token": "initiating-user" } });
+    fetcher.mockRejectedValueOnce(new Error("connection lost"));
+    await expect(client.call("empty-session", "initiating-user", "delete-workspace", command)).rejects.toThrow();
+    await client.call("empty-session", "initiating-user", "delete-workspace", command);
+    expect(fetcher.mock.calls[2]![1]?.body).toBe(fetcher.mock.calls[3]![1]?.body);
+    expect(developmentTools().filter(t => /^(delete_workspace|cleanup|workflow_delete)$/.test(t.name)).map(t => t.name)).toEqual(["delete_workspace"]);
+  });
+
   it("binds every request to the assistant and session without putting Core credentials in agent config", async () => {
     const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ workspaces: [] }), { status: 200 }));
     vi.stubGlobal("fetch", fetcher);
@@ -146,6 +164,8 @@ describe("Core workspaces transport", () => {
     expect(catalog.find(t => t.name === "app_creation_guide")!.annotations.readOnlyHint).toBe(true);
     await call({ id: 5, method: "tools/call", params: { name: "app_creation_guide", arguments: { topic: "sdk" } } });
     expect(invoke).toHaveBeenCalledWith("session-one", "app-creation-guide", { topic: "sdk" });
+    await call({ id: 6, method: "tools/call", params: { name: "delete_workspace", arguments: { requestId: "same-id", all: true } } });
+    expect(invoke).toHaveBeenCalledWith("session-one", "delete-workspace", { requestId: "same-id", all: true });
     mcp.unregister("session-one");
     expect((await call({ id: 4, method: "ping" })).status).toBe(403);
   });

@@ -19,7 +19,14 @@ public sealed partial class CoreLifecycleServiceTests
         var providerRepo = Path.Combine(repositories, DevelopmentWorkspaceService.Hash(repository) + ".git");
         Directory.Move(Path.Combine(repositories, w.RepositoryId + ".git"), providerRepo);
         await RunGitAsync(providerRepo, ["worktree", "repair", w.Path]);
-        w = w with { Repository = repository, RepositoryId = DevelopmentWorkspaceService.Hash(repository),
+        var repositoryId = DevelopmentWorkspaceService.Hash(repository);
+        var id = DevelopmentWorkspaceService.Hash(DevelopmentWorkspaceService.OwnerIdentity(owner) + "\n" + repositoryId);
+        var path = Path.Combine(Path.GetDirectoryName(w.Path)!, id);
+        var branch = "hosty/session/" + id;
+        await RunGitAsync(w.Path, ["branch", "-m", branch]);
+        await RunGitAsync(providerRepo, ["worktree", "move", w.Path, path]);
+        File.Delete(Path.Combine(f.Paths.CoreRoot, "development/workspaces", w.Id + ".json"));
+        w = w with { Id = id, Path = path, Branch = branch, Repository = repository, RepositoryId = repositoryId,
             PullRequests = ["https://github.com/owner/repo/pull/42"] };
         await JsonStorage.WriteAsync(Path.Combine(f.Paths.CoreRoot, "development/workspaces", w.Id + ".json"), w);
         var users = new UserDirectoryStore(f.Paths);
@@ -28,6 +35,14 @@ public sealed partial class CoreLifecycleServiceTests
         var provider = new PublicationProviderFixture { Head = w.Observation!.Head! };
         var connections = new UserConnectionService(users, new SourceProviderRegistry([new GitHubSourceProvider(new HttpClient(), new ConfigurationBuilder().Build(), f.Clock, provider)]), f.Clock, new AuditStore(f.Paths), f.CoreSettings);
         return (f, workspaces, new(f.Paths, workspaces, connections, f.Apps, users, f.Clock, new(f.Paths)), provider, w, users);
+    }
+
+    [Fact]
+    public async Task ExternalPublication_CompletionDoesNotBorrowAnotherOperatorsProviderConnection()
+    {
+        var f = await ExternalPublicationFixture();
+        Assert.Empty(await f.Service.MergedWorkspaceHeadsAsync(f.W.Owner, default, "another-admin"));
+        Assert.Equal(0, f.Provider.Observed);
     }
 
     [Fact]

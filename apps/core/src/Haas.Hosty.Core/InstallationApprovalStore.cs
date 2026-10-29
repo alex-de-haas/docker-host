@@ -65,9 +65,9 @@ internal static class CoreAppPermissions
 
     public static string Describe(string permission) => permission switch
     {
-        Sources => "Access and modify application source code, including code Hosty executes on this host in development mode; manage workspaces and use selected source-provider connections",
+        Sources => "Access and modify application source code, including code Hosty executes on this host in development mode; create, read, edit and delete all Core workspaces as the initiating user; use separately authorized source-provider connections",
         WorkspacesCleanup => "Delete this assistant installation's explicitly completed workspaces and owned temporary resources in the background after fresh Core verification",
-        WorkspacesRead => "Inspect authorized development workspaces, worktrees, source diffs and recorded publication facts as the current administrator; no mutations",
+        WorkspacesRead => "Read all Core development workspaces and retained source as the initiating administrator; no mutations",
         CoreEnvironmentsInspect => "Inspect child Core environments and application status across creating apps as an administrator",
         CoreEnvironmentsOperate => "Create and control trusted child Core environments across creating apps, set up test accounts and permanently delete their temporary resources",
         CoreEnvironmentsRead => "Inspect owned child Core environments and their local preview addresses",

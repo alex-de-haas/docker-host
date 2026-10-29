@@ -85,6 +85,8 @@ export class McpToolPolicy {
   async mode(provider: string, identity: string, tool: string): Promise<ToolMode> {
     const settings = await this.settings?.read();
     const rule = settings?.mcpToolRules?.[ruleKey(provider, tool)];
+    if (rule?.mode === "disabled") return "disabled";
+    if (rule?.identity === identity && rule.mode === "ask") return "ask";
     const catalog = this.catalogs.get(provider), current = catalog?.tools.find(t => t.name === tool);
     if (catalog?.identity !== identity || !current) return "ask";
     if (rule?.identity === identity && rule.definition === definition(current)) return rule.mode;
@@ -126,13 +128,18 @@ export class McpToolPolicy {
     const observedTool = this.catalogs.get(provider)?.tools.find(t => t.name === tool);
     const observedDefinition = observedTool && definition(observedTool);
     if (!observedDefinition || this.catalogs.get(provider)?.identity !== identity) throw new Error("Unknown or changed tool; discover tools again.");
-    const automatic = mode === "run" || this.autonomous(session);
+    const canRunAutomatically = async (effective: ToolMode) => {
+      const rule = (await this.settings?.read())?.mcpToolRules?.[ruleKey(provider, tool)];
+      const explicitAsk = rule?.identity === identity && rule.mode === "ask";
+      return effective === "run" || this.autonomous(session) && !explicitAsk;
+    };
+    const automatic = await canRunAutomatically(mode);
     const dispatchGuard = async () => {
       const currentMode = await this.mode(provider, identity, tool);
       const current = this.catalogs.get(provider);
       const currentTool = current?.tools.find(t => t.name === tool);
       if (signal.aborted || this.generations.get(scope) !== generation || current?.identity !== identity || !currentTool || definition(currentTool) !== observedDefinition ||
-          currentMode === "disabled" || automatic && currentMode !== "run" && !this.autonomous(session))
+          currentMode === "disabled" || automatic && !await canRunAutomatically(currentMode))
         throw new Error("Tool policy changed or the request was canceled before dispatch. Retry with a new MCP request.");
     };
     const name = `${provider}: ${tool}`;

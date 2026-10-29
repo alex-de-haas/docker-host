@@ -161,3 +161,25 @@ it("enforces local development exclusions while refusing local app-access exclus
   expect(notify).not.toHaveBeenCalled();
   expect(() => policy.preparePreferences({}, { [ruleKey("app", "merge")]: { identity: "install-1", mode: "disabled" } })).toThrow("Core access review");
 });
+
+
+it.each([false, true])("honors explicit Delete Ask, Run and Disabled with autonomy=%s", async autonomous => {
+  policy.close();
+  policy = new McpToolPolicy(settings, notify, settled, 1000, () => autonomous);
+  const tool = { name: "delete_workspace", annotations: { readOnlyHint: false, destructiveHint: true } };
+  await policy.catalog("hosty:development", "v1", [tool]);
+  const key = ruleKey("hosty:development", tool.name);
+  const invoke = (id: string) => policy.authorize("session", "hosty:development", "v1", id, tool.name, { all: true, requestId: id }, new AbortController().signal);
+  await policy.update({ [key]: { identity: "v1", mode: "ask" } });
+  const pending = invoke("ask");
+  await vi.waitFor(() => expect(notify).toHaveBeenCalledOnce());
+  expect(policy.resolve("session", notify.mock.calls[0]![1].approvalId, true)).toBe(true);
+  const approved = await pending; await approved();
+  await policy.update({ [key]: { identity: "v1", mode: "run" } });
+  const automatic = await invoke("run"); await automatic();
+  expect(notify).toHaveBeenCalledOnce();
+  await policy.update({ [key]: { identity: "v1", mode: "disabled" } });
+  expect(await policy.catalog("hosty:development", "v1", [tool])).toEqual([]);
+  await expect(invoke("disabled")).rejects.toThrow("disabled");
+  await expect(automatic()).rejects.toThrow("changed");
+});

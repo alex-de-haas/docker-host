@@ -10,11 +10,13 @@ internal sealed record WorkspacePreviews(CoreEnvironmentView[] Environments, Dic
 // Coordinates existing resource owners. It does not implement another container supervisor.
 internal sealed partial class WorkspaceCleanupService(CoreDataPaths paths, WorkspaceInspectionService inspection,
     DevelopmentWorkspaceService workspaces, PublicationService publications, AppRegistryStore apps,
-    CoreEnvironmentStore environments, CoreEnvironmentService environmentService, CoreEnvironmentAccess access)
+    CoreEnvironmentStore environments, CoreEnvironmentService environmentService, CoreEnvironmentAccess access,
+    CoreLifecycleService? lifecycle = null)
 {
     private readonly ConcurrentDictionary<string, SemaphoreSlim> gates = new(StringComparer.Ordinal);
-    private static bool Belongs(SandboxActor actor, SandboxContext? context, WorkspaceOwner owner, string workspaceId)
-        => actor.UserId == owner.UserId && (context?.WorkspaceId == workspaceId ||
+    internal static bool Belongs(SandboxActor actor, SandboxContext? context, WorkspaceOwner owner, string workspaceId)
+        => context?.WorkspaceId == workspaceId ||
+            actor.UserId == owner.UserId && (
             !owner.IsExternal && context?.SessionId == owner.SessionId && actor.AppId == owner.AppId && actor.Installation == owner.Installation);
     private async Task RequirePermission(string appId, string permission, CancellationToken ct)
     {
@@ -36,10 +38,14 @@ internal sealed partial class WorkspaceCleanupService(CoreDataPaths paths, Works
         }
         return new(await Task.WhenAll(children.Select(e => environmentService.ReadAsync(new(userId), e.Id, ct))), applications);
     }
-    public Task<WorkspaceWorkflow> DeleteAsync(string workspaceId, string userId, string appId,
+    public async Task<WorkspaceWorkflow> DeleteAsync(string workspaceId, string userId, string appId,
         WorkspaceWorkflowCommand input, CancellationToken ct)
-        => workspaces.WithResourceContextAsync(new(userId), new(WorkspaceId: workspaceId),
-            () => DeleteResourcesAsync(workspaceId, userId, appId, input, ct), ct, cleanup: true);
+    {
+        var result = await ApplyDeleteAsync(workspaceId, userId, appId, new(input.RequestId), ct);
+        return new(result.State == "removed" ? "deleted" : "deleting", input.ExpectedRevision + 1,
+            ChangedBy: userId, Closure: "closed", Operations: [new(result.RequestId, "discard", input.ExpectedRevision,
+                result.State == "removed" ? "succeeded" : "pending", result.Error)]);
+    }
 
     public async Task<CoreEnvironmentApiResponse> PreviewActionAsync(string workspaceId, string userId, string caller,
         string environmentId, string targetApp, string action, PreviewCheckRun? input, CancellationToken ct)
@@ -83,7 +89,7 @@ internal sealed partial class WorkspaceCleanupService(CoreDataPaths paths, Works
                 await FinalizeAsync(owner, ct);
                 return DevelopmentWorkspaceService.DeletedResult(input);
             }
-            var heads = await publications.MergedWorkspaceHeadsAsync(owner, ct);
+            var heads = await publications.MergedWorkspaceHeadsAsync(owner, ct, userId);
             var state = await workspaces.ChangeWorkflowAsync(owner, userId, "delete", input, heads, ct, prepareOnly: true);
             if (state.State == "deleted") return state;
             var path = Path.Combine(paths.CoreRoot, "development", "cleanup", request.ToString("D") + ".json");
@@ -130,7 +136,7 @@ internal sealed partial class WorkspaceCleanupService(CoreDataPaths paths, Works
             }
             // Fresh verification still applies after slow shutdowns. Core preserves released
             // worktree receipts, so a partially successful cleanup can safely resume here.
-            heads = await publications.MergedWorkspaceHeadsAsync(owner, ct);
+            heads = await publications.MergedWorkspaceHeadsAsync(owner, ct, userId);
             state = await workspaces.ChangeWorkflowAsync(owner, userId, "delete", input, heads, ct);
             await FinalizeAsync(owner, ct);
             return state;

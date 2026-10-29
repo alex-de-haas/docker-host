@@ -29,7 +29,7 @@ export type WorkspaceParticipation = {
   sessions: { appId: string; userId: string; sessionId: string; title: string; attached: boolean; canOpen: boolean; viewerPath: string | null; status: string; activityAt: string | null; changedAt?: string | null }[];
   eligibleUsers: { id: string; name: string }[];
 };
-export type DevelopmentWorkspace = { participation?: WorkspaceParticipation | null; name?: string; id: string; state: string; updatedAt?: string | null; workflow: Workflow;
+export type DevelopmentWorkspace = { permissions?: { read: boolean; manage: boolean }; participation?: WorkspaceParticipation | null; name?: string; id: string; state: string; updatedAt?: string | null; workflow: Workflow;
   owner: { kind: string; label: string; reference: string; appId?: string }; worktrees: Worktree[] };
 export function orderWorkspaces(workspaces: readonly DevelopmentWorkspace[]): DevelopmentWorkspace[] {
   return [...workspaces].sort((left, right) => activityTime(right) - activityTime(left) || left.id.localeCompare(right.id));

@@ -72,7 +72,7 @@ public sealed partial class CoreLifecycleServiceTests
         var other = await service.PrepareAsync(owner with { SessionId = "second" }, WorkspaceRequest("second"), default);
         Assert.NotEqual(w.Id, other.Id);
         Assert.Equal(w.RepositoryId, other.RepositoryId);
-        await Assert.ThrowsAsync<AppLifecycleException>(() => service.ObserveAsync(w.Id, owner with { Installation = owner.Installation.AddSeconds(1) }, default));
+        Assert.Equal(w.Path, (await service.ObserveAsync(w.Id, owner with { Installation = owner.Installation.AddSeconds(1) }, default)).Path);
         var restart = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock);
         Assert.Equal(w.Id, (await restart.PrepareAsync(owner, WorkspaceRequest(), default)).Id);
     }

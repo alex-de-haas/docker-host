@@ -734,7 +734,7 @@ Coverage mapping for the broader D6 contract:
 | Multiple repositories and external ownership, no fabricated chat, denied cleanup/replay and revoked token | Earlier isolated external-workspace acceptance above |
 | Real provider, questions/approvals, retained preview data and agent-owned Finish | D4 and normal-mode lifecycle acceptance above; existing provider/approval regressions rerun |
 | Several PRs, missing/stale/failed CI, comments/reviews, unknown statistics and preview permission revocation | Workspace details/navigation/preview regression tests; Core inspection/workflow coverage recorded above |
-| Completion, resume, deletion and unfinished-work preservation | UI/lifecycle and D5 retention acceptance; separately confirmed physical discard uses the [lifecycle removal contract](../workspace-lifecycle-controls/feature.md#confirmed-physical-discard) |
+| Completion, resume, deletion and unfinished-work preservation | UI/lifecycle and D5 retention acceptance; unified Delete uses the [lifecycle removal contract](../workspace-lifecycle-controls/feature.md#unified-delete-and-recovery) |
 | Navigation migration | Harness manifest entry and no Workspaces/Plans dependency; the later standalone-app retirement leaves existing installations and data untouched and routes workspace viewers to the owning session |
 
 Final verification:
@@ -813,7 +813,7 @@ privileged command independently. Background scheduling stops during manager shu
 
 ## Chats And Workspaces Verification
 
-Verified on macOS on 2026-10-29, in the existing Harness 0.78.0 → 0.79.0 change:
+Verified on macOS on 2026-10-29 for the Harness 0.80.0 release; the initial counts below precede integration of main's 0.79.0 workspace changes:
 
 - `npm run build:web --workspace @haas/hosty-harness` passes with both static pages.
 - `npm run test --workspace @haas/hosty-harness` passes 1,887 tests in 175 files.

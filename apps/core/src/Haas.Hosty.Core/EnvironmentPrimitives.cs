@@ -8,6 +8,17 @@ namespace Haas.Hosty.Core;
 internal sealed record SandboxActor(string UserId, string? AppId = null, DateTimeOffset? Installation = null,
     string? GrantId = null, string? ScopeId = null)
 {
+    // Server-only authority for deleting resources belonging to an admitted workspace.
+    // Never accepted from a JSON client or persisted as a transferable credential.
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? DeletingWorkspace { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public WorkspaceOwner? DeletingOwner { get; init; }
+    internal bool CanDeleteResource(SandboxActor owner, SandboxContext? context)
+        => DeletingWorkspace is { } id && DeletingOwner is { } allocation
+            && DevelopmentWorkspaceService.WorkspaceIdFor(allocation) == id
+            && WorkspaceCleanupService.Belongs(owner, context, allocation, id);
+
     [System.Text.Json.Serialization.JsonIgnore]
     public string Key => SandboxValidation.Hash(CoreJson.Text(this));
     public bool SameOwner(SandboxActor other) => UserId == other.UserId && AppId == other.AppId && Installation == other.Installation

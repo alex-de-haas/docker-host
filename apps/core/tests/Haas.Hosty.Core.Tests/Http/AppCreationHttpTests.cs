@@ -53,14 +53,14 @@ public sealed class AppCreationHttpTests
         var remote = (await client.GetFromJsonAsync<LocalRemoteStatus>(remoteRoot + "?sourceAppId=" + input.AppId))!;
         Assert.Equal(input.AppId, remote.AppId);
         Assert.Null(remote.Remote);
-        Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync(remoteRoot.Replace("session-one", "other") + "?sourceAppId=" + input.AppId)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync(remoteRoot.Replace("session-one", "other") + "?sourceAppId=" + input.AppId)).StatusCode);
         var localRoot = root + "/local/" + input.AppId;
         var local = (await client.GetFromJsonAsync<LocalAppHandoffStatus>(localRoot + "?workspaceId=" + created.Workspace.Id))!;
         var acceptance = new LocalAppHandoffRequest(Guid.NewGuid().ToString(), created.Workspace.Id, local.SourceHead, local.TargetHead);
         Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync(localRoot + "/accept", acceptance)).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync(localRoot + "/use", acceptance with { RequestId = Guid.NewGuid().ToString() })).StatusCode);
         Assert.Equal("stopped", (await apps.GetAppAsync(input.AppId))!.RuntimeState);
-        Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync(localRoot.Replace("session-one", "other") + "?workspaceId=" + created.Workspace.Id)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync(localRoot.Replace("session-one", "other") + "?workspaceId=" + created.Workspace.Id)).StatusCode);
         var guide = (await client.GetFromJsonAsync<AppDevelopmentGuide>(root + "/guide"))!;
         Assert.Contains("Docker", guide.Text);
         Assert.True(guide.Text.Length < 20000);

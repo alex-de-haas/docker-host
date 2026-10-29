@@ -315,7 +315,9 @@ there first.
   current in the worktree. On completion, export useful summaries, Finish the test sandbox through
   its owner and verify resource removal. Keep raw evidence JSON, logs, credentials and experimental
   patches out of PRs. Release a lease only after its native consumers stop; remove a workspace only
-  with authorization and successful dirty/unmerged/consumer checks. Preserve incomplete work.
+  within the user's authorized selection. Inspect and report dirty/unmerged source and consumer activity;
+  they are warnings for an explicit unconditional Delete, not extra approval gates. Preserve incomplete
+  work unless its deletion is authorized.
 - If this repository is not registered Hosty source, or the client lacks the supported operation,
   state that limitation and use the repository's already-authorized workflow. Do not install an app,
   invent a grant, change source selection or claim sandbox verification just to bypass the gap.

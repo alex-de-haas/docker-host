@@ -6,7 +6,7 @@ import { WorkspaceSessionTabs } from "./workspace-session-tabs";
 import { useWorkspaceSessionActions } from "@/lib/use-workspace-session-actions";
 import { WorkspaceSessions } from "./workspace-sessions";
 import { AssistantApiError, createWorkspaceSession, listSessions, workspaceAction, type AssistantSession } from "@/lib/assistant-api";
-import { developmentRequest, DevelopmentRequestError, type DevelopmentWorkspace } from "@/lib/development-api";
+import { type DevelopmentWorkspace } from "@/lib/development-api";
 vi.mock("@/lib/development-api", async original => ({ ...await original<object>(), developmentRequest: vi.fn() }));
 vi.mock("@/lib/assistant-api", async original => ({ ...await original<object>(), createWorkspaceSession: vi.fn(), listSessions: vi.fn(), workspaceAction: vi.fn() }));
 let root: Root, container: HTMLDivElement;
@@ -84,20 +84,19 @@ it.each([
   expect(container.textContent).toContain(failure.message);
   expect(sessionStorage.length).toBe(0); expect(refresh).toHaveBeenCalledOnce();
   expect(button("Retry same request")).toBeUndefined();
-  for (const name of ["Attach session", "Detach this session", "Manage sharing", "New session in workspace"])
+  for (const name of ["Attach session", "Detach this session", "New session in workspace"])
     expect(button(name).disabled).toBe(false);
   await act(async () => root.render(null));
   await act(async () => root.render(<Controls refresh={refresh} />));
   expect(button("Retry same request")).toBeUndefined(); expect(button("New session in workspace").disabled).toBe(false);
 });
-it("clears a confirmed sharing refusal from browser recovery", async () => {
-  vi.mocked(developmentRequest).mockRejectedValueOnce(new DevelopmentRequestError("Not permitted", "workspace_forbidden", 403));
+it("offers session association without a second per-workspace sharing permission", async () => {
   await act(async () => root.render(<Controls refresh={() => {}} />));
-  await act(async () => button("Manage sharing").click());
-  await act(async () => button("Revoke access").click());
-  expect(container.textContent).toContain("Not permitted"); expect(sessionStorage.length).toBe(0);
-  expect(button("Retry same request")).toBeUndefined(); expect(button("New session in workspace").disabled).toBe(false);
+  expect(button("Manage sharing")).toBeUndefined();
+  expect(button("Attach session").disabled).toBe(false);
+  expect(container.textContent).toContain("private");
 });
+
 it.each([
   new Error("Response lost"), new AssistantApiError("unavailable", "Core unavailable", 503),
   new AssistantApiError("timeout", "Request timed out", 408), new AssistantApiError("rate_limit", "Retry later", 429),

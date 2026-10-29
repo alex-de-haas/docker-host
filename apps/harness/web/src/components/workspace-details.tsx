@@ -5,19 +5,17 @@ import { WorkspaceSessions } from "./workspace-sessions";
 import { WorkspaceReview, type ReviewChoice } from "./workspace-review";
 import { FileDiff, FolderGit2, GitBranch, MoreHorizontal, Pencil, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { developmentRequest, DevelopmentRequestError, repositoryName, changeTotals, workflowIsActive, workflowLabel, type DevelopmentWorkspace, type Worktree, type Workflow } from "@/lib/development-api";
 import { LocalRepositoryActions } from "./local-repository-actions";
 import { LocalAppHandoff } from "./local-app-handoff";
 import { WorkspaceActivation } from "./workspace-activation";
 import { WorkspaceConsumers } from "./workspace-consumers";
-import { WorkspaceDiscard } from "./workspace-discard";
+import { WorkspaceDelete } from "./workspace-delete";
 import { WorkspaceLeaseRecovery } from "./workspace-lease-recovery";
 import { WorkspacePreviews } from "./workspace-previews";
 import { WorkspacePullRequest } from "./workspace-pull-request";
 import { Input } from "@/components/ui/input";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { HostyLoader } from "../../../../../shared/web/hosty-states";
 import { ContextAppIcon } from "@/components/context-app-icon";
@@ -41,7 +39,7 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
   onSessionSelected?: (session: AssistantSession) => void;
   refresh: () => void; deleteConversation?: () => Promise<void>; onReview?: (tree: Worktree, choice?: ReviewChoice) => void;
 }) {
-  const canManage = workspace.participation?.role !== "contributor";
+  const canManage = workspace.permissions?.manage !== false;
   const [trees, setTrees] = useState<Worktree[]>(() => workspace.worktrees.map(t => ({ ...t, sessionChanges: undefined })));
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState("");
@@ -49,8 +47,6 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
   const [busy, setBusy] = useState(false);
   const [recovering, setRecovering] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [confirmDiscard, setConfirmDiscard] = useState(false);
-  const [withConversation, setWithConversation] = useState(false);
   const [diffChoices, setDiffChoices] = useState<Record<string, ReviewChoice>>({});
   const [diffTree, setDiffTree] = useState<string | null>(null);
   const [localResult, setLocalResult] = useState<{ base: Workflow; value: Workflow } | null>(null);
@@ -104,7 +100,6 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
       setLocalResult({ base: workspace.workflow, value: result });
       setPending(null); setConfirmDelete(false);
       try { localStorage.removeItem(`hosty.workspace.action.${workspace.id}`); } catch { /* Optional local recovery journal. */ }
-      if (result.state === "deleted" && withConversation && deleteConversation) await deleteConversation();
       refresh();
     } catch (e) {
       let confirmed = false;
@@ -142,8 +137,7 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
           <DropdownMenuItem disabled={busy || recovering || !!discardOperation || !!pending || running || !["in-progress", "deferred"].includes(state.state)} onSelect={() => void run("complete")}>Complete workspace</DropdownMenuItem>
           <DropdownMenuItem disabled={busy || recovering || !!discardOperation || !!pending || !workflowIsActive(state)} onSelect={() => void run("pause")}>Pause workspace</DropdownMenuItem>
           <DropdownMenuItem disabled={busy || recovering || !!discardOperation || !!pending || ["deleting", "deleted"].includes(state.state) || !(state.closure === "closed" || ["completed", "deferred"].includes(state.state))} onSelect={() => void run("resume")}>Resume workspace</DropdownMenuItem>
-          <DropdownMenuItem disabled={busy || recovering || !!discardOperation || !!pending || running || !["completed", "deleting"].includes(state.state)} onSelect={() => setConfirmDelete(true)}>Delete workspace…</DropdownMenuItem>
-          <DropdownMenuItem disabled={busy || recovering || (!!operation && !discardOperation) || state.state === "deleted"} onSelect={() => setConfirmDiscard(true)}>{discardOperation ? "Recover workspace removal…" : "Discard and remove workspace…"}</DropdownMenuItem>
+          <DropdownMenuItem variant="destructive" onSelect={() => setConfirmDelete(true)}>Delete workspace…</DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>}
       </div>
@@ -155,7 +149,7 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
       {running && <p className="text-xs text-muted-foreground">An agent is running. Pause workspace fences all participants and waits for confirmed execution stops.</p>}
       {(state.closure || state.state === "deferred") && !["deleting", "deleted"].includes(state.state) && <p role="status" className="text-xs text-muted-foreground">{state.closure === "closing" ? "Pausing: new development work is blocked while execution stop is verified." : "Paused: source, previews and conversation are retained. Resume to continue development."}</p>}
       {(!externalClose || loadError) && (error || loadError || operation?.error) && <p role="alert" className="text-sm text-destructive-foreground">{error || loadError || operation?.error}</p>}
-      {discardOperation && <div className="space-y-2 text-xs"><p>Workspace removal is pending. Recover the original confirmed request.</p><Button variant="outline" size="sm" disabled={busy || recovering} onClick={() => setConfirmDiscard(true)}>Recover removal</Button></div>}
+      {discardOperation && <div className="space-y-2 text-xs"><p>Workspace removal is pending. Recover the original confirmed request.</p><Button variant="outline" size="sm" disabled={busy || recovering} onClick={() => setConfirmDelete(true)}>Recover removal</Button></div>}
       {busy && <p role="status" className="flex items-center gap-2 text-xs text-muted-foreground"><HostyLoader label={null} className="size-4" />{actionProgress[pending?.kind ?? ""] ?? "Updating workspace…"}</p>}
       {leaseRefusal && !busy && !recovering && !pending && canManage && workflowIsActive(state) && trees.some(tree => tree.leases.length) && <div className="space-y-2 text-xs">
         <p>Pause this workspace, then confirm that all agent executions and their commands have stopped. Source files are retained.</p>
@@ -165,7 +159,6 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
         <Button variant="outline" size="sm" disabled={busy || recovering} onClick={() => void run(pending.kind, true)}>Retry action</Button>
         {!operation && state.state !== "deleting" && state.closure !== "closing" && <Button variant="ghost" size="sm" disabled={busy || recovering} onClick={() => { setPending(null); try { localStorage.removeItem(`hosty.workspace.action.${workspace.id}`); } catch {} }}>Dismiss</Button>}
       </div>}
-      {canManage && state.state === "completed" && <Button variant="outline" size="sm" disabled={busy || recovering || !!discardOperation || !!pending || running} onClick={() => setConfirmDelete(true)}>Delete workspace…</Button>}
       {canManage && <WorkspaceLeaseRecovery key={`lease:${workspace.id}`} workspaceId={workspace.id}
         trees={trees} closure={state.closure} closeRequest={!!pending && ["pause", "close", "defer"].includes(pending.kind) ? pending : null}
         disabled={busy || !!running} refresh={() => { setDetailRefresh(n => n + 1); refresh(); }} onBusyChange={setRecovering} onClosed={result => {
@@ -215,14 +208,10 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
       choice={diffChoices[currentDiff.id] ?? { view: "session", path: "" }}
       onChoice={choice => setDiffChoices(previous => ({ ...previous, [currentDiff.id]: choice }))}
       onBack={() => { setDiffTree(null); requestAnimationFrame(() => diffTrigger.current?.focus()); }} /></div>}
-    {confirmDiscard && <WorkspaceDiscard key={workspace.id} workspaceId={workspace.id} pendingRequestId={discardOperation?.id} disabled={busy || recovering || !!running}
-      canPause={workflowIsActive(state) && !pending && !discardOperation} onPause={() => void run("pause")} onClose={() => setConfirmDiscard(false)} refresh={refresh} deleteConversation={deleteConversation} />}
-    <Dialog open={confirmDelete} onOpenChange={setConfirmDelete}><DialogContent><DialogTitle>Delete workspace?</DialogTitle><DialogDescription>Finish this workspace’s sandboxes and remove their temporary data, then remove its merged worktrees. Core verifies that no other process still uses the source. Published pull requests stay available.</DialogDescription>
-      <ul className="list-disc pl-5 text-sm">{workspace.worktrees.map(t => <li key={t.id}>{repositoryName(t.repository)}</li>)}</ul>
-      {deleteConversation && <label className="flex items-center gap-2 text-sm"><Checkbox checked={withConversation} onCheckedChange={value => setWithConversation(value === true)} />Also delete this conversation after cleanup succeeds</label>}
-      {error && <p role="alert" className="text-sm text-destructive-foreground">{error}</p>}
-      <Button disabled={busy || recovering || running || (!!pending && pending.kind !== "delete")} onClick={() => void run("delete", pending?.kind === "delete")}>{busy ? <><HostyLoader label={null} className="size-4" />Deleting…</> : "Delete workspace"}</Button>
-    </DialogContent></Dialog>
+    {confirmDelete && <WorkspaceDelete key={workspace.id} workspaceId={workspace.id} name={workspace.name ?? title}
+      pendingRequestId={discardOperation?.id ?? (pending?.kind === "delete" ? pending.requestId : undefined)}
+      onClose={() => setConfirmDelete(false)} refresh={refresh} deleteConversation={deleteConversation} />}
+
   </aside>;
 }
 function WorkspaceName({ workspace, fallback, refresh }: { workspace: DevelopmentWorkspace; fallback: string; refresh: () => void }) {

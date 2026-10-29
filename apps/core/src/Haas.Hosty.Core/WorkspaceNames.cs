@@ -45,7 +45,7 @@ internal sealed partial class DevelopmentWorkspaceService
         observationState?.CatalogChanged();
     }
 
-    internal Task<WorkspaceMetadata> RenameAsync(WorkspaceOwner owner, WorkspaceNameCommand input, CancellationToken ct)
+    internal Task<WorkspaceMetadata> RenameAsync(WorkspaceOwner owner, WorkspaceNameCommand input, CancellationToken ct, string? actorUserId = null)
         => Locked(Hash(OwnerIdentity(owner)), async () =>
         {
             RequestId(input.RequestId);
@@ -54,8 +54,7 @@ internal sealed partial class DevelopmentWorkspaceService
             // caller context; neither request IDs nor display names grant access to another owner.
             var trees = (await ListAsync(null, true, ct)).Workspaces.Where(t => t.Owner.SameIdentity(owner)).ToArray();
             if (trees.Length == 0) throw Error("not_found", "Workspace not found.");
-            foreach (var tree in trees)
-                if (!await RequireParticipationSourceAsync(tree, owner.UserId, ct)) await Read(tree.Id, owner, ct);
+            if (actorUserId is not null) await RequireWorkspaceUserAsync(actorUserId, ct);
             var metadata = await MetadataAsync(owner, ct);
             var previous = metadata.Operations?.FirstOrDefault(o => o.Id == input.RequestId);
             if (previous is not null)

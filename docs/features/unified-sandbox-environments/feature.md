@@ -31,7 +31,7 @@ drain, compatibility adapter or old-runtime reader. Parent credentials, provider
 ordinary app data are not copied into test instances. The child retains the existing trusted-Core
 model and shared Docker access; it is not an isolation boundary for hostile Core code.
 
-Artifact versions for this change are Core/CLI **0.163.0**, Shell **0.118.0**, Harness **0.79.0**,
+Artifact versions for this change are Core/CLI **0.163.0**, Shell **0.118.0**, Harness **0.80.0**,
 Demo **0.20.0** and TypeScript SDK **0.37.0**. The .NET SDK has no retired-runtime consumer and is
 unchanged. Canonical app skills, the served development guide and affected feature documents
 describe the single model.
@@ -143,6 +143,11 @@ containers do not establish those claims. Separately scoped remote preview and i
 deliverables also remain in their owning plans.
 
 ## Testing Expectations
+
+After integrating main's shared workspace access and unified Delete, the managed
+`npm run test:integration -- sessions` suite passes again. It verifies child Core resource
+cleanup alongside cross-user deletion, exact-request replay, dirty-source handling and retained
+ordinary app data. Harness 0.80.0 builds with both Chats and Workspaces pages.
 
 On 2026-10-29, a manual browser creation from a workspace-backed parent selected the local
 production binary, observed child Core 0.162.0, installed published Shell 0.116.4 and Marketplace
