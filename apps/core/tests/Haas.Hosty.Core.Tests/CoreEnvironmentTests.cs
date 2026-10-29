@@ -450,6 +450,24 @@ public sealed class CoreEnvironmentTests
         Assert.Single(await f.Store.ListAsync(default));
     }
 
+    [Fact]
+    public async Task VersionFollowsObservedChildAndSurvivesStopWithoutChangingLaunchSelection()
+    {
+        using var f = new Fixture();
+        var item = await f.Create();
+        Assert.Null(item.CoreVersion);
+        f.Runtime.Version = "0.150.1";
+        item = await f.Command(item, "start");
+        Assert.Equal("0.150.1", item.CoreVersion);
+        f.Runtime.Version = "0.162.0";
+        item = await f.Service.ReadAsync(f.Actor, item.Id, default);
+        Assert.Equal("0.162.0", item.CoreVersion);
+        item = await f.Command(item, "stop");
+        Assert.Equal("0.162.0", item.CoreVersion);
+        Assert.Equal("current", item.Mode);
+        Assert.Null(item.Process);
+    }
+
     private sealed class Clock : IClock { public DateTimeOffset UtcNow => DateTimeOffset.UtcNow; }
     private sealed class Fixture : IDisposable
     {
@@ -470,6 +488,7 @@ public sealed class CoreEnvironmentTests
     }
     private sealed class FakeRuntime : ICoreEnvironmentRuntime
     {
+        public string? Version;
         public void ExitAll() => live.Clear();
         public CoreEnvironmentUsage? Usage; public bool FailObservation;
         public Task<CoreEnvironmentUsage?> InspectResourcesAsync(CoreEnvironmentRecord record, string root, CancellationToken ct)
@@ -483,9 +502,9 @@ public sealed class CoreEnvironmentTests
         public Task<CoreEnvironmentProcess?> ObserveAsync(CoreEnvironmentRecord record, string root, CancellationToken ct)
             => Incompatible && live.ContainsKey(record.Id)
                 ? throw new SandboxException("environment_core_version", "Unsupported old child", 409)
-                : Task.FromResult(live.GetValueOrDefault(record.Id));
+                : Task.FromResult(live.GetValueOrDefault(record.Id) is { } process ? process with { Version = Version } : null);
         public async Task StartAsync(CoreEnvironmentRecord record, string root, Func<CoreEnvironmentProcess, Task> save, CancellationToken ct)
-        { Starts++; var process = new CoreEnvironmentProcess(1234567, DateTimeOffset.UtcNow); live[record.Id] = process; await save(process); }
+        { Starts++; var process = new CoreEnvironmentProcess(1234567, DateTimeOffset.UtcNow, Version); live[record.Id] = process; await save(process); }
         public Task StopAsync(CoreEnvironmentRecord record, string root, bool remove, CancellationToken ct)
         { if (FailStop) throw new IOException("Docker unavailable"); Removals.Add(remove); live.Remove(record.Id); return Task.CompletedTask; }
     }

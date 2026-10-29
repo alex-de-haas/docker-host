@@ -36,7 +36,7 @@ export function ResourceUsage({ appId, service, label }: { appId?: string; servi
   const points = useMemo(() => resourceSeries(snapshot, appId, service), [snapshot, appId, service]);
   const latest = fresh ? points.at(-1) : undefined;
   const activity = fresh && !service && appId !== "hosty.core" ? currentApiActivity(snapshot, appId) : null;
-  const showApi = !service && appId !== "hosty.core";
+  const showApi = !service && appId !== "hosty.core" && !appId?.startsWith("core-environment:");
   const warningActivity = activity?.warning ? activity : null;
   const cpu = latest?.cpu ?? null;
   const memory = latest?.memory ?? null;

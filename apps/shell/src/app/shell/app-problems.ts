@@ -28,9 +28,10 @@ export function collectAppProblems(app: CoreApp): AppProblem[] {
   const problems: AppProblem[] = [];
 
   const permissions = app.permissionState;
-  if (permissions?.status === "known" && permissions.unsupportedRequired?.length) {
-    problems.push({ severity: "error", action: "permissions", title: "Required permissions are unsupported",
-      detail: `Core does not support these required permissions: ${permissions.unsupportedRequired.join(", ")}. Install compatible app/Core versions or wait for an app update.` });
+  const unsupported = [...(permissions?.unsupportedRequired ?? []), ...(permissions?.unsupportedOptional ?? [])];
+  if (permissions?.status === "known" && unsupported.length) {
+    problems.push({ severity: "warning", action: "permissions", title: "App and Core permissions differ",
+      detail: `This Core does not support these requested permissions: ${unsupported.join(", ")}. Update the app or Core. These permissions are not granted; some app features may not work.` });
   }
   if (permissions?.status === "known" && permissions.missingRequired.length > 0) {
     problems.push({ severity: "error", action: "permissions", title: "Required permissions need approval",

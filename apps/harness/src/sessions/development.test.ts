@@ -6,6 +6,11 @@ let server: Server | undefined;
 afterEach(async () => { vi.unstubAllGlobals(); if (server) { server.closeAllConnections(); await new Promise<void>(resolve => server!.close(() => resolve())); server = undefined; } });
 
 describe("Core workspaces transport", () => {
+  it("advertises ordinary child environments and no removed relay operations", () => {
+    const names = developmentTools().map(tool => tool.name);
+    expect(names).toEqual(expect.arrayContaining(["environment_create", "environment_start", "environment_setup", "environment_api", "environment_finish"]));
+    expect(names.filter(name => name.startsWith("sandbox_"))).toEqual([]);
+  });
   it.each(["commit", "pr-commit"] as const)("advertises and forwards the selected-file receipt for %s", async action => {
     const tool = developmentTools().find(t => t.name === action.replaceAll("-", "_"))!;
     expect(tool.inputSchema).toMatchObject({ additionalProperties: false, properties: { reviewId: { type: "string" } } });

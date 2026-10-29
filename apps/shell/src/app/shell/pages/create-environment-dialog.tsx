@@ -1,24 +1,24 @@
 "use client";
 
-import { useEffect, useId, useState, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { Plus } from "lucide-react";
 import { HostyLoader } from "../../../../../../shared/web/hosty-states";
-import { EnvironmentStages } from "./environment-stages";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { fetchCore } from "../core-transport.js";
 import { readCoreErrorDetail } from "../core-api";
 
 type Entry = { id: string; title: string; description?: string; defaultEnabled: boolean };
 export function CreateEnvironmentDialog({ origin, disabled, onCreate }: {
-  origin: string; disabled: boolean; onCreate: (input: Record<string, unknown>) => Promise<void>;
+  origin: string; disabled: boolean; onCreate: (input: Record<string, unknown>) => void;
 }) {
   const id = useId();
+  const submitting = useRef(false);
   const [open, setOpen] = useState(false), [entries, setEntries] = useState<Entry[] | null>(null);
   const [selected, setSelected] = useState<string[]>([]), [error, setError] = useState("");
   const [label, setLabel] = useState("New environment"), [corePort, setCorePort] = useState("");
@@ -39,8 +39,9 @@ export function CreateEnvironmentDialog({ origin, disabled, onCreate }: {
     return () => abort.abort();
   }, [open, entries, origin]);
   const overCapacity = selected.length * 2 > memory || selected.length > cpus || selected.length * 256 > pids;
-  const submit = async (event: FormEvent) => {
+  const submit = (event: FormEvent) => {
     event.preventDefault();
+    if (disabled || submitting.current || !entries || !label.trim() || overCapacity) return;
     try {
       const ports = appPorts.split(',').map(value => value.trim()).filter(Boolean).map(value => {
         const match = /^([^:]+):([^:]+):([^=]+)=(\d+)$/.exec(value);
@@ -48,20 +49,21 @@ export function CreateEnvironmentDialog({ origin, disabled, onCreate }: {
           throw new Error("Use appId:service:portKey=port for a selected app, with ports from 1024 to 65535.");
         return { appId: match[1], service: match[2], portKey: match[3], port: +match[4] };
       });
-      await onCreate({ requestId: crypto.randomUUID(), label: label.trim(), mode: "current",
+      submitting.current = true;
+      onCreate({ requestId: crypto.randomUUID(), label: label.trim(), mode: "release",
         initialization: { schemaVersion: "hosty-initialization.0.1", requestId: crypto.randomUUID(), apps: selected, ports },
         ...(corePort ? { corePort: +corePort } : {}),
         limits: { memoryBytes: memory * 1073741824, cpus, pids, diskBytes: 10737418240,
           applicationMemoryBytes: Math.min(2147483648, memory * 1073741824), applicationCpus: 1, applicationPids: 256 } });
       setOpen(false);
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Environment creation failed."); }
+    } catch (cause) { submitting.current = false; setError(cause instanceof Error ? cause.message : "Environment creation failed."); }
   };
-  return <Dialog open={open} onOpenChange={setOpen}>
+  return <Dialog open={open} onOpenChange={value => { if (value) submitting.current = false; setOpen(value); }}>
     <DialogTrigger asChild><Button type="button" size="sm" disabled={disabled}><Plus data-icon="inline-start" />Create environment</Button></DialogTrigger>
-    <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-2xl">
-      <DialogHeader><DialogTitle>Create environment</DialogTitle><DialogDescription>A fresh Core with separate apps, accounts and data. Register its administrator in the browser after installation.</DialogDescription></DialogHeader>
-      <form onSubmit={event => void submit(event)} className="flex flex-col gap-5">
-        <EnvironmentStages current={0} />
+    <DialogContent className="sm:max-w-2xl">
+      <DialogHeader><DialogTitle>Create environment</DialogTitle><DialogDescription>Uses the locally installed production Core release with separate apps, accounts and data. Applications come from their distribution channels.</DialogDescription></DialogHeader>
+      <form id={`${id}-form`} onSubmit={submit} className="contents">
+      <DialogBody className="flex flex-col gap-5">
         <FieldGroup>
           <Field><FieldLabel htmlFor={`${id}-name`}>Name</FieldLabel><Input id={`${id}-name`} value={label} onChange={e => setLabel(e.target.value)} required maxLength={120} disabled={disabled} /></Field>
           <FieldSet><FieldLegend>Applications</FieldLegend><FieldDescription>Core is always included. Recommended apps are selected below.</FieldDescription>
@@ -86,7 +88,8 @@ export function CreateEnvironmentDialog({ origin, disabled, onCreate }: {
         </details>
         {overCapacity && <Alert variant="destructive"><AlertDescription>Select fewer apps or increase the limits under Advanced. This selection exceeds the current reservation.</AlertDescription></Alert>}
         {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
-        <DialogFooter><Button type="submit" disabled={disabled || !entries || !label.trim() || overCapacity}>Create and start</Button></DialogFooter>
+        </DialogBody>
+        <DialogFooter><Button type="button" variant="outline" onClick={() => setOpen(false)}>Cancel</Button><Button type="submit" form={`${id}-form`} disabled={disabled || !entries || !label.trim() || overCapacity}>Create</Button></DialogFooter>
       </form>
     </DialogContent>
   </Dialog>;

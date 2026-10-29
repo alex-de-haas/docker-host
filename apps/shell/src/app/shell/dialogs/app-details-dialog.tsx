@@ -370,7 +370,15 @@ function SettingsDialog({
 }) {
   const settings = app.settings || [];
   const hasPublicOrigins = settings.some((setting) => isPublicOriginSettingKey(setting.key)) || !!app.endpoints?.length;
-  const hasMounts = true;
+  const hasParameters = settings.some((setting) => !isPublicOriginSettingKey(setting.key) && !setting.key.startsWith("HOSTY_LOCAL_NAME_"));
+  const hasMounts = (app.mounts?.length ?? 0) > 0;
+  // Keep existing grants and provider roles reachable even after manifest requests change.
+  const hasPermissions = canManageApps && [
+    app.requiredCorePermissions, app.optionalCorePermissions, app.grantedCorePermissions, app.confirmedRoles,
+    app.permissionState?.required, app.permissionState?.optional,
+    app.permissionState?.acceptedRequired, app.permissionState?.acceptedOptional,
+    app.permissionState?.granted, app.permissionState?.unconfirmedRoles,
+  ].some((entries) => (entries?.length ?? 0) > 0);
   const hasSource = Boolean(app.supportsSource) || canManageApps;
   const availableTabs = SETTINGS_TABS.filter((tab) => {
     switch (tab.id) {
@@ -380,11 +388,12 @@ function SettingsDialog({
         return !!backups;
       case "services":
       case "metrics":
-      case "parameters":
       case "app":
         return true;
+      case "parameters":
+        return hasParameters;
       case "permissions":
-        return canManageApps;
+        return hasPermissions;
       case "publicOrigins":
         return hasPublicOrigins;
       case "mounts":
@@ -435,7 +444,7 @@ function SettingsDialog({
       {active === "services" && <AppServicesPanel key={app.id} app={app} coreOrigin={coreOrigin} serviceRevision={serviceRevision} />}
       {active === "metrics" && <AppMetricsPanel key={app.id} app={app} coreOrigin={coreOrigin} />}
       {active === "logs" && app.capabilities.includes("logs") && <ConsoleLogsPanel key={app.id} app={app} coreOrigin={coreOrigin} />}
-      {canManageApps && <div className={cn("min-h-0 overflow-y-auto", active !== "permissions" && "hidden")}><AppPermissions key={app.id} app={app} active={active === "permissions"} /></div>}
+      {hasPermissions && <div className={cn("min-h-0 overflow-y-auto", active !== "permissions" && "hidden")}><AppPermissions key={app.id} app={app} active={active === "permissions"} /></div>}
       {backups && <div className={cn("flex min-h-0 flex-1 flex-col", active !== "backups" && "hidden")}>{backups}</div>}
       {/* All forms stay mounted (toggled with hidden) so drafts survive tab switches. */}
       <div className={cn("flex min-h-0 flex-1 flex-col", active !== "app" && active !== "parameters" && active !== "publicOrigins" && "hidden")}>

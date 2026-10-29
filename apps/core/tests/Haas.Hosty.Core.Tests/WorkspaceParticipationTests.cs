@@ -229,10 +229,6 @@ public sealed partial class CoreLifecycleServiceTests
         var wrongContext = await Assert.ThrowsAsync<AppLifecycleException>(() => environments.CreateAsync(actor,
             new(Guid.NewGuid().ToString(), "Missing workspace", Context: context with { WorkspaceId = new string('f', 64) }), default));
         Assert.Equal("workspace_not_found", wrongContext.Code);
-        var sandboxes = new SandboxService(new(f.Paths), new ResourceControlInputs(shared.Path), new ResourceControlSandboxRuntime(), f.Clock, workspaces: service);
-        var plan = await sandboxes.PlanAsync(actor, new(shared.Apps[0].AppId, "sandbox", new("worktree", shared.Id), Context: context), default);
-        var sandbox = await sandboxes.PrepareAsync(actor, new(Guid.NewGuid().ToString(), plan.Id, plan.Digest), default);
-        Assert.Equal("prepared", sandbox.State);
     }
 
     [Fact]

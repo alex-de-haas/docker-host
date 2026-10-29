@@ -1,16 +1,13 @@
-import type { CoreEnvironment, SandboxInstance } from "@hosty-sdk/app/sandbox/server";
+import type { CoreEnvironment } from "@hosty-sdk/app/sandbox/server";
 import { CoreEventNames, subscribeToCoreEvents, type CoreStreamState } from "./core-event-stream";
 
 export type SandboxSnapshot = {
   environments: CoreEnvironment[] | null;
-  instances: SandboxInstance[] | null;
   coreError?: string | null;
-  appError?: string | null;
 };
 function isSnapshot(value: unknown): value is SandboxSnapshot {
   const data = value as SandboxSnapshot | null;
-  return !!data && (Array.isArray(data.environments) || data.environments === null && typeof data.coreError === "string") &&
-    (Array.isArray(data.instances) || data.instances === null && typeof data.appError === "string");
+  return !!data && (Array.isArray(data.environments) || data.environments === null && typeof data.coreError === "string");
 }
 
 /** Complete snapshots supersede missed frames; reopening the stream sends current state again. */

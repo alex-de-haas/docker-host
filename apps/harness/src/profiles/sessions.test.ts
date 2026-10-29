@@ -22,6 +22,7 @@ beforeEach(async () => {
   missingProvider = false; dir = await mkdtemp(path.join(os.tmpdir(), "hosty-profile-session-"));
   settings = new SettingsStore(dir); await settings.update({ systemPrompt: "COMMON_OLD", workflowPrompt: "WORKFLOW_OLD", skillIds: ["b".repeat(64)] });
   profiles = new ProfileStore(dir, async () => config("Planner"), async () => [skill]);
+  const defaults = await profiles.read(); await profiles.setDefault(defaults.profiles[0]!.id, defaults.revision);
   store = new SessionStore(dir); adapter = new FakeHarnessAdapter(); manager = open();
 });
 afterEach(async () => { await manager.shutdown(); await rm(dir, { recursive: true, force: true }); });
@@ -70,4 +71,11 @@ it("serializes profile changes against first dispatch", async () => {
   const results = await Promise.allSettled([manager.postMessage(session.id, "hello"), manager.setProfile(session.id, { profileId: null, expectedRevision: 0 })]);
   expect(results[0]?.status).toBe("fulfilled"); expect(results[1]?.status).toBe("rejected");
   expect((await manager.getSession(session.id))?.agentProfile?.name).toBe("Planner"); await idle(session.id);
+});
+
+it("starts without a profile when no default was explicitly configured", async () => {
+  const directory = await profiles.read(); await profiles.setDefault(null, directory.revision);
+  const session = await manager.createSession({ createdBy: "admin" });
+  expect(session.agentProfile).toBeNull(); expect(session.skillIds).toEqual([]);
+  expect(session.providerLocked).not.toBe(true);
 });

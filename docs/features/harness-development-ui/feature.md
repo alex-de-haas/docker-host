@@ -1,13 +1,13 @@
 ---
 created: 2026-10-16
 updated: 2026-10-29
-summary: Harness combines conversation navigation, multi-repository workspace details, sandbox previews and verified lifecycle actions.
+summary: Harness provides separate Chats and Workspaces pages, multi-repository details, environment previews and verified lifecycle actions.
 components: [apps/harness, apps/core, apps/shell, packages/app-sdk]
 ---
 
 # Harness Development UI
 
-Standalone Harness uses the SDK page navigation from its manifest, exposing Harness and Tasks.
+Standalone Harness uses the SDK page navigation from its manifest, exposing Chats, Workspaces and Tasks.
 Wide windows show the page sidebar; narrow windows use the Page navigation drawer. Embedded
 and native hosts control navigation visibility through the SDK chrome contract. The conversation
 and workspace list remains available independently of page navigation.
@@ -90,23 +90,28 @@ the selected conversation. Participation updates use the shared workspace observ
 
 ## Navigation And Conversation
 
-Harness exposes `/development` as its entrypoint and a Shell navigation entry. `/assistant` remains
+Harness opens Chats at `/chats` and exposes Workspaces at `/development` through separate Shell and
+standalone navigation entries. Existing `/development?session=…` and workspace links remain valid. `/assistant` remains
 the compact assistant panel. Both render the same conversation component and use the same session,
 streaming, provider, question, approval, app-context and attachment APIs. Plans is not an installation dependency and remains a separate app. The standalone
 [Workspaces app is retired](../workspaces-app/feature.md). Child Core creation and test-account setup
 remain available through Harness's development tools; its former operator creation form is removed.
 
-The full page places one workspace-and-unattached-chat list on the left. Internal workspaces show
+Each full page places its own list on the left. Chats lists every accessible conversation individually,
+including conversations attached to workspaces. Workspaces lists only workspaces. Internal workspaces show
 accessible conversation tabs above the center chat and details on the right; external workspaces
-leave the center empty. Attached chats do not duplicate the workspace row. Other users' disclosed
+leave the center empty. Attached chats appear as workspace tabs on Workspaces and as individual rows on Chats. Other users' disclosed
 activity contributes to independent Working, Needs attention and Failed counts, without exposing
 private chat tabs. Unknown/stopping metadata has a separate indication. The participant panel keeps
 sharing and attachment controls; its session names are informational rather than duplicate navigation.
 
-Create app, Continue building and New session actions accompany the list. Global New session creates
-an unattached chat; the plus after workspace tabs creates a chat in that workspace. Search matches
-workspace names, disclosed session titles and app context; All, Needs attention, Working and Failed
-chips filter the unified list. Sessionless workspaces offer explicit creation; selecting a row never
+Create app and Continue building appear only on Workspaces. Create app is available before selecting
+a workspace or conversation; it creates an empty conversation and opens the existing form without
+sending a provider message. New session on Chats creates an unattached chat; the plus after workspace
+tabs creates a chat in that workspace. Both pages share search and All, Needs attention, Working and
+Failed filters, scoped to their own rows. Workspace search also matches disclosed session titles and
+app context. Each page restores its own selected conversation; the assistant panel retains its
+existing history. Sessionless workspaces offer explicit creation; selecting a row never
 creates a conversation automatically. Rename remains in the conversation header. Desktop navigation
 and workspace columns measure 264/344 px; transcript and composer are capped at 760 px. Tabs scroll
 horizontally with a reachable plus, and arrow/Home/End keys select tabs. Workspace details use the
@@ -120,7 +125,7 @@ leaves the worktree clean and releases the owned activity lease after confirmed 
 
 Pending approvals/questions have a pinned Review action that scrolls and focuses their card;
 active work has a pinned activity line and Stop. Repository summaries use bordered cards. Search and activity chips change navigation without
-changing conversation identity. Workspaces and unattached chats are ordered by most recent activity, with
+changing conversation identity. Both lists are ordered by most recent activity, with
 stable ID ordering for equal or unavailable dates. Waiting sessions keep their indicators without
 being pinned above newer work. Sessions fall back to their creation date on older records; Core
 aggregates workspace activity across its repositories and workflow; participant state/title changes
@@ -145,7 +150,7 @@ an approval decision. Historical statuses in replay retain cancellation-card sem
 change current controls or signal stream readiness before the authoritative snapshot. Create app
 persists its context-change time before emitting the corresponding event. Provider/autonomy events apply their settings immediately, even if reconciliation
 fails; a fetch superseded by a later settings event cannot replace that event.
-Each row offers Delete session with confirmation. It reuses the existing session deletion API,
+Each Chats row offers Delete session with confirmation. It reuses the existing session deletion API,
 including verified execution stop, independent workspace detachment and resource protection, and keeps failures visible for retry without navigating
 away from the current conversation. Deleting the selected session clears its draft and route selection;
 deleting another session preserves the selected conversation. A terminal deletion event detaches
@@ -400,15 +405,21 @@ health qualifying a running state. Its second line describes the current executi
 icon with the source branch. Workspace/source labels remain accessible to screen readers, with
 source-path name fallback and the full path retained in the title. Selection and installation/update
 provenance do not establish process state; missing observations remain Unknown or Target unavailable.
-The accessible per-app Use this workspace icon is hidden only when the current workspace and
-worktree IDs exactly match the bound target. Unavailable rights, targets and active transitions
-disable switching with an explanation. Group actions use compact Use workspace and Return to
-packages labels. A fresh, complete observation shows only Use workspace when every bound app
+The accessible per-app Use this workspace icon is hidden when the current workspace and
+worktree IDs exactly match the bound target, or while a runtime switch is being submitted or
+observed. Unavailable rights, targets and other app transitions disable switching with an explanation.
+Group actions use compact Use workspace and Return to packages labels. A fresh, complete observation shows only Use workspace when every bound app
 is positively outside this workspace, only Return to packages when every exact bound worktree
 is selected, and both for a mixed selection. Missing/legacy/partial observations and another tree
 in this workspace retain both actions. Initial loading, disconnection and retained execution requests
 also keep both visible so package recovery and original-request retries remain reachable.
+While a submitted switch or retry is in progress, group and per-app switch buttons are hidden;
+the switching status remains visible. Actions return after success or failure, with original-request
+retry and package recovery retained on failure.
 Visibility follows observations rather than treating an operation result as proof of selection.
+The information tooltip next to Use on this Core explains ordinary-data switching and package
+recovery. Successful switches leave no additional completion message; the app rows show the
+observed target and lifecycle state.
 
 Workspace-scoped Harness routes revalidate installed bindings and project only bound-app status,
 execution choices and the permitted operation/review result from existing generic Core APIs. They
@@ -432,9 +443,8 @@ sandbox lifecycle, reviewed checks, restart and service logs, including original
 and confirmations. Current launch stage/time and service state come from Core. Missing full launch
 history, time-to-ready, Not pushed counts or child-Core test-user totals are not invented.
 
-The entire sandbox section is omitted after a successful empty inventory read, including inventories containing only disposed app sandboxes. Loading and unavailable/error states stay visible with their existing retry; later observations reveal newly created previews. Owned child Core environments show their label, runtime
-state and authorized Core/application preview links; app sandboxes show their runtime state and
-preview link. Ordinary child login remains required. Missing resource permission or unavailable
+The entire sandbox section is omitted after a successful empty child-environment inventory read. Loading and unavailable/error states stay visible with their existing retry; later observations reveal newly created previews. Owned child Core environments show their label, runtime
+state and authorized Core/application preview links. Ordinary child login remains required. Missing resource permission or unavailable
 application status is reported. Merely completing a workspace does not finish a retained sandbox.
 
 Each child app also shows Core-owned launch progress (preparation, environment build/reuse,
@@ -460,7 +470,7 @@ sandbox. The [creation feature](../app-prototype-workspaces/feature.md#optional-
 owns the runtime recipe, serialization and recovery contract.
 
 
-External workspaces share the unified workspace/chat list, using Core's typed external ownership
+External workspaces appear on the Workspaces page, using Core's typed external ownership
 and the same summary/diff components. The 264 px navigation column uses compact 36 px rows:
 the same hammer for every workspace, one truncated display name with its full title, and the accent
 selection fill. External workspaces have no distinct icon, secondary label or tooltip in the list. Rows omit the external task reference; selection remains bound to
@@ -801,9 +811,34 @@ Failure warnings contain no credential-bearing provider details. An explicit con
 refresh still waits for that selected conversation before confirming success; Core validates each
 privileged command independently. Background scheduling stops during manager shutdown.
 
+## Chats And Workspaces Verification
+
+Verified on macOS on 2026-10-29 for the Harness 0.80.0 release; the initial counts below precede integration of main's 0.79.0 workspace changes:
+
+- `npm run build:web --workspace @haas/hosty-harness` passes with both static pages.
+- `npm run test --workspace @haas/hosty-harness` passes 1,887 tests in 175 files.
+- Harness TypeScript and targeted ESLint checks pass. Documentation, version consistency and
+  whitespace checks pass.
+- `npm run test:integration -- sessions` passes with a parent-managed child Core, separate test
+  accounts, shared workspace conversations, access revocation and retained source. Parent Finish
+  confirms resource removal. No provider prompts are dispatched or provider credentials copied.
+- The authorized current-runtime trial restarts Harness successfully. Standalone and Shell show
+  separate Chats/Workspaces navigation and lists; development actions remain on Workspaces.
+  A new chat has No profile and changes from Codex to Claude without sending a message. Shell
+  restores that chat and provider. Workspace search and a reloadable workspace detail link pass;
+  workspace row activation is checked standalone because browser automation loses its input target
+  inside the embedded frame. Existing conversations and drafts are preserved, and the empty QA chat
+  is deleted through the authorized API with a confirming 404 read.
+- The operator's automatic General default is cleared through Settings. Explicit profile choices
+  and existing conversation snapshots remain intact.
+
 ## Testing Expectations
 
-- Verify standalone navigation between Harness and Tasks at wide and narrow widths, active-page
+- Verify separate manifest navigation, page-specific selection memory and counts, all accessible
+  chats regardless of attachment, workspace-only development actions and empty-page app creation.
+  Keep existing workspace deep links, per-session drafts and assistant promotion to the correct page.
+
+- Verify standalone navigation between Chats, Workspaces and Tasks at wide and narrow widths, active-page
   selection and host-controlled navigation hiding without losing conversation/workspace controls.
 
 - Cover expired stream admission followed by verified same-actor restoration, durable cursor replay,

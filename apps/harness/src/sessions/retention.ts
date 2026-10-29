@@ -16,12 +16,11 @@ export function retentionBusy(record: SessionRecord): boolean {
     || ["queued", "running", "unknown"].includes(record.handoffDispatch?.state ?? "")
     || !!record.appCreations?.some(o => o.state === "pending")
     || !!record.mcpPendingApprovals?.length
-    || !!record.coreEnvironmentOperations?.some(o => o.state === "pending")
-    || !!record.sandboxOperations?.some(o => o.state === "pending");
+    || !!record.coreEnvironmentOperations?.some(o => o.state === "pending");
 }
 export function hasResourceHistory(record: SessionRecord): boolean {
   return !!(record.appCreations?.some(o => o.state !== "rejected") || record.developmentLease || record.developmentWorkspaces?.length || record.publicationReferences?.length || record.coreEnvironments?.length
-    || record.sandboxInstances?.length || record.coreEnvironmentOperations?.length || record.sandboxOperations?.length);
+    || record.coreEnvironmentOperations?.length);
 }
 // Core deliberately retains no successful Delete receipt. Only its explicit absence
 // confirmation can reconcile local history; older/unavailable Core remains fail-closed.

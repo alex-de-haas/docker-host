@@ -82,9 +82,6 @@ internal sealed partial class WorkspaceCleanupService
         foreach (var child in (await environments.ListAsync(ct)).Where(e => Belongs(e.Owner, e.Request.Context, owner, workspaceId)))
             if (child.State != "finished" || DevelopmentWorkspaceService.PathEntryExists(environments.Root(child.Id)))
                 resources.Add(new(child.Id, "core", child.Request.Label, environments.Root(child.Id), child.State, child.Revision));
-        foreach (var instance in (await sandboxes.ListAsync(ct)).Where(s => Belongs(s.Owner, s.Request.Context, owner, workspaceId)))
-            if (instance.State != "disposed" || DevelopmentWorkspaceService.PathEntryExists(sandboxes.DataRoot(instance.Id)))
-                resources.Add(new(instance.Id, "sandbox", instance.Request.AppId, sandboxes.DataRoot(instance.Id), instance.State, instance.Revision));
         return resources.OrderBy(r => r.Kind).ThenBy(r => r.Id).ToArray();
     }
 
@@ -161,24 +158,6 @@ internal sealed partial class WorkspaceCleanupService
                             "finish", new(resource.RequestId, revision), ct);
                         if (result is not null && result.State != "finished") throw DevelopmentWorkspaceService.Error("cleanup_pending", "Child Core shutdown remains pending.");
                         if (DevelopmentWorkspaceService.PathEntryExists(environments.Root(resource.Id))) throw DevelopmentWorkspaceService.Error("cleanup_pending", "Child Core data removal remains pending.");
-                    }
-                    else if (resource.Kind == "sandbox")
-                    {
-                        var record = await sandboxService.ReadAsync(new(userId) { DeletingWorkspace = workspaceId, DeletingOwner = removalOwner }, resource.Id, ct);
-                        if (!Belongs(record.Owner, record.Context, removalOwner, workspaceId))
-                            throw DevelopmentWorkspaceService.Error("ownership_invalid", "The accepted sandbox context changed.");
-                        recorded = record.Operations.Any(o => o.Id == resource.RequestId);
-                        if (!recorded && record.Revision != resource.Revision)
-                        {
-                            revision = record.Revision;
-                            resource = resource with { Revision = revision };
-                            journal = journal with { Cleanup = journal.Cleanup.Select(r => r.Id == resource.Id && r.Kind == resource.Kind ? resource : r).ToArray() };
-                            await workspaces.SaveDiscardAsync(journal);
-                        }
-                        var result = record.State == "disposed" ? null : await sandboxOperations.CommandAsync(new(userId) { DeletingWorkspace = workspaceId, DeletingOwner = removalOwner }, resource.Id,
-                            "dispose", new(resource.RequestId, revision), ct);
-                        if (result is not null && result.State != "disposed") throw DevelopmentWorkspaceService.Error("cleanup_pending", "Sandbox shutdown remains pending.");
-                        if (DevelopmentWorkspaceService.PathEntryExists(sandboxes.DataRoot(resource.Id))) throw DevelopmentWorkspaceService.Error("cleanup_pending", "Sandbox data removal remains pending.");
                     }
                     else throw DevelopmentWorkspaceService.Error("ownership_invalid", "Unknown accepted resource kind.");
                     journal = journal with { Resources = journal.Resources.Select(r => r.Id == resource.Id && r.Kind == resource.Kind ? r with { State = "removed" } : r).ToArray() };

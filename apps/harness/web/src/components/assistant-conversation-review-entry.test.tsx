@@ -73,7 +73,7 @@ it("opens an external PR in its own workspace without enabling Ask in an unrelat
   expect(button("Ask from review").disabled).toBe(true); expect(api.postMessage).not.toHaveBeenCalled();
   await act(async () => button("Back to session").click());
   expect(container.querySelector('[aria-label="Mock workspace review"]')).toBeNull();
-  expect(container.querySelector('nav[aria-label="Workspaces and chats"] button[aria-current="page"]')?.textContent).toContain("external-workspace");
+  expect(container.querySelector('nav[aria-label="Workspaces"] button[aria-current="page"]')?.textContent).toContain("external-workspace");
 });
 
 it("opens persisted transcript edits in their exact tree and session scope while retaining the prior PR choice and composer", async () => {
@@ -225,8 +225,7 @@ it("switches workspace tabs with independent drafts and excludes other users' ch
   await act(async () => [...container.querySelectorAll<HTMLButtonElement>("nav button")].find(b => b.textContent?.startsWith("shared"))!.click());
   expect(input().value).toBe("Implementation draft");
   await act(async () => tabs()[1].click()); expect(input().value).toBe("Review draft");
-  await act(async () => button("Standalone").click());
-  expect(tabs()).toHaveLength(0); expect(container.querySelector('[aria-label="Workspace draft shared"]')).toBeNull();
+  expect([...container.querySelectorAll('nav[aria-label="Workspaces"] button')].some(node => node.textContent === "Standalone")).toBe(false);
   expect(api.createSession).not.toHaveBeenCalled(); expect(api.postMessage).not.toHaveBeenCalled();
 });
 it.each(["external", "empty"])("restores a %s workspace route without creating or reopening an unrelated conversation", async kind => {

@@ -3,7 +3,7 @@
   "id": "com.haas.demo-app",
   "name": "Demo App",
   "description": "Hosty-aware demo runtime app for validating lifecycle, settings, storage, external mounts, identity, and app-owned role flows.",
-  "version": "0.19.0",
+  "version": "0.20.0",
   "source": {
     "type": "git",
     "repository": "https://github.com/alex-de-haas/docker-host.git",
@@ -431,27 +431,5 @@
   },
   "optionalCorePermissions": [
     "apps.panels.read"
-  ],
-  "sandbox": {
-    "protocol": "hosty-sandbox-v1",
-    "roles": [
-      "admin",
-      "operator",
-      "viewer"
-    ],
-    "permissions": [
-      "demo.health.read",
-      "demo.config.read",
-      "demo.people.read",
-      "demo.directory.read",
-      "demo.roles.read",
-      "demo.roles.manage",
-      "demo.settings.preview"
-    ],
-    "generatedSourceFiles": {
-      "sandbox-dev": [
-        "apps/demo-app/next-env.d.ts"
-      ]
-    }
-  }
+  ]
 }

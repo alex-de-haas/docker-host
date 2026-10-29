@@ -1,15 +1,16 @@
 ---
 created: 2026-09-30
-updated: 2026-10-21
+updated: 2026-10-29
 summary: Per-app permission reviews and a host-wide Security overview of Core permissions, provider roles and their installed-app holders.
-components: [apps/shell, apps/core]
+components: [apps/shell, apps/core, packages/app-sdk]
 ---
 
 # App Permission Management
 
 Administrators manage an installed app's permission declarations and optional choices from the
-Permissions tab in its existing settings panel. The tab remains accessible for empty and legacy
-installations. It distinguishes effective access from accepted declarations and the currently
+Permissions tab in its existing settings panel. The tab is hidden when there are no declarations,
+grants or provider roles; retained access remains reachable after declarations are removed.
+It distinguishes effective access from accepted declarations and the currently
 observed manifest, with descriptions, technical identifiers, additions, removals and transitions.
 The settings panel displays required and optional access read-only in separate compact groups.
 Each row shows a short label and an icon with a text status. Expanding the row reveals Core's full
@@ -48,8 +49,9 @@ update-review concern. Missing or invalid sources retain grants and last verifie
 report unknown/stale state. Reads never adopt manifest fields or change grants.
 
 Missing required access produces the actionable red "Required permissions need approval" problem,
-which opens Permissions and contributes to Dashboard's attention count. Unsupported required names
-produce a separate compatibility error, with no approval action. Missing or unsupported required
+which opens Permissions and contributes to Dashboard's attention count. Unknown required and optional
+names produce an amber compatibility warning: update the app or Core; ungranted access may leave
+features unavailable. Ordinary Core review remains available for known permissions in the same manifest. Missing or unsupported required
 permissions never block start, restart, autostart, runtime switching, or retained workloads.
 The observer reports permission state without stopping applications. An unreadable manifest marks
 running-app state as `stale`, retaining verified declarations and the read error.
@@ -88,7 +90,10 @@ Updated grants drive the existing embedded-app iframe policy. Harness uses Core'
 
 Core exposes `/install/permissions/{appId}` as an administrator recovery entry point. It works
 without the target app or Shell running and forwards to the normal Core-only confirmation page.
-An app with unsupported required declarations must be updated to a compatible manifest first.
+Unknown names remain visible on the Core confirmation page, including removals from older manifests.
+Approval stores declarations but filters grants to the current permission catalogue. A later Core
+that recognizes a previously unknown required name reports missing access and requires a new review;
+installation, update, observation and restart never infer a grant from an accepted declaration.
 
 ## Verified Acceptance
 
@@ -160,9 +165,9 @@ missing required setup for ordinary users with an administrator-configuration ex
 action buttons; only administrators receive details and the Core review action. Existing notice
 endpoints remain compatible. The app service credential stays server-side.
 Only administrators see actionable notices. Missing known required names open Core review;
-unsupported required names explain that the app or Core needs updating without an approval
-button. Optional-only declarations never trigger a notice. Legacy notice dismissal lasts until reload;
-the root overlay remains blocked until required setup succeeds.
+unsupported required names explain that the app or Core needs updating in a non-blocking warning.
+Mixed known/unknown requirements retain the review action for missing known access. Optional-only declarations never trigger a notice. Legacy notice dismissal lasts until reload;
+the root overlay remains blocked for missing known required access; unknown names alone do not hide app content.
 
 Standalone review opens directly from a click. Embedded apps ask Shell with
 `hosty:request-permission-review`; Shell checks the sending window and origin and derives
@@ -227,6 +232,17 @@ Verification on 2026-10-10:
 - Versions: platform 0.127.0 → 0.128.0; Shell 0.97.4 → 0.98.0. No version change in other artifacts.
 
 ## Testing Expectations
+
+The 2026-10-29 compatibility follow-up passed 345 Core tests using
+`dotnet test apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj --no-restore --filter 'FullyQualifiedName~Permission|FullyQualifiedName~WorkspaceManifest|FullyQualifiedName~InstallationApproval|FullyQualifiedName~AppManifestService'`.
+The SDK passed 701 tests with `npm run test --workspace @hosty-sdk/app`; the affected Shell component
+suite passed 47 cases and `node --test apps/shell/test/app-problems.test.mjs` passed 25.
+Core, SDK, Shell and Harness web builds passed, as did targeted Shell lint, documentation,
+version and whitespace checks. `npm run test:integration -- shell` passed on macOS arm64 with
+Docker, ordinary password login, SSE recovery and verified removal of the managed child resources.
+The authorized ordinary-data trial restarted the existing workspace Core, Harness and Shell
+successfully; Harness retained its selected workspace and cleared the obsolete-permission failure.
+No automatic stopping policy, migration of old sandboxes or new permission aliases were added.
 
 - Keep the host-wide overview complete with zero-holder entries; cover persisted permissions/roles,
   declaration-only requests, legacy collector labeling, revocation and administrator/app-grant gates.

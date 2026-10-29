@@ -31,13 +31,14 @@ it("uses newer authorized own-session changes without aliasing a foreign session
   expect(workspaceCounts(space, [mine], now)).toEqual({ working: 1, waiting: 1, failed: 0, unknown: 0 });
   expect(workspaceCounts(space, [{ ...mine, status: "idle" }], now)).toEqual({ working: 0, waiting: 1, failed: 0, unknown: 0 });
 });
-it("keeps ordering stable across heartbeats and includes detached chats and retained empty workspaces", () => {
+it("keeps workspace ordering stable and lists all chats independently of attachment", () => {
   const space = workspace([participant("mine", "idle", true)]);
   const mine = { id: "mine", title: "My chat", status: "idle", createdAt: new Date(now - 60_000).toISOString() } as AssistantSession;
   const solo = { ...mine, id: "solo", createdAt: new Date(now - 30_000).toISOString() };
-  expect(navigationItems([space], [mine, solo], now).map(i => i.key)).toEqual(["session:solo", "workspace:shared"]);
+  expect(navigationItems([space], [mine, solo], now).map(i => i.key)).toEqual(["workspace:shared"]);
   space.participation!.sessions[0].activityAt = new Date(now + 60_000).toISOString();
-  expect(navigationItems([space], [mine, solo], now).map(i => i.key)).toEqual(["session:solo", "workspace:shared"]);
+  expect(navigationItems([space], [mine, solo], now).map(i => i.key)).toEqual(["workspace:shared"]);
+  expect(navigationItems([space], [mine, solo], now, "chats").map(i => i.key)).toEqual(["session:solo", "session:mine"]);
   space.participation!.sessions[0].attached = false;
-  expect(navigationItems([space], [mine, solo], now).map(i => i.key)).toEqual(["session:solo", "session:mine", "workspace:shared"]);
+  expect(navigationItems([space], [mine, solo], now).map(i => i.key)).toEqual(["workspace:shared"]);
 });

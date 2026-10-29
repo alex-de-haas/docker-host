@@ -6,11 +6,23 @@ namespace Haas.Hosty.Core.Tests.Http;
 
 public sealed class CoreEnvironmentHttpTests
 {
+    [Theory]
+    [InlineData("/api/sandbox-instances")]
+    [InlineData("/api/sandbox-runtime/test/protocol")]
+    [InlineData("/api/sandbox-instances/test/authorize")]
+    public async Task RemovedRuntimeRoutesHaveNoEndpoint(string path)
+    {
+        await using var host = await StartHostAsync();
+        using var client = host.CreateClient();
+        using var response = await client.GetAsync(path);
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
     [Fact]
     public async Task EnvironmentApi_RequiresSeparatePermissionAndCurrentOwner()
     {
         await using var host = await StartHostAsync();
-        using var caller = await Client(host, "qa.client", [CoreAppPermissions.SandboxesRead, CoreAppPermissions.SandboxesManage]);
+        using var caller = await Client(host, "qa.client", ["apps.sandboxes.read", "apps.sandboxes.manage"]);
         const string root = "/api/internal/apps/qa.client/core-environments";
         Assert.Equal(HttpStatusCode.Forbidden, (await caller.GetAsync(root)).StatusCode);
         var apps = host.Services.GetRequiredService<AppRegistryStore>();

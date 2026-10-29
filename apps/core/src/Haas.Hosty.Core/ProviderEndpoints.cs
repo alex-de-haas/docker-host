@@ -182,7 +182,7 @@ internal static class ProviderEndpoints
                 var caller = await access.AuthenticateAsync(appId, request, ct);
                 var state = await lifecycle.ObservePermissionsAsync(caller.Id, true, ct);
                 return CoreJson.Json(new AppPermissionState(state.Required, state.Optional, state.Granted,
-                    state.Status == "known" && state.UnsupportedRequired.Count == 0, state.UnsupportedRequired, state.Status));
+                    state.Status == "known", state.UnsupportedRequired, state.Status));
             }));
         app.MapGet(root + "/providers/{kind}", async (string appId, string kind, HttpRequest request, ProviderAccessService access, CancellationToken ct) =>
             await Handle(async () => CoreJson.Json(await access.ListAsync(await access.AuthenticateAsync(appId, request, ct), kind, ct))));

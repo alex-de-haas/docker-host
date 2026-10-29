@@ -8,10 +8,8 @@ public sealed partial class CoreLifecycleServiceTests
     {
         var store = new CoreEnvironmentStore(f.F.Paths);
         var environments = new CoreEnvironmentService(store, new ResourceControlRuntime(), f.F.Clock, f.Service);
-        var sandboxStore = new SandboxStore(f.F.Paths);
-        var sandboxes = new SandboxService(sandboxStore, new ResourceControlInputs(f.Tree.Path), new ResourceControlSandboxRuntime(), f.F.Clock);
         return new(f.F.Paths, new(f.Service, f.F.Apps, f.F.Clock), f.Service, null!, f.F.Apps,
-            store, environments, new(store, environments), sandboxStore, sandboxes, new(sandboxes, new ResourceControlLifetime()));
+            store, environments, new(store, environments));
     }
 
     [Theory]
@@ -157,16 +155,11 @@ public sealed partial class CoreLifecycleServiceTests
         var store = new CoreEnvironmentStore(f.F.Paths);
         var runtime = new ResourceControlRuntime();
         var environments = new CoreEnvironmentService(store, runtime, f.F.Clock, f.Service);
-        var sandboxStore = new SandboxStore(f.F.Paths);
-        var sandboxes = new SandboxService(sandboxStore, new ResourceControlInputs(f.Tree.Path), new ResourceControlSandboxRuntime(), f.F.Clock);
         var cleanup = new WorkspaceCleanupService(f.F.Paths, new(f.Service, f.F.Apps, f.F.Clock), f.Service, null!, f.F.Apps,
-            store, environments, new(store, environments), sandboxStore, sandboxes, new(sandboxes, new ResourceControlLifetime()));
+            store, environments, new(store, environments));
         var child = await environments.CreateAsync(resourceOwner, new(Guid.NewGuid().ToString(), "Owned test data",
             Context: context, WorktreeIds: [f.Tree.Id]), default);
         var unrelated = await environments.CreateAsync(new("admin"), new(Guid.NewGuid().ToString(), "Unrelated data"), default);
-        var plan = await sandboxes.PlanAsync(resourceOwner, new(SourceTestApp, "sandbox", new("worktree", f.Tree.Id),
-            Context: context), default);
-        var sandbox = await sandboxes.PrepareAsync(resourceOwner, new(Guid.NewGuid().ToString(), plan.Id, plan.Digest), default);
         var command = new WorkspaceDeleteCommand(Guid.NewGuid().ToString());
         runtime.FailStop = true;
         var pending = await cleanup.ApplyDeleteAsync(f.Tree.WorkspaceId, "another-admin", null, command, default);
@@ -179,7 +172,6 @@ public sealed partial class CoreLifecycleServiceTests
         var removed = await cleanup.ApplyDeleteAsync(f.Tree.WorkspaceId, "third-admin", null, command, default);
         Assert.True(removed.State == "removed", removed.Error);
         Assert.Equal("finished", (await environments.ReadAsync(new("admin"), child.Id, default)).State);
-        Assert.Equal("disposed", (await sandboxes.ReadAsync(new("admin"), sandbox.Id, default)).State);
         Assert.True(Directory.Exists(unrelated.DataRoot));
         Assert.Single((await store.ReadAsync(child.Id, default))!.Operations!, op => ids.Contains(Guid.Parse(op.Id).ToString("D")));
         Assert.DoesNotContain("deletingWorkspace", CoreJson.Text(new SandboxActor("admin") { DeletingWorkspace = f.Tree.WorkspaceId }), StringComparison.OrdinalIgnoreCase);
@@ -203,10 +195,8 @@ public sealed partial class CoreLifecycleServiceTests
             await File.WriteAllTextAsync(Path.Combine(tree.Path, "unfinished.txt"), "discard this source");
             var store = new CoreEnvironmentStore(f.Paths);
             var environments = new CoreEnvironmentService(store, new ResourceControlRuntime(), f.Clock, workspaces);
-            var sandboxStore = new SandboxStore(f.Paths);
-            var sandboxes = new SandboxService(sandboxStore, new ResourceControlInputs(tree.Path), new ResourceControlSandboxRuntime(), f.Clock);
             var cleanup = new WorkspaceCleanupService(f.Paths, new(workspaces, f.Apps, f.Clock), workspaces, null!, f.Apps,
-                store, environments, new(store, environments), sandboxStore, sandboxes, new(sandboxes, new ResourceControlLifetime()), f.Service);
+                store, environments, new(store, environments), f.Service);
 
             var removed = await cleanup.ApplyDeleteAsync(tree.WorkspaceId, "another-admin", null,
                 new(Guid.NewGuid().ToString()), default);
@@ -230,10 +220,8 @@ public sealed partial class CoreLifecycleServiceTests
         await f.F.Apps.UpsertAppAsync(app with { SourceState = app.SourceState! with { LocalOverridePath = f.Tree.Path } });
         var store = new CoreEnvironmentStore(f.F.Paths);
         var environments = new CoreEnvironmentService(store, new ResourceControlRuntime(), f.F.Clock, f.Service);
-        var sandboxStore = new SandboxStore(f.F.Paths);
-        var sandboxes = new SandboxService(sandboxStore, new ResourceControlInputs(f.Tree.Path), new ResourceControlSandboxRuntime(), f.F.Clock);
         var cleanup = new WorkspaceCleanupService(f.F.Paths, new(f.Service, f.F.Apps, f.F.Clock), f.Service, null!, f.F.Apps,
-            store, environments, new(store, environments), sandboxStore, sandboxes, new(sandboxes, new ResourceControlLifetime()), f.F.Service);
+            store, environments, new(store, environments), f.F.Service);
         var command = new WorkspaceDeleteCommand(Guid.NewGuid().ToString());
         f.F.Adapter.FailOnStopCount = f.F.Adapter.StopCount + 1;
         var pending = await cleanup.ApplyDeleteAsync(f.Tree.WorkspaceId, "admin", null, command, default);

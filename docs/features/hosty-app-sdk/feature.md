@@ -1,6 +1,6 @@
 ---
 created: 2026-07-15
-updated: 2026-10-25
+updated: 2026-10-29
 summary: The shared app-side Host integration published as an npm package and a NuGet package.
 components: [packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -425,6 +425,14 @@ The server-only `@hosty-sdk/app/tool-activity/server` helper reports per-user de
 activity with the managed installation identity. It renews working presence, retains decisions
 through transient failures and re-reports after Core restarts. The existing UI server adapter
 reads activity with the current app-user grant. See the [tool activity contract](../tool-activity/feature.md).
+
+## Child-environment coordination
+
+The sandbox/server module exports CoreEnvironmentClient for ordinary child Core lifecycle,
+consent, setup and bounded child API access. The sandbox/react module retains CoreEnvironmentPanel.
+Single-app SandboxClient and sandbox identity/target parsers and types are removed in 0.37.
+Apps use the same ordinary Core sessions and app roles in each environment. No legacy permission
+is promoted to core.environments.* authority. See [Core environments](../app-sandbox-runtimes/feature.md).
 
 ## Testing Expectations
 

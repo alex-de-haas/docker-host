@@ -1,6 +1,6 @@
 ---
 created: 2026-09-25
-updated: 2026-10-28
+updated: 2026-10-29
 summary: One Core resource sampler for containers, local process trees and Core itself, shared by Dashboard and Telemetry.
 components: [apps/core, apps/shell, apps/telemetry-ui]
 ---
@@ -8,7 +8,7 @@ components: [apps/core, apps/shell, apps/telemetry-ui]
 # Unified runtime resource usage
 
 Core owns one resource sampler for Docker containers, Local Command service process trees, and
-Core itself. Dashboard and Telemetry consume the same observations. Dashboard needs no Telemetry
+Core itself and owned child Core processes. Dashboard and Telemetry consume the same observations. Dashboard needs no Telemetry
 installation, no application instrumentation, and no database. Telemetry's existing SQLite
 retention remains unchanged; no new persistence is introduced in Core or Shell.
 
@@ -62,6 +62,22 @@ zero readings for each service declared by the selected reviewed manifest, even 
 state is cleared by Stop. Starting, stopping and partially unavailable apps retain measured services, with
 unknown placeholders for expected services without samples. Unknown data is never presented as
 zero or silently omitted from a total.
+
+## Child Core processes
+
+The same native sampler reads directly owned child Core processes from the environment registry.
+Each sample uses core-environment:<id>, the environment ID and a PID/start-time identity. Only the
+recorded live process is measured; child app containers are not folded into its CPU/RAM. A reused
+PID is refused and a new process warms up its CPU delta. Missing/stopped/finished processes have
+no live sample. Replacement or missing identities remove the old process series from retained
+history; Shell also filters merged history by the latest process identity.
+
+Child samples in HTTP history require the current owner plus core.environments.inspect for a
+delegated caller. Stream delivery uses the same owner and the authorized sandboxes topic.
+Owner metadata is not serialized. Parent Core and app readings retain their existing permissions.
+Dashboard excludes child Core samples from Apps totals and uses the same resource widget and
+connection without per-row polling. Container reservations and the existing 15-second quota
+observation remain separate from these process readings.
 
 ## History and delivery
 

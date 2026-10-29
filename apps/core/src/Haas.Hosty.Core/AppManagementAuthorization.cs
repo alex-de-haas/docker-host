@@ -129,11 +129,6 @@ internal static class AppManagementAuthorization
         Add(CoreAppPermissions.CoreEnvironmentsInspect, "GET /api/core-environments", "GET /api/core-environments/{id}", "GET /api/core-environments/{id}/apps", "GET /api/core-environments/{id}/initialization");
         Add(CoreAppPermissions.CoreEnvironmentsOperate, "POST /api/core-environments", "POST /api/core-environments/{id}/setup-link", "POST /api/core-environments/{id}/initialization/resume", "POST /api/core-environments/{id}/operations/{kind}", "POST /api/core-environments/{id}/setup", "POST /api/core-environments/{id}/consent/revoke", "POST /api/core-environments/consents/{id}/revoke");
         result["POST /api/core-environments/from-workspace"] = [CoreAppPermissions.CoreEnvironmentsOperate, CoreAppPermissions.WorkspacesRead];
-        Add(CoreAppPermissions.SandboxesInspect, "GET /api/sandbox-instances", "GET /api/sandbox-instances/{id}",
-            "GET /api/sandbox-instances/{id}/browser-runs/{jobId}", "GET /api/sandbox-instances/{id}/preview", "GET /api/sandbox-instances/{id}/diagnostics");
-        Add(CoreAppPermissions.SandboxesOperate, "POST /api/sandbox-instances/{id}/operations/{kind}",
-            "POST /api/sandbox-instances/{id}/users", "POST /api/sandbox-instances/{id}/seeds", "POST /api/sandbox-instances/{id}/browser-runs",
-            "POST /api/sandbox-instances/{id}/users/delete", "POST /api/sandbox-instances/{id}/viewers", "POST /api/sandbox-instances/{id}/evidence/clear", "POST /api/sandbox-instances/{id}/browser-runs/cancel");
         Add(CoreAppPermissions.ReadSkills, "GET /api/skills", "GET /api/skills/", "GET /api/skills/{id}/content");
         Add(CoreAppPermissions.ManageSkills, "POST /api/skills/discover", "POST /api/skills/install", "POST /api/skills/check-updates", "POST /api/skills/update", "DELETE /api/skills/{id}");
         Add(CoreAppPermissions.ReadApps,

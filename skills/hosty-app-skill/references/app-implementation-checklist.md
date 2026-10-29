@@ -11,7 +11,12 @@
 - Apps that need assigned users call `/api/internal/apps/{appId}/directory/users` with `HOSTY_APP_SERVICE_TOKEN`.
 - App-owned roles are stored under the app data directory.
 - Apps declaring `interfaces.mcp` use the SDK's MCP-specific introspection helper for assistant MCP-only tokens and supported direct delegated/scoped credentials. Ordinary API introspection must reject MCP-only credentials. Answer `notifications/initialized` with HTTP 202 and an empty body (never an empty 200), and declare `annotations.readOnlyHint` on every tool (see `app-manifest.md`, "MCP Interface").
-- Runtime validation uses an authorized Core-managed sandbox/child Core. For a supported local profile, use `hosty --data-root <test-instance-root> apps install <managed-worktree>/manifest.json --runtime <profile>` against that instance; preserve supported native/system test paths.
+- Runtime validation uses an authorized Core-managed child Core. For a supported local profile, use `hosty --data-root <test-instance-root> apps install <managed-worktree>/manifest.json --runtime <profile>` against that instance; preserve supported native/system test paths.
 - Browser identity validation uses ordinary Core password login after setup/recovery on an isolated
   data root; no user-selector or direct-session shortcut is available in Development.
 - Documentation links point to `docs/features/runtime-app-manifest/feature.md` when the manifest contract changes.
+
+- Test with ordinary child accounts and application role assignments; never add sandbox-specific
+  identity, personas, relay environment variables or a special manifest sandbox recipe.
+- Verify the retained environment's observed process/version and Finish cleanup; preserve exported
+  reports, registered worktrees and shared inputs.

@@ -11,6 +11,7 @@ export type ApiActivitySnapshot = {
 export type ResourceSample = {
   appId: string; service: string; runtime: string; timestamp: string;
   cpuPercent: number | null; memoryBytes: number | null;
+  environmentId?: string | null; processIdentity?: string | null;
 };
 export type ResourceFrame = { timestamp: string; services: ResourceSample[]; sequence?: number; apiActivity?: ApiActivitySnapshot | null };
 export type ResourceSnapshot = { runId: string; now: string; logicalProcessors: number; history: ResourceFrame[]; sequence?: number; apiActivity?: ApiActivitySnapshot | null };
@@ -28,8 +29,10 @@ export function mergeResources(previous: ResourceSnapshot | null, next: Resource
 }
 
 export function resourceSeries(snapshot: ResourceSnapshot | null, appId?: string, service?: string): ResourcePoint[] {
+  const current = snapshot?.history.at(-1)?.services.find(s => s.appId === appId && s.environmentId);
   return (snapshot?.history ?? []).map(frame => {
-    const samples = frame.services.filter(s => (appId ? s.appId === appId : s.appId !== "hosty.core") && (!service || s.service === service));
+    const samples = frame.services.filter(s => (appId ? s.appId === appId : s.appId !== "hosty.core" && !s.environmentId)
+      && (!service || s.service === service) && (!s.environmentId || !!current && s.processIdentity === current.processIdentity));
     const timestamp = Date.parse(frame.timestamp);
     const sum = (key: "cpuPercent" | "memoryBytes") => samples.length && samples.every(s => s[key] !== null && Number.isFinite(s[key]) && timestamp - Date.parse(s.timestamp) <= STALE_MS)
       ? samples.reduce((total, s) => total + s[key]!, 0) : null;

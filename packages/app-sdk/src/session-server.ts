@@ -2,13 +2,12 @@ import { ProviderClient, type ProviderServerOptions } from "@hosty-sdk/app/provi
 import { ProviderError } from "@hosty-sdk/app/providers";
 import type { AppSessionStatus, SessionRecoveryParams } from "./session-types.js";
 import type { PermissionNoticeState } from "./permission-types.js";
-import type { SandboxIdentityContext } from "./sandbox-identity.js";
 import type { AppContinuity } from "./continuity.js";
 
 /** Framework-neutral server adapter. Call with an already authenticated app session, never request data. */
 export type HostySessionInput = {
   status: AppSessionStatus;
-  identity?: { userId: string; hostRole: string | null; activeUntil?: string | null; activityRequired?: boolean; continuity?: AppContinuity; sandbox?: SandboxIdentityContext };
+  identity?: { userId: string; hostRole: string | null; activeUntil?: string | null; activityRequired?: boolean; continuity?: AppContinuity };
   error?: { code: string; message: string; status: number | null };
 };
 
@@ -20,24 +19,19 @@ export async function createHostySessionResponse(session: HostySessionInput, rec
   const identity = session.identity;
   if (options.administratorOnly && identity.hostRole !== "host.admin")
     return Response.json({ status: "forbidden", recovery }, { headers });
-  if (identity.sandbox) {
-    // Core admits only recipes without required global permissions in this offline profile.
-    // The revalidated execution identity is authoritative; never query the installed app's
-    // permission state or advertise a global permission-review action from a test realm.
-    return Response.json({ status: "active", ...identity, recovery, hosty: { version: 1, setup: "ready" } }, { headers });
-  }
-  let setup: "ready" | "missing" | "unsupported" | "unavailable" | "incompatible" = "unavailable";
+  let setup: "ready" | "missing" | "unavailable" | "incompatible" = "unavailable";
+  let permissionWarning: "unsupported" | undefined;
   let notice: PermissionNoticeState | undefined;
   try {
     const permissions = await new ProviderClient({ ...options, appId: recovery.appId ?? undefined }).permissions(options.signal);
     if (![permissions.required, permissions.optional, permissions.granted, permissions.unsupportedRequired ?? []].every(list => Array.isArray(list) && list.every(name => typeof name === "string")))
       throw new Error("Invalid permission state.");
-    setup = permissions.unsupportedRequired?.length ? "unsupported"
-      : permissions.required.some(name => !permissions.granted.includes(name)) ? "missing" : "ready";
+    setup = permissions.required.some(name => !permissions.unsupportedRequired?.includes(name) && !permissions.granted.includes(name)) ? "missing" : "ready";
+    permissionWarning = permissions.unsupportedRequired?.length ? "unsupported" : undefined;
     if (identity.hostRole === "host.admin") notice = { hostRole: identity.hostRole, appId: recovery.appId ?? "",
       corePublicOrigin: recovery.corePublicOrigin, permissions };
   } catch (error) {
     if (error instanceof ProviderError && error.status === 404) setup = "incompatible";
   }
-  return Response.json({ status: "active", ...identity, recovery, hosty: { version: 1, setup, notice } }, { headers });
+  return Response.json({ status: "active", ...identity, recovery, hosty: { version: 1, setup, permissionWarning, notice } }, { headers });
 }

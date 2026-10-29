@@ -1,7 +1,7 @@
 # Development Runtimes And Live Trials
 
 Use this reference for supported local/source runtime profiles. Default runtime acceptance uses a
-Core-managed sandbox or child Core with separate users and data. An ordinary-data development
+Core-managed child Core with separate users and data. An ordinary-data development
 trial is a separate operator-authorized operation: use the installed app's unified development
 controls to enter, restart or Return. Return restores runtime selection; it does not reset Git or
 restore application data. Preserve live edits and the recorded recovery state.
@@ -98,3 +98,12 @@ Keep the same service keys, endpoint keys, settings, data directory semantics, a
 - App-owned UI and business logic can be checked with the app's standalone dev server.
 - Hosty identity, Shell embedding, assignments, scoped directory access, redirects, WebSockets, and SSE must be checked through Core-managed lifecycle.
 - Dockerfile, storage mounts, lifecycle behavior, and container networking still need image install tests.
+
+## Environment build selection
+
+Retain the existing current/release/source choices. Current and release copy a prepared executable
+into the child's private build directory; source explicitly builds an authorized Core project.
+An application workspace alone does not select a source Core. Parent updates do not replace a
+continuing child's build; parent Start/Restart still prepares its selected input. Observe the child
+process/version instead of assuming a permanent version pin. No alternate single-app relay or
+sandbox-aware identity path is supported.

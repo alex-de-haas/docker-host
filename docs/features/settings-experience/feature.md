@@ -1,6 +1,6 @@
 ---
 created: 2026-10-20
-updated: 2026-10-28
+updated: 2026-10-29
 summary: Shell unifies personal, host and application settings; Core confirms protected changes while Harness owns invocation preferences and skill selections.
 components: [apps/core, apps/shell, apps/harness, apps/marketplace]
 ---
@@ -48,6 +48,11 @@ retain their independent behavior. Core also has no Dashboard expander or inline
 Applicable tabs expose Launch, Logs, Services, Metrics, Parameters, Folders, Network, Permissions,
 Updates and Backups.
 Logs follows Launch when the app declares the logs capability.
+Parameters appears only for app parameters, excluding public-origin and local-name settings.
+Folders appears only for declared mount slots, including unbound optional slots and managed workspace
+slots. Primary app data alone does not add a Folders tab. Permissions appears only when the app has
+requested or previously accepted/granted Core permissions, or confirmed/unconfirmed provider roles.
+An unavailable section link or a selected section whose data disappears falls back to Launch.
 Existing section IDs remain valid (`app`, `publicOrigins`, `mounts`, `source`); `parameters` addresses
 the typed manifest parameters, including secret replacement controls. Launch saves autostart
 independently. Parameters saves no autostart or public-origin values. A save in either section does
@@ -297,6 +302,10 @@ A completed operation retains its captured status and response even when deliver
 fails. Retrying the same reviewed request replays that result without executing the mutation again.
 
 ## Testing Expectations
+
+- Verify empty Parameters, Folders and Permissions tabs are absent, including stale section links
+  and refreshed app data. Retain optional parameters/mounts/permissions and existing grants/roles;
+  network-only settings do not add Parameters, and available form drafts survive tab switches.
 
 - Exercise exact-payload review, replay, stale revisions, cancellation, revoked callers/users,
   CSRF/origin/nonce boundaries, duplicate/case-ambiguous JSON rejection and absence of legacy

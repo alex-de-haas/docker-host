@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-13
-updated: 2026-10-26
+updated: 2026-10-29
 summary: Local demo priorities through November 5 for host-contained agents, workspace Docker sandboxes, app creation, Git review, optional feedback and gradual redesign.
 components: [apps/core, apps/harness, apps/shell]
 ---
@@ -225,10 +225,10 @@ implementation checklist:
 
 1. **Implement and verify the approved instance and preview contract.** Use the experiment to
    validate source/data/cache bindings, runtime identity, authentication, origins and lifecycle.
-   The [Core integration proposal](../app-sandbox-runtimes/plan.md#proposed-core-integration-contract)
+   The [Core integration proposal](../app-sandbox-runtimes/feature.md#parent-managed-child-core-environments)
    now specifies execution targets, storage, scoped principals, Harness operations and a
-   [five-phase sequence](../app-sandbox-runtimes/plan.md#implementation-sequence). The
-   [local demo profile](../app-sandbox-runtimes/plan.md#approved-local-demo-profile)
+   [five-phase sequence](../app-sandbox-runtimes/feature.md#parent-managed-child-core-environments). The
+   [local demo profile](../app-sandbox-runtimes/feature.md#parent-managed-child-core-environments)
    selects offline isolated app networks with a fixed relay and concrete hard resource limits/
    monitored disk quotas, now accepted by the owner. The approved identity design lets Harness
    create sandbox-only test users/roles while preserving real-operator preview. It replaces the
@@ -250,7 +250,7 @@ implementation checklist:
    Git/PR/CI/review path and creation from Shell, then apply ready visual references with parity
    checks. Existing feature owners retain implementation; this plan's D3 collects acceptance.
 
-The [2026-10-14 runtime acceptance summary](../app-sandbox-runtimes/feature.md#integrations-and-verification-boundary)
+The [2026-10-14 runtime acceptance summary](../app-sandbox-runtimes/feature.md#parent-managed-child-core-environments)
 records completion of the two local Core sandbox journeys: real Harness/worktree edits and
 independent artifact QA after logout under scoped background authority. Separate agent/app
 containers, local preview/HMR, temporary users/data, private browser results, failure checks and

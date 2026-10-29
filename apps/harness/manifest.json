@@ -3,7 +3,7 @@
   "id": "hosty.harness",
   "name": "Hosty Harness",
   "description": "Hosty assistant with Docker and Local production runtimes, managed Claude and Codex connections, chat and settings.",
-  "version": "0.79.0",
+  "version": "0.80.0",
   "role": "system",
   "source": {
     "type": "git",
@@ -78,7 +78,7 @@
         },
         "docker": {
           "type": "docker",
-          "image": "ghcr.io/alex-de-haas/hosty-harness:0.79.0",
+          "image": "ghcr.io/alex-de-haas/hosty-harness:0.80.0",
           "environment": {
             "HOSTY_HARNESS_RUNTIME": "docker",
             "PORT": "3400"
@@ -165,7 +165,7 @@
         },
         "docker": {
           "type": "docker",
-          "image": "ghcr.io/alex-de-haas/hosty-harness-worker:0.79.0",
+          "image": "ghcr.io/alex-de-haas/hosty-harness-worker:0.80.0",
           "environment": {
             "HOSTY_HARNESS_RUNTIME": "docker",
             "PORT": "3401"
@@ -393,7 +393,7 @@
   "ui": {
     "entrypoint": {
       "endpoint": "http",
-      "path": "/development"
+      "path": "/chats"
     },
     "settings": {
       "endpoint": "http",
@@ -401,7 +401,12 @@
     },
     "navigation": [
       {
-        "label": "Harness",
+        "label": "Chats",
+        "endpoint": "http",
+        "path": "/chats"
+      },
+      {
+        "label": "Workspaces",
         "endpoint": "http",
         "path": "/development"
       },
@@ -444,8 +449,6 @@
     "apps.lifecycle",
     "apps.install",
     "core.lifecycle",
-    "apps.sandboxes.read",
-    "apps.sandboxes.manage",
     "core.environments.read",
     "core.environments.manage",
     "core.workspace.activate",

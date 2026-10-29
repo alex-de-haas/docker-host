@@ -1,6 +1,6 @@
 ---
 created: 2026-10-20
-updated: 2026-10-22
+updated: 2026-10-29
 summary: Shared local typography, light and dark cards, accessible forms and outcomes for Core authentication and trusted operation confirmations.
 components: [apps/core]
 ---
@@ -43,7 +43,7 @@ no ink edge and no shadow/halo. Forced-colors mode uses a 2 px system Highlight 
 These pages introduce no animation or frontend framework.
 
 Compact credential actions and protected settings reviews use the same design. App sign-in
-relay/storage pages and sandbox persona confirmation retain their domain presentation.
+relay/storage pages retain their domain presentation.
 The [settings experience](../settings-experience/feature.md) owns the API/review behavior and
 configuration editors in Shell.
 

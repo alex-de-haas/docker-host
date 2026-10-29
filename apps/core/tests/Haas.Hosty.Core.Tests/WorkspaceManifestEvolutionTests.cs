@@ -127,6 +127,64 @@ public sealed partial class CoreLifecycleServiceTests
         await Assert.ThrowsAsync<AppLifecycleException>(() => f.Service.PrepareWorkspaceManifestReviewAsync(candidate.Review, owner.UserId, default));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WorkspaceManifest_RestartKeepsOnlyStillGrantedWorkspacePermissionsAndReturnRemovesThem(bool revoke)
+    {
+        var (f, owner, _, tree, _, _) = await LocalHandoffFixture();
+        await AddManifestPackageRuntime(f, tree);
+        await EditDevManifest(tree.Path, m => {
+            m["corePermissions"] = new JsonArray("apps.read");
+            m["optionalCorePermissions"] = new JsonArray("apps.logs");
+        });
+        var required = await SelectManifestTarget(f, owner, tree);
+        Assert.Equal("review-required", required.State);
+        await f.Service.ApproveWorkspaceManifestAsync(required.Review!.WorkspaceManifest!, owner.UserId, ["apps.logs"], default);
+        Assert.Equal("completed", (await f.Service.ExecuteTargetAsync(required, default)).State);
+        await EditDevManifest(tree.Path, m => { m["version"] = "0.4.0"; m["optionalCorePermissions"] = new JsonArray(); });
+        await f.RecreateService().RestartAsync("test.created");
+        var app = (await f.Apps.GetAppAsync("test.created"))!;
+        Assert.Contains("apps.read", app.GrantedCorePermissions!);
+        Assert.DoesNotContain("apps.logs", app.GrantedCorePermissions!);
+        if (revoke)
+        {
+            await f.Apps.UpdateAppAsync(app.Id, a => a with { PermissionRevision = "revoked", GrantedCorePermissions = [] });
+            var starts = f.Adapter.StartCount;
+            Assert.Equal("dev_review_required", (await Assert.ThrowsAsync<AppLifecycleException>(() => f.Service.RestartAsync(app.Id))).Code);
+            Assert.Equal(starts, f.Adapter.StartCount);
+        }
+        Assert.Equal("completed", (await SelectManifestTarget(f, owner, tree, "package")).State);
+        Assert.Empty((await f.Apps.GetAppAsync(app.Id))!.GrantedCorePermissions!);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WorkspaceManifest_RestartReadsObsoletePackagePermissionsButValidatesTheNewSource(bool managedRestart)
+    {
+        var (f, owner, _, tree, _, _) = await LocalHandoffFixture();
+        await AddManifestPackageRuntime(f, tree);
+        Assert.Equal("completed", (await SelectManifestTarget(f, owner, tree)).State);
+        var app = (await f.Apps.GetAppAsync("test.created"))!;
+        var installed = JsonNode.Parse(await File.ReadAllTextAsync(app.ManifestPath!))!.AsObject();
+        installed["optionalCorePermissions"] = new JsonArray("retired.example.permission");
+        var packageBytes = installed.ToJsonString();
+        await File.WriteAllTextAsync(app.ManifestPath!, packageBytes);
+        await EditDevManifest(tree.Path, m => m["services"]![0]!["runtimes"]!["dev"]!["command"] = "node repaired.ts");
+        if (managedRestart)
+            Assert.Equal("active", (await ApplyReviewedDev(f.Service, DevRequest("restart"), DevActor(owner))).Phase);
+        else
+            await f.RecreateService().RestartAsync(app.Id);
+        Assert.Equal("node repaired.ts", f.Adapter.LastContext!.Manifest.Services[0].Runtime.Command);
+        Assert.DoesNotContain("retired.example.permission", (await f.Apps.GetAppAsync(app.Id))!.GrantedCorePermissions ?? []);
+        Assert.Equal(packageBytes, await File.ReadAllTextAsync(app.ManifestPath!));
+        var stops = f.Adapter.StopCount;
+        await EditDevManifest(tree.Path, m => m["optionalCorePermissions"] = new JsonArray(""));
+        await Assert.ThrowsAsync<AppManifestException>(() => f.Service.RestartAsync(app.Id));
+        Assert.Equal(stops, f.Adapter.StopCount);
+    }
+
     [Fact]
     public async Task WorkspaceManifest_ExecutionRefreshAndInvalidSourceReturnKeepInstalledPackageAndCurrentData()
     {

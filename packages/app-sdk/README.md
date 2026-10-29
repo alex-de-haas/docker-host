@@ -596,12 +596,19 @@ See [UI composition and browser acceptance](../../docs/features/sdk-ui-compositi
 
 `@hosty-sdk/app/sandbox/react` exports `CoreEnvironmentPanel` for operator-facing child Core
 management. Supply an authenticated `EnvironmentRequest` transport, a tab-local replay storage key
-and optionally a workspace with its active worktrees. Shell and Workspaces use this shared panel
-for create/start, current/source Core selection, normal test-account setup, app status, preview and
-confirmed deletion. The component does not grant authority: Core independently checks the optional
+and optionally a workspace with its active worktrees. It supports create/start, current/source
+Core selection, normal test-account setup, app status, preview and confirmed deletion. Shell has
+its own combined Core/environment rows and current-mode creation dialog. The component does not grant authority: Core independently checks the optional
 `core.environments.inspect/operate` grants, administrator identity and workspace source access.
 
-`@hosty-sdk/app/sandbox/server` provides the server-side clients for independent app sandboxes and
-child Core environments. Caller-owned `core.environments.read/manage` authority remains distinct
+`@hosty-sdk/app/sandbox/server` provides CoreEnvironmentClient for child Core environments. Caller-owned `core.environments.read/manage` authority remains distinct
 from the operator panel's cross-caller permissions. See the
-[sandbox contract](../../docs/features/app-sandbox-runtimes/feature.md) for lifecycle and cleanup rules.
+[environment contract](../../docs/features/app-sandbox-runtimes/feature.md) for lifecycle and cleanup rules.
+
+Version 0.37 removes SandboxClient, SandboxAction, the single-app Sandbox* request/view types,
+SandboxIdentity/SandboxTarget, readSandboxIdentity and readSandboxTarget. No relay identity or
+HOSTY_SANDBOX_* protocol is supported. Use CoreEnvironmentClient plus ordinary child app/user APIs;
+apps run with the same normal identity and app-owned roles as any other Core installation. Existing
+core.environments.* grants require their ordinary review; removed apps.sandboxes.* grants confer
+no replacement authority. The /sandbox/server and /sandbox/react module paths remain for the
+retained child-environment API.

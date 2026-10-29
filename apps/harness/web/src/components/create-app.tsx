@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Plus, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
@@ -34,8 +34,8 @@ function readDraft(raw: string | null): Draft {
   return next;
 }
 
-export function CreateApp({ session, busy, onChange }: {
-  session: AssistantSession; busy: boolean; onChange: (session: AssistantSession) => void;
+export function CreateApp({ session, busy, onChange, openOnMount = false, onOpened }: {
+  session: AssistantSession; openOnMount?: boolean; onOpened?: () => void; busy: boolean; onChange: (session: AssistantSession) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<Draft>(empty);
@@ -88,6 +88,11 @@ export function CreateApp({ session, busy, onChange }: {
         authorEmail: memory.current?.authorEmail || capabilities.gitIdentity.email });
     } catch (cause) { if (opened === generation.current) setError(cause instanceof Error ? cause.message : String(cause)); }
   }
+  const initialOpen = useRef(openOnMount);
+  useEffect(() => {
+    if (initialOpen.current) { initialOpen.current = false; void show(); onOpened?.(); }
+  });
+
   function close() { generation.current++; setOpen(false); }
   async function chooseIcon(file?: File) {
     if (!file) return;

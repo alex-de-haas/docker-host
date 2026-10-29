@@ -1,6 +1,6 @@
 ---
 created: 2026-08-19
-updated: 2026-10-28
+updated: 2026-10-29
 ---
 
 # Hosty Platform Vision
@@ -518,7 +518,7 @@ Decisions 1–5: 2026-08-19.
     Follow-up on 2026-10-13: the owner approves the local network/resource profile and agent-created
     sandbox-only users with configurable roles and permissions, including administrators that
     cannot act outside their sandbox. The approved
-    [identity contract](features/app-sandbox-runtimes/plan.md#real-operators-sandbox-users-and-instance-authority)
+    [identity contract](features/app-sandbox-runtimes/feature.md#parent-managed-child-core-environments)
     retains real Core operator preview and adds a separately typed, Core-managed test realm per
     runtime instance. This revises the real-users-only testing assumption, not global Core login
     or administrative authority. The owner clarifies that users and temporary resources belong to
@@ -587,7 +587,7 @@ Decisions 1–5: 2026-08-19.
     Public production URLs may be reachable with internet access; existing endpoint authentication
     and explicit grants, not the word sandbox, determine authority. Dependency discovery currently
     does not supply universal peer authorization. These qualifications refine decisions 35/36/40.
-    [Sandbox D13-D17](features/app-sandbox-runtimes/plan.md#permission-extension-owner-revision-2026-10-14)
+    [Sandbox D13-D17](features/app-sandbox-runtimes/feature.md#parent-managed-child-core-environments)
     owns the extension and its checks. The current verified implementation is still the offline profile.
 
 42. **Prefer dedicated sandbox dependencies and explore scoped Core state (2026-10-14).** In the
@@ -599,7 +599,7 @@ Decisions 1–5: 2026-08-19.
     principals, and cleans up owned resources rather than everything created by one user. Host-only
     operations and app-owned records need explicit treatment. This refines decision 41; it does not
     approve a blanket migration of all Core APIs or claim those namespaces already exist.
-    [Sandbox D14/D16-D19](features/app-sandbox-runtimes/plan.md#environment-scope-later-owner-discussion-2026-10-14)
+    [Sandbox D14/D16-D19](features/app-sandbox-runtimes/feature.md#parent-managed-child-core-environments)
     owns the contract review and implementation; shared installed providers stay deferred under D14.
 
 43. **Use trusted same-host test Core instances with shared Docker (2026-10-14).** The owner selects
@@ -610,7 +610,7 @@ Decisions 1–5: 2026-08-19.
     and operators requiring a physical boundary use a separate host. The primary Core should own
     environment lifecycle and cleanup, including graceful child stops. Process parentage alone does
     not implement that guarantee. The owner authorizes the local experiment now; its result and the
-    remaining parent manager are tracked by [sandbox D18-D21](features/app-sandbox-runtimes/plan.md#same-host-core-environments-owner-decision-2026-10-14).
+    remaining parent manager are tracked by [sandbox D18-D21](features/app-sandbox-runtimes/feature.md#parent-managed-child-core-environments).
 
 44. **Prefer SSE where a screen needs background updates (2026-10-16; clarified the same day).**
     The owner recommends SSE for screens whose architecture, user request or interaction model

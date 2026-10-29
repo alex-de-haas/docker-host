@@ -1,6 +1,6 @@
 ---
 created: 2026-10-18
-updated: 2026-10-25
+updated: 2026-10-29
 summary: Core-owned execution selection runs installed packages or registered workspace manifests on ordinary app data, with scoped access review and recoverable lifecycle operations.
 components: [apps/core, apps/cli, apps/harness, apps/shell]
 ---
@@ -52,8 +52,11 @@ flow with a `workspaceManifest` request. It requires source and lifecycle author
 installation authority. The operator sees the concrete added access. Consent is bound to the exact
 candidate digest, installed package, installation, source path, recipe, actor and current permission,
 settings and mount state. The decision nonce remains exclusive to the authenticated Core page.
-A denial grants nothing. Candidate edits, revoked permissions or changed authority require a fresh
-review; retries retain their execution request UUID. A client cannot submit its own approval flag.
+A denial grants nothing. Edits before admission invalidate the exact review; retries retain their
+execution request UUID. After admission, a restart of the same workspace source and runtime keeps
+only its previously admitted, still-granted and still-requested permissions and roles. Removed
+workspace-only permissions drop out; revoked or newly requested rights require review. Package
+Return retains its separate baseline. A client cannot submit its own approval flag.
 
 Approval records scoped consent; it does not update the installed manifest or immediately grant
 permissions to the package. The active workspace receives admitted required rights and explicitly

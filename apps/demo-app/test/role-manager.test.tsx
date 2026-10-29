@@ -20,11 +20,11 @@ afterEach(async () => { await act(async () => root.unmount()); container.remove(
 
 function snapshot(canManage = true): DemoRoleManagementSnapshot {
   return { generatedAt: "2026-10-24T00:00:00Z", canManage,
-    current: { principal: "admin", role: "admin", roleLabel: "Admin", source: "sandbox-scenario", assignment: null, permissions: [], canManageRoles: canManage },
-    assignments: [], roleSourceLabels: { "host-assignment": "Host assignment", "sandbox-scenario": "Sandbox scenario" },
+    current: { principal: "admin", role: "admin", roleLabel: "Admin", source: "host-assignment", assignment: null, permissions: [], canManageRoles: canManage },
+    assignments: [], roleSourceLabels: { "host-assignment": "Host assignment" },
     roles: ["viewer", "operator", "admin"].map(role => ({ role: role as "viewer" | "operator" | "admin", label: role, description: role, permissions: [] })),
     directory: { status: "ok", error: null },
-    users: ["First", "Second"].map(name => ({ id: name, displayName: name, email: `${name}@example.test`, hostRole: null, sandboxRole: "viewer",
+    users: ["First", "Second"].map(name => ({ id: name, displayName: name, email: `${name}@example.test`, hostRole: "host.user",
       appRole: { userId: name, role: "viewer", roleLabel: "Viewer", source: "host-assignment", assignment: null, permissions: [] } })),
   };
 }
@@ -54,7 +54,7 @@ it("keeps another user's draft through a save and displays the pending operation
   await act(async () => resolve(Response.json({ snapshot: updated })));
   expect(container.querySelector('[aria-label="App role for Second"]')?.textContent).toBe("admin");
   expect(save("Second").disabled).toBe(false);
-  expect(container.textContent).toContain("Sandbox · viewer");
+  expect(container.textContent).toContain("host.user");
 });
 
 it("adopts another administrator's returned role for an unrelated clean row", async () => {

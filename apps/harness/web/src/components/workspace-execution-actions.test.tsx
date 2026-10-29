@@ -140,13 +140,14 @@ it("retains the exact per-app intent after response loss, remount and a changed 
   await act(async () => button("Retry runtime switch").click());
   expect(vi.mocked(developmentRequest).mock.calls[2][1]).toEqual(original);
 });
-it("blocks group and other-app changes while a per-app switch is admitted", async () => {
+it("hides switch actions while a per-app switch is admitted", async () => {
   applicationRows = [row(), row("shell")];
   let complete!: (value: unknown) => void;
   vi.mocked(developmentRequest).mockReturnValueOnce(new Promise(resolve => { complete = resolve; }) as never);
   await render(); await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Use this workspace for Notes"]')!.click());
-  expect(button("Use workspace").disabled).toBe(true); expect(button("Return to packages").disabled).toBe(true);
-  expect(container.querySelector<HTMLButtonElement>('[aria-label="Use this workspace for Shell"]')!.disabled).toBe(true);
+  expect(button("Use workspace")).toBeUndefined(); expect(button("Return to packages")).toBeUndefined();
+  expect(button("Retry runtime switch")).toBeUndefined();
+  expect(container.querySelector('[aria-label="Bound applications"] button')).toBeNull();
   expect(container.textContent).toContain("Switching Notes…");
   await act(async () => complete({ state: "completed" }));
   expect(button("Use workspace").disabled).toBe(false);

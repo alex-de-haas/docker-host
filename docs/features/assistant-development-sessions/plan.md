@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-24
-updated: 2026-10-27
+updated: 2026-10-29
 summary: Umbrella for assistant sessions that own a conversation, its source workspaces, tests and pull requests.
 components: [apps/harness, apps/core, apps/shell]
 ---
@@ -151,7 +151,7 @@ can test a pinned app artifact. A workspace can link several app instances, and 
 its installed instance beside sandbox instances. Source ownership and consumer cleanup still apply
 when a worktree is selected; scheduling remains with the calling workflow.
 
-The [sandbox runtime acceptance summary](../app-sandbox-runtimes/feature.md#integrations-and-verification-boundary) verifies
+The [sandbox runtime acceptance summary](../app-sandbox-runtimes/feature.md#parent-managed-child-core-environments) verifies
 the Harness/worktree loop and independent QA without workspace allocation. Shell and Harness
 consume that same API. The [shared Docker runtime](../assistant-shared-docker-runtime/feature.md) now provides supported
 Codex/Claude execution. The [D9 Git acceptance](../../reviews/2026-10-15-sandbox-d9-git-acceptance.md)

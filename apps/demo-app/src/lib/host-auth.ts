@@ -1,5 +1,4 @@
 import { getDemoConfig } from "@/lib/demo-config";
-import { readSandboxTarget, readSandboxIdentity, type SandboxIdentityContext } from "@hosty-sdk/app";
 import {
   readDemoAppRoleAssignments,
   resolveDemoAppPermissions,
@@ -48,7 +47,6 @@ export interface AppSessionSnapshot {
   email: string | null;
   displayName: string | null;
   hostRole: string | null;
-  sandbox?: SandboxIdentityContext;
   expiresAt: string | null;
   error: {
     status: number | null;
@@ -83,7 +81,6 @@ export interface AppDirectoryUser {
   displayName: string | null;
   email: string | null;
   hostRole: string | null;
-  sandboxRole?: string;
 }
 
 export async function getDemoAuthSnapshot(headersList: HeaderReader): Promise<DemoAuthSnapshot> {
@@ -93,7 +90,7 @@ export async function getDemoAuthSnapshot(headersList: HeaderReader): Promise<De
   ]);
   const appPermissions = resolveDemoAppPermissions(appSession, roleAssignments);
   const directory = appPermissions.permissions.includes("demo.people.read")
-    ? await getAppDirectorySnapshot(readAppIdentityToken(headersList).token)
+    ? await getAppDirectorySnapshot()
     : forbiddenDirectorySnapshot();
 
   return {
@@ -215,10 +212,7 @@ async function getAppSessionSnapshot(headersList: HeaderReader): Promise<AppSess
     }
 
     const record = body && typeof body === "object" ? body as Record<string, unknown> : {};
-    let sandbox: SandboxIdentityContext | null = null;
-    let scopeValid = true;
-    try { sandbox = readSandboxIdentity(record, readSandboxTarget(process.env)); } catch { scopeValid = false; }
-    if (readString(record.appId) !== config.host.appId || !scopeValid) {
+    if (readString(record.appId) !== config.host.appId) {
       return {
         ...baseSnapshot,
         status: "forbidden",
@@ -242,7 +236,6 @@ async function getAppSessionSnapshot(headersList: HeaderReader): Promise<AppSess
       email: readString(record.email),
       displayName: readString(record.displayName),
       hostRole: readString(record.hostRole),
-      ...(sandbox ? { sandbox } : {}),
       expiresAt: readString(record.expiresAt),
       error: null,
     };
@@ -264,7 +257,7 @@ async function getAppSessionSnapshot(headersList: HeaderReader): Promise<AppSess
   }
 }
 
-export async function getAppDirectorySnapshot(userToken?: string | null): Promise<AppDirectorySnapshot> {
+export async function getAppDirectorySnapshot(): Promise<AppDirectorySnapshot> {
   const config = getDemoConfig();
   const endpoint = buildAppDirectoryEndpoint(config.host.coreOrigin, config.host.appId);
   const serviceToken = process.env.HOSTY_APP_SERVICE_TOKEN;
@@ -294,7 +287,6 @@ export async function getAppDirectorySnapshot(userToken?: string | null): Promis
       headers: {
         Authorization: `Bearer ${serviceToken}`,
         Accept: "application/json",
-        ...(process.env.HOSTY_SANDBOX_PROTOCOL && userToken ? { "X-Hosty-User-Token": userToken } : {}),
       },
       signal: AbortSignal.timeout(directoryTimeoutMs),
     });
@@ -382,7 +374,7 @@ function readAppIdentityToken(headersList: HeaderReader): {
 
 function buildAppDirectoryEndpoint(coreOrigin: string, appId: string) {
   try {
-    return new URL(process.env.HOSTY_SANDBOX_PROTOCOL ? "/api/auth/apps/directory" : `/api/internal/apps/${encodeURIComponent(appId)}/directory/users`, coreOrigin).toString();
+    return new URL(`/api/internal/apps/${encodeURIComponent(appId)}/directory/users`, coreOrigin).toString();
   } catch {
     return null;
   }
@@ -446,16 +438,15 @@ function normalizeDirectoryUsers(payload: unknown): AppDirectoryUser[] {
   }
 
   return users
-    .map(user => {
+    .map((user): AppDirectoryUser | null => {
       if (!user || typeof user !== "object") {
         return null;
       }
 
       const record = user as Record<string, unknown>;
-      const scoped = process.env.HOSTY_SANDBOX_PROTOCOL === "hosty-sandbox-v1";
-      const id = readString(scoped ? record.userId : record.id);
+      const id = readString(record.id);
       const hostRole = readString(record.hostRole);
-      if (!id || (!scoped && !hostRole) || (scoped && record.identityRealm !== "sandbox" && record.identityRealm !== "core")) {
+      if (!id || !hostRole) {
         return null;
       }
 
@@ -464,7 +455,6 @@ function normalizeDirectoryUsers(payload: unknown): AppDirectoryUser[] {
         displayName: readString(record.displayName),
         email: readString(record.email),
         hostRole,
-        ...(scoped && record.identityRealm === "sandbox" ? { sandboxRole: readString(record.appRole) ?? undefined } : {}),
       };
     })
     .filter((user): user is AppDirectoryUser => user !== null);

@@ -250,6 +250,11 @@ authority. Shell must not request full-source authority for profile or connectio
 
 Missing or unsupported required grants do not prevent launch; per-call checks refuse operations
 without effective authority. Optional permissions remain optional.
+Unknown required or optional names are compatibility warnings during install, update and workspace
+restart. Core retains their declarations but never grants them. Explain that the app or Core may
+need updating and some features may not work; do not infer which one is older from an unknown name.
+Removing unsupported declarations does not block updating the app. If a later Core recognizes a
+previously unknown required name, obtain normal explicit approval; restarting never grants it.
 Retired grants are removed without erasing manifest requirements. A blocked Shell can be reviewed
 on Core at `/install/permissions/hosty.shell`; approval still requires the Core confirmation page.
 

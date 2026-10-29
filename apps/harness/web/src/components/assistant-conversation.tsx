@@ -90,7 +90,7 @@ const HISTORY_STORAGE_KEY = "hosty.assistant.history";
 const MAX_ASK_CHARS = 4_000;
 
 
-export function AssistantConversation({ fullPage = false }: { fullPage?: boolean }) {
+export function AssistantConversation({ fullPage = false, navigation = "workspaces" }: { fullPage?: boolean; navigation?: "workspaces" | "chats" }) {
   const ui = useHostyUi();
   const [health, setHealth] = useState<HarnessHealth | null>(null);
   const [sessions, setSessions] = useState<AssistantSession[]>([]);
@@ -171,6 +171,9 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [historyOpen, setShowSessions] = useState(false);
   const showSessions = !fullPage && historyOpen;
+  const sessionStorageKey = fullPage ? `hosty.harness.${navigation}.session` : SESSION_STORAGE_KEY;
+  const navigationTitle = navigation === "workspaces" ? "Workspaces" : "Chats";
+  const [openAppCreation, setOpenAppCreation] = useState(false);
   const setHistoryOpen = useCallback((open: boolean) => {
     setShowSessions(open);
     try {
@@ -286,6 +289,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     setFailedUpload(null);
     try {
       window.localStorage.setItem(SESSION_STORAGE_KEY, record.id);
+      if (fullPage) window.localStorage.setItem(sessionStorageKey, record.id);
     } catch {
       // Private-mode storage refusal costs reattachment across reloads, nothing else.
     }
@@ -413,7 +417,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
         if (state === "disconnected") setStreamed("");
       },
     );
-  }, [onSessionChange, suggestionsReceive]);
+  }, [onSessionChange, suggestionsReceive, fullPage, sessionStorageKey]);
 
   // A full-page selection is also a navigation: Shell must restore that exact session on reload.
   const navigateSelection = useCallback(async (sessionId: string | null, workspaceId?: string | null) => {
@@ -543,7 +547,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
         let stored: string | null = null;
         let restoreHistory = false;
         try {
-          stored = window.localStorage.getItem(SESSION_STORAGE_KEY);
+          stored = window.localStorage.getItem(sessionStorageKey);
           restoreHistory = window.localStorage.getItem(HISTORY_STORAGE_KEY) === "true";
         } catch {
           // Private-mode storage can refuse reads as well as writes; that costs reattachment, and
@@ -588,7 +592,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
       cancelled = true;
       streamAbortRef.current?.abort();
     };
-  }, [attach, fullPage]);
+  }, [attach, fullPage, sessionStorageKey]);
 
   /**
    * An "ask the assistant" handed in by the embedder.
@@ -890,15 +894,17 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     setSurfaceSessionId(null);
     setMobileDetails(false);
     setHistoryOpen(!fullPage);
-    if (workspace) setSelectedWorkspaceId(workspace.id);
+    const retainedWorkspaceId = navigation === "workspaces" ? workspace?.id : undefined;
+    setSelectedWorkspaceId(retainedWorkspaceId ?? null);
     void inventory.refresh();
-    void navigateSelection(null, workspace?.id).catch(cause => setError(cause instanceof Error ? cause.message : String(cause)));
+    void navigateSelection(null, retainedWorkspaceId).catch(cause => setError(cause instanceof Error ? cause.message : String(cause)));
     try {
       window.localStorage.removeItem(SESSION_STORAGE_KEY);
+      window.localStorage.removeItem(sessionStorageKey);
     } catch {
       // An obsolete stored id is harmless: reattachment resolves it through the API.
     }
-  }, [setHistoryOpen, fullPage, navigateSelection, workspace, inventory]);
+  }, [setHistoryOpen, fullPage, navigateSelection, workspace, inventory, sessionStorageKey, navigation]);
 
   const remove = useCallback(async (sessionId: string) => {
     setError(null);
@@ -988,28 +994,42 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
 
   const pendingDecision = events.find(event => status === "awaiting_approval" && event.type === "approval_request" && !decidedApprovals.has(String(event.approvalId)) || status === "awaiting_question" && event.type === "question_request" && !cancelledQuestionIds.has(String(event.questionId)) && !answeredQuestions.has(String(event.questionId)));
 
-  const createAppAction = session && !showSessions ? <CreateApp key={`creation-${session.id}`} session={session} busy={running || sending || stopping || providerSaving} onChange={record => { onSessionChange(record); void inventory.refresh(); }} /> : null;
+  const createAppAction = fullPage && navigation === "workspaces" ? session ? (
+    <CreateApp key={`creation-${session.id}`} session={session} openOnMount={openAppCreation}
+      onOpened={() => setOpenAppCreation(false)} busy={running || sending || stopping || providerSaving}
+      onChange={record => { onSessionChange(record); void inventory.refresh(); }} />
+  ) : (
+    <Button variant="ghost" size="icon-sm" aria-label="Create app" title="Create app" disabled={!ready || openAppCreation}
+      onClick={() => {
+        setOpenAppCreation(true);
+        void startNew().then(record => { if (!record) setOpenAppCreation(false); });
+      }}><Plus aria-hidden /></Button>
+  ) : null;
 
   return (
     <div className={`harness-conversation flex h-dvh min-h-0 min-w-0 flex-col overflow-hidden ${review ? "harness-review-active" : ""}`}>
       {fullPage && !review && <header inert={workspaceModal} className="flex min-[900px]:hidden shrink-0 items-center gap-2 border-b px-3 py-2">
-        <Button className="md:hidden" size="sm" variant="ghost" onClick={() => { setMobileSessions(v => !v); setMobileDetails(false); }}>Workspaces and chats</Button>
+        <Button className="md:hidden" size="sm" variant="ghost" onClick={() => { setMobileSessions(v => !v); setMobileDetails(false); }}>{navigationTitle}</Button>
         {workspace && <Button className="ml-auto" size="sm" variant="outline" onClick={() => { setMobileDetails(v => !v); setMobileSessions(false); }}>Workspace details</Button>}
       </header>}
       {fullPage && inventory.error && <p role="alert" className="border-b px-4 py-2 text-sm text-destructive-foreground">{inventory.error}</p>}
       <div className="flex min-h-0 flex-1">
-      {fullPage && <div inert={workspaceModal} className={`${review ? "hidden" : mobileSessions ? "block md:block" : "hidden md:block"} w-full shrink-0 border-r md:w-[264px]`}><DevelopmentNavigation sessions={listedSessions} activeId={session?.id} activeWorkspaceId={workspace?.id} workspaces={inventory.workspaces}
+      {fullPage && <div inert={workspaceModal} className={`${review ? "hidden" : mobileSessions ? "block md:block" : "hidden md:block"} w-full shrink-0 border-r md:w-[264px]`}><DevelopmentNavigation view={navigation} sessions={listedSessions} activeId={session?.id} activeWorkspaceId={navigation === "workspaces" ? workspace?.id : undefined} workspaces={inventory.workspaces}
         createAppAction={createAppAction} onWorkspace={pickWorkspace} onNew={() => { setMobileSessions(false); void startNew(); }} onPick={pickSession} onDelete={remove} /></div>}
       <main ref={conversationRef} tabIndex={-1} inert={workspaceModal} className={`${review ? "hidden" : fullPage && mobileSessions ? "hidden md:flex" : "flex"} min-h-0 min-w-0 flex-1 flex-col`}>
 
-      {fullPage && workspace && <WorkspaceSessionTabs workspace={workspace} sessions={listedSessions} activeId={chatVisible ? session?.id : undefined} onPick={record => pickSession(record, true)} actions={workspaceActions} />}
-      {fullPage && !chatVisible ? <div className="min-h-0 flex-1" aria-label="Workspace center">
+      {fullPage && navigation === "workspaces" && workspace && <WorkspaceSessionTabs workspace={workspace} sessions={listedSessions} activeId={chatVisible ? session?.id : undefined} onPick={record => pickSession(record, true)} actions={workspaceActions} />}
+      {fullPage && (!chatVisible || !session) ? <div className="min-h-0 flex-1" aria-label="Workspace center">
+        {!workspace && <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-sm text-muted-foreground">
+          <p>{navigation === "workspaces" ? "Choose a workspace, create an app or continue building." : "Choose a chat or start a new one."}</p>
+          {navigation === "chats" && <Button variant="outline" disabled={!ready} onClick={() => void startNew()}>New chat</Button>}
+        </div>}
         {workspace && workspace.owner.kind !== "external" && <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-sm text-muted-foreground">
           <p>No accessible chats in this workspace.</p>
           <Button variant="outline" disabled={workspaceActions.busy || workspaceActions.retry || !workspace.participation || !workflowIsActive(workspace.workflow)} onClick={() => void workspaceActions.command("new")}>New session in workspace</Button>
         </div>}
         {error && <p role="alert" className="p-3 text-sm text-destructive-foreground">{error}</p>}
-      </div> : <div id="workspace-chat" role={fullPage && workspace ? "tabpanel" : undefined} aria-labelledby={fullPage && workspace && session ? `workspace-tab-${session.id}` : undefined} className="flex min-h-0 flex-1 flex-col">
+      </div> : <div id="workspace-chat" role={fullPage && navigation === "workspaces" && workspace ? "tabpanel" : undefined} aria-labelledby={fullPage && navigation === "workspaces" && workspace && session ? `workspace-tab-${session.id}` : undefined} className="flex min-h-0 flex-1 flex-col">
       <header className="flex flex-wrap shrink-0 items-center gap-2 border-b px-3 py-2">
         {showSessions ? (
           <>
@@ -1046,9 +1066,10 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                     }
                     if (!writeDraftAttachments(session.id, stored)) throw new Error("Browser storage is unavailable. Your draft and attachments remain in this panel.");
                     localStorage.setItem(SESSION_STORAGE_KEY, session.id);
-                    const entry = ui.getNavigation().entries.find(e => e.route === "/development");
+                    const destination = workspace ? "/development" : "/chats";
+                    const entry = ui.getNavigation().entries.find(e => e.route === destination);
                     if (entry) { const result = await ui.navigate(entry.key, { requestId: crypto.randomUUID(), placement: "main", search: `?session=${encodeURIComponent(session.id)}` }); if (result.status === "accepted") return; }
-                    window.open(`/development?session=${encodeURIComponent(session.id)}`, "_blank", "noopener");
+                    window.open(`${destination}?session=${encodeURIComponent(session.id)}`, "_blank", "noopener");
                   } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
                   finally { sendingRef.current = false; setSending(false); }
                 }}>Open in Harness</Button>

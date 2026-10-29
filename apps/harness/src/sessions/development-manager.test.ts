@@ -269,59 +269,6 @@ describe("development session coordination", () => {
       requestId: "finish", expectedRevision: 1 }, "token", "admin")).resolves.toMatchObject({ state: "finished" });
   });
 
-  it("plans artifact QA without a worktree and recovers the same preparation after reconnect", async () => {
-    const record = await manager.createSession({ createdBy: "admin", appIds: ["notes"] });
-    const plan = { id: "b".repeat(32), digest: "c".repeat(64), inputDigest: "d".repeat(64), request: { appId: "notes" },
-      blockers: [], expiresAt: new Date(Date.now() + 600000).toISOString() };
-    const sandbox = vi.spyOn(client, "sandbox").mockResolvedValueOnce(plan).mockRejectedValueOnce(new Error("response lost"));
-    await manager.workspaceAction(record.id, "sandbox-plan", { appId: "notes", profile: "sandbox", source: { kind: "appArtifact" } }, "token", "admin");
-    expect(sandbox).toHaveBeenCalledWith("token", "sandbox-plan", expect.objectContaining({ context: { sessionId: record.id } }));
-    expect(vi.mocked(client.call).mock.calls.every(call => call[2] === "workflow-status")).toBe(true);
-    const input = { requestId: "a".repeat(32), planId: plan.id, digest: plan.digest };
-    await expect(manager.workspaceAction(record.id, "sandbox-prepare", input, "token", "admin")).rejects.toThrow("response lost");
-    expect((await store.readRecord(record.id))!.sandboxOperations?.[0]?.state).toBe("pending");
-    expect(JSON.stringify(await store.readRecord(record.id))).not.toContain('"token"');
-    await manager.shutdown(); manager = build();
-    sandbox.mockResolvedValue({ id: "e".repeat(32), appId: "notes", state: "prepared" });
-    await manager.workspaceAction(record.id, "sandbox-prepare", input, "fresh-token", "admin");
-    expect(sandbox).toHaveBeenLastCalledWith("fresh-token", "sandbox-prepare", input);
-    expect((await store.readRecord(record.id))!.sandboxOperations?.[0]?.state).toBe("observed");
-    const other = await manager.createSession({ createdBy: "admin", appIds: ["notes"] });
-    await expect(manager.workspaceAction(other.id, "sandbox-status", { runtimeInstanceId: "e".repeat(32) }, "token", "admin")).rejects.toThrow("not associated");
-  });
-  it("can cancel and inspect a private browser job while its response remains pending", async () => {
-    const record = await manager.createSession({ createdBy: "admin", appIds: ["notes"] });
-    const instance = { id: "e".repeat(32), appId: "notes", state: "ready", context: { sessionId: record.id } };
-    let complete!: (value: unknown) => void;
-    const pending = new Promise(resolve => { complete = resolve; });
-    const sandbox = vi.spyOn(client, "sandbox").mockImplementation(async (_credential, action) => {
-      if (action === "sandbox-list") return { instances: [instance] };
-      if (action === "sandbox-browser") return pending;
-      return instance;
-    });
-    await manager.workspaceAction(record.id, "sandbox-list", {}, "token", "admin");
-    const browser = manager.workspaceAction(record.id, "sandbox-browser", { runtimeInstanceId: instance.id, requestId: "browser-job" }, "token", "admin");
-    try {
-      await vi.waitFor(() => expect(sandbox).toHaveBeenCalledWith("token", "sandbox-browser", expect.anything()));
-      await expect(manager.workspaceAction(record.id, "sandbox-status", { runtimeInstanceId: instance.id }, "token", "other")).rejects.toThrow("another user");
-      const cancel = manager.workspaceAction(record.id, "sandbox-browser-cancel", {
-        runtimeInstanceId: instance.id, requestId: "cancel-job", jobId: "browser-job", expectedRevision: 1,
-      }, "token", "admin");
-      await vi.waitFor(() => expect(sandbox).toHaveBeenCalledWith("token", "sandbox-browser-cancel", expect.anything()));
-      await cancel;
-      expect((await store.readRecord(record.id))!.sandboxOperations?.find(o => o.input.requestId === "browser-job")?.state).toBe("pending");
-    } finally { complete({ state: "failed", errorCode: "sandbox_browser_cancelled" }); await browser; }
-    expect((await store.readRecord(record.id))!.sandboxOperations?.every(o => o.state === "observed")).toBe(true);
-  });
-  it("accepts only this session's attached worktree for source sandbox plans", async () => {
-    const record = await manager.createSession({ createdBy: "admin", appIds: ["notes"] });
-    const input = { appId: "notes", profile: "sandbox-dev", source: { kind: "worktree", worktreeId: tree.id } };
-    await expect(manager.workspaceAction(record.id, "sandbox-plan", input, "token", "admin")).rejects.toThrow("registered app worktree");
-    await manager.workspaceAction(record.id, "prepare", { appId: "notes" }, "token", "admin");
-    const sandbox = vi.spyOn(client, "sandbox").mockResolvedValue({ id: "plan", expiresAt: new Date(Date.now() + 60000).toISOString() });
-    await manager.workspaceAction(record.id, "sandbox-plan", input, "token", "admin");
-    expect(sandbox).toHaveBeenCalledWith("token", "sandbox-plan", expect.objectContaining({ source: input.source, context: { sessionId: record.id, workspaceId: undefined } }));
-  });
   it("does not allocate for conversation and includes the instructions on subsequent turns", async () => {
     const record = await manager.createSession({ createdBy: "admin", appIds: ["notes"] });
     await manager.postMessage(record.id, "hello", "credential"); await finish(record.id);

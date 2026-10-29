@@ -64,14 +64,17 @@ it("shows explicit empty and unavailable states", async () => {
   expect([...container.querySelectorAll("button")].some(b => b.textContent === "Review permissions")).toBe(false);
 });
 
-it("explains unsupported requirements and does not offer an impossible approval", async () => {
+it("warns about unsupported requirements while allowing the ordinary Core review", async () => {
+  const open = vi.spyOn(window, "open").mockReturnValue(null);
   state = { ...state, required: ["removed.permission"], unsupportedRequired: ["removed.permission"], missingRequired: [] };
   await render();
-  expect(container.textContent).toContain("Core does not support these required permissions: removed.permission");
+  expect(container.textContent).toContain("Core does not support these requested permissions: removed.permission");
   expect(container.textContent).not.toContain("Required permissions need approval");
   const button = [...container.querySelectorAll("button")].find(b => b.textContent === "Review permissions")!;
-  expect(button.disabled).toBe(true);
+  expect(button.disabled).toBe(false);
   await review();
+  expect(open).toHaveBeenCalledWith("https://core.test/install/permissions/legacy", "_blank", "noopener,noreferrer");
+  open.mockRestore();
   expect(api.prepare).not.toHaveBeenCalled();
 });
 
@@ -111,10 +114,10 @@ it("does not let an older read overwrite refreshed grant evidence", async () => 
 });
 
 it("labels workspace, test-environment and Core development permissions in plain words with exact unknown fallback", async () => {
-  state = { ...state, required: ["apps.workspaces.read", "apps.mcp.access.request", "apps.sandboxes.manage", "core.workspace.activate", "new.unknown.permission"], optional: [], missingRequired: [] };
+  state = { ...state, required: ["apps.workspaces.read", "apps.mcp.access.request", "core.environments.manage", "core.workspace.activate", "new.unknown.permission"], optional: [], missingRequired: [] };
   await render();
   const group = container.querySelector('[aria-label="Required permissions"]')!;
   expect(group.textContent).toContain("Development workspace information"); expect(group.textContent).toContain("Request reviewed MCP access");
-  expect(group.textContent).toContain("Create and manage test environments"); expect(group.textContent).toContain("Run and return from a workspace Core build");
+  expect(group.textContent).toContain("Create and manage owned Core environments"); expect(group.textContent).toContain("Run and return from a workspace Core build");
   expect(group.textContent).toContain("new.unknown.permission");
 });

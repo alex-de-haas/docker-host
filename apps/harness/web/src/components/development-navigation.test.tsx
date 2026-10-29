@@ -87,7 +87,7 @@ it("combines search and state filters without changing session identity or order
   expect(container.textContent).not.toContain("Working task");
   const rows = [...container.querySelectorAll<HTMLButtonElement>('button')].filter(button => button.textContent?.includes("task") && !button.getAttribute("aria-label")?.startsWith("Delete"));
   expect(rows.map(button => button.querySelector("span.block")?.textContent)).toEqual(["Newer task", "Older task"]);
-  const search = container.querySelector<HTMLInputElement>('[aria-label="Search workspaces and chats"]')!;
+  const search = container.querySelector<HTMLInputElement>('[aria-label="Search chats"]')!;
   await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(search, "Older"); search.dispatchEvent(new Event("input", { bubbles: true })); });
   expect(container.textContent).not.toContain("Newer task");
   await act(async () => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent?.startsWith("Older task"))!.click());
@@ -95,26 +95,27 @@ it("combines search and state filters without changing session identity or order
 
 });
 
-it("groups attached chats under their workspace and keeps external and sessionless workspaces in the same list", async () => {
+it("lists only workspaces, retaining external and sessionless entries and matching attached chat titles", async () => {
   const session = { ...disposable, id: "attached", title: "Implementation" };
   const workspace = { id: "workspace", name: "Shared project", state: "active", owner: { kind: "assistant", appId: "hosty.harness", reference: session.id, label: "Owned" }, workflow: { state: "in-progress", revision: 0 }, worktrees: [] } as DevelopmentWorkspace;
   const external = { ...workspace, id: "external", name: "External checkout", owner: { kind: "external", reference: "task", label: "Codex" } };
   const empty = { ...workspace, id: "empty", name: "Retained source", owner: { ...workspace.owner, reference: "deleted" } };
   const pick = vi.fn();
-  const render = (spaces = [workspace, external, empty]) => act(async () => root.render(<DevelopmentNavigation sessions={[session, disposable]} workspaces={spaces} activeId={session.id} onWorkspace={pick} onPick={vi.fn()} onNew={vi.fn()} onDelete={vi.fn()} />));
+  const render = (spaces = [workspace, external, empty]) => act(async () => root.render(<DevelopmentNavigation view="workspaces" sessions={[session, disposable]} workspaces={spaces} activeId={session.id} onWorkspace={pick} onPick={vi.fn()} onNew={vi.fn()} onDelete={vi.fn()} />));
   await render();
   expect(container.textContent).toContain("Shared project"); expect(container.textContent).toContain("External checkout"); expect(container.textContent).toContain("Retained source");
+  expect(container.textContent).not.toContain("Disposable chat");
   expect(container.textContent).not.toContain("Implementation");
   expect(container.querySelector('[aria-label="Delete Implementation"]')).toBeNull();
   await act(async () => container.querySelector<HTMLButtonElement>('[aria-current="page"]')!.click());
   expect(pick).toHaveBeenCalledWith(workspace, undefined);
-  const search = container.querySelector<HTMLInputElement>('[aria-label="Search workspaces and chats"]')!;
+  const search = container.querySelector<HTMLInputElement>('[aria-label="Search workspaces"]')!;
   await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(search, "Implementation"); search.dispatchEvent(new Event("input", { bubbles: true })); });
   await act(async () => container.querySelector<HTMLButtonElement>('[aria-current="page"]')!.click());
   expect(pick).toHaveBeenLastCalledWith(workspace, session);
   await render([{ ...workspace, workflow: { state: "deleted", revision: 1 } }]);
-  expect(container.textContent).toContain("Implementation");
-  expect(container.querySelector('[aria-label="Delete Implementation"]')).not.toBeNull();
+  expect(container.textContent).not.toContain("Implementation");
+  expect(container.querySelector('[aria-label="Delete Implementation"]')).toBeNull();
 });
 
 it("keeps decorative status shapes, factual chip counts and each filter's existing session projection", async () => {
@@ -141,6 +142,23 @@ it("keeps decorative status shapes, factual chip counts and each filter's existi
   await render(sessions.slice(0, -1));
   expect(filters().map(node => node.textContent)).toEqual(["All5", "Needs attention2", "Working1", "Failed0"]);
   expect(filters()[3].getAttribute("aria-pressed")).toBe("true");
-  expect(container.textContent).toContain("No workspaces or chats match this search and filter.");
+  expect(container.textContent).toContain("No chats match this search and filter.");
   expect(pick).not.toHaveBeenCalled();
+});
+
+
+it("shows every accessible chat separately and reserves development actions for Workspaces", async () => {
+  const session = { ...disposable, id: "attached", title: "Implementation" };
+  const workspace = { id: "workspace", name: "Shared project", state: "active", owner: { kind: "assistant", appId: "hosty.harness", reference: session.id, label: "Owned" }, workflow: { state: "in-progress", revision: 0 }, worktrees: [] } as DevelopmentWorkspace;
+  const render = (view: "chats" | "workspaces") => act(async () => root.render(<DevelopmentNavigation view={view} sessions={[session, disposable]} workspaces={[workspace]} activeId={session.id} onPick={vi.fn()} onNew={vi.fn()} onDelete={vi.fn()} createAppAction={<button>Create app</button>} />));
+  await render("chats");
+  expect(container.textContent).toContain("Implementation"); expect(container.textContent).toContain("Disposable chat");
+  expect(container.textContent).not.toContain("Shared project"); expect(container.textContent).not.toContain("Create app");
+  expect(container.querySelector('[aria-label="Continue building"]')).toBeNull();
+  expect(container.querySelector('[aria-label="New session"]')).not.toBeNull();
+  expect(container.querySelector('[aria-current="page"]')?.textContent).toContain("Implementation");
+  await render("workspaces");
+  expect(container.textContent).toContain("Shared project"); expect(container.textContent).toContain("Create app");
+  expect(container.querySelector('[aria-label="Continue building"]')).not.toBeNull();
+  expect(container.querySelector('[aria-label="New session"]')).toBeNull();
 });

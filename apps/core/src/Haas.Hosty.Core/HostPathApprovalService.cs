@@ -56,7 +56,7 @@ internal sealed class HostPathApprovalService(CoreDataPaths paths, AppRegistrySt
                 var real = await policy.OverrideAsync(app, source.Path, ct);
                 var manifestPath = Path.Combine(real, app.SourceState?.ManifestSubpath ?? "");
                 var selection = await manifests.LoadAsync(manifestPath, app.SelectedRuntime, ct,
-                    validateAllProfiles: true, forceRead: true, allowUnsupportedPermissions: true);
+                    validateAllProfiles: true, forceRead: true);
                 if (selection.Manifest.Id != app.Id)
                     throw new AppLifecycleException("source_override_app_mismatch", "The source manifest belongs to a different app.");
                 fingerprint.AddRange([real, MountPathPolicy.ResolveRealPath(selection.ManifestPath), selection.ManifestDigest,

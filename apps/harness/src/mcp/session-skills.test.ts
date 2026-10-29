@@ -179,7 +179,8 @@ describe("native skills in a session", () => {
     manager = new SessionManager(new SessionStore(dataDir), adapter, new AuditReporter(null, null, "hosty.harness"), dataDir,
       settings, providers, exchange, proxy, "http://127.0.0.1:3400", null, null, null, null, mode, profiles);
     for (const withProfile of [false, true]) {
-      const record = await manager.createSession({ createdBy: "user_admin", ...(withProfile ? {} : { profileId: null }) });
+      const record = await manager.createSession({ createdBy: "user_admin",
+        profileId: withProfile ? (await profiles.read()).profiles[0]!.id : null });
       await manager.postMessage(record.id, "hello", "hostyg_seed");
       const prompt = adapter.lastStart!.systemPrompt!;
       expect(prompt.startsWith(intro)).toBe(true);

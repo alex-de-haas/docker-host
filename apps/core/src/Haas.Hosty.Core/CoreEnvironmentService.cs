@@ -17,7 +17,8 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
     internal CoreEnvironmentView View(CoreEnvironmentRecord record) => new(record.Id, record.Request.Label,
         record.Request.Mode, record.Request.ProjectPath, record.Request.Context, record.State, record.Revision, record.Port,
         record.State == "finished" ? null : store.Root(record.Id), $"http://core.i-{record.Id}.hosty.localhost:{record.Port}",
-        record.Process, record.Error, record.Operations ?? [], CoreEnvironmentResources.Limits(record), record.State == "finished" ? null : record.Usage, InitializationRequested: record.Request.Initialization is not null);
+        record.Process, record.Error, record.Operations ?? [], CoreEnvironmentResources.Limits(record), record.State == "finished" ? null : record.Usage,
+        InitializationRequested: record.Request.Initialization is not null, CoreVersion: record.Process?.Version ?? record.ObservedCoreVersion);
     private async Task<CoreEnvironmentView> ViewAsync(CoreEnvironmentRecord record, CancellationToken ct, Dictionary<string, Task<string>>? digests = null)
         => View(record) with { Access = consent is null ? null : await consent.AccessAsync(record, ct, digests) };
     internal Task RequireConsentAsync(SandboxActor actor, CoreEnvironmentRecord record, bool launch, CancellationToken ct)
@@ -75,7 +76,8 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
         var state = process is not null ? "running" : record.State == "running" ? "stopped" : record.State;
         if (process is null && CoreEnvironmentRuntime.Alive(record.Process)) { process = record.Process; state = "unready"; }
         if (process == record.Process && state == record.State) return record;
-        record = record with { Process = process, State = state, Revision = record.Revision + 1 };
+        record = record with { Process = process, State = state, Revision = record.Revision + 1,
+            ObservedCoreVersion = process?.Version ?? record.Process?.Version ?? record.ObservedCoreVersion };
         await store.WriteAsync(record, ct); return record;
     }
     public async Task<CoreEnvironmentView> CreateFromWorkspaceAsync(SandboxActor actor, CoreEnvironmentWorkspaceCreate input, CancellationToken ct)
@@ -345,7 +347,8 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
                         CleanupOwners = kind == "finish" ? record.CleanupOwners ?? await store.CleanupOwnersAsync(record, deadline.Token) : record.CleanupOwners };
                     await store.WriteAsync(record, deadline.Token);
                     await runtime.StopAsync(record, root, kind == "finish", deadline.Token);
-                    record = record with { Process = null, State = kind == "finish" ? "finishing" : "stopped" };
+                    record = record with { Process = null, State = kind == "finish" ? "finishing" : "stopped",
+                        ObservedCoreVersion = record.Process?.Version ?? record.ObservedCoreVersion };
                 }
                 if (kind is "start" or "restart")
                 {
@@ -358,7 +361,7 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
                         {
                             await runtime.StartAsync(record, root, async process =>
                             {
-                                record = record with { Process = process };
+                                record = record with { Process = process, ObservedCoreVersion = process.Version ?? record.ObservedCoreVersion };
                                 await store.WriteAsync(record, deadline.Token);
                             }, deadline.Token);
                             break;
