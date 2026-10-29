@@ -4,7 +4,7 @@ namespace Haas.Hosty.Core;
 
 // Exists only between verified physical cleanup and removal of the last metadata file.
 // Snapshots let recovery validate ownership/consumers after some worktree records are gone.
-internal sealed record WorkspaceDeletionJournal(WorkspaceOwner Owner, DevelopmentWorkspace[] Worktrees);
+internal sealed record WorkspaceDeletionJournal(WorkspaceOwner Owner, DevelopmentWorkspace[] Worktrees, bool Direct = false);
 
 internal sealed partial class DevelopmentWorkspaceService
 {
@@ -112,7 +112,7 @@ internal sealed partial class DevelopmentWorkspaceService
         return owners.Values.ToArray();
     }
 
-    internal Task FinalizeDeletionAsync(WorkspaceOwner owner, CancellationToken ct)
+    internal Task FinalizeDeletionAsync(WorkspaceOwner owner, CancellationToken ct, bool direct = false)
         => Locked(Hash(OwnerIdentity(owner)), () => Locked("workspace-consumers", async () =>
         {
             var id = WorkspaceIdFor(owner);
@@ -126,7 +126,7 @@ internal sealed partial class DevelopmentWorkspaceService
                 if (state.Heads is null || !state.Heads.Keys.Order(StringComparer.Ordinal)
                     .SequenceEqual(current.Select(w => w.Id).Order(StringComparer.Ordinal)))
                     throw Error("completion_unknown", "Deleted workspace has incomplete worktree evidence.");
-                journal = new(owner, current);
+                journal = new(owner, current, direct);
             }
             else if (state.State != "deleted" && File.Exists(WorkflowPath(owner)))
                 throw Error("cleanup_pending", "Workspace workflow changed during metadata cleanup.");
@@ -143,7 +143,7 @@ internal sealed partial class DevelopmentWorkspaceService
                 if (tree.State != "released" || tree.Leases.Length != 0 || tree.SandboxConsumers.Length != 0
                     || tree.Operations.Any(o => o.State is "pending" or "unknown") || PathEntryExists(tree.Path))
                     throw Error("cleanup_pending", "Workspace still has source or unresolved activity.");
-                await CheckConsumers(tree, ct);
+                if (!direct && !journal.Direct) await CheckConsumers(tree, ct);
                 var repo = RepoPath(tree.RepositoryId);
                 if (Directory.Exists(repo))
                 {

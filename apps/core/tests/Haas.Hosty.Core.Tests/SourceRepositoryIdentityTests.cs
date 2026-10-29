@@ -15,6 +15,14 @@ public sealed partial class CoreLifecycleServiceTests
             privateSources: new PrivateSourceService(connections, http));
     }
 
+    private static DevelopmentWorkspace RepositoryIdentityRecord(DevelopmentWorkspace template, string repository)
+    {
+        var repositoryId = DevelopmentWorkspaceService.Hash(repository);
+        var id = DevelopmentWorkspaceService.Hash(DevelopmentWorkspaceService.OwnerIdentity(template.Owner) + "\n" + repositoryId);
+        return template with { Id = id, Repository = repository, RepositoryId = repositoryId,
+            Path = Path.Combine(Path.GetDirectoryName(template.Path)!, id), Branch = "hosty/session/" + id };
+    }
+
     [Theory]
     [InlineData("https://github.com/Owner/Repository")]
     [InlineData("https://github.com/owner/repository.git")]
@@ -33,7 +41,8 @@ public sealed partial class CoreLifecycleServiceTests
         var (fixture, _, original, _) = await DocumentFixtureAsync();
         var workspace = await original.PrepareAsync(WorkspaceTestOwner(fixture), WorkspaceRequest(), default);
         const string legacy = "https://github.com/Owner/Repository";
-        workspace = workspace with { Repository = legacy, RepositoryId = DevelopmentWorkspaceService.Hash(legacy) };
+        File.Delete(Path.Combine(fixture.Paths.CoreRoot, "development/workspaces", workspace.Id + ".json"));
+        workspace = RepositoryIdentityRecord(workspace, legacy);
         await JsonStorage.WriteAsync(Path.Combine(fixture.Paths.CoreRoot, "development/workspaces", workspace.Id + ".json"), workspace);
         var service = RepositoryIdentityService(fixture);
         Assert.Equal(legacy, await service.CanonicalRepositoryAsync("https://github.com/owner/repository.git", null, default));
@@ -51,16 +60,12 @@ public sealed partial class CoreLifecycleServiceTests
         var records = Path.Combine(fixture.Paths.CoreRoot, "development/workspaces");
         const string first = "https://github.com/Owner/Repository";
         const string second = "https://github.com/owner/repository.git";
-        await JsonStorage.WriteAsync(Path.Combine(records, workspace.Id + ".json"), workspace with
+        File.Delete(Path.Combine(records, workspace.Id + ".json"));
+        foreach (var repository in new[] { first, second })
         {
-            Repository = first, RepositoryId = DevelopmentWorkspaceService.Hash(first),
-        });
-        var otherId = new string('b', 64);
-        await JsonStorage.WriteAsync(Path.Combine(records, otherId + ".json"), workspace with
-        {
-            Id = otherId, Repository = second, RepositoryId = DevelopmentWorkspaceService.Hash(second),
-            Path = Path.Combine(Path.GetDirectoryName(workspace.Path)!, otherId), Branch = "hosty/session/" + otherId,
-        });
+            var legacy = RepositoryIdentityRecord(workspace, repository);
+            await JsonStorage.WriteAsync(Path.Combine(records, legacy.Id + ".json"), legacy);
+        }
         var service = RepositoryIdentityService(fixture);
         var error = await Assert.ThrowsAsync<AppLifecycleException>(() => service.CanonicalRepositoryAsync("https://github.com/owner/repository", null, default));
         Assert.Equal("workspace_repository_alias_conflict", error.Code);

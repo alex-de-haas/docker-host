@@ -18,7 +18,7 @@ internal sealed partial class WorkspaceActivationService
             // still require the retained source authority and registered repository/project binding.
             var tree = await workspaces.ObserveAsync(a.CoreWorktreeId!, null, ct);
             var source = await core.SourceSettingsAsync(ct);
-            if (tree.Owner.UserId != a.UserId || tree.WorkspaceId != a.WorkspaceId || tree.State != "active" ||
+            if (tree.WorkspaceId != a.WorkspaceId || tree.State != "active" ||
                 source.Revision != a.CoreSourceRevision || source.RepositoryUrl is null ||
                 core.NormalizeRepository(source.RepositoryUrl) != core.NormalizeRepository(tree.Repository) ||
                 CoreDevelopmentService.Project(tree.Path, source.ProjectPath) != a.CoreProject)

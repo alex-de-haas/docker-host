@@ -48,7 +48,7 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
             ? "external\n" + Hash(owner.UserId) + "\n" + Hash(external.PrincipalId) + "\n" + Hash(owner.SessionId)
             : CoreJson.Text(owner);
 
-    private static void Id(string id)
+    internal static void Id(string id)
     {
         if (id is null || id.Length != 64 || id.Any(c => !char.IsAsciiHexDigit(c))) throw Error("not_found", "Workspace not found.");
     }
@@ -103,9 +103,9 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
         // Normalize only that optional addition; unknown lease/operation activity must still fail.
         w = w with { SandboxConsumers = w.SandboxConsumers ?? [] };
         if (owner is not null) await RequireSessionAccessAsync(w, owner, ct);
-        if (w.Path != WorkPath(id) || w.RepositoryId != Hash(w.Repository) || w.Branch != "hosty/session/" + id)
+        if (w.Id != id || w.Id != Hash(OwnerIdentity(w.Owner) + "\n" + w.RepositoryId) ||
+            w.Path != WorkPath(id) || w.RepositoryId != Hash(w.Repository) || w.Branch != "hosty/session/" + id)
             throw Error("ownership_invalid", "Workspace ownership metadata is inconsistent.");
-        if (owner?.IsExternal == true) await RequireExternalSourceAsync(w, ct);
         return await WithNameAsync(w, ct);
     }
     public Task<WorkspaceList> ListAsync(WorkspaceOwner? owner, bool includeReleased, CancellationToken ct)
@@ -121,9 +121,8 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
                 try
                 {
                     var w = await Read(System.IO.Path.GetFileNameWithoutExtension(file), null, ct);
-                    if ((owner is null || await SessionCanReadAsync(w, owner, ct)) && (includeReleased || w.State != "released"))
+                    if ((owner is null || await IsSessionWorkspaceAsync(w, owner, ct)) && (includeReleased || w.State != "released"))
                     {
-                        if (owner?.IsExternal == true) await RequireExternalSourceAsync(w, ct);
                         found.Add(w);
                     }
                 }
@@ -157,18 +156,20 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
     }
 
     private Task<DevelopmentWorkspace> PrepareCoreAsync(WorkspaceOwner owner, WorkspacePrepare input, CancellationToken ct,
-        Haas.Hosty.Launch.CoreSourceSettings? core = null)
+        Haas.Hosty.Launch.CoreSourceSettings? core = null, WorkspaceOwner? actor = null)
         => Locked(Hash(OwnerIdentity(owner)), async () =>
         {
+            actor ??= owner;
+            await RequireWorkspaceUserAsync(actor.UserId, ct);
             RequestId(input.RequestId);
             if (input.Name is not null) ValidateWorkspaceName(input.Name);
             await RequireOpenWorkflow(owner, ct);
-            if (owner.SessionId != input.SessionId || string.IsNullOrWhiteSpace(input.SessionId) || input.SessionId.Length > 200)
+            if (actor.SessionId != input.SessionId || string.IsNullOrWhiteSpace(input.SessionId) || input.SessionId.Length > 200)
                 throw Error("session_invalid", "A bounded nonempty session ID is required.");
-            if (owner.External is { } external)
+            if (actor.External is { } external)
             {
-                if (owner.AppId.Length != 0 || owner.Installation != DateTimeOffset.UnixEpoch ||
-                    string.IsNullOrWhiteSpace(owner.UserId) || string.IsNullOrWhiteSpace(external.PrincipalId) ||
+                if (actor.AppId.Length != 0 || actor.Installation != DateTimeOffset.UnixEpoch ||
+                    string.IsNullOrWhiteSpace(actor.UserId) || string.IsNullOrWhiteSpace(external.PrincipalId) ||
                     external.PrincipalId.Length > 200 || external.PrincipalId.Any(char.IsControl) ||
                     input.SessionId.Any(char.IsControl) || input.SessionId != input.SessionId.Trim())
                     throw Error("owner_invalid", "A current external grant and bounded task ID are required.");
@@ -190,8 +191,8 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
             var source = app?.SourceState;
             if (core is null && source is null) throw Error("source_missing", "This app has no source repository.");
             var grant = core is null ? app?.PrivateSources?.Git
-                : await (coreDevelopment ?? throw Error("core_unavailable", "Core source management is unavailable.")).SourceGrantAsync(core, owner.UserId, ct);
-            if (grant is not null && grant.OwnerId != owner.UserId)
+                : await (coreDevelopment ?? throw Error("core_unavailable", "Core source management is unavailable.")).SourceGrantAsync(core, actor.UserId, ct);
+            if (grant is not null && grant.OwnerId != actor.UserId)
                 throw Error("source_forbidden", "This private source belongs to another user.");
             if (grant is not null) await (privateSources ?? throw PrivateSourceService.Denied()).ValidateAsync(new(Git: grant), ct);
             var declaredRepository = core?.RepositoryUrl ?? source?.Repository;
@@ -202,7 +203,7 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
             DevelopmentWorkspace Bind(DevelopmentWorkspace tree)
             {
                 var bound = app is not null ? Attach(tree, app, null) : tree with { Core = new(core!.Revision, core.ProjectPath) };
-                return input.LeaseId is null ? bound : ClaimLease(bound, owner, input.LeaseId);
+                return input.LeaseId is null ? bound : ClaimLease(bound, actor, input.LeaseId);
             }
             var repositoryId = Hash(repository);
             return await Locked("repository-admission:" + repositoryId, async () =>
@@ -211,7 +212,7 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
                 var existing = await JsonStorage.ReadAsync<DevelopmentWorkspace>(RecordPath(id), ct);
                 if (existing is not null)
                 {
-                    existing = await Read(id, owner, ct);
+                    existing = await Read(id, actor, ct);
                     if (existing.State is "released" or "releasing") throw Error("released", "This session's workspace has been released. Start a new session.");
                     if (input.TargetBranch is not null && input.TargetBranch != existing.TargetBranch)
                         throw Error("base_conflict", "The existing workspace has a different target branch.");
@@ -293,7 +294,7 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
                 var w = new DevelopmentWorkspace { Id = id, Owner = owner, Repository = repository, RepositoryId = repositoryId,
                     Path = WorkPath(id), Branch = "hosty/session/" + id, TargetBranch = target, OriginalBase = baseHead,
                     IntegrationBase = baseHead, SessionPath = input.SessionPath, SourceGrant = grant,
-                    Operations = [new(input.RequestId, "prepare", fingerprint, "pending")] };
+                    Operations = [new(input.RequestId, "prepare", fingerprint, "pending", Actor: actor)] };
                 w = Bind(w);
                 await Save(w); // Allocation identity precedes Git side effects.
                 w = await Materialize(w, ct);
@@ -459,7 +460,6 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
                     throw Error("not_active", "Cannot attach a sandbox while the source is being changed or released.");
                 await RequireSourceInstallationAsync(current, ct);
                 await ValidateTree(current, ct);
-                await WorkspaceGrantAsync(current, ct);
             }
             // Release follows verified sandbox shutdown. It must also work after source grant
             // revocation or Git damage; neither condition authorizes deleting the worktree.
@@ -485,7 +485,7 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
             var old = w.Operations.FirstOrDefault(o => o.Id == input.RequestId);
             if (old is not null)
             {
-                if (old.Kind != kind || old.Fingerprint != fingerprint || old.Actor is not null && (owner is null || !old.Actor.SameIdentity(owner)) || old.Actor is null && owner is not null && !w.Owner.SameIdentity(owner)) throw Error("request_conflict", "This request ID was used for a different operation.");
+                if (old.Kind != kind || old.Fingerprint != fingerprint) throw Error("request_conflict", "This request ID was used for a different operation.");
                 if (old.State != "pending") return w;
                 return await Recover(w, old, ct);
             }
@@ -512,12 +512,12 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
                 switch (kind)
                 {
                     case "lease":
-                        await RequireSourceInstallationAsync(w, ct);
                         if (!Guid.TryParse(input.LeaseId, out _)) throw Error("lease_invalid", "Lease ID must be a UUID.");
                         w = ClaimLease(w, owner ?? w.Owner, input.LeaseId!); break;
                     case "release-lease":
                         if (!Guid.TryParse(input.LeaseId, out _)) throw Error("lease_invalid", "Lease ID must be a UUID.");
-                        RequireLeaseOwner(w, owner, input.LeaseId!);
+                        // Explicit release is authorized by workspace management permission.
+                        // The recorded claim remains attribution, not an access restriction.
                         w = w with { Leases = w.Leases.Where(l => l != input.LeaseId).ToArray(),
                             LeaseClaims = w.LeaseClaims?.Where(c => c.Id != input.LeaseId).ToArray() }; break;
                     case "refresh":
@@ -888,8 +888,7 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
             var core = await coreDevelopment.SourceSettingsAsync(ct);
             if (core.RepositoryUrl is not null && LogicalRepositoryIdentity(tree.Repository) == LogicalRepositoryIdentity(core.RepositoryUrl))
             {
-                _ = await coreDevelopment.SourceGrantAsync(core, tree.Owner.UserId, ct, localOnly: true);
-                return;
+                return; // Retained source is authorized separately from remote credentials.
             }
         }
         foreach (var binding in tree.Apps)

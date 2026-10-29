@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-02
-updated: 2026-10-26
+updated: 2026-10-29
 summary: Explicit session and development grants, native command approval rules, revocation controls and permission-decision audit.
 components: [apps/harness]
 ---
@@ -36,6 +36,15 @@ Autonomous remains an explicit administrator choice. Prefix rules are optional c
 this plan does not prohibit broad autonomous execution, force a card for every native write or claim
 that changing confirmation policy creates a sandbox. In an isolated execution, neither a prefix rule
 nor Autonomous can enlarge the boundary enforced by Containment or the authority accepted by Core.
+
+## Workspace Delete Policy Coordination (Owner Clarification, 2026-10-29)
+
+[Workspace Permissions And Deletion](../external-workspace-access-continuity/feature.md#one-delete-operation) documents the implemented
+focused integration for a single workspace deletion tool: explicit Ask asks once, Run unprompted
+dispatches directly and Disabled prevents dispatch. Core adds no UI review or second approval.
+Explicit per-tool Ask takes precedence in Autonomous mode through the shared broker. This plan
+consumes that behavior without adding another deletion gate or duplicating the completed work. General
+native autonomy and the remaining optional permission work here stay independently scoped.
 
 ## Target Behavior
 

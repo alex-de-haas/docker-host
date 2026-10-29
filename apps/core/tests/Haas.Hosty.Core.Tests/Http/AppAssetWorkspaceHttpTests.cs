@@ -182,6 +182,9 @@ public sealed class AppAssetWorkspaceHttpTests
                 SourceState: new("git", repository, "main", null, null, repository, now, "apps/notes"),
                 CatalogMetadata: new(null, null, [], "assets/icon.svg", [], null, null, null, null, null, null));
             await apps.UpsertAppAsync(app);
+            var users = harness.Services.GetRequiredService<UserDirectoryStore>();
+            var admin = new HostUserRecord("admin", "admin@example.test", "Admin", "host.admin", false, now, now);
+            await users.WriteAsync(new UserDirectoryState(1, [admin], [], [], []));
             var owner = new WorkspaceOwner("hosty.harness", now, "admin", "asset-preview");
             var tree = await harness.Services.GetRequiredService<DevelopmentWorkspaceService>().PrepareAsync(owner,
                 new(Guid.NewGuid().ToString(), owner.SessionId, app.Id, "/assistant", "main", Guid.NewGuid().ToString()), default);
@@ -193,10 +196,9 @@ public sealed class AppAssetWorkspaceHttpTests
             var fixture = new Fixture(harness, paths, apps, app, tree, operation);
             Directory.CreateDirectory(Path.GetDirectoryName(fixture.PackagedIcon)!);
             await File.WriteAllTextAsync(fixture.PackagedIcon, "<svg>old</svg>");
-            var users = harness.Services.GetRequiredService<UserDirectoryStore>();
             var assigned = new HostUserRecord("assigned", "assigned@example.test", "Assigned", "host.user", false, now, now);
             var unassigned = assigned with { Id = "unassigned", Email = "unassigned@example.test" };
-            await users.WriteAsync(new UserDirectoryState(1, [assigned, unassigned], [], [new(app.Id, assigned.Id, now)],
+            await users.WriteAsync(new UserDirectoryState(1, [admin, assigned, unassigned], [], [new(app.Id, assigned.Id, now)],
                 [new("sess_assigned", assigned.Id, now, now.AddHours(1), null, now), new("sess_unassigned", unassigned.Id, now, now.AddHours(1), null, now)]));
             return fixture;
         }

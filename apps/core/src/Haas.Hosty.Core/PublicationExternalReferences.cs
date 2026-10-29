@@ -75,9 +75,12 @@ internal sealed partial class PublicationService
 
     // Fetch fresh provider evidence before acquiring the workspace mutation lock. Publication
     // commands take publication -> workspace locks; reversing that order would deadlock.
-    internal async Task<Dictionary<string, string>> MergedWorkspaceHeadsAsync(WorkspaceOwner owner, CancellationToken ct)
+    internal async Task<Dictionary<string, string>> MergedWorkspaceHeadsAsync(WorkspaceOwner owner, CancellationToken ct, string? actorId = null)
     {
         var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        // Provider evidence uses the connection belonging to its recorded owner. Collection-wide
+        // source authority does not let another operator borrow that connection for completion.
+        if (actorId is not null && actorId != owner.UserId) return result;
         foreach (var tree in (await workspaces.ListAsync(null, true, ct)).Workspaces.Where(t => t.Owner.SameIdentity(owner)))
         {
             if (!owner.IsExternal)

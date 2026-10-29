@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-26
-updated: 2026-10-27
+updated: 2026-10-29
 summary: Deferred automatic workspace allocation, reuse and reverse observation across tasks, building on the independent basic task contract.
 components: [apps/core, apps/harness, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -31,10 +31,15 @@ worktrees. Allow an explicit independent binding for an unrelated bugfix and PR;
 not force one workspace per tree. Preserve discovery/related-task context without implying that the
 same source resource or branch must serve both pieces of work.
 
-Task-to-workspace bindings retain the task provider and workspace owner identities. Coordinate reverse
+[Workspace Permissions And Deletion](../external-workspace-access-continuity/feature.md) owns
+collection-wide app/user operation authority. Agent/session/provider reassignment preserves the
+initiating user without per-agent sharing approval. Selected workspace IDs and allocation keys
+are execution context, not access allowlists; no resource ACL belongs in this plan.
+
+Task-to-workspace bindings retain the task provider and stable workspace resource identities. Coordinate reverse
 task observation without moving task records into Core or requiring all task providers to share
 storage. Reassignment and reparenting do not silently move active consumers or reset source. Handle
-an unavailable/removed task provider, changed membership and stale references explicitly.
+an unavailable/removed task provider, changed app/user authority and stale references explicitly.
 
 Reuse current Core workspace preparation, association, activity leases, sandbox and publication APIs.
 Choose a stable allocation key and reconcile uncertain operations before retrying. A task completion
@@ -66,8 +71,8 @@ and launch contract has one canonical home in Basic Tasks; this plan does not du
 
 ## Deliverables
 
-- [ ] D3. Define and implement, after Ready approval, automatic task-to-workspace allocation/reuse and reverse task observation through existing resource APIs, including explicit independent work, concurrent allocation, retry recovery, reparenting/reassignment and current membership checks.
-- [ ] D5. Verify the full coordination flow with concurrent related tasks, deliberate independent bugfix/PR bindings, restart/lost responses, provider removal, revoked membership and active consumers; document shipped behavior in feature.md, reconcile Basic Tasks and orchestration, and regenerate the index.
+- [ ] D3. Define and implement, after Ready approval, automatic task-to-workspace allocation/reuse and reverse task observation through existing resource APIs, including explicit independent work, concurrent allocation, retry recovery, reparenting/reassignment and current application and initiating-user permission checks.
+- [ ] D5. Verify the full coordination flow with concurrent related tasks, deliberate independent bugfix/PR bindings, restart/lost responses, provider removal, revoked app/user permissions and active consumers; document shipped behavior in feature.md, reconcile Basic Tasks and orchestration, and regenerate the index.
 
 ## Open Questions
 

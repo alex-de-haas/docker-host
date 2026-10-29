@@ -46,15 +46,7 @@ internal sealed partial class DevelopmentWorkspaceService
             if (!cleanup)
             {
                 if (tree is null) throw Error("not_found", "Workspace no longer exists.");
-                var participation = await ReadParticipationAsync(workspaceId, ct);
-                if (participation is not null && RequireMember(participation, actor.UserId) is { Role: not "owner" } member)
-                    tree = candidates.FirstOrDefault(w => member.WorktreeIds.Contains(w.Id))
-                        ?? throw Error("forbidden", "No repository in this workspace is shared with the acting user.");
-                if (!await RequireParticipationSourceAsync(tree, actor.UserId, ct))
-                {
-                    if (tree.Owner.UserId != actor.UserId) throw Error("forbidden", "The workspace owner must share its source first.");
-                    await Read(tree.Id, tree.Owner, ct);
-                }
+                await RequireWorkspaceUserAsync(actor.UserId, ct);
             }
             var workflow = tree is null ? new WorkspaceWorkflow() : await WorkflowAsync(tree.Owner, ct);
             if (!cleanup && (workflow.Closure is not null || workflow.State is "deferred" or "deleting" or "deleted"
@@ -150,7 +142,7 @@ internal sealed partial class DevelopmentWorkspaceService
                     // Resume permits unfinished/conflicted work, but never trusts a cached
                     // observation or silently reopens missing/replaced source.
                     await ValidateTree(tree, ct);
-                    await Fetch(RepoPath(tree.RepositoryId), tree.Repository, tree.TargetBranch, ct, await WorkspaceGrantAsync(tree, ct));
+                    await Fetch(RepoPath(tree.RepositoryId), tree.Repository, tree.TargetBranch, ct, await ActingSourceGrantAsync(tree, WorkspaceOwner.ForExternal(actor, "workflow", input.RequestId, "Workspace workflow"), null, ct));
                     if ((await Observe(tree, ct)).Observation?.State != "ok")
                         throw Error("unavailable", "The full workspace status could not be read. Source remains paused.");
                 }
@@ -168,7 +160,7 @@ internal sealed partial class DevelopmentWorkspaceService
                         var releasedHead = state.Heads?.GetValueOrDefault(original.Id)
                             ?? original.Operations.LastOrDefault(o => o.Kind == "cleanup" && o.State == "succeeded")?.BeforeHead;
                         if (releasedHead is null) throw Error("completion_unknown", "Released source has no recoverable head evidence.");
-                        var releasedTarget = await Fetch(RepoPath(original.RepositoryId), original.Repository, original.TargetBranch, ct, await WorkspaceGrantAsync(original, ct));
+                        var releasedTarget = await Fetch(RepoPath(original.RepositoryId), original.Repository, original.TargetBranch, ct, await ActingSourceGrantAsync(original, WorkspaceOwner.ForExternal(actor, "workflow", input.RequestId, "Workspace workflow"), null, ct));
                         if ((await Git(RepoPath(original.RepositoryId), ["merge-base", "--is-ancestor", releasedHead, releasedTarget], ct, true)).ExitCode != 0 && mergedHeads.GetValueOrDefault(original.Id) != releasedHead)
                             throw Error("unmerged", "Released source is not verified as merged.");
                         heads[original.Id] = releasedHead;
@@ -184,7 +176,7 @@ internal sealed partial class DevelopmentWorkspaceService
                     var w = await Observe(original, ct);
                     if (w.Observation is not { State: "ok", Head: { } head, Conflict: false, Local: { Files.Count: 0, Truncated: false } })
                         throw Error("dirty", "Commit or resolve every repository's changes before completing or deleting the workspace.");
-                    var target = await Fetch(RepoPath(w.RepositoryId), w.Repository, w.TargetBranch, ct, await WorkspaceGrantAsync(w, ct));
+                    var target = await Fetch(RepoPath(w.RepositoryId), w.Repository, w.TargetBranch, ct, await ActingSourceGrantAsync(w, WorkspaceOwner.ForExternal(actor, "workflow", input.RequestId, "Workspace workflow"), null, ct));
                     if ((await Git(w.Path, ["merge-base", "--is-ancestor", head, target], ct, true)).ExitCode != 0 && mergedHeads.GetValueOrDefault(w.Id) != head)
                         throw Error("unmerged", "Current commits are not merged in " + w.Repository + ".");
                     if (kind == "delete" && state.Heads?.GetValueOrDefault(w.Id) != head)

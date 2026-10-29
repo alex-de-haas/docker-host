@@ -35,11 +35,13 @@ public sealed class WorkspaceInspectionHttpTests
         client.DefaultRequestHeaders.Authorization = new("Bearer", host.Services.GetRequiredService<AppServiceTokenService>().CreateToken(appId));
         var grant = await BrowserAuthorityFixture.Grant(host, appId, "admin");
         client.DefaultRequestHeaders.Add("X-Hosty-User-Token", grant.AccessToken);
-        foreach (var permission in new[] { CoreAppPermissions.Sources, CoreAppPermissions.SourcesRead, "apps.workspaces.manage" })
+        foreach (var permission in new[] { CoreAppPermissions.SourcesRead, "apps.workspaces.manage" })
         {
             await apps.UpsertAppAsync(record with { GrantedCorePermissions = [permission] });
             Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync(root)).StatusCode);
         }
+        await apps.UpsertAppAsync(record with { GrantedCorePermissions = [CoreAppPermissions.Sources] });
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync(root)).StatusCode);
         await apps.UpsertAppAsync(record with { GrantedCorePermissions = [CoreAppPermissions.WorkspacesRead] });
         Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync(recovery, recoveryBody)).StatusCode);
         using var response = await client.GetAsync(root);

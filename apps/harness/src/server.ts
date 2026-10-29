@@ -720,14 +720,14 @@ async function route(
       method === "POST" ? await readJson(request) : undefined)); return;
   }
 
-  const inspection = url.pathname.match(/^\/api\/development-workspaces(\/local-apps|\/[a-f0-9]{64}(?:\/participants(?:\/(?:grant|revoke))?|\/name|\/execution-target(?:\/[a-f0-9-]{36})?|\/discard\/(?:plan|apply|status)|\/activation\/(?:plan|apply|list|status|cancel|resume|return)|\/(?:environments|sandboxes)\/[a-f0-9]{32}\/(?:start|stop|finish|dispose)|\/previews(?:\/[a-f0-9]{32}\/[a-zA-Z0-9._-]+\/(?:checks|run|restart|logs))?|\/worktrees\/[a-f0-9]{64}(?:\/(?:diff|recover-lease|review(?:\/diff)?|reviews\/(?:reply|resolve|comment)))?|\/workflow(?:\/(?:complete|resume|pause|defer|delete|close))?)?)?$/);
+  const inspection = url.pathname.match(/^\/api\/development-workspaces(\/delete|\/local-apps|\/[a-f0-9]{64}(?:\/participants(?:\/(?:grant|revoke))?|\/name|\/execution-target(?:\/[a-f0-9-]{36})?|\/delete(?:\/(?:details|status))?|\/discard\/(?:plan|apply|status)|\/activation\/(?:plan|apply|list|status|cancel|resume|return)|\/(?:environments|sandboxes)\/[a-f0-9]{32}\/(?:start|stop|finish|dispose)|\/previews(?:\/[a-f0-9]{32}\/[a-zA-Z0-9._-]+\/(?:checks|run|restart|logs))?|\/worktrees\/[a-f0-9]{64}(?:\/(?:diff|recover-lease|review(?:\/diff)?|reviews\/(?:reply|resolve|comment)))?|\/workflow(?:\/(?:complete|resume|pause|defer|delete|close))?)?)?$/);
   if (inspection && (method === "GET" || method === "POST")) {
     const credential = actor.via === "app-session" ? readAppCredential(request) : null;
     if (!credential) throw new AppContextError(401, "reauth_required", "Open Harness through Core to inspect workspaces.");
-    const discard = /\/discard\/(plan|apply|status)$/.exec(inspection[1] ?? "");
+    const discard = /\/(?:discard|delete)\/(plan|apply|details|status)$/.exec(inspection[1] ?? "");
     if (discard && method !== (discard[1] === "apply" ? "POST" : "GET"))
       throw new AppContextError(405, "workspace_method_invalid", "Removal review and status require GET; removal apply requires POST.");
-    if (method === "POST" && !/\/(?:participants\/(?:grant|revoke)|name|execution-target|discard\/apply|activation\/(?:plan|apply|list|status|cancel|resume|return)|(?:environments|sandboxes)\/[a-f0-9]{32}\/(?:start|stop|finish|dispose)|worktrees\/[a-f0-9]{64}\/(?:recover-lease|reviews\/(?:reply|resolve|comment))|workflow\/(?:complete|resume|pause|defer|delete|close)|previews\/[a-f0-9]{32}\/[a-zA-Z0-9._-]+\/(?:checks|run|restart|logs))$/.test(inspection[1] ?? ""))
+    if (method === "POST" && !/\/(?:participants\/(?:grant|revoke)|name|execution-target|delete|discard\/apply|activation\/(?:plan|apply|list|status|cancel|resume|return)|(?:environments|sandboxes)\/[a-f0-9]{32}\/(?:start|stop|finish|dispose)|worktrees\/[a-f0-9]{64}\/(?:recover-lease|reviews\/(?:reply|resolve|comment))|workflow\/(?:complete|resume|pause|defer|delete|close)|previews\/[a-f0-9]{32}\/[a-zA-Z0-9._-]+\/(?:checks|run|restart|logs))$/.test(inspection[1] ?? ""))
       throw new AppContextError(400, "workspace_action_invalid", "Choose a workspace lifecycle action.");
     if (method === "GET" && /\/reviews\/(?:reply|resolve|comment)$/.test(inspection[1] ?? ""))
       throw new AppContextError(405, "workspace_method_invalid", "Review actions require POST.");

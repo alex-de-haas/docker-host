@@ -292,7 +292,7 @@ public sealed partial class CoreLifecycleServiceTests
     }
 
     [Fact]
-    public async Task SourceDocuments_PrivateFallbackAuthorizesOwnerWithoutExposingAnotherOwnersWorktree()
+    public async Task SourceDocuments_PrivateFallbackUsesOwnConnectionAndSharesRetainedWorktree()
     {
         var (f, _, initialWorkspaces, _) = await DocumentFixtureAsync();
         var workspace = await initialWorkspaces.PrepareAsync(WorkspaceTestOwner(f), WorkspaceRequest(), default);
@@ -313,11 +313,10 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.Equal("available", Assert.Single((await documents.ListRepositoriesAsync("bob", default)).Repositories).State);
         var local = await documents.ListDocumentsAsync(entry.Id, "admin", false, default, "worktree", workspace.Id);
         Assert.Single(local.Documents);
-        Assert.Equal("source_document_forbidden", (await Assert.ThrowsAsync<AppLifecycleException>(() =>
-            documents.ListDocumentsAsync(entry.Id, "bob", false, default, "worktree", workspace.Id))).Code);
+        Assert.Single((await documents.ListDocumentsAsync(entry.Id, "bob", false, default, "worktree", workspace.Id)).Documents);
         await users.UpdateAsync(state => state with { ProviderConnections = state.ProviderConnections!.Where(c => c.UserId != "admin").ToArray() });
         Assert.Equal("unavailable", Assert.Single((await documents.ListRepositoriesAsync("admin", default)).Repositories).State);
-        await Assert.ThrowsAsync<AppLifecycleException>(() => documents.ListDocumentsAsync(entry.Id, "admin", false, default, "worktree", workspace.Id));
+        Assert.NotEmpty((await documents.ListDocumentsAsync(entry.Id, "admin", false, default, "worktree", workspace.Id)).Documents);
     }
 
     [Theory]
@@ -337,7 +336,7 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.Equal(transition == "clear" ? "available" : "unavailable", entry.State);
         // A cleared public app remains discoverable for another administrator as well.
         if (transition == "clear") Assert.Equal("available", Assert.Single((await documents.ListRepositoriesAsync("bob", default)).Repositories).State);
-        await Assert.ThrowsAsync<AppLifecycleException>(() => documents.ListDocumentsAsync(entry.Id, "admin", false, default, "worktree", workspace.Id));
+        Assert.NotEmpty((await documents.ListDocumentsAsync(entry.Id, "admin", false, default, "worktree", workspace.Id)).Documents);
     }
 
     [Fact]

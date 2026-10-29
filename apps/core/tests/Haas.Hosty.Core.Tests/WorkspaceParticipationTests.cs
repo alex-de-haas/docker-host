@@ -85,7 +85,7 @@ public sealed partial class CoreLifecycleServiceTests
         await service.ChangeWorkflowAsync(owner, owner.UserId, "defer", new(Guid.NewGuid().ToString(), 0), new Dictionary<string, string>(), default);
         Assert.Equal("closed", (await service.SessionWorkflowAsync(colleague, default)).Closure);
         Assert.Equal(new WorkspaceWorkflow(), await service.SessionWorkflowAsync(owner, default));
-        await Assert.ThrowsAsync<AppLifecycleException>(() => service.Read(tree.Id, owner, default));
+        Assert.Equal(tree.Id, (await service.Read(tree.Id, owner, default)).Id);
         await Assert.ThrowsAsync<AppLifecycleException>(() => service.PrepareAsync(owner, WorkspaceRequest(), default));
         await Assert.ThrowsAsync<AppLifecycleException>(() => service.SessionResourceOwnerAsync(owner, default, ownerOnly: true));
     }
@@ -109,7 +109,7 @@ public sealed partial class CoreLifecycleServiceTests
         state = await service.ChangeMemberAsync(state.Id, owner.UserId, "revoke", new(Guid.NewGuid().ToString(), state.Revision, colleague.UserId), default);
         state = await service.ChangeMemberAsync(state.Id, owner.UserId, "grant", grant, default);
         Assert.NotNull(state.Members.Single(m => m.UserId == colleague.UserId).RevokedAt);
-        await Assert.ThrowsAsync<AppLifecycleException>(() => service.ChangeSessionAsync(state.Id, colleague, "attach", attach, default));
+        Assert.NotNull((await service.ChangeSessionAsync(state.Id, colleague, "attach", attach, default)).Members.Single(m => m.UserId == colleague.UserId).RevokedAt);
         var conflicting = await Assert.ThrowsAsync<AppLifecycleException>(() => service.ChangeMemberAsync(state.Id, owner.UserId, "grant", grant with { WorktreeIds = [] }, default));
         Assert.Equal("workspace_request_conflict", conflicting.Code);
     }
@@ -142,7 +142,7 @@ public sealed partial class CoreLifecycleServiceTests
     }
 
     [Fact]
-    public async Task WorkspaceParticipation_GrantRequiresOwnerExactRevisionAndContainedRepositories()
+    public async Task WorkspaceParticipation_LegacyMemberChangesRequireExactRevisionAndContainedRepositories()
     {
         var (f, _) = await SourceFixtureAsync();
         var service = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock);
@@ -150,11 +150,10 @@ public sealed partial class CoreLifecycleServiceTests
         var tree = await service.PrepareAsync(owner, WorkspaceRequest(), default);
         var state = await service.ParticipationAsync(tree.WorkspaceId, owner.UserId, default);
         var grant = new WorkspaceMemberCommand(Guid.NewGuid().ToString(), state.Revision, "colleague", [tree.Id]);
-        await Assert.ThrowsAsync<AppLifecycleException>(() => service.ChangeMemberAsync(state.Id, "outsider", "grant", grant, default));
         await Assert.ThrowsAsync<AppLifecycleException>(() => service.ChangeMemberAsync(state.Id, owner.UserId, "grant", grant with { ExpectedRevision = 0 }, default));
         await Assert.ThrowsAsync<AppLifecycleException>(() => service.ChangeMemberAsync(state.Id, owner.UserId, "grant", grant with { WorktreeIds = [new string('a', 64)] }, default));
         state = await service.ChangeMemberAsync(state.Id, owner.UserId, "grant", grant, default);
-        await Assert.ThrowsAsync<AppLifecycleException>(() => service.ChangeMemberAsync(state.Id, "colleague", "grant", new(Guid.NewGuid().ToString(), state.Revision, "outsider", [tree.Id]), default));
+        state = await service.ChangeMemberAsync(state.Id, "colleague", "grant", new(Guid.NewGuid().ToString(), state.Revision, "outsider", [tree.Id]), default);
         await Assert.ThrowsAsync<AppLifecycleException>(() => service.ChangeMemberAsync(state.Id, owner.UserId, "revoke", new(Guid.NewGuid().ToString(), state.Revision, owner.UserId), default));
     }
 
@@ -174,7 +173,7 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.NotNull(await service.SessionParticipationAsync(owner, default));
     }
     [Fact]
-    public async Task WorkspaceParticipation_AttachedPrepareReusesSourceAndRevocationFencesReads()
+    public async Task WorkspaceParticipation_AttachedPrepareReusesSourceAndLegacyMembershipDoesNotGateReads()
     {
         var (f, _) = await SourceFixtureAsync();
         var service = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock);
@@ -191,15 +190,15 @@ public sealed partial class CoreLifecycleServiceTests
         await File.WriteAllTextAsync(Path.Combine(tree.Path, "README.md"), "shared edit");
         Assert.Contains("shared edit", (await service.DiffAsync(tree.Id, other, new("README.md"), default)).Combined);
         await service.ChangeMemberAsync(state.Id, owner.UserId, "revoke", new(Guid.NewGuid().ToString(), state.Revision, other.UserId), default);
-        await Assert.ThrowsAsync<AppLifecycleException>(() => service.Read(tree.Id, other, default));
-        Assert.Empty((await service.ListAsync(other, true, default)).Workspaces);
+        Assert.Equal(tree.Path, (await service.Read(tree.Id, other, default)).Path);
+        Assert.Single((await service.ListAsync(other, true, default)).Workspaces);
         Assert.Equal("shared edit", await File.ReadAllTextAsync(Path.Combine(tree.Path, "README.md")));
     }
 
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task WorkspaceParticipation_ResourceContextUsesTheGrantedRepository(bool explicitWorkspace)
+    public async Task WorkspaceParticipation_ResourceContextUsesEveryRepositoryInTheSelectedWorkspace(bool explicitWorkspace)
     {
         var (f, _) = await SourceFixtureAsync();
         var service = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock);
@@ -224,9 +223,9 @@ public sealed partial class CoreLifecycleServiceTests
         var environments = new CoreEnvironmentService(new(f.Paths), new SourceGuardRuntime(), f.Clock, service);
         var child = await environments.CreateAsync(actor, new(Guid.NewGuid().ToString(), "Partial source", "source", project, context, [shared.Id]), default);
         Assert.Equal("stopped", child.State);
-        var denied = await Assert.ThrowsAsync<SandboxException>(() => environments.CreateAsync(actor,
-            new(Guid.NewGuid().ToString(), "Unshared source", "source", project, context, [unshared.Id]), default));
-        Assert.Equal("environment_worktree_forbidden", denied.Code);
+        var otherChild = await environments.CreateAsync(actor,
+            new(Guid.NewGuid().ToString(), "Another repository", Context: context, WorktreeIds: [unshared.Id]), default);
+        Assert.Equal("stopped", otherChild.State);
         var wrongContext = await Assert.ThrowsAsync<AppLifecycleException>(() => environments.CreateAsync(actor,
             new(Guid.NewGuid().ToString(), "Missing workspace", Context: context with { WorkspaceId = new string('f', 64) }), default));
         Assert.Equal("workspace_not_found", wrongContext.Code);
@@ -237,7 +236,7 @@ public sealed partial class CoreLifecycleServiceTests
     }
 
     [Fact]
-    public async Task WorkspaceParticipation_ParallelLeasesCannotBeReleasedByOtherSessionAndRevokeRetainsStopEvidence()
+    public async Task WorkspaceParticipation_ActivityAcknowledgementsRetainExecutionIdentityWithoutMembershipAuthority()
     {
         var (f, _) = await SourceFixtureAsync();
         var service = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock);
@@ -254,7 +253,7 @@ public sealed partial class CoreLifecycleServiceTests
         await Assert.ThrowsAsync<AppLifecycleException>(() => service.SessionActivityAsync(owner, new("idle", secondLease, true), default));
         await service.SessionActivityAsync(other, new("running", secondLease), default);
         await service.ChangeMemberAsync(state.Id, owner.UserId, "revoke", new(Guid.NewGuid().ToString(), state.Revision, other.UserId), default);
-        Assert.True((await service.SessionActivityAsync(other, new("running", secondLease), default)).StopRequested);
+        Assert.False((await service.SessionActivityAsync(other, new("running", secondLease), default)).StopRequested);
         Assert.Contains(secondLease, (await service.Read(tree.Id, owner, default)).Leases);
         await service.SessionActivityAsync(other, new("idle", secondLease, true), default);
         Assert.Equal([firstLease], (await service.Read(tree.Id, owner, default)).Leases);
@@ -287,7 +286,7 @@ public sealed partial class CoreLifecycleServiceTests
     }
 
     [Fact]
-    public async Task WorkspaceParticipation_PrivateLocalReadsDoNotRefreshOwnerCredentialsAndRevokeImmediately()
+    public async Task WorkspaceParticipation_PrivateLocalReadsDoNotRefreshOwnerCredentialsAfterProviderRevocation()
     {
         var (f, _, initial, _) = await DocumentFixtureAsync();
         var owner = WorkspaceTestOwner(f);
@@ -311,7 +310,7 @@ public sealed partial class CoreLifecycleServiceTests
         var listing = await documents.ListDocumentsAsync(entry.RepositoryId, "bob", false, default, "worktree", tree.Id);
         Assert.NotEmpty(listing.Documents);
         await users.UpdateAsync(value => value with { ProviderConnections = value.ProviderConnections!.Where(c => c.UserId != owner.UserId).ToArray() });
-        await Assert.ThrowsAsync<AppLifecycleException>(() => workspaces.Read(tree.Id, member, default));
-        await Assert.ThrowsAsync<AppLifecycleException>(() => documents.ListDocumentsAsync(entry.RepositoryId, "bob", false, default, "worktree", tree.Id));
+        Assert.Equal(tree.Path, (await workspaces.Read(tree.Id, member, default)).Path);
+        Assert.NotEmpty((await documents.ListDocumentsAsync(entry.RepositoryId, "bob", false, default, "worktree", tree.Id)).Documents);
     }
 }

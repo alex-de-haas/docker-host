@@ -1,6 +1,6 @@
 ---
 created: 2026-10-16
-updated: 2026-10-28
+updated: 2026-10-29
 summary: Harness combines conversation navigation, multi-repository workspace details, sandbox previews and verified lifecycle actions.
 components: [apps/harness, apps/core, apps/shell, packages/app-sdk]
 ---
@@ -724,7 +724,7 @@ Coverage mapping for the broader D6 contract:
 | Multiple repositories and external ownership, no fabricated chat, denied cleanup/replay and revoked token | Earlier isolated external-workspace acceptance above |
 | Real provider, questions/approvals, retained preview data and agent-owned Finish | D4 and normal-mode lifecycle acceptance above; existing provider/approval regressions rerun |
 | Several PRs, missing/stale/failed CI, comments/reviews, unknown statistics and preview permission revocation | Workspace details/navigation/preview regression tests; Core inspection/workflow coverage recorded above |
-| Completion, resume, deletion and unfinished-work preservation | UI/lifecycle and D5 retention acceptance; separately confirmed physical discard uses the [lifecycle removal contract](../workspace-lifecycle-controls/feature.md#confirmed-physical-discard) |
+| Completion, resume, deletion and unfinished-work preservation | UI/lifecycle and D5 retention acceptance; unified Delete uses the [lifecycle removal contract](../workspace-lifecycle-controls/feature.md#unified-delete-and-recovery) |
 | Navigation migration | Harness manifest entry and no Workspaces/Plans dependency; the later standalone-app retirement leaves existing installations and data untouched and routes workspace viewers to the owning session |
 
 Final verification:

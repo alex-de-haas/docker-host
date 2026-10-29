@@ -1,7 +1,7 @@
 namespace Haas.Hosty.Core;
 
-// Workspace authority is narrower than the administrator's browser role. It belongs to one
-// directly reviewed Core credential and is re-established for every call, including source reads.
+// Current credential scopes and the initiating user authorize the whole workspace collection.
+// Credential identity remains attribution; revocation is rechecked on every call.
 internal sealed class ExternalWorkspaceMcpAuthorization(UserDirectoryStore users, OAuthStore oauth,
     IClock clock, CoreSettingsService settings)
 {
@@ -10,10 +10,12 @@ internal sealed class ExternalWorkspaceMcpAuthorization(UserDirectoryStore users
         var bearer = http is null ? null : CoreSessionAuthorization.ReadBearerToken(http.Request);
         var credential = ScopedCredentials.Resolve(await users.ReadAsync(ct), bearer, clock.UtcNow,
             settings.AuthLifetimes, AccessTokenScopes.CoreAudience);
-        if (credential is null || !AppAccessPolicy.IsAdmin(credential.User) ||
+        if (credential is null ||
             !AccessTokenScopes.Grants(credential.Record.Scopes, AccessTokenScopes.McpRead) ||
             !AccessTokenScopes.Grants(credential.Record.Scopes, AccessTokenScopes.McpWorkspaces))
             throw Denied();
+        if (!AppAccessPolicy.IsAdmin(credential.User))
+            throw new AppIdentityException("admin_required", "The initiating user needs workspace administration authority.");
 
         if (credential.Record.Kind == AccessTokenKinds.OAuth && credential.Record.GrantId is { } grantId)
         {
@@ -54,9 +56,6 @@ internal sealed class ExternalWorkspaceMcpAuthorization(UserDirectoryStore users
 
 internal sealed record ExternalWorkspaceMcpCaller(string UserId, string PrincipalId, string Label)
 {
-    public bool Owns(WorkspaceOwner owner)
-        => owner.UserId == UserId && owner.External?.PrincipalId == PrincipalId;
-
     public WorkspaceOwner Owner(string taskId, string? label = null)
         => WorkspaceOwner.ForExternal(UserId, PrincipalId, taskId,
             label is null ? Label : ExternalWorkspaceMcpAuthorization.NormalizeLabel(label));

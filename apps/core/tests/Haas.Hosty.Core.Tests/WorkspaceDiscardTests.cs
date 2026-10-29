@@ -238,14 +238,13 @@ public sealed partial class CoreLifecycleServiceTests
         await AddDiscardableSource(f.Tree);
         var plan = await f.Service.PrepareDiscardAsync(f.Owner, "admin", [], default);
         var command = DiscardInput(plan);
-        await Assert.ThrowsAsync<AppLifecycleException>(() => f.Service.PrepareDiscardAsync(f.Owner, "another-admin", [], default));
+        Assert.Empty((await f.Service.PrepareDiscardAsync(f.Owner, "another-admin", [], default)).Blockers);
         await Assert.ThrowsAsync<AppLifecycleException>(() => f.Service.AdmitDiscardAsync(f.Owner, "another-admin", command, [], default));
         await f.Service.AdmitDiscardAsync(f.Owner, "admin", command, [], default);
         await Assert.ThrowsAsync<AppLifecycleException>(() => f.Service.AdmitDiscardAsync(f.Owner, "admin", command with { RequestId = Guid.NewGuid().ToString() }, [], default));
         await Assert.ThrowsAsync<AppLifecycleException>(() => f.Service.AdmitDiscardAsync(f.Owner, "admin", command with { Digest = new string('0', 64) }, [], default));
-        await Assert.ThrowsAsync<AppLifecycleException>(() => f.Service.FinishDiscardAsync(f.Owner, "another-admin", command, default));
-        Assert.True(Directory.Exists(f.Tree.Path));
-        await f.Service.FinishDiscardAsync(f.Owner, "admin", command, default);
+        Assert.Equal("removed", (await f.Service.FinishDiscardAsync(f.Owner, "another-admin", command, default)).State);
+        Assert.Equal("removed", (await f.Service.FinishDiscardAsync(f.Owner, "admin", command, default)).State);
     }
 
     [Theory]
@@ -559,7 +558,7 @@ public sealed partial class CoreLifecycleServiceTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task WorkspaceDiscard_RechecksPrivateSourceAuthorityAfterReviewAndOnAcceptedRecovery(bool admitted)
+    public async Task WorkspaceDiscard_RetainedLocalDeletionDoesNotNeedRemoteProviderCredentials(bool admitted)
     {
         var (fixture, users, access, service, tree, _, _) = await PrivateWorkspaceDocumentFixtureAsync();
         using var f = new DiscardFixture(fixture, tree.Repository, service, tree.Owner, tree);
@@ -578,10 +577,9 @@ public sealed partial class CoreLifecycleServiceTests
         var source = Path.Combine(tree.Path, PlanPath);
         var bytes = File.ReadAllBytes(source);
         await users.UpdateAsync(state => state with { ProviderConnections = [] });
-        await Assert.ThrowsAsync<AppLifecycleException>(() => controls.ApplyDiscardAsync(tree.WorkspaceId, "admin", SourceTestApp, command, default));
-        Assert.Equal(bytes, File.ReadAllBytes(source));
-        Assert.True(Directory.Exists(tree.Path));
-        if (!admitted) Assert.Null(await service.ReadDiscardAsync(tree.WorkspaceId, command.RequestId, "admin", default));
+        Assert.Equal("removed", (await controls.ApplyDiscardAsync(tree.WorkspaceId, "admin", SourceTestApp, command, default)).State);
+        Assert.False(Directory.Exists(tree.Path));
+
     }
 
 
@@ -607,7 +605,7 @@ public sealed partial class CoreLifecycleServiceTests
         var retained = Assert.Single((await inspection.ListAsync("admin", default)).Workspaces);
         Assert.Equal(f.Tree.WorkspaceId, retained.Id);
         Assert.Contains(retained.Workflow!.Operations!, operation => operation.Id == command.RequestId && operation.Kind == "discard" && operation.State == "pending");
-        Assert.Empty((await inspection.ListAsync("another-admin", default)).Workspaces);
+        Assert.Single((await inspection.ListAsync("another-admin", default)).Workspaces);
         await Assert.ThrowsAsync<AppLifecycleException>(() => restarted.PrepareAsync(f.Owner, ExternalPrepare(), default));
         Assert.Equal("removed", (await restarted.FinishDiscardAsync(f.Owner, "admin", command, default)).State);
         Assert.Empty((await inspection.ListAsync("admin", default)).Workspaces);

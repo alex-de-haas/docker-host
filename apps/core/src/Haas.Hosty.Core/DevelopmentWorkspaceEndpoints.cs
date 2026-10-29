@@ -48,10 +48,10 @@ internal static class DevelopmentWorkspaceEndpoints
                 var owner = await workspaces.SessionResourceOwnerAsync(actor, ct, ownerOnly: true);
                 if (kind == "delete")
                 {
-                    return await cleanup.DeleteAsync(DevelopmentWorkspaceService.WorkspaceIdFor(owner), owner.UserId, appId, input, ct);
+                    return await cleanup.DeleteAsync(DevelopmentWorkspaceService.WorkspaceIdFor(owner), actor.UserId, appId, input, ct);
                 }
-                var heads = kind is "complete" or "delete" ? await publications.MergedWorkspaceHeadsAsync(owner, ct) : new Dictionary<string, string>();
-                return await workspaces.ChangeWorkflowAsync(owner, owner.UserId, kind is "pause-confirm" or "close-confirm" or "defer-confirm" ? kind[..^8] : kind, input, heads, ct, prepareOnly: kind is "pause" or "close");
+                var heads = kind is "complete" or "delete" ? await publications.MergedWorkspaceHeadsAsync(owner, ct, actor.UserId) : new Dictionary<string, string>();
+                return await workspaces.ChangeWorkflowAsync(owner, actor.UserId, kind is "pause-confirm" or "close-confirm" or "defer-confirm" ? kind[..^8] : kind, input, heads, ct, prepareOnly: kind is "pause" or "close");
             }));
         routes.MapPost(internalRoot, async (string appId, string sessionId, HttpRequest request, WorkspacePrepare input,
             WorkspaceAuthorization auth, DevelopmentWorkspaceService workspaces, AuditStore audit, IClock clock, CancellationToken ct) =>
@@ -149,13 +149,7 @@ internal static class DevelopmentWorkspaceEndpoints
             await CoreSessionAuthorization.RequireAdminBrowserAsync(request, users, clock, user => Handle(async () =>
             {
                 var tree = await workspaces.Read(id, null, ct);
-                if (tree.Owner.UserId != user.Id)
-                    throw DevelopmentWorkspaceService.Error("forbidden", "Workspace operations require the owning operator or an attached session.");
-                if (tree.Owner.IsExternal) await workspaces.RequireExternalSourceAsync(tree, ct);
-                else await workspaces.RequireParticipationSourceAsync(tree, user.Id, ct);
-                // Browser-prepared Core source uses an explicit operator principal. It may
-                // release its own preparation lease; it cannot impersonate an assistant or MCP grant.
-                var actor = tree.Owner.External?.PrincipalId == "operator:" + user.Id ? tree.Owner : null;
+                var actor = WorkspaceOwner.ForExternal(user.Id, "operator:" + user.Id, "browser", "Browser");
                 var result = await workspaces.CommandAsync(id, actor, kind, input, ct);
                 await Audit(audit, clock, user.Id, result, input.RequestId, kind, ct);
                 return DevelopmentWorkspaceService.UserProjection(result, user.Id);

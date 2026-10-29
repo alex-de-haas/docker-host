@@ -11,7 +11,7 @@ public sealed partial class CoreLifecycleServiceTests
     [Theory]
     [InlineData("revoked")]
     [InlineData("missing")]
-    public async Task ExecutionTargets_GroupPackageReturnNeedsOwnershipButNotReadableSource(string failure)
+    public async Task ExecutionTargets_GroupPackageReturnNeedsCurrentAuthorityButNotReadableSource(string failure)
     {
         var (f, _, initialWorkspaces, initialTree, _, _) = await LocalHandoffFixture();
         await AddManifestPackageRuntime(f, initialTree);
@@ -54,9 +54,7 @@ public sealed partial class CoreLifecycleServiceTests
             workspaces, inspection, host.Services.GetRequiredService<WorkspaceActivationAccess>(),
             NullLogger<AppExecutionTargetService>.Instance);
         var request = new AppExecutionTargetRequest(Guid.NewGuid().ToString("D"), "package");
-        if (failure == "revoked")
-            await Assert.ThrowsAsync<AppLifecycleException>(() => worker.SubmitWorkspaceAsync(tree.WorkspaceId,
-                new(Guid.NewGuid().ToString("D"), "workspace"), actor, default));
+        Assert.Equal(tree.Owner, await inspection.WorkflowOwnerAsync(tree.WorkspaceId, actor.UserId, default));
 
         await worker.StartAsync(default);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
@@ -77,8 +75,8 @@ public sealed partial class CoreLifecycleServiceTests
             var stops = f.Adapter.StopCount;
             await Assert.ThrowsAsync<AppLifecycleException>(() => worker.SubmitWorkspaceAsync(tree.WorkspaceId, request,
                 actor with { UserId = "bob", Principal = "manual:" + DevelopmentWorkspaceService.Hash("group-return-foreign") }, default));
-            await Assert.ThrowsAsync<AppIdentityException>(() => worker.SubmitWorkspaceAsync(tree.WorkspaceId, request,
-                actor with { Principal = "manual:" + DevelopmentWorkspaceService.Hash("group-return-other") }, default));
+            Assert.Equal("execution_request_conflict", (await Assert.ThrowsAsync<AppLifecycleException>(() => worker.SubmitWorkspaceAsync(tree.WorkspaceId, request,
+                actor with { Principal = "manual:" + DevelopmentWorkspaceService.Hash("group-return-other") }, default))).Code);
             Assert.Equal(stops, f.Adapter.StopCount);
             Assert.Equal("completed", (await worker.SubmitWorkspaceAsync(tree.WorkspaceId, request, actor, timeout.Token)).State);
             Assert.Equal(starts, f.Adapter.StartCount);
