@@ -468,6 +468,11 @@ Existing installations need a confirmed update on Core 0.108.0 or later. Shell p
 assistant independently and selects its own entry-point target in Settings → Shell. Notification
 session links include the owning app. See [assistant provider permissions](../assistant-provider-permissions/feature.md).
 
+
+Provider account quota and credit observations are available through the shared Limits control.
+See [Harness Provider Usage Limits](../harness-provider-usage-limits/feature.md) for optional support,
+staleness and separation from conversation context.
+
 ## Testing Expectations
 
 - Settings UI refactors retain keyboard navigation, labelled form controls, modal focus return,

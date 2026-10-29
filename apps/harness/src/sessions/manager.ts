@@ -2553,6 +2553,7 @@ export class SessionManager {
         this.fanOut(session, this.suggestionEvent(session));
         return;
       }
+      case "provider_usage": return; // Account diagnostics never enter conversation history.
       case "activity":
         if (["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) {
           this.setActivity(session, event.activity);

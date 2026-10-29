@@ -64,6 +64,14 @@ def check(context):
     call(app_origin, '/api/auth/app-code', {'code':code,'codeVerifier':verifier})
     assert call(app_origin, '/api/auth/identity')['status'] == 'active'
     call(app_origin, '/api/sessions')
+    connection = call(app_origin, '/api/connections', {'name':'Usage fixture', 'kind':'claude', 'auth':'api-key', 'secret':'synthetic-usage-fixture'})
+    usage = call(app_origin, '/api/connections/'+connection['id']+'/usage?refresh=true')
+    assert usage['state'] == 'unsupported' and usage['rows'] == [] and usage['connectionRevision'] == connection['revision']
+    say('PASS: authenticated Local worker usage reports unsupported API-key telemetry without inference')
+    local_usage = call(app_origin, '/api/connections', {'name':'Local quota fixture', 'kind':'ollama', 'auth':'none'})
+    local_usage = call(app_origin, '/api/connections/'+local_usage['id']+'/usage?refresh=true')
+    assert local_usage['state'] == 'not_applicable' and local_usage['rows'] == []
+    say('PASS: local Ollama quota is not applicable without a provider request')
     catalog = call(app_origin, '/api/skills')['skills']
     assert sorted((s['name'], s['coreVersion']) for s in catalog if s['sourceKind'] == 'core') == sorted((s['name'], s['coreVersion']) for s in core_skills)
     with client.open(app_origin+'/assistant/', timeout=30) as response:
@@ -90,6 +98,16 @@ def check(context):
         assert result.returncode == 0, 'Suggestion browser acceptance failed'
 
     if review := os.environ.get('HOSTY_HARNESS_BROWSER_REVIEW'):
+        shell_manifest = json.loads((workspace/'apps/shell/manifest.json').read_text())
+        shell_manifest['source']['repository'] = context['repository']
+        shell_source = base/'shell-manifest.json'
+        shell_source.write_text(json.dumps(shell_manifest))
+        run([cli, '--data-root', root, 'apps', 'install', shell_source, '--runtime', 'dev', '--no-autostart'])
+        run([cli, '--data-root', root, 'apps', 'start', 'hosty.shell'])
+        wait_for(lambda: request('/api/apps/hosty.shell/health')['status'] == 'healthy', 180)
+        shell_summary = next(item for item in request('/api/apps')['apps'] if item['id'] == 'hosty.shell')
+        shell_endpoint = next(item for item in shell_summary['endpoints'] if item['key'] == 'web')
+        shell_url = shell_endpoint.get('browserOrigin') or shell_endpoint.get('publicOrigin') or shell_endpoint['url']
         development = request('/api/core/development')
         source = request('/api/core/source', {'revision':development['source']['revision'], 'overridePath':None,
             'repository':{'repositoryUrl':context['repository'], 'ref':'main', 'projectPath':context['project'], 'connectionId':None}},
@@ -100,7 +118,7 @@ def check(context):
         review_path = pathlib.Path(review)
         descriptor = os.open(review_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(descriptor, 'w') as output:
-            json.dump({'origin':origin, 'appUrl':link, 'email':'activation-fixture@example.test', 'password':password,
+            json.dump({'origin':origin, 'appUrl':link, 'shellUrl':shell_url, 'email':'activation-fixture@example.test', 'password':password,
                 'dataRoot':str(root), 'pid':request('/api/core/development')['launch']['processId'],
                 'worktree':tree['path'], 'workspaceId':tree['workspaceId']}, output)
         say('BROWSER_REVIEW_READY: '+str(review_path))

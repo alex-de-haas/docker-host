@@ -18,7 +18,7 @@ Retired `agentWorker` manifests fail validation explicitly.
 
 The API image contains the web export and conversation/MCP coordinator. The Worker image contains
 the provider SDKs, Codex CLI 0.162.1, Claude SDK 0.3.296 and its packaged Claude CLI, Node 24, Git
-2.56.0, Python, ripgrep and .NET SDK 10. Images and Harness packages share version 0.77.0. Worker
+2.56.0, Python, ripgrep and .NET SDK 10. Images and Harness packages share version 0.78.0. Worker
 does not need host agent CLIs, a Docker socket or another Docker daemon. `tini` supplies ordinary
 container signal/reaping behavior; the application starts known child processes directly.
 
@@ -173,6 +173,11 @@ Docker source sharing are outside the first supported matrix.
 Independent provider extraction remains in the [Agent Provider plan](../agent-provider-interface/plan.md).
 This private HTTP/SSE seam does not create `providers.agent`, file synchronization, a public protocol
 or cross-app grants. [Containment](../assistant-runtime-containment/plan.md) retains stricter isolation.
+
+
+The worker also owns [provider usage snapshots](../harness-provider-usage-limits/feature.md).
+Authenticated connection operations expose cached or bounded refreshed observations independently
+of run event retention; diagnostics use the existing connection credential claims.
 
 ## Testing Expectations
 

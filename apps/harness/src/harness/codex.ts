@@ -1,3 +1,4 @@
+import { UsageReader, absentUsage, codexUsage } from "./provider-usage.js";
 import { cleanAgentEnvironment } from "../connections/codex-login.js";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { toCodexMcpConfig } from "./codex-mcp.js";
@@ -57,6 +58,7 @@ export class CodexHarnessAdapter implements HarnessAdapter {
   readonly capabilities: HarnessCapabilities = {
     // Protocol integration exists; actual availability is learned from a native response.
     promptSuggestions: true,
+    usage: { snapshots: true, events: true, kinds: ["quota", "credits"] },
     questions: false,
     appMcp: true,
     liveReconfigure: false,
@@ -102,6 +104,19 @@ export class CodexHarnessAdapter implements HarnessAdapter {
     return { available: true };
   }
 
+  async readUsage() {
+    if (this.auth.apiKey) return absentUsage("unsupported", "unsupported_auth");
+    const { CodexLogin } = await import("../connections/codex-login.js");
+    const client = new CodexLogin(this.auth.managedHome ?? this.auth.codexHome ?? path.join(this.auth.dataDir, "codex-home"));
+    const reader = new UsageReader(async () => {
+      await client.initialize();
+      const account = await client.request("account/read", { refreshToken: false });
+      if ((account.account as { type?: string } | null)?.type === "apiKey") return absentUsage("unsupported", "unsupported_auth");
+      return codexUsage(await client.request("account/rateLimits/read", {}));
+    });
+    try { return await reader.refresh(); } finally { reader.close(); await client.closeAndWait(); }
+  }
+
   async models(): Promise<import("../worker/contracts.js").ModelCatalog> {
     const { CodexLogin } = await import("../connections/codex-login.js");
     const { catalog, effortLabel } = await import("../worker/models.js");
@@ -141,6 +156,7 @@ class ReconfigurableCodexRun implements HarnessRun {
   constructor(private readonly options: HarnessStartOptions, private readonly auth: CodexAuthConfig) {
     this.active = new CodexRun(options, auth);
   }
+  readUsage() { return this.active.readUsage(); }
   send(text: string): void { this.active.send(text); }
   resolveApproval(id: string, decision: "allow" | "deny", message?: string): boolean { return this.active.resolveApproval(id, decision, message); }
   resolveQuestion(): boolean { return false; }
@@ -179,6 +195,9 @@ interface PendingApproval {
 }
 
 class CodexRun implements HarnessRun {
+  private readonly usageReader = new UsageReader(async () => this.auth.apiKey ? absentUsage("unsupported", "unsupported_auth")
+    : codexUsage(await this.request("account/rateLimits/read", {})));
+  readUsage() { return this.usageReader.refresh(); }
   private readonly child: ChildProcessWithoutNullStreams;
   private readonly pendingRequests = new Map<number | string, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
   private readonly approvals = new Map<string, PendingApproval>();
@@ -362,6 +381,7 @@ class CodexRun implements HarnessRun {
     }
     this.approvals.clear();
     this.clearFileChangeProposals();
+    this.usageReader.close();
     this.child.kill("SIGTERM");
   }
 
@@ -374,6 +394,7 @@ class CodexRun implements HarnessRun {
     });
     this.predictionRuntime = codexPredictionSupport.key(resolveCodexCommand(), (initialized as { userAgent?: unknown })?.userAgent);
     this.notify(CODEX_METHODS.initialized, {});
+    void this.readUsage().then(usage => { if (!this.stopped) this.emit({ type: "provider_usage", usage }); });
     this.selectedModel = this.options.model ?? null;
     this.selectedEffort = this.options.reasoningEffort ?? null;
     // Null turn overrides keep a resumed thread's old values. Resolve native defaults explicitly
@@ -550,6 +571,12 @@ class CodexRun implements HarnessRun {
     }
 
     const params = message.params ?? {};
+    if (message.method === "account/rateLimits/updated") {
+      this.emit({ type: "provider_usage", usage: codexUsage(params, true) }); return;
+    }
+    if (message.method === "account/updated") {
+      this.emit({ type: "provider_usage", usage: { ...absentUsage(), invalidated: true } }); return;
+    }
     if (typeof params.threadId === "string" && this.threadId && params.threadId !== this.threadId) return;
     if (message.method === "model/rerouted") {
       this.emit({ type: "notice", message: `Codex reported a model change: ${String(params.fromModel ?? "unknown")} → ${String(params.toModel ?? "unknown")}.` });

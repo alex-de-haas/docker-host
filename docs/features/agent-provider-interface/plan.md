@@ -243,6 +243,19 @@ existing Harness journal's correlated event foundation; [Durable Agent Jobs D7](
 owns common session commands, same-provider continuation and bounded context. Reuse these as the
 Harness adapter's implementation, without requiring independent providers to share its storage.
 
+## Optional Usage Reporting Coordination (2026-10-28)
+
+[Harness Provider Usage Limits](../harness-provider-usage-limits/feature.md) owns optional account quota,
+credit balance and API rate-limit observations in the existing Harness connections and UI. It
+covers the existing local Ollama adapter's not-applicable quota and Ollama Cloud conformance fixtures, not this public
+provider API. D2 here must preserve an optional usage-reporting capability, distinct from invocation
+cost, context capacity and connection readiness. A provider without it remains usable.
+
+D4 here includes binding that optional capability when the independently installed provider exposes
+it, preserving local not-applicable quota and adding cloud balance observations when cloud support is introduced.
+Reuse the observation semantics and verified provider contracts; this coordination neither selects
+an invocation standard nor makes billing access mandatory. Existing D1-D6 remain unchecked and Draft.
+
 ## Dependencies And Boundaries
 
 - [Core extension boundaries](../core-extension-model/feature.md) describe the existing role and grant

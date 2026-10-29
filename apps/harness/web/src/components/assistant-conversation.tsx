@@ -1,4 +1,5 @@
 "use client";
+import { ProviderUsageIndicator } from "@/components/provider-usage";
 import { ContextUsageIndicator } from "@/components/context-usage";
 import { applyContextUsage, emptyContextUsage } from "@/lib/context-usage";
 import { HostyNavigationBoundary } from "@hosty-sdk/app/react";
@@ -1270,6 +1271,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                       onSessionChange(record);
                       void getHealth(record.id).then(value => { if (activeSessionId.current === record.id) setHealth(value); }).catch(() => {});
                     }} />}
+                    {session?.connectionId && <ProviderUsageIndicator key={session.connectionId + ":" + session.connectionRevision} connectionId={session.connectionId} revision={session.connectionRevision} />}
                     {session && <ContextUsageIndicator usage={contextUsage.sessionId === session.id ? contextUsage.usage : null} connected={connection === "connected"} />}
                   </div>
                   {session && <SpeechInput key={session.id} onStart={suggestions.interact} disabled={sending || !!pendingSend || sendRecoveryBlocked} onText={text => setInput(current => current ? `${current}${/\s$/.test(current) ? "" : " "}${text}` : text)} />}

@@ -1,3 +1,4 @@
+import { UsageReader, absentUsage, claudeUsage, claudeLimitEvent } from "./provider-usage.js";
 import { ContextUsageReader, claudeContextUsage } from "./context-usage.js";
 import { toolResult, toolDuration, shouldRetainToolOutput } from "./tool-result.js";
 import { randomUUID } from "node:crypto";
@@ -58,6 +59,7 @@ export class ClaudeHarnessAdapter implements HarnessAdapter {
   readonly name = "claude-agent-sdk";
   readonly capabilities: HarnessCapabilities = {
     promptSuggestions: true,
+    usage: { snapshots: true, events: true, kinds: ["quota", "credits"] },
     questions: true,
     appMcp: true,
     liveReconfigure: true,
@@ -86,6 +88,20 @@ export class ClaudeHarnessAdapter implements HarnessAdapter {
     }
 
     return { available: true };
+  }
+
+  async readUsage() {
+    if (!this.environment.CLAUDE_CODE_OAUTH_TOKEN) return absentUsage("unsupported", "unsupported_auth");
+    const { query } = await import("@anthropic-ai/claude-agent-sdk");
+    const controller = new AbortController();
+    const input = (async function* () { await new Promise<void>(resolve => controller.signal.addEventListener("abort", () => resolve(), { once: true })); })();
+    const client = query({ prompt: input, options: { env: this.environment, settingSources: [], persistSession: false,
+      abortController: controller, tools: [], mcpServers: {}, strictMcpConfig: true } });
+    const reader = new UsageReader(async () => typeof client.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET === "function"
+      ? claudeUsage(await client.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true }))
+      : absentUsage("unsupported", "unsupported_sdk"));
+    try { return await reader.refresh(); }
+    finally { reader.close(); controller.abort(); client.close(); }
   }
 
   async models(): Promise<import("../worker/contracts.js").ModelCatalog> {
@@ -129,6 +145,8 @@ class ClaudeRun implements HarnessRun {
     setMcpServers?(servers: Record<string, unknown>): Promise<{ errors?: Record<string, string> }>;
     toggleMcpServer?(name: string, enabled: boolean): Promise<void>;
   } | null = null;
+  private usageReader: UsageReader | null = null;
+  async readUsage() { return this.usageReader?.refresh() ?? absentUsage(); }
   private contextReader: ContextUsageReader | null = null;
   private stopped = false;
   private turnActive = false;
@@ -258,6 +276,7 @@ class ClaudeRun implements HarnessRun {
 
   async stop(): Promise<void> {
     this.stopped = true;
+    this.usageReader?.close();
     this.contextReader?.close();
     // Unblock any approval or question the harness is still paused on, then tear the query down.
     for (const [, pending] of this.pending) {
@@ -319,9 +338,16 @@ class ClaudeRun implements HarnessRun {
             this.requestApproval(toolName, input, context),
         },
       } as never) as AsyncIterable<Record<string, never>> & { interrupt(): Promise<unknown>; close(): void;
+        usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET?(options: { skipBehaviors: boolean }): Promise<unknown>;
         getContextUsage?(options: { detail: "summary" }): Promise<unknown>;
         applyFlagSettings(settings: { model: string | null; effortLevel: string | null }): Promise<unknown> };
       this.query = query;
+      this.usageReader = new UsageReader(async () => this.environment.ANTHROPIC_API_KEY
+        ? absentUsage("unsupported", "unsupported_auth")
+        : typeof query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET === "function"
+          ? claudeUsage(await query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true }))
+          : absentUsage("unsupported", "unsupported_sdk"));
+      void this.readUsage().then(usage => { if (!this.stopped) this.options.onEvent({ type: "provider_usage", usage }); });
       if (query.getContextUsage) this.contextReader = new ContextUsageReader(
         async () => claudeContextUsage(await query.getContextUsage!({ detail: "summary" })),
         usage => this.options.onEvent({ type: "context_usage", usage }),
@@ -348,6 +374,9 @@ class ClaudeRun implements HarnessRun {
             void this.contextReader?.refresh();
           }
         }
+        if (value.type === "rate_limit_event") this.options.onEvent({ type: "provider_usage", usage: claudeLimitEvent(value.rate_limit_info) });
+        if (value.type === "assistant" && value.usage_report) this.options.onEvent({ type: "provider_usage", usage: claudeUsage(value.usage_report) });
+        if (value.type === "result") this.options.onEvent({ type: "provider_usage", usage: await this.readUsage() });
         this.dispatch(value);
       }
     } catch (error) {
@@ -358,6 +387,7 @@ class ClaudeRun implements HarnessRun {
         });
       }
     } finally {
+      this.usageReader?.close();
       this.contextReader?.close();
     }
   }

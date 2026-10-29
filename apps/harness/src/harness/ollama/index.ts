@@ -9,6 +9,7 @@ import type {
   HarnessRun,
   HarnessStartOptions,
 } from "../adapter.js";
+import { absentUsage } from "../provider-usage.js";
 import { toolResult } from "../tool-result.js";
 import {
   OllamaClient,
@@ -22,6 +23,7 @@ import { OllamaContext } from "./context.js";
 import { LOCAL_TOOLS, OllamaMcp, schemaValidator } from "./tools.js";
 
 export const OLLAMA_CAPABILITIES: HarnessCapabilities = {
+  usage: { snapshots: true, events: false, kinds: [] },
   questions: true,
   appMcp: true,
   liveReconfigure: true,
@@ -66,6 +68,7 @@ export class OllamaHarnessAdapter implements HarnessAdapter {
       };
     }
   }
+  async readUsage() { return absentUsage("not_applicable", "local"); }
   models() {
     return this.client.models();
   }

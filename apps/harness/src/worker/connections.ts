@@ -25,6 +25,7 @@ export class RemoteConnections implements ConnectionService {
   startLogin(id: string): ReturnType<AgentConnections["startLogin"]> { return this.call("start-login", [id]); }
   fetchLogin(id: string): ReturnType<AgentConnections["fetchLogin"]> { return this.call("login", [id]); }
   cancelLogin(id: string): Promise<void> { return this.call("cancel-login", [id]); }
+  usage(id: string, refresh = false): ReturnType<AgentConnections["usage"]> { return this.call("usage", [id, refresh]); }
   models(id: string): ReturnType<AgentConnections["models"]> { return this.client.request(`/v1/connections/${encodeURIComponent(id)}/models`); }
   async reserve(binding: ConnectionBinding): Promise<() => void> {
     // Worker atomically claims the actual connection when it accepts execution.

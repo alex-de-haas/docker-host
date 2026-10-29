@@ -80,6 +80,19 @@ describe("codex harness adapter", () => {
     }
   });
 
+  it("returns unavailable and releases a diagnostic whose native process cannot spawn", async () => {
+    process.env.HOSTY_HARNESS_CODEX_COMMAND = "/tmp/hosty-missing-codex-usage-binary";
+    expect((await new CodexHarnessAdapter({ dataDir: authDir }).readUsage()).state).toBe("unavailable");
+  });
+
+  it("reads account limits without creating a thread and receives live multi-window updates", async () => {
+    const adapter = new CodexHarnessAdapter({ dataDir: authDir });
+    expect((await adapter.readUsage()).rows.map(row => row.used)).toEqual([12, 25]);
+    start().send("provider-usage");
+    await waitFor(() => events.find(event => event.type === "result"), "usage turn");
+    expect(events.filter(event => event.type === "provider_usage").some(event => event.usage.rows.some(row => row.used === 40))).toBe(true);
+  });
+
   it("reports each MCP startup failure once until recovery or a changed cause", async () => {
     const active = start();
     active.send("startup-notices");
