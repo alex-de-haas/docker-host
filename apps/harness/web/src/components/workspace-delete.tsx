@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { LoaderCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -39,6 +39,7 @@ export function WorkspaceDelete({ workspaceId, name, pendingRequestId, onClose, 
   const [loading, setLoading] = useState(true);
   const [removing, setRemoving] = useState(false);
   const executing = useRef(false);
+  const applied = useRef(false);
   const alive = useRef(true);
   const initial = useRef(command);
   const remember = (value: DeleteCommand | null) => {
@@ -48,6 +49,7 @@ export function WorkspaceDelete({ workspaceId, name, pendingRequestId, onClose, 
       else for (const prefix of ["hosty.workspace.delete.", "hosty.workspace.discard."]) localStorage.removeItem(prefix + workspaceId);
     } catch { /* The same request is also retained in memory and in Core after admission. */ }
   };
+  const retireCompleted = useEffectEvent(() => { remember(null); refresh(); });
   useEffect(() => {
     alive.current = true;
     const abort = new AbortController();
@@ -55,12 +57,22 @@ export function WorkspaceDelete({ workspaceId, name, pendingRequestId, onClose, 
       try {
         if (initial.current) {
           const value = await developmentRequest<DeleteProgress>(`/${workspaceId}/delete/status?requestId=${encodeURIComponent(initial.current.requestId)}`, undefined, abort.signal);
-          if (!abort.signal.aborted) setProgress(value);
+          if (abort.signal.aborted || applied.current) return;
+          setProgress(value);
+          if (value.state === "removed") {
+            retireCompleted();
+            // A completed receipt can outlive its source allocation. Inspect the current
+            // workspace before offering a new request for a replacement with the same ID.
+            try {
+              const current = await developmentRequest<DeleteDetails>(`/${workspaceId}/delete/details`, undefined, abort.signal);
+              if (!abort.signal.aborted && !applied.current) { setDetails(current); setProgress(null); }
+            } catch { /* The completed receipt remains visible when no current workspace can be inspected. */ }
+          }
         } else {
           const value = await developmentRequest<DeleteDetails>(`/${workspaceId}/delete/details`, undefined, abort.signal);
-          if (!abort.signal.aborted) setDetails(value);
+          if (!abort.signal.aborted && !applied.current) setDetails(value);
         }
-      } catch (e) { if (!abort.signal.aborted) setError(message(e)); }
+      } catch (e) { if (!abort.signal.aborted && !applied.current) setError(message(e)); }
       finally { if (!abort.signal.aborted) setLoading(false); }
     };
     void load();
@@ -69,7 +81,7 @@ export function WorkspaceDelete({ workspaceId, name, pendingRequestId, onClose, 
   const apply = async () => {
     if (executing.current || progress?.state === "removed") return;
     const request = command ?? { requestId: crypto.randomUUID() };
-    executing.current = true; setRemoving(true); setError(""); remember(request);
+    applied.current = true; executing.current = true; setRemoving(true); setError(""); remember(request);
     try {
       const value = await developmentRequest<DeleteProgress>(`/${workspaceId}/delete`, request);
       if (!alive.current) return;

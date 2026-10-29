@@ -219,9 +219,9 @@ internal sealed partial class WorkspaceCleanupService
                 if (status.WorktreeId == tree.Id && status.Phase != "inactive")
                 {
                     var actor = new AppDevActor(userId, "workspace-delete", WorkspaceOwner.ForExternal(userId, "workspace-delete", journal.Command.RequestId, "Workspace deletion"));
-                    var request = new AppDevRequest(WorkspaceRuntimeFiles.ChildId(journal.Command.RequestId, appId), "return");
+                    var request = new AppDevRequest(WorkspaceRuntimeFiles.ChildId(journal.Command.RequestId, appId), "return", AcceptDataChanges: true);
                     var plan = await lifecycle.PlanDevModeAsync(appId, request, actor, ct);
-                    await lifecycle.ApplyDevModeAsync(appId, request with { PlanDigest = plan.PlanDigest, AcceptDataChanges = true }, actor, ct);
+                    await lifecycle.ApplyDevModeAsync(appId, request with { PlanDigest = plan.PlanDigest }, actor, ct);
                     var returned = await lifecycle.GetDevModeAsync(appId, ct);
                     if (returned.WorktreeId == tree.Id && returned.Phase is not ("inactive" or "returned"))
                         throw DevelopmentWorkspaceService.Error("cleanup_pending", "Managed runtime return remains pending: " + appId);

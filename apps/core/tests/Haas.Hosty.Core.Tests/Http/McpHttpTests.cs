@@ -33,7 +33,7 @@ public sealed class McpHttpTests
             .ToArray();
         Assert.Equal(
             [
-                "abort_workspace_merge", "acquire_workspace_lease", "apply_app_dev_mode", "apply_app_update", "cleanup_workspace", "commit_workspace", "configure_workspace_runtime",
+                "abort_workspace_merge", "acquire_workspace_lease", "apply_app_dev_mode", "apply_app_update", "commit_workspace", "configure_workspace_runtime", "delete_workspace",
                 "get_app", "get_app_dev_mode", "get_app_development_guide", "get_app_execution_selection", "get_app_execution_targets", "get_core_development", "get_core_operation", "get_host_status", "get_workspace", "get_workspace_diff", "get_workspace_execution_selection",
                 "list_apps", "list_workspaces", "merge_workspace_target", "plan_app_dev_mode", "plan_app_update", "prepare_workspace",
                 "record_workspace_pull_requests", "refresh_workspace", "release_workspace_lease", "rename_workspace", "restart_app", "restart_core",
@@ -163,7 +163,7 @@ public sealed class McpHttpTests
         // what is available, which is not the "safe to call unattended" promise readOnlyHint makes.
         string[] mutations = ["workspace_activation", "apply_app_dev_mode", "start_app", "stop_app", "restart_app", "restart_core", "plan_app_update", "apply_app_update",
             "prepare_workspace", "refresh_workspace", "commit_workspace", "merge_workspace_target", "abort_workspace_merge",
-            "acquire_workspace_lease", "release_workspace_lease", "record_workspace_pull_requests", "rename_workspace", "cleanup_workspace",
+            "acquire_workspace_lease", "release_workspace_lease", "record_workspace_pull_requests", "rename_workspace", "delete_workspace",
             "select_app_execution_target", "select_workspace_execution", "configure_workspace_runtime"];
         var tools = await CallAsync(client, admin, "tools/list", new { });
         foreach (var tool in tools.GetProperty("tools").EnumerateArray())

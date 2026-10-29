@@ -160,9 +160,12 @@ public sealed partial class CoreLifecycleServiceTests
         var (_, access, grant) = await PrivateDocumentAccessAsync(fixture, first, new SnapshotDocumentProvider());
         await fixture.Apps.UpdateAppAsync(SourceTestApp, app => app with { PrivateSources = new(Git: grant), SourceState = app.SourceState! with { Repository = first, LocalOverridePath = null, ManagedCheckoutPath = null } });
         var records = Path.Combine(fixture.Paths.CoreRoot, "development/workspaces");
-        await JsonStorage.WriteAsync(Path.Combine(records, workspace.Id + ".json"), workspace with { Repository = first, RepositoryId = DevelopmentWorkspaceService.Hash(first), SourceGrant = grant });
-        var otherId = new string('b', 64);
-        await JsonStorage.WriteAsync(Path.Combine(records, otherId + ".json"), workspace with { Id = otherId, Repository = second, RepositoryId = DevelopmentWorkspaceService.Hash(second), Path = Path.Combine(Path.GetDirectoryName(workspace.Path)!, otherId), Branch = "hosty/session/" + otherId, SourceGrant = grant });
+        File.Delete(Path.Combine(records, workspace.Id + ".json"));
+        foreach (var repository in new[] { first, second })
+        {
+            var legacy = RepositoryIdentityRecord(workspace, repository) with { SourceGrant = grant };
+            await JsonStorage.WriteAsync(Path.Combine(records, legacy.Id + ".json"), legacy);
+        }
         var service = new DevelopmentWorkspaceService(fixture.Paths, fixture.Apps, fixture.Clock, privateSources: access);
         var root = service.RepositoryPath(first);
         Directory.CreateDirectory(root); await RunGitAsync(root, ["init", "--bare"]);

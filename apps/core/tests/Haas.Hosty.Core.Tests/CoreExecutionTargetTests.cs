@@ -59,7 +59,7 @@ public sealed partial class CoreLifecycleServiceTests
     }
 
     [Fact]
-    public async Task CoreExecutionTargets_RevokedPrivateSourceHidesChoicesAndRetainedActivation()
+    public async Task CoreExecutionTargets_RevokedPrivateSourceKeepsUnavailableChoiceAndRetainedActivation()
     {
         var (fixture, workspaces, tree, core, git) = await CoreCatalogFixture();
         WorkspaceRuntimeFiles.Save(fixture.Paths.DataRoot, CatalogActivation(tree));
@@ -68,8 +68,10 @@ public sealed partial class CoreLifecycleServiceTests
 
         var catalog = await targets.InventoryAsync("admin", default);
 
-        Assert.Empty(catalog.Targets);
-        Assert.Empty(catalog.Activations);
+        var target = Assert.Single(catalog.Targets);
+        Assert.Equal(tree.Id, target.WorktreeId);
+        Assert.NotNull(target.Unavailable);
+        Assert.Equal(tree.WorkspaceId, Assert.Single(catalog.Activations).WorkspaceId);
         Assert.True(Directory.Exists(tree.Path));
     }
 

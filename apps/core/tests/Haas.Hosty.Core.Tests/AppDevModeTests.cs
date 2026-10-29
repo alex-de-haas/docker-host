@@ -150,11 +150,11 @@ public sealed partial class CoreLifecycleServiceTests
     }
 
     [Fact]
-    public async Task DevMode_RejectsWrongOwnerStaleReviewAndConflictingSourceChanges()
+    public async Task DevMode_AllowsAnotherSessionButRejectsStaleReviewAndConflictingSourceChanges()
     {
         var (f, owner, workspaces, tree, _, _) = await LocalHandoffFixture();
         var input = DevRequest("enter", tree.Id); var actor = DevActor(owner);
-        await Assert.ThrowsAsync<AppLifecycleException>(() => f.Service.PlanDevModeAsync("test.created", input, DevActor(owner with { SessionId = "other" })));
+        Assert.Equal(tree.Id, (await f.Service.PlanDevModeAsync("test.created", input, DevActor(owner with { SessionId = "other" }))).WorktreeId);
         var plan = await f.Service.PlanDevModeAsync("test.created", input, actor);
         await f.Service.ConfigureAsync("test.created", new(new Dictionary<string, string?> { ["PORT"] = "3999" }));
         var stale = await Assert.ThrowsAsync<AppLifecycleException>(() => f.Service.ApplyDevModeAsync("test.created", input with { PlanDigest = plan.PlanDigest }, actor));

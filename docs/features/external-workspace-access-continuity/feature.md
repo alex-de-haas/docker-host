@@ -67,6 +67,8 @@ See [workspace sessions](../workspace-sessions/feature.md),
   retain private chat/provider boundaries and initiating-user propagation.
 - Exercise dirty/unmerged/ignored source, active/unknown leases, partial preparation, managed resource
   stop failure, missing paths, symlink replacement, lost responses, restart and fixed bulk replay.
+- Recover completed UI requests without hiding Delete for replacement allocations; verify Return from
+  active dev runtimes preserves ordinary app data and uses the same planned and applied arguments.
 - Test one visible Delete action and advisory dialog states; exercise canonical direct/brokered MCP
   transport with explicit Ask, Run and Disabled in both chat modes.
 - Build Core/Harness and run affected tests, plus multi-user acceptance and browser checks in a

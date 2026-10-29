@@ -150,14 +150,6 @@ internal sealed class ExternalWorkspaceMcpTools
             return CoreJson.Text(await cleanup.DeleteBatchAsync(caller.UserId, null, new(requestId, workspaceIds, all), cancellationToken));
         }, authorization, accessor, cancellationToken);
 
-    // Compatibility for accepted worktree cleanup requests. New MCP clients use delete_workspace.
-    [Description("Release and remove an owned worktree at expectedHead only after explicit user/repository cleanup authorization. Requires mcp:workspaces and UUID requestId. Refuses dirty/conflicted/unmerged work, activity leases and runtime/source consumers. Never infer cleanup from client disconnect. The original request ID recovers uncertain cleanup.")]
-    public static Task<string> CleanupAsync(string workspaceId, string requestId, string expectedHead,
-        ExternalWorkspaceMcpAuthorization authorization, DevelopmentWorkspaceService workspaces,
-        IHttpContextAccessor accessor, AuditStore audit, IClock clock, CancellationToken cancellationToken)
-        => CommandAsync(workspaceId, "cleanup", new(requestId, expectedHead),
-            authorization, workspaces, accessor, audit, clock, cancellationToken);
-
     private static Task<string> CommandAsync(string id, string kind, WorkspaceCommand command,
         ExternalWorkspaceMcpAuthorization authorization, DevelopmentWorkspaceService workspaces,
         IHttpContextAccessor accessor, AuditStore audit, IClock clock, CancellationToken ct)

@@ -73,3 +73,38 @@ it("reuses an uncertain request after connection loss and does not delete a conv
   await act(async () => button("Retry deletion").click());
   expect(developmentRequest).toHaveBeenLastCalledWith("/workspace/delete", saved);
 });
+
+it.each(["delete", "discard"])("retires a completed %s receipt and offers a fresh Delete for a replacement allocation", async prefix => {
+  localStorage.setItem(`hosty.workspace.${prefix}.workspace`, JSON.stringify({ requestId }));
+  vi.mocked(developmentRequest).mockResolvedValueOnce(progress("removed")).mockResolvedValueOnce(details());
+  await render();
+  expect(localStorage.getItem(`hosty.workspace.${prefix}.workspace`)).toBeNull();
+  expect(button("Delete").disabled).toBe(false);
+  expect(document.body.textContent).toContain("1 changed · 1 untracked · 1 ignored · 2 unmerged commits");
+  vi.mocked(developmentRequest).mockImplementationOnce(async (_path, body) => {
+    expect(body!.requestId).not.toBe(requestId);
+    return { ...progress("removed"), requestId: body!.requestId } as never;
+  });
+  await act(async () => button("Delete").click());
+  expect(document.body.textContent).toContain("Workspace deleted");
+});
+it("retires a completed receipt when the deleted workspace is still absent", async () => {
+  localStorage.setItem("hosty.workspace.delete.workspace", JSON.stringify({ requestId }));
+  vi.mocked(developmentRequest).mockResolvedValueOnce(progress("removed")).mockRejectedValueOnce(new Error("Workspace not found"));
+  await render();
+  expect(localStorage.getItem("hosty.workspace.delete.workspace")).toBeNull();
+  expect(document.body.textContent).toContain("Workspace deleted");
+  expect(button("Delete")).toBeUndefined();
+  expect(refresh).toHaveBeenCalledOnce();
+});
+it("ignores a late status response after the user retries the accepted request", async () => {
+  localStorage.setItem("hosty.workspace.delete.workspace", JSON.stringify({ requestId }));
+  let finishStatus!: (value: DeleteProgress) => void;
+  vi.mocked(developmentRequest).mockImplementationOnce(() => new Promise(resolve => { finishStatus = resolve as typeof finishStatus; }));
+  await render();
+  vi.mocked(developmentRequest).mockResolvedValueOnce(progress("removed"));
+  await act(async () => button("Retry deletion").click());
+  await act(async () => finishStatus(progress()));
+  expect(document.body.textContent).toContain("Workspace deleted");
+  expect(button("Retry deletion")).toBeUndefined();
+});

@@ -223,10 +223,10 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.Equal(0, f.Provider.Merged);
     }
     [Fact]
-    public async Task Publication_RevokedConnectionAndDifferentSessionCannotObserveOrMutate()
+    public async Task Publication_AnotherSessionCanObserveButRevokedConnectionCannotPublish()
     {
         var f = await PublicationFixture();
-        await Assert.ThrowsAsync<AppLifecycleException>(() => f.Service.ObserveAsync(f.W.Id, f.W.Owner with { SessionId = "other" }, default));
+        Assert.Equal(f.W.Id, (await f.Service.ObserveAsync(f.W.Id, f.W.Owner with { SessionId = "other" }, default)).WorkspaceId);
         await f.Users.UpdateAsync(s => s with { ProviderConnections = [] });
         var unavailable = await f.Service.ObserveAsync(f.W.Id, f.W.Owner, default);
         Assert.Equal("unavailable", unavailable.Observation!.State);

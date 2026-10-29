@@ -185,6 +185,43 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.DoesNotContain("deletingWorkspace", CoreJson.Text(new SandboxActor("admin") { DeletingWorkspace = f.Tree.WorkspaceId }), StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WorkspaceDelete_ReturnsActiveDevRuntimeAndPreservesChangedOrdinaryData(bool running)
+    {
+        var (f, owner, workspaces, tree, _, _) = await LocalHandoffFixture();
+        try
+        {
+            if (running) await f.Service.StartAsync("test.created");
+            var before = (await f.Apps.GetAppAsync("test.created"))!;
+            var data = Path.Combine(f.Paths.AppsRoot, "test.created", "data", "notes.txt");
+            Directory.CreateDirectory(Path.GetDirectoryName(data)!);
+            await File.WriteAllTextAsync(data, "before development");
+            await ApplyReviewedDev(f.Service, DevRequest("enter", tree.Id), DevActor(owner));
+            await File.WriteAllTextAsync(data, "ordinary data changed during development");
+            await File.WriteAllTextAsync(Path.Combine(tree.Path, "unfinished.txt"), "discard this source");
+            var store = new CoreEnvironmentStore(f.Paths);
+            var environments = new CoreEnvironmentService(store, new ResourceControlRuntime(), f.Clock, workspaces);
+            var sandboxStore = new SandboxStore(f.Paths);
+            var sandboxes = new SandboxService(sandboxStore, new ResourceControlInputs(tree.Path), new ResourceControlSandboxRuntime(), f.Clock);
+            var cleanup = new WorkspaceCleanupService(f.Paths, new(workspaces, f.Apps, f.Clock), workspaces, null!, f.Apps,
+                store, environments, new(store, environments), sandboxStore, sandboxes, new(sandboxes, new ResourceControlLifetime()), f.Service);
+
+            var removed = await cleanup.ApplyDeleteAsync(tree.WorkspaceId, "another-admin", null,
+                new(Guid.NewGuid().ToString()), default);
+
+            Assert.True(removed.State == "removed", removed.Error);
+            Assert.False(Directory.Exists(tree.Path));
+            Assert.Equal("returned", (await f.Service.GetDevModeAsync("test.created")).Phase);
+            var after = (await f.Apps.GetAppAsync("test.created"))!;
+            Assert.Equal(before.SourceState, after.SourceState);
+            Assert.Equal(running ? "running" : "stopped", after.RuntimeState);
+            Assert.Equal("ordinary data changed during development", await File.ReadAllTextAsync(data));
+        }
+        finally { if (Directory.Exists(f.Root)) Directory.Delete(f.Root, recursive: true); }
+    }
+
     [Fact]
     public async Task WorkspaceDelete_StopsManagedSourceConsumerAndKeepsOrdinaryData()
     {
