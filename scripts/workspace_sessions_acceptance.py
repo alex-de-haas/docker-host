@@ -26,6 +26,9 @@ def check(context):
         return next(row for row in request('/api/apps')['apps'] if row['id'] == app_id)
     manifest = json.loads((workspace/'apps/harness/manifest.json').read_text())
     manifest['source']['repository'] = context['repository']
+    # Release tags are pulled and can replace a locally built image. Use local-only acceptance tags.
+    for service in manifest['services']:
+        service['runtimes']['docker']['image'] = 'hosty-harness-'+service['key']+'-acceptance:local'
     manifest_path = base/'harness-manifest.json'
     manifest_path.write_text(json.dumps(manifest))
     run([cli, '--data-root', root, 'apps', 'install', manifest_path, '--runtime', 'docker', '--no-autostart'])
@@ -38,12 +41,12 @@ def check(context):
     app_origin = urllib.parse.urlunparse((parsed.scheme, parsed.netloc, '', '', '', ''))
 
     class Browser:
-        def __init__(self, email, name, invited=False):
+        def __init__(self, email, name, invited=False, role="host.admin"):
             self.jar = http.cookiejar.CookieJar()
             self.client = urllib.request.build_opener(urllib.request.ProxyHandler({}), urllib.request.HTTPCookieProcessor(self.jar))
             self.csrf = None
             if invited:
-                invitation = request('/api/auth/invitations', {'email': email, 'displayName': name, 'role': 'host.admin'}, confirm_settings=True)
+                invitation = request('/api/auth/invitations', {'email': email, 'displayName': name, 'role': role}, confirm_settings=True)
                 context['diagnostic_secrets'].add(invitation['token'])
                 self.call(origin, '/api/auth/invitations/accept', {'setupToken': invitation['token'], 'displayName': name, 'password': password})
             self.jar.clear()
@@ -57,9 +60,13 @@ def check(context):
             self.csrf = self.call(origin, '/api/auth/csrf')['token']
             verifier = uuid.uuid4().hex + uuid.uuid4().hex
             challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip('=')
-            code = self.call(origin, '/api/apps/'+app+'/launch-code', {'redirectUri': link,
-                'codeChallenge': challenge, 'codeChallengeMethod': 'S256'})['code']
-            self.call(app_origin, '/api/auth/app-code', {'code': code, 'codeVerifier': verifier})
+            launch = self.call(origin, '/api/apps/'+app+'/launch-code', {'redirectUri': link,
+                'codeChallenge': challenge, 'codeChallengeMethod': 'S256'}, expected=(200, 403) if role != 'host.admin' else 200)
+            if role != 'host.admin':
+                if 'code' in launch and 'message' not in launch:
+                    self.call(app_origin, '/api/auth/app-code', {'code': launch['code'], 'codeVerifier': verifier}, expected=403)
+                return
+            self.call(app_origin, '/api/auth/app-code', {'code': launch['code'], 'codeVerifier': verifier})
             context['diagnostic_secrets'].update(cookie.value for cookie in self.jar)
 
         def call(self, host, path, body=None, method=None, expected=200):
@@ -73,7 +80,7 @@ def check(context):
             except urllib.error.HTTPError as error:
                 status, raw = error.code, error.read()
             value = json.loads(raw) if raw else None
-            assert status == expected, (path, status, value.get('code') if isinstance(value, dict) else None)
+            assert status in (expected if isinstance(expected, tuple) else (expected,)), (path, status, {key: value.get(key) for key in ('code', 'message')} if isinstance(value, dict) else None)
             return value
 
         def harness(self, path, body=None, method=None, expected=200):
@@ -110,6 +117,8 @@ def check(context):
     owner = Browser('activation-fixture@example.test', 'Owner')
     member = Browser('workspace-member@example.test', 'Member', invited=True)
     outsider = Browser('workspace-outsider@example.test', 'Outsider', invited=True)
+    Browser('workspace-ordinary@example.test', 'Ordinary user', invited=True, role='host.user')
+    say('PASS: ordinary password user cannot enter administrator-only Harness; no service-user fallback')
     preferences = owner.harness('/preferences/prompt-suggestions')
     assert preferences == {'enabled':True, 'revision':0}
     saved = owner.harness('/preferences/prompt-suggestions', {'enabled':False, 'revision':0}, method='PUT')
@@ -143,10 +152,8 @@ def check(context):
     workspace_id = tree['workspaceId']
     participants_path = '/development-workspaces/'+workspace_id+'/participants'
     state = owner.harness(participants_path)
-    member.harness(participants_path, expected=403)
-    outsider.harness('/development-workspaces/'+workspace_id+'/worktrees/'+tree['id'], expected=403)
-    state = owner.harness(participants_path+'/grant', {'requestId': str(uuid.uuid4()), 'expectedRevision': state['revision'],
-        'userId': member.user, 'worktreeIds': [tree['id']]})
+    member.harness(participants_path)
+    assert outsider.harness('/development-workspaces/'+workspace_id+'/worktrees/'+tree['id'])['id'] == tree['id']
     creation = {'requestId': str(uuid.uuid4()), 'workspaceId': workspace_id, 'expectedRevision': state['revision']}
     second = member.harness('/workspace-sessions', creation)
     assert member.harness('/workspace-sessions', creation)['id'] == second['id']
@@ -161,12 +168,10 @@ def check(context):
     added = action(member, second, 'context-add', appIds=[app, another_app],
         expectedRevision=cleared['current']['revision'], requestId=str(uuid.uuid4()))
     assert added['current']['appIds'] == [app, another_app]
-    denied = member.harness('/sessions/'+second['id']+'/workspaces',
-        {'action': 'prepare', 'appId': another_app, 'requestId': str(uuid.uuid4())}, expected=409)
-    assert denied['code'] == 'workspace_sharing_scope_invalid'
-    other_tree = action(owner, first, 'prepare', requestId=str(uuid.uuid4()), appId=another_app, targetBranch='main')
+    other_tree = action(member, second, 'prepare', requestId=str(uuid.uuid4()), appId=another_app, targetBranch='main')
     assert other_tree['id'] != tree['id'] and other_tree['workspaceId'] == tree['workspaceId']
-    say('PASS: stopped app and monorepo preparation ignore context; another repository needs its own owner-authorized binding')
+    assert action(owner, first, 'prepare', requestId=str(uuid.uuid4()), appId=another_app, targetBranch='main')['id'] == other_tree['id']
+    say('PASS: any authorized participant can add an installed repository to the selected workspace without creator approval')
     member.harness('/sessions/'+second['id'], {'title': 'Member review'}, method='PATCH')
     state = member.harness(participants_path)
     assert next(row for row in state['sessions'] if row['sessionId'] == second['id'])['title'] == 'Member review'
@@ -185,17 +190,11 @@ def check(context):
     assert 'owner edit' in diff['combined']
     diff = action(owner, first, 'diff', workspaceId=tree['id'], path='member-acceptance.txt')
     assert 'member edit' in diff['combined']
-    say('PASS: three password logins, explicit sharing, one directory/branch, idle idempotent session creation, cross-user route privacy and shared edits')
-    state = owner.harness(participants_path)
-    owner.harness(participants_path+'/revoke', {'requestId': str(uuid.uuid4()), 'expectedRevision': state['revision'], 'userId': member.user})
-    member.harness(participants_path, expected=403)
-    current_context = action(member, second, 'context-list')
-    action(member, second, 'context-remove', appIds=[app], expectedRevision=current_context['revision'], requestId=str(uuid.uuid4()))
-    action(member, second, 'context-add', appIds=[app], expectedRevision=current_context['revision'] + 1, requestId=str(uuid.uuid4()))
-    member.harness('/sessions/'+second['id']+'/workspaces',
-        {'action': 'prepare', 'appId': app, 'targetBranch': 'main', 'requestId': str(uuid.uuid4())}, expected=403)
-    assert member.harness('/sessions/'+second['id']+'/workspaces', {'action': 'list'})['workspaces'] == []
-    member.harness('/sessions/'+second['id']+'/workspaces', {'action': 'status', 'workspaceId': tree['id']}, expected=403)
+    say('PASS: three password logins, collection authority, one directory/branch, idle idempotent session creation, cross-user route privacy and shared edits')
+    assert action(member, second, 'status', workspaceId=tree['id'])['id'] == tree['id']
+    empty = outsider.harness('/sessions', {'title': 'Collection operator without a primary workspace'})
+    inventory = action(outsider, empty, 'workspace-inventory')
+    assert any(item['id'] == workspace_id for item in inventory['workspaces'])
     assert (source/'owner-acceptance.txt').read_text() == 'owner edit\n'
     member.harness('/sessions/'+second['id'], method='DELETE')
     owner.harness('/sessions/'+first['id'], method='DELETE')
@@ -204,7 +203,7 @@ def check(context):
     assert source.exists() and (source/'member-acceptance.txt').exists()
     third = owner.harness('/workspace-sessions', {'requestId': str(uuid.uuid4()), 'workspaceId': workspace_id, 'expectedRevision': state['revision']})
     assert next(row for row in action(owner, third, 'list')['workspaces'] if row['id'] == tree['id'])['path'] == str(source)
-    say('PASS: revocation fences reads; deleting both chats preserves dirty source; sessionless workspace accepts a new idle chat')
+    say('PASS: all-workspace access survives creator-chat deletion; deleting both chats preserves dirty source; sessionless workspace accepts a new idle chat')
     # External work has no participant roster. Pause must still reach Core's lease checks,
     # and recovering a verified stopped fixture lease must finish the original request.
     development = request('/api/core/development')
@@ -232,6 +231,20 @@ def check(context):
     assert owner.harness(external_path+'/workflow/pause', pause)['closure'] == 'closed'
     assert external_file.read_text() == 'unfinished external work\n'
     say('PASS: external pause reaches Core lease refusal; verified recovery finishes the original request and retains dirty source')
+    completed = owner.harness('/sessions', {'title': 'Completed cleanup candidate'})
+    completed_tree = action(owner, completed, 'prepare', requestId=str(uuid.uuid4()), appId=app, targetBranch='main')
+    completed_workflow = action(owner, completed, 'workflow-status')
+    verified = action(owner, completed, 'workflow-complete', requestId=str(uuid.uuid4()), expectedRevision=completed_workflow['revision'])
+    assert verified['state'] == 'completed'
+    inventory = action(outsider, empty, 'workspace-inventory')
+    # A conditional maintenance task applies its own requested predicate before invoking Delete.
+    selected = [row['id'] for row in inventory['workspaces'] if (row.get('workflow') or {}).get('state') == 'completed']
+    assert selected == [completed_tree['workspaceId']]
+    conditional = action(outsider, empty, 'delete-workspace', requestId=str(uuid.uuid4()), workspaceIds=selected)
+    assert all(item['state'] == 'removed' for item in conditional['targets'])
+    assert source.exists() and external_file.exists(), 'Conditional cleanup removed unfinished candidates'
+    owner.harness('/sessions/'+completed['id'], method='DELETE')
+    say('PASS: completed-and-merged cleanup selects only verified completion and preserves unfinished/unknown candidates')
     if '--hold-ui' in context['sys'].argv:
         owner.harness('/sessions/'+third['id'], {'title': 'Implementation'}, method='PATCH')
         owner.harness('/sessions', {'title': 'Standalone chat'})
@@ -239,7 +252,6 @@ def check(context):
         retained_tree = action(owner, retained, 'prepare', requestId=str(uuid.uuid4()), appId=app, targetBranch='main')
         owner.harness('/sessions/'+retained['id'], method='DELETE')
         state = owner.harness(participants_path)
-        state = owner.harness(participants_path+'/grant', {'requestId': str(uuid.uuid4()), 'expectedRevision': state['revision'], 'userId': member.user, 'worktreeIds': [tree['id']]})
         colleague = member.harness('/workspace-sessions', {'requestId': str(uuid.uuid4()), 'workspaceId': workspace_id, 'expectedRevision': state['revision']})
         member.harness('/sessions/'+colleague['id'], {'title': 'Private member review'}, method='PATCH')
         development = request('/api/core/development')
@@ -248,7 +260,7 @@ def check(context):
         external_lease = str(uuid.uuid4())
         external = request('/api/core/source/workspaces', {'requestId': str(uuid.uuid4()), 'taskId': 'navigation-external-fixture', 'leaseId': external_lease,
             'sourceRevision': source_settings['revision'], 'targetBranch': 'main', 'label': 'External checkout', 'principalLabel': 'Navigation acceptance'})
-        request('/api/development/workspaces/'+external['id']+'/operations/release-lease', {'requestId': str(uuid.uuid4()), 'leaseId': external_lease})
+        (pathlib.Path(external['path'])/'delete-ui-fixture.txt').write_text('Disposable unfinished source for Delete UI acceptance.\n')
         shell_manifest = workspace/'apps/shell/manifest.json'
         run([cli, '--data-root', root, 'apps', 'install', shell_manifest, '--runtime', 'docker', '--no-autostart'])
         run([cli, '--data-root', root, 'apps', 'start', 'hosty.shell'])
@@ -266,4 +278,20 @@ def check(context):
         while time.time() < deadline and not (base/'finish-ui').exists(): time.sleep(.5)
         assert (base/'finish-ui').exists(), 'Browser acceptance did not acknowledge completion'
         access.unlink()
+    # This fixture owns every child-Core workspace. Dirty source and a live activity claim
+    # are consequences to display, not separate confirmations or workflow prerequisites.
+    removed = outsider.harness('/development-workspaces/'+workspace_id+'/delete', {'requestId': str(uuid.uuid4())})
+    assert removed['state'] == 'removed', removed.get('error')
+    assert not source.exists()
+    batch_request = {'requestId': str(uuid.uuid4()), 'all': True}
+    batch = outsider.harness('/development-workspaces/delete', batch_request)
+    assert batch['targets'] and all(item['state'] == 'removed' for item in batch['targets']), batch
+    later = owner.harness('/sessions', {'title': 'Created after batch acceptance'})
+    later_tree = action(owner, later, 'prepare', requestId=str(uuid.uuid4()), appId=app, targetBranch='main')
+    replay = outsider.harness('/development-workspaces/delete', batch_request)
+    assert [item['workspaceId'] for item in replay['targets']] == [item['workspaceId'] for item in batch['targets']]
+    assert pathlib.Path(later_tree['path']).exists()
+    final_delete = action(outsider, empty, 'delete-workspace', workspaceId=later_tree['workspaceId'], requestId=str(uuid.uuid4()))
+    assert final_delete['state'] == 'removed'
+    say('PASS: another operator deletes dirty active source with one request; bulk replay preserves later workspaces; sessionless collection Delete uses the same backend')
     say('Provider prompts were not dispatched; no provider credentials were copied into this sandbox')

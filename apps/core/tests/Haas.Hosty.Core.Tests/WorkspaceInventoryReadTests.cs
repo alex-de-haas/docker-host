@@ -74,7 +74,7 @@ public sealed partial class CoreLifecycleServiceTests
             var snapshots = await Task.WhenAll(Enumerable.Range(0, 6).Select(_ => documents.ListWorkspacesAsync("admin", entry.Id, default)));
             Assert.All(snapshots, value => Assert.Equal(first.Changes, Assert.Single(value.Workspaces).Changes));
             Assert.Equal(loads, documents.WorkspaceInventoryLoads);
-            Assert.Empty((await documents.ListWorkspacesAsync("another-user", entry.Id, default)).Workspaces);
+            Assert.Single((await documents.ListWorkspacesAsync("another-user", entry.Id, default)).Workspaces);
             await File.WriteAllTextAsync(Path.Combine(tree.Path, PlanPath), PlanText.Replace("Ready", "Draft"));
             await WaitForObservation(async () => (await workspaces.Read(tree.Id, null, default)).Observation!.Local!.Files.Any(file => file.Path == PlanPath)
                 && state.Health(tree.Id) == "watching" && !state.NeedsObservation(tree.Id));

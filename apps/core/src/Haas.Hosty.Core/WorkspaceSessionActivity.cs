@@ -27,7 +27,7 @@ internal sealed partial class DevelopmentWorkspaceService
                 var stop = false;
                 try
                 {
-                    RequireMember(value, actor.UserId);
+                    await RequireWorkspaceUserAsync(actor.UserId, ct);
                     await RequireOpenWorkflow(value.AllocationOwner, ct);
                     foreach (var tree in trees.Where(t => t.LeaseClaims?.Any(c => c.Session.SameIdentity(actor)) == true))
                         await RequireSessionAccessAsync(tree, actor, ct);

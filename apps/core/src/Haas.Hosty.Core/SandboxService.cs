@@ -161,10 +161,10 @@ internal sealed class SandboxService(SandboxStore store, ISandboxInputs inputs, 
     public async Task<SandboxView> ReadAsync(SandboxActor actor, string id, CancellationToken ct)
     {
         var instance = await store.ReadAsync(id, ct);
-        if (instance is not null) { RequireOwner(actor, instance.Owner); return View(instance); }
+        if (instance is not null) { await RequireResourceOwnerAsync(actor, instance.Owner, instance.Request.Context, ct); return View(instance); }
         var receipt = await JsonStorage.ReadAsync<SandboxReceipt>(store.ReceiptPath(id), ct)
             ?? throw new SandboxException("sandbox_not_found", "Sandbox not found.", 404);
-        RequireOwner(actor, receipt.Owner);
+        await RequireResourceOwnerAsync(actor, receipt.Owner, receipt.Context, ct);
         return new(id, receipt.AppId, receipt.Owner, new("disposed"), receipt.Context, 0, "", "", "disposed", null, null, new(), receipt.Operations, []);
     }
 
@@ -187,7 +187,7 @@ internal sealed class SandboxService(SandboxStore store, ISandboxInputs inputs, 
     internal async Task<SandboxInstance> RequireAsync(SandboxActor actor, string id, CancellationToken ct)
     {
         var instance = await store.ReadAsync(id, ct) ?? throw new SandboxException("sandbox_not_found", "Sandbox not found.", 404);
-        RequireOwner(actor, instance.Owner);
+        await RequireResourceOwnerAsync(actor, instance.Owner, instance.Request.Context, ct);
         return instance;
     }
 
@@ -342,6 +342,7 @@ internal sealed class SandboxService(SandboxStore store, ISandboxInputs inputs, 
     internal async Task<SandboxView> Mutate(SandboxActor actor, string id, string kind, string requestId, long expected,
         string body, Func<SandboxInstance, Task<SandboxInstance>> action, CancellationToken ct, bool recover = false)
     {
+        if (actor.DeletingWorkspace is not null && kind != "dispose") throw Forbidden();
         SandboxValidation.Id(id); SandboxValidation.Request(requestId);
         var gate = store.Gate(id);
         await gate.WaitAsync(ct);
@@ -355,7 +356,7 @@ internal sealed class SandboxService(SandboxStore store, ISandboxInputs inputs, 
                 if (done is null || done.Fingerprint != SandboxValidation.Hash(kind + "\n" + body)) throw ReplayConflict();
                 return disposed;
             }
-            RequireOwner(actor, instance.Owner);
+            await RequireResourceOwnerAsync(actor, instance.Owner, instance.Request.Context, ct);
             var fingerprint = SandboxValidation.Hash(kind + "\n" + body);
             var prior = instance.Operations.FirstOrDefault(o => o.Id == requestId);
             if (prior is not null)
@@ -430,6 +431,15 @@ internal sealed class SandboxService(SandboxStore store, ISandboxInputs inputs, 
     }
     private static bool Allowed(SandboxActor actor, SandboxActor owner)
         => actor.SameOwner(owner) || (actor.AppId is null && actor.UserId == owner.UserId);
+    private async Task RequireResourceOwnerAsync(SandboxActor actor, SandboxActor owner, SandboxContext? context, CancellationToken ct)
+    {
+        if (actor.CanDeleteResource(owner, context))
+        {
+            if (workspaces is not null) await workspaces.RequireWorkspaceUserAsync(actor.UserId, ct);
+            return;
+        }
+        RequireOwner(actor, owner);
+    }
     private static void RequireOwner(SandboxActor actor, SandboxActor owner) { if (!Allowed(actor, owner)) throw Forbidden(); }
     private static SandboxException Forbidden() => new("sandbox_forbidden", "The sandbox is outside this caller's authority.", 403);
     private static SandboxException ReplayConflict() => new("sandbox_replay_conflict", "The request ID belongs to a different operation.");

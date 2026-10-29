@@ -161,19 +161,19 @@ internal sealed partial class CoreLifecycleService
             t.WorkspaceId == request.WorkspaceId && t.State == "active" &&
             t.Apps.Any(a => a.AppId == app.Id && a.Installation == app.InstalledAt)).ToArray();
         var explicitTree = request.WorktreeId is { } requestedTree ? await DevWorkspaces.Read(requestedTree, null, ct) : null;
-        if (explicitTree is not null && (explicitTree.WorkspaceId != request.WorkspaceId || explicitTree.Owner.UserId != journal.Actor.UserId))
-            throw DevError("workspace_forbidden", "This workspace does not belong to the acting user.");
+        if (explicitTree is not null && (explicitTree.WorkspaceId != request.WorkspaceId))
+            throw DevError("workspace_forbidden", "The selected worktree is outside this workspace.");
         var resolvedTree = await ResolveWorkspaceTreeAsync(app, request.WorkspaceId!, candidates.Select(t => t.Id).ToArray(),
             explicitTree?.Id, active is { Active: true } ? active.WorktreeId : null, ct);
         var candidateTree = candidates.SingleOrDefault(t => t.Id == resolvedTree.WorktreeId)
             ?? throw DevError("worktree_required", resolvedTree.Unavailable ?? "Configure this application's worktree in the workspace.");
-        if (candidateTree.WorkspaceId != request.WorkspaceId || candidateTree.Owner.UserId != journal.Actor.UserId)
-            throw DevError("workspace_forbidden", "This workspace does not belong to the acting user.");
-        if (journal.Actor.Principal is { } principal && (principal.StartsWith("oauth:", StringComparison.Ordinal) || principal.StartsWith("manual:", StringComparison.Ordinal))
-            && candidateTree.Owner.External?.PrincipalId != principal)
-            throw DevError("workspace_forbidden", "This direct credential does not own the workspace.");
+        if (candidateTree.WorkspaceId != request.WorkspaceId)
+            throw DevError("workspace_forbidden", "The selected worktree is outside this workspace.");
+        var sourceActor = journal.Actor.AppId is { } callerApp && journal.Actor.Installation is { } installation
+            ? new WorkspaceOwner(callerApp, installation, journal.Actor.UserId, journal.Request.RequestId)
+            : WorkspaceOwner.ForExternal(journal.Actor.UserId, journal.Actor.Principal ?? "local-control", journal.Request.RequestId, "Runtime selection");
         // The operator deliberately selects editable workspace source; an editing lease is not a lifecycle lock.
-        await DevWorkspaces.CheckDevTreeAsync(candidateTree, app, candidateTree.Owner, ct);
+        await DevWorkspaces.CheckDevTreeAsync(candidateTree, app, sourceActor, ct);
         var installedRecipe = await manifests.ReadRuntimeProfilesAsync(app.ManifestPath!, ct);
         var runtime = request.Runtime ?? await ReadWorkspaceRecipeAsync(app, installedRecipe, candidateTree.Id, ct, resolvedTree.Runtime)
             ?? throw DevError("recipe_required", "Configure a development runtime during workspace setup.");
@@ -184,7 +184,7 @@ internal sealed partial class CoreLifecycleService
             await ClaimAsync();
             return journal with { State = "completed", Phase = "completed" };
         }
-        var actor = new AppDevActor(journal.Actor.UserId, journal.Actor.Via, candidateTree.Owner, TrustedLocalOperator: journal.Actor.Principal == "local-control");
+        var actor = new AppDevActor(journal.Actor.UserId, journal.Actor.Via, sourceActor, TrustedLocalOperator: journal.Actor.Principal == "local-control");
         var candidate = await PrepareExecutionCandidateAsync(app, candidateTree.Path, runtime, actor, ct);
         try { await EnsureExecutionCandidateApprovedAsync(candidate, app, ct); }
         catch (AppLifecycleException ex) when (ex.Code == "dev_review_required")
@@ -274,7 +274,7 @@ internal sealed partial class CoreLifecycleService
             }
             await apps.UpdateAppAsync(app.Id, current => current with { DevModeId = retained.Id }, ct);
         }
-        await DevWorkspaces.WithDevAdmissionAsync(candidateTree.Id, await RequireAppAsync(app.Id, ct), candidateTree.Owner,
+        await DevWorkspaces.WithDevAdmissionAsync(candidateTree.Id, await RequireAppAsync(app.Id, ct), sourceActor,
             async () => { await EnterDevAsync(retained, request.RequestId, ct); return true; }, ct);
         var configuredRecipe = await JsonStorage.ReadAsync<WorkspaceExecutionRecipe>(WorkspaceRecipePath(app.Id, candidateTree.Id), ct);
         await JsonStorage.WriteAsync(WorkspaceRecipePath(app.Id, candidateTree.Id), new WorkspaceExecutionRecipe(app.Id, app.InstalledAt, runtime,

@@ -1,6 +1,6 @@
 ---
 created: 2026-10-05
-updated: 2026-10-26
+updated: 2026-10-29
 summary: A per-chat Normal or Autonomous mode that controls whether native commands and file changes ask for approval.
 components: [apps/core, apps/harness]
 ---
@@ -12,7 +12,7 @@ selector. The choice belongs to the chat and survives reopening and Harness rest
 in older records mean Normal. Selecting a mode does not send a message or start a model.
 
 Normal retains the existing native provider approval behavior and per-tool MCP rules. Autonomous
-runs native commands and file changes without approval and treats Ask as unprompted for enabled,
+runs native commands and file changes without approval and treats default Ask as unprompted for enabled,
 discovered MCP tools in that chat. Disabled tools remain unavailable; dispatch still rechecks tool
 identity, definition, policy, cancellation, target grants and Core authorization. The setting is not
 a repository sandbox: native access follows the Harness process permissions. Core API permissions
@@ -50,6 +50,9 @@ user access, installation identity and existing grants. Continuous sessions have
 hourly deadline. Normal and Autonomous neither add permissions nor extend principal lifetime.
 Standard app recovery updates all live conversations of that actor while preserving runs and drafts.
 
+Explicit per-tool Ask rules remain approval requirements in Autonomous mode. Run unprompted and
+Disabled retain their selected behavior; autonomy does not override an explicit MCP approval choice.
+
 ## Testing Expectations
 
 - Session/API tests cover Normal defaults, persistence, ownership, busy rejection, restart/resume,
@@ -57,7 +60,7 @@ Standard app recovery updates all live conversations of that actor while preserv
 - Protocol fixtures check actual Codex start/resume/turn parameters and Claude SDK options/callbacks;
   Normal is restored after Autonomous. These deterministic tests use no paid model calls and do not
   prove live provider command execution or cross-platform process termination.
-- MCP tests cover unprompted Ask in the selected chat, unaffected other chats, Disabled and policy
+- MCP tests cover unprompted default Ask and preserved explicit Ask in the selected chat, unaffected other chats, Disabled and policy
   revocation between authorization and dispatch.
 - Component tests cover the selector, process-access description, running states, save failures and
   composer blocking during persistence.

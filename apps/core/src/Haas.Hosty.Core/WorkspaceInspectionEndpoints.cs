@@ -8,7 +8,8 @@ internal sealed class WorkspaceInspectionAuthorization(AppServiceTokenService se
         if (!services.ValidateToken(appId, CoreSessionAuthorization.ReadBearerToken(request) ?? ""))
             throw new AppIdentityException("token_invalid", "An app service token is required.");
         var app = await apps.GetAppAsync(appId, ct);
-        if (app is null || !AppManagementAuthorization.HasPermission(app, manage ? CoreAppPermissions.Sources : CoreAppPermissions.WorkspacesRead))
+        if (app is null || !(AppManagementAuthorization.HasPermission(app, CoreAppPermissions.Sources) ||
+            !manage && AppManagementAuthorization.HasPermission(app, CoreAppPermissions.WorkspacesRead)))
             throw new AppIdentityException("app_permission_required", "The calling app requires the reviewed workspace permission.");
         if (request.Cookies.ContainsKey(CoreSessionAuthorization.SessionCookieName))
             throw new AppIdentityException("app_credential_mixed", "Use this app's user credential without a Core cookie.");
@@ -59,6 +60,18 @@ internal static class WorkspaceInspectionEndpoints
             WorkspaceInspectionAuthorization auth, WorkspaceCleanupService cleanup, CancellationToken ct) =>
             await Handle(async () => await cleanup.SandboxCommandAsync(workspaceId,
                 await auth.RequireAsync(request, appId, ct), appId, id, action, input, ct)));
+        routes.MapGet("/{workspaceId}/delete/details", async (string appId, string workspaceId, HttpRequest request,
+            WorkspaceInspectionAuthorization auth, WorkspaceCleanupService cleanup, CancellationToken ct) =>
+            await Handle(async () => await cleanup.DeleteDetailsAsync(workspaceId, await auth.RequireAsync(request, appId, ct, manage: true), appId, ct)));
+        routes.MapPost("/{workspaceId}/delete", async (string appId, string workspaceId, WorkspaceDeleteCommand input, HttpRequest request,
+            WorkspaceInspectionAuthorization auth, WorkspaceCleanupService cleanup, CancellationToken ct) =>
+            await Handle(async () => await cleanup.ApplyDeleteAsync(workspaceId, await auth.RequireAsync(request, appId, ct, manage: true), appId, input, ct)));
+        routes.MapGet("/{workspaceId}/delete/status", async (string appId, string workspaceId, HttpRequest request,
+            WorkspaceInspectionAuthorization auth, WorkspaceCleanupService cleanup, CancellationToken ct) =>
+            await Handle(async () => await cleanup.DeleteStatusAsync(workspaceId, await auth.RequireAsync(request, appId, ct, manage: true), appId, request.Query["requestId"].ToString(), ct)));
+        routes.MapPost("/delete", async (string appId, WorkspaceDeleteBatchCommand input, HttpRequest request,
+            WorkspaceInspectionAuthorization auth, WorkspaceCleanupService cleanup, CancellationToken ct) =>
+            await Handle(async () => await cleanup.DeleteBatchAsync(await auth.RequireAsync(request, appId, ct, manage: true), appId, input, ct)));
         routes.MapGet("/{workspaceId}/discard/plan", async (string appId, string workspaceId, HttpRequest request,
             WorkspaceInspectionAuthorization auth, WorkspaceCleanupService cleanup, CancellationToken ct) =>
             await Handle(async () => await cleanup.PrepareDiscardAsync(workspaceId, await auth.RequireAsync(request, appId, ct, manage: true), appId, ct)));

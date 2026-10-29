@@ -1,6 +1,6 @@
 ---
 created: 2026-10-16
-updated: 2026-10-25
+updated: 2026-10-29
 summary: Harness expires reconciled chats, protects attached development sessions and recovers previously accepted cleanup without deleting shared source implicitly.
 components: [apps/harness, apps/core]
 ---
@@ -76,7 +76,7 @@ keep ambiguous history blocked; an empty displayed list alone never authorizes d
 
 This historical acceptance predates shared workspaces. The current attached-session protection and
 manual-detach behavior above supersede its automatic completed-workspace deletion scenario; current
-coverage is recorded in [workspace sessions acceptance](../workspace-sessions/feature.md#acceptance-2026-10-25).
+coverage is recorded in [workspace sessions acceptance](../workspace-sessions/feature.md#testing-expectations).
 
 The D5 acceptance uses the working tree based on `9964fa1814c2cbe2b8a7f3fd495303ef37620e07`,
 Core 0.137.0 and Harness 0.55.0. A disposable Core uses normal setup/password authentication and a

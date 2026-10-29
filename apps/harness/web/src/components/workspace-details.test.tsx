@@ -21,6 +21,7 @@ const workspace = (): DevelopmentWorkspace => ({ id: "workspace", state: "active
     pullRequests: [{ url: `https://example.test/${id}/pull/1` }] })) });
 function replies(w: DevelopmentWorkspace) {
   vi.mocked(developmentRequest).mockImplementation(async (path = "") => {
+    if (path.endsWith("/delete/details")) return { name: "Workspace", trees: [], resources: [], warnings: [] } as never;
     if (path.endsWith("/previews")) return { environments: [], instances: [], applications: {} } as never;
     if (path.includes("/review?")) {
       const query = new URLSearchParams(path.split("?")[1]);
@@ -150,27 +151,18 @@ it("recovers interrupted closure from Core without browser storage and retains t
   expect(remove).not.toHaveBeenCalled();
 });
 
-it("blocks deletion when an open confirmation is overtaken by a durable close", async () => {
-  const w = workspace(); w.workflow = { state: "completed", revision: 3 }; replies(w);
-  const render = (value: DevelopmentWorkspace) => act(async () => root.render(<WorkspaceDetails workspace={value} title="Completed" refresh={() => {}} />));
-  await render(w);
-  const deleteEntry = () => [...container.querySelectorAll("button")].find(b => b.textContent === "Delete workspace…")!;
-  await act(async () => deleteEntry().click());
-  const confirm = () => [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(b => b.textContent === "Delete workspace")!;
-  expect(confirm().disabled).toBe(false);
-  const request = { kind: "close", requestId: "4637074a-7c1f-4227-9104-d6811dd4bea3", expectedRevision: 3 };
-  const journal = JSON.stringify(request);
-  localStorage.setItem("hosty.workspace.action.workspace", journal);
-  await render({ ...w, workflow: { ...w.workflow, closure: "closing", operations: [{ id: request.requestId, kind: "close", expectedRevision: 3, state: "pending" }] } });
-  expect(deleteEntry().disabled).toBe(true);
-  expect(confirm().disabled).toBe(true);
-  await act(async () => confirm().click());
-  expect(vi.mocked(developmentRequest).mock.calls.some(([path]) => path?.endsWith("/workflow/delete"))).toBe(false);
-  expect(localStorage.getItem("hosty.workspace.action.workspace")).toBe(journal);
-  await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(b => b.textContent === "Close")!.click());
-  vi.mocked(developmentRequest).mockResolvedValueOnce({ state: "completed", closure: "closed", revision: 4 });
-  await act(async () => [...container.querySelectorAll("button")].find(b => b.textContent === "Retry action")!.click());
-  expect(developmentRequest).toHaveBeenCalledWith("/workspace/workflow/close", { requestId: request.requestId, expectedRevision: 3 });
+it("keeps Delete available when a pending lifecycle action arrives after the popup opens", async () => {
+  const w = workspace(); replies(w);
+  const render = async (value: DevelopmentWorkspace) => act(async () => root.render(<WorkspaceDetails workspace={value} title="Delete" refresh={() => {}} />));
+  await render(w); await chooseWorkflowAction("Delete workspace…");
+  const pending = { ...w, workflow: { state: "in-progress", closure: "closing", revision: 3,
+    operations: [{ id: "pending-close", kind: "close", expectedRevision: 3, state: "pending" }] } };
+  await render(pending);
+  const confirm = [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(b => b.textContent === "Delete")!;
+  expect(confirm.disabled).toBe(false);
+  vi.mocked(developmentRequest).mockResolvedValueOnce({ workspaceId: "workspace", requestId: "delete-request", state: "removed", trees: [], resources: [] });
+  await act(async () => confirm.click());
+  expect(developmentRequest).toHaveBeenCalledWith("/workspace/delete", { requestId: expect.any(String) });
 });
 
 
@@ -553,7 +545,7 @@ it("keeps discard recovery separate from generic lifecycle retry after browser s
   expect([...container.querySelectorAll("button")].some(button => button.textContent === "Retry action")).toBe(false);
   vi.mocked(developmentRequest).mockImplementationOnce(async () => ({ workspaceId: "workspace", requestId, state: "pending", command: { requestId, expectedRevision: 3, digest: "same-review", confirmationName: "Remove" }, trees: [], resources: [] }));
   await act(async () => [...container.querySelectorAll("button")].find(button => button.textContent === "Recover removal")!.click());
-  expect(developmentRequest).toHaveBeenLastCalledWith(`/workspace/discard/status?requestId=${requestId}`, undefined, expect.any(AbortSignal));
+  expect(developmentRequest).toHaveBeenLastCalledWith(`/workspace/delete/status?requestId=${requestId}`, undefined, expect.any(AbortSignal));
   expect(developmentRequest).not.toHaveBeenCalledWith("/workspace/workflow/discard", expect.anything());
 });
 
@@ -591,7 +583,7 @@ it("shows completion progress through the action and refusal check without prema
   expect(container.textContent).toContain("Pause this workspace, then confirm that all agent executions and their commands have stopped.");
   expect([...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Pause workspace")?.disabled).toBe(false);
   await act(async () => container.querySelector('[aria-label="Workspace actions"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
-  for (const label of ["Complete workspace", "Pause workspace", "Discard and remove workspace…"]) {
+  for (const label of ["Complete workspace", "Pause workspace", "Delete workspace…"]) {
     const entry = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(item => item.textContent === label);
     expect(entry).toBeDefined();
     expect(entry!.getAttribute("aria-disabled")).not.toBe("true");
@@ -599,29 +591,29 @@ it("shows completion progress through the action and refusal check without prema
   expect(requests).toHaveLength(1);
 });
 
-it("lets a local-only uncertain journal open read-only discard review without replacing its recovery identity", async () => {
+it("lets a local-only uncertain journal open deletion details without replacing its recovery identity", async () => {
   const w = workspace(), request = { kind: "complete", requestId: "ba3c2cc8-b85b-4b12-8f64-fbec4bab51d3", expectedRevision: 0 };
   localStorage.setItem(workflowJournal, JSON.stringify(request));
   replies(w);
   const fallback = vi.mocked(developmentRequest).getMockImplementation()!;
-  vi.mocked(developmentRequest).mockImplementation(async (path = "", body, signal) => path === "/workspace/discard/plan"
+  vi.mocked(developmentRequest).mockImplementation(async (path = "", body, signal) => path === "/workspace/delete/details"
     ? { workspaceId: w.id, name: "Unwanted work", revision: 0, digest: "read-only-review", expiresAt: new Date(Date.now() + 60000).toISOString(),
-      trees: [], resources: [], blockers: ["Pause active writers before removal."] } as never
+      trees: [], resources: [], warnings: ["An external writer may still be active."] } as never
     : await fallback(path, body, signal) as never);
   await act(async () => root.render(<WorkspaceDetails workspace={w} title="Unwanted work" refresh={vi.fn()} />));
   expect(container.textContent).toContain("Action outcome unconfirmed: complete");
-  await chooseWorkflowAction("Discard and remove workspace…");
-  expect(developmentRequest).toHaveBeenCalledWith("/workspace/discard/plan", undefined, expect.any(AbortSignal));
-  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Discard and remove workspace?");
-  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Pause active writers before removal.");
+  await chooseWorkflowAction("Delete workspace…");
+  expect(developmentRequest).toHaveBeenCalledWith("/workspace/delete/details", undefined, expect.any(AbortSignal));
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Delete workspace?");
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("An external writer may still be active.");
   expect(vi.mocked(developmentRequest).mock.calls.every(([, body]) => body === undefined)).toBe(true);
   expect(JSON.parse(localStorage.getItem(workflowJournal)!)).toEqual(request);
-  await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(button => button.textContent === "Keep workspace")!.click());
+  await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(button => button.textContent === "Cancel")!.click());
   expect([...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Retry action")?.disabled).toBe(false);
   expect(JSON.parse(localStorage.getItem(workflowJournal)!)).toEqual(request);
 });
 
-it.each(["pending", "unknown"])("keeps discard review disabled for a Core %s receipt without a local journal", async receipt => {
+it.each(["pending", "unknown"])("keeps Delete enabled for a Core %s receipt without a local journal", async receipt => {
   const w = workspace(), requestId = "51229231-6b3b-4803-8728-904b7215b2a7";
   w.workflow = { state: "in-progress", revision: 0, operations: [{ id: requestId, kind: "complete", expectedRevision: 0, state: receipt }] };
   replies(w);
@@ -630,10 +622,28 @@ it.each(["pending", "unknown"])("keeps discard review disabled for a Core %s rec
   expect([...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Retry action")?.disabled).toBe(false);
   expect([...container.querySelectorAll("button")].some(button => button.textContent === "Dismiss")).toBe(false);
   await act(async () => container.querySelector('[aria-label="Workspace actions"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
-  const entry = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(item => item.textContent === "Discard and remove workspace…");
+  const entry = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(item => item.textContent === "Delete workspace…");
   expect(entry).toBeDefined();
-  expect(entry?.getAttribute("aria-disabled")).toBe("true");
-  expect(vi.mocked(developmentRequest).mock.calls.some(([path]) => path === "/workspace/discard/plan")).toBe(false);
+  expect(entry?.getAttribute("aria-disabled")).not.toBe("true");
+  expect(vi.mocked(developmentRequest).mock.calls.some(([path]) => path === "/workspace/delete/details")).toBe(false);
   expect(vi.mocked(developmentRequest).mock.calls.every(([, body]) => body === undefined)).toBe(true);
   expect(localStorage.getItem(workflowJournal)).toBeNull();
+});
+
+
+it.each(["clean", "dirty", "working", "paused", "completed", "failed"])("offers one destructive Delete for %s source", async state => {
+  const w = workspace();
+  if (state === "clean") for (const tree of w.worktrees) tree.sessionChanges = [];
+  if (state === "working") w.worktrees[0]!.leases = ["active-agent"];
+  if (state === "paused") w.workflow = { state: "in-progress", closure: "closed", revision: 1 };
+  if (state === "completed") w.workflow = { state: "completed", revision: 1 };
+  if (state === "failed") { w.state = "failed"; w.worktrees[0]!.state = "failed"; }
+  replies(w);
+  await act(async () => root.render(<WorkspaceDetails workspace={w} title="Delete states" refresh={vi.fn()} />));
+  await act(async () => container.querySelector('[aria-label="Workspace actions"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+  const entries = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].filter(item => /Delete|Discard/.test(item.textContent ?? ""));
+  expect(entries).toHaveLength(1);
+  expect(entries[0]!.textContent).toBe("Delete workspace…");
+  expect(entries[0]!.getAttribute("aria-disabled")).not.toBe("true");
+  expect(entries[0]!.getAttribute("data-variant")).toBe("destructive");
 });

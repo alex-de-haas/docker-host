@@ -52,7 +52,7 @@ public sealed partial class CoreLifecycleServiceTests
     }
 
     [Fact]
-    public async Task WorkspaceReview_RejectsStaleRevisionUnsafePathAndRevokedSource()
+    public async Task WorkspaceReview_RejectsStaleRevisionAndUnsafePathButRetainsLocalSource()
     {
         var (fixture, users, access, workspaces, tree, _, _) = await PrivateWorkspaceDocumentFixtureAsync();
         var inspection = new WorkspaceInspectionService(workspaces, fixture.Apps, fixture.Clock, privateSources: access);
@@ -66,7 +66,7 @@ public sealed partial class CoreLifecycleServiceTests
             tree.Id, "admin", "target", null, "../secret", null, default));
         Assert.Equal("workspace_review_path_invalid", path.Code);
         await users.UpdateAsync(state => state with { ProviderConnections = [] });
-        await Assert.ThrowsAsync<AppLifecycleException>(() => inspection.ReviewAsync(tree.WorkspaceId, tree.Id, "admin", "session", null, default));
+        Assert.NotEmpty((await inspection.ReviewAsync(tree.WorkspaceId, tree.Id, "admin", "session", null, default)).Files);
     }
 
     [Fact]
@@ -105,7 +105,7 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.True(diff.LocalRangesComplete);
         Assert.Equal(new WorkspaceReviewLineRange(1, 1), Assert.Single(diff.LocalRanges));
         Assert.Equal("local replacement\n", await File.ReadAllTextAsync(Path.Combine(tree.Path, "README.md")));
-        await Assert.ThrowsAsync<AppLifecycleException>(() => inspection.ReviewAsync(tree.WorkspaceId, tree.Id,
+        await Assert.ThrowsAsync<PublicationException>(() => inspection.ReviewAsync(tree.WorkspaceId, tree.Id,
             "another-admin", "pull-request", url, default));
         var membership = await fixture.Workspaces.ParticipationAsync(tree.WorkspaceId, "admin", default);
         await fixture.Workspaces.ChangeMemberAsync(tree.WorkspaceId, "admin", "grant",

@@ -1,6 +1,6 @@
 ---
 created: 2026-10-17
-updated: 2026-10-18
+updated: 2026-10-29
 summary: Local Git app creation, child Core Docker preview, local acceptance, remote publication and versioned development guidance through Harness, MCP and CLI.
 components: [apps/core, apps/cli, apps/harness]
 ---
@@ -421,7 +421,7 @@ are Core/CLI 0.140.0 and Harness 0.57.0; local acceptance does not attest to reg
 - Ordinary Docker data and caches remain separate from preview through reload, restart and Finish.
 - Existing-session continuation preserves its worktree; new sessions start from reviewed accepted main.
 - Lost preparation responses and restart reuse the original session without starting an agent.
-- Dirty/outstanding work blocks deletion; completed chat/worktree deletion retains canonical Git.
+- Explicit workspace Delete can remove dirty/outstanding work after one UI confirmation; it retains canonical Git.
 - Source override and clearing retain canonical and worktree files and restore the original binding.
 - Reviewed multi-service replacement removes obsolete containers without touching another app/instance.
 - Full-graph reconciliation retains sibling services and fails honestly on Docker inventory/removal errors.

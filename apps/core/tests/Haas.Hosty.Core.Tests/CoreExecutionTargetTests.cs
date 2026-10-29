@@ -74,7 +74,7 @@ public sealed partial class CoreLifecycleServiceTests
     }
 
     [Fact]
-    public async Task CoreExecutionTargets_OnlyOwnedWorkspacesAndLiveCoreOwnershipAreDiscoverable()
+    public async Task CoreExecutionTargets_AllWorkspacesAndVerifiedCoreBindingsAreDiscoverable()
     {
         var (fixture, _) = await SourceFixtureAsync();
         var workspaces = new DevelopmentWorkspaceService(fixture.Paths, fixture.Apps, fixture.Clock);
@@ -94,7 +94,8 @@ public sealed partial class CoreLifecycleServiceTests
         var catalog = await targets.InventoryAsync("admin", default);
 
         Assert.Empty(catalog.Targets);
-        Assert.Equal(keep.Id, Assert.Single(catalog.Activations).Activation.Id);
+        Assert.Equal(2, catalog.Activations.Length);
+        Assert.Contains(catalog.Activations, a => a.Activation.Id == keep.Id);
     }
 
     [Theory]

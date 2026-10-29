@@ -155,43 +155,18 @@ internal sealed partial class SourceDocumentService(AppRegistryStore apps,
 
     private async Task<bool> SharedPrivateWorkspaceAsync(Binding binding, DevelopmentWorkspace tree, string userId, CancellationToken ct)
     {
-        if (tree.Owner.IsExternal || await workspaces.ReadParticipationAsync(tree.WorkspaceId, ct) is null) return false;
-        // Membership authorizes the bounded checkout, but cannot turn an anonymous/public
-        // repository cache into a durable private-source grant after public access disappears.
+        // Workspace authority covers retained local source. Remote target refreshes still need
+        // the acting user's own provider connection or verified anonymous repository access.
         await RequireWorkspaceAsync(binding, tree.Id, userId, ct);
-        return tree.SourceGrant is not null || binding.Apps.Any(app => app.PrivateSources?.Git is not null &&
-            tree.Apps.Any(a => a.AppId == app.Id && a.Installation == app.InstalledAt));
+        return true;
     }
 
     private async Task<DevelopmentWorkspace> RequireWorkspaceAsync(Binding binding, string? id, string userId, CancellationToken ct, bool validateTree = true, string? targetCommit = null)
     {
         var workspace = binding.Workspaces.FirstOrDefault(w => w.Id == id)
             ?? throw Error("not_found", "Workspace does not belong to this repository entry.");
-        if (!workspace.Owner.IsExternal && await workspaces.ReadParticipationAsync(workspace.WorkspaceId, ct) is not null)
-        {
-            try { await workspaces.RequireParticipationSourceAsync(workspace, userId, ct); }
-            catch (AppLifecycleException ex) { throw Error("forbidden", ex.Message); }
-            if (workspace.State != "active") throw Error("unavailable", "Workspace source is no longer active.");
-            if (validateTree) await workspaces.ValidateTree(workspace, ct);
-            return workspace;
-        }
-        if (!workspace.Owner.IsExternal && workspace.Owner.UserId != userId)
-            throw Error("forbidden", "The owner must explicitly share this workspace.");
-        if (binding.Entry.State != "available") throw Error("unavailable", binding.Entry.Error ?? "Repository is unavailable.");
-        var grant = await GrantAsync(binding, userId, ct);
-        if (grant is null && !workspaces.Fetches.HasPublicProof(binding.Entry.Repository, binding.Entry.Branch,
-            targetCommit ?? await CurrentTargetAsync(binding.Entry, ct)))
-            throw Error("unavailable", "List the tracked branch to verify public access before reading workspace documents.");
-        if (grant is not null && workspace.Owner.UserId != userId)
-            throw Error("forbidden", "Another administrator's private workspace is not available through this grant.");
-        if (workspace.SourceGrant is not null)
-        {
-            var effective = await workspaces.WorkspaceGrantAsync(workspace, ct);
-            if (effective is null || effective.OwnerId != userId || effective.Repository != workspaces.LogicalRepositoryIdentity(workspace.Repository))
-                throw Error("forbidden", "This workspace's reviewed Git grant is no longer available to the acting administrator.");
-            await (privateSources ?? throw PrivateSourceService.Denied()).ValidateAsync(new(Git: effective), ct);
-        }
-        if (workspace.State != "active") throw Error("unavailable", "Workspace is " + workspace.State + "; its document changes are unknown.");
+        await workspaces.RequireWorkspaceUserAsync(userId, ct);
+        if (workspace.State != "active") throw Error("unavailable", "Workspace source is no longer active.");
         if (validateTree) await workspaces.ValidateTree(workspace, ct);
         return workspace;
     }
@@ -319,9 +294,7 @@ internal sealed partial class SourceDocumentService(AppRegistryStore apps,
     {
         RequirePath(input.Path);
         var binding = await RequireBindingAsync(repositoryId, ct);
-        if (binding.Entry.State != "available") throw Error("unavailable", binding.Entry.Error ?? "Repository is unavailable.");
-        // Workspace versions stay readable through their current private grant even when the
-        // remote is unavailable. Public access still requires anonymous proof before local reads.
+        // Local workspace versions do not require a live remote credential.
         var candidate = binding.Workspaces.FirstOrDefault(w => w.Id == input.WorkspaceId);
         var sharedLocal = input.Version != "target" && candidate is not null && await SharedPrivateWorkspaceAsync(binding, candidate, userId, ct);
         if (input.Version == "target" || !sharedLocal && await GrantAsync(binding, userId, ct) is null)

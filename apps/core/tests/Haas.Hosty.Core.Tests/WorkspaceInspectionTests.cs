@@ -64,18 +64,18 @@ public sealed partial class CoreLifecycleServiceTests
     [Theory]
     [InlineData("revoke")]
     [InlineData("clear")]
-    public async Task WorkspaceInspection_PrivateSourceRevocationHidesInventoryAndRejectsDetailAndDiff(string transition)
+    public async Task WorkspaceInspection_ProviderRevocationDoesNotHideRetainedWorkspaceSource(string transition)
     {
         var (f, users, access, service, tree, _, _) = await PrivateWorkspaceDocumentFixtureAsync();
         var inspection = new WorkspaceInspectionService(service, f.Apps, f.Clock, privateSources: access);
         Assert.Single((await inspection.ListAsync("admin", default)).Workspaces);
-        Assert.Empty((await inspection.ListAsync("another-admin", default)).Workspaces);
-        await Assert.ThrowsAsync<AppLifecycleException>(() => inspection.DiffAsync(tree.WorkspaceId, tree.Id, "another-admin", new(PlanPath), default));
+        Assert.Single((await inspection.ListAsync("another-admin", default)).Workspaces);
+        await inspection.DiffAsync(tree.WorkspaceId, tree.Id, "another-admin", new(PlanPath), default);
         if (transition == "clear") await f.Apps.UpdateAppAsync(SourceTestApp, a => a with { PrivateSources = null });
         else await users.UpdateAsync(s => s with { ProviderConnections = [] });
-        Assert.Empty((await inspection.ListAsync("admin", default)).Workspaces);
-        await Assert.ThrowsAsync<AppLifecycleException>(() => inspection.ReadAsync(tree.WorkspaceId, tree.Id, "admin", default));
-        await Assert.ThrowsAsync<AppLifecycleException>(() => inspection.DiffAsync(tree.WorkspaceId, tree.Id, "admin", new(PlanPath), default));
+        Assert.Single((await inspection.ListAsync("admin", default)).Workspaces);
+        await inspection.ReadAsync(tree.WorkspaceId, tree.Id, "admin", default);
+        await inspection.DiffAsync(tree.WorkspaceId, tree.Id, "admin", new(PlanPath), default);
     }
 
     [Fact]
@@ -121,7 +121,7 @@ public sealed partial class CoreLifecycleServiceTests
         var observed = Assert.Single(detail.PullRequests, p => p.Observation is not null);
         Assert.Equal("SUCCESS", Assert.Single(observed.Observation!.Checks!).State);
         Assert.Null(observed.Observation.Reviews);
-        await Assert.ThrowsAsync<AppLifecycleException>(() => inspection.ReadAsync(f.W.WorkspaceId, f.W.Id, "another-admin", default));
+        Assert.Empty((await inspection.ReadAsync(f.W.WorkspaceId, f.W.Id, "another-admin", default)).PullRequests);
         var membership = await f.Workspaces.ParticipationAsync(f.W.WorkspaceId, "admin", default);
         await f.Workspaces.ChangeMemberAsync(f.W.WorkspaceId, "admin", "grant", new(Guid.NewGuid().ToString(), membership.Revision, "another-admin", [f.W.Id]), default);
         Assert.Empty((await inspection.ReadAsync(f.W.WorkspaceId, f.W.Id, "another-admin", default)).PullRequests);

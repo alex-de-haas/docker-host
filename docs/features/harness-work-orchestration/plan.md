@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-26
-updated: 2026-10-27
+updated: 2026-10-29
 summary: Deferred Harness task decomposition, hierarchy, artifact and decision integration, parked continuation and selected cross-session context access.
 components: [apps/harness]
 ---
@@ -16,8 +16,7 @@ plan as Ready and deferred automatic workspace coordination, artifacts, waits an
 [Vision decision 64](../../vision.md) records this split. This plan remains Draft; it no longer owns
 the first manual/API task store, executor adapter, task UI or simple result review.
 
-The basic feature is still unimplemented, not an existing shipped dependency. Its Ready approval
-does not approve this broader composition. A separate Organization app and its name remain open;
+The basic feature is shipped; its delivery does not approve this broader composition. A separate Organization app and its name remain open;
 Core stays independent of Harness routes, first-party IDs and business roles.
 
 ## Target Behavior
@@ -38,7 +37,14 @@ requiresReview task acceptance already belongs to Basic Tasks and does not depen
 Here the runner handles durable waits, schedules/retries where selected and response-driven
 continuation. Keep workflow policy in Harness and do not build a competing scheduler.
 
-Related source delegation normally passes the selected workspace. An unrelated bugfix can receive
+Related source delegation normally passes the selected workspace. The proposed
+[workspace-permission foundation](../external-workspace-access-continuity/feature.md) permits the full
+collection when both the application and initiating user have the operation right. Preserve that
+user through the agent hierarchy and provider handoffs without per-workspace or per-agent consent.
+Workspace selection is execution context, not an allowlist. Collection operations need no primary
+workspace or conversation attachment. This plan owns writer coordination, not another access gate.
+
+Related task work normally keeps that selected workspace. An unrelated bugfix can receive
 an explicitly independent workspace and PR. [Task Workspace Coordination](../shared-tasks/plan.md)
 owns allocation/reuse and reverse references; this plan owns delegation policy, writer coordination
 and integration. Shared source is not same-file isolation, and task completion does not implicitly

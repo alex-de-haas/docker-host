@@ -1,13 +1,13 @@
 ---
 created: 2026-10-07
-updated: 2026-10-26
+updated: 2026-10-29
 summary: Local external agents use authorized Core-owned worktrees, separate plan progress, and read-only pull request tracking through Harness and Core.
 components: [apps/core, apps/documents]
 ---
 
 # External Development Workspaces
 
-## Registry And Ownership
+## Registry And Allocation
 
 Core creates registered Git worktrees for local external agents using the same repository store,
 target refs, durable operations and observer as [assistant session workspaces](../assistant-session-workspaces/feature.md).
@@ -27,11 +27,10 @@ the current credential, administrator, OAuth grant/client and source grant. Brow
 app and delegated credentials do not establish this external authority. Other Core operation scopes
 remain independent. Existing Harness session tools keep their installed-app authorization.
 
-Listing omits individual records that fail current source-access revalidation or cannot be read,
-including released records with revoked private-source grants. Other authorized workspaces remain
-discoverable with their operation IDs and activity leases; records with validated access and an
-explicit unavailable observation remain visible. Omitted records expose no cached source or change
-metadata. Direct reads and operations still require current source authority.
+Listing includes every retained workspace allowed by the application's operation permission and the
+initiating administrator's current rights. Creator, session, credential and source-provider grant do
+not filter retained local source. Invalid records are omitted individually. Allocation identity and
+old operation receipts remain unchanged; a fresh authorized credential can continue an existing tree.
 
 Preparation requires a short purpose-based workspace `name`, separate from the external agent label.
 The `rename_workspace` tool changes that aggregate name with an exact UUID replay receipt; names
@@ -40,9 +39,8 @@ propagate through workspace observation without changing source, ownership or ac
 Preparation selects an installed app's declared repository and optional target branch. It returns
 a Core-owned absolute directory, registered branch, target branch and original base. External
 preparation requires an explicit activity lease and accepts no assistant session path. Native file
-edits and commits in that directory appear through the existing observer. Private-source reads and
-operations revalidate current reviewed source ownership; cleared, rebound or revoked grants do not
-restore earlier managed access from cached observations.
+edits and commits in that directory appear through the existing observer. Remote source operations revalidate the acting user's provider authority. Retained local source does
+not require the creator's provider connection and never transfers its credentials.
 
 ## Plans Presentation
 
@@ -90,7 +88,7 @@ evidence; a linked card's merged state or passing CI never proves the workspace 
 Observations persist under Core's `development/publications/external` directory and survive restart
 while the workspace is retained. Successful workspace Delete removes these snapshots; late provider
 responses cannot recreate them. Startup recovery removes verified legacy deleted workspace records
-and their caches under the [workspace deletion contract](../workspace-lifecycle-controls/feature.md#cleanup-and-recovery).
+and their caches under the [workspace deletion contract](../workspace-lifecycle-controls/feature.md#unified-delete-and-recovery).
 Reads revalidate the current administrator, source access and connection before showing cached facts.
 The projection includes state, draft flag, checks, review decision, unresolved-thread count and
 observation time, but omits credentials and private review comment bodies. Removed references are
@@ -161,10 +159,9 @@ of a tool in that catalog is not proof that the credential may call it.
 A logical task has a stable opaque `taskId`, chosen once for that work context and reused when
 resuming it. Use a nonempty ID of at most 200 characters without surrounding whitespace or control
 characters. OAuth binds ownership to the current administrator and durable grant; token refresh
-retains that binding. A newly authorized grant is a new principal and does not inherit the old
-one's source. Tasks within one grant are separate allocations but share its authority. A task ID,
-agent label or conversation ID is not an authorization boundary. Use separate grants when separate
-authority is required. Core records no imported conversation and provides no external-session URL.
+retains that binding. A newly authorized grant has its own allocation context but can access the same retained source
+through the workspace operation permission. Tasks remain separate allocations. A task ID, agent label,
+conversation ID or original credential is not an authorization boundary. Core records no imported conversation and provides no external-session URL.
 
 1. Read the user's approved scope and select an installed app with declared source. Do not register
    an arbitrary repository, change app source selection or install/start an app merely to obtain
@@ -234,18 +231,15 @@ Revocation stops future Core calls; it does not remove the external program's ex
 system access to a directory it already received. These instructions coordinate trusted local work
 and do not create a Hosty filesystem sandbox.
 
-An administrator can dispose of unwanted external work without reconnecting the old client.
-Harness's separate [confirmed physical discard](../workspace-lifecycle-controls/feature.md#confirmed-physical-discard)
-reviews and removes registered worktrees/private branches, unfinished files, owned temporary test
-data and workspace metadata. Pause and explicit stopped-process/lease recovery resolve abandoned
-activity first; live or unknown consumers remain blockers. Discard is an operator inspection action,
-not additional authority granted to an external credential. Normal `cleanup_workspace`, Complete,
-Delete and retention still refuse unfinished work.
+An authorized administrator can delete unwanted work through the same [Delete operation](../workspace-lifecycle-controls/feature.md#unified-delete-and-recovery)
+from Harness or MCP. Dirty/unmerged source and retained leases are warnings, not permission gates.
+The UI confirms once; MCP Ask/Run/Disabled is the broker's approval point. Core requires no second
+review, typed name, prior inspection, completion or pause.
 
 | Core tool | Purpose |
 | --- | --- |
 | `prepare_workspace(requestId, taskId, appId, leaseId, targetBranch?, label?)` | Prepare or reuse this task's installed-app source binding |
-| `list_workspaces(taskId?, includeReleased?)` | List this principal's workspaces, including released records by default |
+| `list_workspaces(taskId?, includeReleased?)` | List all authorized Core workspaces, including released records by default |
 | `get_workspace(workspaceId)` | Observe the binding and inspect durable `operations` and leases |
 | `get_workspace_diff(workspaceId, path, view?)` | Preview a repository-relative path; `session` is the default view |
 | `refresh_workspace(workspaceId, requestId)` | Fetch the target without changing the workspace branch |
@@ -255,7 +249,7 @@ Delete and retention still refuse unfinished work.
 | `acquire_workspace_lease(workspaceId, requestId, leaseId)` | Record durable activity before native work |
 | `release_workspace_lease(workspaceId, requestId, leaseId)` | Release known stopped activity |
 | `record_workspace_pull_requests(workspaceId, requestId, pullRequests)` | Associate existing HTTPS PR URLs for read-only provider observation; never publish or prove merge |
-| `cleanup_workspace(workspaceId, requestId, expectedHead)` | Explicitly request conservative source cleanup |
+| `delete_workspace(requestId, workspaceId?, workspaceIds?, all?)` | Delete one logical workspace or a fixed collection without a Core confirmation |
 
 Generate a new request UUID for each intentional managed mutation. Retain its original arguments.
 After a lost response, retry the same operation with that same UUID and arguments; do not guess that
@@ -272,15 +266,12 @@ Use a regular merge commit for repository PRs. Push, PR publication, merge and a
 selection remain separate workflows with their own authority; this workspace scope grants none of
 them implicitly.
 
-Cleanup is an explicit operation after the user/repository has authorized it. Core refuses dirty,
-unavailable, conflicted, leased, unmerged or runtime-consumed source. Ordinary cleanup freshly checks
-that the workspace HEAD is included in the target; a recorded PR URL or a reported merge is not
-proof. Never force removal or manually delete Core's tree or shared bare repository to bypass a
-refusal. Durable leases do not expire with time; an administrator releases abandoned activity only
-after checking that its native consumer stopped. Released metadata remains available for inspection.
-
-The [PR #590 acceptance report](../../reviews/2026-10-14-external-workspace-pr-observation.md)
-records real provider, browser, connection-loss and remote-head verification.
+Deletion is explicit and follows the user's requested selection. If the task says to remove only
+completed and merged work, verify those predicates before selecting targets. An unconditional Delete
+removes unfinished source too. Never delete Core's shared repository/cache or unrelated directories
+manually. Keep request IDs after a timeout; bulk retries retain the original target allocations.
+The legacy `cleanup_workspace` MCP entry is retired; accepted old cleanup/discard operations retain
+recovery compatibility. See [workspace authority](../external-workspace-access-continuity/feature.md).
 
 ## Workspace Runtime Activation
 
@@ -306,12 +297,12 @@ Return preserves current data and live source edits.
 - Exercise real OAuth consent and PKCE redemption, token refresh, same-grant tasks, independent grants,
   manual credentials, expiry/revocation, client deletion, current administrator role and Core-only scopes.
   Read-only, browser, device, app and delegated credentials cannot call workspace tools or read diffs.
-- Keep healthy workspace listings available when another owned active or released record loses its
-  private-source authority; omit failed records and refuse direct reads and operations on them.
-- Check same-request replay, conflicting arguments, owner isolation, native commits and uncommitted
-  plan edits, effective private-source ownership, clearing/rebinding/revocation and interrupted recovery.
-- Keep activity leases through disconnect/restart; refuse dirty, conflicted, unmerged, unavailable,
-  leased and runtime-consumed cleanup. Never infer deletion authority from elapsed time or a PR URL.
+- Retain local workspace access after provider authorization changes; omit malformed records
+  individually and require current user/app permission on every read or operation.
+- Check same-request replay, conflicting arguments, cross-actor access, native commits and uncommitted
+  plan edits, acting-user provider authority, clearing/rebinding/revocation and interrupted recovery.
+- Keep activity leases through disconnect/restart; explicit Delete accepts dirty, conflicted,
+  unmerged and leased source. Never infer deletion authority from elapsed time or a PR URL.
 - Verify a real local client against a Core-managed instance with ordinary password login and OAuth
   consent. Use the returned directory, verify distinct target/workspace progress and two logical tasks,
   inspect the Core/Plans responses and UI, revoke authority and preserve source until authorized cleanup.

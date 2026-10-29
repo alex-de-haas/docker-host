@@ -585,7 +585,10 @@ finally:
         if child_id:
             try:
                 child = request(f'/api/core-environments/{child_id}')
-                child = request(f'/api/core-environments/{child_id}/operations/finish', {'requestId':str(uuid.uuid4()), 'expectedRevision':child['revision']})
+                finish_path = base/'finish-request.json'
+                if not finish_path.exists():
+                    finish_path.write_text(json.dumps({'requestId':str(uuid.uuid4()), 'expectedRevision':child['revision']}))
+                child = request(f'/api/core-environments/{child_id}/operations/finish', json.loads(finish_path.read_text()))
                 assert child['state'] == 'finished', child
                 say('Parent Finish confirmed child resource removal')
                 for fixture_image in [globals().get('desktop_fixture_image'), globals().get('task_fixture_image')]:

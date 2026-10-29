@@ -35,7 +35,7 @@ it.each(cases)("keeps context tools session-bound for $provider with autonomous=
     expect(tools.result.tools.some((tool: any) => tool.name === "context_add")).toBe(mode !== "disabled");
     expect(tools.result.tools.filter((tool: any) => tool.name.startsWith("context_")).length).toBe(mode === "disabled" ? 3 : 4);
     const pending = call(entry.url, 2, "tools/call", "context_add");
-    if (mode === "ask" && !autonomous) {
+    if (mode === "ask") {
       await vi.waitFor(() => expect(approvals).toHaveLength(1));
       expect(invoked).not.toHaveBeenCalled();
       expect(policy.resolve("one", approvals[0]!, true)).toBe(true);
@@ -47,7 +47,7 @@ it.each(cases)("keeps context tools session-bound for $provider with autonomous=
       expect(invoked.mock.calls[0]?.[0]).toBe("one");
       expect(JSON.parse(result.result.content[0].text)).toEqual({ revision: 1, appIds: ["notes"] });
     }
-    if (mode !== "ask" || autonomous) expect(approvals).toHaveLength(0);
+    if (mode !== "ask") expect(approvals).toHaveLength(0);
     mcp.config("two", origin);
     expect((await call(origin + "/internal/workspaces/two", 3, "tools/call", "context_add")).status).toBe(403);
     mcp.unregister("one");

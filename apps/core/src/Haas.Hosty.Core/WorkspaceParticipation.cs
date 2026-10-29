@@ -28,11 +28,11 @@ internal sealed partial class DevelopmentWorkspaceService
     {
         var value = await recordCache.ReadAsync<WorkspaceParticipation>(ParticipationPath(workspaceId), ct);
         if (value is null) return null;
-        if (value.Id != workspaceId || value.AllocationOwner is null || value.AllocationOwner.IsExternal ||
+        if (value.Id != workspaceId || value.AllocationOwner is null ||
             WorkspaceIdFor(value.AllocationOwner) != workspaceId || value.Revision < 1 ||
             value.Members is null || value.Sessions is null || value.Operations is null ||
             value.Members.Any(m => m is null || m.WorktreeIds is null || m.Role is not ("owner" or "contributor")) ||
-            value.Sessions.Any(s => s is null || s.Session is null || s.Session.IsExternal) ||
+            value.Sessions.Any(s => s is null || s.Session is null) ||
             value.Operations.Any(o => o is null) ||
             value.Members.Count(m => m.Role == "owner") != 1 ||
             value.Members.Count(m => m.Role == "owner" && m.RevokedAt is null && m.UserId == value.AllocationOwner.UserId) != 1 ||
@@ -86,10 +86,7 @@ internal sealed partial class DevelopmentWorkspaceService
         var trees = (await ListAsync(null, true, ct)).Workspaces.Where(w => w.WorkspaceId == workspaceId).ToArray();
         if (trees.Length == 0) throw Error("not_found", "Workspace not found.");
         var first = trees[0];
-        if (first.Owner.IsExternal) throw Error("external_membership", "External workspaces retain their direct grant ownership.");
         var owner = first.Owner;
-        if (migrationActor is not null && migrationActor != owner.UserId)
-            throw Error("forbidden", "The owner must share this workspace before another user can join.");
         if (trees.Any(w => !w.Owner.SameIdentity(owner))) throw Error("membership_invalid", "Workspace allocation evidence conflicts.");
         var now = clock.UtcNow;
         var value = new WorkspaceParticipation(workspaceId, owner, 1,
@@ -116,17 +113,8 @@ internal sealed partial class DevelopmentWorkspaceService
     internal Task<WorkspaceParticipation> ParticipationAsync(string workspaceId, string actor, CancellationToken ct)
         => Locked("workspace-participation", async () =>
         {
-            var existing = await ReadParticipationAsync(workspaceId, ct);
-            if (existing is null)
-            {
-                var tree = (await ListAsync(null, true, ct)).Workspaces.FirstOrDefault(w => w.WorkspaceId == workspaceId);
-                if (tree?.Owner.UserId != actor) throw Error("forbidden", "This workspace is not shared with the current user.");
-            }
+            await RequireWorkspaceUserAsync(actor, ct);
             var value = await EnsureParticipationAsync(workspaceId, ct);
-            var member = RequireMember(value, actor);
-            if (member.Role != "owner")
-                foreach (var tree in (await ListAsync(null, true, ct)).Workspaces.Where(t => t.WorkspaceId == value.Id && member.WorktreeIds.Contains(t.Id)))
-                    await RequireParticipationSourceAsync(tree, actor, ct);
             return value;
         }, ct);
 
@@ -157,7 +145,7 @@ internal sealed partial class DevelopmentWorkspaceService
             if (kind is not ("grant" or "revoke") || string.IsNullOrWhiteSpace(input.UserId) || input.UserId.Length > 200)
                 throw Error("member_invalid", "Choose a user and grant or revoke membership.");
             var value = await EnsureParticipationAsync(workspaceId, ct, actor);
-            RequireMember(value, actor, ownerOnly: true);
+            await RequireWorkspaceUserAsync(actor, ct);
             if (input.UserId == value.AllocationOwner.UserId) throw Error("owner_required", "Workspace ownership cannot be revoked or transferred here.");
             var fingerprint = Hash(kind + "\n" + CoreJson.Text(input));
             if (ParticipationReplay(value, input.RequestId, actor, fingerprint)) return value;
@@ -196,8 +184,7 @@ internal sealed partial class DevelopmentWorkspaceService
             AssistantSessionAuthority.ValidateSessionId(actor.SessionId);
             var value = await EnsureParticipationAsync(workspaceId, ct, actor.UserId);
             var session = value.Sessions.FirstOrDefault(s => s.Session.SameIdentity(actor));
-            // A revoked participant may detach its own stopped session, but cannot read shared source.
-            if (kind != "detach" || session is null) RequireMember(value, actor.UserId);
+            await RequireWorkspaceUserAsync(actor.UserId, ct);
             var actorKey = OwnerIdentity(actor);
             var fingerprint = Hash(kind + "\n" + CoreJson.Text(input));
             if (ParticipationReplay(value, input.RequestId, actorKey, fingerprint)) return value;
@@ -220,8 +207,7 @@ internal sealed partial class DevelopmentWorkspaceService
                         throw Error("session_bound", "This session already owns retained source. Detach it explicitly first.");
                 }
                 await RequireSessionIdleAsync(trees, actor, ct);
-                foreach (var tree in trees.Where(t => t.State == "active" &&
-                    (actor.UserId == value.AllocationOwner.UserId || value.Members.First(m => m.UserId == actor.UserId).WorktreeIds.Contains(t.Id))))
+                foreach (var tree in trees.Where(t => t.State == "active"))
                     await RequireParticipationSourceAsync(tree, actor.UserId, ct);
                 session = new(actor, input.Title.Trim(), path, clock.UtcNow, Status: "idle", ActivityAt: clock.UtcNow);
             }
@@ -240,7 +226,7 @@ internal sealed partial class DevelopmentWorkspaceService
         ct.ThrowIfCancellationRequested();
         // Unknown legacy leases remain conservative claims. Other attributable executions do
         // not prevent detaching this stopped session or lose their own leases when it detaches.
-        if (trees.Any(t => t.Leases.Any(id => t.LeaseClaims?.FirstOrDefault(c => c.Id == id) is not { } claim || claim.Session.SameIdentity(actor)) ||
+        if (trees.Any(t => t.Leases.Any(id => t.LeaseClaims?.FirstOrDefault(c => c.Id == id) is { } claim && claim.Session.SameIdentity(actor)) ||
             t.Operations.Any(o => o.State is "pending" or "unknown" && (o.Actor is null || o.Actor.SameIdentity(actor)))))
             throw Error("session_busy", "Stop native work and reconcile activity leases and operations before detaching.");
         return Task.CompletedTask;

@@ -8,17 +8,17 @@ internal sealed record WorkspaceDiscardTree(string Id, string Repository, string
     string Fingerprint, string[] ChangedFiles, string[] UntrackedFiles, string[] IgnoredFiles, int UnmergedCommits);
 internal sealed record WorkspaceDiscardResource(string Id, string Kind, string Name, string? DataPath, string State, long Revision);
 internal sealed record WorkspaceDiscardPlan(string WorkspaceId, string Name, long Revision, string Digest,
-    DateTimeOffset ExpiresAt, WorkspaceDiscardTree[] Trees, WorkspaceDiscardResource[] Resources, string[] Blockers, string[]? RemovedTrees = null);
+    DateTimeOffset ExpiresAt, WorkspaceDiscardTree[] Trees, WorkspaceDiscardResource[] Resources, string[] Blockers, string[]? RemovedTrees = null, string[]? Warnings = null);
 internal sealed record WorkspaceDiscardItem(string Id, string State, string? Kind = null);
 internal sealed record WorkspaceDiscardProgress(string WorkspaceId, string RequestId, string State, WorkspaceDiscardApply Command,
-    WorkspaceDiscardItem[] Trees, WorkspaceDiscardItem[] Resources, string? Error = null);
+    WorkspaceDiscardItem[] Trees, WorkspaceDiscardItem[] Resources, string? Error = null, WorkspaceDeleteActivity[]? Activity = null);
 internal sealed record WorkspaceDiscardReview(string Actor, WorkspaceOwner Owner, WorkspaceDiscardPlan Plan);
 internal sealed record WorkspaceDiscardJournal(string Actor, string WorkspaceId, WorkspaceDiscardApply Command,
     string State, WorkspaceOwner? Owner, WorkspaceDiscardPlan? Plan, DevelopmentWorkspace[]? Snapshots,
     WorkspaceDiscardItem[] Trees, WorkspaceDiscardItem[] Resources, WorkspaceCleanupResource[] Cleanup,
-    string? Error = null, bool SourceRemoved = false, string[]? RelatedRequests = null, string[]? ReviewDigests = null)
+    string? Error = null, bool SourceRemoved = false, string[]? RelatedRequests = null, string[]? ReviewDigests = null, bool Direct = false, WorkspaceDeleteActivity[]? Activity = null)
 {
-    internal WorkspaceDiscardProgress Progress() => new(WorkspaceId, Command.RequestId, State, Command, Trees, Resources, Error);
+    internal WorkspaceDiscardProgress Progress() => new(WorkspaceId, Command.RequestId, State, Command, Trees, Resources, Error, Activity);
 }
 
 internal sealed partial class DevelopmentWorkspaceService
@@ -44,11 +44,11 @@ internal sealed partial class DevelopmentWorkspaceService
         var value = await JsonStorage.ReadAsync<WorkspaceDiscardJournal>(DiscardJournalPath(workspaceId, requestId), ct);
         if (value is not null)
         {
-            if (value.Actor != actor || value.WorkspaceId != workspaceId)
-                throw Error("forbidden", "This discard request belongs to another operator.");
+            if (value.WorkspaceId != workspaceId)
+                throw Error("forbidden", "The deletion receipt does not match this workspace.");
             if (value.Command is null || value.Command.RequestId != requestId || value.Trees is null || value.Resources is null || value.Cleanup is null
                 || value.State is not ("pending" or "removed" or "review-required") || value.Trees.Select(t => t.Id).Distinct().Count() != value.Trees.Length
-                || value.State != "removed" && (value.Owner is null || value.Owner.UserId != actor || WorkspaceIdFor(value.Owner) != workspaceId
+                || value.State != "removed" && (value.Owner is null || WorkspaceIdFor(value.Owner) != workspaceId
                     || value.Plan is null || value.Plan.WorkspaceId != workspaceId || value.Plan.Digest != value.Command.Digest || value.Snapshots is not { Length: > 0 }
                     || value.Snapshots.Any(w => w.Owner is null || !w.Owner.SameIdentity(value.Owner) || w.WorkspaceId != workspaceId
                         || w.Id != Hash(OwnerIdentity(value.Owner) + "\n" + w.RepositoryId) || w.RepositoryId != Hash(w.Repository)
@@ -80,7 +80,7 @@ internal sealed partial class DevelopmentWorkspaceService
         {
             RequireDiscardStorage(path);
             var value = await JsonStorage.ReadAsync<WorkspaceDiscardJournal>(path, ct);
-            if (value?.Actor != actor || value.State != "pending") continue;
+            if (value is null || value.State != "pending") continue;
             var journal = await ReadDiscardAsync(value.WorkspaceId, value.Command.RequestId, actor, ct);
             if (journal is not null && DiscardJournalPath(journal.WorkspaceId, journal.Command.RequestId) == path) found.Add(journal);
         }
@@ -103,7 +103,7 @@ internal sealed partial class DevelopmentWorkspaceService
 
     private static void RequireDiscardActor(WorkspaceOwner owner, string actor)
     {
-        if (owner.UserId != actor) throw Error("forbidden", "Only the workspace's operator can discard its local work.");
+        if (string.IsNullOrWhiteSpace(actor)) throw Error("forbidden", "An initiating user is required for workspace deletion.");
     }
     private async Task<DevelopmentWorkspace[]> DiscardTrees(WorkspaceOwner owner, CancellationToken ct)
     {
@@ -116,25 +116,25 @@ internal sealed partial class DevelopmentWorkspaceService
         }
         return found.OrderBy(w => w.Id, StringComparer.Ordinal).ToArray();
     }
-    private async Task<WorkspaceDiscardPlan> BuildDiscardPlan(WorkspaceOwner owner, WorkspaceDiscardResource[] resources, CancellationToken ct)
+    private async Task<WorkspaceDiscardPlan> BuildDiscardPlan(WorkspaceOwner owner, WorkspaceDiscardResource[] resources, CancellationToken ct, bool direct = false)
     {
         var workflow = await WorkflowAsync(owner, ct);
         var trees = await DiscardTrees(owner, ct);
         if (trees.Length == 0) throw Error("not_found", "The workspace has no registered source to discard.");
         var blockers = new List<string>(); var review = new List<WorkspaceDiscardTree>();
         var renewed = workflow.State == "deleting" && await HasDiscardReviewRequired(owner, workflow, ct);
-        if (workflow.State == "deleted" || workflow.State == "deleting" && !renewed || workflow.Operations?.Any(o => o.State == "pending") == true)
+        if (!direct && (workflow.State == "deleted" || workflow.State == "deleting" && !renewed || workflow.Operations?.Any(o => o.State == "pending") == true))
             blockers.Add("Recover the already accepted workspace action before preparing another removal.");
         foreach (var tree in trees)
         {
-            if (renewed && tree.State == "released") continue;
+            if ((direct || renewed) && tree.State == "released") continue;
             try
             {
-                if (tree.State != "active") throw Error("not_active", "The worktree is not active; recover its existing operation first.");
-                if (tree.Operations.Any(o => o.State is "pending" or "unknown"))
+                if (!direct && tree.State != "active") throw Error("not_active", "The worktree is not active; recover its existing operation first.");
+                if (!direct && tree.Operations.Any(o => o.State is "pending" or "unknown"))
                     throw Error("operation_pending", "Recover outstanding source operations before discarding this worktree.");
-                await CheckDiscardConsumers(tree, resources.Select(r => r.Id).ToHashSet(StringComparer.Ordinal), ct);
-                review.Add(await InspectDiscardTree(tree, ct));
+                if (!direct) await CheckDiscardConsumers(tree, resources.Select(r => r.Id).ToHashSet(StringComparer.Ordinal), ct);
+                review.Add(await InspectDiscardTree(tree, ct, fingerprint: !direct));
             }
             catch (Exception ex) when (ex is AppLifecycleException or IOException or UnauthorizedAccessException)
             {
@@ -145,7 +145,8 @@ internal sealed partial class DevelopmentWorkspaceService
         }
         return new(WorkspaceIdFor(owner), trees[0].Name ?? "Workspace", workflow.Revision, "", clock.UtcNow.AddMinutes(10),
             review.ToArray(), resources.OrderBy(r => r.Kind).ThenBy(r => r.Id).ToArray(), blockers.ToArray(),
-            trees.Where(t => t.State == "released").Select(t => t.Id).ToArray());
+            trees.Where(t => t.State == "released").Select(t => t.Id).ToArray(),
+            direct ? [.. blockers, .. trees.SelectMany(t => t.Leases.Select(l => "Activity lease " + l + ": the external process may still be running; its exit is not verified."))] : null);
     }
     private async Task<bool> HasDiscardReviewRequired(WorkspaceOwner owner, WorkspaceWorkflow workflow, CancellationToken ct)
     {
@@ -168,7 +169,7 @@ internal sealed partial class DevelopmentWorkspaceService
                 throw Error("consumer_unavailable", "A local process has unverified ownership. Resolve its recovery before removal.");
         await CheckConsumers(tree with { SandboxConsumers = tree.SandboxConsumers.Where(id => !ownedResources.Contains(id)).ToArray() }, ct);
     }
-    private async Task<WorkspaceDiscardTree> InspectDiscardTree(DevelopmentWorkspace tree, CancellationToken ct)
+    private async Task<WorkspaceDiscardTree> InspectDiscardTree(DevelopmentWorkspace tree, CancellationToken ct, bool fingerprint = true)
     {
         await ValidateTree(tree, ct);
         var head = (await Git(tree.Path, ["rev-parse", "HEAD"], ct)).StandardOutput.Trim();
@@ -185,6 +186,8 @@ internal sealed partial class DevelopmentWorkspaceService
         var target = "refs/hosty/targets/" + Hash(tree.TargetBranch);
         var count = (await Git(RepoPath(tree.RepositoryId), ["rev-list", "--count", target + ".." + head], ct)).StandardOutput.Trim();
         if (!int.TryParse(count, out var unmerged)) throw Error("unavailable", "The local target comparison is unavailable.");
+        if (!fingerprint) return new(tree.Id, tree.Repository, tree.Path, tree.Branch, head, "observed",
+            changed.Order(StringComparer.Ordinal).ToArray(), untracked.Order(StringComparer.Ordinal).ToArray(), ignored.Order(StringComparer.Ordinal).ToArray(), unmerged);
         // The index can contain staged bytes absent from both HEAD and the working directory.
         var indexPath = (await Git(tree.Path, ["rev-parse", "--path-format=absolute", "--git-path", "index"], ct)).StandardOutput.Trim();
         string indexDigest = "absent";
@@ -195,8 +198,8 @@ internal sealed partial class DevelopmentWorkspaceService
             await using var stream = new FileStream(indexPath, FileMode.Open, FileAccess.Read, FileShare.Read, 65536, FileOptions.Asynchronous);
             indexDigest = Convert.ToHexStringLower(await SHA256.HashDataAsync(stream, ct));
         }
-        var fingerprint = Hash(await DiscardFingerprint(tree.Path, ct) + "\n" + indexDigest);
-        return new(tree.Id, tree.Repository, tree.Path, tree.Branch, head, fingerprint,
+        var sourceFingerprint = Hash(await DiscardFingerprint(tree.Path, ct) + "\n" + indexDigest);
+        return new(tree.Id, tree.Repository, tree.Path, tree.Branch, head, sourceFingerprint,
             changed.Order(StringComparer.Ordinal).ToArray(), untracked.Order(StringComparer.Ordinal).ToArray(), ignored.Order(StringComparer.Ordinal).ToArray(), unmerged);
     }
     private static async Task<string> DiscardFingerprint(string root, CancellationToken ct)
@@ -299,16 +302,16 @@ internal sealed partial class DevelopmentWorkspaceService
         var prior = workflow.Operations?.SingleOrDefault(o => o.Id == journal.Command.RequestId);
         if (prior is not null)
         {
-            if (prior.Kind != "discard" || prior.ExpectedRevision != journal.Command.ExpectedRevision || workflow.State is not ("deleting" or "deleted"))
+            if ((prior.Kind != "discard" && !(journal.Direct && prior.Kind == "delete")) || !journal.Direct && prior.ExpectedRevision != journal.Command.ExpectedRevision || workflow.State is not ("deleting" or "deleted"))
                 throw Error("ownership_invalid", "The accepted removal fence changed.");
             return;
         }
-        if (workflow.Revision != journal.Command.ExpectedRevision || workflow.Operations?.Any(o => o.State == "pending") == true
-            || workflow.State == "deleted") throw Error("discard_review_changed", "Workspace changed before its removal fence was recorded.");
+        if (!journal.Direct && (workflow.Revision != journal.Command.ExpectedRevision || workflow.Operations?.Any(o => o.State == "pending") == true
+            || workflow.State == "deleted")) throw Error("discard_review_changed", "Workspace changed before its removal fence was recorded.");
         var heads = new Dictionary<string, string>(workflow.Heads ?? []);
         foreach (var tree in journal.Plan!.Trees) heads[tree.Id] = tree.Head!;
         await SaveWorkflow(owner, workflow with { State = "deleting", Closure = "closed", ChangedBy = journal.Actor, Heads = heads,
-            Operations = [.. (workflow.Operations ?? []), new(journal.Command.RequestId, "discard", journal.Command.ExpectedRevision, "pending")] });
+            Operations = [.. (workflow.Operations ?? []).Select(o => journal.Direct && o.State == "pending" ? o with { State = "rejected", Error = "Superseded by workspace deletion." } : o), new(journal.Command.RequestId, "discard", journal.Command.ExpectedRevision, "pending")] });
     }
 
     internal Task<WorkspaceDiscardJournal> RequireDiscardReviewAsync(WorkspaceOwner owner, WorkspaceDiscardJournal journal, string error)
@@ -333,7 +336,7 @@ internal sealed partial class DevelopmentWorkspaceService
     internal Task ValidateDiscardSourcesAsync(WorkspaceOwner owner, WorkspaceDiscardJournal journal, CancellationToken ct)
         => Locked(Hash(OwnerIdentity(owner)), () => Locked("workspace-consumers", async () =>
         {
-            if (journal.SourceRemoved) return true;
+            if (journal.SourceRemoved || journal.Direct) return true;
             var snapshots = journal.Snapshots!;
             var current = await DiscardTrees(owner, ct);
             if (current.Length != snapshots.Length || current.Any(t => !snapshots.Any(s => s.Id == t.Id)))
@@ -393,40 +396,52 @@ internal sealed partial class DevelopmentWorkspaceService
             {
                 foreach (var snapshot in snapshots)
                 {
-                    var tree = await Read(snapshot.Id, owner.IsExternal ? owner : null, ct);
+                    var tree = await Read(snapshot.Id, null, ct);
                     if (!tree.Owner.SameIdentity(owner)) throw Error("forbidden", "The discard allocation owner changed.");
-                    await CheckDiscardConsumers(tree, [], ct);
-                    if (tree.Operations.Any(o => (o.State is "pending" or "unknown") && o.Id != "discard-" + input.RequestId))
+                    if (!journal.Direct) await CheckDiscardConsumers(tree, [], ct);
+                    if (!journal.Direct && tree.Operations.Any(o => (o.State is "pending" or "unknown") && o.Id != "discard-" + input.RequestId))
                         throw Error("operation_pending", "An unrelated source operation blocks removal.");
                     if (tree.State == "released") continue;
                     var reviewed = plan.Trees.Single(t => t.Id == tree.Id);
                     if (Directory.Exists(tree.Path))
                     {
-                        var fresh = await InspectDiscardTree(tree, ct);
-                        if (fresh.Head != reviewed.Head || fresh.Fingerprint != reviewed.Fingerprint)
+                        if (journal.Direct) await ValidateDeleteTreeAsync(tree, ct);
+                        else await ValidateTree(tree, ct);
+                        var fresh = journal.Direct ? null : await InspectDiscardTree(tree, ct);
+                        if (fresh is not null && (fresh.Head != reviewed.Head || fresh.Fingerprint != reviewed.Fingerprint))
                             throw Error("discard_review_changed", "Source changed after removal admission. Prepare a fresh removal review; remaining files are preserved.");
                     }
-                    else if (tree.State != "releasing" || !tree.Operations.Any(o => o.Id == "discard-" + input.RequestId && o.BeforeHead == reviewed.Head))
+                    else if (!journal.Direct && (tree.State != "releasing" || !tree.Operations.Any(o => o.Id == "discard-" + input.RequestId && o.BeforeHead == reviewed.Head)))
                         throw Error("ownership_invalid", "A missing directory does not prove removal by this operation.");
                 }
                 foreach (var snapshot in snapshots)
                 {
-                    var tree = await Read(snapshot.Id, owner.IsExternal ? owner : null, ct);
+                    var tree = await Read(snapshot.Id, null, ct);
                     if (!tree.Owner.SameIdentity(owner)) throw Error("forbidden", "The discard allocation owner changed.");
                     if (tree.State != "released")
                     {
                         var reviewed = plan.Trees.Single(t => t.Id == tree.Id);
-                        await CheckDiscardConsumers(tree, [], ct);
+                        if (!journal.Direct) await CheckDiscardConsumers(tree, [], ct);
                         var operation = new WorkspaceOperation("discard-" + input.RequestId, "discard", input.Digest, "pending", reviewed.Head);
-                        tree = tree with { State = "releasing", Operations = [.. tree.Operations.Where(o => o.Id != operation.Id), operation] };
+                        tree = tree with { State = "releasing", Operations = [.. tree.Operations.Where(o => o.Id != operation.Id)
+                            .Select(o => journal.Direct && o.State is ("pending" or "unknown") ? o with { State = "failed", Error = "Canceled by workspace deletion." } : o), operation] };
                         await Save(tree);
                         if (Directory.Exists(tree.Path))
                         {
-                            var fresh = await InspectDiscardTree(tree, ct);
-                            if (fresh.Head != reviewed.Head || fresh.Fingerprint != reviewed.Fingerprint) throw Error("discard_review_changed", "Source changed before physical removal. Prepare a fresh removal review.");
-                            await Git(RepoPath(tree.RepositoryId), ["worktree", "remove", "--force", tree.Path], ct);
+                            if (journal.Direct) await ValidateDeleteTreeAsync(snapshot, ct);
+                            else await ValidateTree(tree, ct);
+                            var fresh = journal.Direct ? null : await InspectDiscardTree(tree, ct);
+                            if (fresh is not null && (fresh.Head != reviewed.Head || fresh.Fingerprint != reviewed.Fingerprint)) throw Error("discard_review_changed", "Source changed before physical removal. Prepare a fresh removal review.");
+                            if (journal.Direct) Directory.Delete(tree.Path, recursive: true);
+                            else await Git(RepoPath(tree.RepositoryId), ["worktree", "remove", "--force", "--force", tree.Path], ct);
                         }
                         else if (PathEntryExists(tree.Path)) throw Error("ownership_invalid", "The source path was replaced with a link or unexpected entry.");
+                        if (journal.Direct)
+                        {
+                            var registrations = await Git(RepoPath(tree.RepositoryId), ["worktree", "list", "--porcelain"], ct);
+                            if (registrations.StandardOutput.Split('\n').Contains("worktree " + tree.Path))
+                                await Git(RepoPath(tree.RepositoryId), ["worktree", "remove", "--force", "--force", tree.Path], ct);
+                        }
                         var reference = "refs/heads/" + tree.Branch;
                         var symbolic = await Git(RepoPath(tree.RepositoryId), ["symbolic-ref", "--quiet", reference], ct, true);
                         if (symbolic.ExitCode != 1) throw Error("ownership_invalid", "The private workspace branch was replaced or cannot be verified; it was preserved.");
@@ -434,14 +449,16 @@ internal sealed partial class DevelopmentWorkspaceService
                         if (branch.ExitCode == 0)
                         {
                             var head = branch.StandardOutput.Split(' ')[0];
-                            if (head != reviewed.Head) throw Error("stale_head", "The workspace branch changed and was preserved.");
+                            if (!journal.Direct && head != reviewed.Head) throw Error("stale_head", "The workspace branch changed and was preserved.");
                             var registrations = await Git(RepoPath(tree.RepositoryId), ["worktree", "list", "--porcelain"], ct);
                             if (registrations.StandardOutput.Split('\n').Any(line => line == "worktree " + tree.Path || line == "branch " + reference))
                                 throw Error("in_use", "The workspace still has a Git registration.");
-                            await Git(RepoPath(tree.RepositoryId), ["update-ref", "--no-deref", "-d", reference, reviewed.Head!], ct);
+                            await Git(RepoPath(tree.RepositoryId), ["update-ref", "--no-deref", "-d", reference, head], ct);
                         }
                         else if (branch.ExitCode != 1) throw Error("unavailable", "The workspace branch could not be inspected.");
-                        await Save(Put(tree with { State = "released", Observation = null }, operation with { State = "succeeded" }));
+                        await Save(Put(tree with { State = "released", Observation = null, Leases = journal.Direct ? [] : tree.Leases,
+                            LeaseClaims = journal.Direct ? [] : tree.LeaseClaims,
+                            SandboxConsumers = journal.Direct ? [] : tree.SandboxConsumers }, operation with { State = "succeeded" }));
                     }
                     journal = journal with { Trees = journal.Trees.Select(t => t.Id == tree.Id ? t with { State = "removed" } : t).ToArray(), Error = null };
                     await SaveDiscardAsync(journal);
@@ -467,7 +484,7 @@ internal sealed partial class DevelopmentWorkspaceService
         if (result.State != "pending") return result;
         var deletion = await ReadDeletionAsync(result.WorkspaceId, ct);
         if (deletion is not null || (await DiscardTrees(owner, ct)).Length > 0)
-            await FinalizeDeletionAsync(owner, ct);
+            await FinalizeDeletionAsync(owner, ct, result.Direct);
         else
         {
             // A crash after the last metadata unlink still retains the accepted receipt.
@@ -475,7 +492,7 @@ internal sealed partial class DevelopmentWorkspaceService
             foreach (var tree in result.Snapshots!)
             {
                 if (tree.State != "released" || PathEntryExists(tree.Path)) throw Error("cleanup_pending", "Source absence cannot be verified.");
-                await CheckDiscardConsumers(tree, [], ct);
+                if (!result.Direct) await CheckDiscardConsumers(tree, [], ct);
                 var branch = await Git(RepoPath(tree.RepositoryId), ["show-ref", "--verify", "--quiet", "refs/heads/" + tree.Branch], ct, true);
                 if (branch.ExitCode != 1) throw Error("cleanup_pending", "The private branch is present or cannot be verified.");
                 var registrations = await Git(RepoPath(tree.RepositoryId), ["worktree", "list", "--porcelain"], ct);
@@ -500,11 +517,11 @@ internal sealed partial class DevelopmentWorkspaceService
         }
         // Capture this operation's exact metadata scope at admission. A later allocation can
         // reuse a task/workspace ID; replay must never rewrite that new generation's records.
-        foreach (var digest in (completed.ReviewDigests ?? []).Append(completed.Command.Digest).Distinct(StringComparer.Ordinal))
+        foreach (var digest in (completed.ReviewDigests ?? []).Concat(completed.Direct ? [] : new[] { completed.Command.Digest }).Distinct(StringComparer.Ordinal))
         {
             var path = DiscardReviewPath(digest);
             var review = await JsonStorage.ReadAsync<WorkspaceDiscardReview>(path, ct);
-            if (review is not null && (review.Actor != actor || review.Plan.WorkspaceId != workspaceId))
+            if (review is not null && (review.Actor != completed.Actor || review.Plan.WorkspaceId != workspaceId))
                 throw Error("ownership_invalid", "The captured removal review belongs to another workspace.");
             DeleteMetadata(path);
         }
@@ -516,6 +533,7 @@ internal sealed partial class DevelopmentWorkspaceService
                 throw Error("ownership_invalid", "A superseded removal request is unexpectedly active; metadata was preserved.");
             // Keep only actor-bound replay evidence, never source inventories or private grants.
             await SaveDiscardAsync(journal with { State = "removed", Owner = null, Plan = null, Snapshots = null, Cleanup = [], Error = null,
+                Activity = journal.Activity?.Select(a => a.Kind == "lease" ? a with { State = "retired", Detail = "Lease retired by deletion; external process exit remains unknown." } : a).ToArray(),
                 Trees = journal.Trees.Select(t => t with { State = "removed" }).ToArray(), Resources = journal.Resources.Select(r => r with { State = "removed" }).ToArray() });
         }
     }

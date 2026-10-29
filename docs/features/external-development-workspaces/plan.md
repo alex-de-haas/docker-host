@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-16
-updated: 2026-10-18
+updated: 2026-10-29
 summary: Support privileged external agents through convenient managed sandbox operations and factual reconciliation of Git and publication actions.
 components: [apps/core]
 ---
@@ -47,6 +47,11 @@ sandbox adoption or a condition of recognizing externally created PRs. D12 owns 
 any missing reconciliation needed for those actions. Internal restricted-agent enforcement remains
 with Containment and Execution Authorization; this plan does not weaken it.
 
+Collection-wide workspace access independent of creator/session/grant is tracked in
+[Workspace Permissions And Deletion](../external-workspace-access-continuity/feature.md).
+It owns the app-permission AND initiating-user-permission rule and individual/bulk deletion semantics,
+without resource ACLs or per-workspace consent. This plan retains sandbox/publication adapters.
+
 ## Existing Foundation And Required Difference
 
 [External workspaces](feature.md) already provide direct MCP source preparation, owned worktrees,
@@ -63,16 +68,20 @@ Sandbox's shipped general service supports app/operator clients and Harness adap
 external credential needs an explicitly defined integration with the same service.
 
 Add direct external-client adapters and ownership/authority handling, not new source, sandbox or
-publication engines. Reuse the stable external principal, Core records and operation replay rules.
+publication engines. Reuse stable Core resource records and operation replay rules under the
+workspace-permission contract linked above. External principal identifies the caller, not ownership.
 Never impersonate an installed assistant, issue its service token to an external client, or treat
 a task/workspace ID as authorization. Private-source, target-app and publication-connection checks
-remain applicable; cross-owner substitutions must fail.
+remain applicable; forged acting-user substitutions must fail. Legitimate collection access to
+source created by another caller must not fail solely because its creator differs.
 
 The intended sequence is prepare source → edit → plan/prepare/start sandbox → open/test preview →
 export evidence and finish sandbox → publish/fix/review/merge under user/repository authority →
 finish eligible workspace work. Sandbox disposal and source cleanup have separate lifetimes.
-Worktrees remain while dirty, leased, unmerged or consumed; installed apps retain their normal
-runtime, source and data throughout. A source-based Docker recipe supplies execution without an
+Ordinary verified cleanup retains dirty/unmerged work. Explicit destructive deletion follows the
+workspace-permission plan and the user's requested targets, without per-item consent or a mandatory
+merge prerequisite. Actual consumers and pending operations require lifecycle reconciliation;
+installed apps retain their normal runtime, source and data outside the requested operation. A source-based Docker recipe supplies execution without an
 installed-app override. Missing recipes or unsupported dependencies have explicit outcomes.
 
 MCP governs managed operations. It does not restrict an external native editor's OS access to the

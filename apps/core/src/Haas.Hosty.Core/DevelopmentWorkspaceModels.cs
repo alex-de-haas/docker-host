@@ -77,4 +77,4 @@ internal sealed record DevelopmentWorkspace
     public DateTimeOffset? UpdatedAt { get; init; }
     public string? SourceStamp { get; init; }
 }
-internal sealed record WorkspaceList(DevelopmentWorkspace[] Workspaces);
+internal sealed record WorkspaceList(DevelopmentWorkspace[] Workspaces, WorkspacePermissions? Permissions = null);

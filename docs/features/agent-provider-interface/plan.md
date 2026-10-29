@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-10
-updated: 2026-10-28
+updated: 2026-10-29
 summary: Explore a shared app-facing interface for independently provided agents and models, including multi-model providers and structured results.
 components: [apps/core, apps/harness, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -65,6 +65,17 @@ For contract design, distinguish three concepts without prescribing their final 
 A common interface may cover both invocation forms, but compatibility cannot silently give a simple
 generation request an operator agent's permissions. Moving agents out of Harness must preserve the
 current ownership of conversations and confirmations or explicitly specify its replacement.
+
+## Workspace Permission Propagation (Owner Decision, 2026-10-29)
+
+Consume [Workspace Permissions And Deletion](../external-workspace-access-continuity/feature.md)
+in D2-D3. An application allowed to use workspace operations can use the full collection when the
+initiating user also has those rights. Preserve that user through provider/agent handoffs; a provider
+cannot substitute its service administrator or elevate the initiator. Workspace IDs select work
+context, not a resource allowlist. No additional per-agent or per-workspace consent is required.
+Keep credentials and private transcripts separate. Changing a provider/session/grant does not
+change workspace ownership or collection authority. Support collection operations with no primary
+workspace. Public provider invocation remains owned here; the permission contract lives in that plan.
 
 ## Independent Agent Applications: Design Assessment (2026-10-28)
 

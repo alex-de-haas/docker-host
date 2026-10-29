@@ -43,7 +43,7 @@ public sealed partial class CoreLifecycleServiceTests
         await Assert.ThrowsAsync<AppLifecycleException>(() => service.PrepareCoreSourceAsync(owner,
             input with { SourceRevision = "stale" }, default));
         git.Revoked = true;
-        await Assert.ThrowsAsync<AppLifecycleException>(() => service.ObserveAsync(tree.Id, owner, default));
+        Assert.Equal(tree.Id, (await service.ObserveAsync(tree.Id, owner, default)).Id);
         Assert.True(File.Exists(Path.Combine(tree.Path, "keep.txt")));
     }
 

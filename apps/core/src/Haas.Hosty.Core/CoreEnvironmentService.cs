@@ -25,6 +25,11 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
     internal async Task<CoreEnvironmentRecord> RequireAsync(SandboxActor actor, string id, CancellationToken ct)
     {
         var record = await store.ReadAsync(id, ct) ?? throw new SandboxException("environment_not_found", "Environment not found.", 404);
+        if (actor.CanDeleteResource(record.Owner, record.Request.Context))
+        {
+            if (workspaces is not null) await workspaces.RequireWorkspaceUserAsync(actor.UserId, ct);
+            return record;
+        }
         if (record.Owner.UserId != actor.UserId || actor.AppId is not null && (!record.Owner.SameOwner(actor) || actor.GrantId is not null &&
                 (record.Consent?.GrantId != actor.GrantId || record.Consent.ScopeId != actor.ScopeId)))
             throw new SandboxException("environment_forbidden", "The environment belongs to another caller.", 403);
@@ -270,6 +275,8 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
     public async Task<CoreEnvironmentView> CommandAsync(SandboxActor actor, string id, string kind,
         CoreEnvironmentCommand input, CancellationToken ct)
     {
+        if (actor.DeletingWorkspace is not null && kind != "finish")
+            throw new SandboxException("environment_forbidden", "Workspace deletion only authorizes finishing its resources.", 403);
         if (kind is not ("start" or "stop" or "restart" or "finish"))
             throw new SandboxException("environment_operation_invalid", "Unknown environment operation.", 400);
         var requestId = RequestId(input.RequestId);

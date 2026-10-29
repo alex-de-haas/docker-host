@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-26
-updated: 2026-10-27
+updated: 2026-10-29
 summary: Durable jobs and recoverable Harness sessions with scheduling, bounded context, same-provider continuation, budgets and decision waits.
 components: [apps/harness, apps/core, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -82,6 +82,20 @@ Pending waits retain the checkpoint and referenced inputs through ordinary idle 
 and revoked access remain explicit. Context limits, summary policy and attachment retention need
 design before Ready. [Shared Artifacts](../shared-artifacts/plan.md) owns selected cross-session
 handoffs; it neither imports a whole private transcript nor transfers provider-native hidden state.
+
+## Workspace Maintenance Consumer (Owner Decision, 2026-10-29)
+
+A job with application workspace authority and a valid authorizing user's rights can inspect the
+entire workspace collection. Preserve the initiating user in the established background grant;
+job/profile/session identity creates no extra resource ACL. Existing authorization covers recurring
+operations without new per-workspace consent.
+
+[Workspace Permissions And Deletion](../external-workspace-access-continuity/feature.md#one-delete-operation)
+owns collection/deletion semantics. A delete-only-completed-and-merged job checks those requested
+predicates. An explicit delete-all command can remove unfinished source too, without per-item
+permission or mandatory integration proof. The workspace service owns actual execution/recovery;
+this plan owns schedule, claims, retries and reporting. These examples create no live automation
+and authorize no deletion during planning.
 
 ## Dependencies And Ownership
 
