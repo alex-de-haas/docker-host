@@ -13,6 +13,9 @@ internal sealed partial class CoreLifecycleService
         string runtime, AppDevActor actor, CancellationToken ct)
     {
         sourcePath = MountPathPolicy.ResolveRealPath(sourcePath);
+        // The installed package is a comparison/authority baseline, never the
+        // execution candidate. Its retired permissions must not block a valid
+        // workspace that has already removed them.
         var installed = await manifests.LoadAsync(app.ManifestPath!, runtime, ct, forceRead: true);
         await ValidateDevSourceAuthorityAsync(app, installed, actor, ct);
         await new HostPathAuthority(paths, apps).OverrideAsync(app, sourcePath, ct);
@@ -23,16 +26,29 @@ internal sealed partial class CoreLifecycleService
         var operation = await AppDevStore.ReadAsync(paths, app, ct);
         var grants = DevelopmentBaseGrants(app, operation);
         var roles = DevelopmentBaseRoles(app, operation);
-        var classification = AppDevelopmentManifest.Classify(installed, candidate, grants, roles, app.Mounts, app.System);
+        // Carry only previously admitted, still-granted and still-requested workspace
+        // authority into a restart of that same source/runtime. Return keeps its base.
+        var sameWorkspace = operation is { Active: true, ExecutionManifest: not null } &&
+            operation.SourcePath == sourcePath && operation.TargetRuntime == runtime;
+        var effectiveGrants = grants.Concat(sameWorkspace ? (operation!.ExecutionGrantedPermissions ?? [])
+            .Intersect(app.GrantedCorePermissions ?? [], StringComparer.Ordinal)
+            .Intersect(candidate.Manifest.CorePermissions.Concat(candidate.Manifest.OptionalCorePermissions), StringComparer.Ordinal) : [])
+            .Distinct(StringComparer.Ordinal).ToArray();
+        var effectiveRoles = roles.Concat(sameWorkspace ? (operation!.ExecutionConfirmedRoles ?? [])
+            .Intersect(app.ConfirmedRoles ?? [], StringComparer.Ordinal)
+            .Intersect(PlatformCapabilities.RequestedRoles(candidate.Manifest.Provides), StringComparer.Ordinal) : [])
+            .Distinct(StringComparer.Ordinal).ToArray();
+        var classification = AppDevelopmentManifest.Classify(installed, candidate, effectiveGrants, effectiveRoles, app.Mounts, app.System);
         var stamp = DevelopmentWorkspaceService.Hash(string.Join("\n", app.Id, app.InstalledAt.ToString("O"),
             installed.ManifestDigest, sourcePath, runtime, candidate.ManifestDigest, app.PermissionRevision,
             string.Join(",", grants.Order(StringComparer.Ordinal)), string.Join(",", roles.Order(StringComparer.Ordinal)),
+            string.Join(",", effectiveGrants.Order(StringComparer.Ordinal)), string.Join(",", effectiveRoles.Order(StringComparer.Ordinal)),
             await DevConfigurationHashAsync(BuildAppRecord(candidate, app.ManifestPath!, app.ManifestUrl, app.System, app), ct)));
         var digest = DevelopmentWorkspaceService.Hash(stamp + "\n" + actor.UserId + "\n" + actor.Via);
         var review = new AppDevelopmentAccessPlan(app.Id, installed.Manifest.Name ?? app.DisplayName, app.InstalledAt, sourcePath, runtime,
             candidate.ManifestDigest, stamp, digest, actor.UserId, actor.Via, classification.AdditionalAccess,
             candidate.Manifest.CorePermissions.ToArray(), candidate.Manifest.OptionalCorePermissions.ToArray(), grants, roles);
-        return new(candidate, sourcePath, stamp, classification, review, actor);
+        return new(candidate, sourcePath, stamp, classification, review, actor, effectiveGrants, effectiveRoles);
     }
 
     internal Task<InstallationPrepare> CreateExecutionCandidateReviewAsync(AppDevelopmentCandidate candidate,
@@ -83,9 +99,9 @@ internal sealed partial class CoreLifecycleService
                 new(userId, review.Via), ct);
             if (candidate.Review.PlanDigest != review.PlanDigest || CoreJson.Text(candidate.Review) != CoreJson.Text(review))
                 throw DevError("review_stale", "The workspace manifest, installation or authority changed. Select the workspace again.");
-            var granted = review.BaseGrantedPermissions.Concat(CoreAppPermissions.ResolveGrants(review.RequiredPermissions,
+            var granted = candidate.GrantedPermissions.Concat(CoreAppPermissions.ResolveGrants(review.RequiredPermissions,
                 review.OptionalPermissions, optionalPermissions)).Distinct(StringComparer.Ordinal).ToArray();
-            var roles = review.BaseConfirmedRoles.Concat(PlatformCapabilities.RequestedRoles(candidate.Selection.Manifest.Provides))
+            var roles = candidate.ConfirmedRoles.Concat(PlatformCapabilities.RequestedRoles(candidate.Selection.Manifest.Provides))
                 .Distinct(StringComparer.Ordinal).ToArray();
             var path = DevelopmentConsentPath(app.Id, review.PlanDigest);
             SecureFileSystem.EnsurePrivateDirectory(Path.GetDirectoryName(path)!);
@@ -106,9 +122,9 @@ internal sealed partial class CoreLifecycleService
             DevelopmentConsentPath(app.Id, candidate.Review.PlanDigest), ct) : null;
         var next = operation with { ExecutionManifest = file, ExecutionManifestDigest = candidate.Selection.ManifestDigest,
             BaseGrantedPermissions = candidate.Review.BaseGrantedPermissions,
-            ExecutionGrantedPermissions = consent?.GrantedPermissions ?? candidate.Review.BaseGrantedPermissions,
+            ExecutionGrantedPermissions = consent?.GrantedPermissions ?? candidate.GrantedPermissions,
             BaseConfirmedRoles = candidate.Review.BaseConfirmedRoles,
-            ExecutionConfirmedRoles = consent?.ConfirmedRoles ?? candidate.Review.BaseConfirmedRoles };
+            ExecutionConfirmedRoles = consent?.ConfirmedRoles ?? candidate.ConfirmedRoles };
         var executionHash = await DevConfigurationHashAsync(BuildDevelopmentRecord(app, candidate.Selection, next), ct);
         return next with { ExecutionConfigurationHash = executionHash,
             PriorExecutionConfigurationHash = operation.ExecutionConfigurationHash != executionHash
@@ -121,7 +137,7 @@ internal sealed partial class CoreLifecycleService
     {
         var path = running ? operation.RunningManifest ?? operation.ExecutionManifest : operation.ExecutionManifest;
         var selection = await manifests.LoadAsync(path ?? operation.PreviousManifest, operation.TargetRuntime, ct,
-            forceRead: true, allowUnsupportedPermissions: true, allowRetiredContracts: running);
+            forceRead: true, allowRetiredContracts: running);
         if (path is null && selection.ManifestDigest != operation.ManifestDigest)
             throw DevError("previous_contract_changed", "The retained runtime contract changed; restore the operation record before returning.");
         if (!running && path is not null && selection.ManifestDigest != operation.ExecutionManifestDigest)
@@ -135,9 +151,9 @@ internal sealed partial class CoreLifecycleService
         return next with { Version = app.Version, InstallManifestPath = app.InstallManifestPath, SourceState = app.SourceState,
             RequiredCorePermissions = selection.Manifest.CorePermissions.ToArray(),
             OptionalCorePermissions = selection.Manifest.OptionalCorePermissions.ToArray(),
-            GrantedCorePermissions = DevelopmentBaseGrants(app, operation).Concat(operation.ExecutionGrantedPermissions ?? [])
+            GrantedCorePermissions = (operation.BaseGrantedPermissions ?? DevelopmentBaseGrants(app, operation)).Concat(operation.ExecutionGrantedPermissions ?? [])
                 .Distinct(StringComparer.Ordinal).ToArray(),
-            ConfirmedRoles = DevelopmentBaseRoles(app, operation).Concat(operation.ExecutionConfirmedRoles ?? [])
+            ConfirmedRoles = (operation.BaseConfirmedRoles ?? DevelopmentBaseRoles(app, operation)).Concat(operation.ExecutionConfirmedRoles ?? [])
                 .Distinct(StringComparer.Ordinal).ToArray(),
             DevModeId = operation.Id };
     }

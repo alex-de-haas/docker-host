@@ -472,6 +472,27 @@ it("repairs a real stale-plan refusal after a failed review read without replaci
   expect(mutations().every(([url]) => new URL(url).pathname.endsWith("/activation/apply"))).toBe(true);
 });
 
+it("retains a refused apply and offers fresh review when no activation was admitted", async () => {
+  let rejected = false;
+  intercept = (kind) => {
+    if (kind === "apply" && !rejected) {
+      rejected = true;
+      return Response.json({ code: "activation_review_changed", message: "Source changed before admission" }, { status: 409 });
+    }
+    if (kind === "status" && calls("apply").length === 1)
+      return Response.json({ code: "activation_recovery_required", message: "The workspace activation record is unavailable." }, { status: 409 });
+  };
+  await render(); await choose("Hosty redesign"); await click("Switch Core");
+  const original = calls("apply")[0][1];
+  await refreshStatus();
+  expect(document.body.textContent).toContain("Source changed before admission");
+  expect(document.body.textContent).not.toContain("activation record is unavailable");
+  expect(JSON.parse(localStorage.getItem(journalKey())!).refusal.code).toBe("activation_review_changed");
+  await click("Review workspace again"); await click("Retry reviewed switch");
+  expect(calls("apply")[1][1].requestId).toBe(original.requestId);
+  expect(calls("apply")[1][1].selection).toEqual(original.selection);
+});
+
 it("shows a missing workspace and dismisses only its stale browser journal after a fresh catalog read", async () => {
   const saved = { workspaceId: "deleted-workspace", activationId: "returned-activation", target: { kind: "release" } };
   localStorage.setItem(journalKey(), JSON.stringify(saved));

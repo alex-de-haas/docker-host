@@ -17,6 +17,7 @@ let root: Root, container: HTMLDivElement, props: ComponentProps<typeof AppDetai
 const app: CoreApp = {
   id: "example.media", displayName: "Media", version: "1.0.0", kind: "runtime", system: false,
   source: "manifest", operationStatus: "started", runtimeState: "running", selectedRuntime: "dev", live: true,
+  requiredCorePermissions: ["apps.read"],
   capabilities: ["backup", "logs"], autostart: true, supportsSource: true,
   settings: [{ key: "MODE", type: "string", value: "normal", secret: false }, { key: "HOSTY_PUBLIC_ORIGIN_UI", type: "string", value: "https://media.test", secret: false }],
   mounts: [{ key: "library", mode: "ro", required: false, multiple: false, bindings: [{ source: "local", label: "Library", hostPath: "/media", containerPath: "/external/library" }] }],

@@ -23,19 +23,12 @@ internal sealed partial class WorkspaceCleanupService
         foreach (var child in (await environments.ListAsync(ct)).Where(e => Belongs(e.Owner, e.Request.Context, owner, workspaceId)))
             if (child.State != "finished" || DevelopmentWorkspaceService.PathEntryExists(environments.Root(child.Id)))
                 resources.Add(new(child.Id, "core", child.Request.Label, environments.Root(child.Id), child.State, child.Revision));
-        foreach (var instance in (await sandboxes.ListAsync(ct)).Where(s => Belongs(s.Owner, s.Request.Context, owner, workspaceId)))
-            if (instance.State != "disposed" || DevelopmentWorkspaceService.PathEntryExists(sandboxes.DataRoot(instance.Id)))
-                resources.Add(new(instance.Id, "sandbox", instance.Request.AppId + " · " + instance.Id, sandboxes.DataRoot(instance.Id), instance.State, instance.Revision));
         if (resources.Any(r => r.Kind == "core"))
         {
             await RequirePermission(caller, CoreAppPermissions.CoreEnvironmentsRead, ct);
             await RequirePermission(caller, CoreAppPermissions.CoreEnvironmentsManage, ct);
         }
-        if (resources.Any(r => r.Kind == "sandbox"))
-        {
-            await RequirePermission(caller, CoreAppPermissions.SandboxesRead, ct);
-            await RequirePermission(caller, CoreAppPermissions.SandboxesManage, ct);
-        }
+
         return resources.OrderBy(r => r.Kind, StringComparer.Ordinal).ThenBy(r => r.Id, StringComparer.Ordinal).ToArray();
     }
 
@@ -93,12 +86,7 @@ internal sealed partial class WorkspaceCleanupService
                             && record.Operations?.Any(o => o.Id == CoreEnvironmentService.RequestId(resource.RequestId) && o.Kind == "finish") == true)
                             retained.Add(resource);
                     }
-                    else if (resource.Kind == "sandbox")
-                    {
-                        var record = await sandboxService.ReadAsync(new(userId), resource.Id, ct);
-                        if (Belongs(record.Owner, record.Context, owner, workspaceId)
-                            && record.Operations.Any(o => o.Id == resource.RequestId && o.Kind == "dispose")) retained.Add(resource);
-                    }
+
                 }
                 // A new source confirmation does not replace already accepted resource requests.
                 // Requests never admitted by their resource owner use the newly reviewed revision.
@@ -125,14 +113,7 @@ internal sealed partial class WorkspaceCleanupService
                             && record.Operations?.Any(o => o.Id == CoreEnvironmentService.RequestId(resource.RequestId)) != true)
                             throw DevelopmentWorkspaceService.Error("discard_review_changed", "A child Core changed after review. Prepare a fresh removal review.");
                     }
-                    else if (resource.Kind == "sandbox")
-                    {
-                        var record = await sandboxService.ReadAsync(new(userId), resource.Id, ct);
-                        if (!Belongs(record.Owner, record.Context, removalOwner, workspaceId))
-                            throw DevelopmentWorkspaceService.Error("forbidden", "The reviewed sandbox owner changed.");
-                        if (record.State != "disposed" && record.Revision != resource.Revision && !record.Operations.Any(o => o.Id == resource.RequestId))
-                            throw DevelopmentWorkspaceService.Error("discard_review_changed", "A sandbox changed after review. Prepare a fresh removal review.");
-                    }
+
                     else throw DevelopmentWorkspaceService.Error("ownership_invalid", "The cleanup journal contains an unknown resource kind.");
                 }
                 await workspaces.ValidateDiscardSourcesAsync(removalOwner, journal, ct);
@@ -155,23 +136,7 @@ internal sealed partial class WorkspaceCleanupService
                         if (DevelopmentWorkspaceService.PathEntryExists(environments.Root(resource.Id)))
                             throw DevelopmentWorkspaceService.Error("cleanup_pending", "Child Core data removal cannot be verified.");
                     }
-                    else if (resource.Kind == "sandbox")
-                    {
-                        await RequirePermission(caller, CoreAppPermissions.SandboxesManage, ct);
-                        var record = await sandboxService.ReadAsync(new(userId), resource.Id, ct);
-                        if (!Belongs(record.Owner, record.Context, removalOwner, workspaceId))
-                            throw DevelopmentWorkspaceService.Error("forbidden", "The reviewed sandbox owner changed.");
-                        if (record.State != "disposed")
-                        {
-                            var accepted = record.Operations.Any(o => o.Id == resource.RequestId);
-                            if (!accepted && record.Revision != resource.Revision)
-                                throw DevelopmentWorkspaceService.Error("discard_review_changed", "The sandbox changed after review. Prepare a fresh removal review.");
-                            var result = await sandboxOperations.CommandAsync(new(userId), resource.Id, "dispose", new(resource.RequestId, resource.Revision), ct);
-                            if (result.State != "disposed") throw DevelopmentWorkspaceService.Error("cleanup_pending", "Sandbox cleanup remains pending.");
-                        }
-                        if (DevelopmentWorkspaceService.PathEntryExists(sandboxes.DataRoot(resource.Id)))
-                            throw DevelopmentWorkspaceService.Error("cleanup_pending", "Sandbox data removal cannot be verified.");
-                    }
+
                     else throw DevelopmentWorkspaceService.Error("ownership_invalid", "The cleanup journal contains an unknown resource kind.");
                     journal = journal with { Resources = journal.Resources.Select(r => r.Id == resource.Id && r.Kind == resource.Kind ? r with { State = "removed" } : r).ToArray(), Error = null };
                     await workspaces.SaveDiscardAsync(journal);

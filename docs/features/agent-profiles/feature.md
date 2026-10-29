@@ -1,6 +1,6 @@
 ---
 created: 2026-10-26
-updated: 2026-10-28
+updated: 2026-10-29
 summary: Shared Harness agent configurations with connection, model, reasoning, role instructions and explicit skills, selectable before a conversation starts.
 components: [apps/harness]
 ---
@@ -39,8 +39,9 @@ Additional packages, including `hosty-app-skill`, remain optional native guidanc
 that each package must activate on every turn. The Skills tab manages packages; it has no assistant-wide
 selection checkboxes. The legacy settings mutation rejects skill selection with `skill_selection_moved`.
 
-On first profile-store access, General captures the previously selected assistant skills and becomes
-the default. Existing skill migration runs before that capture. Initialization occurs once; deleting
+On first profile-store access, General captures the previously selected assistant skills but is not
+selected as the default. New installations start without a profile. An operator can explicitly set a
+default in Settings; existing configured defaults and conversation snapshots are preserved. Existing skill migration runs before that capture. Initialization occurs once; deleting
 all profiles does not recreate General. Creating another profile does not change the default.
 Deleting the default clears it. A chat without a profile receives the platform introduction and
 package, common instructions and no implicitly selected additional skills. Explicit session `skillIds` remain supported for manual/API consumers.
@@ -58,7 +59,8 @@ action or explicit Refresh, without periodic requests that overwrite edits.
 
 ## Conversation Selection And Persistence
 
-A new chat selects the configured default, or an explicit profile/no-profile choice. Before its
+A new chat starts with No profile unless the operator explicitly configured a default or supplied a
+profile choice. No profile leaves provider selection available before the first message. Before its
 first message the composer can switch profile, applying connection/model/effort, role and skill
 selection as one persisted change. Profile selection and message dispatch share the session queue
 and selection revision, so a send cannot race a partially applied profile. Creating or switching
@@ -156,7 +158,7 @@ Verified on macOS, 2026-10-26, for Harness 0.71.0 → 0.72.0:
 
 ## Testing Expectations
 
-- Preserve one-time initialization, empty collections, explicit defaults and persisted configurations;
+- Preserve one-time initialization without an implicit default, empty collections, explicit defaults and persisted configurations;
   reject malformed storage, duplicate names, unsupported fields and stale concurrent writes.
 - Include platform context with and without a profile, while retaining optional development-skill
   choices and showing the base package as included in every profile.

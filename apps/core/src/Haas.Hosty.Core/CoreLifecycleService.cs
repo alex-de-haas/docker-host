@@ -5162,7 +5162,7 @@ internal sealed partial class CoreLifecycleService(
             return new(await LoadDevExecutionSelectionAsync(development, cancellationToken, running: true), false, null);
         // The reviewed installed copy remains separate from admitted workspace snapshots.
         // Retired contracts remain readable for stop/remove/update; new candidates and execution stay strict.
-        var lastGood = await manifests.LoadAsync(app.ManifestPath, app.SelectedRuntime, cancellationToken, allowUnsupportedPermissions: true, allowRetiredContracts: true);
+        var lastGood = await manifests.LoadAsync(app.ManifestPath, app.SelectedRuntime, cancellationToken, allowRetiredContracts: true);
         if (development is { Active: true })
         {
             // Launching code requires the reviewed live contract. Stop, logs and health use the
@@ -5199,7 +5199,7 @@ internal sealed partial class CoreLifecycleService(
         {
             // Same-size edits can retain the file timestamp on Linux. Operator-owned source must
             // be read again; only the immutable installed copy can rely on the stamp cache.
-            var live = await manifests.LoadAsync(liveManifestPath, app.SelectedRuntime, cancellationToken, validateAllProfiles: true, forceRead: true, allowUnsupportedPermissions: true);
+            var live = await manifests.LoadAsync(liveManifestPath, app.SelectedRuntime, cancellationToken, validateAllProfiles: true, forceRead: true);
             // A folder whose manifest now describes a different app is an operator mistake, not a
             // contract Core should adopt — treat it like an invalid edit and keep the last-good copy.
             if (!string.Equals(live.Manifest.Id, app.Id, StringComparison.Ordinal))

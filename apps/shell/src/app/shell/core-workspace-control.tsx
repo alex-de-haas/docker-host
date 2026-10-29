@@ -24,7 +24,7 @@ type Candidate = { target: Extract<Target, { kind: "workspace" }>; unavailable?:
 type CoreExecutionTargets = { targets: { workspaceId: string; worktreeId: string; label: string; projectPath: string | null; unavailable?: string | null }[]; activations: Retained[] };
 type Pending = { kind: "apply" | "return" | "resume" | "cancel"; workspaceId: string; body: Record<string, unknown> };
 type ReleaseStage = { fromInstance: string; operationId?: string; status?: string; error?: string };
-type Recovery = { release?: ReleaseStage; expectedCoreProject?: string; target: Target | null; workspaceId: string; activationId: string; pending?: Pending | null; originalApply?: Pending | null };
+type Recovery = { refusal?: { message: string; code: string | null; status: number | null }; release?: ReleaseStage; expectedCoreProject?: string; target: Target | null; workspaceId: string; activationId: string; pending?: Pending | null; originalApply?: Pending | null };
 export type CoreWorkspaceControlProps = {
   coreOrigin: string; state: CoreDevelopment | null; workspaces: ActivationWorkspace[]; workspace?: WorkspaceSource;
   disabled: boolean; onRelease: (signal: AbortSignal) => Promise<string>; menu?: boolean;
@@ -202,7 +202,7 @@ export function useCoreWorkspaceControl({ coreOrigin, state, workspaces, workspa
         entry.pending.kind === "return" && activation.returns?.some(receipt => receipt.request.requestId === (entry.pending!.body.return as { requestId?: string })?.requestId) ||
         entry.pending.kind === "resume" && value.status.helper && ["accepted", "running", "completed"].includes(value.status.helper.state) ||
         entry.pending.kind === "cancel" && value.status.cancellationRequested)) {
-      remember({ ...entry, pending: null });
+      remember({ ...entry, refusal: undefined, pending: null });
     }
     return value;
   }, [remember, request, state]);
@@ -223,9 +223,10 @@ export function useCoreWorkspaceControl({ coreOrigin, state, workspaces, workspa
       catch (cause) {
         if (!controller.signal.aborted && !isAuthRequiredRedirectError(cause)) {
           setStatusFailures(value => value + 1);
-          setErrorCode(cause instanceof ActivationError ? cause.code : coreErrorCode(cause));
-          setErrorStatus(cause instanceof ActivationError || cause instanceof CoreRequestError ? cause.status : null);
-          setError("Core status could not be confirmed. The original request is retained. " + (cause instanceof Error ? cause.message : ""));
+          const refusal = recoveryRef.current?.refusal;
+          setErrorCode(refusal?.code ?? (cause instanceof ActivationError ? cause.code : coreErrorCode(cause)));
+          setErrorStatus(refusal?.status ?? (cause instanceof ActivationError || cause instanceof CoreRequestError ? cause.status : null));
+          setError(refusal ? refusal.message : "Core status could not be confirmed. The original request is retained. " + (cause instanceof Error ? cause.message : ""));
         }
       }
       finally { reading = false; if (!controller.signal.aborted && transition) timer = setTimeout(() => void poll(), 3000); }
@@ -239,7 +240,7 @@ export function useCoreWorkspaceControl({ coreOrigin, state, workspaces, workspa
     const scope = lifetime.current;
     if (executing.current || disabled || !state?.manageable || !activeUser?.id || !scope || scope.signal.aborted) return;
     executing.current = true; setBusy(true); setNotice(""); setStatusFailures(0); setError(""); setErrorCode(null); setErrorStatus(null);
-    const original = { ...entry, pending, originalApply: pending.kind === "apply" ? pending : entry.originalApply };
+    const original = { ...entry, refusal: undefined, pending, originalApply: pending.kind === "apply" ? pending : entry.originalApply };
     remember(original);
     try {
       await request<unknown>(pending.workspaceId, pending.kind, pending.body, scope.signal);
@@ -248,9 +249,13 @@ export function useCoreWorkspaceControl({ coreOrigin, state, workspaces, workspa
       await inspect({ ...original, pending: null }, scope.signal);
     } catch (cause) {
       if (!scope.signal.aborted && !isAuthRequiredRedirectError(cause)) {
-        setErrorCode(cause instanceof ActivationError ? cause.code : coreErrorCode(cause));
-        setErrorStatus(cause instanceof ActivationError || cause instanceof CoreRequestError ? cause.status : null);
-        setError("The operation could not be confirmed. Its original request is retained. " + (cause instanceof Error ? cause.message : ""));
+        const code = cause instanceof ActivationError ? cause.code : coreErrorCode(cause);
+        const status = cause instanceof ActivationError || cause instanceof CoreRequestError ? cause.status : null;
+        const message = "The operation could not be confirmed. Its original request is retained. " + (cause instanceof Error ? cause.message : "");
+        setErrorCode(code); setErrorStatus(status); setError(message);
+        // A later missing-record response must not hide a refusal before admission.
+        if (status !== null && status >= 400 && status < 500 && ![408, 429].includes(status))
+          remember({ ...original, refusal: { message, code, status } });
       }
     } finally { if (lifetime.current === scope) { executing.current = false; if (!scope.signal.aborted) { setBusy(false); setStatusRevision(value => value + 1); } } }
   };
@@ -481,7 +486,7 @@ export function useCoreWorkspaceControl({ coreOrigin, state, workspaces, workspa
         <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => setStatusRevision(value => value + 1)}>Check progress</Button>
         {recovery.release.status === "failed" && <Button type="button" variant="outline" size="sm" onClick={() => { remember(null); setError(""); setTarget(null); }}>Dismiss failed switch</Button>}
       </section>}
-      {target?.kind === "workspace" && recovery?.originalApply && (repairing || review?.repair || errorCode === "activation_review_changed" || observed?.phase === "preparing" && observed.preparationReleased) && <div className="space-y-2">
+      {target?.kind === "workspace" && recovery?.originalApply && (repairing || review?.repair || errorCode === "activation_review_changed" || !observed && stalled && errorStatus !== 401 && errorStatus !== 403 && errorCode !== "workspace_not_found" || observed?.phase === "preparing" && observed.preparationReleased) && <div className="space-y-2">
         <Button type="button" variant="outline" disabled={unavailable || busy} onClick={() => void prepareReview(target, recovery.originalApply!)}>Review workspace again</Button>
         {review && <Button type="button" disabled={unavailable || busy} onClick={() => void run({ ...recovery.originalApply!, body: { ...recovery.originalApply!.body, planDigest: review.value.planDigest } },
           { ...recovery, expectedCoreProject: review.value.plan.participants.find(row => row.kind === "core")?.sourcePath ?? undefined })}>Retry reviewed switch</Button>}

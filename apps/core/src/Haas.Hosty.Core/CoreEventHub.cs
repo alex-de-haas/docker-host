@@ -71,9 +71,12 @@ internal sealed class CoreEventHub
         CoreEventSubscription[] targets;
         lock (gate) targets = subscriptions.Where(s => s.Resources && s.IsActive).ToArray();
         if (targets.Length == 0) return;
-        var envelope = new CoreEventEnvelope(ResourcesSample,
-            JsonSerializer.Serialize(sample, CoreJsonSerializerContext.Default.ResourceUsageEvent));
-        foreach (var subscription in targets) subscription.TryWrite(envelope);
+        foreach (var subscription in targets)
+        {
+            var scoped = sample with { Frame = sample.Frame.ForUser(subscription.UserId, subscription.Sandboxes) };
+            subscription.TryWrite(new(ResourcesSample,
+                JsonSerializer.Serialize(scoped, CoreJsonSerializerContext.Default.ResourceUsageEvent)));
+        }
     }
 
     // End the streams a credential currently holds open, so revoking it stops delivery now rather than

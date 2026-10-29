@@ -28,10 +28,6 @@ internal static class CoreAppPermissions
     public const string CoreEnvironmentsOperate = "core.environments.operate";
     public const string CoreEnvironmentsRead = "core.environments.read";
     public const string CoreEnvironmentsManage = "core.environments.manage";
-    public const string SandboxesRead = "apps.sandboxes.read";
-    public const string SandboxesInspect = "apps.sandboxes.inspect";
-    public const string SandboxesOperate = "apps.sandboxes.operate";
-    public const string SandboxesManage = "apps.sandboxes.manage";
     public const string SourcesRead = "apps.sources.read";
     public const string LegacySources = "apps.sources";
     public const string SourceConnections = "sources.connections";
@@ -43,7 +39,7 @@ internal static class CoreAppPermissions
     public const string TaskProviders = "providers.tasks";
     public const string TaskExecutors = "providers.task-executor";
     public const string AssistantProviders = "providers.assistant";
-    public static readonly string[] Known = [ReadCredentials, RevokeCredentials, RequestMcpAccess, WorkspaceCore, Install, ReadApps, ReadPanels, AppLogs, Notifications, AppLifecycle, ConfigureApps, ReadCore, UpdateCore, CoreLifecycle, ConfigureCore, CoreLogs, ReadUsers, ManageUsers, Sources, SourcesRead, WorkspacesRead, WorkspacesCleanup, SandboxesRead, SandboxesManage, CoreEnvironmentsRead, CoreEnvironmentsManage, CoreEnvironmentsInspect, CoreEnvironmentsOperate, SandboxesInspect, SandboxesOperate, SourceConnections, ReadSkills, ManageSkills, SpeechProviders, TranslationProviders, AssistantProviders, TaskProviders, TaskExecutors];
+    public static readonly string[] Known = [ReadCredentials, RevokeCredentials, RequestMcpAccess, WorkspaceCore, Install, ReadApps, ReadPanels, AppLogs, Notifications, AppLifecycle, ConfigureApps, ReadCore, UpdateCore, CoreLifecycle, ConfigureCore, CoreLogs, ReadUsers, ManageUsers, Sources, SourcesRead, WorkspacesRead, WorkspacesCleanup, CoreEnvironmentsRead, CoreEnvironmentsManage, CoreEnvironmentsInspect, CoreEnvironmentsOperate, SourceConnections, ReadSkills, ManageSkills, SpeechProviders, TranslationProviders, AssistantProviders, TaskProviders, TaskExecutors];
 
     // The old name grants exactly the same authority. Other retired permissions remain unsupported.
     public static string Normalize(string permission) => permission == LegacySources ? Sources : permission;
@@ -58,13 +54,13 @@ internal static class CoreAppPermissions
         optional = Normalize(optional);
         selected = selected is null ? null : Normalize(selected);
         previous = previous is null ? null : Normalize(previous);
-        var unsupported = required.Concat(selected ?? []).Where(p => !Known.Contains(p, StringComparer.Ordinal)).ToArray();
-        if (unsupported.Length > 0)
-            throw new AppLifecycleException("app_permissions_unsupported", $"Unsupported permission declarations: {string.Join(", ", unsupported)}. Update the app manifest before approving permissions.");
         var choices = selected ?? (previous ?? []).Intersect(optional, StringComparer.Ordinal).Where(p => Known.Contains(p, StringComparer.Ordinal)).ToArray();
         if (choices.Any(p => !optional.Contains(p, StringComparer.Ordinal)))
             throw new AppLifecycleException("permission_selection_invalid", "An optional permission was not part of the reviewed declarations.");
-        return required.Concat(choices).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+        // Unknown declarations remain diagnostic metadata, never dormant grants
+        // that could gain authority automatically after a Core upgrade.
+        return required.Concat(choices).Where(p => Known.Contains(p, StringComparer.Ordinal))
+            .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
     }
 
     public static string Describe(string permission) => permission switch
@@ -72,14 +68,10 @@ internal static class CoreAppPermissions
         Sources => "Access and modify application source code, including code Hosty executes on this host in development mode; manage workspaces and use selected source-provider connections",
         WorkspacesCleanup => "Delete this assistant installation's explicitly completed workspaces and owned temporary resources in the background after fresh Core verification",
         WorkspacesRead => "Inspect authorized development workspaces, worktrees, source diffs and recorded publication facts as the current administrator; no mutations",
-        SandboxesInspect => "Inspect the current administrator's sandbox instances across their creating apps",
-        SandboxesOperate => "Operate the current administrator's sandboxes across creating apps, including replacing test fixtures and deleting temporary resources",
         CoreEnvironmentsInspect => "Inspect child Core environments and application status across creating apps as an administrator",
         CoreEnvironmentsOperate => "Create and control trusted child Core environments across creating apps, set up test accounts and permanently delete their temporary resources",
         CoreEnvironmentsRead => "Inspect owned child Core environments and their local preview addresses",
         CoreEnvironmentsManage => "Launch trusted child Core processes sharing Docker, configure their full API, and finish their temporary resources",
-        SandboxesRead => "Inspect authorized sandbox instances, preview destinations and sanitized verification results",
-        SandboxesManage => "Create and manage isolated sandbox instances, temporary test users and synthetic data within reviewed runtime and resource limits",
         SourcesRead => "Read repository documentation and development workspace document changes as the current administrator; no source edits or workspace mutations",
         SourceConnections => "Manage your own source-provider accounts and Git identity; select connections for reviewed installations",
         ReadApps => "List applications and read their state",

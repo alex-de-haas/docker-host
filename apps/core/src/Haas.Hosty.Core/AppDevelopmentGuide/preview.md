@@ -59,3 +59,18 @@ advertised port; this routing change does not replace app credentials or authori
 The browser uses the original advertised URL. Probe the client bundle as well as `/healthz`:
 a healthy process alone does not prove the generated page can build or authenticate.
 
+
+## One sandbox model
+
+Every sandbox is a child Core with ordinary applications. Use environment_create and the existing
+consent/start/setup/environment_api tools; no separate app-sandbox allocator, persona auth, reset
+API or private browser worker exists. Install one or several apps through normal child APIs and
+review their permissions/dependencies. Browser checks use the advertised Core/app origins and
+normal password login with child-only test accounts. Stop/Restart retains data. Finish followed by
+a new environment is a fresh test; keep useful reports outside the child-owned root.
+
+Current/release copy the selected Core executable closure; source builds an explicitly selected
+registered Core project. An app workspace does not imply a source Core. Observe the actual child
+version: a continuing child survives a parent update on its private copy, while parent Start/Restart
+prepares its existing selected input. Do not replace this behavior with automatic synchronization.
+

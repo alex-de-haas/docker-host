@@ -176,7 +176,7 @@ public sealed class ProviderHttpTests
         Assert.Equal("removed.permission", body.GetProperty("unsupportedRequired")[0].GetString());
         Assert.Equal(2, body.GetProperty("required").GetArrayLength());
         Assert.Empty(body.GetProperty("granted").EnumerateArray());
-        Assert.False(body.GetProperty("reviewAvailable").GetBoolean());
+        Assert.True(body.GetProperty("reviewAvailable").GetBoolean());
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/internal/apps/example.other/permissions")).StatusCode);
     }
 

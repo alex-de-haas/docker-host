@@ -484,45 +484,34 @@ public sealed partial class CoreLifecycleServiceTests
         var store = new CoreEnvironmentStore(f.F.Paths);
         var runtime = new ResourceControlRuntime();
         var environments = new CoreEnvironmentService(store, runtime, f.F.Clock, f.Service);
-        var sandboxStore = new SandboxStore(f.F.Paths);
-        var sandboxRuntime = new ResourceControlSandboxRuntime();
-        var sandboxes = new SandboxService(sandboxStore, new ResourceControlInputs(f.Tree.Path), sandboxRuntime, f.F.Clock);
         WorkspaceCleanupService Controls(DevelopmentWorkspaceService workspaces) => new(f.F.Paths,
             new(workspaces, f.F.Apps, f.F.Clock), workspaces, null!, f.F.Apps, store, environments,
-            new(store, environments), sandboxStore, sandboxes, new(sandboxes, new ResourceControlLifetime()));
+            new(store, environments));
         var app = (await f.F.Apps.GetAppAsync(SourceTestApp))!;
         await f.F.Apps.UpsertAppAsync(app with { GrantedCorePermissions = [CoreAppPermissions.Sources,
-            CoreAppPermissions.CoreEnvironmentsRead, CoreAppPermissions.CoreEnvironmentsManage,
-            CoreAppPermissions.SandboxesRead, CoreAppPermissions.SandboxesManage] });
+            CoreAppPermissions.CoreEnvironmentsRead, CoreAppPermissions.CoreEnvironmentsManage] });
         var actor = new SandboxActor("admin");
         var child = await environments.CreateAsync(actor, new(Guid.NewGuid().ToString(), "Discarded child data",
             Context: new(WorkspaceId: f.Tree.WorkspaceId), WorktreeIds: [f.Tree.Id]), default);
-        var sandboxPlan = await sandboxes.PlanAsync(actor, new(SourceTestApp, "sandbox", new("worktree", f.Tree.Id),
-            Context: new(WorkspaceId: f.Tree.WorkspaceId)), default);
-        var sandbox = await sandboxes.PrepareAsync(actor, new(Guid.NewGuid().ToString(), sandboxPlan.Id, sandboxPlan.Digest), default);
         var unrelated = await environments.CreateAsync(actor, new(Guid.NewGuid().ToString(), "Unrelated retained data"), default);
         var childData = Path.Combine(child.DataRoot!, "sentinel.txt");
-        var sandboxData = Path.Combine(sandboxStore.DataRoot(sandbox.Id), "sentinel.txt");
         var unrelatedData = Path.Combine(unrelated.DataRoot!, "sentinel.txt");
         await File.WriteAllTextAsync(childData, "owned child data");
-        Directory.CreateDirectory(Path.GetDirectoryName(sandboxData)!);
-        await File.WriteAllTextAsync(sandboxData, "owned sandbox data");
         await File.WriteAllTextAsync(unrelatedData, "unrelated data remains");
         var controls = Controls(f.Service);
         var plan = await controls.PrepareDiscardAsync(f.Tree.WorkspaceId, "admin", SourceTestApp, default);
         Assert.Empty(plan.Blockers);
-        Assert.Equal(2, plan.Resources.Length);
+        Assert.Single(plan.Resources);
         Assert.Contains(plan.Resources, item => item.Id == child.Id && item.DataPath == child.DataRoot);
-        Assert.Contains(plan.Resources, item => item.Id == sandbox.Id && item.Kind == "sandbox");
         var command = DiscardInput(plan);
         runtime.FailStop = true;
         var pending = await controls.ApplyDiscardAsync(f.Tree.WorkspaceId, "admin", SourceTestApp, command, default);
         Assert.Equal("pending", pending.State);
         Assert.NotNull(pending.Error);
-        Assert.True(File.Exists(childData)); Assert.True(File.Exists(sandboxData));
+        Assert.True(File.Exists(childData));
         Assert.True(Directory.Exists(f.Tree.Path));
         var admitted = (await f.Service.ReadDiscardAsync(f.Tree.WorkspaceId, command.RequestId, "admin", default))!;
-        Assert.Equal(2, admitted.Cleanup.Length);
+        Assert.Single(admitted.Cleanup);
         runtime.FailStop = false;
         var restarted = new DevelopmentWorkspaceService(f.F.Paths, f.F.Apps, f.F.Clock);
         if (sourceDrift)
@@ -531,8 +520,7 @@ public sealed partial class CoreLifecycleServiceTests
             var stale = await Controls(restarted).ApplyDiscardAsync(f.Tree.WorkspaceId, "admin", SourceTestApp, command, default);
             Assert.Equal("review-required", stale.State);
             Assert.Equal(0, runtime.Stops);
-            Assert.True(File.Exists(childData)); Assert.True(File.Exists(sandboxData));
-            Assert.DoesNotContain((await sandboxes.ReadAsync(actor, sandbox.Id, default)).Operations, item => item.Kind == "dispose");
+            Assert.True(File.Exists(childData));
             Assert.True(Directory.Exists(f.Tree.Path));
             var refreshed = await Controls(restarted).PrepareDiscardAsync(f.Tree.WorkspaceId, "admin", SourceTestApp, default);
             Assert.Empty(refreshed.Blockers);
@@ -541,17 +529,13 @@ public sealed partial class CoreLifecycleServiceTests
         var result = await Controls(restarted).ApplyDiscardAsync(f.Tree.WorkspaceId, "admin", SourceTestApp, command, default);
         Assert.Equal("removed", result.State);
         Assert.False(Directory.Exists(f.Tree.Path));
-        Assert.False(File.Exists(childData)); Assert.False(File.Exists(sandboxData));
-        Assert.False(Directory.Exists(child.DataRoot)); Assert.False(Directory.Exists(sandboxStore.DataRoot(sandbox.Id)));
+        Assert.False(File.Exists(childData));
+        Assert.False(Directory.Exists(child.DataRoot));
         Assert.Equal("finished", (await environments.ReadAsync(actor, child.Id, default)).State);
-        Assert.Equal("disposed", (await sandboxes.ReadAsync(actor, sandbox.Id, default)).State);
         Assert.Equal("unrelated data remains", await File.ReadAllTextAsync(unrelatedData));
         Assert.Equal("source", await File.ReadAllTextAsync(Path.Combine(f.Origin, "README.md")));
         var childRecord = (await store.ReadAsync(child.Id, default))!;
         Assert.Contains(childRecord.Operations!, item => item.Id == CoreEnvironmentService.RequestId(admitted.Cleanup.Single(r => r.Id == child.Id).RequestId));
-        var sandboxRecord = await sandboxes.ReadAsync(actor, sandbox.Id, default);
-        var disposed = Assert.Single(sandboxRecord.Operations, item => item.Kind == "dispose");
-        if (!sourceDrift) Assert.Equal(admitted.Cleanup.Single(r => r.Id == sandbox.Id).RequestId, disposed.Id);
         Assert.Equal("removed", (await Controls(restarted).ApplyDiscardAsync(f.Tree.WorkspaceId, "admin", SourceTestApp, command, default)).State);
     }
 
@@ -565,11 +549,8 @@ public sealed partial class CoreLifecycleServiceTests
         using var f = new DiscardFixture(fixture, tree.Repository, service, tree.Owner, tree);
         var store = new CoreEnvironmentStore(fixture.Paths);
         var environments = new CoreEnvironmentService(store, new ResourceControlRuntime(), fixture.Clock, service);
-        var sandboxStore = new SandboxStore(fixture.Paths);
-        var sandboxes = new SandboxService(sandboxStore, new ResourceControlInputs(tree.Path), new ResourceControlSandboxRuntime(), fixture.Clock);
         var controls = new WorkspaceCleanupService(fixture.Paths, new(service, fixture.Apps, fixture.Clock, privateSources: access),
-            service, null!, fixture.Apps, store, environments, new(store, environments), sandboxStore, sandboxes,
-            new(sandboxes, new ResourceControlLifetime()));
+            service, null!, fixture.Apps, store, environments, new(store, environments));
         await fixture.Apps.UpdateAppAsync(SourceTestApp, app => app with { GrantedCorePermissions = [CoreAppPermissions.Sources] });
         var plan = await controls.PrepareDiscardAsync(tree.WorkspaceId, "admin", SourceTestApp, default);
         Assert.Empty(plan.Blockers);
@@ -750,10 +731,8 @@ public sealed partial class CoreLifecycleServiceTests
         await AddDiscardableSource(f.Tree);
         var store = new CoreEnvironmentStore(f.F.Paths);
         var environments = new CoreEnvironmentService(store, new ResourceControlRuntime(), f.F.Clock, f.Service);
-        var sandboxStore = new SandboxStore(f.F.Paths);
-        var sandboxes = new SandboxService(sandboxStore, new ResourceControlInputs(f.Tree.Path), new ResourceControlSandboxRuntime(), f.F.Clock);
         var controls = new WorkspaceCleanupService(f.F.Paths, new(f.Service, f.F.Apps, f.F.Clock), f.Service, null!, f.F.Apps,
-            store, environments, new(store, environments), sandboxStore, sandboxes, new(sandboxes, new ResourceControlLifetime()));
+            store, environments, new(store, environments));
         await f.F.Apps.UpdateAppAsync(SourceTestApp, app => app with { GrantedCorePermissions = [CoreAppPermissions.Sources] });
         var plan = await controls.PrepareDiscardAsync(f.Tree.WorkspaceId, "admin", SourceTestApp, default);
         var command = DiscardInput(plan);

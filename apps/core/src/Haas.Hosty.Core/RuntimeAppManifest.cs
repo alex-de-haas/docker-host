@@ -62,13 +62,12 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
         string? legacyManifestDigest = null,
         SourceReadGrant? manifestGrant = null,
         bool forceRead = false,
-        bool allowUnsupportedPermissions = false,
         bool allowRetiredContracts = false)
     {
         var (manifest, source, digest) = await ReadDocumentAsync(manifestPath, manifestGrant, forceRead, cancellationToken);
         return Select(manifest, source.Reference, digest, selectedRuntime, source.Json, source.ManifestUrl,
             validateAllProfiles: validateAllProfiles, requirePanelIcons: requirePanelIcons && digest != legacyManifestDigest,
-            allowUnsupportedPermissions: allowUnsupportedPermissions, allowRetiredContracts: allowRetiredContracts);
+            allowRetiredContracts: allowRetiredContracts);
     }
 
     // Discovery reads declarations, not an execution contract. Admission still goes through LoadAsync
@@ -488,7 +487,6 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
         string? manifestUrl = null,
         bool validateAllProfiles = true,
         bool requirePanelIcons = false,
-        bool allowUnsupportedPermissions = false,
         bool allowRetiredContracts = false)
     {
         var errors = new List<AppManifestValidationError>();
@@ -534,8 +532,8 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
             errors.Add(new("app_manifest_agent_worker_retired", "The agentWorker contract is retired. Install an application that declares ordinary services.", "$.agentWorker"));
         foreach (var permission in manifest.CorePermissions.Concat(manifest.OptionalCorePermissions))
         {
-            if (!allowUnsupportedPermissions && !CoreAppPermissions.Known.Contains(permission, StringComparer.Ordinal))
-                errors.Add(new("app_manifest_core_permission_invalid", $"Unknown Core permission '{permission}'.", "$.corePermissions"));
+            if (string.IsNullOrWhiteSpace(permission) || permission != permission.Trim())
+                errors.Add(new("app_manifest_core_permission_invalid", "Core permission names must be nonempty strings without surrounding whitespace.", "$.corePermissions"));
         }
         if (manifest.CorePermissions.Distinct(StringComparer.Ordinal).Count() != manifest.CorePermissions.Count)
             errors.Add(new("app_manifest_core_permission_duplicate", "Core permissions must be unique.", "$.corePermissions"));
@@ -911,7 +909,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
         if (validateAllProfiles)
         {
             foreach (var other in manifest.RuntimeProfiles.Where(profile => profile.Key != selectedProfile!.Key))
-                Select(manifest, manifestPath, manifestDigest, other.Key, manifestJson, manifestUrl, validateAllProfiles: false, requirePanelIcons: requirePanelIcons, allowUnsupportedPermissions: allowUnsupportedPermissions, allowRetiredContracts: allowRetiredContracts);
+                Select(manifest, manifestPath, manifestDigest, other.Key, manifestJson, manifestUrl, validateAllProfiles: false, requirePanelIcons: requirePanelIcons, allowRetiredContracts: allowRetiredContracts);
         }
         _ = DockerRuntimeAdapter.OrderServices(selectedServices);
 
@@ -3479,8 +3477,6 @@ internal sealed record RuntimeDockerImage(string Repository, string Tag, string?
 
 internal sealed class RuntimeAppManifest
 {
-    // Explicit opt-in: older SDKs cannot safely interpret instance-scoped test administrators.
-    public SandboxManifest? Sandbox { get; init; }
     public System.Text.Json.JsonElement? AgentWorker { get; init; }
     // Collection properties coalesce null to empty in the getter so that members absent
     // from the JSON behave the same under the source generator (used for Native AOT) as

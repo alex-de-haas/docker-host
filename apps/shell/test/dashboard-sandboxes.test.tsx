@@ -2,7 +2,6 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DashboardSandboxes } from "../src/app/shell/pages/dashboard-sandboxes";
-import type { CoreApp } from "../src/app/shell/types";
 import type { ActivationWorkspace } from "../src/app/shell/workspace-sources";
 
 const transport = vi.hoisted(() => ({ read: vi.fn(), send: vi.fn() }));
@@ -10,27 +9,21 @@ vi.mock("../src/app/shell/core-transport.js", () => ({ fetchCore: transport.read
 vi.mock("../src/app/shell/shell-context", () => ({ useShellActions: () => ({ sendCsrfJson: transport.send }) }));
 
 const origin = "https://core.test";
-const childId = "1".repeat(32), instanceId = "2".repeat(32);
+const childId = "1".repeat(32);
 const workspaceId = "opaque-workspace-id-that-is-not-a-purpose";
-const appId = "example.movie-studio";
-const apps = [{ id: appId, displayName: "Movie Studio" }] as CoreApp[];
 const workspace: ActivationWorkspace = {
   id: workspaceId, name: "Improve playback", state: "active", owner: { label: "Playback work" }, worktrees: [],
 };
 const child = (value: Record<string, unknown> = {}) => ({
-  id: childId, label: "Playback QA", state: "running", mode: "release", revision: 6, operations: [],
+  id: childId, label: "Playback QA", state: "running", mode: "source", revision: 6, operations: [],
   previewUrl: "https://child.test", context: { workspaceId }, ...value,
 });
-const instance = (value: Record<string, unknown> = {}) => ({
-  id: instanceId, appId, state: "ready", revision: 7, operations: [], users: [],
-  source: { kind: "worktree" }, previewUrl: "https://preview.test/app", ...value,
-});
 let root: Root, container: HTMLDivElement;
-let environments: ReturnType<typeof child>[], instances: ReturnType<typeof instance>[];
-let childFailure: Response | null, instanceFailure: Response | null;
+let environments: ReturnType<typeof child>[];
+let childFailure: Response | null;
 let childApps: { state: string; apps: Record<string, unknown>[] };
 
-const rows = () => [...container.querySelectorAll<HTMLElement>('article[aria-label^="Sandbox "]')];
+const rows = () => [...container.querySelectorAll<HTMLElement>('article[aria-label^="Environment "]')];
 function row(label: string) {
   const result = rows().find(item => item.getAttribute("aria-label")?.includes(label));
   expect(result, `Missing sandbox row ${label}`).toBeDefined();
@@ -46,29 +39,34 @@ async function click(label: string, scope: ParentNode = container) {
   await act(async () => button(label, scope).click());
 }
 async function expand(label: string) {
-  const toggle = row(label).querySelector<HTMLButtonElement>('button[aria-expanded="false"]');
+  const toggle = button(`Environment Details for ${label}`, row(label));
   expect(toggle).not.toBeNull();
   await act(async () => toggle!.click());
 }
+async function refreshInventory() {
+  await act(async () => {
+    if (SandboxSource.latest.readyState !== 1) SandboxSource.latest.open();
+    SandboxSource.latest.emit("sandbox.snapshot", null);
+  });
+}
 async function render(workspaces = [workspace]) {
-  await act(async () => root.render(<DashboardSandboxes coreOrigin={origin} apps={apps} workspaces={workspaces} />));
+  await act(async () => root.render(<DashboardSandboxes coreOrigin={origin} connectedCore={<div data-testid="connected-core">Hosty Core</div>} workspaces={workspaces} />));
 }
 const appRequests = () => transport.read.mock.calls.filter(([url]) => /\/core-environments\/[^/]+\/apps$/.test(String(url)));
 
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  vi.stubGlobal("EventSource", SandboxSource);
   sessionStorage.clear();
-  environments = []; instances = []; childFailure = null; instanceFailure = null;
+  environments = []; childFailure = null;
   childApps = { state: "ready", apps: [{ id: "child.app", displayName: "Child application", runtimeState: "running", health: "healthy", previewUrl: "https://child.test/app" }] };
   transport.read.mockReset(); transport.send.mockReset();
   transport.read.mockImplementation(async (url: string) => {
     const path = new URL(String(url), origin).pathname;
     if (path === "/api/core-environments") return childFailure?.clone() ?? Response.json({ environments, consents: [] });
-    if (path === "/api/sandbox-instances") return instanceFailure?.clone() ?? Response.json({ instances });
     if (/^\/api\/core-environments\/[^/]+\/apps$/.test(path)) return Response.json(childApps);
     if (path === `/api/core-environments/${childId}`) return Response.json(environments.find(item => item.id === childId) ?? child());
-    if (path === `/api/sandbox-instances/${instanceId}`) return Response.json(instances.find(item => item.id === instanceId) ?? instance());
     throw new Error(`Unexpected read ${path}`);
   });
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
@@ -77,53 +75,13 @@ afterEach(async () => {
   await act(async () => root.unmount()); container.remove(); sessionStorage.clear(); vi.unstubAllGlobals();
 });
 
-it("keeps creation visible when both inventories successfully report no sandboxes", async () => {
-  await render();
-  expect(button("Create environment").disabled).toBe(false);
-  expect(container.textContent).toContain("No sandboxes yet");
-  expect(transport.read.mock.calls.map(([url]) => new URL(String(url)).pathname).sort())
-    .toEqual(["/api/core-environments", "/api/sandbox-instances"]);
-});
-
-it.each(["Core", "application", "both"])("shows %s sandboxes in one section with collapsed rows and no eager child app reads", async kind => {
-  if (kind !== "application") environments = [child()];
-  if (kind !== "Core") instances = [instance()];
-  await render();
-  expect(container.querySelectorAll('[role="region"][aria-label="Sandboxes"]')).toHaveLength(1);
-  expect([...container.querySelectorAll("h2,h3")].filter(item => item.textContent === "Sandboxes")).toHaveLength(1);
-  expect(rows()).toHaveLength(kind === "both" ? 2 : 1);
-  expect([...container.querySelectorAll('button[aria-expanded]')].every(item => item.getAttribute("aria-expanded") === "false")).toBe(true);
-  expect(appRequests()).toHaveLength(0);
-  expect(container.textContent).not.toContain("Child application");
-  if (kind !== "application") {
-    await expand("Playback QA");
-    expect(appRequests()).toHaveLength(1);
-    expect(row("Playback QA").textContent).toContain("Child application");
-    expect(row("Playback QA").textContent).toContain("healthy");
-  }
-});
-
-it("uses workspace purposes, legacy owner labels and independent runs without opaque IDs", async () => {
-  environments = [child(), child({ id: "3".repeat(32), label: "Legacy QA", context: { workspaceId: "legacy" } })];
-  instances = [instance()];
-  await render([workspace, { ...workspace, id: "legacy", name: undefined, owner: { label: "Fix the player" } }]);
-  expect(row("Playback QA").textContent).toContain("Improve playback");
-  expect(row("Legacy QA").textContent).toContain("Fix the player");
-  expect(row("Movie Studio").textContent).toContain("Independent run");
-  expect(container.textContent).not.toContain(workspaceId);
-  expect(container.textContent).not.toContain(appId);
-});
-
 it("keeps failed, cleanup-failed and stopped resources visible while excluding finished and disposed ones", async () => {
   environments = [child({ state: "failed", label: "Failed build" }), child({ id: "3".repeat(32), state: "cleanup-failed", label: "Cleanup needs retry" }),
     child({ id: "4".repeat(32), state: "stopped", label: "Stopped QA" }), child({ id: "5".repeat(32), state: "finished", label: "Finished QA" })];
-  instances = [instance({ state: "failed" }), instance({ id: "6".repeat(32), appId: "cleanup.app", state: "cleanup-failed" }),
-    instance({ id: "7".repeat(32), appId: "stopped.app", state: "stopped" }), instance({ id: "8".repeat(32), appId: "disposed.app", state: "disposed" })];
   await render();
-  expect(rows()).toHaveLength(6);
-  for (const label of ["Failed build", "Cleanup needs retry", "Stopped QA", "Movie Studio", "cleanup.app", "stopped.app"]) expect(row(label)).toBeDefined();
+  expect(rows()).toHaveLength(3);
+  for (const label of ["Failed build", "Cleanup needs retry", "Stopped QA"]) expect(row(label)).toBeDefined();
   expect(container.textContent).not.toContain("Finished QA");
-  expect(container.textContent).not.toContain("disposed.app");
   expect(container.textContent?.toLowerCase()).toContain("cleanup-failed");
   expect(container.textContent?.toLowerCase()).toContain("stopped");
   await expand("Stopped QA");
@@ -132,36 +90,12 @@ it("keeps failed, cleanup-failed and stopped resources visible while excluding f
 
 it("only offers credential-free HTTP preview links for a running child and its apps", async () => {
   environments = [child({ previewUrl: "javascript:alert(1)" })];
-  instances = [instance({ previewUrl: "data:text/html,not-a-preview" })];
   childApps.apps.push({ id: "unsafe.app", displayName: "Unsafe application", runtimeState: "running", previewUrl: "https://user:secret@unsafe.test/app" });
-  await render(); await expand("Playback QA"); await expand("Movie Studio");
-  const hrefs = [...container.querySelectorAll<HTMLAnchorElement>("a[href]")].map(link => link.href);
+  await render(); await expand("Playback QA");
+  const hrefs = [...document.querySelectorAll<HTMLAnchorElement>("a[href]")].map(link => link.href);
   expect(hrefs).toContain("https://child.test/app");
   expect(hrefs.every(value => { const url = new URL(value); return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password; })).toBe(true);
   expect(hrefs.some(value => value.includes("unsafe.test"))).toBe(false);
-});
-
-it.each(["Core", "application"])("keeps the other inventory when the %s inventory fails", async failed => {
-  if (failed === "Core") { childFailure = Response.json({ message: "Core inventory unavailable" }, { status: 503 }); instances = [instance()]; }
-  else { instanceFailure = Response.json({ message: "App inventory unavailable" }, { status: 503 }); environments = [child()]; }
-  await render();
-  expect(row(failed === "Core" ? "Movie Studio" : "Playback QA")).toBeDefined();
-  expect(container.querySelector('[role="alert"]')?.textContent).toContain(failed === "Core" ? "Core inventory unavailable" : "App inventory unavailable");
-});
-
-it("retains both successful inventories and expanded details when a later refresh fails", async () => {
-  environments = [child()]; instances = [instance()];
-  await render(); await expand("Playback QA"); await expand("Movie Studio");
-  childFailure = Response.json({ message: "Core refresh is temporarily unavailable" }, { status: 500 });
-  instanceFailure = Response.json({ message: "Application refresh is temporarily unavailable" }, { status: 500 });
-  await click("Refresh sandboxes");
-  expect(rows()).toHaveLength(2);
-  expect(row("Playback QA").querySelector('button[aria-expanded="true"]')).not.toBeNull();
-  expect(row("Movie Studio").querySelector('button[aria-expanded="true"]')).not.toBeNull();
-  expect(row("Playback QA").textContent).toContain("Child application");
-  const errors = [...container.querySelectorAll('[role="alert"]')].map(item => item.textContent).join(" ");
-  expect(errors).toContain("Core refresh is temporarily unavailable");
-  expect(errors).toContain("Application refresh is temporarily unavailable");
 });
 
 it("does not let an overlapping old inventory undo a confirmed mutation while revalidation is pending", async () => {
@@ -182,26 +116,18 @@ it("does not let an overlapping old inventory undo a confirmed mutation while re
     return Response.json(environments[0]);
   });
   await render(); await expand("Playback QA");
-  await click("Refresh sandboxes");
+  await refreshInventory();
   expect(coreReads).toBe(2);
   await click("Start", row("Playback QA"));
-  expect(button("Hide details for Playback QA").textContent).toContain("running");
+  expect(row("Playback QA").querySelector(".dashboard-sandbox-status")!.textContent?.toLowerCase()).toContain("running");
   await act(async () => resolveOld(Response.json({ environments: [child({ state: "stopped" })], consents: [] })));
   await vi.waitFor(() => expect(coreReads).toBe(3));
   // The newer read is deliberately unresolved: only the mutation receipt can supply this state.
-  expect(button("Hide details for Playback QA").textContent).toContain("running");
-  expect(button("Hide details for Playback QA").textContent).not.toContain("stopped");
+  expect(row("Playback QA").querySelector(".dashboard-sandbox-status")!.textContent?.toLowerCase()).toContain("running");
+  expect(row("Playback QA").querySelector(".dashboard-sandbox-status")!.textContent?.toLowerCase()).not.toContain("stopped");
   expect(sessionStorage.getItem(`hosty:core-environment:${origin}`)).toBeNull();
   await act(async () => resolveFresh(Response.json({ environments, consents: [] })));
-  expect(button("Hide details for Playback QA").textContent).toContain("running");
-});
-
-it.each(["Core", "application"])("does not hide a forbidden %s inventory behind the other successful empty list", async kind => {
-  const failure = Response.json({ message: "Sandbox inspection permission is required" }, { status: 403 });
-  if (kind === "Core") childFailure = failure; else instanceFailure = failure;
-  await render();
-  expect(container.querySelector('[role="region"][aria-label="Sandboxes"]')).not.toBeNull();
-  expect(container.querySelector('[role="alert"]')?.textContent).toContain("Sandbox inspection permission is required");
+  expect(row("Playback QA").querySelector(".dashboard-sandbox-status")!.textContent?.toLowerCase()).toContain("running");
 });
 
 it("does not expose an unavailable workspace ID as the sandbox's purpose", async () => {
@@ -212,74 +138,49 @@ it("does not expose an unavailable workspace ID as the sandbox's purpose", async
   expect(row("Playback QA").textContent).not.toContain("Improve playback");
 });
 
-it("keeps Core and application sandboxes distinct when their IDs happen to match", async () => {
-  environments = [child()]; instances = [instance({ id: childId })];
-  await render();
-  expect(rows()).toHaveLength(2);
-  await expand("Playback QA");
-  expect(row("Playback QA").querySelector('button[aria-expanded="true"]')).not.toBeNull();
-  expect(row("Movie Studio").querySelector('button[aria-expanded="false"]')).not.toBeNull();
-  await expand("Movie Studio");
-  expect(rows().every(item => item.querySelector('button[aria-expanded="true"]'))).toBe(true);
-});
-
-it("updates the workspace name without resetting an expanded sandbox", async () => {
+it("updates the workspace name without closing Environment Details", async () => {
   environments = [child()];
   await render(); await expand("Playback QA");
   await render([{ ...workspace, name: "Playback fix verified" }]);
   expect(row("Playback QA").textContent).toContain("Playback fix verified");
   expect(row("Playback QA").textContent).not.toContain("Improve playback");
-  expect(row("Playback QA").querySelector('button[aria-expanded="true"]')).not.toBeNull();
-  expect(row("Playback QA").textContent).toContain("Child application");
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Environment Details");
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Child application");
+  expect(row("Playback QA").textContent).not.toContain("Child application");
 });
 
-it.each(["Core", "application"])("recovers the legacy %s journal and retries a network-unknown operation with its exact request", async kind => {
+it("closes Environment Details and restores focus to its row", async () => {
+  environments = [child()];
+  await render(); await expand("Playback QA");
+  const dialog = document.querySelector('[role="dialog"]')!;
+  expect(dialog.textContent).toContain("Environment Details");
+  await click("Close", dialog);
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+  await vi.waitFor(() => expect(document.activeElement).toBe(button("Environment Details for Playback QA")));
+});
+
+it("retries an uncertain environment operation with its exact request", async () => {
   const requestId = "da08888a-6c32-423c-9a27-e37099a78224";
-  const isCore = kind === "Core";
-  const body = { requestId, expectedRevision: isCore ? 6 : 7 };
-  const pending = isCore ? { path: `/${childId}/operations/start`, body, id: childId, kind: "start" }
-    : { id: instanceId, action: "start", ...body };
-  const key = `hosty:${isCore ? "core-environment" : "sandbox-operation"}:${origin}`;
-  const url = `${origin}/api/${isCore ? `core-environments/${childId}` : `sandbox-instances/${instanceId}`}/operations/start`;
-  if (isCore) environments = [child({ state: "stopped" })]; else instances = [instance({ state: "stopped" })];
+
+  const body = { requestId, expectedRevision: 6 };
+  const pending = { path: `/${childId}/operations/start`, body, id: childId, kind: "start" };
+  const key = `hosty:core-environment:${origin}`;
+  const url = `${origin}/api/core-environments/${childId}/operations/start`;
+  environments = [child({ state: "stopped" })];
   sessionStorage.setItem(key, JSON.stringify(pending));
   transport.send.mockRejectedValueOnce(new TypeError("Network response was lost"));
   await render();
   expect(transport.send).not.toHaveBeenCalled();
-  const confirmation = [...container.querySelectorAll('[role="status"]')].find(node => node.textContent?.includes("needs confirmation"))!;
+  const confirmation = [...row("Playback QA").querySelectorAll('.dashboard-sandbox-status [role="status"]')].find(node => node.textContent?.includes("Needs confirmation"))!;
   expect(confirmation.classList.contains("text-warning-foreground")).toBe(true);
   expect(confirmation.querySelector('.animate-spin')).toBeNull();
   await click("Retry same request");
   expect(JSON.parse(sessionStorage.getItem(key)!)).toEqual(pending);
   expect(container.textContent).toContain("Network response was lost");
-  transport.send.mockResolvedValueOnce(Response.json(isCore
-    ? child({ operations: [{ id: requestId, kind: "start", state: "succeeded" }] })
-    : instance({ operations: [{ id: requestId, kind: "start", state: "succeeded" }] })));
+  transport.send.mockResolvedValueOnce(Response.json(child({ operations: [{ id: requestId, kind: "start", state: "succeeded" }] })));
   await click("Retry same request");
   expect(transport.send.mock.calls.map(([endpoint, request]) => [endpoint, request])).toEqual([[url, body], [url, body]]);
   expect(sessionStorage.getItem(key)).toBeNull();
-});
-
-it("retains the latest failed disposal request while cleanup is still disposing", async () => {
-  const requestId = "d8b9c9a0-220a-41db-ae34-ccadf2f51377";
-  const pending = { id: instanceId, action: "dispose", requestId, expectedRevision: 7 };
-  const key = `hosty:sandbox-operation:${origin}`;
-  instances = [instance({ state: "disposing", operations: [{ id: requestId, kind: "dispose", state: "failed", message: "Container cleanup needs recovery" }] })];
-  sessionStorage.setItem(key, JSON.stringify(pending));
-  await render();
-  expect(JSON.parse(sessionStorage.getItem(key)!)).toEqual(pending);
-  expect(container.textContent).toContain("Container cleanup needs recovery");
-  expect(button("Retry same request").disabled).toBe(false);
-  transport.send.mockImplementationOnce(async () => {
-    instances = [instance({ state: "disposed", operations: [{ id: requestId, kind: "dispose", state: "succeeded" }] })];
-    return Response.json(instances[0]);
-  });
-  await click("Retry same request");
-  expect(transport.send.mock.calls.map(([url, body]) => [url, body])).toEqual([
-    [`${origin}/api/sandbox-instances/${instanceId}/operations/dispose`, { requestId, expectedRevision: 7 }],
-  ]);
-  expect(sessionStorage.getItem(key)).toBeNull();
-  expect(rows()).toHaveLength(0);
 });
 
 it("clears a recovered legacy workspace-create journal after the original request succeeds", async () => {
@@ -294,29 +195,43 @@ it("clears a recovered legacy workspace-create journal after the original reques
   });
   await render();
   expect(transport.send).not.toHaveBeenCalled();
-  const confirmation = [...container.querySelectorAll('[role="status"]')].find(node => node.textContent?.includes("needs confirmation"))!;
+  const confirmation = [...row("Recovered QA").querySelectorAll('.dashboard-sandbox-status [role="status"]')].find(node => node.textContent?.includes("Needs confirmation"))!;
   expect(confirmation.classList.contains("text-warning-foreground")).toBe(true);
   expect(confirmation.querySelector('.animate-spin')).toBeNull();
   await click("Retry same request");
   expect(transport.send.mock.calls.map(([url, request]) => [url, request])).toEqual([[`${origin}/api/core-environments/from-workspace`, body]]);
   expect(sessionStorage.getItem(key)).toBeNull();
-  expect(row("Recovered QA").textContent).toContain("stopped");
+  expect(row("Recovered QA").textContent?.toLowerCase()).toContain("stopped");
 });
 
-it("keeps Restart available to recover an unhealthy application sandbox", async () => {
-  instances = [instance({ state: "unhealthy" })];
-  await render(); await expand("Movie Studio");
-  expect(button("Restart", row("Movie Studio")).disabled).toBe(false);
-  transport.send.mockImplementationOnce(async (_url: string, body: { requestId: string }) => {
-    instances = [instance({ operations: [{ id: body.requestId, kind: "restart", state: "succeeded" }] })];
-    return Response.json(instances[0]);
-  });
-  await click("Restart", row("Movie Studio"));
-  expect(transport.send.mock.calls[0][0]).toBe(`${origin}/api/sandbox-instances/${instanceId}/operations/restart`);
-  expect(transport.send.mock.calls[0][1]).toMatchObject({ expectedRevision: 7 });
-  expect(transport.send.mock.calls[0][1].requestId).toMatch(/^[\da-f-]{36}$/i);
+it.each([
+  ["start", "Starting"],
+  ["finish", "Deleting"],
+  ["restart", "Restarting"],
+  ["create", "Creating"],
+] as const)("shows %s progress below the affected environment status without a disabled retry", async (kind, progress) => {
+  const requestId = "ec5ff5aa-d638-4658-9c18-4605060d74be";
+  const body = { requestId, label: "Playback QA", expectedRevision: 6 };
+  const pending = kind === "create" ? { path: "", body, kind }
+    : { path: `/${childId}/operations/${kind}`, body, id: childId, kind };
+  sessionStorage.setItem(`hosty:core-environment:${origin}`, JSON.stringify(pending));
+  environments = kind === "create" ? [] : [child()];
+  let resolve!: (response: Response) => void;
+  transport.send.mockImplementationOnce(() => new Promise<Response>(done => { resolve = done; }));
+  await render();
+  await click("Retry same request");
+  expect(row("Playback QA").querySelector(".dashboard-sandbox-status")?.textContent).toContain(`${progress}…`);
+  expect(container.textContent).not.toContain("Retry same request");
+  expect(container.textContent).not.toContain("operation is in progress");
+  if (kind === "create") {
+    environments = [child({ operations: [{ id: requestId, kind, state: "running" }] })];
+    await refreshInventory();
+    expect(rows()).toHaveLength(1);
+    expect(row("Playback QA").querySelector(".dashboard-sandbox-status")?.textContent).toContain("Creating…");
+  }
+  await act(async () => resolve(Response.json(child({ operations: [{ id: requestId, kind, state: "succeeded" }] }))));
+  expect(sessionStorage.getItem(`hosty:core-environment:${origin}`)).toBeNull();
 });
-
 
 it.each([
   ["building", "text-info-foreground", "loader-circle"],
@@ -325,30 +240,13 @@ it.each([
   ["quota-exceeded", "text-warning-foreground", "triangle-alert"],
 ] as const)("gives a %s sandbox a labelled state shape while retaining its observed label", async (state, tone, icon) => {
   environments = [child({ state })]; await render();
-  const badge = row("Playback QA").querySelector('[data-slot="badge"]')!;
-  expect(badge.textContent).toBe(state);
+  const badge = row("Playback QA").querySelector(".dashboard-sandbox-status")!;
+  expect(badge.textContent?.toLowerCase()).toBe(state);
   expect(badge.querySelector(`.${tone}`)).not.toBeNull();
   expect(badge.querySelector(`.lucide-${icon}[aria-hidden="true"]`)).not.toBeNull();
   expect(transport.send).not.toHaveBeenCalled();
 });
 
-
-it("waits for both independent inventories before claiming empty and keeps the available half visible", async () => {
-  let resolve!: (value: Response) => void;
-  transport.read.mockImplementation((url: string) => url.endsWith("/core-environments")
-    ? Promise.resolve(Response.json({ environments: [child()] }))
-    : new Promise<Response>(done => { resolve = done; }));
-  await render();
-  expect(container.querySelector('[role="status"]')?.textContent).toBe("Loading sandbox inventory…");
-  expect(container.querySelector('.hosty-grid-loader')).not.toBeNull();
-  expect(rows()).toHaveLength(1);
-  expect(container.textContent).not.toContain("No sandboxes yet");
-  expect(button("Refresh sandboxes").disabled).toBe(true);
-  await act(async () => resolve(Response.json({ instances: [] })));
-  expect(container.textContent).not.toContain("Loading sandbox inventory");
-  expect(rows()).toHaveLength(1);
-  expect(button("Refresh sandboxes").disabled).toBe(false);
-});
 
 it("does not turn a first-read failure into empty while retrying and only confirms an empty success", async () => {
   childFailure = Response.json({ message: "Inventory offline" }, { status: 503 });
@@ -357,22 +255,21 @@ it("does not turn a first-read failure into empty while retrying and only confir
   expect(container.querySelector('.hosty-empty-slots')).toBeNull();
   let resolve!: (value: Response) => void;
   transport.read.mockImplementation((url: string) => url.endsWith("/core-environments")
-    ? new Promise<Response>(done => { resolve = done; }) : Promise.resolve(Response.json({ instances: [] })));
-  await click("Refresh sandboxes");
-  expect(container.querySelector('[role="status"]')?.textContent).toBe("Loading sandbox inventory…");
+    ? new Promise<Response>(done => { resolve = done; }) : Promise.resolve(Response.json({ environments: [] })));
+  await refreshInventory();
+  expect(container.querySelector('[role="status"]')?.textContent).toBe("Loading environments…");
   expect(container.textContent).not.toContain("No sandboxes yet");
   await act(async () => resolve(Response.json({ environments: [] })));
   expect(container.textContent).not.toContain("Inventory offline");
-  expect(container.querySelector('.hosty-empty-slots')).not.toBeNull();
+  expect(container.querySelector('[data-testid="connected-core"]')).not.toBeNull();
   expect(button("Create environment").disabled).toBe(false);
 });
 
 it("retains confirmed inventory after a malformed refresh instead of reporting empty", async () => {
   environments = [child()]; await render();
   transport.read.mockResolvedValue(Response.json({}));
-  await click("Refresh sandboxes");
+  await refreshInventory();
   expect(rows()).toHaveLength(1);
-  expect(container.textContent).toContain("Previously loaded sandboxes");
   expect(container.textContent).toContain("Core did not return the sandbox inventory");
   expect(container.textContent).not.toContain("No sandboxes yet");
   expect(transport.send).not.toHaveBeenCalled();
@@ -391,11 +288,11 @@ it("renders external sandbox changes directly and avoids idle inventory requests
   try {
     await render();
     const initialReads = transport.read.mock.calls.length;
-    await act(async () => { SandboxSource.latest.open(); SandboxSource.latest.emit("sandbox.snapshot", { environments: [child()], instances: [instance()] }); });
-    expect(rows()).toHaveLength(2);
+    await act(async () => { SandboxSource.latest.open(); SandboxSource.latest.emit("sandbox.snapshot", { environments: [child()],  }); });
+    expect(rows()).toHaveLength(1);
     await act(async () => vi.advanceTimersByTimeAsync(120_000));
     expect(transport.read).toHaveBeenCalledTimes(initialReads);
-    await act(async () => SandboxSource.latest.emit("sandbox.snapshot", { environments: [child({ state: "finished" })], instances: [] }));
+    await act(async () => SandboxSource.latest.emit("sandbox.snapshot", { environments: [child({ state: "finished" })] }));
     expect(rows()).toHaveLength(0); expect(transport.read).toHaveBeenCalledTimes(initialReads);
   } finally { vi.useRealTimers(); }
 });
@@ -403,35 +300,35 @@ it("does not let a late initial GET overwrite a newer streamed state", async () 
   vi.stubGlobal("EventSource", SandboxSource);
   let resolve!: (response: Response) => void;
   transport.read.mockImplementation((url: string) => String(url).endsWith("core-environments")
-    ? new Promise<Response>(done => { resolve = done; }) : Promise.resolve(Response.json({ instances: [] })));
+    ? new Promise<Response>(done => { resolve = done; }) : Promise.resolve(Response.json({ environments: [] })));
   await render();
-  await act(async () => { SandboxSource.latest.open(); SandboxSource.latest.emit("sandbox.snapshot", { environments: [child()], instances: [] }); });
+  await act(async () => { SandboxSource.latest.open(); SandboxSource.latest.emit("sandbox.snapshot", { environments: [child()] }); });
   await act(async () => resolve(Response.json({ environments: [] })));
   expect(rows()).toHaveLength(1);
 });
 
-it("recovers a lost disposal receipt without further stream events or inventory polling", async () => {
-  vi.useFakeTimers(); vi.stubGlobal("EventSource", SandboxSource);
-  try {
-    const requestId = "d8b9c9a0-220a-41db-ae34-ccadf2f51377";
-    const key = `hosty:sandbox-operation:${origin}`;
-    sessionStorage.setItem(key, JSON.stringify({ id: instanceId, action: "dispose", requestId, expectedRevision: 7 }));
-    let receipts = 0;
-    const original = transport.read.getMockImplementation()!;
-    transport.read.mockImplementation((url: string) => {
-      if (String(url).endsWith(`/sandbox-instances/${instanceId}`)) {
-        if (++receipts === 1) return Promise.reject(new Error("Disconnected"));
-        return Promise.resolve(Response.json(instance({ state: "disposed", operations: [{ id: requestId, kind: "dispose", state: "succeeded" }] })));
-      }
-      return original(url);
-    });
-    await render();
-    await act(async () => { SandboxSource.latest.open(); SandboxSource.latest.emit("sandbox.snapshot", { environments: [], instances: [] }); });
-    expect(sessionStorage.getItem(key)).not.toBeNull();
-    await act(async () => vi.advanceTimersByTimeAsync(1000));
-    expect(sessionStorage.getItem(key)).toBeNull(); expect(receipts).toBe(2);
-    const reads = transport.read.mock.calls.length;
-    await act(async () => vi.advanceTimersByTimeAsync(60_000));
-    expect(transport.read).toHaveBeenCalledTimes(reads);
-  } finally { vi.useRealTimers(); }
+
+it("keeps the connected Core first and creation above one environment list", async () => {
+  environments = [child()]; await render();
+  const section = container.querySelector('section[aria-label="Core instances"]')!;
+  expect(section.textContent!.indexOf("Create environment")).toBeLessThan(section.textContent!.indexOf("Hosty Core"));
+  expect(section.textContent!.indexOf("Hosty Core")).toBeLessThan(section.textContent!.indexOf("Playback QA"));
+  expect(container.textContent).not.toContain("Refresh sandboxes");
+  expect(transport.read.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual(["/api/core-environments"]);
+});
+it("shows the observed child version for copied builds even with an attached app workspace", async () => {
+  environments = [child({ mode: "current", coreVersion: "0.150.1" }), child({ id: "3".repeat(32), mode: "release", label: "Other version", coreVersion: "0.160.0" })];
+  await render();
+  expect(row("Playback QA").textContent).toContain("0.150.1");
+  expect(row("Playback QA").textContent).not.toContain("Improve playback");
+  expect(row("Other version").textContent).toContain("0.160.0");
+});
+it("keeps the connected Core available when there are no children or their read fails", async () => {
+  await render(); expect(rows()).toHaveLength(0); expect(container.textContent).toContain("Hosty Core");
+  childFailure = Response.json({ message: "Environment inventory unavailable" }, { status: 503 });
+  await refreshInventory();
+  expect(container.textContent).toContain("Hosty Core");
+  expect(container.textContent).toContain("Environment inventory unavailable");
+  childFailure = null; await click("Retry environments");
+  expect(container.textContent).not.toContain("Environment inventory unavailable");
 });

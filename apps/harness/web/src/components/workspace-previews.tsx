@@ -5,11 +5,11 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { HostyLoader } from "../../../../../shared/web/hosty-states";
-import type { CoreEnvironment, SandboxInstance } from "@hosty-sdk/app/sandbox/server";
+import type { CoreEnvironment } from "@hosty-sdk/app/sandbox/server";
 import { developmentRequest } from "@/lib/development-api";
 import { WorkspaceResourceActions } from "./workspace-resource-actions";
 import { PreviewChecks } from "./preview-checks";
-type Previews = { environments: CoreEnvironment[]; instances: SandboxInstance[]; applications: Record<string, { state: string; error?: string;
+type Previews = { environments: CoreEnvironment[]; applications: Record<string, { state: string; error?: string;
   apps: PreviewApp[] }> };
 type PreviewApp = { id: string; displayName: string; runtimeState: string; previewUrl?: string; health?: string;
   services?: { service: string; status: string; health?: string | null }[] | null;
@@ -35,8 +35,7 @@ export function WorkspacePreviews({ workspaceId, canStart = true, disabled = fal
     return () => { abort.abort(); clearInterval(timer); };
   }, [workspaceId, revision]);
   const changed = () => { setRevision(n => n + 1); refresh?.(); };
-  const instances = value?.instances.filter(item => item.state !== "disposed") ?? [];
-  if (value && !value.environments.length && !instances.length) return null;
+  if (value && !value.environments.length) return null;
   return <section className="space-y-3 border-t pt-4" aria-label="Sandbox previews"><h3 className="text-xs font-semibold text-muted-foreground">Previews</h3>
     {!value && !error && <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><HostyLoader label={null} className="size-4" />Loading sandbox previews…</p>}
     {error && <Alert variant="destructive"><AlertTitle>Preview status unavailable</AlertTitle><AlertDescription>
@@ -61,19 +60,8 @@ export function WorkspacePreviews({ workspaceId, canStart = true, disabled = fal
       </p>}
       {(item.error || value.applications[item.id]?.error) && <p role="status" className="text-destructive-foreground">{item.error || value.applications[item.id]?.error}</p>}
     </div>)}
-    {instances.map(item => <div key={item.id} className="min-w-0 space-y-3 rounded-xl border bg-card p-3 text-xs">
-      <div className="flex min-w-0 items-start gap-2"><FlaskConical className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden /><p className="min-w-0 flex-1 break-all font-mono text-xs font-normal">{item.appId}</p><PreviewState state={item.state} /></div>
-      <p className="tabular-nums text-muted-foreground">{item.users.length} test {item.users.length === 1 ? "user" : "users"} · Separate sandbox data</p>
-      {safeLink(item.previewUrl) && <p className="truncate rounded-md border bg-muted/40 px-2 py-1.5 font-mono text-xs text-muted-foreground" title={safeLink(item.previewUrl)}>{safeLink(item.previewUrl)}</p>}
-      <div className="flex flex-wrap items-center gap-2">
-        {item.state === "ready" && safeLink(item.previewUrl) && <Button asChild variant="outline" size="sm"><a target="_blank" rel="noreferrer" href={personaLink(item.previewUrl!)}>Open preview<ExternalLink className="size-3" /></a></Button>}
-        <WorkspaceResourceActions compact key={item.id} workspaceId={workspaceId} kind="sandboxes" resource={item} label={item.appId} canStart={canStart} disabled={disabled} refresh={changed} />
-      </div>
-      {item.errorCode && <p role="status" className="text-destructive-foreground">{item.errorCode}</p>}
-    </div>)}
   </section>;
 }
-function personaLink(value: string) { const url = new URL(safeLink(value)!); url.searchParams.set("hosty_sandbox_persona", "core"); return url.href; }
 function PreviewState({ state }: { state: string }) {
   const working = ["starting", "preparing", "finishing", "stopping"].includes(state);
   const failed = ["failed", "cleanup-failed"].includes(state);

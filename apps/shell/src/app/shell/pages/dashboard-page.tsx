@@ -203,11 +203,7 @@ export function DashboardPage({
   // app the action could not actually enqueue.
   const routineUpdateCount = apps.filter(isRoutineUpdate).length;
 
-  return (
-    <ResourceUsageProvider coreOrigin={coreOrigin}>
-    <div className="dashboard-layout space-y-6">
-      <h1 className="sr-only">Dashboard</h1>
-      <CoreSection
+  const coreSection = <CoreSection
         workspaces={workspaces}
         status={status}
         coreUpdate={coreUpdate}
@@ -215,7 +211,14 @@ export function DashboardPage({
         canManageApps={canManageApps}
         coreOrigin={coreOrigin}
         onUpdateCore={onUpdateCore}
-      />
+      />;
+
+  return (
+    <ResourceUsageProvider coreOrigin={coreOrigin}>
+    <div className="dashboard-layout space-y-6">
+      <h1 className="sr-only">Dashboard</h1>
+      {canManageApps ? <DashboardSandboxes coreOrigin={coreOrigin} workspaces={workspaces} connectedCore={coreSection} />
+        : <Frame><FramePanel className="min-w-0 p-0">{coreSection}</FramePanel></Frame>}
 
 
       <section className="dashboard-heading grid items-center gap-3">
@@ -290,7 +293,6 @@ export function DashboardPage({
           )}
         </FramePanel>
       </Frame>
-      {canManageApps && <DashboardSandboxes coreOrigin={coreOrigin} apps={apps} workspaces={workspaces} />}
     </div>
     </ResourceUsageProvider>
   );
@@ -367,8 +369,7 @@ function CoreSection({
   const showUpdate = !dev && canManageApps && (coreUpdate?.updateAvailable === true || coreUpdating);
 
   return (
-    <Frame role="region" aria-label="Hosty Core" className="text-sm">
-      <FramePanel className="min-w-0 p-0">
+    <div className="min-w-0 text-sm">
         <Table role="table" className="dashboard-table" aria-label="Hosty Core">
           <DashboardTableHeader />
           <TableBody role="rowgroup">
@@ -433,8 +434,7 @@ function CoreSection({
         {runtime.dialog}
         {stopping.dialog}
         <CoreLogsDialog open={logsOpen} coreOrigin={coreOrigin} onOpenChange={setLogsOpen} />
-      </FramePanel>
-    </Frame>
+    </div>
   );
 }
 

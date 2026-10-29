@@ -54,11 +54,6 @@ internal static class WorkspaceInspectionEndpoints
             WorkspaceInspectionAuthorization auth, WorkspaceCleanupService cleanup, CancellationToken ct) =>
             await Handle(async () => await cleanup.EnvironmentCommandAsync(workspaceId,
                 await auth.RequireAsync(request, appId, ct), appId, id, action, input, ct)));
-        routes.MapPost("/{workspaceId}/sandboxes/{id}/{action}", async (string appId, string workspaceId,
-            string id, string action, SandboxCommand input, HttpRequest request,
-            WorkspaceInspectionAuthorization auth, WorkspaceCleanupService cleanup, CancellationToken ct) =>
-            await Handle(async () => await cleanup.SandboxCommandAsync(workspaceId,
-                await auth.RequireAsync(request, appId, ct), appId, id, action, input, ct)));
         routes.MapGet("/{workspaceId}/discard/plan", async (string appId, string workspaceId, HttpRequest request,
             WorkspaceInspectionAuthorization auth, WorkspaceCleanupService cleanup, CancellationToken ct) =>
             await Handle(async () => await cleanup.PrepareDiscardAsync(workspaceId, await auth.RequireAsync(request, appId, ct, manage: true), appId, ct)));

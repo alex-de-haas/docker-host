@@ -20,7 +20,8 @@ const statusFilters = [
   { key: "failed", label: "Failed", Icon: CircleAlert, tone: "text-destructive-foreground" },
 ] as const;
 
-export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, onNew, onDelete, activeWorkspaceId, onWorkspace, createAppAction }: {
+export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, onNew, onDelete, activeWorkspaceId, onWorkspace, createAppAction, view = "chats" }: {
+  view?: "workspaces" | "chats";
   activeWorkspaceId?: string; onWorkspace?: (workspace: DevelopmentWorkspace, session?: AssistantSession) => void; createAppAction?: ReactNode;
   sessions: AssistantSession[]; activeId?: string; workspaces: DevelopmentWorkspace[];
   onPick: (session: AssistantSession) => void; onNew: () => void; onDelete: (sessionId: string) => Promise<void>;
@@ -35,7 +36,8 @@ export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, 
   const [stateFilter, setStateFilter] = useState("all");
   const [now, setNow] = useState(Date.now);
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 15_000); return () => clearInterval(timer); }, []);
-  const items = navigationItems(workspaces, sessions, now);
+  const items = navigationItems(workspaces, sessions, now, view);
+  const title = view === "workspaces" ? "Workspaces" : "Chats";
   const matchesState = (item: typeof items[number], state: string) => state === "all" || item.counts[state as "waiting" | "working" | "failed"] > 0;
   const visible = items.filter(item => matchesState(item, stateFilter) && (!query.trim() || item.search.includes(query.trim().toLowerCase())));
   const sessionLabel = (session: AssistantSession) => session.title?.trim() || "Untitled session";
@@ -60,24 +62,23 @@ export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, 
         onClick={event => { deleteTrigger.current = event.currentTarget; setError(null); setDeleting(session); }}><Trash2 /></Button>}
     </div>;
   };
-  return <nav aria-label="Workspaces and chats" className="flex h-full min-h-0 flex-col">
+  return <nav aria-label={title} className="flex h-full min-h-0 flex-col">
     <div className="space-y-3 border-b p-3">
       <div className="flex items-center justify-between gap-2">
-        <h1 className="text-sm font-semibold">Workspaces &amp; chats <span className="ml-1 font-mono text-xs font-normal tabular-nums text-muted-foreground">{items.length}</span></h1>
+        <h1 className="text-sm font-semibold">{title} <span className="ml-1 font-mono text-xs font-normal tabular-nums text-muted-foreground">{items.length}</span></h1>
         <div className="flex shrink-0 items-center gap-1">
-          {createAppAction}
-          <ContinueBuilding sessions={sessions} onPick={onPick} />
-          <TooltipProvider delayDuration={250}>
+          {view === "workspaces" && <>{createAppAction}<ContinueBuilding sessions={sessions} onPick={onPick} /></>}
+          {view === "chats" && <TooltipProvider delayDuration={250}>
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button ref={newButton} variant="ghost" size="icon-sm" aria-label="New session" onClick={onNew}><MessageSquarePlus aria-hidden="true" /></Button>
               </TooltipTrigger>
               <TooltipContent side="right">New session</TooltipContent>
             </Tooltip>
-          </TooltipProvider>
+          </TooltipProvider>}
         </div>
       </div>
-      <div className="relative"><Search className="pointer-events-none absolute top-2.5 left-2.5 size-4 text-muted-foreground" /><Input aria-label="Search workspaces and chats" placeholder="Search…" className="pl-8" value={query} onChange={event => setQuery(event.target.value)} /></div>
+      <div className="relative"><Search className="pointer-events-none absolute top-2.5 left-2.5 size-4 text-muted-foreground" /><Input aria-label={`Search ${title.toLowerCase()}`} placeholder="Search…" className="pl-8" value={query} onChange={event => setQuery(event.target.value)} /></div>
       <div className="flex flex-wrap gap-1" aria-label="Activity filters">{statusFilters.map(({ key, label, Icon, tone }) => {
         const count = items.filter(item => matchesState(item, key)).length;
         return <Button key={key} size="sm" variant={stateFilter === key ? "secondary" : "ghost"} aria-pressed={stateFilter === key} className="h-7 gap-1 rounded-full px-2 text-xs" onClick={() => setStateFilter(key)}>
@@ -88,8 +89,8 @@ export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, 
     </div>
     <div className="min-h-0 flex-1 overflow-y-auto py-2">
       {visible.map(renderItem)}
-      {!!items.length && !visible.length && <p className="p-3 text-sm text-muted-foreground">No workspaces or chats match this search and filter.</p>}
-      {!items.length && <div className="flex flex-col items-center gap-3 p-5 text-center"><HostyMark appId="hosty.harness" tile className="size-12" /><p className="text-sm text-muted-foreground">Start a session to ask a question or work on an application.</p></div>}
+      {!!items.length && !visible.length && <p className="p-3 text-sm text-muted-foreground">No {title.toLowerCase()} match this search and filter.</p>}
+      {!items.length && <div className="flex flex-col items-center gap-3 p-5 text-center"><HostyMark appId="hosty.harness" tile className="size-12" /><p className="text-sm text-muted-foreground">{view === "workspaces" ? "Create an app or continue building to start a workspace." : "Start a new chat to ask a question."}</p></div>}
     </div>
     <Dialog open={deleting !== null} onOpenChange={open => { if (!open && !deletionPending.current) setDeleting(null); }}>
       <DialogContent showCloseButton={!pending} onCloseAutoFocus={event => {

@@ -14,7 +14,8 @@ describe("profile persistence", () => {
   it("initializes once, preserves old selections and persists an empty library without recreating defaults", async () => {
     const first = await store.read(); expect(first.profiles[0]?.skillIds).toEqual([a, b]);
     expect((await open().read()).defaultId).toBe(first.defaultId); expect(initialCalls).toBe(1);
-    await store.remove(first.defaultId!, first.revision);
+    expect(first.defaultId).toBeNull(); expect(await store.select()).toBeNull();
+    await store.remove(first.profiles[0]!.id, first.revision);
     expect(await open().read()).toMatchObject({ defaultId: null, profiles: [] }); expect(initialCalls).toBe(1);
   });
   it("does not erase selections on catalog failure and prunes confirmed deletion durably", async () => {

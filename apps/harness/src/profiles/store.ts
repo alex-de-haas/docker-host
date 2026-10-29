@@ -43,7 +43,7 @@ export class ProfileStore {
     catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       const profile = { ...profileConfig(await this.initial()), id: randomUUID(), revision: 1 };
-      const state = { revision: 1, defaultId: profile.id, profiles: [profile] }; await this.write(state); return state;
+      const state = { revision: 1, defaultId: null, profiles: [profile] }; await this.write(state); return state;
     }
     const state = JSON.parse(raw);
     if (state.version !== 1 || !Number.isSafeInteger(state.revision) || state.revision < 1 || !Array.isArray(state.profiles)

@@ -13,7 +13,7 @@ vi.mock("../src/app/shell/core-development", () => ({ useCoreDevelopment: () => 
 vi.mock("../src/app/shell/core-workspace-control", () => ({ useCoreWorkspaceControl: () => ({ busy: fixture.runtimeBusy, needsAttention: fixture.runtimeAttention, showRecovery: fixture.recover, control: null, dialog: null }) }));
 vi.mock("../src/app/shell/core-stop", () => ({ useCoreStop: () => ({ busy: fixture.stopBusy, phase: fixture.phase, stop: fixture.stop, dialog: null }) }));
 vi.mock("../src/app/shell/resources/resource-usage", () => ({ ResourceUsageProvider: ({ children }: { children: ReactNode }) => children, ResourceUsage: () => null }));
-vi.mock("../src/app/shell/pages/dashboard-sandboxes", () => ({ DashboardSandboxes: () => null }));
+vi.mock("../src/app/shell/pages/dashboard-sandboxes", () => ({ DashboardSandboxes: ({ connectedCore }: { connectedCore: ReactNode }) => connectedCore }));
 vi.mock("../src/app/shell/dialogs/core-logs-dialog", () => ({ CoreLogsDialog: ({ open }: { open: boolean }) => open ? <div role="dialog">Core logs</div> : null }));
 
 let root: Root, container: HTMLDivElement;

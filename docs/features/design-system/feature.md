@@ -1,6 +1,6 @@
 ---
 created: 2026-10-21
-updated: 2026-10-28
+updated: 2026-10-29
 summary: Shared web tokens, local fonts and scoped SDK chrome, with Shell, Harness, Marketplace and Telemetry adoption and an in-place credential grid.
 components: [apps/core, apps/shell, apps/harness, apps/marketplace, apps/documents, apps/telemetry, apps/telemetry-ui, apps/whisper, apps/demo-app, packages/app-sdk, shared/web]
 ---
@@ -159,7 +159,8 @@ status is inferred from missing API facts. See
 
 ## Dashboard Adoption
 
-Core and app rows share identity, status, resources and actions columns. Runtime app icons have 4 px of extra space on each side; wrapped status and resource rows align with the app text.
+Core and app rows share identity, status, resources and actions columns. Sandbox rows align their
+unboxed state indicator with the same desktop status column; narrow rows place it below the identity. Core, app and environment rows share the sidebar theme lime hover background across the entire row, including resources and action controls; identity buttons keep that row background visible. Environment rows open Environment Details from their name or overflow menu, without an inline disclosure; Sign Up is the compact first-administrator action. Runtime app icons have 4 px of extra space on each side; wrapped status and resource rows align with the app text.
 Core and app rows use the same 4 px gap between the title and the second metadata line.
 Resource and action columns align across Core, app rows and the aggregate toolbar. Resource
 labels, bounded numeric values and sparklines occupy separate space without overlapping. Compact
@@ -411,7 +412,10 @@ Compact bound-application rows place lifecycle status immediately after the app 
 second line for package/runtime, hammer/workspace or Git/source identity. Per-app switching targets
 the exact bound worktree. Group actions show Use workspace, Return to packages or both according
 to factual selections; successful background refresh retains the last observation without flashing
-actions. Consumer and lease details stay under Activity diagnostics.
+actions. During a submitted runtime switch, group and per-app switch buttons are hidden and
+the progress status remains visible. The information tooltip beside Use on this Core holds the
+switching explanation; completed switches leave no persistent success caption. Consumer and
+lease details stay under Activity diagnostics.
 
 Workspace lifecycle failures distinguish an in-flight action from an uncertain retained request;
 a definite unadmitted refusal does not leave a misleading Retry action. Ordinary Delete physically
@@ -524,7 +528,7 @@ tokens wrap inside a selectable monospace block. Error and success messages use 
   and narrow widths, including long labels/tokens, optional permission groups, errors and outcomes.
   Confirm stylesheet delivery under the page CSP, keyboard focus and unchanged permission defaults.
 
-- Cover independently delayed sandbox inventories, first-read failure/retry, malformed refreshes
+- Cover delayed environment inventories, first-read failure/retry, malformed refreshes
   with retained rows, service loading/unavailable/empty results and shared-folder search with retained
   assignments and keyboard focus. Preserve request identity, lifecycle actions and existing reads.
 - Verify the built artifacts through a Core-managed sandbox with normal password login, both themes

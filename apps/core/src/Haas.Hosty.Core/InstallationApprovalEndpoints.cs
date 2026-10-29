@@ -618,8 +618,10 @@ internal static class InstallationApprovalEndpoints
                 ? $"<p>Unsupported optional permission (not granted): <code>{E(p)}</code></p>"
                 : $"<p class=permission-choice><label><input type=checkbox name=optionalPermission value=\"{E(p)}\"{(optionalDefaults.Contains(p, StringComparer.Ordinal) ? " checked" : "")}><span>{E(CoreAppPermissions.Describe(p))}<code>{E(p)}</code>{DeclarationChange(p, false)}</span></label></p>")) + "</fieldset>";
         var rights = permissions.Count == 0 ? "<li>No Core permissions requested</li>" : string.Join("", permissions.Select(p =>
-            $"<li>{E(CoreAppPermissions.Describe(p))}<code>{E(p)}</code>{DeclarationChange(p, true)}{(!installing && !before.Contains(p, StringComparer.Ordinal) ? " <span class=muted>(currently not granted; approval grants access)</span>" : "")}</li>"));
-        var removed = before.Concat(entry.PermissionPlan?.AcceptedRequired ?? entry.UpdatePlan?.PreviousRequiredCorePermissions ?? []).Concat(entry.PermissionPlan?.AcceptedOptional ?? entry.UpdatePlan?.PreviousOptionalCorePermissions ?? []).Distinct(StringComparer.Ordinal).Except(permissions.Concat(optional), StringComparer.Ordinal).Select(p => $"<li>Removed: {E(CoreAppPermissions.Describe(p))}</li>");
+            !CoreAppPermissions.Known.Contains(p, StringComparer.Ordinal)
+                ? $"<li>Unknown required permission (not granted): <code>{E(p)}</code>{DeclarationChange(p, true)}</li>"
+                : $"<li>{E(CoreAppPermissions.Describe(p))}<code>{E(p)}</code>{DeclarationChange(p, true)}{(!installing && !before.Contains(p, StringComparer.Ordinal) ? " <span class=muted>(currently not granted; approval grants access)</span>" : "")}</li>"));
+        var removed = before.Concat(entry.PermissionPlan?.AcceptedRequired ?? entry.UpdatePlan?.PreviousRequiredCorePermissions ?? []).Concat(entry.PermissionPlan?.AcceptedOptional ?? entry.UpdatePlan?.PreviousOptionalCorePermissions ?? []).Distinct(StringComparer.Ordinal).Except(permissions.Concat(optional), StringComparer.Ordinal).Select(p => $"<li>Removed{(CoreAppPermissions.Known.Contains(p, StringComparer.Ordinal) ? "" : " unknown permission")}: {E(CoreAppPermissions.Describe(p))}</li>");
         var roles = entry.InstallPlan?.RequestedRoles ?? entry.UpdatePlan?.TargetRoles ?? [];
         var previousRoles = entry.UpdatePlan?.CurrentConfirmedRoles ?? [];
         var roleItems = roles.Count == 0 ? "<li>No provider roles requested</li>" : string.Join("", roles.Select(role =>
@@ -628,6 +630,8 @@ internal static class InstallationApprovalEndpoints
         var source = entry.WorkspaceManifest?.SourcePath ?? entry.FeedsUrl ?? entry.InstallPlan?.ManifestPath ?? entry.UpdatePlan?.ManifestPath;
         var warning = entry.InstallPlan?.TargetRuntimeType is "localCommand" or "mixed"
             ? "<p class=warning>This app runs commands directly on your host, outside a container. Only install code you trust.</p>" : "";
+        if (permissions.Concat(optional).Any(p => !CoreAppPermissions.Known.Contains(p, StringComparer.Ordinal)))
+            warning += "<p class=warning>This Core does not support some requested permissions. Update the app or Core. These permissions are not granted; some app features may not work. If a later Core supports them, access still requires explicit approval.</p>";
         if (entry.InstallPlan is { System: true })
             warning += "<p class=warning><strong>System app.</strong> Administrators have access; other users need an explicit assignment. App permissions still apply.</p>";
         var access = entry.InstallPlan?.PrivateSources ?? entry.UpdatePlan?.PrivateSources;

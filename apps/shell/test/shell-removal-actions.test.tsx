@@ -64,7 +64,6 @@ beforeEach(() => {
     if (path === "/api/global-mounts") return Response.json({ mounts: [] });
     if (path === "/api/development/activation-workspaces") return Response.json({ workspaces: [] });
     if (path === "/api/core-environments") return Response.json({ environments: [] });
-    if (path === "/api/sandbox-instances") return Response.json({ instances: [] });
     if (path === "/api/core/development") return Response.json({ message: "No development target" }, { status: 404 });
     if (path === "/api/installations") return prepareError
       ? Response.json({ message: "Target changed", code: "removal_stale" }, { status: 409 }) : Response.json(draft);

@@ -1,6 +1,6 @@
 ---
 created: 2026-06-04
-updated: 2026-10-21
+updated: 2026-10-29
 summary: The app.0.1 manifest contract for installing and running runtime apps.
 components: [apps/core]
 ---
@@ -304,9 +304,12 @@ declarations/grants before startup cleanup. `apps.workspaces.read` grants curren
 inspection of authorized workspace/worktree metadata and bounded source diffs, without source or
 lifecycle mutations; see [workspace inspection](../assistant-session-workspaces/feature.md). `apps.sources.read` grants administrator-only repository
 documentation reads and workspace document projections; it does not grant source or Git mutations.
-New installs and updates reject unknown or duplicate names. Installed unsupported declarations remain
-visible for compatibility diagnostics. Neither missing required grants nor unknown required names
-block launch; per-call authorization uses stored grants only. Unknown names cannot be approved.
+New installs, updates and workspace restarts accept unknown permission names as compatibility
+warnings. Empty, whitespace-padded and duplicate names remain invalid. Unsupported declarations stay
+visible but never become grants. Core review warns that the app or Core may need updating and some
+features may not work. Missing required grants and unknown required names do not block launch;
+per-call authorization uses stored grants only. Supporting a name in a later Core never grants it
+automatically: known required access still needs explicit approval.
 `apps.update`, `apps.workspaces.manage` and `apps.publications.manage` are retired; Core removes their
 stored grants without erasing the manifest's requirements. `optionalCorePermissions` declares optional operations;
 the required and optional lists must be disjoint. Installation review offers optional permissions

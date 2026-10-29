@@ -55,7 +55,7 @@ internal static class EventStreamEndpoints
                 if (workspaces && AppManagementAuthorization.RequireAdditional(request, CoreAppPermissions.WorkspacesRead) is { } denied)
                     return denied;
                 if (sandboxes)
-                    foreach (var permission in new[] { CoreAppPermissions.CoreEnvironmentsInspect, CoreAppPermissions.SandboxesInspect })
+                    foreach (var permission in new[] { CoreAppPermissions.CoreEnvironmentsInspect })
                         if (AppManagementAuthorization.RequireAdditional(request, permission) is { } sandboxDenied) return sandboxDenied;
                 // The /api/events delegated policy already requires core.read + apps.read (and
                 // notifications), a superset of /api/core/resources. Resolve it again during delivery.
@@ -96,8 +96,7 @@ internal static class EventStreamEndpoints
                     return current.Error is null && current.Caller?.User.Role == user.Role &&
                         (!workspaces || current.Caller is { } caller && AppManagementAuthorization.HasPermission(caller.App, CoreAppPermissions.WorkspacesRead)) &&
                         (!sandboxes || current.Caller is { } sandboxCaller &&
-                            AppManagementAuthorization.HasPermission(sandboxCaller.App, CoreAppPermissions.CoreEnvironmentsInspect) &&
-                            AppManagementAuthorization.HasPermission(sandboxCaller.App, CoreAppPermissions.SandboxesInspect));
+                            AppManagementAuthorization.HasPermission(sandboxCaller.App, CoreAppPermissions.CoreEnvironmentsInspect));
                 }
 
                 long sandboxRevision = 0;
@@ -114,7 +113,7 @@ internal static class EventStreamEndpoints
                         await response.WriteAsync($"event: sandbox.snapshot\ndata: {data}\n\n", streamToken);
                     lastSandboxData = data;
                     // Retry failed inventories on the normal heartbeat without a browser polling loop.
-                    sandboxRevision = snapshot.CoreError is null && snapshot.AppError is null ? revision : 0;
+                    sandboxRevision = snapshot.CoreError is null ? revision : 0;
                 }
 
                 try

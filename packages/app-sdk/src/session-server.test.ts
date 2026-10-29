@@ -29,12 +29,14 @@ describe("standard overlay server adapter", () => {
   it.each([
     [{ required: [], optional: ["apps.logs"], granted: [] }, "ready"],
     [{ required: ["apps.read"], optional: [], granted: ["apps.read"] }, "ready"],
-    [{ required: ["new.right"], optional: [], granted: [], unsupportedRequired: ["new.right"] }, "unsupported"],
+    [{ required: ["new.right"], optional: [], granted: [], unsupportedRequired: ["new.right"] }, "ready"],
+    [{ required: ["new.right", "apps.read"], optional: [], granted: [], unsupportedRequired: ["new.right"] }, "missing"],
     [{ required: [], optional: [], granted: "invalid" }, "unavailable"],
   ])("classifies required and optional declarations", async (permissions, expected) => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json(permissions)));
     const body = await (await createHostySessionResponse({ status: "active", identity }, recovery, options)).json();
     expect(body.hosty.setup).toBe(expected);
+    expect(body.hosty.permissionWarning).toBe("unsupportedRequired" in permissions ? "unsupported" : undefined);
   });
   it.each([[404, "incompatible"], [503, "unavailable"]])("does not treat HTTP %s as successful readiness", async (status, setup) => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({}, { status: Number(status) })));
@@ -56,15 +58,4 @@ describe("standard overlay server adapter", () => {
     const response = await handler(new Request("https://app.test/api/hosty/session", { headers: { authorization: "Bearer hostyg_current", cookie: "identity=hostyg_old" } }));
     expect(await response.json()).toMatchObject({ status: "active", userId: "alice", hosty: { version: 1, setup: "ready" } });
   });
-});
-
-
-it("uses the revalidated sandbox setup without querying installed-app permissions", async () => {
-  const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);
-  const sandbox = { runtimeInstanceId: "a".repeat(32), generation: "b".repeat(32), dataRevision: "c".repeat(32), identityRealm: "sandbox" as const, appRole: "admin", permissions: [] };
-  const response = await createHostySessionResponse({ status: "active", identity: { ...identity, hostRole: null, sandbox } }, recovery, options);
-  expect(await response.json()).toMatchObject({ status: "active", hostRole: null, sandbox, hosty: { version: 1, setup: "ready" } });
-  expect(fetcher).not.toHaveBeenCalled();
-  const denied = await createHostySessionResponse({ status: "active", identity: { ...identity, hostRole: null, sandbox } }, recovery, { ...options, administratorOnly: true });
-  expect(await denied.json()).toMatchObject({ status: "forbidden" });
 });

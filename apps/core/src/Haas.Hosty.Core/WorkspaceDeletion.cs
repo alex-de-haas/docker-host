@@ -199,9 +199,6 @@ internal sealed partial class WorkspaceCleanupService
         foreach (var child in (await environments.ListAsync(ct)).Where(e => Matches(e.Owner, e.Request.Context)))
             if (child.State != "finished" || DevelopmentWorkspaceService.PathEntryExists(environments.Root(child.Id)))
                 throw DevelopmentWorkspaceService.Error("cleanup_pending", "Workspace child Core cleanup is not finished.");
-        foreach (var sandbox in (await sandboxes.ListAsync(ct)).Where(s => Matches(s.Owner, s.Request.Context)))
-            if (sandbox.State != "disposed" || DevelopmentWorkspaceService.PathEntryExists(sandboxes.DataRoot(sandbox.Id)))
-                throw DevelopmentWorkspaceService.Error("cleanup_pending", "Workspace sandbox cleanup is not finished.");
     }
     private async Task FinalizeAsync(WorkspaceOwner owner, CancellationToken ct)
     {

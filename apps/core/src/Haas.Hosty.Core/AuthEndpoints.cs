@@ -397,7 +397,7 @@ internal static class AuthEndpoints
 
     internal static bool IsAllowedLoginReturnTo(string? returnTo)
         => IsRelativeContinuation(returnTo, out var path) &&
-            (path is "/account/tokens" or "/account/device" or "/account/background" or "/oauth/consent" || SandboxAuthEndpoints.IsOperatorContinuation(path) ||
+            (path is "/account/tokens" or "/account/device" or "/account/background" or "/oauth/consent" ||
              (path.StartsWith("/api/apps/", StringComparison.Ordinal) &&
               path.EndsWith("/open", StringComparison.Ordinal)) ||
              (path.StartsWith("/install/permissions/", StringComparison.Ordinal) && path.Length is > 21 and <= 84 &&

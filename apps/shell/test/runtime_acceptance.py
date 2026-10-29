@@ -82,7 +82,7 @@ def check(context):
             if predicate(snapshot): return snapshot
     with client.open(app_origin+'/api/core/api/events?topics=sandboxes', timeout=60) as stream:
         initial_snapshot = stream_snapshot(stream, lambda data: True)
-        assert initial_snapshot['environments'] == [] and initial_snapshot['instances'] == []
+        assert initial_snapshot['environments'] == [] and 'instances' not in initial_snapshot
         sandbox = request('/api/core-environments', {'requestId':str(uuid.uuid4()), 'label':'SSE lifecycle QA', 'mode':'current'})
         def observed(state):
             return lambda data: any(item['id'] == sandbox['id'] and item['state'] == state for item in data['environments'])
@@ -93,6 +93,16 @@ def check(context):
                     {'requestId':str(uuid.uuid4()), 'expectedRevision':sandbox['revision']})
                 assert sandbox['state'] == state, sandbox
                 stream_snapshot(stream, observed(state))
+                if state == 'running':
+                    assert sandbox['coreVersion'] == request('/control/v1/core/status', control=True)['version']
+                    def child_resource():
+                        history = request('/api/core/resources')['history']
+                        return next((sample for frame in history[-1:] for sample in frame['services']
+                                     if sample.get('environmentId') == sandbox['id']), None)
+                    sample = wait_for(child_resource, 30)
+                    assert sample['memoryBytes'] > 0 and sample['processIdentity']
+                    assert 'ownerUserId' not in sample
+
             assert not pathlib.Path(root/'environments'/sandbox['id']).exists()
         finally:
             if sandbox['state'] != 'finished':

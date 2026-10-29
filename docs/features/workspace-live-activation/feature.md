@@ -1,6 +1,6 @@
 ---
 created: 2026-10-19
-updated: 2026-10-26
+updated: 2026-10-29
 summary: Select named app workspaces or installed package runtimes with scoped access review, retained package choices and recoverable Core-owned transitions.
 components: [apps/core, apps/cli, apps/shell, apps/harness, shared]
 ---
@@ -578,7 +578,8 @@ activation records or snapshots. Finish removes the child, its processes and tes
 - Shell recovery covers deleted-workspace journals, explicit status refusals, sustained outages and
   recovery, missing Release receipts, fresh-catalog dismissal guards and delayed responses across
   successful status reads or actor/origin changes. Dashboard exposes a static recovery action while
-  retaining lifecycle guards.
+  retaining lifecycle guards. A refused apply before admission retains its original error even when
+  status has no activation record. Fresh review and retry preserve the original request ID and selection.
 
 
 - Verify URL/ref/project validation, canonical GitHub matching, fork distinction, stale revisions,

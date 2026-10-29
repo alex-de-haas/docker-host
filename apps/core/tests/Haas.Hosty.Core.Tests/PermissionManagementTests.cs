@@ -33,8 +33,7 @@ public sealed partial class CoreLifecycleServiceTests
     public void RetiredPermissions_AreNotAliasesForBroaderGrants(string permission)
     {
         Assert.DoesNotContain(permission, CoreAppPermissions.Known);
-        Assert.Equal("app_permissions_unsupported", Assert.Throws<AppLifecycleException>(() =>
-            CoreAppPermissions.ResolveGrants([permission], [], [])).Code);
+        Assert.Empty(CoreAppPermissions.ResolveGrants([permission], [], []));
     }
 
     [Theory]
@@ -77,7 +76,7 @@ public sealed partial class CoreLifecycleServiceTests
     }
 
     [Fact]
-    public async Task RequiredPermissions_UnknownRequirementIsDiagnosticAndCannotBeApproved()
+    public async Task RequiredPermissions_UnknownRequirementCanBeReviewedButNeverGranted()
     {
         var adapter = new RecordingRuntimeAdapter("localCommand");
         var fixture = await LifecycleFixture.CreateAsync(localRuntimeAdapter: adapter);
@@ -88,8 +87,10 @@ public sealed partial class CoreLifecycleServiceTests
         var state = await fixture.Service.ObservePermissionsAsync("example.permissions", true, default);
         Assert.Equal(["removed.permission"], state.UnsupportedRequired);
         Assert.Empty(state.MissingRequired);
-        Assert.Equal("app_permissions_unsupported", (await Assert.ThrowsAsync<AppLifecycleException>(() =>
-            fixture.Service.CreatePermissionPlanAsync("example.permissions", default))).Code);
+        var plan = await fixture.Service.CreatePermissionPlanAsync("example.permissions", default);
+        await fixture.Service.ApplyOptionalPermissionsAsync(plan, [], default);
+        Assert.Empty((await fixture.Apps.GetAppAsync("example.permissions"))!.GrantedCorePermissions!);
+        Assert.Equal(["removed.permission"], (await fixture.Apps.GetAppAsync("example.permissions"))!.RequiredCorePermissions);
         Assert.Equal(1, adapter.StartCount);
     }
 
@@ -198,6 +199,64 @@ public sealed partial class CoreLifecycleServiceTests
         await fixture.Service.ObserveAppPermissionsAsync(default);
         Assert.Equal(0, adapter.StopCount);
         Assert.Contains("removed.permission", (await fixture.Service.ListAppsAsync()).Single(a => a.Id == busyId).PermissionState!.UnsupportedRequired);
+    }
+
+    [Fact]
+    public async Task UnknownPermissions_InstallReviewAndRemovalPreserveOnlyKnownGrants()
+    {
+        var fixture = await LifecycleFixture.CreateAsync(localRuntimeAdapter: new RecordingRuntimeAdapter("localCommand"));
+        var path = await WritePermissionManifest(fixture, [CoreAppPermissions.ReadSkills, "future.required"],
+            [CoreAppPermissions.ReadApps, "retired.optional"]);
+        await fixture.Service.InstallAsync(new(path, Autostart: false,
+            OptionalPermissions: [CoreAppPermissions.ReadApps, "retired.optional"]));
+        var app = (await fixture.Apps.GetAppAsync("example.permissions"))!;
+        Assert.Equal([CoreAppPermissions.ReadApps, CoreAppPermissions.ReadSkills], app.GrantedCorePermissions);
+        var plan = await fixture.Service.CreatePermissionPlanAsync(app.Id, default);
+        await fixture.Service.ApplyOptionalPermissionsAsync(plan, ["retired.optional"], default);
+        Assert.Equal([CoreAppPermissions.ReadSkills], (await fixture.Apps.GetAppAsync(app.Id))!.GrantedCorePermissions);
+        await WritePermissionManifest(fixture, [CoreAppPermissions.ReadSkills], []);
+        plan = await fixture.Service.CreatePermissionPlanAsync(app.Id, default);
+        await fixture.Service.ApplyOptionalPermissionsAsync(plan, [], default);
+        Assert.Equal([CoreAppPermissions.ReadSkills], (await fixture.Apps.GetAppAsync(app.Id))!.RequiredCorePermissions);
+        await fixture.Service.RestartAsync(app.Id);
+        Assert.Empty((await fixture.Service.ObservePermissionsAsync(app.Id, true, default)).UnsupportedRequired);
+    }
+
+    [Fact]
+    public async Task UnknownPermissions_PackageUpdateCanAddAndRemoveUnsupportedDeclarations()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var path = await WritePermissionManifest(fixture, [CoreAppPermissions.ReadSkills, "retired.required"], [], live: false);
+        await fixture.Service.InstallAsync(new(path, Autostart: false));
+        await WritePermissionManifest(fixture, [CoreAppPermissions.ReadSkills, "future.required"], ["future.optional"], live: false);
+        var update = await fixture.Service.CreateUpdatePlanAsync("example.permissions", new(path));
+        Assert.True(update.RequiresReview);
+        Assert.Contains(update.Changes, change => change.Contains("future.required"));
+        await fixture.Service.ApplyUpdateAsync("example.permissions", new(update.PlanDigest, path));
+        var app = (await fixture.Apps.GetAppAsync("example.permissions"))!;
+        Assert.Equal([CoreAppPermissions.ReadSkills], app.GrantedCorePermissions);
+        Assert.Contains("future.required", app.RequiredCorePermissions!);
+        Assert.DoesNotContain("retired.required", app.RequiredCorePermissions!);
+        await WritePermissionManifest(fixture, [CoreAppPermissions.ReadSkills], [], live: false);
+        update = await fixture.Service.CreateUpdatePlanAsync(app.Id, new(path));
+        await fixture.Service.ApplyUpdateAsync(app.Id, new(update.PlanDigest, path));
+        Assert.Equal([CoreAppPermissions.ReadSkills], (await fixture.Apps.GetAppAsync(app.Id))!.RequiredCorePermissions);
+    }
+
+    [Fact]
+    public async Task PreviouslyUngrantableRequiredDeclaration_NeedsExplicitApprovalWhenKnown()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var path = await WritePermissionManifest(fixture, [CoreAppPermissions.ReadSkills], []);
+        await fixture.Service.InstallAsync(new(path, Autostart: false));
+        // A prior Core retained this required declaration but could not grant it.
+        await fixture.Apps.UpdateAppAsync("example.permissions", app => app with { GrantedCorePermissions = [] });
+        await fixture.RecreateService().RestartAsync("example.permissions");
+        var state = await fixture.Service.ObservePermissionsAsync("example.permissions", true, default);
+        Assert.Equal([CoreAppPermissions.ReadSkills], state.MissingRequired);
+        Assert.Empty(state.Granted);
+        await fixture.Service.ApplyOptionalPermissionsAsync(await fixture.Service.CreatePermissionPlanAsync("example.permissions", default), [], default);
+        Assert.Empty((await fixture.Service.ObservePermissionsAsync("example.permissions", true, default)).MissingRequired);
     }
 
     [Fact]

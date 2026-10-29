@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ArrowRightLeft, CircleAlert, GitBranch, Hammer, LoaderCircle, TriangleAlert } from "lucide-react";
+import { ArrowRightLeft, CircleAlert, GitBranch, Hammer, Info, LoaderCircle, TriangleAlert } from "lucide-react";
 import { ContextAppIcon } from "@/components/context-app-icon";
 import type { ContextApp } from "@/lib/assistant-api";
 import { HostyLoader } from "../../../../../shared/web/hosty-states";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { openInstallationConfirmation, showInstallationConfirmation } from "@hosty-sdk/app/install";
 import { approveWorkspaceAccess, type WorkspaceAccessReview } from "@/lib/workspace-access-review";
 import { developmentRequest, DevelopmentRequestError } from "@/lib/development-api";
@@ -134,12 +135,17 @@ export function WorkspaceActivation({ workspaceId, apps, disabled, canUse = true
   const showWorkspace = !!pending || !known || !placements.every(value => value === "current");
   const showPackages = !!pending || !known || !placements.every(value => value === "elsewhere");
   return <section aria-label="Workspace applications" className="flex min-w-0 flex-col gap-3 rounded-xl border bg-card p-3">
-    <h4 className="text-xs font-semibold">Use on this Core</h4>
+    <div className="flex items-center gap-1">
+      <h4 className="text-xs font-semibold">Use on this Core</h4>
+      <TooltipProvider delayDuration={250}><Tooltip>
+        <TooltipTrigger asChild><Button type="button" variant="ghost" size="icon-sm" aria-label="About using apps on this Core"><Info aria-hidden="true" /></Button></TooltipTrigger>
+        <TooltipContent className="max-w-xs">Switch the bound applications using their ordinary data. Return keeps the existing package recovery.</TooltipContent>
+      </Tooltip></TooltipProvider>
+    </div>
     <ul aria-label="Bound applications" className="flex min-w-0 flex-col gap-2">{apps.map(app => {
       const live = inventory.applications.find(item => item.appId === app.appId);
       const status = live ? workspaceApplicationStatus(live) : { label: inventory.loading ? "Loading…" : "Unknown", tone: "muted", busy: false };
       const current = !!live && workspaceApplicationIsCurrent(live);
-      const rowBusy = busy && pending?.appId === app.appId;
       const Glyph = status.tone === "destructive" ? CircleAlert : status.tone === "warning" ? TriangleAlert : status.busy ? LoaderCircle : null;
       const reason = !live ? inventory.loading ? "Reading application status…" : "Execution target unavailable."
         : live.unavailable || live.target?.unavailable || (!live.canSwitch ? "Application lifecycle access is required." : undefined);
@@ -159,23 +165,21 @@ export function WorkspaceActivation({ workspaceId, apps, disabled, canUse = true
             <span className="truncate">{"detail" in target ? target.detail : label}</span>
           </span>
         </div>
-        {!current && <Button type="button" variant="ghost" size="icon-sm" aria-label={`Use this workspace for ${app.name}`}
-          title={rowBusy ? `Switching ${app.name}…` : reason || `Use this workspace for ${app.name}`}
+        {!busy && !current && <Button type="button" variant="ghost" size="icon-sm" aria-label={`Use this workspace for ${app.name}`}
+          title={reason || `Use this workspace for ${app.name}`}
           disabled={disabled || busy || reviewing || unsettled || inventory.loading || !canUse || !live?.canSwitch || !live.target?.worktreeId || status.busy || live.operationStatus === "updating"}
-          onClick={() => live && void run("workspace", live)}>{rowBusy ? <HostyLoader label={null} /> : <ArrowRightLeft aria-hidden />}</Button>}
+          onClick={() => live && void run("workspace", live)}><ArrowRightLeft aria-hidden /></Button>}
       </li>;
     })}</ul>
     {inventory.error && <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground"><span role="status">Application status unavailable.</span><Button variant="link" size="sm" onClick={inventory.refresh}>Retry</Button></div>}
-    <p className="text-xs text-muted-foreground">Switch the bound applications using their ordinary data. Return keeps the existing package recovery.</p>
-    <div className="flex flex-wrap gap-2">
+    {!busy && <div className="flex flex-wrap gap-2">
       {showWorkspace && <Button variant="outline" size="sm" disabled={disabled || busy || reviewing || unsettled || !canUse} onClick={() => void run("workspace")}>Use workspace</Button>}
       {showPackages && <Button variant="outline" size="sm" disabled={disabled || busy || reviewing || unsettled} onClick={() => void run("package")}>Return to packages</Button>}
       {pending && <Button variant="outline" size="sm" disabled={disabled || busy || reviewing || pending.kind === "workspace" && !canUse}
         title={pending.kind === "workspace" && !canUse ? "Resume this workspace before retrying its selection." : undefined}
         onClick={() => void run(pending.kind, undefined, true)}>Retry runtime switch</Button>}
-    </div>
+    </div>}
     {busy && <p role="status" className="flex items-center gap-2 text-xs"><HostyLoader label={null} className="size-3.5" />{pending?.appId ? `Switching ${apps.find(app => app.appId === pending.appId)?.name || pending.appId}…` : "Switching applications…"}</p>}
-    {result?.state === "completed" && <p role="status" className="text-xs text-muted-foreground">{result.apps.length === 1 ? "Application switched." : "Applications switched."}</p>}
     {approvalLink && <a className="block text-xs underline" href={approvalLink} target="_blank" rel="noreferrer">Open Core access confirmation</a>}
     {(error || result?.error) && <p role="alert" className="text-xs text-destructive-foreground">{error || result?.error}</p>}
     {problems.length > 0 && <ul className="space-y-1 text-xs">{problems.map(app => <li key={app.appId}>

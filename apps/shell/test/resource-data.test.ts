@@ -69,3 +69,17 @@ describe("Core API activity", () => {
     expect(currentApiActivity(data, "a")).toBeNull();
   });
 });
+
+it("separates child Core usage from apps and discards a replaced or missing child process series", () => {
+  const data = snapshot();
+  const child = { appId: "core-environment:child", service: "core", runtime: "core", timestamp: time,
+    cpuPercent: 50, memoryBytes: 800, environmentId: "child", processIdentity: "123:before" };
+  data.history[0].services.push(child);
+  expect(resourceSeries(data)[0]).toMatchObject({ cpu: 140, memory: 700 });
+  expect(resourceSeries(data, child.appId)[0]).toMatchObject({ cpu: 50, memory: 800 });
+  data.history.push({ timestamp: "2026-09-25T12:00:03Z", services: [{ ...child, processIdentity: "123:after", cpuPercent: null }] });
+  expect(resourceSeries(data, child.appId)[0].memory).toBeNull();
+  expect(resourceSeries(data, child.appId)[1]).toMatchObject({ cpu: null, memory: 800 });
+  data.history.push({ timestamp: "2026-09-25T12:00:06Z", services: [] });
+  expect(resourceSeries(data, child.appId).every(point => point.memory === null)).toBe(true);
+});

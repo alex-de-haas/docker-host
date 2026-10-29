@@ -16,7 +16,7 @@ import { DEFAULT_WORKFLOW_PROMPT } from "../settings/workflow.js";
 import { WorkerError } from "../runtime/errors.js";
 import type { WorkerClient } from "../worker/client.js";
 import { McpToolPolicy } from "../mcp/policy.js";
-import { type CoreEnvironmentAction, type CoreEnvironment, sandboxActions, type SandboxAction, type SandboxInstance, type SandboxPlan } from "@hosty-sdk/app/sandbox/server";
+import { type CoreEnvironmentAction, type CoreEnvironment } from "@hosty-sdk/app/sandbox/server";
 import { DevelopmentClient, DevelopmentMcp, DEVELOPMENT_PROVIDER, DEVELOPMENT_IDENTITY, developmentTools, workspaceInstructions, type DevelopmentAction, type DevelopmentWorkspace } from "./development.js";
 import { ConnectionError } from "../connections/errors.js";
 import type { AgentConnections, ConnectionBinding } from "../connections/registry.js";
@@ -411,7 +411,6 @@ export class SessionManager {
     }
     if (contextActions.includes(action as ContextAction)) return this.contextAction(id, action as ContextAction, input, credential, userId, dispatchGuard);
     if (action.startsWith("environment-")) return this.environmentAction(id, action as CoreEnvironmentAction, input, credential, userId);
-    if (action.startsWith("sandbox-")) return this.sandboxWorkspaceAction(id, action as SandboxAction, input, credential, userId);
     return this.serialize(id, async () => {
       const session = await this.requireLive(id);
       if (userId && session.record.createdBy !== userId) throw new AppContextError(403, "workspace_forbidden", "This session belongs to another user.");
@@ -423,7 +422,7 @@ export class SessionManager {
       if (action === "attach" || action === "detach") {
         if (!userId) throw new AppContextError(403, "workspace_operator_required", "Attach and detach are explicit user actions.");
         if (["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) throw new SessionBusyError();
-        if (session.record.mcpPendingApprovals?.length || session.record.coreEnvironmentOperations?.some(o => o.state === "pending") || session.record.sandboxOperations?.some(o => o.state === "pending"))
+        if (session.record.mcpPendingApprovals?.length || session.record.coreEnvironmentOperations?.some(o => o.state === "pending"))
           throw new AppContextError(409, "workspace_session_busy", "Reconcile pending approvals and resource operations first.");
         session.workspaceCredential = token;
         await this.finishExecution(session);
@@ -631,74 +630,6 @@ export class SessionManager {
       }
       return result;
     });
-  }
-
-  private async sandboxWorkspaceAction(id: string, action: SandboxAction, raw: Record<string, unknown>, credential?: string, userId?: string): Promise<unknown> {
-    const prepared = await this.serialize(id, async () => {
-      const session = await this.requireLive(id);
-      if (userId && session.record.createdBy !== userId) throw new AppContextError(403, "workspace_forbidden", "This session belongs to another user.");
-      if (!this.development?.available) throw new AppContextError(503, "workspaces_unavailable", "Sandboxes require a Core-managed assistant.");
-      const token = credential ?? session.workspaceCredential ?? session.credential;
-      if (!token) throw new AppContextError(401, "workspace_credentials_required", "Refresh the session's Hosty credentials before using sandboxes.");
-      return { token, input: await this.prepareSandboxAction(session, action, raw) };
-    });
-    // A browser job can last minutes. Keep status, cancellation and lifecycle requests usable
-    // while Core owns execution; only the local journal transitions serialize with the session.
-    const result = await this.development!.sandbox(prepared.token, action, prepared.input);
-    return this.serialize(id, async () => this.observeSandboxAction(await this.requireLive(id), action, prepared.input, result));
-  }
-
-  private async prepareSandboxAction(session: LiveSession, action: SandboxAction, raw: Record<string, unknown>): Promise<Record<string, unknown>> {
-    if (!sandboxActions.includes(action)) throw new AppContextError(400, "sandbox_action_invalid", "Unknown sandbox action.");
-    const { action: _action, ...input } = raw;
-    const attached = session.record.appIds ?? [];
-    if (action === "sandbox-plan") {
-      if (typeof input.appId !== "string" || !attached.includes(input.appId))
-        throw new AppContextError(409, "sandbox_app_required", "Attach the target application to this session first.");
-      const source = input.source as { kind?: string; worktreeId?: string } | undefined;
-      if (source?.kind === "worktree") {
-        const tree = session.record.developmentWorkspaces?.find(w => w.id === source.worktreeId && w.state === "active" && w.apps.some(a => a.appId === input.appId));
-        if (!tree) throw new AppContextError(403, "sandbox_worktree_forbidden", "Use this session's registered app worktree.");
-        input.context = { sessionId: session.record.id, workspaceId: tree.workspaceId };
-      } else input.context = { sessionId: session.record.id };
-    } else if (action === "sandbox-prepare") {
-      const plan = session.record.sandboxPlans?.find(p => p.id === input.planId && p.digest === input.digest);
-      if (!plan || !attached.includes(plan.request.appId)) throw new AppContextError(403, "sandbox_plan_forbidden", "Review a plan for an attached app in this session.");
-    } else if (action !== "sandbox-list") {
-      if (!session.record.sandboxInstances?.some(i => i.id === input.runtimeInstanceId && attached.includes(i.appId)))
-        throw new AppContextError(403, "sandbox_instance_forbidden", "The sandbox is not associated with an attached app in this session.");
-    }
-    if (typeof input.requestId === "string") {
-      const operations = session.record.sandboxOperations ?? [];
-      const prior = operations.find(o => o.input.requestId === input.requestId);
-      if (prior && (prior.action !== action || stableSandboxInput(prior.input) !== stableSandboxInput(input)))
-        throw new AppContextError(409, "sandbox_replay_conflict", "Keep the same arguments when recovering a request ID.");
-      if (!prior) {
-        if (operations.filter(o => o.state === "pending").length >= 32) throw new AppContextError(409, "sandbox_pending_limit", "Observe pending operations before starting more.");
-        session.record.sandboxOperations = [...operations.filter(o => o.state === "pending"), ...operations.filter(o => o.state === "observed").slice(-99), { action, input, state: "pending" }];
-        await this.store.saveRecord(session.record);
-      }
-    }
-    return input;
-  }
-
-  private async observeSandboxAction(session: LiveSession, action: SandboxAction, input: Record<string, unknown>, result: unknown): Promise<unknown> {
-    const attached = session.record.appIds ?? [];
-    if (action === "sandbox-plan") {
-      const plan = result as SandboxPlan;
-      session.record.sandboxPlans = [...(session.record.sandboxPlans ?? []).filter(p => Date.parse(p.expiresAt) > Date.now()).slice(-31), plan];
-    } else if (action !== "sandbox-logs" && action !== "sandbox-browser" && action !== "sandbox-export" && action !== "sandbox-preview") {
-      const instances = action === "sandbox-list" ? (result as { instances: SandboxInstance[] }).instances
-        .filter(i => i.context?.sessionId === session.record.id && attached.includes(i.appId)) : [result as SandboxInstance];
-      const known = new Map((session.record.sandboxInstances ?? []).map(i => [i.id, i]));
-      for (const instance of instances) known.set(instance.id, instance);
-      session.record.sandboxInstances = [...known.values()];
-      if (action === "sandbox-list") { await this.store.saveRecord(session.record); return { instances }; }
-    }
-    const operation = session.record.sandboxOperations?.find(o => o.input.requestId === input.requestId);
-    if (operation) operation.state = "observed";
-    await this.store.saveRecord(session.record);
-    return result;
   }
 
   private async leaseWorkspaces(session: LiveSession, acquire: boolean, outcome = session.record.status): Promise<void> {
@@ -1314,7 +1245,7 @@ export class SessionManager {
       let snapshot = await this.retentionSnapshot(record);
       if (!snapshot.resourcesFinished)
         throw new AppContextError(409, "resource_retained", "Finish this session's sandbox resources before deleting its conversation.");
-      if (record.coreEnvironmentOperations?.some(o => o.state === "pending") || record.sandboxOperations?.some(o => o.state === "pending") || record.associationRequests?.some(o => o.state === "pending" && o.action !== "detach"))
+      if (record.coreEnvironmentOperations?.some(o => o.state === "pending") || record.associationRequests?.some(o => o.state === "pending" && o.action !== "detach"))
         throw new AppContextError(409, "resource_operation_pending", "Recover outstanding operations before deleting this conversation.");
       if (snapshot.kind === "workspace" && snapshot.workflow?.state !== "deleted") {
         const token = credential ?? live.workspaceCredential ?? live.credential;

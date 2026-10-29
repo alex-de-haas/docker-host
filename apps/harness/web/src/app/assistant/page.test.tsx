@@ -12,7 +12,7 @@ vi.mock("@hosty-sdk/app/ui/react", () => ({ useHostyUi: () => ui }));
 
 vi.mock("@/lib/assistant-api", async original => ({
   ...await original<typeof api>(),
-  getSuggestionPreference: vi.fn(), setSuggestionPreference: vi.fn(), getHealth: vi.fn(), listSessions: vi.fn(), getSession: vi.fn(), createSession: vi.fn(), deleteSession: vi.fn(),
+  workspaceAction: vi.fn().mockResolvedValue({}), getSuggestionPreference: vi.fn(), setSuggestionPreference: vi.fn(), getHealth: vi.fn(), listSessions: vi.fn(), getSession: vi.fn(), createSession: vi.fn(), deleteSession: vi.fn(),
   listAppNames: vi.fn(), listContextApps: vi.fn(), setSessionApps: vi.fn(), postMessage: vi.fn(), stopSession: vi.fn(), streamEvents: vi.fn(), setSessionAutonomy: vi.fn(), listAgentConnections: vi.fn(), getSessionModels: vi.fn(), renameSession: vi.fn(),
 }));
 vi.mock("@/lib/profiles-api", () => ({ listProfiles: vi.fn(), selectSessionProfile: vi.fn() }));
@@ -372,12 +372,12 @@ it("clears the previous activity when opening a different session", async () => 
 
 it("promotes the exact session to the host main area without sending or creating a conversation", async () => {
   await render(); await type("Keep my draft");
-  ui.getNavigation.mockReturnValue({ entries: [{ key: "development", route: "/development" }] });
+  ui.getNavigation.mockReturnValue({ entries: [{ key: "chats", route: "/chats" }] });
   ui.navigate.mockResolvedValue({ status: "accepted" });
   vi.mocked(api.createSession).mockClear();
   const open = [...container.querySelectorAll("button")].find(b => b.textContent === "Open in Harness")!;
   await act(async () => open.click());
-  expect(ui.navigate).toHaveBeenCalledWith("development", { requestId: expect.any(String), placement: "main", search: "?session=session-one" });
+  expect(ui.navigate).toHaveBeenCalledWith("chats", { requestId: expect.any(String), placement: "main", search: "?session=session-one" });
   expect(localStorage.getItem("hosty.assistant.draft.session-one")).toBe("Keep my draft");
   expect(api.postMessage).not.toHaveBeenCalled(); expect(api.createSession).not.toHaveBeenCalled();
 });
@@ -388,9 +388,9 @@ it("updates the host destination when selecting another full-page session and pr
   localStorage.setItem("hosty.assistant.draft.next-session", "Keep next draft");
   vi.mocked(api.listSessions).mockResolvedValue([record, next]);
   vi.mocked(api.getSession).mockImplementation(async id => id === next.id ? next : record);
-  ui.getNavigation.mockReturnValue({ entries: [{ key: "development", route: "/development" }] });
+  ui.getNavigation.mockReturnValue({ entries: [{ key: "chats", route: "/chats" }] });
   ui.navigate.mockResolvedValue({ status: "accepted" });
-  await act(async () => root.render(<AssistantConversation fullPage />));
+  await act(async () => root.render(<AssistantConversation fullPage navigation="chats" />));
   const pick = [...container.querySelectorAll("button")].find(b => b.textContent?.startsWith("Other conversation"))!;
   await act(async () => pick.click());
   expect(ui.navigate).not.toHaveBeenCalled();
@@ -404,7 +404,7 @@ it("updates standalone selection URLs when the host has no main destination", as
   vi.mocked(api.listSessions).mockResolvedValue([record, next]);
   vi.mocked(api.getSession).mockImplementation(async id => id === next.id ? next : record);
   ui.getNavigation.mockReturnValue({ entries: [] });
-  await act(async () => root.render(<AssistantConversation fullPage />));
+  await act(async () => root.render(<AssistantConversation fullPage navigation="chats" />));
   await act(async () => [...container.querySelectorAll("button")].find(b => b.textContent?.startsWith("Standalone next"))!.click());
   expect(window.location.search).toBe("?session=standalone-next");
   expect(localStorage.getItem("hosty.assistant.session")).toBe(next.id);
@@ -443,7 +443,7 @@ const openDelete = async (title = "Conversation") => {
 const renderDeletion = async () => {
   window.history.replaceState({}, "", "/development?session=session-one");
   ui.getNavigation.mockReturnValue({ entries: [] });
-  await act(async () => root.render(<AssistantConversation fullPage />));
+  await act(async () => root.render(<AssistantConversation fullPage navigation="chats" />));
   await type("My retained draft");
 };
 it("detaches on a local deletion event even if the HTTP response is lost", async () => {
@@ -521,7 +521,7 @@ it.each(["deleted", "retained", "unavailable"])("reconciles a lost non-active de
   }
 });
 
-const navigationTitles = () => [...container.querySelectorAll('nav[aria-label="Workspaces and chats"] button span.block[title]')].map(node => node.textContent);
+const navigationTitles = () => [...container.querySelectorAll('nav[aria-label="Chats"] button span.block[title]')].map(node => node.textContent);
 const renderActivityOrder = async () => {
   record = { ...record, appIds: ["one"], appContextRevision: 1, updatedAt: "2026-10-18T10:00:00Z" };
   const newer = { ...record, id: "newer", title: "Newer conversation", updatedAt: "2026-10-18T11:00:00Z" };
@@ -926,4 +926,29 @@ it("refuses foreign, expired and out-of-order projections and keeps literal text
   await act(async () => emit(suggestionEvent({ revision: 2, text: "stale" })));
   expect(container.textContent).not.toContain("stale");
   expect(container.querySelector('[aria-label="Conversation messages"]')?.textContent ?? "").not.toContain("<script>");
+});
+
+
+it("keeps page selection separate and exposes app creation before a workspace or chat is selected", async () => {
+  localStorage.setItem("hosty.assistant.session", record.id);
+  window.history.replaceState({}, "", "/development");
+  await act(async () => root.render(<AssistantConversation fullPage />));
+  expect(api.createSession).not.toHaveBeenCalled();
+  expect(container.textContent).toContain("Choose a workspace, create an app or continue building.");
+  expect(button("Create app")?.disabled).toBe(false);
+  expect(button("New session")).toBeNull();
+  expect(container.querySelector('[aria-label="Message composer"]')).toBeNull();
+  await act(async () => button("Create app")!.click());
+  expect(api.createSession).toHaveBeenCalledOnce();
+  expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+  expect(api.postMessage).not.toHaveBeenCalled();
+});
+
+it("shows Chats without development actions and restores its own selected conversation", async () => {
+  localStorage.setItem("hosty.harness.chats.session", record.id);
+  window.history.replaceState({}, "", "/chats");
+  await act(async () => root.render(<AssistantConversation fullPage navigation="chats" />));
+  expect(input()).not.toBeNull(); expect(button("Create app")).toBeNull();
+  expect(button("Continue building")).toBeNull(); expect(button("New session")).not.toBeNull();
+  expect(api.createSession).not.toHaveBeenCalled();
 });

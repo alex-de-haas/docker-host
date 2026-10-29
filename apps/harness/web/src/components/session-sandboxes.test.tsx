@@ -10,7 +10,7 @@ let root: Root, container: HTMLDivElement;
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.useFakeTimers();
-  vi.mocked(workspaceAction).mockReset().mockImplementation(async (_id, action) => action === "environment-list" ? { environments: [] } : { instances: [] });
+  vi.mocked(workspaceAction).mockReset().mockImplementation(async (_id, action) => action === "environment-list" ? { environments: [] } : {});
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
 });
 afterEach(async () => {
@@ -30,17 +30,14 @@ const open = () => act(async () => {
 });
 const button = (label: string) => [...container.querySelectorAll("button")].find(item => item.textContent === label)!;
 
-it("waits for both independent inventory reads before reporting a confirmed empty session", async () => {
-  const sandbox = deferred<unknown>(), child = deferred<unknown>();
-  vi.mocked(workspaceAction).mockImplementation((_id, action) => action === "environment-list" ? child.promise : sandbox.promise);
+it("waits for the environment inventory before reporting a confirmed empty session", async () => {
+  const child = deferred<unknown>();
+  vi.mocked(workspaceAction).mockImplementation(() => child.promise);
   await mount(); await open();
   expect(container.querySelector('[role="status"]')?.textContent).toBe("Loading sandbox inventory…");
   expect(container.querySelector(".hosty-grid-loader")).not.toBeNull();
   expect(container.textContent).not.toContain("No sandbox instances");
   await act(async () => child.resolve({ environments: [] }));
-  expect(container.textContent).toContain("Loading sandbox inventory…");
-  expect(container.textContent).not.toContain("No sandbox instances");
-  await act(async () => sandbox.resolve({ instances: [] }));
   expect(container.textContent).toContain("No sandbox instances in this session");
   expect(container.textContent).not.toContain("Loading sandbox inventory");
 });
@@ -48,18 +45,18 @@ it("waits for both independent inventory reads before reporting a confirmed empt
 it("keeps a failed inventory distinct from empty and retries only the existing read operations", async () => {
   vi.mocked(workspaceAction).mockImplementation(async (_id, action) => {
     if (action === "environment-list") throw new Error("Child inventory denied");
-    return { instances: [] };
+    return {};
   });
   await mount(); await open();
   expect(container.querySelector('[role="alert"]')?.textContent).toContain("Child inventory denied");
   expect(container.textContent).not.toContain("No sandbox instances");
-  const sandbox = deferred<unknown>(), child = deferred<unknown>();
-  vi.mocked(workspaceAction).mockImplementation((_id, action) => action === "environment-list" ? child.promise : sandbox.promise);
+  const child = deferred<unknown>();
+  vi.mocked(workspaceAction).mockImplementation(() => child.promise);
   await act(async () => button("Retry inventory").click());
   expect(container.textContent).toContain("Loading sandbox inventory…");
   expect(container.querySelector('[role="alert"]')).toBeNull();
-  expect(vi.mocked(workspaceAction).mock.calls.every(([session, action]) => session === "one" && ["sandbox-list", "environment-list"].includes(action))).toBe(true);
-  await act(async () => { child.resolve({ environments: [] }); sandbox.resolve({ instances: [] }); });
+  expect(vi.mocked(workspaceAction).mock.calls.every(([session, action]) => session === "one" && action === "environment-list")).toBe(true);
+  await act(async () => { child.resolve({ environments: [] }); });
   expect(container.textContent).toContain("No sandbox instances in this session");
 });
 
@@ -70,7 +67,7 @@ it.each([
 ])("does not treat a $status child response without an app inventory as no preview endpoints", async response => {
   const apps = deferred<unknown>();
   vi.mocked(workspaceAction).mockImplementation(async (_id, action) => action === "environment-list" ? { environments: [environment] }
-    : action === "environment-api" ? apps.promise : { instances: [] });
+    : action === "environment-api" ? apps.promise : {});
   await mount(); await open();
   expect(container.textContent).toContain("Loading application previews…");
   expect(container.textContent).not.toContain("No running application preview endpoints");
@@ -84,7 +81,7 @@ it.each([
 it("recovers child observations from unavailable to a confirmed empty endpoint set and then the existing preview link", async () => {
   let applicationResponse: unknown = { status: 503 };
   vi.mocked(workspaceAction).mockImplementation(async (_id, action) => action === "environment-list" ? { environments: [environment] }
-    : action === "environment-api" ? applicationResponse : { instances: [] });
+    : action === "environment-api" ? applicationResponse : {});
   await mount(); await open();
   expect(container.textContent).toContain("Application previews unavailable.");
   applicationResponse = { status: 200, body: { apps: [] } };
@@ -109,7 +106,7 @@ it("clears stale child links on inventory failure without claiming that the sess
     }
     if (action === "environment-api") return { status: 200, body: { apps: [{ displayName: "Test App", entryEndpoint: "web",
       endpoints: [{ key: "web", browserOrigin: "http://app.test", availability: "running" }] }] } };
-    return { instances: [] };
+    return {};
   });
   await mount(); await open();
   expect(container.querySelector('a[href="http://app.test/"]')).not.toBeNull();
@@ -122,7 +119,7 @@ it("clears stale child links on inventory failure without claiming that the sess
 
 it("does not start child reads after the inventory disclosure closes", async () => {
   const child = deferred<unknown>();
-  vi.mocked(workspaceAction).mockImplementation((_id, action) => action === "environment-list" ? child.promise : Promise.resolve({ instances: [] }));
+  vi.mocked(workspaceAction).mockImplementation((_id, action) => action === "environment-list" ? child.promise : Promise.resolve({}));
   await mount(); await open();
   await act(async () => {
     const details = container.querySelector("details")!;

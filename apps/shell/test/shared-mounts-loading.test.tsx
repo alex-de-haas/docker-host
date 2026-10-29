@@ -61,7 +61,6 @@ beforeEach(() => {
     if (path === "/api/core/development") return Response.json({ message: "No development target" }, { status: 404 });
     if (path === "/api/development/activation-workspaces") return Response.json({ workspaces: [] });
     if (path === "/api/core-environments") return Response.json({ environments: [] });
-    if (path === "/api/sandbox-instances") return Response.json({ instances: [] });
     throw new Error("Unexpected request: " + path);
   });
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);

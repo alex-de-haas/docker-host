@@ -14,12 +14,11 @@ if (process.argv[2] === "--record") {
 } else {
   const root = process.argv[2];
   const expected = (await readFile("/opt/hosty/dependencies.sha256", "utf8")).trim();
-  if (await fingerprint(root) !== expected) throw new Error("sandbox_dependencies_not_prepared: rebuild the reviewed dependency image before running this lockfile");
-  // Services share the instance's root dependency cache; serialize its initial fill.
-  // The lock is generation-specific, so a verified stopped generation cannot block restart.
-  // Ordinary Core development uses service-specific caches without a sandbox generation.
-  const generation = process.env.HOSTY_SANDBOX_GENERATION ?? randomUUID().replaceAll("-", "");
-  if (!/^[a-f0-9]{32}$/.test(generation ?? "")) throw new Error("Missing sandbox generation");
+  if (await fingerprint(root) !== expected) throw new Error("dependencies_not_prepared: rebuild the reviewed dependency image before running this lockfile");
+  // Ordinary Core gives each service a private cache. A fresh preparation ID avoids
+  // retaining a stale lock after an interrupted container start.
+  const generation = randomUUID().replaceAll("-", "");
+  if (!/^[a-f0-9]{32}$/.test(generation ?? "")) throw new Error("Invalid preparation ID");
   for (const relative of ["node_modules", "apps/demo-app/node_modules"]) {
     const target = path.join(root, relative);
     const marker = path.join(target, ".hosty-ready-" + expected);

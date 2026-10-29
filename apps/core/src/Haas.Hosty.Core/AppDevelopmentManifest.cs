@@ -13,7 +13,8 @@ internal sealed record AppDevelopmentAccessPlan(string AppId, string DisplayName
     string UserId, string Via, string[] Changes, string[] RequiredPermissions, string[] OptionalPermissions,
     string[] BaseGrantedPermissions, string[] BaseConfirmedRoles);
 internal sealed record AppDevelopmentCandidate(RuntimeAppManifestSelection Selection, string SourcePath,
-    string AuthorityStamp, AppDevelopmentManifestClassification Classification, AppDevelopmentAccessPlan Review, AppDevActor Actor)
+    string AuthorityStamp, AppDevelopmentManifestClassification Classification, AppDevelopmentAccessPlan Review, AppDevActor Actor,
+    string[] GrantedPermissions, string[] ConfirmedRoles)
 {
     public bool ReviewRequired => Classification.ReviewRequired;
     public string[] AdditionalAccess => Classification.AdditionalAccess;

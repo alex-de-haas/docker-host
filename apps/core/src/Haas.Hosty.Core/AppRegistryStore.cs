@@ -212,7 +212,7 @@ internal sealed class AppRegistryStore(CoreDataPaths paths, CoreEventHub? events
             return app;
         return app with
         {
-            // Declarations remain intact: an unknown required name is a compatibility error.
+            // Declarations remain intact for compatibility warnings and later explicit review.
             RequiredCorePermissions = app.RequiredCorePermissions ?? grants.ToArray(),
             GrantedCorePermissions = grants.Where(p => CoreAppPermissions.Known.Contains(p, StringComparer.Ordinal)).ToArray(),
             PermissionRevision = Guid.NewGuid().ToString("N"),

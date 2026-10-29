@@ -47,7 +47,7 @@ authentication. Read only the additional references needed for the task:
 ## Validate And Finish
 
 Run affected builds and tests in the registered worktree. For runtime, identity and embedding
-acceptance, use a Core-managed sandbox/child Core with separate data, normal setup/password login
+acceptance, use a Core-managed child Core with separate data, normal setup/password login
 and advertised preview URLs. A standalone app, a direct diagnostic identity token or an agent
 worker's local server does not prove browser authentication or Shell embedding works.
 
@@ -57,3 +57,12 @@ against an active data root or install a test into the ordinary host by default.
 native/system test path where Docker does not apply. Preserve incomplete source, report observed
 results and verification limits, and Finish the owned test environment through its manager.
 Commit, publication and a live-data development trial remain separate authorized actions.
+
+## One environment contract
+
+Every test sandbox is a child Core containing ordinary applications. Use environment creation,
+consent, lifecycle and child API tools; keep their durable request IDs. Do not use the retired
+single-app relay, persona users, private browser worker or HOSTY_SANDBOX_* protocol. App code uses
+normal Core identity and app-owned roles in every installation. Create test accounts through
+normal child setup/user APIs and validate browser login. To reset all test data, Finish the owned
+child and create a fresh environment; Restart retains data. Keep reports outside its owned root.
