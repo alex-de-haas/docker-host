@@ -7301,11 +7301,12 @@ public sealed partial class CoreLifecycleServiceTests
             return new LifecycleFixture(root, paths, apps, backups, manifests, sources, service, adapter, localAdapter, localProcesses, clock, coreSettings, publications);
         }
 
-        public CoreLifecycleService RecreateService(CorePublicOriginResolver? coreOrigins = null, PrivateSourceService? privateSources = null)
+        public CoreLifecycleService RecreateService(CorePublicOriginResolver? coreOrigins = null, PrivateSourceService? privateSources = null,
+            IAppRuntimeAdapter? localRuntimeAdapter = null)
         {
             var registry = new AppRegistryStore(Paths);
             return new CoreLifecycleService(Paths, registry, Manifests, new AppBackupService(Paths, Clock),
-                new AppSourceService(Paths, registry, Clock), [Adapter, LocalAdapter], new NoopIngressController(),
+                new AppSourceService(Paths, registry, Clock), [Adapter, localRuntimeAdapter ?? LocalAdapter], new NoopIngressController(),
                 Microsoft.Extensions.Logging.Abstractions.NullLogger<CoreLifecycleService>.Instance, clock: Clock, coreOrigins: coreOrigins, privateSources: privateSources);
         }
 

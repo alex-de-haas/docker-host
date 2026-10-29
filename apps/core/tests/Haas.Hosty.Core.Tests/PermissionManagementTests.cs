@@ -246,12 +246,13 @@ public sealed partial class CoreLifecycleServiceTests
     [Fact]
     public async Task PreviouslyUngrantableRequiredDeclaration_NeedsExplicitApprovalWhenKnown()
     {
-        var fixture = await LifecycleFixture.CreateAsync();
+        var adapter = new RecordingRuntimeAdapter("localCommand");
+        var fixture = await LifecycleFixture.CreateAsync(localRuntimeAdapter: adapter);
         var path = await WritePermissionManifest(fixture, [CoreAppPermissions.ReadSkills], []);
         await fixture.Service.InstallAsync(new(path, Autostart: false));
         // A prior Core retained this required declaration but could not grant it.
         await fixture.Apps.UpdateAppAsync("example.permissions", app => app with { GrantedCorePermissions = [] });
-        await fixture.RecreateService().RestartAsync("example.permissions");
+        await fixture.RecreateService(localRuntimeAdapter: adapter).RestartAsync("example.permissions");
         var state = await fixture.Service.ObservePermissionsAsync("example.permissions", true, default);
         Assert.Equal([CoreAppPermissions.ReadSkills], state.MissingRequired);
         Assert.Empty(state.Granted);
