@@ -133,4 +133,78 @@ public sealed class AgentSkillHttpTests
         var id = AgentSkillLibrary.Id("app", "example.producer", "default");
         Assert.Equal(HttpStatusCode.BadRequest, (await client.GetAsync($"{Root}/{id}/content?path=..%2Fsecret")).StatusCode);
     }
+
+    [Fact]
+    public async Task LocalSelectedImportRequiresControlAuthenticationAndRefusesPrivateConnections()
+    {
+        var git = new SelectedGit();
+        await using var host = await CoreHttpHarness.StartAsync(configure: services => services.AddSingleton<IAgentSkillGit>(git));
+        using var client = host.CreateClient();
+        var source = new AgentSkillGitRequest("https://example.test/catalog");
+        foreach (var authenticated in new[] { false, true })
+        {
+            if (authenticated) client.DefaultRequestHeaders.Add("X-Hosty-Control-Secret", "wrong-secret");
+            Assert.Equal(HttpStatusCode.Unauthorized, (await client.PostAsJsonAsync("/control/v1/skills/discover", new { source, names = new[] { "guide" } })).StatusCode);
+            Assert.Equal(HttpStatusCode.Unauthorized, (await client.PostAsJsonAsync("/control/v1/skills/install", new { source, commit = "first", names = new[] { "guide" } })).StatusCode);
+        }
+        client.DefaultRequestHeaders.Remove("X-Hosty-Control-Secret");
+        client.DefaultRequestHeaders.Add("X-Hosty-Control-Secret", host.Services.GetRequiredService<ControlSecret>().Value);
+        source = source with { ConnectionId = "other-users-source" };
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync("/control/v1/skills/discover", new { source, names = new[] { "guide" } })).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync("/control/v1/skills/install", new { source, commit = "first", names = new[] { "guide" } })).StatusCode);
+        Assert.Equal(0, git.Checkouts);
+        Assert.DoesNotContain(await host.Services.GetRequiredService<AuditStore>().ReadRecentAsync(), r => r.Action == "skills.library.modified");
+    }
+
+    [Fact]
+    public async Task LocalImportWorksWithoutAppsAuditsSuccessAndSupportsIndependentConsumers()
+    {
+        var git = new SelectedGit();
+        await using var host = await CoreHttpHarness.StartAsync(configure: services => services.AddSingleton<IAgentSkillGit>(git));
+        using var client = host.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Hosty-Control-Secret", host.Services.GetRequiredService<ControlSecret>().Value);
+        var source = new AgentSkillGitRequest("https://example.test/catalog");
+        using var discovery = await client.PostAsJsonAsync("/control/v1/skills/discover", new { source, names = new[] { "guide" } });
+        Assert.Equal(HttpStatusCode.OK, discovery.StatusCode);
+        var selection = await discovery.Content.ReadFromJsonAsync<JsonElement>();
+        var commit = selection.GetProperty("commit").GetString();
+        git.Commit = "moved";
+        Assert.Equal(HttpStatusCode.Conflict, (await client.PostAsJsonAsync("/control/v1/skills/install", new { source, commit, names = new[] { "guide" } })).StatusCode);
+        Assert.DoesNotContain(await host.Services.GetRequiredService<AuditStore>().ReadRecentAsync(), r => r.Action == "skills.library.modified");
+        git.Commit = commit!;
+        using var install = await client.PostAsJsonAsync("/control/v1/skills/install", new { source, commit, names = new[] { "guide" } });
+        Assert.Equal(HttpStatusCode.OK, install.StatusCode);
+        var installed = await install.Content.ReadFromJsonAsync<JsonElement>();
+        var skill = Assert.Single(installed.GetProperty("skills").EnumerateArray());
+        Assert.Equal("guide", skill.GetProperty("name").GetString());
+        var audit = Assert.Single(await host.Services.GetRequiredService<AuditStore>().ReadRecentAsync(), r => r.Action == "skills.library.modified");
+        Assert.Null(audit.ActorUserId);
+        Assert.Equal("/control/v1/skills/install", audit.ResourceId);
+        Assert.Equal("local-control", audit.Details["via"]);
+        Assert.Equal("POST", audit.Details["method"]);
+        await Seed(host);
+        using var app = AppClient(host);
+        var id = skill.GetProperty("id").GetString();
+        using var exported = await app.PostAsJsonAsync(Root + "/exports", new { contextId = "imported", skillIds = new[] { id } });
+        Assert.Equal(HttpStatusCode.OK, exported.StatusCode);
+        var export = await exported.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(File.Exists(Path.Combine(export.GetProperty("path").GetString()!, "guide/SKILL.md")));
+        Assert.Equal(HttpStatusCode.Unauthorized, (await app.PostAsJsonAsync("/control/v1/skills/install", new { source, commit, names = new[] { "guide" } })).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await app.PostAsJsonAsync(Root + "/discover", new { source, names = new[] { "guide" } })).StatusCode);
+    }
+
+    private sealed class SelectedGit : IAgentSkillGit
+    {
+        public string Commit { get; set; } = "first";
+        public int Checkouts { get; private set; }
+        public async Task<AgentSkillCheckout> CheckoutAsync(AgentSkillGitRequest source, SourceReadGrant? grant, CancellationToken ct)
+        {
+            Assert.Null(grant);
+            Checkouts++;
+            var root = Path.Combine(Path.GetTempPath(), "hosty-selected-http-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(Path.Combine(root, "guide"));
+            await File.WriteAllTextAsync(Path.Combine(root, "guide/SKILL.md"), "---\nname: guide\ndescription: A test guide.\n---\nTest instructions.", ct);
+            return new(root, Commit);
+        }
+    }
 }
