@@ -43,7 +43,7 @@ support, typing remains available. Dictation does not submit the report.
 
 IndexedDB stores the entire unsent draft, including image blobs. Keys include Core identity, app ID,
 installation identity and user ID. Writes are serialized and revision-checked in one transaction;
-an older tab cannot overwrite a newer committed draft. Saved locally appears only after transaction
+an older tab cannot overwrite or discard a newer committed draft. Saved locally appears only after transaction
 commit. Storage failure preserves current in-memory text and displays Not saved locally; it does not
 promise recovery of uncommitted edits. Browser storage clearing/eviction and cross-device or
 cross-origin synchronization are outside this guarantee.
@@ -101,7 +101,8 @@ No private chat or source authority is created by a feedback reference.
 
 The global page filters by application, processing status and unassigned binding. Workspace details
 show that workspace's reports. Administrators inspect complete annotations/images, mark reports
-Dismissed or Duplicate, restore them and reassign eligible reports. Lists refresh on entry, explicit
+Dismissed or Duplicate, restore them and reassign eligible reports. Attempts from other clients/installations remain read-only history; only this client installation
+reconciles or subscribes to its own attempts. Lists refresh on entry, explicit
 Refresh, focus/visibility return and workspace chat activity changes. An open send review retains its
 selected snapshots and instruction; explicit refresh actions re-review reports and chat availability.
 

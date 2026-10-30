@@ -181,7 +181,7 @@ function FeedbackEditor({ capabilities, path }: { capabilities: FeedbackCapabili
         throw new Error(result?.message ?? "Submission was not confirmed. Retry the same feedback; your draft is retained.");
       }
       if (!result || !["submitted", "deleted"].includes(result.status ?? "")) throw new Error("Submission was not confirmed. Retry the same feedback.");
-      await deleteDraft(key, frozen.requestId);
+      await deleteDraft(key, frozen.requestId, frozen.revision);
       const fresh = blankDraft(key); savedRevision.current = 0; current.current = fresh; setDraft(fresh);
       setReviewTargets([]);
       if (capabilities.administrator && result.status === "submitted" && result.id) {
@@ -197,7 +197,7 @@ function FeedbackEditor({ capabilities, path }: { capabilities: FeedbackCapabili
   async function discard() {
     if (!window.confirm(current.current.submitting ? "This submission may already exist. Discard its local retry record? This does not delete a submitted feedback." : "Discard this local feedback draft and its screenshots?")) return;
     try {
-      await queue.current; await deleteDraft(key, current.current.requestId);
+      await queue.current; await deleteDraft(key, current.current.requestId, savedRevision.current);
       const fresh = blankDraft(key); savedRevision.current = 0; saveFailure.current = null; current.current = fresh; setDraft(fresh);
       setEdit(null); setHighlight(null); setError(""); setNotice("Draft discarded.");
     } catch (e) { setError(errorMessage(e)); }

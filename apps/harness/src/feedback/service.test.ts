@@ -16,6 +16,7 @@ const sent = vi.fn();
 const adapter: HarnessAdapter = { name: "controlled", capabilities: { questions: true, appMcp: true, liveReconfigure: false, autoAllow: false, denyReason: false }, probe: async () => ({ available: true }),
   start: options => { run = options; return { send: sent, resolveApproval: () => true, resolveQuestion: () => true, setMcpServers: async () => false, interrupt: async () => {}, stop: async () => {}, stopAndWait: async () => {} }; } };
 const client = {
+  capabilities: vi.fn(async () => ({ appId: "harness", installation: "one", userId: "owner" })),
   list: vi.fn(async () => ({ reports: [report], dispatches: attempts })),
   reserve: vi.fn(async (input: FeedbackDispatchInput) => {
     const prior = attempts.find(d => d.id === input.requestId); if (prior) { expect(input).toEqual(prior.input); return prior; }
@@ -74,4 +75,22 @@ it("does not use an unrelated later turn, idle state, or failed result as succes
   expect(feedbackTurn(events({ type: "user_message" }, { type: "user_message" }, { type: "result", status: "success" }), 1)).toMatchObject({ state: "unknown" });
   expect(feedbackTurn(events({ type: "user_message" }, { type: "result", status: "error" }), 1)).toMatchObject({ state: "failed" });
   expect(feedbackTurn(events({ type: "user_message" }, { type: "question_request" }), 1)).toBeNull();
+});
+
+it("keeps foreign-client and prior-installation attempts read-only while reconciling its own", async () => {
+  const session = await manager.createSession({ createdBy: "owner" });
+  const own = await service.send(body(session.id), "grant", "owner");
+  attempts.push({ ...own, id: randomUUID(), callerAppId: "another.client", input: { ...own.input, sessionId: "foreign-chat" } },
+    { ...own, id: randomUUID(), callerInstallation: "previous", input: { ...own.input, sessionId: "old-chat" } });
+  client.delivery.mockClear();
+  const subscribe = vi.spyOn(manager, "subscribe");
+  const receipt = vi.spyOn(manager, "messageReceipt");
+  const listed = await service.list("grant", "owner");
+  expect(listed.dispatches).toHaveLength(3);
+  expect(client.delivery.mock.calls.every(([id]) => id === own.id)).toBe(true);
+  expect(receipt.mock.calls.every(([id]) => id === session.id)).toBe(true);
+  expect(subscribe.mock.calls.every(([id]) => id === session.id)).toBe(true);
+  run.onEvent({ type: "result", status: "success" });
+  await vi.waitFor(() => expect(own.state).toBe("succeeded"));
+  expect(attempts.slice(1).every(d => d.state === "accepted")).toBe(true);
 });

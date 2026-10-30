@@ -66,7 +66,14 @@ try {
   const stalePanel = stale.getByRole('complementary', {name:'Feedback draft'});
   await stalePanel.getByLabel('Overall comment (optional)').fill('Stale second-tab edit');
   await stalePanel.getByRole('alert').filter({hasText:'another tab'}).waitFor();
-  assert.equal(await stalePanel.getByText('Saved locally', {exact:true}).count(), 0); await stale.close();
+  assert.equal(await stalePanel.getByText('Saved locally', {exact:true}).count(), 0);
+  stale.once('dialog', dialog => dialog.accept());
+  await stalePanel.getByRole('button', {name:'Discard draft', exact:true}).click();
+  await stalePanel.getByRole('alert').filter({hasText:'Reload before discarding'}).waitFor();
+  await stale.reload(); await stale.getByRole('button', {name:'Annotate · 3', exact:true}).click();
+  assert.equal(await stalePanel.getByLabel('Overall comment (optional)').inputValue(), 'Latest committed browser draft');
+  assert.equal(await stalePanel.locator('ol > li').count(), 3); await stalePanel.locator('img').waitFor();
+  await stale.close();
   // Fault injection only in this isolated browser: the actual IndexedDB transaction boundary fails.
   await page.evaluate(() => { const original = IDBDatabase.prototype.transaction;
     IDBDatabase.prototype.transaction = function(...args) { if (args[1] === 'readwrite') throw new DOMException('Test quota exhausted', 'QuotaExceededError'); return original.apply(this, args); }; });
@@ -87,7 +94,7 @@ try {
   await isolated.close();
   await panel.getByLabel('Overall comment (optional)').fill('Browser acceptance report');
   await panel.getByText('Saved locally', {exact:true}).waitFor();
-  console.log('PASS: stale tab cannot overwrite committed edits; quota failure is visible; reload restores committed content; identity scopes isolate drafts');
+  console.log('PASS: stale tab cannot overwrite or discard committed edits and screenshots; quota failure is visible; reload restores committed content; identity scopes isolate drafts');
 
   let lost = false;
   await page.route('**/api/hosty/ui/feedback', async route => {

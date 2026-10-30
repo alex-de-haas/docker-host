@@ -1,10 +1,11 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { FeedbackServerClient } from "@hosty-sdk/app/feedback/server";
-import { FeedbackError, type FeedbackDispatch, type FeedbackDispatchInput, type FeedbackOutcome } from "@hosty-sdk/app/feedback";
+import { FeedbackError, type FeedbackDispatch, type FeedbackDispatchInput, type FeedbackOutcome, type FeedbackCapabilities } from "@hosty-sdk/app/feedback";
 import type { SessionManager } from "../sessions/manager.js";
 import type { SessionRecord, StoredEvent } from "../sessions/store.js";
 import { AppContextError } from "../sessions/app-context.js";
 
+const owned = (d: FeedbackDispatch, scope: FeedbackCapabilities) => d.actorId === scope.userId && d.callerAppId === scope.appId && d.callerInstallation === scope.installation;
 const active = (d: FeedbackDispatch) => ["reserved", "accepted", "unknown"].includes(d.state);
 const busy = (status: string) => ["running", "awaiting_question", "awaiting_approval", "suggesting"].includes(status);
 const fail = (code: string, message: string, status = 409): never => { throw new FeedbackError(code, message, status); };
@@ -78,9 +79,10 @@ export class FeedbackService {
     watch.stop = subscription.unsubscribe;
   }
   async list(token: string, actor: string) {
-    const client = this.clientFactory(); const collection = await client.list(token);
-    for (const [id, watch] of this.watches) if (!collection.dispatches.some(d => d.id === id && active(d))) { watch.stop(); this.watches.delete(id); }
-    for (const dispatch of collection.dispatches.filter(d => active(d) && d.actorId === actor)) {
+    const client = this.clientFactory();
+    const [collection, scope] = await Promise.all([client.list(token), client.capabilities(token)]);
+    for (const [id, watch] of this.watches) if (watch.actor === actor && !collection.dispatches.some(d => d.id === id && active(d) && owned(d, scope))) { watch.stop(); this.watches.delete(id); }
+    for (const dispatch of collection.dispatches.filter(d => active(d) && d.actorId === actor && owned(d, scope))) {
       await this.reconcile(dispatch, token, actor); await this.watch(dispatch, token, actor);
     }
     return client.list(token);
@@ -89,8 +91,9 @@ export class FeedbackService {
     if (typeof body.requestId !== "string" || !/^[0-9a-f-]{36}$/i.test(body.requestId)) fail("feedback_invalid", "Use a stable UUID for this dispatch.", 400);
     const requestId = body.requestId as string;
     return this.serial("send:" + requestId, async () => {
-      const client = this.clientFactory(); const collection = await client.list(token);
-      const prior = collection.dispatches.find(d => d.id === requestId && d.actorId === actor);
+      const client = this.clientFactory();
+      const [collection, scope] = await Promise.all([client.list(token), client.capabilities(token)]);
+      const prior = collection.dispatches.find(d => d.id === requestId && d.actorId === actor && owned(d, scope));
       let sessionId = typeof body.sessionId === "string" ? body.sessionId : prior?.input.sessionId;
       const workspaceId = typeof body.workspaceId === "string" ? body.workspaceId : null;
       if (!Array.isArray(body.reports) || !body.reports.length || body.reports.length > 50 || typeof body.instruction !== "string" || body.instruction.length > 5000)
@@ -149,9 +152,9 @@ export class FeedbackService {
     if (!session) fail("session_missing", "This chat is unavailable.", 404);
     const events = await this.manager.store.readEvents(sessionId);
     const current = events.filter(e => e.type === "user_message").at(-1);
-    const collection = await client.list(token!);
+    const [collection, scope] = await Promise.all([client.list(token!), client.capabilities(token!)]);
     let dispatch: FeedbackDispatch | undefined;
-    for (const d of collection.dispatches.filter(d => d.input.sessionId === sessionId && d.actorId === session!.createdBy && active(d))) {
+    for (const d of collection.dispatches.filter(d => d.input.sessionId === sessionId && d.actorId === session!.createdBy && active(d) && owned(d, scope))) {
       const receipt = await this.manager.messageReceipt(sessionId, d.id, session!.createdBy).catch(() => null);
       if (receipt?.eventSeq && receipt.eventSeq === current?.seq && !feedbackTurn(events, receipt.eventSeq)) { dispatch = d; break; }
     }

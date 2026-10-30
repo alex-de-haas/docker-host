@@ -15,7 +15,10 @@ import { PanelPreferencesProvider, panelPreferenceKey } from "../src/app/shell/c
 import { panelKey } from "@hosty-sdk/app/ui/types";
 import { RIGHT_PANEL_OPEN_PREF_KEY } from "../src/app/shell/shell-routes";
 
-vi.mock("@hosty-sdk/app/browser-auth", () => ({ appFetch: (...args: Parameters<typeof fetch>) => fetch(...args) }));
+vi.mock("@hosty-sdk/app/browser-auth", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@hosty-sdk/app/browser-auth")>(),
+  appFetch: (...args: Parameters<typeof fetch>) => fetch(...args),
+}));
 const policy = { microphone: false, popupEscape: false };
 const bootstrap: UiBootstrap = { version: 1, coreOrigin: "https://core.test", userId: "alice", canHost: true, pinnedOpen: true,
   app: { appId: "shell", installationId: "shell-1", origins: ["http://localhost:3000"] } };

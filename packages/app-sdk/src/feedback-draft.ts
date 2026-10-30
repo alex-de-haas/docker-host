@@ -38,12 +38,17 @@ export async function saveDraft(draft: FeedbackDraft, expectedRevision: number):
     tx.onabort = tx.onerror = () => reject(conflict ? new Error("This draft changed in another tab. Reload to restore its latest saved version.") : tx.error ?? new Error("Draft could not be saved locally."));
   }); } finally { db.close(); }
 }
-export async function deleteDraft(key: string, requestId: string): Promise<void> {
+export async function deleteDraft(key: string, requestId: string, expectedRevision: number): Promise<void> {
   const db = await open();
   try { await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction("drafts", "readwrite"); const store = tx.objectStore("drafts"); const read = store.get(key);
-    read.onsuccess = () => { if (read.result?.requestId === requestId) store.delete(key); };
-    tx.oncomplete = () => resolve(); tx.onabort = tx.onerror = () => reject(tx.error);
+    const tx = db.transaction("drafts", "readwrite"); const store = tx.objectStore("drafts"); const read = store.get(key); let conflict = false;
+    read.onsuccess = () => {
+      if (!read.result) return;
+      if (read.result.requestId !== requestId || read.result.revision !== expectedRevision) { conflict = true; tx.abort(); return; }
+      store.delete(key);
+    };
+    tx.oncomplete = () => resolve();
+    tx.onabort = tx.onerror = () => reject(conflict ? new Error("This draft changed in another tab. Reload before discarding its saved content.") : tx.error ?? new Error("Draft could not be removed locally."));
   }); } finally { db.close(); }
 }
 export function blankDraft(key: string): FeedbackDraft {
