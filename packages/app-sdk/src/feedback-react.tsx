@@ -48,7 +48,7 @@ function FeedbackEditor({ capabilities, path }: { capabilities: FeedbackCapabili
   const [reviewTargets, setReviewTargets] = useState<{ label: string; href: string }[]>([]);
   const key = draftKey(capabilities);
   const [draft, setDraft] = useState<FeedbackDraft>(() => blankDraft(key));
-  const current = useRef(draft), savedRevision = useRef(0), queue = useRef(Promise.resolve()), saveFailure = useRef<Error | null>(null);
+  const current = useRef(draft), savedRevision = useRef(0), savedRequestId = useRef<string | null>(null), queue = useRef(Promise.resolve()), saveFailure = useRef<Error | null>(null);
   const live = useRef(true);
   const [ready, setReady] = useState(false), [open, setOpen] = useState(false), [saving, setSaving] = useState(false);
   const [error, setError] = useState(""), [notice, setNotice] = useState(""), [busy, setBusy] = useState(false);
@@ -64,7 +64,7 @@ function FeedbackEditor({ capabilities, path }: { capabilities: FeedbackCapabili
     live.current = true;
     void readDraft(key).then(value => {
       if (!live.current) return;
-      if (value) { current.current = value; savedRevision.current = value.revision; setDraft(value); setNotice("Saved draft restored."); }
+      if (value) { current.current = value; savedRevision.current = value.revision; savedRequestId.current = value.requestId; setDraft(value); setNotice("Saved draft restored."); }
     }).catch(e => { if (live.current) setError(errorMessage(e)); }).finally(() => { if (live.current) setReady(true); });
     return () => { live.current = false; capture.current?.abort(); };
   }, [key]);
@@ -73,7 +73,7 @@ function FeedbackEditor({ capabilities, path }: { capabilities: FeedbackCapabili
     current.current = next; setDraft(next); setSaving(true); setNotice("");
     queue.current = queue.current.then(async () => {
       try {
-        await saveDraft(next, savedRevision.current); savedRevision.current = next.revision; saveFailure.current = null;
+        await saveDraft(next, savedRevision.current, savedRequestId.current); savedRevision.current = next.revision; savedRequestId.current = next.requestId; saveFailure.current = null;
         if (live.current) { setError(""); setSaving(current.current.revision !== next.revision); }
       } catch (e) {
         saveFailure.current = new Error(errorMessage(e));
@@ -182,7 +182,7 @@ function FeedbackEditor({ capabilities, path }: { capabilities: FeedbackCapabili
       }
       if (!result || !["submitted", "deleted"].includes(result.status ?? "")) throw new Error("Submission was not confirmed. Retry the same feedback.");
       await deleteDraft(key, frozen.requestId, frozen.revision);
-      const fresh = blankDraft(key); savedRevision.current = 0; current.current = fresh; setDraft(fresh);
+      const fresh = blankDraft(key); savedRevision.current = 0; savedRequestId.current = null; current.current = fresh; setDraft(fresh);
       setReviewTargets([]);
       if (capabilities.administrator && result.status === "submitted" && result.id) {
         void appFetch(path + "/" + encodeURIComponent(result.id) + "/review-targets").then(async response => {
@@ -198,7 +198,7 @@ function FeedbackEditor({ capabilities, path }: { capabilities: FeedbackCapabili
     if (!window.confirm(current.current.submitting ? "This submission may already exist. Discard its local retry record? This does not delete a submitted feedback." : "Discard this local feedback draft and its screenshots?")) return;
     try {
       await queue.current; await deleteDraft(key, current.current.requestId, savedRevision.current);
-      const fresh = blankDraft(key); savedRevision.current = 0; saveFailure.current = null; current.current = fresh; setDraft(fresh);
+      const fresh = blankDraft(key); savedRevision.current = 0; savedRequestId.current = null; saveFailure.current = null; current.current = fresh; setDraft(fresh);
       setEdit(null); setHighlight(null); setError(""); setNotice("Draft discarded.");
     } catch (e) { setError(errorMessage(e)); }
   }

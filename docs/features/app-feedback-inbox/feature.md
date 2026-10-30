@@ -42,7 +42,7 @@ ignores late microphone grants and transcription replies. Without speech permiss
 support, typing remains available. Dictation does not submit the report.
 
 IndexedDB stores the entire unsent draft, including image blobs. Keys include Core identity, app ID,
-installation identity and user ID. Writes are serialized and revision-checked in one transaction;
+installation identity and user ID. Writes are serialized and check both the saved request identity and revision in one transaction;
 an older tab cannot overwrite or discard a newer committed draft. Saved locally appears only after transaction
 commit. Storage failure preserves current in-memory text and displays Not saved locally; it does not
 promise recovery of uncommitted edits. Browser storage clearing/eviction and cross-device or

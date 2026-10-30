@@ -25,13 +25,13 @@ export async function readDraft(key: string): Promise<FeedbackDraft | null> {
   }); } finally { db.close(); }
 }
 /** Read-check-write is one transaction: an older tab cannot overwrite a newer draft. */
-export async function saveDraft(draft: FeedbackDraft, expectedRevision: number): Promise<void> {
+export async function saveDraft(draft: FeedbackDraft, expectedRevision: number, expectedRequestId: string | null): Promise<void> {
   const db = await open();
   try { await new Promise<void>((resolve, reject) => {
     const tx = db.transaction("drafts", "readwrite"); const store = tx.objectStore("drafts");
     const read = store.get(draft.key); let conflict = false;
     read.onsuccess = () => {
-      if ((read.result?.revision ?? 0) !== expectedRevision) { conflict = true; tx.abort(); return; }
+      if ((read.result?.revision ?? 0) !== expectedRevision || (read.result?.requestId ?? null) !== expectedRequestId) { conflict = true; tx.abort(); return; }
       store.put(draft);
     };
     tx.oncomplete = () => resolve();

@@ -96,6 +96,51 @@ try {
   await panel.getByText('Saved locally', {exact:true}).waitFor();
   console.log('PASS: stale tab cannot overwrite or discard committed edits and screenshots; quota failure is visible; reload restores committed content; identity scopes isolate drafts');
 
+  // Reusing a revision after an explicit discard must not let an older report overwrite its replacement.
+  const generation = await context.newPage(), generationStale = await context.newPage();
+  for (const tab of [generation, generationStale]) await tab.route('**/api/hosty/ui/feedback', async route => {
+    const response = await route.fetch(); const body = await response.json();
+    assert.equal(route.request().method(), 'GET');
+    await route.fulfill({response,json:{...body,userId:'draft-generation-regression'}});
+  });
+  await generation.goto(config.harness+'/feedback/'); await generation.getByRole('button',{name:'Annotate',exact:true}).click();
+  const generationPanel = generation.getByRole('complementary',{name:'Feedback draft'});
+  const generationEditor = generation.getByRole('dialog',{name:'Annotation comment'});
+  await generationPanel.getByRole('button',{name:'Page comment',exact:true}).click();
+  await generationEditor.getByLabel('Comment',{exact:true}).fill('Original report');
+  await generationEditor.getByRole('button',{name:'Done',exact:true}).click();
+  await generationPanel.getByLabel('Overall comment (optional)').fill('Original explanation');
+  await generationPanel.getByText('Saved locally',{exact:true}).waitFor();
+  const storedGeneration = async tab => tab.evaluate(() => new Promise((resolve,reject) => {
+    const open = indexedDB.open('hosty-feedback-v1',1);
+    open.onsuccess = () => { const db = open.result, tx = db.transaction('drafts','readonly'), read = tx.objectStore('drafts').getAll();
+      read.onsuccess = () => { const d = read.result.find(d=>JSON.parse(d.key)[3]==='draft-generation-regression'); resolve({requestId:d.requestId,revision:d.revision}); }; tx.oncomplete=()=>db.close(); };
+    open.onerror=()=>reject(open.error);
+  }));
+  const originalGeneration = await storedGeneration(generation);
+  await generationStale.goto(config.harness+'/feedback/'); await generationStale.getByRole('button',{name:'Annotate · 1',exact:true}).click();
+  generation.once('dialog',dialog=>dialog.accept());
+  await generationPanel.getByRole('button',{name:'Discard draft',exact:true}).click();
+  await generationPanel.getByText('Draft discarded.',{exact:true}).waitFor();
+  await generationPanel.getByRole('button',{name:'Page comment',exact:true}).click();
+  await generationEditor.getByLabel('Comment',{exact:true}).fill('Replacement report');
+  await generation.bringToFront();
+  await generationEditor.getByRole('button',{name:'Add screenshot',exact:true}).click();
+  await generation.getByRole('dialog',{name:'Review screenshot'}).getByRole('button',{name:'Include screenshot',exact:true}).click();
+  await generationEditor.getByRole('button',{name:'Done',exact:true}).click();
+  await generationPanel.getByText('Saved locally',{exact:true}).waitFor();
+  const replacementGeneration = await storedGeneration(generation);
+  assert.equal(replacementGeneration.revision,originalGeneration.revision);
+  assert.notEqual(replacementGeneration.requestId,originalGeneration.requestId);
+  const staleGenerationPanel = generationStale.getByRole('complementary',{name:'Feedback draft'});
+  await staleGenerationPanel.getByLabel('Overall comment (optional)').fill('Stale original must not replace new report');
+  await staleGenerationPanel.getByRole('alert').filter({hasText:'another tab'}).waitFor();
+  await generationStale.reload(); await generationStale.getByRole('button',{name:'Annotate · 1',exact:true}).click();
+  assert.match(await staleGenerationPanel.innerText(),/Replacement report/); await staleGenerationPanel.locator('img').waitFor();
+  assert.deepEqual(await storedGeneration(generationStale),replacementGeneration);
+  await generationStale.close(); await generation.close(); await page.bringToFront();
+  console.log('PASS: a stale report cannot overwrite a replacement with the same revision; replacement comments and screenshot survive reload');
+
   let lost = false;
   await page.route('**/api/hosty/ui/feedback', async route => {
     if (route.request().method()==='POST' && !lost) { lost = true; const response = await route.fetch(); assert.equal(response.status(), 200); await route.abort('failed'); }
