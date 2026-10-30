@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-13
-updated: 2026-10-29
+updated: 2026-10-30
 summary: Local demo priorities through November 5 for host-contained agents, workspace Docker sandboxes, app creation, Git review, optional feedback and gradual redesign.
 components: [apps/core, apps/harness, apps/shell]
 ---
@@ -36,7 +36,7 @@ Owner clarification, 2026-10-13:
   explicit operator action through installed-app development/runtime selection.
 - Local browser access is required. Production-host preview is desirable but is not a demo gate.
 - The Git/PR/CI/review workflow is included. Marketplace publication remains separate.
-- Feedback collection and delegation are optional additions. Redesign is incremental as the
+- Feedback collection and manual one-session dispatch are optional additions. Redesign is incremental as the
   owner finishes the mockups; existing functionality must remain accessible throughout.
 
 This document owns priorities and readiness decisions; linked plans own implementation and tests.
@@ -97,7 +97,7 @@ This checkpoint does not approve implementation of this Draft umbrella.
 | App creation | [Local app creation](../app-prototype-workspaces/feature.md), [Development Controls](../app-development-controls/plan.md), [App Authoring](../app-authoring/plan.md) | Local creation/continuation, recovery, Accept/Use locally and existing-remote PR flow verified on 2026-10-18; broader integration/adaptation and release/catalog delivery retain their own plans |
 | Agent boundary | [Shared Docker Agent Runtime](../assistant-shared-docker-runtime/feature.md) and [Containment](../assistant-runtime-containment/plan.md) | Shared worker implementation and both-provider local acceptance complete; stricter session isolation retains its separate Draft plan |
 | Sandbox | [App Sandbox](../app-sandbox-runtimes/plan.md) | D27/D28 record verified local and cold-engine stages; native Linux/Windows, Linux amd64 worker and additional recipe acceptance remain under D9 |
-| Feedback | [App Feedback Inbox](../app-feedback-inbox/plan.md) and shipped [Overlay](../hosty-overlay/feature.md) | Durable draft annotations, intake, administrator triage and optional assistant grouping/delegation |
+| Feedback | [App Feedback Inbox](../app-feedback-inbox/feature.md) and shipped [Overlay](../hosty-overlay/feature.md) | Durable annotated reports, intake, administrator triage and manual one-session dispatch |
 | Redesign | [Design System](../design-system/plan.md), Ink and Signal | Apply foundations and prepared screens with functional parity; mockups are not a complete inventory of capabilities |
 
 Docker Development is implemented foundation, not sandbox delivery: changing source does not
@@ -151,7 +151,7 @@ need explicit instance access; neither an unguessable URL nor a synthetic login 
 | P0 | Agent edits, tests through Playwright, operator inspects, then commit/push/PR/CI/review work through the existing publication path | [Sandbox D8-D9](../app-sandbox-runtimes/plan.md), [Development Sessions D1-D2](../assistant-development-sessions/plan.md), [PR lifecycle](../assistant-pr-lifecycle/feature.md) |
 | P0 | Create a new app from Shell and continue building it through the same workspace/sandbox flow | [Prototype Workspaces](../app-prototype-workspaces/feature.md), [App Authoring](../app-authoring/plan.md) |
 | P1 | Apply finished tokens, typography, logos and prepared layouts without losing actions or state | [Design System](../design-system/plan.md) |
-| Optional | Collect durable feedback, review batches and delegate selected work | [Feedback Inbox](../app-feedback-inbox/plan.md) |
+| Optional | Collect durable feedback, review batches and send selected work to one session | [Feedback Inbox](../app-feedback-inbox/feature.md) |
 | Optional | Open a sandbox running on a production host through an explicit remote-preview route | [Sandbox D11](../app-sandbox-runtimes/plan.md) |
 
 Proposed checkpoints, to adjust after the first experiments rather than treating them as estimates:
@@ -180,7 +180,7 @@ any necessary scope transfer must be explicit and preserve outstanding deliverab
 | Identity and preview | Real Core login, allowed/denied viewers, separate origins and instance-bound credentials; revocation, expired sessions, direct link, iframe, redirect and HMR behavior |
 | Playwright | Seed → act → assert backend/UI state → keep screenshots/trace and pass/fail/unknown bound to source/fixture revisions; source edits invalidate old evidence |
 | Recovery and Git | Cancel, detached writer, restart, retry and cleanup; source retained; commit/push/draft PR, CI/review feedback and exact-revision evidence remain connected |
-| Optional feedback | Accumulate several comments; navigate/reload/close/reopen, fail a save/upload, retry submit; preserve draft and evidence; approve/dismiss/edit/group without duplicate dispatch |
+| Optional feedback | Accumulate several comments; navigate/reload/close/reopen, fail a save/upload, retry submit; preserve draft and evidence; select/dismiss/edit and send to one session without duplicate dispatch |
 | Design parity | Inventory existing actions before applying the mockup; exercise every preserved action, draft, selection, approval, empty/error state and supported responsive layout afterward |
 
 Containment D9 owns reproducible measurements: pinned versions, host/engine configuration, raw
@@ -265,18 +265,36 @@ and propagation behavior require a separate spike; no Cloudflare timing guarante
 
 ## Optional Feedback Direction
 
-Call each small item a **comment** or **observation**, with **Feedback** as the collection/inbox;
-final labels can be settled with the UI. Users and administrators may collect many app-linked
-annotations and submit together. Persist unfinished drafts, not only submitted reports. Show saving,
-saved and failed states; unsaved evidence must not silently disappear on navigation or reload.
+The October 30 owner direction makes a **feedback report** one coherent submission containing
+related SDK annotations. Core owns submitted reports, evidence and current app/runtime context.
+Harness supplies a global Feedback page and a workspace-details section; no separate app is required.
+Keep reports together during selection and dispatch. SDK drafts persist locally in IndexedDB with
+text/images, visible saving/saved/failed states and recovery across navigation/reload/reopening.
+Retain the draft until confirmed acceptance; retry the same submission identity without duplicates.
+Server-side draft autosave and cross-device draft synchronization are not required.
 
-An administrator selects, approves/dismisses, adds context and sends a batch. A separate explicit
-"let the assistant organize these" action may authorize grouping into multiple sessions/workspaces.
-Independent repositories can proceed in parallel; one repository is sequential by default unless
-an explicit independent split uses separate worktrees/PRs and accounts for overlap and merge order.
-Submission or approval alone starts no agent. General scheduling/delegation remains
-[Durable Agent Jobs](../durable-agent-jobs/plan.md); Feedback owns its
-batch handoff and per-item links. This direction does not add a queue to the one-agent demo.
+Workspace dispatch proposes the currently visible chat after review and an optional instruction.
+Global selection defaults to a new session and normally a new development workspace; an explicit
+existing-workspace/chat alternative remains available. Preserve observed origin apart from work
+destination. Core snapshots its available current runtime/version/workspace context at first
+submission acceptance; missing fields and a modest update-time mismatch are acceptable. Exact served
+build correlation is not required and context never implies resolution. The owning
+[Feedback feature](../app-feedback-inbox/feature.md) implements this manually reviewed flow.
+
+The owner narrowed the first delivery to manual selection and dispatch to one session. Busy-chat
+sending is refused without a queue and preserves the selected reports/instruction. Address all
+excludes already processed and accepted/running reports. Processing is linked to each report's
+exact prompt/run outcome, with no separate Closed state. Retain evidence for manual Send again
+with new explanations and attempt history. A report has zero or one current workspace binding;
+reassignment preserves the observation/version snapshot. On workspace deletion, delete currently
+processed reports/evidence and detach all others intact into the global inbox. PR state and app
+rollout do not gate processing or trigger deletion. Only administrators inspect reports and outcomes;
+ordinary reporters receive no post-submission view, status or notifications. Browser screenshots
+use the selected Screen Capture API with explicit user permission, without DOM-renderer workarounds.
+
+Submission or approval alone starts no agent. Automatic pickup/routing and possible reporter access
+are [exploratory](../../ideas.md#i18-feedback-follow-up-and-automated-handling); tasks remain separate.
+The feedback feature adds neither a queue nor orchestration to the one-agent demonstration.
 
 ## Remaining Questions
 

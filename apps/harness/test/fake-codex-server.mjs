@@ -192,6 +192,15 @@ function handle(msg) {
     }
     if (process.env.HOSTY_TEST_EXTERNAL_SANDBOX && policy.networkAccess !== "enabled") fail("missing external network policy");
     currentTurnText = String(msg.params?.input?.[0]?.text ?? "");
+    if (currentTurnText.includes("FEEDBACK_ACCEPTANCE:")) {
+      send({ jsonrpc: "2.0", id: msg.id, result: {} });
+      if (currentTurnText.includes("FEEDBACK_ACCEPTANCE:WAIT")) return;
+      void feedbackOutcome(currentTurnText).then(() => {
+        send({ method: "item/completed", params: { threadId: activeThreadId, item: { type: "agentMessage", id: "feedback-result", text: "Scripted feedback acceptance completed." } } });
+        send({ method: "turn/completed", params: { threadId: activeThreadId, turn: { id: "feedback-turn", status: "completed" } } });
+      }).catch(error => fail(error.message));
+      return;
+    }
     if (currentTurnText.includes("TASK_ACCEPTANCE:")) {
       send({ id: msg.id, result: {} });
       send({ method: "turn/started", params: { threadId: activeThreadId, turn: { id: "task-turn" } } });
@@ -417,4 +426,38 @@ async function taskOutcome(text) {
   const result = await client.callTool({ name: "task_result", arguments: { requestId: crypto.randomUUID(), result: { markdown: "Verified explicit task outcome from the scripted native adapter.", resources: [] } } });
   if (result.isError) throw new Error("Task result tool refused: " + JSON.stringify(result.content));
   await client.close();
+}
+
+// Verify the production feedback tools through their session-scoped transport and approval gate.
+async function feedbackOutcome(text) {
+  const config = Object.fromEntries(argv.filter(a => a.startsWith("mcp_servers.")).map(a => {
+    const split = a.indexOf("="); return [a.slice(0, split), JSON.parse(a.slice(split + 1))];
+  }));
+  const key = Object.keys(config).find(k => k.endsWith(".url") && k.includes("hosty-workspaces"));
+  if (!key) throw new Error("Feedback fixture did not receive the session MCP server");
+  const token = process.env[config[key.replace(/url$/, "bearer_token_env_var")]];
+  const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+  const { StreamableHTTPClientTransport } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
+  const client = new Client({ name: "feedback-acceptance-fixture", version: "1" });
+  await client.connect(new StreamableHTTPClientTransport(new URL(config[key]), { requestInit: { headers: { Authorization: `Bearer ${token}` } } }));
+  const call = async (name, args) => {
+    const result = await client.callTool({ name, arguments: args });
+    if (result.isError) throw new Error("Feedback tool refused: " + JSON.stringify(result.content));
+    return result;
+  };
+  try {
+    const current = await call("feedback_current", {});
+    const batch = JSON.parse(current.content.find(c => c.type === "text").text);
+    if (!batch.reports.every(r => r.workspaceId)) await call("prepare", { appId: batch.reports[0].context.appId, requestId: crypto.randomUUID(), name: "Feedback acceptance" });
+    for (const report of batch.reports) {
+      const note = report.annotations.find(n => n.mediaType);
+      if (note) {
+        const image = await call("feedback_image", { reportId: report.id, annotationId: note.id });
+        if (!image.content.some(c => c.type === "image" && c.data)) throw new Error("Feedback image unavailable");
+      }
+    }
+    const handled = !text.includes("FEEDBACK_ACCEPTANCE:PARTIAL");
+    await call("feedback_result", { outcomes: batch.reports.map(r => ({ reportId: r.id, summary: handled ? "All requested changes verified by the fixture" : "More work remains", handled,
+      handledAnnotationIds: handled ? r.annotations.map(n => n.id) : [] })) });
+  } finally { await client.close(); }
 }

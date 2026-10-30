@@ -9,7 +9,7 @@ const cli = 'apps/cli/src/Haas.Hosty.Cli/Haas.Hosty.Cli.csproj';
 const coreTests = 'apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj';
 const cliTests = 'apps/cli/tests/Haas.Hosty.Cli.Tests/Haas.Hosty.Cli.Tests.csproj';
 const windowsFilter = 'FullyQualifiedName~WindowsProcessControlTests|FullyQualifiedName~StopAsync_OnWindowsKillsAdoptedJobDescendantAfterShellExited|FullyQualifiedName~CoreDevelopmentTests|FullyQualifiedName~ExplicitStop|FullyQualifiedName~SourceDocuments_ReferenceMetadataSupportsLfAndCrLf|FullyQualifiedName~WorkspaceGit_|FullyQualifiedName~JsonStorageTests';
-export const suites = Object.freeze(['activation', 'dependencies', 'sessions', 'tasks', 'windows', 'transport', 'worker', 'whisper', 'opus', 'documents', 'desktop', 'harness-local', 'shell', 'observability']);
+export const suites = Object.freeze(['activation', 'dependencies', 'sessions', 'tasks', 'windows', 'transport', 'worker', 'whisper', 'opus', 'documents', 'desktop', 'harness-local', 'feedback', 'shell', 'observability']);
 const usage = 'Usage: npm run test:integration -- <' + suites.join('|') + '> [--dry-run]\n'
   + 'Runs one explicitly selected local suite. Builds its fixtures first; no automatic retries.\n'
   + 'activation: .NET, Git, Python, Docker; isolated managed Core Return and recovery\n'
@@ -22,6 +22,7 @@ const usage = 'Usage: npm run test:integration -- <' + suites.join('|') + '> [--
   + 'desktop: .NET, Git, Python, Docker; role-aware desktop and lifecycle in a managed Core\n'
   + 'documents: .NET, Git, Python, Docker; current docs, workspace progress and scoped events in a managed Core\n'
   + 'shell: .NET, Git, Python, Docker; isolated Shell identity and workspace inventory with browser review\n'
+  + 'feedback: .NET, Git, Python, Node/npm, Docker; feedback intake, SDK browser capture and exact-prompt processing in a managed Core\n'
   + 'harness-local: .NET, Git, Python, Node/npm, Docker; managed Core production local startup and recovery\n'
   + 'worker: Docker; builds the manifest-matching worker image and checks its lifecycle\n'
   + 'whisper: .NET; downloads the pinned model and runs native CPU inference\n'
@@ -47,11 +48,12 @@ export function suitePlan(suite, { platform = process.platform, node = process.e
         command('docker', ['build', '-f', 'apps/telemetry-ui/Dockerfile', '-t', 'hosty-observability-ui:acceptance', '.']),
         command(python, ['scripts/check-workspace-activation.py', '.', 'observability', '--managed']),
       ] };
+    case 'feedback':
     case 'harness-local':
       return { prerequisites: [dotnet, command('git', ['--version']), pythonCheck, docker,
         command(node, ['--version']), command(node, ['-e', "require('node:child_process').execSync('npm --version', {stdio:'inherit'})"])], steps: [
         build(core), build(cli),
-        command(python, ['scripts/check-workspace-activation.py', '.', 'harness-local', '--managed']),
+        command(python, ['scripts/check-workspace-activation.py', '.', suite, '--managed']),
       ] };
     case 'activation':
       return { prerequisites: [dotnet, command('git', ['--version']), pythonCheck, docker], steps: [

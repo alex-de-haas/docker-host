@@ -1,3 +1,5 @@
+import { FeedbackService } from "./feedback/service.js";
+import { FeedbackError } from "@hosty-sdk/app/feedback";
 import { TaskService } from "./tasks/service.js";
 import { isSkillManagementRoute, manageSkills, migrateSkillSelection, validSkillIds } from "./skills.js";
 import { createHash } from "node:crypto";
@@ -70,6 +72,7 @@ export function createGatewayServer(
   internal?: (request: IncomingMessage, response: ServerResponse) => Promise<boolean>,
 ): Server & { stopTaskDispatch: () => Promise<void> } {
   const tasks = new TaskService(manager);
+  const feedback = new FeedbackService(manager);
   const handoffs = new HandoffStore(manager, settings, providers);
   const eventStreams = new EventStreamTransport(manager, Date.now, connections);
   const translations = connections && settings ? new TranslationService(connections, settings) : null;
@@ -81,9 +84,9 @@ export function createGatewayServer(
   const timer = setInterval(() => { void handoffs.sweep().catch(error => console.error("[handoff] cleanup failed", error)); }, 60_000);
   timer.unref();
   const server = createServer((request, response) => {
-    void recovered.then(async () => { if (await internal?.(request, response)) return; return route(request, response, manager, adapter, settings, providers, proxy, facade, connections, handoffs, translations, eventStreams, tasks); }).catch((error) => {
+    void recovered.then(async () => { if (await internal?.(request, response)) return; return route(request, response, manager, adapter, settings, providers, proxy, facade, connections, handoffs, translations, eventStreams, tasks, feedback); }).catch((error) => {
       if (response.destroyed) return;
-      if (error instanceof ProviderError) { sendJson(response, error.status, { code: error.code, message: error.message }); return; }
+      if (error instanceof ProviderError || error instanceof FeedbackError) { sendJson(response, error.status, { code: error.code, message: error.message }); return; }
       if (error instanceof SessionBusyError) {
         sendJson(response, 409, { code: "session_busy", message: error.message });
         return;
@@ -109,10 +112,10 @@ export function createGatewayServer(
     });
   });
   eventStreams.attach(server);
-  const taskServer = Object.assign(server, { stopTaskDispatch: () => tasks.close() });
+  const taskServer = Object.assign(server, { stopTaskDispatch: async () => { await tasks.close(); await feedback.close(); } });
   const close = server.close.bind(server);
   server.close = ((callback?: (error?: Error) => void) => { void tasks.close(); eventStreams.close(); return close(callback); }) as typeof server.close;
-  server.on("close", () => { clearInterval(timer); tasks.close(); });
+  server.on("close", () => { clearInterval(timer); tasks.close(); void feedback.close(); });
   return taskServer;
 }
 
@@ -132,6 +135,7 @@ async function route(
   translations: TranslationService | null,
   eventStreams: EventStreamTransport,
   tasks: TaskService,
+  feedback: FeedbackService,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", "http://gateway.local");
   const method = request.method ?? "GET";
@@ -175,7 +179,7 @@ async function route(
     const session = await resolveAppSession(token);
     const headers = new Headers();
     for (const [name, value] of Object.entries(request.headers)) if (value !== undefined) headers.set(name, Array.isArray(value) ? value.join(", ") : value);
-    const body = method === "POST" ? JSON.stringify(await readJson(request)) : undefined;
+    const body = method === "POST" ? JSON.stringify(await readJson(request, url.pathname.includes("/feedback") ? 12 * 1024 * 1024 : MAX_BODY_BYTES)) : undefined;
     const incoming = new Request(url, { method, headers, body });
     const result = await createHostyUiResponse(incoming, { session, token }, { administratorOnly: true, appId: process.env.HOSTY_APP_ID ?? "hosty.harness" });
     response.setHeader("Cache-Control", "no-store");
@@ -315,6 +319,12 @@ async function route(
       message: "A session cookie may only change state from the gateway's own pages.",
     });
     return;
+  }
+
+  if (url.pathname.startsWith("/api/feedback")) {
+    const token = actor.via === "app-session" ? readAppCredential(request) : null;
+    if (!token) throw new FeedbackError("app_session_required", "Open Harness through Core to manage feedback.", 403);
+    if (await feedback.route(request, response, url, token, actor.userId, () => readJson(request, 128 * 1024))) return;
   }
 
   if (url.pathname === "/api/preferences/prompt-suggestions" && (method === "GET" || method === "PUT")) {

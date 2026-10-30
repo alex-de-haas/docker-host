@@ -7,6 +7,7 @@ internal static class CoreAppPermissions
     public const string Install = "apps.install";
     public const string ReadApps = "apps.read";
     public const string ReadPanels = "apps.panels.read";
+    public const string FeedbackManage = "apps.feedback.manage";
     public const string AppLogs = "apps.logs";
     public const string Notifications = "apps.notifications";
     public const string AppLifecycle = "apps.lifecycle";
@@ -39,7 +40,7 @@ internal static class CoreAppPermissions
     public const string TaskProviders = "providers.tasks";
     public const string TaskExecutors = "providers.task-executor";
     public const string AssistantProviders = "providers.assistant";
-    public static readonly string[] Known = [ReadCredentials, RevokeCredentials, RequestMcpAccess, WorkspaceCore, Install, ReadApps, ReadPanels, AppLogs, Notifications, AppLifecycle, ConfigureApps, ReadCore, UpdateCore, CoreLifecycle, ConfigureCore, CoreLogs, ReadUsers, ManageUsers, Sources, SourcesRead, WorkspacesRead, WorkspacesCleanup, CoreEnvironmentsRead, CoreEnvironmentsManage, CoreEnvironmentsInspect, CoreEnvironmentsOperate, SourceConnections, ReadSkills, ManageSkills, SpeechProviders, TranslationProviders, AssistantProviders, TaskProviders, TaskExecutors];
+    public static readonly string[] Known = [FeedbackManage, ReadCredentials, RevokeCredentials, RequestMcpAccess, WorkspaceCore, Install, ReadApps, ReadPanels, AppLogs, Notifications, AppLifecycle, ConfigureApps, ReadCore, UpdateCore, CoreLifecycle, ConfigureCore, CoreLogs, ReadUsers, ManageUsers, Sources, SourcesRead, WorkspacesRead, WorkspacesCleanup, CoreEnvironmentsRead, CoreEnvironmentsManage, CoreEnvironmentsInspect, CoreEnvironmentsOperate, SourceConnections, ReadSkills, ManageSkills, SpeechProviders, TranslationProviders, AssistantProviders, TaskProviders, TaskExecutors];
 
     // The old name grants exactly the same authority. Other retired permissions remain unsupported.
     public static string Normalize(string permission) => permission == LegacySources ? Sources : permission;
@@ -65,6 +66,7 @@ internal static class CoreAppPermissions
 
     public static string Describe(string permission) => permission switch
     {
+        FeedbackManage => "Read user feedback and screenshots, reassign reports and record agent processing as the initiating administrator",
         Sources => "Access and modify application source code, including code Hosty executes on this host in development mode; create, read, edit and delete all Core workspaces as the initiating user; use separately authorized source-provider connections",
         WorkspacesCleanup => "Delete this assistant installation's explicitly completed workspaces and owned temporary resources in the background after fresh Core verification",
         WorkspacesRead => "Read all Core development workspaces and retained source as the initiating administrator; no mutations",

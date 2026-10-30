@@ -1,3 +1,7 @@
+import { FeedbackServerClient } from "@hosty-sdk/app/feedback/server";
+import { FeedbackError } from "@hosty-sdk/app/feedback";
+import { ProviderClient } from "@hosty-sdk/app/providers/server";
+import { ProviderError } from "@hosty-sdk/app/providers";
 import type { ProviderServerOptions } from "@hosty-sdk/app/providers/server";
 import { UiError, type ToolActivity, type PanelTarget, type UiBootstrap, type UiPanel, type UiResolvedPanel, type UiNavigationCatalog, type UiNavigationTarget, type UiResolvedNavigation } from "@hosty-sdk/app/ui/types";
 
@@ -65,7 +69,33 @@ export async function createHostyUiResponse(request: Request, context: UiAuthent
     const route = url.pathname.startsWith(prefix + "/") ? url.pathname.slice(prefix.length + 1) : "";
     const client = new UiServerClient(options);
     let result: unknown;
-    if (request.method === "GET" && route === "bootstrap") {
+    if (/^feedback\/[a-f0-9]{64}\/review-targets$/.test(route) && request.method === "GET") {
+      result = await new FeedbackServerClient(options).reviewTargets(route.split("/")[1]!, context.token, request.signal);
+    } else if (route === "feedback/speech" && request.method === "GET") {
+      const speech = new ProviderClient(options), permissions = await speech.permissions(request.signal);
+      const granted = permissions.granted.includes("providers.speech-to-text");
+      result = { granted, providers: granted ? await speech.list("speech-to-text", request.signal) : [] };
+    } else if (route === "feedback/speech" && request.method === "POST") {
+      if (!sameOrigin(request) || request.headers.get("content-type")?.split(";", 1)[0]?.trim() !== "application/json")
+        throw new UiError("origin_denied", "Dictate from this application page.", 403);
+      const speech = new ProviderClient(options), roster = await speech.list("speech-to-text", request.signal);
+      const input = JSON.parse(await boundedBody(request, 6 * 1024 * 1024));
+      if (!input || typeof input.appId !== "string" || typeof input.key !== "string" || typeof input.audio !== "string")
+        throw new UiError("speech_invalid", "Choose a speech provider and a recording.", 400);
+      if (!roster.some(p => p.appId === input.appId && p.key === input.key && p.available))
+        throw new UiError("speech_unavailable", "The selected speech provider is unavailable.", 409);
+      const bytes = Uint8Array.from(Buffer.from(input.audio, "base64"));
+      if (bytes.length < 44 || bytes.length > 120 * 16000 * 2 + 4096 || String.fromCharCode(...bytes.subarray(0, 4)) !== "RIFF" || String.fromCharCode(...bytes.subarray(8, 12)) !== "WAVE")
+        throw new UiError("speech_invalid", "Use a bounded WAV recording.", 400);
+      result = await speech.transcribe(input, new Blob([bytes], { type: "audio/wav" }), { signal: request.signal });
+    } else if (route === "feedback" && request.method === "GET") {
+      result = await new FeedbackServerClient(options).capabilities(context.token, request.signal);
+    } else if (route === "feedback" && request.method === "POST") {
+      if (!sameOrigin(request) || request.headers.get("content-type")?.split(";", 1)[0]?.trim() !== "application/json")
+        throw new UiError("origin_denied", "Submit feedback from this application page.", 403);
+      const body = await boundedBody(request, 12 * 1024 * 1024);
+      result = await new FeedbackServerClient(options).submit(JSON.parse(body), context.token, request.signal);
+    } else if (request.method === "GET" && route === "bootstrap") {
       if ([...url.searchParams.keys()].some(k => k !== "parentOrigin") || url.searchParams.getAll("parentOrigin").length > 1)
         throw new UiError("ui_request_invalid", "Invalid bootstrap request.", 400);
       result = await client.bootstrap({ parentOrigin: url.searchParams.get("parentOrigin") ?? undefined }, context.token, request.signal);
@@ -86,14 +116,14 @@ export async function createHostyUiResponse(request: Request, context: UiAuthent
     } else throw new UiError("ui_route_not_found", "Unknown panel operation.", 404);
     return Response.json(result, { headers: responseHeaders });
   } catch (error) {
-    const known = error instanceof UiError;
+    const known = error instanceof UiError || error instanceof FeedbackError || error instanceof ProviderError;
     return Response.json({ code: known ? error.code : error instanceof SyntaxError ? "ui_request_invalid" : "ui_unavailable",
       message: known ? error.message : "Application panels are unavailable. Retry opening the same target." },
     { status: known ? error.status : error instanceof SyntaxError ? 400 : 503, headers: responseHeaders });
   }
 }
 
-async function boundedBody(request: Request): Promise<string> {
+async function boundedBody(request: Request, limit = 16_384): Promise<string> {
   const reader = request.body?.getReader();
   if (!reader) return "";
   const chunks: Uint8Array[] = []; let length = 0;
@@ -102,7 +132,7 @@ async function boundedBody(request: Request): Promise<string> {
       const { value, done } = await reader.read();
       if (done) break;
       length += value.byteLength;
-      if (length > 16_384) { await reader.cancel(); throw new UiError("ui_request_invalid", "Panel request is too large.", 413); }
+      if (length > limit) { await reader.cancel(); throw new UiError("ui_request_invalid", "Panel request is too large.", 413); }
       chunks.push(value);
     }
   } finally { reader.releaseLock(); }

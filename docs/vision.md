@@ -1,6 +1,6 @@
 ---
 created: 2026-08-19
-updated: 2026-10-29
+updated: 2026-10-30
 ---
 
 # Hosty Platform Vision
@@ -229,7 +229,7 @@ Decisions 1–5: 2026-08-19.
     own reviewed observation directly. Submission alone starts no agent and grants no source access;
     feedback items are input to sessions, not a second development task model. The capture mechanism,
     narrow user-facing authority, durable evidence and triage UX remain Draft work owned by
-    [app feedback inbox](features/app-feedback-inbox/plan.md).
+    [app feedback inbox](features/app-feedback-inbox/feature.md).
 
 12. **Dedicated native Harness client (2026-09-25).** Build a separate Swift client focused on
     Hosty Harness sessions over AHP, including remote conversation, permission/question requests,
@@ -536,7 +536,8 @@ Decisions 1–5: 2026-08-19.
     session or explicitly let the assistant organize it into several tasks/sessions. Independent
     repositories can proceed in parallel; independent changes to one repository may use separate
     worktrees/PRs with overlap/merge-order handling. Every item keeps provenance and partial outcomes.
-    [Feedback Inbox](features/app-feedback-inbox/plan.md) owns intake/grouping/dispatch integration;
+    Decision 66 narrows the first delivery to manual one-session dispatch; automatic grouping is
+    deferred exploration. [Feedback Inbox](features/app-feedback-inbox/feature.md) owns intake/dispatch;
     [Durable Agent Jobs](features/durable-agent-jobs/plan.md) retains general
     execution/delegation. Feedback remains optional for the local demonstration, and neither
     reporting nor approval alone launches an agent or grants source access.
@@ -1190,6 +1191,42 @@ Decisions 1–5: 2026-08-19.
     direction, superseding the combined-provider/Codex-backed suggestions. The owner subsequently
     approved the initial external-server adapter for implementation on the same date. Separate
     application extraction remains Draft; no live runtime switch is authorized.
+
+66. **Core feedback records, SDK annotations and Harness triage (2026-10-30).** Refine
+    decisions 11 and 37: one report can contain several related element/region annotations, comments
+    and images explaining one problem. Preserve reports as units when selecting a dispatch batch.
+    Core owns submitted reports, evidence and trusted current app/runtime context; SDK owns capture
+    and browser-local unsent drafts. Harness initially hosts a global Feedback page and a
+    workspace-details section. No separate feedback application or development UI extraction is required. Core remains client-neutral;
+    reporting does not require administrator-only Harness.
+    Workspace dispatch proposes the currently displayed chat, previews reports and any instruction,
+    and runs only after confirmation. Global dispatch defaults to a new session that normally
+    prepares a new workspace; an explicitly selected existing workspace/chat is also valid.
+    Observed origin and work destination remain distinct. Take available current context from Core
+    at first submission acceptance, with unknown fields and an update-time mismatch allowed; exact
+    served-build tracking is not required. Preserve this snapshot on retries. Unsent text and image
+    drafts survive reload in browser storage (IndexedDB is the selected technical default), and
+    remain until confirmed acceptance or explicit discard. Retry uses the same submission identity
+    to avoid duplicates. Permissions, capture feasibility and remaining visual details belong to
+    [Feedback Inbox](features/app-feedback-inbox/feature.md). The selected capture interaction places
+    comment entry beside the element and also permits editing the same annotation in the side panel.
+
+    The owner further limits this delivery to manually selected reports sent to one session.
+    Ordinary reporters get draft/submission feedback only, with no post-submission view, status or
+    notifications; administrators inspect records in Harness. Busy-chat sends are simply refused
+    with the selection preserved, without queuing or automatic retry. Address all excludes reports
+    already processed or accepted/in progress. A processing indication follows the exact dispatched
+    prompt and its per-report outcome. There is no separate Closed state. Retain processed reports
+    and screenshots for explicit Send again with additional explanations and a new attempt history.
+    Each report has zero or one current workspace binding; reassignment replaces it while preserving
+    the observed app version/context. Workspace deletion removes currently processed reports and
+    their evidence, but detaches every other report intact into the unassigned inbox. A historical
+    origin/dispatch reference is not another binding. PR state and app rollout neither gate
+    processing nor trigger deletion. Browser screenshots use Screen Capture API with user permission;
+    no DOM-renderer workaround is included. Automated pickup, multi-agent routing and possible
+    reporter access remain [ideas](ideas.md#i18-feedback-follow-up-and-automated-handling).
+    Feedback has no task association or task creation. The owner subsequently approved implementation
+    on October 30; the feature document records the delivered manual flow. Automatic agent triggers remain outside this scope.
 
 ## Personal And Shared Environments (owner exploration, 2026-10-23)
 

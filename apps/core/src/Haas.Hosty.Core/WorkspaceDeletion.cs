@@ -172,6 +172,7 @@ internal sealed partial class DevelopmentWorkspaceService
                 var job = await JsonStorage.ReadAsync<WorkspaceCleanupJob>(path, ct);
                 if (job?.WorkspaceId == id && job.UserId == owner.UserId) DeleteMetadata(path);
             }
+            await new FeedbackStore(paths, clock).DeleteWorkspaceAsync(id, ct);
             await RetireParticipationAsync(id, ct);
             DeleteMetadata(MetadataPath(owner));
             DeleteMetadata(WorkflowPath(owner));

@@ -121,3 +121,10 @@ test('observability builds all affected images and uses the managed child fixtur
   assert.equal(plan.steps.filter(step => step.file === 'docker' && step.args[0] === 'build').length, 3);
   assert.deepEqual(plan.steps.at(-1).args, ['scripts/check-workspace-activation.py', '.', 'observability', '--managed']);
 });
+
+
+test('feedback uses native Harness and managed Core with browser acceptance', () => {
+  const plan = suitePlan('feedback', { platform: 'darwin' });
+  assert.deepEqual(plan.steps[2].args, ['scripts/check-workspace-activation.py', '.', 'feedback', '--managed']);
+  assert.equal(plan.steps.some(step => step.bin === 'docker' && step.args.includes('build')), false);
+});

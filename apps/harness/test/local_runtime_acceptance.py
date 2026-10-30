@@ -33,6 +33,9 @@ def check(context):
     manifest = json.loads((workspace/'apps/harness/manifest.json').read_text())
     app = manifest['id']
     manifest['source']['repository'] = context['repository']
+    if context.get('scenario') == 'feedback':
+        worker = next(s for s in manifest['services'] if s['key'] == 'worker')['runtimes']['local']
+        worker.setdefault('environment', {})['HOSTY_HARNESS_CODEX_COMMAND'] = str(workspace/'apps/harness/test/fake-codex-server.mjs')
     target = base/'harness-manifest.json'
     target.write_text(json.dumps(manifest))
     run([cli, '--data-root', root, 'apps', 'install', target, '--runtime', 'local', '--no-autostart'])
@@ -82,6 +85,10 @@ def check(context):
         with client.open(urllib.parse.urljoin(app_origin, asset), timeout=30) as response:
             assert response.status == 200 and len(response.read()) > 0
     say('PASS: production API/worker, password login, Core launch-code identity, sessions API and compiled static assets')
+
+    if context.get('scenario') == 'feedback':
+        from feedback_acceptance import check as check_feedback
+        check_feedback(context, app_origin, link)
 
     if os.environ.get('HOSTY_OLLAMA_ACCEPTANCE'):
         import importlib.util

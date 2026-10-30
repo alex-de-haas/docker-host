@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-24
-updated: 2026-10-29
+updated: 2026-10-30
 summary: Umbrella for assistant sessions that own a conversation, its source workspaces, tests and pull requests.
 components: [apps/harness, apps/core, apps/shell]
 ---
@@ -165,9 +165,15 @@ records Sandbox D28: empty-engine image import/extraction, uncached build/start,
 engine/native memory and disposal without changing existing workloads. Broader host/recipe
 acceptance remains in Sandbox D9. This does not close this umbrella plan's remaining deliverables.
 
-[Feedback](../app-feedback-inbox/plan.md) adds optional durable collections and explicit assistant
-organization into several sessions/workspaces. Independent changes may use parallel worktrees/PRs;
-source access, execution authority and repository commit rules still apply to every child.
+[Feedback](../app-feedback-inbox/feature.md) adds Core-owned reports containing related SDK annotations,
+with Harness global and workspace-details views. Workspace dispatch defaults to the visible chat;
+global dispatch defaults to a new session and normally new source preparation, with an explicit
+existing-workspace alternative. The October 30 scope is manual dispatch of several reports to one
+session, with prompt-linked processing and administrator-only tracking. Processed reports support
+manual repeat attempts with retained evidence; there is no Closed state. Each report has at most
+one current workspace binding. Deleting that workspace removes processed reports and detaches all
+others with their evidence/version context intact. Automatic routing, reporter outcome
+views/notifications and task associations are outside that feature's current delivery.
 Cross-session handoffs and the broader acceptance below remain tracked requirements of this
 umbrella, but are not prerequisites for the one-provider first demonstration. Partial integration
 does not close this plan.
@@ -300,7 +306,7 @@ Uncommitted changes in the operator's main checkout are not part of this baselin
 | [PR lifecycle](../assistant-pr-lifecycle/feature.md) | Publish/review/Merge/Complete, credentials, CI, ordered dependencies and corrective PRs |
 | [Action summary](../assistant-action-summary/plan.md) | Correlated native events and durable ingestion (D4), with evidence-linked aggregation/UI |
 | [Timeline analysis](../assistant-timeline-analysis/plan.md) | Later analysis over the event foundation; does not gate basic shared sessions or summary |
-| [Feedback inbox](../app-feedback-inbox/plan.md) | Independent ordinary-user intake and admin triage/batch delivery outside the privileged Harness process |
+| [Feedback inbox](../app-feedback-inbox/feature.md) | Core-owned ordinary-user reports/evidence, SDK annotations and Harness global/workspace triage with reviewed session delivery |
 | [External context exchange](../assistant-external-session-context/plan.md) | Later explicit local-agent read/prepare/report workflow |
 | [Harness Swift](../hosty-harness-swift/plan.md) | Dedicated native client with independent delivery and notification decisions |
 | [Sandbox runtimes](../app-sandbox-runtimes/plan.md) | Independent Core instance API, optional worktree integration, runtime/data/user isolation and deterministic browser validation |
@@ -321,7 +327,7 @@ internal journal/commands for the requested functionality. Evaluate AHP early as
 adapter through a bounded spike; adoption does not gate session recovery, context handoffs, workspaces or PRs.
 Keep the current web REST/SSE contract. The Swift client targets the official AHP SDK if the
 client/auth/reconnect spike succeeds. A future web migration is optional, not part of this plan.
-Rename, feedback, analytics, external context and synthetic evaluation retain separate approvals.
+Feedback has its own approved implementation. Rename, analytics, external context and synthetic evaluation retain separate approvals.
 
 ## Deliverables
 

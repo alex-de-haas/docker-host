@@ -7,7 +7,7 @@ import { createPresentationRequestId, ui } from "./ui";
 import type { UiHost } from "./ui-host";
 import type { UiBootstrap, UiPanel } from "./ui-types";
 import { HostyAppFrame } from "./ui-frame";
-vi.mock("./browser-auth", () => ({ appFetch: (...args: Parameters<typeof fetch>) => fetch(...args) }));
+vi.mock("./browser-auth", () => ({ APP_SESSION_RESTORED: "hosty:app-session-restored", appFetch: (...args: Parameters<typeof fetch>) => fetch(...args) }));
 let root: Root, element: HTMLDivElement, host: UiHost | null;
 let resize: () => void;
 let catalogGate: Promise<void> | null;

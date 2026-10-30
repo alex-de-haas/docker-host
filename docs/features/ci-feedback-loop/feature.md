@@ -1,6 +1,6 @@
 ---
 created: 2026-10-20
-updated: 2026-10-27
+updated: 2026-10-30
 summary: Affected component CI, explicit local integration checks and publication of verified main revisions.
 components: [.github, scripts]
 ---
@@ -64,6 +64,7 @@ npm run test:integration -- worker
 npm run test:integration -- sessions
 npm run test:integration -- tasks
 npm run test:integration -- harness-local
+npm run test:integration -- feedback
 npm run test:integration -- whisper
 npm run test:integration -- opus
 npm run test:integration -- desktop
@@ -87,6 +88,7 @@ GitHub Actions. Its small command-construction tests remain in the CI policy job
 | worker | Requires Docker; builds the worker image named by the current manifest and runs its process/mount/control fixtures. |
 | shell | Requires .NET, Git, Python and Docker; builds Shell and verifies password identity and workspace inventory in a managed child Core. `HOSTY_SHELL_BROWSER_REVIEW` names a private temporary browser checkpoint; its `.continue` marker resumes Finish cleanup. |
 | harness-local | Requires Node/npm, .NET, Git, Python and Docker for the parent-managed child Core; verifies native production cold/warm startup, password/app identity, compiled assets, recovery and Finish cleanup. |
+| feedback | Requires the harness-local prerequisites and Playwright Chromium; verifies annotated capture/drafts, one reviewed batch, exact-prompt outcomes, partial repeat, workspace retention and Finish cleanup. See [feedback acceptance](../app-feedback-inbox/feature.md#testing-expectations). |
 | tasks | Requires .NET, Git, Python and Docker; builds Core/CLI and Harness images, verifies human/profile/independent-provider tasks, explicit MCP results, cancellation, existing workspaces and restart in a managed child Core. `HOSTY_TASKS_BROWSER=1` adds the Playwright browser journey. |
 | sessions | Requires .NET, Git, Python and Docker; builds Core/CLI and both Harness images, then runs multi-user workspace acceptance in a parent-managed child Core with separate password-authenticated users and data. |
 | opus | Requires Node 24 and uv; builds the app, verifies real OPUS-MT Big inference, cancellation and model-cache reuse/recovery. `HOSTY_OPUS_TEST_CACHE` reuses a dedicated cache. |

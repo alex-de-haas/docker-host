@@ -5,11 +5,11 @@ import { createHostySessionResponse } from "@hosty-sdk/app/session/server";
 import { createHostyUiResponse } from "@hosty-sdk/app/ui/server";
 import { readAppCredential, resolveAppSession, getAppRecoveryParams, exchangeLaunchCode } from "./auth.js";
 
-async function body(request: IncomingMessage) {
+async function body(request: IncomingMessage, maxBytes = 65536) {
   let text = "";
   for await (const chunk of request) {
     text += chunk.toString();
-    if (Buffer.byteLength(text) > 65536) throw new Error("Request too large.");
+    if (Buffer.byteLength(text) > maxBytes) throw new Error("Request too large.");
   }
   return JSON.parse(text || "{}");
 }
@@ -51,8 +51,8 @@ createServer(async (request, response) => {
       return send(result.status, await result.json());
     }
     if (url.pathname.startsWith("/api/hosty/ui/")) {
-      const result = await createHostyUiResponse(new Request(url, { method: request.method,
-        body: request.method === "POST" ? JSON.stringify(await body(request)) : undefined }),
+      const result = await createHostyUiResponse(new Request(url, { method: request.method, headers: Object.fromEntries(Object.entries(request.headers).filter((entry): entry is [string, string] => typeof entry[1] === "string")),
+        body: request.method === "POST" ? JSON.stringify(await body(request, url.pathname.includes("/feedback") ? 12 * 1024 * 1024 : 65536)) : undefined }),
         { session, token });
       return send(result.status, await result.json());
     }
