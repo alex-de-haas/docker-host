@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-26
-updated: 2026-10-27
+updated: 2026-10-29
 summary: Persistent addressed decision requests, authorized resolution and durable continuation handoff beyond an individual live session.
 components: [apps/core, apps/harness, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -75,6 +75,34 @@ Questions, business acceptance and permission requests may share a UI while reta
 enforcement. [Approval Rules](../assistant-approval-rules/plan.md) and execution authorization own
 tool permissions; do not replay an expired native permission or convert plan acceptance into
 publication/deployment authority.
+
+## Assistant Event Correlation (2026-10-29)
+
+[Assistant Events And Session Continuation](../assistant-events-and-continuation/plan.md) supplies the
+recipient-binding, event receipt and admission seam for a resolved decision. D2-D4 here retain the
+record, authorized answer and consistent response publication; Notifications D6 retains transport,
+and Durable Agent Jobs retains waiting/recovery. Register the wait before exposing the question,
+preserve its identity through replay and distinguish an answered decision from an accepted or
+completed continuation. An unrelated application event cannot satisfy a permission wait. This
+coordination adds no implicit consent, new permission replay or implementation approval.
+
+## PR Merge Decision Example (2026-10-29)
+
+An event-triggered routine may ask, "Merge this reviewed dependency update?" Keep the repository/PR,
+reviewed head and relevant evidence/policy revision with the decision. The user can answer from the
+shared Decisions view without finding the originating chat. A persisted yes resumes the waiting
+routine; it does not prove a merge occurred. A no prevents that proposed merge. Changed inputs make
+the old decision stale under D2, and the action owner rechecks current rights, CI/reviews and branch
+protection immediately before a revision-bound merge request.
+
+[Durable Agent Jobs](../durable-agent-jobs/plan.md#event-triggered-routine-example-2026-10-29) owns
+routine execution; [Assistant Events](../assistant-events-and-continuation/plan.md#design-consumer-repository-events-and-dependabot-routines)
+owns event admission/correlation. The separate [PR inbox plan](../harness-pull-request-inbox/feature.md)
+can link the decision, while this plan remains the owner of its record. The inbox is independently
+usable without this decision service; a PR is one possible reviewed subject, not a required field
+of every question or answer. A configured automatic action
+can omit a human question within valid prior authority; no fabricated human answer or reusable
+approval for a different PR/head is recorded. This is an example of D1-D4, not a new implementation.
 
 ## Deliverables
 

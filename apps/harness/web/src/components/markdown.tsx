@@ -1,6 +1,6 @@
 "use client";
 
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { type Options } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { remarkSoftBreaks, transformChatUrl } from "@/lib/markdown";
 import { cn } from "@/lib/utils";
@@ -31,13 +31,19 @@ const PROSE_CLASS = [
   "[&_td]:border-b [&_td]:border-muted-foreground/15 [&_td]:px-2 [&_td]:py-1",
 ].join(" ");
 
-export function Markdown({ text, className, streaming = false }: { text: string; className?: string; streaming?: boolean }) {
+export function Markdown({ text, className, streaming = false, rehypePlugins }: {
+  text: string;
+  className?: string;
+  streaming?: boolean;
+  rehypePlugins?: Options["rehypePlugins"];
+}) {
   return (
     <div className={cn(PROSE_CLASS, className)}>
       <ReactMarkdown
         // Soft breaks after GFM, so a table's own line endings are already structured by the time
         // stray newlines become line breaks.
         remarkPlugins={[remarkGfm, remarkSoftBreaks]}
+        rehypePlugins={rehypePlugins}
         urlTransform={transformChatUrl}
         components={{
           pre: ({ children }) => <ChatCodeBlock {...markdownCodeProps({ children })} streaming={streaming} />,

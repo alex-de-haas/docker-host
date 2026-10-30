@@ -12,7 +12,6 @@ export function WorkspaceSessionTabs({ workspace, sessions, activeId, onPick, ac
   onPick: (session: AssistantSession) => void; actions: WorkspaceSessionActions;
 }) {
   const tabList = useRef<HTMLDivElement>(null);
-  if (workspace.owner.kind === "external") return null;
   const chats = workspaceSessionIds(workspace).flatMap(id => sessions.find(s => s.id === id) ?? []);
   return <div className="shrink-0 border-b">
     <div className="flex min-w-0 items-center gap-1 px-2 pt-2">

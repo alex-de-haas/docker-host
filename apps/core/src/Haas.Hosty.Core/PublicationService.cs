@@ -408,24 +408,3 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
         }, ct);
     }
 }
-
-internal sealed class PublicationObserver(PublicationService service, ILogger<PublicationObserver> logger) : BackgroundService
-{
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
-        do
-        {
-            try
-            {
-                foreach (var r in (await service.ListAsync(null, stoppingToken)).Publications)
-                {
-                    try { await service.ObserveInBackgroundAsync(r.WorkspaceId, stoppingToken); }
-                    catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogWarning("Cannot observe publication {WorkspaceId}: {ErrorType}", r.WorkspaceId, ex.GetType().Name); }
-                }
-                await service.RefreshExternalReferencesAsync(stoppingToken);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogWarning("Cannot list publications: {ErrorType}", ex.GetType().Name); }
-        } while (await timer.WaitForNextTickAsync(stoppingToken));
-    }
-}

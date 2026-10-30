@@ -90,7 +90,7 @@ it("labels external ownership and per-repository observation age without implyin
   w.worktrees[1].observation = undefined; replies(w);
   await act(async () => root.render(<WorkspaceDetails workspace={w} title="External QA" refresh={() => {}} />));
   expect(container.textContent).toContain("External work: External QA");
-  expect(container.textContent).toContain("Conversation and agent activity are not synchronized.");
+  expect(container.textContent).toContain("The external conversation and its agent activity are not synchronized.");
   expect(container.querySelector("time")?.dateTime).toBe("2020-01-01T00:00:00Z");
   await expandCards(); expect(container.textContent).toContain("Outdated");
   expect(container.textContent).toContain("Observation unavailable");

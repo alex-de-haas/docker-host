@@ -6,7 +6,7 @@ using System.Text.RegularExpressions;
 
 namespace Haas.Hosty.Core;
 
-internal sealed partial class GitHubPublicationProvider(HttpClient http, IClock clock) : IPublicationProvider
+internal sealed partial class GitHubPublicationProvider(HttpClient http, IClock clock, PullRequestProviderBudget? budget = null, PullRequestObservationCache? observationCache = null) : IPublicationProvider
 {
     public string NormalizeRepository(string url) => Repository(url);
     public string PullRequestUrl(string repository, int number) => $"https://github.com/{Slug(repository)}/pull/{number}";
@@ -28,7 +28,13 @@ internal sealed partial class GitHubPublicationProvider(HttpClient http, IClock 
     private static string Escape(string value) => Uri.EscapeDataString(value);
     private async Task<JsonNode> Request(UserProviderConnection c, HttpMethod method, string path, JsonNode? body, CancellationToken ct)
     {
+        try { return await RequestBudgeted(c, method, path, body, ct); }
+        catch (PullRequestException e) { throw new PublicationException(e.Code, e.Message); }
+    }
+    private async Task<JsonNode> RequestBudgeted(UserProviderConnection c, HttpMethod method, string path, JsonNode? body, CancellationToken ct)
+    {
         if (c.Provider != "github") throw new PublicationException("provider_unsupported", "Select a GitHub connection.");
+        using var budgetLease = budget is null ? null : await budget.AcquireAsync(c, path == "/graphql", false, ct, waitForPacing: true);
         using var request = new HttpRequestMessage(method, "https://api.github.com" + path);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", c.AccessToken);
         request.Headers.UserAgent.ParseAdd("Hosty/1.0");
@@ -37,7 +43,10 @@ internal sealed partial class GitHubPublicationProvider(HttpClient http, IClock 
         if (body is not null) request.Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json");
         using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
         if (!response.IsSuccessStatusCode)
+        {
+            budgetLease?.Complete(response);
             throw new PublicationException("provider_unavailable", $"GitHub returned {(int)response.StatusCode}. Check connection permissions, repository rules and rate limits; recover uncertain operations with the same request ID.");
+        }
         if (response.Content.Headers.ContentLength > 4 * 1024 * 1024) throw new PublicationException("response_limit", "GitHub response is too large to verify.");
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
         using var buffer = new MemoryStream();
@@ -48,6 +57,7 @@ internal sealed partial class GitHubPublicationProvider(HttpClient http, IClock 
             if (buffer.Length > 4 * 1024 * 1024) throw new PublicationException("response_limit", "GitHub response is too large to verify.");
         }
         var result = JsonNode.Parse(buffer.ToArray()) ?? throw new PublicationException("response_invalid", "GitHub returned no data.");
+        budgetLease?.Complete(response, result);
         if (result is JsonObject obj && obj.ContainsKey("errors")) throw new PublicationException("provider_unavailable", "GitHub could not verify all requested facts. Check connection permissions.");
         return result;
     }
@@ -170,6 +180,7 @@ internal sealed partial class GitHubPublicationProvider(HttpClient http, IClock 
                   }
                 }
               }
+              rateLimit { cost limit remaining resetAt }
             }
             """;
         var parts = Slug(r.Repository).Split('/');

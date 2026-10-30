@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-06-16
-updated: 2026-10-27
+updated: 2026-10-29
 summary: Expose notifications to non-browser clients and add delivery channels that reach users outside any client.
 components: [apps/core]
 ---
@@ -33,6 +33,32 @@ Under [vision decision 63](../../vision.md), Ready persists a direct execution c
 state; request receipts and reconciliation provide its reliability. HTTP reads and SSE refresh with
 state reload handle the initial UI. D6 remains necessary for later transition-driven subscriptions;
 this narrower dispatch record is not a second general-purpose event bus.
+
+## Assistant Event Consumer (2026-10-29)
+
+[Assistant Events And Session Continuation](../assistant-events-and-continuation/plan.md) adds a
+consumer contract for activity events and delegated-task results. D6 here retains shared transport,
+authorization, retention and replay; the assistant plan owns bindings to private conversations,
+receipt interpretation and event-to-session admission. Domain producers keep state/publication
+consistency. Delivery is not permission to run a model or proof of continuation.
+
+Keep bounded domain facts and protected result references separate from arbitrary agent messages
+or private transcripts, which remain direct authorized consumer/provider exchanges. The existing
+human inbox and ephemeral SSE hints do not acquire machine-trigger semantics. This link neither
+completes D6 nor makes unrelated notification channels prerequisites for the assistant contract.
+
+## Independent Domain Sources (2026-10-29)
+
+The owner clarifies that D6 must accept unrelated compatible domain sources; a PR change is one
+example alongside activity changes, application jobs and decisions. Source-owned versioned schemas
+and authorized subscriptions must not require GitHub, a PR number or a first-party assistant.
+Unknown types/versions need explicit compatibility behavior. Generic event identity/replay and
+access remain shared; domain predicates and routine activation belong to their consumers.
+
+[Harness Pull Request Inbox](../harness-pull-request-inbox/feature.md) owns repository discovery and
+its standalone browsing surface. Its ordinary reads/UI convergence do not require D6. A future live
+PR event producer must be explicitly scoped with that owner; no priority, subscription or event-bus
+implementation is selected by creating the inbox Draft.
 
 ## Deliverables
 
