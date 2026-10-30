@@ -296,4 +296,3 @@ const feedbackStyles = [
   ".hf-popover>strong{display:block;margin-bottom:6px}.hf-popover{position:fixed;width:min(310px,calc(100vw - 32px));box-sizing:border-box;z-index:2147481002;background:#fff;border:1px solid #84cc16;border-radius:10px;padding:12px;box-shadow:0 8px 28px #0f1b2d35}",
   ".hf-backdrop{position:fixed;inset:0;background:#0f1b2d88;display:grid;place-items:center;z-index:2147481003;padding:16px}.hf-crop::backdrop{background:#0f1b2d88}.hf-crop{border:0;color:#0f1b2d;background:#fff;border-radius:12px;padding:20px;width:min(760px,90vw);max-height:90vh;overflow:auto}.hf-crop-image{position:relative;display:table;max-width:100%;touch-action:none}.hf-crop-image img{display:block;max-width:100%;max-height:55vh;user-select:none}.hf-crop-selection{position:absolute;border:2px solid #65a30d;background:#a3e63530;pointer-events:none;box-sizing:border-box}.hf-crop input{display:block;width:70px}"
 ].join("\n");
-

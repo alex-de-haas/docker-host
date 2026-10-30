@@ -41,4 +41,3 @@ internal sealed class FeedbackException(string code, string message, int status 
     public string Code { get; } = code;
     public int Status { get; } = status;
 }
-

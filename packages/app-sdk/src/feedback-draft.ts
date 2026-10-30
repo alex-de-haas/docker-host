@@ -62,4 +62,3 @@ export async function submission(draft: FeedbackDraft): Promise<FeedbackSubmit> 
     return { ...data, image: { mediaType: image.type, data: btoa(binary) } };
   })) };
 }
-

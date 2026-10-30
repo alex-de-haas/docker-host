@@ -260,4 +260,3 @@ internal sealed class FeedbackStore(CoreDataPaths paths, IClock clock)
         return true;
     }, ct);
 }
-

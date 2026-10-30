@@ -45,4 +45,3 @@ export class FeedbackServerClient {
     return this.response("feedback/" + encodeURIComponent(id) + "/images/" + encodeURIComponent(noteId), token, undefined, signal);
   }
 }
-

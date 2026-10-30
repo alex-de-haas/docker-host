@@ -57,4 +57,3 @@ export async function cropStill(blob: Blob, crop: FeedbackRect | null): Promise<
 function canvasBlob(canvas: HTMLCanvasElement): Promise<Blob> {
   return new Promise((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error("Could not encode the screenshot.")), "image/png"));
 }
-

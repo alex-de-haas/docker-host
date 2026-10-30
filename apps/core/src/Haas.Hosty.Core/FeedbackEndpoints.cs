@@ -170,4 +170,3 @@ internal static class FeedbackEndpoints
             kind, workspace, revision);
     }
 }
-
