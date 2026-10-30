@@ -1,6 +1,6 @@
 ---
 created: 2026-10-16
-updated: 2026-10-29
+updated: 2026-10-30
 summary: Harness provides separate Chats and Workspaces pages, multi-repository details, environment previews and verified lifecycle actions.
 components: [apps/harness, apps/core, apps/shell, packages/app-sdk]
 ---
@@ -124,7 +124,9 @@ exact path and patch before denial; denying it stops the request without executi
 leaves the worktree clean and releases the owned activity lease after confirmed Worker exit.
 
 Pending approvals/questions have a pinned Review action that scrolls and focuses their card;
-active work has a pinned activity line and Stop. Repository summaries use bordered cards. Search and activity chips change navigation without
+active work shows its live activity at the end of the transcript and Stop in the composer,
+without an additional activity bar below the conversation header. When the composer is blocked,
+Stop remains available in the header. Repository summaries use bordered cards. Search and activity chips change navigation without
 changing conversation identity. Both lists are ordered by most recent activity, with
 stable ID ordering for equal or unavailable dates. Waiting sessions keep their indicators without
 being pinned above newer work. Sessions fall back to their creation date on older records; Core
@@ -224,6 +226,11 @@ as more calls arrive, preserving disclosure state and focus. Prose, approvals, q
 boundaries separate activity sections. Approval cards remain immediately visible outside a collapsed
 section. Each call retains its input/output disclosure and each command its own recorded outcome.
 MCP calls keep their app/tool identity rather than being assumed read-only.
+
+Transcript notices, including MCP startup failures, appear as single-line disclosures collapsed
+by default. A bounded, whitespace-normalized preview truncates to the available width; expanding
+the row shows the complete recorded message as plain text with its original line breaks.
+Notices expand independently and retain their disclosure state as later events arrive.
 
 Each activity block with recorded edits has a separate collapsible **Changes** section beside
 Tool calls. Its header stays visible while Tool calls is collapsed, with the source-bound file
@@ -893,6 +900,8 @@ Verified on macOS on 2026-10-29 for the Harness 0.80.0 release; the initial coun
   exact-source edit aggregation, unknown totals and retained Review/input actions; command ID reuse,
   duplicate/conflicting/late results, missing provider fields and legacy logs. Test bounded summary
   validation before worker/coordinator persistence, SSE replay and append-before-cursor recovery.
+- Verify notices start collapsed with single-line previews, reveal the full literal message on
+  expansion, and retain independent disclosure state and focus as new transcript events arrive.
 - Verify separate tool-result text and JSON, command output, call/run/turn/parent/thread isolation,
   identical duplicates and conflicts, unmatched payloads, cancelled runs, and histories without
   results. Cover the 32,768-character bound, truncation, recursive `_meta` removal, binary omission,
