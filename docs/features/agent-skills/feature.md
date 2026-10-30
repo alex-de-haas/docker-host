@@ -1,6 +1,6 @@
 ---
 created: 2026-10-26
-updated: 2026-10-28
+updated: 2026-10-30
 summary: A shared library of Core, Git and app skill packages with stable selections, current-file exports and platform context for native agents.
 components: [apps/core, apps/cli, apps/harness]
 ---
@@ -47,15 +47,55 @@ symlinks, traversal and Git metadata are refused. Limits are 512 files/16 MiB pe
 256 KiB for `SKILL.md`, and 200 packages/64 MiB for the managed library. Core packages are outside
 that capacity; exports and Harness selections accept all 200 managed packages plus both built-ins.
 
+## Local Git Installation
+
+The local operator can install selected public Git packages directly into the shared library:
+
+```sh
+hosty skills add https://github.com/github/awesome-copilot --skill csharp-xunit
+hosty --data-root /path/to/instance skills add https://example.org/team/skills.git \
+  --skill testing --skill review --ref main --path skills --format json
+```
+
+`add` requires at least one exact SKILL.md frontmatter name. Repeated `--skill` arguments select
+multiple packages; identical selectors are deduplicated. `--ref` defaults to `HEAD`, and `--path`
+defaults to the repository root. Repository URLs use the existing credential-free HTTP(S) Git
+contract. GitHub shorthand, browser `/tree/` URLs, private Source connection flags and an implicit
+install-all mode are not supported. The selected Core instance must already be running.
+
+The command discovers metadata and installs at the observed commit. A moved ref, missing name,
+ambiguous name or invalid selected package fails before publication. Ambiguity diagnostics show
+candidate paths for narrowing `--path`. Selection reads names from metadata rather than assuming
+directory names; full package validation still enforces the portable directory-name contract.
+Discovery reads only SKILL.md frontmatter, bounded to 256 KiB per header, 10,000 directories,
+20 levels and 64 MiB of metadata. Invalid or
+unreadable metadata and exceeded scan bounds produce errors instead of incomplete selections.
+Large upstream catalogs can contain more than 200 packages: full file validation applies only to
+selected packages. Oversized unselected instruction bodies and ancillary files do not block
+selection or consume installed library capacity.
+
+Success prints a readable summary and table of the packages installed by this command.
+`--format json` returns only those packages with full metadata, stable IDs and commits.
+Re-adding the same repository/ref/path replaces its current contents with the same stable ID;
+existing exports refresh through the ordinary library publication path. Unrelated packages and
+profile selections stay intact. Installation never runs package scripts or provisions native homes.
+
+The local `/control/v1/skills/discover` contract accepts `{ source, names }` and returns selected
+metadata with the observed commit. `/control/v1/skills/install` accepts `{ source, commit, names }`
+and returns the installed package catalog. Both require the existing local control secret and
+reject non-null Source connection IDs. Private imports retain the administrator HTTP contract
+and owned Source grants. Successful local publication records `skills.library.modified` with
+`via: local-control` and no fabricated user identity.
+
 ## API And Delivery
 
 | Consumer | Contract |
 | --- | --- |
 | Signed-in user/operator app | `/api/skills`: catalog, file reads, discover, install, check-updates, update and delete |
 | Installed app | `/api/internal/apps/{appId}/skills`: catalog, file reads and owned exports |
-| Local operator | `hosty skills list`, `read`, `export` and `release`, through local Core control |
+| Local operator | `hosty skills add`, `list`, `read`, `export` and `release`, through local Core control |
 
-Library writes require a current administrator; app-mediated management additionally requires
+Browser/API library writes require a current administrator; app-mediated management additionally requires
 `skills.manage`. App catalog/read/export calls require its service identity and `apps.skills.read`.
 Private repository reads use saved Source grants. Management mutations record actor provenance in
 the audit log. An app cannot release another app's exports.
@@ -109,10 +149,17 @@ An independent local Codex consumer can run:
 
 ```sh
 hosty skills list
+hosty skills list --format json
 hosty skills export --context my-agent --skill <stable-id> --link <dedicated-home>/.agents/skills
 HOME=<dedicated-home> CODEX_HOME=<connection-home> codex
 hosty skills release <export-id>
 ```
+
+`hosty skills list` defaults to a table of skill names, source kinds and descriptions abbreviated
+to 120 characters. `--format table` explicitly selects that view. `--format json` returns the full
+catalog, including stable IDs for read/export commands and complete descriptions. Scripts consuming
+the previous JSON-only default must add `--format json`. Empty tables display `No skills installed.`
+Invalid list arguments fail before connecting to Core.
 
 The CLI never replaces an existing ordinary directory or unrelated link. Remote MCP alone does
 not provision filesystem packages. The CLI MCP connector and HTTP facade supply tool descriptions
@@ -154,8 +201,30 @@ Native history can retain previously loaded instructions. Resume reads current f
 erase earlier messages, and Hosty does not require immediate catalog refresh in a running turn.
 Missing selections produce an empty or reduced current export rather than preventing a session.
 
+The 2026-10-30 macOS arm64 CLI acceptance run uses a parent-managed child Core with separate
+data and normal test-user setup/login. `npm run test:integration -- skills` passes actual HTTP Git
+imports from a 240-package fixture, repeated selectors, ref/path selection, atomic failures,
+oversized unselected instructions, moved-source rejection, stable reinstallation IDs and
+add/list/read/export/release. The exact public example above installs `csharp-xunit` from
+awesome-copilot commit `5269f7ea2d6c3a9bfda5ed878b6726cf509121fd`. Parent Finish confirms child
+resource removal; the fixture checks process exit and port release before removing its data.
+
+Verification for this change includes Core/CLI builds, 356 CLI tests and 15 integration-runner
+tests. The full Core run passes 4386 tests with five unrelated opt-in integration skips; after
+the final metadata-reader adjustment, all 50 affected skill/audit tests pass again. NativeAOT
+publish and startup smoke pass on osx-arm64 without new trim/AOT warnings. The full Core suite
+is not repeated after that isolated adjustment; Windows and Linux runtime checks are not run.
+
 ## Testing Expectations
 
+- Cover the CLI's default and explicit table output, literal package text, abbreviated descriptions,
+  complete JSON output, empty catalogs and argument errors without a running Core.
+- Cover selected public imports, repeated selectors, ref/path propagation, large upstream catalogs,
+  ambiguity, metadata and selected-package failures, moved commits, stable reinstallation IDs,
+  export refresh, local authentication/audit and rejection of private connection IDs.
+- Run `npm run test:integration -- skills` for real Git transport and CLI add/list/read/export/release
+  in a parent-managed child Core, normal test-user login, the public awesome-copilot example and
+  Finish cleanup. Keep live upstream failures distinct from deterministic fixture results.
 - Cover built-ins without installed apps, Core version provenance, protected lifecycle, reserved
   names, legacy collisions, recovery from packaged bytes and platform-context opt-in.
 - Cover complete packages, path/YAML/size validation, source selection and moved commits, manual

@@ -18,6 +18,10 @@ internal sealed record AgentSkillGitRequest(string Repository, string Ref = "HEA
 internal sealed record AgentSkillCandidate(string Path, string Name, string Description, int FileCount, long Bytes);
 internal sealed record AgentSkillDiscovery(string Repository, string Ref, string Commit, AgentSkillCandidate[] Skills);
 internal sealed record AgentSkillInstallRequest(AgentSkillGitRequest Source, string Commit, string[] Paths);
+internal sealed record AgentSkillMetadata(string Path, string Name, string Description);
+internal sealed record AgentSkillSelectionRequest(AgentSkillGitRequest Source, string[] Names);
+internal sealed record AgentSkillSelectedInstallRequest(AgentSkillGitRequest Source, string Commit, string[] Names);
+internal sealed record AgentSkillSelection(string Repository, string Ref, string Commit, AgentSkillMetadata[] Skills);
 internal sealed record AgentSkillUpdateRequest(string[] SkillIds);
 internal sealed record AgentSkillUpdate(string Id, string? CurrentCommit, string? AvailableCommit, bool Removed, string? Error = null);
 internal sealed record AgentSkillUpdates(AgentSkillUpdate[] Skills);

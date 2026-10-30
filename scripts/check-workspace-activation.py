@@ -303,6 +303,13 @@ try:
         csrf = request('/api/auth/csrf')['token']
         initial = request('/control/v1/core/status',control=True)
         say('Started a parent-managed child Core and logged in with its separate test account')
+    if scenario == 'skills':
+        assert managed, 'Skills acceptance requires a managed child Core'
+        sys.dont_write_bytecode = True
+        from skills_acceptance import check
+        check(globals())
+        success = True
+        sys.exit(0)
     if scenario == 'shell':
         assert managed, 'Shell acceptance requires a managed child Core'
         import importlib.util

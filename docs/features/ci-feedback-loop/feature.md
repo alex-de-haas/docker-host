@@ -1,6 +1,6 @@
 ---
 created: 2026-10-20
-updated: 2026-10-27
+updated: 2026-10-30
 summary: Affected component CI, explicit local integration checks and publication of verified main revisions.
 components: [.github, scripts]
 ---
@@ -68,6 +68,7 @@ npm run test:integration -- whisper
 npm run test:integration -- opus
 npm run test:integration -- desktop
 npm run test:integration -- shell
+npm run test:integration -- skills
 ```
 
 The `desktop` suite builds Desktop and exercises normal password login, role-based app access, assignment revocation and lifecycle authorization in the existing parent-managed child Core. `HOSTY_DESKTOP_BROWSER=1` retains that same sandbox for manual UI acceptance until its completion marker is written; the owner then Finishes the environment and verifies removal.
@@ -83,6 +84,7 @@ GitHub Actions. Its small command-construction tests remain in the CI policy job
 | activation | Requires .NET, Git, Python and Docker; builds Core/CLI and runs Return plus detached-helper recovery in parent-owned isolated Core environments. |
 | windows | Requires Windows, Git and .NET; runs the focused process/path/document/storage Core tests and CLI shared-receipt tests. Other operating systems receive an explicit refusal. |
 | dependencies | Requires .NET, Python and Docker; builds Core/CLI and checks dependency waits, recovery, cancellation and boot in a parent-owned isolated Core. |
+| skills | Requires .NET, Git, Python and Docker; builds Core/CLI, verifies selected public Git imports, table/JSON output, exports and atomic failures in a parent-owned child Core, then probes the requested awesome-copilot package and Finishes the child. |
 | transport | Requires .NET, Python and Docker; builds Core and runs its isolated real-Docker listener/transport fixture. |
 | worker | Requires Docker; builds the worker image named by the current manifest and runs its process/mount/control fixtures. |
 | shell | Requires .NET, Git, Python and Docker; builds Shell and verifies password identity and workspace inventory in a managed child Core. `HOSTY_SHELL_BROWSER_REVIEW` names a private temporary browser checkpoint; its `.continue` marker resumes Finish cleanup. |

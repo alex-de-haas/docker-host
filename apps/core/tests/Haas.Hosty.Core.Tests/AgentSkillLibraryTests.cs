@@ -419,12 +419,179 @@ public sealed class AgentSkillLibraryTests : IDisposable
     }
 
     private sealed class Clock : IClock { public DateTimeOffset UtcNow => DateTimeOffset.UtcNow; }
+
+    [Fact]
+    public async Task SelectedImportSupportsLargeCatalogAndIgnoresUnselectedAncillaryFiles()
+    {
+        git.Packages = Enumerable.Range(0, 240).ToDictionary(i => "skills/guide-" + i, i => Package("guide-" + i));
+        git.Packages["skills/guide-100"] = Package("guide-100") with
+            { Files = [.. Package("guide-100").Files, new(".git/config", [])] };
+        var source = new AgentSkillGitRequest("https://example.test/catalog");
+        var selection = await library.DiscoverSelectedAsync(new(source, ["guide-0", "guide-239"]), default);
+        Assert.Equal(new[] { "guide-0", "guide-239" }, selection.Skills.Select(s => s.Name));
+        var installed = await library.InstallSelectedAsync(new(source, selection.Commit, ["guide-0", "guide-239"]), default);
+        Assert.Equal(2, git.Checkouts);
+        Assert.Equal(2, installed.Skills.Length);
+        Assert.Equal(4, (await library.CatalogAsync(default)).Skills.Length);
+        var export = await library.ExportAsync("app:independent.consumer", new("selected", installed.Skills.Select(s => s.Id).ToArray()), default);
+        Assert.Equal("first", File.ReadAllText(Path.Combine(export.Path, "guide-239/references/result.txt")));
+        var invalid = await Assert.ThrowsAsync<AppLifecycleException>(() => library.InstallSelectedAsync(
+            new(source, selection.Commit, ["guide-0", "guide-100"]), default));
+        Assert.Equal("skill_package_invalid", invalid.Code);
+        Assert.Equal(4, (await library.CatalogAsync(default)).Skills.Length);
+    }
+
+    [Fact]
+    public async Task SelectedDiscoveryIgnoresOversizedInstructionBodiesUntilInstallation()
+    {
+        var oversized = Package("oversized");
+        oversized = oversized with { Files = [new("SKILL.md", [.. oversized.Files[0].Content, .. new byte[AgentSkillPackages.MaxInstructionsBytes]])] };
+        git.Packages = new() { ["guide"] = Package("guide"), ["oversized"] = oversized };
+        var source = new AgentSkillGitRequest("https://example.test/catalog");
+        var selection = await library.DiscoverSelectedAsync(new(source, ["guide", "oversized"]), default);
+        Assert.Equal(new[] { "guide", "oversized" }, selection.Skills.Select(s => s.Name));
+        Assert.Single((await library.InstallSelectedAsync(new(source, selection.Commit, ["guide"]), default)).Skills);
+        var invalid = await Assert.ThrowsAsync<AppLifecycleException>(() => library.InstallSelectedAsync(new(source, selection.Commit, ["oversized"]), default));
+        Assert.Equal("skill_package_invalid", invalid.Code);
+        Assert.Equal("guide", Assert.Single((await library.CatalogAsync(default)).Skills, s => s.SourceKind != "core").Name);
+    }
+
+    [Theory]
+    [InlineData("\n", false)]
+    [InlineData("\r\n", true)]
+    public async Task SelectedMetadataSupportsBoundedMultilineHeadersAndEndOfFile(string newline, bool bom)
+    {
+        var path = Path.Combine(root, "metadata");
+        Directory.CreateDirectory(path);
+        var text = (bom ? "\uFEFF" : "") + "---\nname: guide\ndescription: >-\n  Reusable résumé\n  for tests.\nmetadata:\n  note: " + new string('x', 5000) + "\n---";
+        await File.WriteAllTextAsync(Path.Combine(path, "SKILL.md"), text.Replace("\n", newline));
+        var metadata = await AgentSkillPackages.ReadMetadataAsync(path, default);
+        Assert.Equal("guide", metadata.Name);
+        Assert.Equal("Reusable résumé for tests.", metadata.Description);
+        await File.WriteAllTextAsync(Path.Combine(path, "SKILL.md"), text.Replace(new string('x', 5000), new string('x', AgentSkillPackages.MaxInstructionsBytes)));
+        await Assert.ThrowsAsync<AppLifecycleException>(() => AgentSkillPackages.ReadMetadataAsync(path, default));
+    }
+
+    [Fact]
+    public async Task SelectedImportResolvesMetadataNamesAndRejectsAmbiguityWithoutPublishing()
+    {
+        git.Packages = new() { ["a/guide"] = Package("guide"), ["b/guide"] = Package("guide") };
+        var source = new AgentSkillGitRequest("https://example.test/catalog");
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() => library.DiscoverSelectedAsync(new(source, ["guide"]), default));
+        Assert.Equal("skill_name_ambiguous", error.Code);
+        Assert.Contains("a/guide", error.Message);
+        Assert.Contains("b/guide", error.Message);
+        Assert.Equal(2, (await library.CatalogAsync(default)).Skills.Length);
+        var narrowed = source with { Path = "a" };
+        var selection = await library.DiscoverSelectedAsync(new(narrowed, ["guide"]), default);
+        Assert.Equal("a/guide", Assert.Single(selection.Skills).Path);
+        await library.InstallSelectedAsync(new(narrowed, selection.Commit, ["guide"]), default);
+        git.Packages = new() { ["aliases/unrelated-directory"] = Package("named-guide") };
+        selection = await library.DiscoverSelectedAsync(new(source, ["named-guide"]), default);
+        Assert.Equal("aliases/unrelated-directory", Assert.Single(selection.Skills).Path);
+        // Metadata selects the candidate; full installation still enforces the portable package contract.
+        error = await Assert.ThrowsAsync<AppLifecycleException>(() => library.InstallSelectedAsync(new(source, selection.Commit, ["named-guide"]), default));
+        Assert.Equal("skill_package_invalid", error.Code);
+    }
+
+    [Fact]
+    public async Task SelectedImportMissingNamesOrMovedSourcePreserveLibraryAndExports()
+    {
+        git.Packages = new() { ["guide"] = Package("guide"), ["other"] = Package("other") };
+        var source = new AgentSkillGitRequest("https://example.test/catalog");
+        var selection = await library.DiscoverSelectedAsync(new(source, ["guide", "other"]), default);
+        var installed = await library.InstallSelectedAsync(new(source, selection.Commit, ["guide", "other"]), default);
+        var export = await library.ExportAsync("control", new("ongoing", installed.Skills.Select(s => s.Id).ToArray()), default);
+        var missing = await Assert.ThrowsAsync<AppLifecycleException>(() => library.InstallSelectedAsync(new(source, selection.Commit, ["guide", "missing"]), default));
+        Assert.Equal("skill_not_found", missing.Code);
+        git.Commit = "changed";
+        git.Packages["guide"] = Package("guide", "second");
+        var moved = await Assert.ThrowsAsync<AppLifecycleException>(() => library.InstallSelectedAsync(new(source, selection.Commit, ["guide"]), default));
+        Assert.Equal("skill_source_changed", moved.Code);
+        Assert.Equal("first", File.ReadAllText(Path.Combine(export.Path, "guide/references/result.txt")));
+        selection = await library.DiscoverSelectedAsync(new(source, ["guide"]), default);
+        var replacement = Assert.Single((await library.InstallSelectedAsync(new(source, selection.Commit, ["guide"]), default)).Skills);
+        Assert.Equal(installed.Skills[0].Id, replacement.Id);
+        Assert.Equal("changed", replacement.Commit);
+        Assert.Equal("second", File.ReadAllText(Path.Combine(export.Path, "guide/references/result.txt")));
+        Assert.Equal("first", File.ReadAllText(Path.Combine(export.Path, "other/references/result.txt")));
+        Assert.Equal(4, (await library.CatalogAsync(default)).Skills.Length);
+    }
+
+    [Fact]
+    public async Task SelectedImportRefusesPrivateConnectionsBeforeFetching()
+    {
+        var source = new AgentSkillGitRequest("https://example.test/private", ConnectionId: "someone-elses-connection");
+        var discovery = await Assert.ThrowsAsync<AppLifecycleException>(() => library.DiscoverSelectedAsync(new(source, ["guide"]), default));
+        var install = await Assert.ThrowsAsync<AppLifecycleException>(() => library.InstallSelectedAsync(new(source, "commit", ["guide"]), default));
+        Assert.Equal("source_access_required", discovery.Code);
+        Assert.Equal(discovery.Code, install.Code);
+        Assert.Equal(0, git.Checkouts);
+    }
+
+    [Fact]
+    public async Task SelectedImportEnforcesNamesReservedPackagesAndLibraryCapacity()
+    {
+        var source = new AgentSkillGitRequest("https://example.test/catalog");
+        foreach (var names in new string[][] { null!, [], ["INVALID"], Enumerable.Range(0, 201).Select(i => "guide-" + i).ToArray() })
+            await Assert.ThrowsAsync<AppLifecycleException>(() => library.DiscoverSelectedAsync(new(source, names), default));
+        Assert.Equal(0, git.Checkouts);
+        git.Packages = new() { ["hosty-platform"] = Package("hosty-platform") };
+        var reserved = await Assert.ThrowsAsync<AppLifecycleException>(() => library.InstallSelectedAsync(new(source, git.Commit, ["hosty-platform"]), default));
+        Assert.Equal("skill_name_conflict", reserved.Code);
+        await library.ReplaceAppAsync("independent.producer", "1", Enumerable.Range(0, 200).ToDictionary(i => "guide-" + i, i => Package("guide-" + i)), default);
+        git.Packages = new() { ["additional"] = Package("additional") };
+        await Assert.ThrowsAsync<AppLifecycleException>(() => library.InstallSelectedAsync(new(source, git.Commit, ["additional"]), default));
+        Assert.Equal(202, (await library.CatalogAsync(default)).Skills.Length);
+        await library.ReplaceAppAsync("independent.producer", "2", new Dictionary<string, AgentSkillPackage> { ["guide-0"] = Package("guide-0") }, default);
+        git.Packages = new() { ["guide-0"] = Package("guide-0") };
+        var collision = await Assert.ThrowsAsync<AppLifecycleException>(() => library.InstallSelectedAsync(new(source, git.Commit, ["guide-0"]), default));
+        Assert.Equal("skill_name_conflict", collision.Code);
+    }
+
+    [Fact]
+    public async Task SelectedDiscoveryRejectsInvalidMetadataAndIncompleteScans()
+    {
+        var source = new AgentSkillGitRequest("https://example.test/catalog");
+        git.Packages = new() { ["guide"] = Package("guide"), ["invalid"] = new("invalid", "Invalid", [new("SKILL.md", Encoding.UTF8.GetBytes("not frontmatter"))]) };
+        var invalid = await Assert.ThrowsAsync<AppLifecycleException>(() => library.DiscoverSelectedAsync(new(source, ["guide"]), default));
+        Assert.Contains("invalid/SKILL.md", invalid.Message);
+        git.Packages = new() { ["guide"] = Package("guide"), [string.Join('/', Enumerable.Repeat("nested", 21)) + "/deep"] = Package("deep") };
+        var limit = await Assert.ThrowsAsync<AppLifecycleException>(() => library.DiscoverSelectedAsync(new(source, ["guide"]), default));
+        Assert.Contains("directory limit", limit.Message);
+        Assert.Equal(2, (await library.CatalogAsync(default)).Skills.Length);
+    }
+
+    [Fact]
+    public async Task SelectedDiscoveryRefusesLinkedMetadataAndSelectedOversizedPackages()
+    {
+        var source = new AgentSkillGitRequest("https://example.test/catalog");
+        git.Packages = new() { ["guide"] = Package("guide") with
+            { Files = [new("SKILL.md", new byte[AgentSkillPackages.MaxInstructionsBytes + 1])] } };
+        await Assert.ThrowsAsync<AppLifecycleException>(() => library.DiscoverSelectedAsync(new(source, ["guide"]), default));
+        git.Packages = new() { ["guide"] = Package("guide") with
+            { Files = [.. Package("guide").Files, .. Enumerable.Range(0, 512).Select(i => new AgentSkillFile("extra-" + i, []))] } };
+        var selection = await library.DiscoverSelectedAsync(new(source, ["guide"]), default);
+        await Assert.ThrowsAsync<AppLifecycleException>(() => library.InstallSelectedAsync(new(source, selection.Commit, ["guide"]), default));
+        if (OperatingSystem.IsWindows()) return;
+        git.Packages = new() { ["guide"] = Package("guide") };
+        git.MutateCheckout = checkout =>
+        {
+            var instructions = Path.Combine(checkout, "guide", "SKILL.md");
+            File.Move(instructions, Path.Combine(checkout, "outside.md"));
+            File.CreateSymbolicLink(instructions, "../outside.md");
+        };
+        var linked = await Assert.ThrowsAsync<AppLifecycleException>(() => library.DiscoverSelectedAsync(new(source, ["guide"]), default));
+        Assert.Contains("symbolic link", linked.Message);
+    }
+
     private sealed class FakeGit : IAgentSkillGit
     {
         public Dictionary<string, AgentSkillPackage> Packages { get; set; } = [];
         public string Commit { get; set; } = "first";
         public int Checkouts { get; private set; }
         public bool Fail { get; set; }
+        public Action<string>? MutateCheckout { get; set; }
         public async Task<AgentSkillCheckout> CheckoutAsync(AgentSkillGitRequest source, SourceReadGrant? grant, CancellationToken ct)
         {
             if (Fail) throw new AppLifecycleException("skill_source_unavailable", "Source unavailable.");
@@ -438,6 +605,7 @@ public sealed class AgentSkillLibraryTests : IDisposable
                     Directory.CreateDirectory(Path.GetDirectoryName(target)!);
                     await File.WriteAllBytesAsync(target, file.Content, ct);
                 }
+            MutateCheckout?.Invoke(path);
             return new(path, Commit);
         }
     }
