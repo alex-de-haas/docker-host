@@ -17,7 +17,7 @@
     <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.20.1" />
     <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.20.1" />
     <PackageReference Include="YamlDotNet" Version="18.1.0" />
-    <PackageReference Include="ModelContextProtocol.AspNetCore" Version="2.2.0" />
+    <PackageReference Include="ModelContextProtocol.AspNetCore" Version="2.3.0" />
   </ItemGroup>
   <ItemGroup>
     <Compile Include="../../../../shared/*.cs" Link="%(Filename)%(Extension)" />
