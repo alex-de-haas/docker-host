@@ -1,6 +1,6 @@
 ---
 created: 2026-09-29
-updated: 2026-10-21
+updated: 2026-10-29
 summary: GitHub pull request publication, review, merge and completion for assistant session workspaces.
 components: [apps/core, apps/harness]
 ---
@@ -192,6 +192,11 @@ merge, artifact publication, installation and runtime selection remain separate 
 Harness's Source workspaces section displays Core state, PR links, CI/review status, pending/failed
 operations, completion and observation freshness. Publication mutations are requested through the
 agent; there are no new Publish/Merge/Complete buttons. Existing workspace controls remain available.
+
+Background publication observation shares the [PR inbox scheduler and account budget](../harness-pull-request-inbox/feature.md#shared-observation).
+Visible workspace PR scopes select the adaptive cadence. Compact reads preserve repository and
+branch correlation but carry no completion evidence; merged publications, explicit actions and
+cleanup continue through the full policy verifier. The read-only inbox adds no publication commands.
 
 ## Testing Expectations
 

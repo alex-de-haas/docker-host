@@ -42,8 +42,8 @@ internal sealed partial class WorkspaceInspectionService(DevelopmentWorkspaceSer
             var first = group.First();
             var owner = first.Owner;
             var assistant = installed.FirstOrDefault(a => a.Id == owner.AppId && a.InstalledAt == owner.Installation);
-            var participation = owner.IsExternal ? null : await workspaces.ParticipationAsync(group.Key, userId, ct);
-            var participants = participation is null ? null : await WorkspaceParticipationEndpoints.Project(participation, userId, callerAppId, users, apps, ct);
+            var participation = await workspaces.ParticipationAsync(group.Key, userId, ct);
+            var participants = await WorkspaceParticipationEndpoints.Project(participation, userId, callerAppId, users, apps, ct);
             var ownSession = participants?.Sessions.FirstOrDefault(s => s.Attached && s.CanOpen);
             var destination = owner.IsExternal ? new WorkspaceDestination(null, null)
                 : ownSession is null ? new WorkspaceDestination(null, "No accessible conversation is attached.")

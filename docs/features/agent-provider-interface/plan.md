@@ -267,6 +267,20 @@ it, preserving local not-applicable quota and adding cloud balance observations 
 Reuse the observation semantics and verified provider contracts; this coordination neither selects
 an invocation standard nor makes billing access mandatory. Existing D1-D6 remain unchecked and Draft.
 
+## Assistant Events Above Engine Invocation (2026-10-29)
+
+[Assistant Events And Session Continuation](../assistant-events-and-continuation/plan.md) owns
+application-activity bindings and authorized inbound facts that can continue a selected assistant
+conversation. It consumes the native invocation/recovery capability here and common Harness session
+commands from Durable Agent Jobs D7; it does not extract engines or implement this plan's D1-D6.
+The first internal Harness adapter can precede independently installed providers.
+
+Keep the boundaries explicit: an assistant presentation capability does not establish native resume,
+trusted turn-purpose propagation or event-triggered execution support. Negotiate those capabilities
+and return unsupported outcomes. Preserve direct consumer/provider agent messaging; Core's durable
+domain envelopes carry bounded facts and protected result references, not a centralized private-chat
+relay. Native subagent results must have one continuation owner and must not be injected twice.
+
 ## Dependencies And Boundaries
 
 - [Core extension boundaries](../core-extension-model/feature.md) describe the existing role and grant

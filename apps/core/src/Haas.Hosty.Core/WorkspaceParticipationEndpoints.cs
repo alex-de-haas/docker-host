@@ -66,7 +66,8 @@ internal static class WorkspaceParticipationEndpoints
         string Name(string userId) => directory.FirstOrDefault(u => u.Id == userId)?.DisplayName ?? "Workspace participant";
         return new(value.Id, value.Revision, role,
             value.Members.Select(m => new WorkspaceMemberView(m.UserId, Name(m.UserId), m.Role, m.WorktreeIds, m.RevokedAt is not null)).ToArray(),
-            value.Sessions.Select(s => new WorkspaceSessionView(s.Session.AppId, s.Session.UserId, s.Session.SessionId, s.Title,
+            // External allocation evidence is retained internally, not exposed as a hosted chat or activity.
+            value.Sessions.Where(s => !s.Session.IsExternal).Select(s => new WorkspaceSessionView(s.Session.AppId, s.Session.UserId, s.Session.SessionId, s.Title,
                 s.DetachedAt is null, s.Session.UserId == actor && s.Session.AppId == appId && s.Session.Installation == installation,
                 s.Session.UserId == actor && s.Session.AppId == appId && s.Session.Installation == installation ? s.ViewerPath : null,
                 s.Status is not ("idle" or "failed") && (s.ActivityAt is null || DateTimeOffset.UtcNow - s.ActivityAt > TimeSpan.FromSeconds(45)) ? "unknown" : s.Status, s.ActivityAt, s.Session.AppId == appId && s.Session.Installation == installation, s.ChangedAt ?? s.AttachedAt)).ToArray(),
