@@ -1,6 +1,6 @@
 ---
 created: 2026-10-16
-updated: 2026-10-29
+updated: 2026-10-30
 summary: Core coordinates pause and verified completion independently from unconditional workspace deletion with one informational UI confirmation.
 components: [apps/core, apps/harness]
 ---
@@ -245,6 +245,10 @@ repository and allocation checks still prevent removal of unrelated source. Part
 no Git metadata can be removed. Deletion removes worktrees, their local branches and workspace metadata;
 published PRs, shared repository caches and ordinary application data retain their own lifetimes.
 
+On Windows, physical cleanup removes directory links themselves without following their targets and
+handles read-only generated files. Git worktree registration paths use filesystem path comparison,
+so a retry after partial file removal can still remove the allocation's registration and local branch.
+
 A durable journal survives partial removal, lost responses and restart. Accepted child operation UUIDs
 and revisions are preserved. Batch deletion freezes original targets and allocation generations;
 retry does not include later workspaces or a recreated allocation. Results distinguish removed source,
@@ -262,6 +266,8 @@ conditions. None is a prerequisite for Delete.
 
 - Retain pause/completion, exact-head merge evidence and private provider credential checks.
 - Cover direct deletion of dirty source, active/unknown leases, partial preparation and missing paths.
+- Cover Windows read-only files, directory links with preserved external targets, and recovery after
+  file removal leaves a Git worktree registration.
 - Verify immutable allocation identity, symlink refusal, accepted legacy recovery, real managed stop
   failures, restart and retry, resource cleanup, and bulk replay excluding new allocations.
 - UI tests cover a single red Delete action across states, advisory loading/failure, cancellation,

@@ -5,9 +5,9 @@ namespace Haas.Hosty.Core.Tests;
 public sealed partial class CoreLifecycleServiceTests
 {
     private static async Task<(LifecycleFixture Fixture, WorkspaceOwner Owner, DevelopmentWorkspaceService Workspaces,
-        DevelopmentWorkspace Tree, AppCreationResult Created, LocalAppHandoffRequest Request)> LocalHandoffFixture()
+        DevelopmentWorkspace Tree, AppCreationResult Created, LocalAppHandoffRequest Request)> LocalHandoffFixture(bool shortPaths = false)
     {
-        var f = await LifecycleFixture.CreateAsync();
+        var f = await LifecycleFixture.CreateAsync(shortPaths: shortPaths);
         var owner = WorkspaceTestOwner(f);
         var input = NewApp();
         var created = await f.Service.CreateLocalAppAsync(owner, input, null, default);
