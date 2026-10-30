@@ -219,7 +219,7 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
   const sessionWorkspace = inventory.workspaces.find(w => w.participation ? w.participation.sessions.some(binding => binding.attached && binding.canOpen && binding.sessionId === session?.id) : w.owner.kind === "assistant" && w.owner.appId === "hosty.harness" && w.owner.reference === session?.id);
   const selectedWorkspace = selectedWorkspaceId ? inventory.workspaces.find(w => w.id === selectedWorkspaceId) : sessionWorkspace;
   const workspace = selectedWorkspace?.workflow.state === "deleted" ? undefined : selectedWorkspace;
-  const chatVisible = !fullPage || !selectedWorkspaceId || !!workspace && workspace.owner.kind !== "external" && !!session && workspaceSessionIds(workspace).includes(session.id);
+  const chatVisible = !fullPage || !selectedWorkspaceId || !!workspace && !!session && workspaceSessionIds(workspace).includes(session.id);
   useEffect(() => {
     if (workspace && session && chatVisible) rememberWorkspaceSession(workspace, session.id);
   }, [workspace, session, chatVisible]);
@@ -454,7 +454,7 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
   const pickWorkspace = (target: DevelopmentWorkspace, matched?: AssistantSession) => {
     const record = matched ?? rememberedWorkspaceSession(target, sessions);
     setMobileSessions(false); setMobileDetails(false); setReview(null); setWorkspaceVisible(true);
-    if (record && target.owner.kind !== "external") pickSession(record);
+    if (record) pickSession(record);
     else {
       clearActiveConversation(); setSelectedWorkspaceId(target.id); setWorkspaceToResolve(null);
       void navigateSelection(null, target.id);
@@ -485,7 +485,7 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
       if (!target) { setError("This workspace is unavailable."); return; }
       setSessions(records);
       const record = rememberedWorkspaceSession(target, records);
-      if (record && target.owner.kind !== "external") {
+      if (record) {
         requestedSessionRef.current = record.id; setRequestedSessionId(record.id);
       }
       const route = new URL(window.location.href);
@@ -1024,7 +1024,7 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
           <p>{navigation === "workspaces" ? "Choose a workspace, create an app or continue building." : "Choose a chat or start a new one."}</p>
           {navigation === "chats" && <Button variant="outline" disabled={!ready} onClick={() => void startNew()}>New chat</Button>}
         </div>}
-        {workspace && workspace.owner.kind !== "external" && <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-sm text-muted-foreground">
+        {workspace && <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-sm text-muted-foreground">
           <p>No accessible chats in this workspace.</p>
           <Button variant="outline" disabled={workspaceActions.busy || workspaceActions.retry || !workspace.participation || !workflowIsActive(workspace.workflow)} onClick={() => void workspaceActions.command("new")}>New session in workspace</Button>
         </div>}

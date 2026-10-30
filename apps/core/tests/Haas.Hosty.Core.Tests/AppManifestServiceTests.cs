@@ -1307,14 +1307,14 @@ public sealed class AppManifestServiceTests
     }
 
     [Theory]
-    [InlineData("harness", "bot")]
-    [InlineData("demo-app", "contact-round")]
-    public async Task LoadAsync_FirstPartyPanelsMeetTheAuthoringContract(string app, string expectedIcon)
+    [InlineData("harness", new[] { "bot", "git-pull-request" })]
+    [InlineData("demo-app", new[] { "contact-round" })]
+    public async Task LoadAsync_FirstPartyPanelsMeetTheAuthoringContract(string app, string[] expectedIcons)
     {
         var selection = await new AppManifestService().LoadAsync(
             ResolveRepoFile(Path.Combine("apps", app, "manifest.json")),
             validateAllProfiles: true, requirePanelIcons: true);
-        Assert.Equal(expectedIcon, Assert.Single(selection.Manifest.Ui!.Panels).Icon);
+        Assert.Equal(expectedIcons, selection.Manifest.Ui!.Panels.Select(panel => panel.Icon));
     }
 
     [Fact]

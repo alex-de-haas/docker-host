@@ -5,7 +5,7 @@ import { call } from "@/lib/api";
 import type { AgentConnection } from "./agent-providers";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogBody, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -136,18 +136,20 @@ function TranslationProviderRow({ initial, connections }: { initial: Variant; co
           <DialogTitle>{label} translation model</DialogTitle>
           <DialogDescription>Enter an exact model ID supported by your account and installed agent. This applies only to translations.</DialogDescription>
         </DialogHeader>
-        <form className="grid gap-4" onSubmit={event => {
+        <form className="flex min-h-0 flex-1 flex-col gap-4" onSubmit={event => {
           event.preventDefault();
           if (customValid && !busy) void save(variant.connectionId, customModel.trim()).then(saved => { if (saved) setCustomOpen(false); });
         }}>
-          <Field>
-            <FieldLabel htmlFor={`translation-${variant.key}-custom-model`}>Model ID</FieldLabel>
-            <Input id={`translation-${variant.key}-custom-model`} value={customModel} disabled={busy}
-              maxLength={128} autoComplete="off" spellCheck={false} aria-describedby={`translation-${variant.key}-custom-help`}
-              onChange={event => setCustomModel(event.target.value)} />
-            <FieldDescription id={`translation-${variant.key}-custom-help`}>Start with a letter or number. Use up to 128 letters, numbers, dots, underscores or hyphens.</FieldDescription>
-          </Field>
-          {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
+          <DialogBody>
+            <Field>
+              <FieldLabel htmlFor={`translation-${variant.key}-custom-model`}>Model ID</FieldLabel>
+              <Input id={`translation-${variant.key}-custom-model`} value={customModel} disabled={busy}
+                maxLength={128} autoComplete="off" spellCheck={false} aria-describedby={`translation-${variant.key}-custom-help`}
+                onChange={event => setCustomModel(event.target.value)} />
+              <FieldDescription id={`translation-${variant.key}-custom-help`}>Start with a letter or number. Use up to 128 letters, numbers, dots, underscores or hyphens.</FieldDescription>
+            </Field>
+            {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
+          </DialogBody>
           <DialogFooter>
             <Button type="button" variant="outline" disabled={busy} onClick={() => setCustomOpen(false)}>Cancel</Button>
             <Button type="submit" disabled={busy || !customValid}>Save model</Button>

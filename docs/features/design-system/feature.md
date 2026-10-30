@@ -1,6 +1,6 @@
 ---
 created: 2026-10-21
-updated: 2026-10-29
+updated: 2026-10-30
 summary: Shared web tokens, local fonts and scoped SDK chrome, with Shell, Harness, Marketplace and Telemetry adoption and an in-place credential grid.
 components: [apps/core, apps/shell, apps/harness, apps/marketplace, apps/documents, apps/telemetry, apps/telemetry-ui, apps/whisper, apps/demo-app, packages/app-sdk, shared/web]
 ---
@@ -68,6 +68,13 @@ Shell renders one SVG favicon link. Before hydration its adaptive SVG follows th
 preference; after hydration the fixed light/dark SVG follows the resolved Shell theme, including
 a saved manual choice and system-theme changes. Six cells are white in dark mode or ink in
 light mode, with a lime center in both. The fixed ICO is not a competing head icon.
+
+## Harness Dialogs
+
+[Harness dialog layout](../harness-dialog-layout/feature.md) keeps modal titles and primary actions
+visible around a scrolling central body. Profile/provider forms, app and workspace operations,
+confirmations and choosers share this pattern. The narrow workspace sheet keeps its return action
+in a fixed footer. Short viewports use compact spacing; menus and anchored popovers remain distinct.
 
 ## Status Semantics And Motion
 

@@ -1,3 +1,4 @@
+import { pullRequestEvents } from "./pull-requests-proxy.js";
 import type { ConnectionService } from "./connections/service.js";
 import { UsageSubscriptions } from "./connections/usage-subscriptions.js";
 import { randomBytes } from "node:crypto";
@@ -16,7 +17,7 @@ const SOCKET_PATH = "/api/event-stream";
 const TICKET_LIFETIME = 30_000;
 const STREAM_LIFETIME = 3_600_000;
 const QUEUE_LIMIT = 1_048_576;
-type Target = { kind: "usage"; connectionId: string } | { kind: "session"; sessionId: string; after: number } | { kind: "workspaces" };
+type Target = { kind: "usage"; connectionId: string } | { kind: "session"; sessionId: string; after: number } | { kind: "workspaces" } | { kind: "pullRequests"; subscriptionId: string };
 type Ticket = { actor: AdminActor; credential: string; origin: string; target: Target; expires: number; deadline: number };
 const failure = (status: number, code: string, message: string): never => { throw new AppContextError(status, code, message); };
 
@@ -51,6 +52,8 @@ export class EventStreamTransport {
     const usage = /^\/api\/connections\/([A-Za-z0-9-]{1,128})\/usage\/events$/.exec(path);
     if (usage && this.connections) return { kind: "usage", connectionId: usage[1]! };
     if (path === "/api/development-workspaces/events") return { kind: "workspaces" };
+    const pr = /^\/api\/pull-requests\/events\?subscriptionId=([a-f0-9]{32})$/.exec(path);
+    if (pr) return { kind: "pullRequests", subscriptionId: pr[1]! };
     const match = /^\/api\/sessions\/([A-Za-z0-9_-]{1,128})\/events(?:\?after=(\d{1,16}))?$/.exec(path);
     const after = Number(match?.[2] ?? 0);
     if (!match || !Number.isSafeInteger(after) || after < 0) return failure(400, "event_stream_invalid", "Select a supported event stream.");
@@ -75,7 +78,7 @@ export class EventStreamTransport {
   }
   private async admitted(target: Target, actor: AdminActor) {
     if (target.kind === "usage") { await this.connections!.get(target.connectionId); return; }
-    if (target.kind === "workspaces") {
+    if (target.kind === "workspaces" || target.kind === "pullRequests") {
       if (actor.via !== "app-session") failure(401, "reauth_required", "Open Harness through Core to inspect workspaces.");
       return;
     }
@@ -201,7 +204,9 @@ export class EventStreamTransport {
         for (const event of subscription.replay) if (!await deliver(event)) return;
         replaying = false; await drain();
       } else {
-        const upstream = await this.manager.workspaceEvents(ticket.credential, abort.signal);
+        const upstream = ticket.target.kind === "pullRequests"
+          ? await pullRequestEvents(ticket.credential, ticket.target.subscriptionId, abort.signal)
+          : await this.manager.workspaceEvents(ticket.credential, abort.signal);
         if (stopped) { await upstream.body?.cancel().catch(() => {}); return; }
         const reader = upstream.body!.getReader(), decoder = new TextDecoder(); let tail = "";
         cancelUpstream = () => { void reader.cancel().catch(() => {}); };

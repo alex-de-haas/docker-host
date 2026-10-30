@@ -3,7 +3,7 @@
   "id": "hosty.harness",
   "name": "Hosty Harness",
   "description": "Hosty assistant with Docker and Local production runtimes, managed Claude and Codex connections, chat and settings.",
-  "version": "0.80.1",
+  "version": "0.81.0",
   "role": "system",
   "source": {
     "type": "git",
@@ -78,7 +78,7 @@
         },
         "docker": {
           "type": "docker",
-          "image": "ghcr.io/alex-de-haas/hosty-harness:0.80.1",
+          "image": "ghcr.io/alex-de-haas/hosty-harness:0.81.0",
           "environment": {
             "HOSTY_HARNESS_RUNTIME": "docker",
             "PORT": "3400"
@@ -165,7 +165,7 @@
         },
         "docker": {
           "type": "docker",
-          "image": "ghcr.io/alex-de-haas/hosty-harness-worker:0.80.1",
+          "image": "ghcr.io/alex-de-haas/hosty-harness-worker:0.81.0",
           "environment": {
             "HOSTY_HARNESS_RUNTIME": "docker",
             "PORT": "3401"
@@ -414,6 +414,11 @@
         "label": "Tasks",
         "endpoint": "http",
         "path": "/tasks"
+      },
+      {
+        "label": "Pull requests",
+        "endpoint": "http",
+        "path": "/pull-requests"
       }
     ],
     "panels": [
@@ -423,6 +428,13 @@
         "endpoint": "http",
         "path": "/assistant",
         "icon": "bot"
+      },
+      {
+        "id": "pull-requests",
+        "label": "Pull requests",
+        "endpoint": "http",
+        "path": "/pull-requests-panel",
+        "icon": "git-pull-request"
       }
     ]
   },

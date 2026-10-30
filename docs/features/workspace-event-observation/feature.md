@@ -1,6 +1,6 @@
 ---
 created: 2026-10-19
-updated: 2026-10-27
+updated: 2026-10-29
 summary: Core observes workspace changes through filesystem and mutation events, while Harness consumes authorized SSE updates.
 components: [apps/core, apps/harness]
 ---
@@ -56,8 +56,8 @@ refreshed. Cache reads revalidate current source authority before and after insp
 does not grant access. Manual detail refresh accepts `refresh=true`.
 
 Resume, Complete, Delete, source mutations and file diff requests keep their fresh ownership,
-path and Git checks. Local observation never fetches remote Git. The separate provider PR observer
-continues its existing schedule and signals changes to the same UI stream.
+path and Git checks. Local observation never fetches remote Git. The [shared provider PR scheduler](../harness-pull-request-inbox/feature.md#shared-observation)
+uses scoped live demand and signals publication changes to the same UI stream.
 
 ## Delivery And Recovery
 

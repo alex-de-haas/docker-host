@@ -817,7 +817,7 @@ describe("external workspace pause", () => {
   const pending = { closure: "closing", operations: [{ id: input.requestId, state: "pending" }] };
   const closed = { closure: "closed", operations: [{ id: input.requestId, state: "succeeded" }] };
 
-  it.each(["pause", "close"])("confirms external %s without requesting participants or cancelling unrelated sessions", async kind => {
+  it.each(["pause", "close"])("confirms external %s with an empty roster without cancelling unrelated sessions", async kind => {
     const session = await manager.createSession({ createdBy: "admin" });
     await manager.postMessage(session.id, "unrelated work", "session-token");
     const route = `/${workspaceId}/workflow/${kind}`;
@@ -825,12 +825,36 @@ describe("external workspace pause", () => {
       if (!path) return { workspaces: [{ id: workspaceId, owner: { kind: "external" } }] };
       if (path === route) return pending;
       if (path === route + "-confirm") return closed;
-      throw new Error("External workspaces have no participant roster");
+      if (path === `/${workspaceId}/participants`) return { sessions: [] };
+      throw new Error("Unexpected inspection");
     });
     expect(await manager.inspectWorkspaces("operator", route, input, "admin")).toEqual(closed);
-    expect(inspection.mock.calls).toEqual([["operator", route, input], ["operator"], ["operator", route + "-confirm", input]]);
+    expect(inspection.mock.calls).toEqual([["operator", route, input], ["operator"], ["operator", `/${workspaceId}/participants`], ["operator", route + "-confirm", input]]);
     expect((await manager.getSession(session.id))!.status).toBe("running");
     await finish(session.id);
+  });
+
+  it("stops hosted participants in an external allocation while leaving unrelated work running", async () => {
+    const participant = await manager.createSession({ createdBy: "member" });
+    await manager.postMessage(participant.id, "shared source work", "participant-token");
+    const unrelated = await manager.createSession({ createdBy: "admin" });
+    await manager.postMessage(unrelated.id, "other workspace", "unrelated-token");
+    const route = `/${workspaceId}/workflow/pause`;
+    vi.spyOn(client, "inspection").mockImplementation(async (_credential, path) => {
+      if (!path) return { workspaces: [{ id: workspaceId, owner: { kind: "external" } }] };
+      if (path === route) return pending;
+      if (path === `/${workspaceId}/participants`) return { sessions: [
+        { appId: "hosty.harness", userId: "member", sessionId: participant.id, attached: true, currentInstallation: true },
+      ] };
+      if (path === route + "-confirm") {
+        expect((await manager.getSession(participant.id))!.status).toBe("cancelled");
+        return closed;
+      }
+      throw new Error("Unexpected inspection");
+    });
+    expect(await manager.inspectWorkspaces("operator", route, input, "admin")).toEqual(closed);
+    expect((await manager.getSession(unrelated.id))!.status).toBe("running");
+    await finish(unrelated.id);
   });
 
   it("retains Core lease refusal and retries the same pause after release and coordinator restart", async () => {
@@ -843,7 +867,8 @@ describe("external workspace pause", () => {
         if (leased) throw new AppContextError(409, "workspace_in_use", "Activity lease retained");
         return closed;
       }
-      throw new Error("Unexpected external participation request");
+      if (path === `/${workspaceId}/participants`) return { sessions: [] };
+      throw new Error("Unexpected inspection");
     });
     await expect(manager.inspectWorkspaces("operator", route, input, "admin")).rejects.toMatchObject({ code: "workspace_in_use" });
     await manager.shutdown(); manager = build(); leased = false;

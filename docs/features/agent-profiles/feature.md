@@ -1,6 +1,6 @@
 ---
 created: 2026-10-26
-updated: 2026-10-29
+updated: 2026-10-30
 summary: Shared Harness agent configurations with connection, model, reasoning, role instructions and explicit skills, selectable before a conversation starts.
 components: [apps/harness]
 ---
@@ -26,6 +26,8 @@ coordination belongs to [Harness Work Orchestration](../harness-work-orchestrati
 Settings → Agent profiles supports create, edit, duplicate, delete, set default and clear default.
 The form explains shared working rules versus role specialization, loads models/efforts from the
 selected connection and selects optional guidance from the [Core skill library](../agent-skills/feature.md).
+The editor uses the shared [Harness dialog layout](../harness-dialog-layout/feature.md): its title,
+explanation and Cancel/Save actions remain visible while the profile fields and skills scroll.
 Changing connection clears provider-specific model/effort values; changing model clears effort.
 Ollama profiles preserve tagged model IDs and advertised thinking values. Incompatible installed
 models are disabled with their server/catalog reason; no compatible model is substituted.

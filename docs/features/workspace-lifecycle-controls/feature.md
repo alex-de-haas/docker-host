@@ -73,10 +73,11 @@ being acknowledged until that earlier operation is resolved. Replaying a success
 cancelling the new run. Terminal session events refresh worker availability in the chat, so recovered
 Docker health does not remain stale until a page reload.
 
-Harness reads Core's workspace owner after pause admission. External workspaces skip participant
-lookup and Harness session cancellation, then submit the original pause UUID/revision for Core
-confirmation. Active external leases and outstanding source operations still block confirmation;
-recovery of a stopped external lease can finish the same pause without a participant record.
+Harness reads Core's workspace owner after pause admission. It resolves and stops hosted participants
+for both internal and external allocations, then submits the original pause UUID/revision for Core
+confirmation. An external creator is not a hosted participant. Active external leases and outstanding
+source operations still block confirmation; recovery of a stopped external lease can finish the same
+pause even when no hosted sessions are attached.
 Unavailable or unrecognized ownership retains the pending request for an explicit retry.
 
 External agents and older assistant installations are not impersonated. Unrelated sessions are not stopped.

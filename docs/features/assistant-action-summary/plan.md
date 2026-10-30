@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-26
-updated: 2026-10-27
+updated: 2026-10-29
 summary: Correlated native invocation evidence and readable summaries of the tools and MCP calls used during a session.
 components: [apps/harness]
 ---
@@ -60,6 +60,15 @@ stream for summaries, timeline analysis and AHP; no second adapter pipeline or t
 projection; [Durable Agent Jobs D7](../durable-agent-jobs/plan.md#deliverables) owns session command
 and continuation recovery. These transfers remain Draft and do not claim new runtime behavior.
 Timeline analysis requires independent approval in [its own plan](../assistant-timeline-analysis/plan.md) and does not gate this feature.
+
+## External Event Correlation (2026-10-29)
+
+[Assistant Events And Session Continuation](../assistant-events-and-continuation/plan.md) links an
+external activity/result receipt and its continuation command to this existing journal. D4 here
+retains native invocation evidence; the new plan owns inbound bindings and admission, not a second
+event normalization pipeline. Distinguish a delivered event, accepted/running continuation and a
+separate observed domain effect. Source attribution is not user authorization, and historical inputs
+must not become fabricated tool results or replayed effects.
 
 ## Deliverables
 
