@@ -94,3 +94,19 @@ it("keeps foreign-client and prior-installation attempts read-only while reconci
   await vi.waitFor(() => expect(own.state).toBe("succeeded"));
   expect(attempts.slice(1).every(d => d.state === "accepted")).toBe(true);
 });
+
+it("reconciles a terminal result persisted while restoring a feedback subscription", async () => {
+  const session = await manager.createSession({ createdBy: "owner" });
+  const attempt = await service.send(body(session.id), "grant", "owner");
+  await service.close();
+  service = new FeedbackService(manager, () => client as unknown as FeedbackServerClient);
+  const subscribe = manager.subscribe.bind(manager);
+  vi.spyOn(manager, "subscribe").mockImplementationOnce(async (...args) => {
+    const events = await manager.store.readEvents(session.id);
+    await manager.store.appendEvent(session.id, { seq: events.at(-1)!.seq + 1, ts: new Date().toISOString(), type: "result", status: "success" });
+    return subscribe(...args);
+  });
+  const result = await service.list("grant", "owner");
+  expect(attempt.state).toBe("succeeded");
+  expect(result.dispatches[0]!.state).toBe("succeeded");
+});

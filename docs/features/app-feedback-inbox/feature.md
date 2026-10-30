@@ -135,7 +135,8 @@ annotation IDs for every selected report.
 
 A report is Processed only when its exact accepted prompt ends successfully and its structured
 result explicitly handles the report and all annotations. An idle session, unrelated later prompt,
-commit, PR or deployment does not qualify. Missing/partial outcomes remain Partial. Errors,
+commit, PR or deployment does not qualify. Reconciliation after subscription attachment also covers terminal events returned in the replay.
+Missing/partial outcomes remain Partial. Errors,
 cancellation and unknown outcomes remain distinguishable; there is no Closed state.
 
 Send again creates a deliberate new attempt using the existing comments/images and an additional

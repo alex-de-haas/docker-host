@@ -77,6 +77,9 @@ export class FeedbackService {
         void this.reconcile(dispatch, watch.token, actor).catch(() => undefined); // Read/refresh also reconciles after reconnect.
     }).catch(error => { this.watches.delete(dispatch.id); throw error; });
     watch.stop = subscription.unsubscribe;
+    if (this.closed || this.watches.get(dispatch.id) !== watch) { watch.stop(); return; }
+    // Events committed during subscription setup may be returned only in its replay.
+    await this.reconcile(dispatch, watch.token, actor);
   }
   async list(token: string, actor: string) {
     const client = this.clientFactory();
