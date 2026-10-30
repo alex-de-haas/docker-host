@@ -184,8 +184,9 @@ chooser cancellation. The included screenshot was inspected with capture chrome 
 parent Finish operation confirmed removal of the child resources. Live operator data was not used.
 
 The full Core suite passed 4,386 tests with five opt-in runtime suites skipped by their existing
-conditions; all 11 focused feedback store/HTTP tests passed after the final metadata change. SDK
-and Harness suites passed 711 and 1,897 tests respectively. SDK/Core/Harness builds, web/backend
-type checks, documentation/link validation, version consistency and 15 launcher tests passed. The
+conditions before integration of concurrent main changes. After integration, all 32 focused feedback
+and workspace deletion tests passed with a canonical macOS temporary path. SDK and Harness suites
+passed 711 and 1,930 tests respectively. SDK/Core/Harness builds, web/backend type checks,
+documentation/link validation, version consistency and 16 launcher tests passed. The
 web lint retains one unrelated existing warning in `tasks.tsx`. Other operating systems and native
 webviews were not exercised in this acceptance.
