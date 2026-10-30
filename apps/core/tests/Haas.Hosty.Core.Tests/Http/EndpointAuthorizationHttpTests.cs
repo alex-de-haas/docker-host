@@ -205,8 +205,8 @@ public sealed class EndpointAuthorizationHttpTests
                     case RoutePatternLiteralPart literal:
                         segments.Add(literal.Content);
                         break;
-                    case RoutePatternParameterPart:
-                        segments.Add("x");
+                    case RoutePatternParameterPart parameter:
+                        segments.Add(parameter.ParameterPolicies.Any(p => p.Content == "int") ? "1" : "x");
                         break;
                 }
             }

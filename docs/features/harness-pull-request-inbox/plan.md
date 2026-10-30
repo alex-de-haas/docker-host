@@ -698,6 +698,8 @@ backfill is a separate explicit policy, not a side effect of installing an app o
 
 - [x] D11. Correct reviewed shared-detail authorization, background verifier pacing, partial-status retry/freshness and command-result recovery; verify dedicated regressions and the managed PR suite.
 
+- [ ] D12. Scope emitted stream revisions to subscribed repositories, PRs and workspaces; cover unrelated observation and access-loss regressions, reconcile the two-panel and anonymous-route contracts, and preserve pending-discard inventory recovery through the full Core suite.
+
 ## Sequence And Readiness
 
 D1 closes the technical design under the owner's explicit 2026-10-29 instruction to make the plan

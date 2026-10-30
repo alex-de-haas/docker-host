@@ -82,7 +82,7 @@ internal sealed partial class PullRequestService
                 if (repo.Items.TryGetValue(number, out var previous) && previous.Head == summary.Head)
                     summary = summary with { Checks = previous.Checks, ReviewDecision = previous.ReviewDecision, MergeState = previous.MergeState };
                 else repo.HeadSeen[number] = clock.UtcNow;
-                repo.Items[number] = summary; Changed(owner);
+                repo.Items[number] = summary; Changed(owner, repo);
                 return new PullRequestDetail(summary, remote.Description, remote.Truncated, [], summary.Receipt);
             }
         }, ct);

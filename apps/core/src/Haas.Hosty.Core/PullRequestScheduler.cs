@@ -144,7 +144,7 @@ internal sealed partial class PullRequestService
                     }
                 }
             }
-            lock (sync) { r.RetryAt = null; r.Error = null; Changed(job.Owner); }
+            lock (sync) { r.RetryAt = null; r.Error = null; Changed(job.Owner, r); }
         }
         catch (Exception ex) when (ex is PullRequestException or PublicationException or UserConnectionException or HttpRequestException or OperationCanceledException or System.Text.Json.JsonException)
         {
@@ -156,7 +156,7 @@ internal sealed partial class PullRequestService
                 r.Error = ex is PullRequestException pr ? pr.Message : "Provider observation is temporarily unavailable.";
                 r.RetryAt = ex is PullRequestException { RetryAt: { } retry } ? retry : clock.UtcNow.AddSeconds(denied ? 900 : 30);
                 if (denied) { EvictDetails(job.Owner.UserId, r.Id); r.Items.Clear(); r.AccessAt = null; r.Validators.Clear(); }
-                Changed(job.Owner);
+                Changed(job.Owner, r);
             }
         }
         finally { lock (sync) r.Busy = false; }

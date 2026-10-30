@@ -22,8 +22,8 @@ internal static class PullRequestEndpoints
             Handle(request, actor => Json(() => service.ChecksAsync(actor, repositoryId, number, cursor, ct)), ct));
         app.MapGet("/api/pull-requests/{repositoryId}/{number:int}/review", (string repositoryId, int number, string? cursor, HttpRequest request, PullRequestService service, CancellationToken ct) =>
             Handle(request, actor => Json(() => service.ReviewAsync(actor, repositoryId, number, cursor, ct)), ct));
-        app.MapGet("/api/pull-requests/{repositoryId}/{number:int}/diff", (string repositoryId, int number, string head, string @base, HttpRequest request, PullRequestService service, CancellationToken ct) =>
-            Handle(request, actor => Json(() => service.DiffAsync(actor, repositoryId, number, head, @base, ct)), ct));
+        app.MapGet("/api/pull-requests/{repositoryId}/{number:int}/diff", (string repositoryId, int number, string? head, string? @base, HttpRequest request, PullRequestService service, CancellationToken ct) =>
+            Handle(request, actor => Json(() => service.DiffAsync(actor, repositoryId, number, head ?? "", @base ?? "", ct)), ct));
         app.MapGet("/api/pull-requests/{repositoryId}/{number:int}/actions", (string repositoryId, int number, HttpRequest request, PullRequestService service, CancellationToken ct) =>
             Handle(request, actor => Json(() => service.ActionsAsync(actor, repositoryId, number, ct)), ct));
         app.MapPost("/api/pull-requests/{repositoryId}/{number:int}/actions", (string repositoryId, int number, HttpRequest request, PullRequestService service, CancellationToken ct) =>
@@ -34,8 +34,8 @@ internal static class PullRequestEndpoints
             Handle(request, async actor => await Json(async () => await service.RefreshAsync(actor, await Body<PullRequestRefresh>(request, ct), ct)), ct));
         app.MapPost("/api/pull-requests/subscriptions", (HttpRequest request, PullRequestService service, CancellationToken ct) =>
             Handle(request, async actor => await Json(async () => await service.SubscribeAsync(actor, await Body<PullRequestScope>(request, ct), ct)), ct));
-        app.MapGet("/api/pull-requests/events", (string subscriptionId, HttpRequest request, PullRequestService service, IHostApplicationLifetime lifetime, CancellationToken ct) =>
-            Handle(request, actor => Stream(actor, subscriptionId, request, service, lifetime, ct), ct));
+        app.MapGet("/api/pull-requests/events", (string? subscriptionId, HttpRequest request, PullRequestService service, IHostApplicationLifetime lifetime, CancellationToken ct) =>
+            Handle(request, actor => Stream(actor, subscriptionId ?? "", request, service, lifetime, ct), ct));
     }
     private static PullRequestQuery Query(HttpRequest request)
     {
@@ -90,6 +90,7 @@ internal static class PullRequestEndpoints
         }
         try
         {
+            var observed = service.CurrentRevision(actor);
             var initial = await service.StreamStateAsync(actor, id, deadline.Token);
             await Write("stream.ready", CoreJson.Text(initial));
             var revision = initial.Revision;
@@ -97,12 +98,14 @@ internal static class PullRequestEndpoints
             using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(250));
             while (await timer.WaitForNextTickAsync(deadline.Token))
             {
-                if (service.CurrentRevision(actor) == revision && System.Diagnostics.Stopwatch.GetElapsedTime(lastPing) < TimeSpan.FromSeconds(15)) continue;
+                var latest = service.CurrentRevision(actor);
+                if (latest == observed && System.Diagnostics.Stopwatch.GetElapsedTime(lastPing) < TimeSpan.FromSeconds(15)) continue;
                 if (AppManagementAuthorization.Caller(request) is not null && await AppManagementAuthorization.RevalidateCallerAsync(request, deadline.Token) is not null) break;
                 var authorized = false;
                 await Handle(request, current => { authorized = current == actor; return Task.FromResult<IResult>(Results.Empty); }, deadline.Token);
                 if (!authorized) { await Write("stream.revoked", "{}"); break; }
                 var state = await service.StreamStateAsync(actor, id, deadline.Token);
+                observed = latest;
                 if (state.Revision != revision) { await Write("pull-requests.changed", CoreJson.Text(state)); revision = state.Revision; }
                 else if (System.Diagnostics.Stopwatch.GetElapsedTime(lastPing) >= TimeSpan.FromSeconds(15))
                 { await Write("stream.ping", "{}"); lastPing = System.Diagnostics.Stopwatch.GetTimestamp(); }

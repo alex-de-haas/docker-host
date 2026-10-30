@@ -131,7 +131,9 @@ re-reads authorized state. Streams contain revision/resource hints, not durable 
 
 Browser change hints coalesce for 150 ms and retain at most one trailing snapshot refresh. Background
 snapshots are serialized, with at least five seconds after a completed refresh before the next one;
-quiet streams and heartbeats schedule no reads. Hide/unmount cancels queued reads. Stream readiness
+quiet streams and heartbeats schedule no reads. Stream revisions reflect only subscribed repositories,
+individual PRs and workspaces; unrelated observations do not invalidate a consumer. The owner-wide
+change signal only wakes server-side reconciliation and is separate from the emitted scope revision. Hide/unmount cancels queued reads. Stream readiness
 performs one reconciliation after connection, scope changes or visibility restoration, without an
 additional pre-connect read. Explicit refresh remains immediate. These limits affect Harness-to-Core
 snapshot requests independently of the provider polling intervals above.

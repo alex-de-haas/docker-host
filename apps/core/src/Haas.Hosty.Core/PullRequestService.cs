@@ -27,6 +27,7 @@ internal sealed partial class PullRequestService(CoreDataPaths paths, InstalledP
     {
         public InstalledPullRequestRepositories.Binding Binding = binding;
         public string Id = DevelopmentWorkspaceService.Hash(binding.Key);
+        public string Revision = Guid.NewGuid().ToString("N");
         public string Name = binding.Repository;
         public string Url = "https://github.com/" + binding.Repository;
         public DateTimeOffset? AccessAt, LastScan, AttemptAt, RetryAt;
@@ -50,7 +51,11 @@ internal sealed partial class PullRequestService(CoreDataPaths paths, InstalledP
     private static PullRequestApp[] RepositoryApps(Owner owner, Repository repository) => owner.Repositories.Values
         .Where(r => r.Id == repository.Id).SelectMany(r => r.Binding.Apps).DistinctBy(a => a.Id).ToArray();
     private static PullRequestReceipt NewReceipt() => new(Guid.NewGuid().ToString("N"));
-    private void Changed(Owner owner) => owner.Revision = Guid.NewGuid().ToString("N");
+    private void Changed(Owner owner, Repository? repository = null)
+    {
+        owner.Revision = Guid.NewGuid().ToString("N");
+        if (repository is not null) repository.Revision = owner.Revision;
+    }
     private bool HasProof(Repository repo) => !repo.Denied && repo.AccessAt is { } at && clock.UtcNow - at < PullRequestPolicy.Baseline;
     private PullRequestReceipt Receipt(Owner owner, Repository repo) => new(owner.Revision, repo.AttemptAt, repo.LastScan,
         repo.RetryAt, repo.Denied ? "unavailable" : repo.RetryAt > clock.UtcNow ? "delayed" : repo.Busy ? "refreshing" :
@@ -187,7 +192,7 @@ internal sealed partial class PullRequestService(CoreDataPaths paths, InstalledP
             {
                 repo.Denied = true; repo.AccessAt = null; repo.Items.Clear(); repo.Validators.Clear();
                 EvictDetails(actor.UserId, repo.Id);
-                owner = owners.GetValueOrDefault(actor.UserId); if (owner is not null) Changed(owner);
+                owner = owners.GetValueOrDefault(actor.UserId); if (owner is not null) Changed(owner, repo);
             }
             if (owner is not null) await PersistAsync(owner, ct);
             throw;
@@ -219,6 +224,7 @@ internal sealed partial class PullRequestService(CoreDataPaths paths, InstalledP
                         row.Repo.Items.Remove(row.Pr.Number); row.Repo.StatusAt.Remove(row.Pr.Number); row.Repo.StatusRetryAt.Remove(row.Pr.Number); row.Repo.HeadSeen.Remove(row.Pr.Number);
                         row.Repo.SummaryLimited = true; row.Repo.Completeness = "partial";
                         row.Repo.Error = "The summary cache is at capacity; older rows are omitted.";
+                        Changed(owner, row.Repo);
                     }
                     Changed(owner); value = Snapshot();
                 }

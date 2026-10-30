@@ -121,7 +121,7 @@ internal sealed partial class PullRequestService
                 if (dispatched) lock (sync)
                 {
                     EvictDetails(actor.UserId, id); repo.Requested.Add(number); repo.ScanRequested = true;
-                    repo.StatusAt.Remove(number); Changed(owner);
+                    repo.StatusAt.Remove(number); Changed(owner, repo);
                 }
             }
             await RequireActionBinding(actor, binding, ct);
