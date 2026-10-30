@@ -182,7 +182,7 @@ public sealed partial class CoreLifecycleServiceTests
     [InlineData(true)]
     public async Task WorkspaceDelete_ReturnsActiveDevRuntimeAndPreservesChangedOrdinaryData(bool running)
     {
-        var (f, owner, workspaces, tree, _, _) = await LocalHandoffFixture();
+        var (f, owner, workspaces, tree, _, _) = await LocalHandoffFixture(shortPaths: true);
         try
         {
             if (running) await f.Service.StartAsync("test.created");
@@ -209,7 +209,7 @@ public sealed partial class CoreLifecycleServiceTests
             Assert.Equal(running ? "running" : "stopped", after.RuntimeState);
             Assert.Equal("ordinary data changed during development", await File.ReadAllTextAsync(data));
         }
-        finally { if (Directory.Exists(f.Root)) Directory.Delete(f.Root, recursive: true); }
+        finally { CoreOwnedDirectoryCleanup.Delete(f.Root); }
     }
 
     [Fact]

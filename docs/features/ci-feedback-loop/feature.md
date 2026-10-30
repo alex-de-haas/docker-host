@@ -83,7 +83,7 @@ GitHub Actions. Its small command-construction tests remain in the CI policy job
 | Suite | Preparation and local behavior |
 | --- | --- |
 | activation | Requires .NET, Git, Python and Docker; builds Core/CLI and runs Return plus detached-helper recovery in parent-owned isolated Core environments. |
-| windows | Requires Windows, Git and .NET; runs the focused process/path/document/storage Core tests and CLI shared-receipt tests. Other operating systems receive an explicit refusal. |
+| windows | Requires Windows, Git and .NET; runs the focused process/path/document/storage Core tests, workspace deletion regressions and CLI shared-receipt tests. Other operating systems receive an explicit refusal. |
 | dependencies | Requires .NET, Python and Docker; builds Core/CLI and checks dependency waits, recovery, cancellation and boot in a parent-owned isolated Core. |
 | skills | Requires .NET, Git, Python and Docker; builds Core/CLI, verifies selected public Git imports, table/JSON output, exports and atomic failures in a parent-owned child Core, then probes the requested awesome-copilot package and Finishes the child. |
 | transport | Requires .NET, Python and Docker; builds Core and runs its isolated real-Docker listener/transport fixture. |

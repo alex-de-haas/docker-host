@@ -22,6 +22,7 @@ test('unsupported Windows acceptance refuses before any process starts', () => {
   const plan = suitePlan('windows', { platform: 'win32' });
   assert.equal(plan.steps.length, 2);
   assert.match(plan.steps[0].args.at(-1), /WindowsProcessControlTests/);
+  assert.match(plan.steps[0].args.at(-1), /WorkspaceDelete_/);
   assert.match(plan.steps[1].args.at(-1), /SharedReceiptSharingTests/);
 });
 
