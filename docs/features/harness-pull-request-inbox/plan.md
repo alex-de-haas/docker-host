@@ -698,7 +698,7 @@ backfill is a separate explicit policy, not a side effect of installing an app o
 
 - [x] D11. Correct reviewed shared-detail authorization, background verifier pacing, partial-status retry/freshness and command-result recovery; verify dedicated regressions and the managed PR suite.
 
-- [ ] D12. Scope emitted stream revisions to subscribed repositories, PRs and workspaces; cover unrelated observation and access-loss regressions, reconcile the two-panel and anonymous-route contracts, and preserve pending-discard inventory recovery through the full Core suite.
+- [x] D12. Scope emitted stream revisions to subscribed repositories, PRs and workspaces; cover unrelated observation and access-loss regressions, reconcile the two-panel and anonymous-route contracts, and preserve pending-discard inventory recovery through the full Core suite.
 
 ## Sequence And Readiness
 
@@ -993,3 +993,20 @@ the sole initial failure required the static settings export, and all 63 gateway
 that prerequisite build. The production web build, Harness lint/type checks (one existing tasks
 hook warning), 15 integration-runner tests, version consistency and documentation checks pass.
 D7 retains live-provider acceptance; D8 retains final closure and plan removal after that acceptance.
+
+
+## PR Review Verification (2026-10-30)
+
+D12 is verified against implementation commit c7adb469 in PR #714. Scoped stream revisions ignore
+unrelated repository, PR and workspace observations while preserving relevant changes and access
+revocation. Pending-discard inventory remains discoverable after source records disappear; endpoint
+authorization and the two-panel manifest contract are covered.
+
+- All nine targeted review/CI regressions pass locally on macOS arm64.
+- The managed pull-requests suite passes after the corrections, with parent Finish and resource
+  removal verified.
+- GitHub Actions run 41071364799 passes the complete Core suite on Linux: 4,445 passed, five skipped,
+  zero failures, 4,450 total. The complete Harness job also passes.
+- The additional local full-Core attempt was stopped without a final result after CI verified the
+  same source; it is not counted as a passing local full-suite run.
+- D7's explicitly deferred live GitHub acceptance and final D8 closure remain open.
