@@ -127,6 +127,8 @@ try {
   // Resolve the application frame by its actual origin; Shell may also retain tool frames.
   await page.waitForFunction(origin => [...document.querySelectorAll('iframe')].some(f=>f.src.startsWith(origin)),config.harness,{timeout:60000});
   const child = page.frameLocator('iframe[src^="'+config.harness+'"]');
+  // The old chats frame shares this origin while Shell finishes the selected navigation.
+  await child.getByRole('heading',{name:'Feedback',exact:true}).waitFor();
   await child.getByRole('button',{name:'Annotate',exact:true}).click();
   const embeddedPanel = child.getByRole('complementary',{name:'Feedback draft'});
   await embeddedPanel.getByRole('button',{name:'Select element',exact:true}).click();
