@@ -3,7 +3,8 @@ import { FeedbackServerClient } from "@hosty-sdk/app/feedback/server";
 import { FeedbackError, type FeedbackDispatch, type FeedbackDispatchInput, type FeedbackOutcome, type FeedbackCapabilities } from "@hosty-sdk/app/feedback";
 import type { SessionManager } from "../sessions/manager.js";
 import type { SessionRecord, StoredEvent } from "../sessions/store.js";
-import { AppContextError } from "../sessions/app-context.js";
+import { AppContextError, MAX_CONTEXT_APPS, readContextApps } from "../sessions/app-context.js";
+import type { ProviderDirectory } from "../settings/providers.js";
 
 const owned = (d: FeedbackDispatch, scope: FeedbackCapabilities) => d.actorId === scope.userId && d.callerAppId === scope.appId && d.callerInstallation === scope.installation;
 const active = (d: FeedbackDispatch) => ["reserved", "accepted", "unknown"].includes(d.state);
@@ -33,7 +34,7 @@ export class FeedbackService {
   private readonly watches = new Map<string, { stop: () => void; token: string; actor: string }>();
   private readonly pending = new Map<string, Promise<unknown>>();
   private closed = false;
-  constructor(private readonly manager: SessionManager, private readonly clientFactory = () => new FeedbackServerClient()) {
+  constructor(private readonly manager: SessionManager, private readonly clientFactory = () => new FeedbackServerClient(), private readonly providers: ProviderDirectory | null = null) {
     manager.feedbackAction = (id, action, input, token) => this.tool(id, action, input, token);
   }
   async close() { this.closed = true; this.manager.feedbackAction = undefined; for (const watch of this.watches.values()) watch.stop(); this.watches.clear(); await Promise.allSettled(this.pending.values()); }
@@ -105,13 +106,26 @@ export class FeedbackService {
       if (reports.some(r => !r || typeof r.id !== "string" || !Number.isSafeInteger(r.revision))) fail("feedback_invalid", "Review the selected report revisions.", 400);
       if (!sessionId) {
         const chosen = reports.map(r => collection.reports.find(report => report.id === r.id) ?? fail("feedback_not_found", "A selected report is unavailable.", 404));
-        sessionId = (await this.manager.createSession({ createdBy: actor, title: "Feedback", clientRequestId: requestId,
-          appIds: [...new Set(chosen.map(r => r.context.appId))], profileId: body.profileId, profileRevision: body.profileRevision })).id;
+        const existing = (await this.manager.store.listRecords()).find(r => r.createdBy === actor && r.creationRequest?.id === requestId);
+        // Historical report context survives uninstall; only live apps belong in a new chat's selection.
+        // A retry preserves its original selection even if the app catalog has since changed.
+        const available = existing ? [] : await readContextApps(this.providers);
+        const appIds = existing?.appIds ?? [...new Set(chosen.map(r => r.context.appId))].filter(id => available.some(app => app.id === id)).slice(0, MAX_CONTEXT_APPS);
+        const created = await this.manager.createSession({ createdBy: actor, title: "Feedback", clientRequestId: requestId,
+          appIds, profileId: body.profileId, profileRevision: body.profileRevision });
+        sessionId = created.id;
         if (workspaceId) {
-          const inventory = await this.manager.workspaceInventory(token) as { workspaces: { id: string; participation?: { revision: number } }[] };
-          const workspace = inventory.workspaces.find(w => w.id === workspaceId);
-          if (!workspace?.participation) fail("workspace_missing", "The selected workspace is unavailable.", 404);
-          await this.manager.workspaceAction(sessionId, "attach", { workspaceId, expectedRevision: workspace!.participation!.revision, requestId }, token, actor);
+          const attachment = created.associationRequests?.find(r => r.id === requestId);
+          if (attachment && (attachment.action !== "attach" || attachment.input.workspaceId !== workspaceId))
+            fail("workspace_request_conflict", "Reuse the original workspace destination.");
+          let input = attachment?.input;
+          if (!input) {
+            const inventory = await this.manager.workspaceInventory(token) as { workspaces: { id: string; participation?: { revision: number } }[] };
+            const workspace = inventory.workspaces.find(w => w.id === workspaceId);
+            if (!workspace?.participation) fail("workspace_missing", "The selected workspace is unavailable.", 404);
+            input = { workspaceId, expectedRevision: workspace!.participation!.revision, requestId };
+          }
+          await this.manager.workspaceAction(sessionId, "attach", input, token, actor);
         }
       }
       const session = await this.manager.getSession(sessionId!);

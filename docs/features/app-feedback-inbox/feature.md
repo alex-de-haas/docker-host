@@ -123,7 +123,11 @@ Busy or awaiting-input chats cannot accept a batch. The server repeats the check
 admission; there is no queue or automatic retry. Known refusal retains the reviewed reports and
 instruction. Unknown acceptance retains the frozen request UUID and payload for explicit retry.
 Harness uses the ordinary durable message-admission receipt, so retry cannot create a second prompt.
-New-chat creation and source preparation retain the same task/request context.
+New-chat creation and source preparation retain the same task/request context. Retries reuse the
+persisted workspace attachment arguments, including the original participation revision. New chats
+select only currently available apps within the chat context limit; every selected report retains
+its historical app/version context even after uninstall. Retrying an existing creation request
+preserves that chat's app selection.
 
 The accepted prompt carries complete report snapshots and app context, plus scoped tools
 `feedback_current`, `feedback_image` and `feedback_result`. Tools operate only for the current

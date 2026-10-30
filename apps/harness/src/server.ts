@@ -73,7 +73,7 @@ export function createGatewayServer(
   internal?: (request: IncomingMessage, response: ServerResponse) => Promise<boolean>,
 ): Server & { stopTaskDispatch: () => Promise<void> } {
   const tasks = new TaskService(manager);
-  const feedback = new FeedbackService(manager);
+  const feedback = new FeedbackService(manager, undefined, providers);
   const handoffs = new HandoffStore(manager, settings, providers);
   const eventStreams = new EventStreamTransport(manager, Date.now, connections);
   const translations = connections && settings ? new TranslationService(connections, settings) : null;

@@ -6,12 +6,15 @@ import path from "node:path";
 import { FeedbackService, feedbackTurn } from "./service.js";
 import { SessionManager } from "../sessions/manager.js";
 import { SessionStore, type StoredEvent } from "../sessions/store.js";
+import { ProviderDirectory } from "../settings/providers.js";
+import { DevelopmentClient } from "../sessions/development.js";
 import { AuditReporter } from "../audit.js";
 import type { HarnessAdapter, HarnessStartOptions } from "../harness/adapter.js";
 import type { FeedbackServerClient } from "@hosty-sdk/app/feedback/server";
 import type { FeedbackDispatch, FeedbackDispatchInput, FeedbackDelivery, FeedbackOutcome, FeedbackReport } from "@hosty-sdk/app/feedback";
 let dir: string, manager: SessionManager, service: FeedbackService, run: HarnessStartOptions;
-let report: FeedbackReport, attempts: FeedbackDispatch[];
+let report: FeedbackReport, attempts: FeedbackDispatch[], directory: ProviderDirectory;
+const buildManager = (development: DevelopmentClient | null = null) => new SessionManager(new SessionStore(dir), adapter, new AuditReporter(null, null, "harness"), dir, null, directory, null, null, "http://localhost:1234", null, null, development);
 const sent = vi.fn();
 const adapter: HarnessAdapter = { name: "controlled", capabilities: { questions: true, appMcp: true, liveReconfigure: false, autoAllow: false, denyReason: false }, probe: async () => ({ available: true }),
   start: options => { run = options; return { send: sent, resolveApproval: () => true, resolveQuestion: () => true, setMcpServers: async () => false, interrupt: async () => {}, stop: async () => {}, stopAndWait: async () => {} }; } };
@@ -35,8 +38,10 @@ beforeEach(async () => {
   report = { id: "a".repeat(64), revision: 1, workspaceId: null, currentAttemptId: null, disposition: null, status: "unprocessed", reporterId: "reporter", comment: "Align controls",
     context: { appId: "independent.app", appName: "App", installation: "one", version: "1.0", observedAt: "now", executionKind: "package", workspaceId: null, sourceRevision: null },
     annotations: [{ id: randomUUID(), text: "Move button", route: "/", capturedAt: "now", mediaType: "image/png" }] };
-  manager = new SessionManager(new SessionStore(dir), adapter, new AuditReporter(null, null, "harness"), dir, null, null, null, null, "http://localhost:1234");
-  service = new FeedbackService(manager, () => client as unknown as FeedbackServerClient);
+  directory = new ProviderDirectory(null, null, "harness");
+  vi.spyOn(directory, "readApps").mockResolvedValue([{ id: "independent.app", displayName: "App" }]);
+  manager = buildManager();
+  service = new FeedbackService(manager, () => client as unknown as FeedbackServerClient, directory);
 });
 afterEach(async () => { await service.close(); await manager.shutdown(); vi.unstubAllEnvs(); await rm(dir, { recursive: true, force: true }); });
 const body = (id: string) => ({ requestId: randomUUID(), sessionId: id, workspaceId: null, reports: [{ id: report.id, revision: 1 }], instruction: "Keep the label" });
@@ -99,7 +104,7 @@ it("reconciles a terminal result persisted while restoring a feedback subscripti
   const session = await manager.createSession({ createdBy: "owner" });
   const attempt = await service.send(body(session.id), "grant", "owner");
   await service.close();
-  service = new FeedbackService(manager, () => client as unknown as FeedbackServerClient);
+  service = new FeedbackService(manager, () => client as unknown as FeedbackServerClient, directory);
   const subscribe = manager.subscribe.bind(manager);
   vi.spyOn(manager, "subscribe").mockImplementationOnce(async (...args) => {
     const events = await manager.store.readEvents(session.id);
@@ -109,4 +114,45 @@ it("reconciles a terminal result persisted while restoring a feedback subscripti
   const result = await service.list("grant", "owner");
   expect(attempt.state).toBe("succeeded");
   expect(result.dispatches[0]!.state).toBe("succeeded");
+});
+
+it("starts a chat for retained feedback after its application is uninstalled", async () => {
+  vi.mocked(directory.readApps).mockResolvedValue([]);
+  const { sessionId: _unused, ...input } = body("");
+  const attempt = await service.send(input, "grant", "owner");
+  expect((await manager.getSession(attempt.input.sessionId))!.appIds).toEqual([]);
+  expect(attempt.snapshot[0]!.context.appId).toBe("independent.app");
+  expect(sent.mock.calls[0]![0]).toContain("independent.app");
+});
+
+it.each(["attach", "reserve"])("replays original workspace attachment after a lost %s response and app removal", async failure => {
+  const workspaceId = "b".repeat(64);
+  const development = new DevelopmentClient("http://core.test", "harness", "service");
+  let revision = 4, lost = failure === "attach";
+  const inventory = vi.spyOn(development, "inspection").mockImplementation(async () => ({ workspaces: [{ id: workspaceId, participation: { revision } }] }));
+  vi.spyOn(development, "activity").mockResolvedValue({ workspaceId, revision: 5, stopRequested: false, state: "in-progress" });
+  const calls = vi.spyOn(development, "call").mockImplementation(async (_id, _token, action, command) => {
+    if (action === "attach") {
+      expect(command.expectedRevision).toBe(4); revision = 5;
+      if (lost) { lost = false; throw new Error("Lost attach response"); }
+      return { workspace: { id: workspaceId, revision } };
+    }
+    return { workspaces: [] };
+  });
+  await service.close(); await manager.shutdown(); manager = buildManager(development);
+  service = new FeedbackService(manager, () => client as unknown as FeedbackServerClient, directory);
+  if (failure === "reserve") client.reserve.mockRejectedValueOnce(new Error("Lost reserve response"));
+  const { sessionId: _unused, ...input } = { ...body(""), workspaceId };
+  await expect(service.send(input, "grant", "owner")).rejects.toThrow("Lost " + failure + " response");
+  const created = (await manager.store.listRecords())[0]!;
+  await service.close(); await manager.shutdown(); manager = buildManager(development);
+  service = new FeedbackService(manager, () => client as unknown as FeedbackServerClient, directory);
+  vi.mocked(directory.readApps).mockResolvedValue([]);
+  const attempt = await service.send(input, "grant", "owner");
+  expect(attempt.input.sessionId).toBe(created.id);
+  expect(await manager.store.listRecords()).toHaveLength(1);
+  expect(sent).toHaveBeenCalledTimes(1);
+  expect(inventory).toHaveBeenCalledTimes(1);
+  const attachments = calls.mock.calls.filter(c => c[2] === "attach");
+  expect(attachments).toHaveLength(2); expect(attachments[1]).toEqual(attachments[0]);
 });
