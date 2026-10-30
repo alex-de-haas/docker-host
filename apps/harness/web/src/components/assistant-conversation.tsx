@@ -1044,6 +1044,9 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
             </div>
             <div className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-2">
               <StatusBadge value={status} />
+              {composerBlocked && (running || stopping) && <Button type="button" variant="ghost" size="icon-sm" disabled={sending || stopping} onClick={() => void stop()} aria-label="Stop" title="Stop response">
+                {sending || stopping ? <Loader2 className="motion-safe:animate-spin" /> : <Square className="fill-current" />}
+              </Button>}
               {session && <SessionExecutionIndicator executionMode={session.executionMode} />}
               {fullPage && workspace && <Button variant="ghost" size="icon-sm" className="hidden min-[900px]:inline-flex" aria-label="Toggle workspace" aria-pressed={workspaceVisible} onClick={() => setWorkspaceVisible(value => !value)}><PanelRight /></Button>}
               {session && (
@@ -1084,7 +1087,6 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
         )}
       </header>
       {!showSessions && pendingDecision && <div className="flex shrink-0 items-center gap-2 border-b border-warning-foreground/25 bg-warning-soft px-3 py-2 text-sm text-warning-foreground"><Diamond className="size-4 shrink-0" /><span className="min-w-0 flex-1">Needs you · {pendingDecision.type === "approval_request" ? "Approval requested" : "Answer requested"}</span><Button size="sm" variant="outline" onClick={() => { decisionCard.current?.scrollIntoView({ block: "center", behavior: "instant" }); decisionCard.current?.focus(); }}>Review</Button></div>}
-      {!showSessions && !pendingDecision && (running || stopping) && <div className="flex shrink-0 items-center border-b bg-info-soft"><div className="min-w-0 flex-1"><AssistantActivity status={status} activity={activity?.activity ?? null} connection={connection} stopping={stopping} appNames={appNames} /></div><Button variant="ghost" size="sm" className="mr-2" disabled={stopping} onClick={() => void stop()}><Square className="size-3" />Stop</Button></div>}
       {session && !showSessions && <SessionRetention sessionId={session.id} revision={`${status}:${workspace?.workflow.revision ?? ""}`} />}
 
       {!showSessions && session && <SessionCredentials key={`credentials-${session.id}`} sessionId={session.id} />}

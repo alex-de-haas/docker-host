@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useId, useMemo, useRef, useState } from "react";
-import { Check, ChevronDown, ChevronRight, Clock3, HelpCircle, ShieldCheck, Wrench, X, FileCode2 } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Clock3, HelpCircle, Info, ShieldCheck, Wrench, X, FileCode2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { HostyLoader } from "../../../../../shared/web/hosty-states";
 import { Button } from "@/components/ui/button";
@@ -182,16 +182,30 @@ export function TranscriptEvent({
     case "notice":
       // Something degraded while the session stayed usable, so it reads as information rather than
       // as the failure styling — which would say the run is over when it is not.
-      return (
-        <div className="min-w-0 rounded-md border border-muted-foreground/30 bg-muted/40 px-3 py-2 text-xs wrap-anywhere text-muted-foreground">
-          {String(event.message ?? "")}
-        </div>
-      );
+      return <TranscriptNotice message={String(event.message ?? "")} />;
     case "error":
       return <InlineError message={String(event.message ?? "Assistant error")} />;
     default:
       return null;
   }
+}
+
+function TranscriptNotice({ message }: { message: string }) {
+  const [open, setOpen] = useState(false);
+  const summary = message.trim().replace(/\s+/g, " ");
+  const preview = summary.length > 160 ? `${summary.slice(0, 160)}…` : summary || "Assistant notice";
+  const Chevron = open ? ChevronDown : ChevronRight;
+  return <Collapsible open={open} onOpenChange={setOpen} className="min-w-0 text-xs text-muted-foreground" data-slot="transcript-notice">
+    <CollapsibleTrigger asChild><Button type="button" variant="ghost" size="sm"
+      className="h-auto min-h-8 w-full min-w-0 justify-start gap-1.5 px-1 py-1 text-left text-xs text-muted-foreground hover:text-foreground">
+      <Info className="size-3 shrink-0" aria-hidden />
+      <span className="min-w-0 flex-1 truncate font-normal">{preview}</span>
+      <Chevron className="ml-auto size-3 shrink-0" aria-hidden />
+    </Button></CollapsibleTrigger>
+    <CollapsibleContent className="min-w-0 pt-1">
+      <div className="min-w-0 rounded-md border border-muted-foreground/30 bg-muted/40 px-3 py-2 whitespace-pre-wrap wrap-anywhere">{message}</div>
+    </CollapsibleContent>
+  </Collapsible>;
 }
 
 /** Stored metadata remains visible even when the session cache no longer contains the file. */
