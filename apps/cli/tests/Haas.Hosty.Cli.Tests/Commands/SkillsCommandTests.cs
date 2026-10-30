@@ -227,6 +227,8 @@ public sealed class SkillsCommandTests : IDisposable
             Ansi = AnsiSupport.No,
             ColorSystem = ColorSystemSupport.NoColors,
         });
+        // CI profile enrichment can override factory settings; keep assertions on plain text.
+        console.Profile.Capabilities.Ansi = false;
         console.Profile.Width = 100;
         return (console, output);
     }

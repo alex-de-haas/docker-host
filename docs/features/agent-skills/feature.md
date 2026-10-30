@@ -209,7 +209,8 @@ add/list/read/export/release. The exact public example above installs `csharp-xu
 awesome-copilot commit `5269f7ea2d6c3a9bfda5ed878b6726cf509121fd`. Parent Finish confirms child
 resource removal; the fixture checks process exit and port release before removing its data.
 
-Verification for this change includes Core/CLI builds, 356 CLI tests and 15 integration-runner
+Verification for this change includes Core/CLI builds, 356 CLI tests (also with
+`GITHUB_ACTIONS=true` to exercise CI console detection) and 15 integration-runner
 tests. The full Core run passes 4386 tests with five unrelated opt-in integration skips; after
 the final metadata-reader adjustment, all 50 affected skill/audit tests pass again. NativeAOT
 publish and startup smoke pass on osx-arm64 without new trim/AOT warnings. The full Core suite
