@@ -22,6 +22,7 @@ test('unsupported Windows acceptance refuses before any process starts', () => {
   const plan = suitePlan('windows', { platform: 'win32' });
   assert.equal(plan.steps.length, 2);
   assert.match(plan.steps[0].args.at(-1), /WindowsProcessControlTests/);
+  assert.match(plan.steps[0].args.at(-1), /WorkspaceDelete_/);
   assert.match(plan.steps[1].args.at(-1), /SharedReceiptSharingTests/);
 });
 
@@ -40,6 +41,13 @@ test('worker uses the declared service image, without an npm install or host tsx
   assert.equal(plan.steps[0].args[4], 'example/worker:1.2.3');
   assert.deepEqual(plan.steps[1], { file: '/path with space/node', args: ['scripts/check-harness-worker.mjs'], env: {} });
   assert.throws(() => suitePlan('worker', { readManifest: () => ({}) }), /worker image/);
+});
+
+test('skills builds Core and CLI before running selected imports in a managed child', () => {
+  const plan = suitePlan('skills', { platform: 'darwin' });
+  assert.deepEqual(plan.steps.slice(0, 2).map(step => step.args[0]), ['build', 'build']);
+  assert.deepEqual(plan.steps[2].args, ['scripts/check-workspace-activation.py', '.', 'skills', '--managed']);
+  assert.ok(plan.prerequisites.some(step => step.file === 'docker'));
 });
 
 test('preflight failure prevents builds and runtime work, preserves exit status and never retries', () => {

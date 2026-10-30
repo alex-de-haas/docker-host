@@ -1224,7 +1224,7 @@ Decisions 1–5: 2026-08-19.
     origin/dispatch reference is not another binding. PR state and app rollout neither gate
     processing nor trigger deletion. Browser screenshots use Screen Capture API with user permission;
     no DOM-renderer workaround is included. Automated pickup, multi-agent routing and possible
-    reporter access remain [ideas](ideas.md#i18-feedback-follow-up-and-automated-handling).
+    reporter access remain [ideas](ideas.md#i19-feedback-follow-up-and-automated-handling).
     Feedback has no task association or task creation. The owner subsequently approved implementation
     on October 30; the feature document records the delivered manual flow. Automatic agent triggers remain outside this scope.
 

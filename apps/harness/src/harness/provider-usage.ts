@@ -46,6 +46,12 @@ const percentage = (used: unknown) => { const value = number(used); return value
 const observed = (rows: UsageRow[], observedAt: string, partial = false): ProviderUsage =>
   rows.length ? { state: "available", rows, observedAt, partial } : absentUsage();
 
+const quotaWindowLabel = (minutes: number): string => {
+  if (minutes > 0 && minutes % 1440 === 0) return `${minutes / 1440} ${minutes === 1440 ? "day" : "days"}`;
+  if (minutes > 0 && minutes % 60 === 0) return `${minutes / 60} ${minutes === 60 ? "hour" : "hours"}`;
+  return `${minutes} min`;
+};
+
 export function codexUsage(input: unknown, partial = false, now = new Date().toISOString()): ProviderUsage {
   const data = obj(input), buckets = obj(data.rateLimitsByLimitId);
   const entries = Object.keys(buckets).length ? Object.entries(buckets) : data.rateLimits ? [[label(obj(data.rateLimits).limitId, "codex"), data.rateLimits] as const] : [];
@@ -55,7 +61,7 @@ export function codexUsage(input: unknown, partial = false, now = new Date().toI
     for (const part of ["primary", "secondary"]) {
       const window = obj(bucket[part]); if (!Object.keys(window).length) continue;
       const minutes = number(window.windowDurationMins);
-      rows.push({ id: group + ":" + part, group, kind: "quota", label: label(bucket.limitName, key) + (minutes === undefined ? " · " + part : " · " + minutes + " min"),
+      rows.push({ id: group + ":" + part, group, kind: "quota", label: label(bucket.limitName, key) + (minutes === undefined ? " · " + part : " · " + quotaWindowLabel(minutes)),
         scope: typeof bucket.normalModelSlug === "string" ? bucket.normalModelSlug : undefined,
         status: bucket.spendControlReached === true ? "spend_control_reached" : undefined,
         ...percentage(window.usedPercent), resetsAt: time(window.resetsAt, true), observedAt: now });

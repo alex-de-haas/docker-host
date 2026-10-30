@@ -4,7 +4,7 @@ import { MoreHorizontal } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { HostyLoader } from "../../../../../shared/web/hosty-states";
-import { Dialog, DialogContent, DialogDescription, DialogTitle, DialogHeader, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogBody, DialogDescription, DialogTitle, DialogHeader, DialogFooter } from "@/components/ui/dialog";
 import { DevelopmentRequestError, developmentRequest } from "@/lib/development-api";
 type Request = { action: string; requestId: string; expectedRevision: number };
 type Operation = { id: string; state: string; error?: string; message?: string };
@@ -78,8 +78,10 @@ export function WorkspaceResourceActions({ workspaceId, kind, resource, label, c
       <DialogHeader><DialogTitle>Delete sandbox “{label}”?</DialogTitle><DialogDescription>
         Stop this sandbox and permanently remove its test data and owned runtime resources. Workspace source files, commits and ordinary application data are preserved.
       </DialogDescription></DialogHeader>
-      {progress}
-      {error && <p role="alert" className="text-sm text-destructive-foreground">{error}</p>}
+      <DialogBody>
+        {progress}
+        {error && <p role="alert" className="text-sm text-destructive-foreground">{error}</p>}
+      </DialogBody>
       <DialogFooter><Button variant="outline" disabled={busy} onClick={() => setConfirm(false)}>Cancel</Button>
         <Button variant="destructive" disabled={locked} onClick={() => void run(pending ?? request("finish"))}>{busy ? "Deleting…" : "Delete sandbox"}</Button>
       </DialogFooter>

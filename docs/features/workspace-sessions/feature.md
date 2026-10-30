@@ -1,6 +1,6 @@
 ---
 created: 2026-10-25
-updated: 2026-10-29
+updated: 2026-10-30
 summary: Core workspaces support concurrent private sessions, permission-based source access, attributable activity and independent conversation lifetimes.
 components: [apps/core, apps/harness]
 ---
@@ -72,11 +72,15 @@ and requires rereading files after another participant's edits. Permission revoc
 
 Harness has one left-hand list of authorized workspaces and unattached chats. Attached conversations
 are grouped into their workspace row. External and sessionless workspaces remain in the same list. All workspace rows use the same hammer icon, with no external marker, secondary label or tooltip.
-Internal workspaces show only the current user's accessible sessions as keyboard-navigable tabs,
-with a plus that creates one idle conversation. Other participants' titles and activity appear in
-the right-hand details panel without private conversation links. Standalone chats have no workspace
-panel; external workspaces have an empty center, without a composer or session-creation controls.
-Sessionless internal workspaces offer explicit creation without creating a chat on selection.
+Internal and externally allocated workspaces show only the current user's accessible Harness sessions
+as keyboard-navigable tabs, with a plus that creates one idle conversation. Empty workspaces offer
+explicit creation without creating a chat on selection. Other hosted participants' titles and activity
+appear in the right-hand details panel without private conversation links. Standalone chats have no
+workspace panel. External allocation remains provenance: its original record and source are retained,
+but it does not appear as a hosted conversation or contribute inferred session activity. The external
+client's transcript and activity are not synchronized. New Harness chats share the existing files,
+branches and uncommitted edits. Transcript file links resolve the current accessible association,
+including externally allocated workspaces, rather than requiring the chat to be the original creator.
 
 Workspace rows display independent Working, Needs attention and Failed icon/count groups, hiding
 zeros. Each attached participant contributes to one current category; approval/question waits do not
@@ -91,6 +95,9 @@ In-place route updates report to Shell without reopening the page. Drafts and ap
 independent; unsent local files survive tab switches in the current document, while uploaded references
 and text drafts survive reload. Tabs scroll horizontally; the plus stays reachable on narrow screens.
 Attachment controls and source lifecycle/review actions remain on the right; there is no sharing-permission menu.
+Attach session opens a modal with the current user's available chats, loading/empty/error states and
+Cancel/Attach actions. Successful attachment closes it; uncertain requests retain their exact retry
+inside the modal, or in the details panel after it is dismissed.
 Source views say Workspace changes because a diff is not attributable to one chat.
 
 Joining requires an idle session with reconciled source/resource operations. Detach preserves source
@@ -122,5 +129,10 @@ fresh consumer checks.
 - `npm run test:integration -- sessions` uses a parent-managed child Core, normal password login,
   distinct users, disposable repositories and locally built Harness images. It checks shared paths
   without grants, private chat routes, creator-chat deletion, sessionless inventory and deletion replay.
+  External allocations also cover multiple hosted chats, exact creation replay, immutable source/lease
+  identity, private routes and source preservation after detachment and chat deletion.
 - Browser acceptance uses Core app launch URLs and the same isolated fixture. Parent Finish removes
   the child and its services after verification. Test credentials remain in temporary fixture data.
+  `HOSTY_ACCEPTANCE_HOLD_UI=1 npm run test:integration -- sessions` builds Shell locally and keeps
+  the fixture available for explicit first/second chat creation, keyboard tabs, independent drafts,
+  reload and workspace-return restoration, and narrow-screen checks. No provider prompt is required.

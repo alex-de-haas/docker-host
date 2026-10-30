@@ -420,6 +420,11 @@
         "endpoint": "http",
         "path": "/feedback",
         "feedbackReview": true
+      },
+      {
+        "label": "Pull requests",
+        "endpoint": "http",
+        "path": "/pull-requests"
       }
     ],
     "panels": [
@@ -429,6 +434,13 @@
         "endpoint": "http",
         "path": "/assistant",
         "icon": "bot"
+      },
+      {
+        "id": "pull-requests",
+        "label": "Pull requests",
+        "endpoint": "http",
+        "path": "/pull-requests-panel",
+        "icon": "git-pull-request"
       }
     ]
   },

@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Plus, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogBody, DialogDescription, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
 import { Field, FieldGroup, FieldLabel, FieldDescription, FieldSet, FieldLegend } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -163,48 +163,50 @@ export function CreateApp({ session, busy, onChange, openOnMount = false, onOpen
         <TooltipContent side="right">Create app{recoverable.length > 0 ? " · recovery available" : ""}</TooltipContent>
       </Tooltip>
     </TooltipProvider>
-      <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-xl">
+      <DialogContent className="sm:max-w-xl">
         <DialogHeader><DialogTitle>Create a local app</DialogTitle>
           <DialogDescription>Your source stays on this host. The assistant works in a separate worktree and prepares a Docker preview with its own data.</DialogDescription>
         </DialogHeader>
-        {operations.length > 0 && <div className="space-y-2 text-sm" aria-label="App creation history">
-          {operations.map(operation => <div key={String(operation.input.requestId)} className="flex items-center justify-between gap-2">
-            <span className="min-w-0 text-muted-foreground">{String(operation.input.name || operation.input.appId)} · {operation.state === "observed" ? "Created locally" : "Creation pending"}</span>
-            {recoverable.includes(operation) && <Button size="sm" variant="ghost" disabled={busy || working || readingIcon} onClick={() => void show(operation)}>Recover</Button>}
-          </div>)}
-        </div>}
-        <form className="flex flex-col gap-5" onSubmit={event => { event.preventDefault(); void submit(); }}>
-          <FieldGroup className="gap-4">
-            <Field><FieldLabel htmlFor="create-app-name">Name</FieldLabel><Input id="create-app-name" required maxLength={120} disabled={locked} value={draft.name} onChange={e => update({ name: e.target.value, ...(!draft.appId || draft.appId === suggestId(draft.name) ? { appId: suggestId(e.target.value) } : {}) })} /></Field>
-            <Field><FieldLabel htmlFor="create-app-id">App ID</FieldLabel><Input id="create-app-id" required maxLength={63} pattern={"(?!.*\\.\\.)[a-z0-9][a-z0-9._\\-]*"} placeholder="local.my-app" disabled={locked} value={draft.appId} onChange={e => update({ appId: e.target.value })} />
-              <FieldDescription>Choose a unique ID. It remains the same when you publish later.</FieldDescription></Field>
-            <Field><FieldLabel htmlFor="create-app-description">Description (optional)</FieldLabel><Input id="create-app-description" maxLength={4000} disabled={locked} value={draft.description} onChange={e => update({ description: e.target.value })} /></Field>
-            <Field>
-              <FieldLabel htmlFor="create-app-icon">Icon (optional)</FieldLabel>
-              <Input id="create-app-icon" type="file" accept="image/png" disabled={locked || readingIcon} onChange={e => { void chooseIcon(e.target.files?.[0]); e.target.value = ""; }} />
-              <FieldDescription>PNG, up to 128 KiB and 1024×1024 pixels. Included in the initial commit.</FieldDescription>
-              {draft.iconPng && <div className="flex items-center gap-2">
-                {/* Uploaded local data is displayed directly, without an image optimization request. */}
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={`data:image/png;base64,${draft.iconPng}`} alt="App icon preview" className="size-12 rounded-md object-contain" />
-                <Button type="button" variant="outline" disabled={locked || readingIcon} onClick={() => update({ iconPng: undefined })}>Remove icon</Button>
-              </div>}
-            </Field>
-            <FieldSet><FieldLegend variant="label">Local Git repository</FieldLegend>
-            <FieldDescription>No remote is connected and nothing is published. These author details apply to the initial commit; your account settings stay unchanged.</FieldDescription>
-            <FieldGroup className="grid gap-4 sm:grid-cols-2">
-              <Field><FieldLabel htmlFor="create-app-author">Git author</FieldLabel><Input id="create-app-author" required maxLength={200} disabled={locked} value={draft.authorName} onChange={e => update({ authorName: e.target.value })} /></Field>
-              <Field><FieldLabel htmlFor="create-app-email">Git email</FieldLabel><Input id="create-app-email" type="email" required maxLength={254} disabled={locked} value={draft.authorEmail} onChange={e => update({ authorEmail: e.target.value })} /></Field>
-            </FieldGroup></FieldSet>
-            <Field><FieldLabel htmlFor="create-app-prompt">What would you like to build?</FieldLabel><Textarea id="create-app-prompt" required maxLength={20000} rows={4} disabled={working || saved?.prompt !== undefined} value={draft.prompt} onChange={e => update({ prompt: e.target.value })} /></Field>
-            <Field orientation="horizontal"><Checkbox id="create-app-consent" checked={draft.consent} disabled={locked} onCheckedChange={value => update({ consent: value === true })} />
-              <FieldLabel htmlFor="create-app-consent">Create one initial commit with these author details. Keep the repository local; later commits and publication are separate actions.</FieldLabel></Field>
-          </FieldGroup>
-          {storageError ? <p role="alert" className="text-sm text-destructive-foreground">{storageError}</p> : <p className="text-sm text-muted-foreground">Draft is saved in this browser as you edit. Close and reopen to continue.</p>}
-          {draft.requestId && <p className="text-sm text-muted-foreground">{saved?.state === "observed" ? "App and workspace created locally. Continue to send the saved request to the assistant." : "Creation was submitted. Continue with the same details to check its result."}</p>}
-          {error && <div role="alert"><InlineError message={error} /></div>}
-          {step && <p role="status" className="text-sm text-muted-foreground">{step}</p>}
-          {pending.length > 0 && !draft.requestId && <p className="text-sm text-muted-foreground">This session has pending creation work. Use Recover to continue it without creating another app.</p>}
+        <form className="flex min-h-0 flex-1 flex-col gap-4" onSubmit={event => { event.preventDefault(); void submit(); }}>
+          <DialogBody>
+          {operations.length > 0 && <div className="space-y-2 text-sm" aria-label="App creation history">
+            {operations.map(operation => <div key={String(operation.input.requestId)} className="flex items-center justify-between gap-2">
+              <span className="min-w-0 text-muted-foreground">{String(operation.input.name || operation.input.appId)} · {operation.state === "observed" ? "Created locally" : "Creation pending"}</span>
+              {recoverable.includes(operation) && <Button type="button" size="sm" variant="ghost" disabled={busy || working || readingIcon} onClick={() => void show(operation)}>Recover</Button>}
+            </div>)}
+          </div>}
+            <FieldGroup className="gap-4">
+              <Field><FieldLabel htmlFor="create-app-name">Name</FieldLabel><Input id="create-app-name" required maxLength={120} disabled={locked} value={draft.name} onChange={e => update({ name: e.target.value, ...(!draft.appId || draft.appId === suggestId(draft.name) ? { appId: suggestId(e.target.value) } : {}) })} /></Field>
+              <Field><FieldLabel htmlFor="create-app-id">App ID</FieldLabel><Input id="create-app-id" required maxLength={63} pattern={"(?!.*\\.\\.)[a-z0-9][a-z0-9._\\-]*"} placeholder="local.my-app" disabled={locked} value={draft.appId} onChange={e => update({ appId: e.target.value })} />
+                <FieldDescription>Choose a unique ID. It remains the same when you publish later.</FieldDescription></Field>
+              <Field><FieldLabel htmlFor="create-app-description">Description (optional)</FieldLabel><Input id="create-app-description" maxLength={4000} disabled={locked} value={draft.description} onChange={e => update({ description: e.target.value })} /></Field>
+              <Field>
+                <FieldLabel htmlFor="create-app-icon">Icon (optional)</FieldLabel>
+                <Input id="create-app-icon" type="file" accept="image/png" disabled={locked || readingIcon} onChange={e => { void chooseIcon(e.target.files?.[0]); e.target.value = ""; }} />
+                <FieldDescription>PNG, up to 128 KiB and 1024×1024 pixels. Included in the initial commit.</FieldDescription>
+                {draft.iconPng && <div className="flex items-center gap-2">
+                  {/* Uploaded local data is displayed directly, without an image optimization request. */}
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={`data:image/png;base64,${draft.iconPng}`} alt="App icon preview" className="size-12 rounded-md object-contain" />
+                  <Button type="button" variant="outline" disabled={locked || readingIcon} onClick={() => update({ iconPng: undefined })}>Remove icon</Button>
+                </div>}
+              </Field>
+              <FieldSet><FieldLegend variant="label">Local Git repository</FieldLegend>
+              <FieldDescription>No remote is connected and nothing is published. These author details apply to the initial commit; your account settings stay unchanged.</FieldDescription>
+              <FieldGroup className="grid gap-4 sm:grid-cols-2">
+                <Field><FieldLabel htmlFor="create-app-author">Git author</FieldLabel><Input id="create-app-author" required maxLength={200} disabled={locked} value={draft.authorName} onChange={e => update({ authorName: e.target.value })} /></Field>
+                <Field><FieldLabel htmlFor="create-app-email">Git email</FieldLabel><Input id="create-app-email" type="email" required maxLength={254} disabled={locked} value={draft.authorEmail} onChange={e => update({ authorEmail: e.target.value })} /></Field>
+              </FieldGroup></FieldSet>
+              <Field><FieldLabel htmlFor="create-app-prompt">What would you like to build?</FieldLabel><Textarea id="create-app-prompt" required maxLength={20000} rows={4} disabled={working || saved?.prompt !== undefined} value={draft.prompt} onChange={e => update({ prompt: e.target.value })} /></Field>
+              <Field orientation="horizontal"><Checkbox id="create-app-consent" checked={draft.consent} disabled={locked} onCheckedChange={value => update({ consent: value === true })} />
+                <FieldLabel htmlFor="create-app-consent">Create one initial commit with these author details. Keep the repository local; later commits and publication are separate actions.</FieldLabel></Field>
+            </FieldGroup>
+            {storageError ? <p role="alert" className="text-sm text-destructive-foreground">{storageError}</p> : <p className="text-sm text-muted-foreground">Draft is saved in this browser as you edit. Close and reopen to continue.</p>}
+            {draft.requestId && <p className="text-sm text-muted-foreground">{saved?.state === "observed" ? "App and workspace created locally. Continue to send the saved request to the assistant." : "Creation was submitted. Continue with the same details to check its result."}</p>}
+            {error && <div role="alert"><InlineError message={error} /></div>}
+            {step && <p role="status" className="text-sm text-muted-foreground">{step}</p>}
+            {pending.length > 0 && !draft.requestId && <p className="text-sm text-muted-foreground">This session has pending creation work. Use Recover to continue it without creating another app.</p>}
+          </DialogBody>
           <DialogFooter>
             <Button type="button" variant="outline" disabled={working || readingIcon} onClick={close}>Close</Button>
             <Button type="submit" disabled={working || readingIcon || busy || !draft.consent}>{working && <Loader2 className="motion-safe:animate-spin" data-icon="inline-start" />}{draft.requestId ? "Continue creation" : "Create and build"}</Button>

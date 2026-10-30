@@ -1,6 +1,6 @@
 ---
 created: 2026-10-28
-updated: 2026-10-28
+updated: 2026-10-30
 summary: Optional connection-level quota and credit observations for Codex and Claude, with bounded diagnostics, retained snapshots and shared Limits controls.
 components: [apps/harness]
 ---
@@ -17,7 +17,9 @@ The shipped packages are Codex CLI 0.162.1 and Claude Agent SDK 0.3.296.
 
 - Codex uses app-server `account/rateLimits/read` and `account/rateLimits/updated`.
   Multiple `rateLimitsByLimitId` buckets take precedence over the legacy snapshot. Primary and
-  secondary windows retain their durations, percentages and Unix reset times. Credits retain
+  secondary windows retain their durations, percentages and Unix reset times. Duration labels use
+  whole days or hours when exact (for example, `7 days` and `5 hours`); other durations remain in
+  minutes without rounding. Missing durations keep the primary/secondary label. Credits retain
   their provider unit and explicit unlimited flag. Partial notifications replace only their
   reported bucket. A native account-change event invalidates its old observation.
 - Claude uses `rate_limit_event`, structured `usage_report` messages when naturally emitted,

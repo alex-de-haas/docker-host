@@ -42,7 +42,8 @@ internal sealed partial class WorkspaceInspectionService(DevelopmentWorkspaceSer
             var first = group.First();
             var owner = first.Owner;
             var assistant = installed.FirstOrDefault(a => a.Id == owner.AppId && a.InstalledAt == owner.Installation);
-            var participation = owner.IsExternal ? null : await workspaces.ParticipationAsync(group.Key, userId, ct);
+            var discard = discards.FirstOrDefault(d => d.WorkspaceId == group.Key);
+            var participation = discard is null ? await workspaces.ParticipationAsync(group.Key, userId, ct) : null;
             var participants = participation is null ? null : await WorkspaceParticipationEndpoints.Project(participation, userId, callerAppId, users, apps, ct);
             var ownSession = participants?.Sessions.FirstOrDefault(s => s.Attached && s.CanOpen);
             var destination = owner.IsExternal ? new WorkspaceDestination(null, null)
@@ -55,7 +56,6 @@ internal sealed partial class WorkspaceInspectionService(DevelopmentWorkspaceSer
             var state = children.All(w => w.State == "released") ? "released"
                 : children.Any(w => w.State != "active" || w.Observation?.State != "ok") ? "attention" : "active";
             var workflow = await workspaces.WorkflowAsync(owner, ct);
-            var discard = discards.FirstOrDefault(d => d.WorkspaceId == group.Key);
             if (discard is not null)
                 workflow = workflow with { State = "deleting", Closure = "closed", Operations = [.. (workflow.Operations ?? []).Where(o => o.Id != discard.Command.RequestId),
                     new(discard.Command.RequestId, "discard", discard.Command.ExpectedRevision, "pending", discard.Error)] };

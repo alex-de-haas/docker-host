@@ -293,7 +293,7 @@ ordinary reporters receive no post-submission view, status or notifications. Bro
 use the selected Screen Capture API with explicit user permission, without DOM-renderer workarounds.
 
 Submission or approval alone starts no agent. Automatic pickup/routing and possible reporter access
-are [exploratory](../../ideas.md#i18-feedback-follow-up-and-automated-handling); tasks remain separate.
+are [exploratory](../../ideas.md#i19-feedback-follow-up-and-automated-handling); tasks remain separate.
 The feedback feature adds neither a queue nor orchestration to the one-agent demonstration.
 
 ## Remaining Questions

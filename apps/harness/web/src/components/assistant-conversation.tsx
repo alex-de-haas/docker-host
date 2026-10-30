@@ -219,7 +219,7 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
   const sessionWorkspace = inventory.workspaces.find(w => w.participation ? w.participation.sessions.some(binding => binding.attached && binding.canOpen && binding.sessionId === session?.id) : w.owner.kind === "assistant" && w.owner.appId === "hosty.harness" && w.owner.reference === session?.id);
   const selectedWorkspace = selectedWorkspaceId ? inventory.workspaces.find(w => w.id === selectedWorkspaceId) : sessionWorkspace;
   const workspace = selectedWorkspace?.workflow.state === "deleted" ? undefined : selectedWorkspace;
-  const chatVisible = !fullPage || !selectedWorkspaceId || !!workspace && workspace.owner.kind !== "external" && !!session && workspaceSessionIds(workspace).includes(session.id);
+  const chatVisible = !fullPage || !selectedWorkspaceId || !!workspace && !!session && workspaceSessionIds(workspace).includes(session.id);
   useEffect(() => {
     if (workspace && session && chatVisible) rememberWorkspaceSession(workspace, session.id);
   }, [workspace, session, chatVisible]);
@@ -454,7 +454,7 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
   const pickWorkspace = (target: DevelopmentWorkspace, matched?: AssistantSession) => {
     const record = matched ?? rememberedWorkspaceSession(target, sessions);
     setMobileSessions(false); setMobileDetails(false); setReview(null); setWorkspaceVisible(true);
-    if (record && target.owner.kind !== "external") pickSession(record);
+    if (record) pickSession(record);
     else {
       clearActiveConversation(); setSelectedWorkspaceId(target.id); setWorkspaceToResolve(null);
       void navigateSelection(null, target.id);
@@ -485,7 +485,7 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
       if (!target) { setError("This workspace is unavailable."); return; }
       setSessions(records);
       const record = rememberedWorkspaceSession(target, records);
-      if (record && target.owner.kind !== "external") {
+      if (record) {
         requestedSessionRef.current = record.id; setRequestedSessionId(record.id);
       }
       const route = new URL(window.location.href);
@@ -1024,7 +1024,7 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
           <p>{navigation === "workspaces" ? "Choose a workspace, create an app or continue building." : "Choose a chat or start a new one."}</p>
           {navigation === "chats" && <Button variant="outline" disabled={!ready} onClick={() => void startNew()}>New chat</Button>}
         </div>}
-        {workspace && workspace.owner.kind !== "external" && <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-sm text-muted-foreground">
+        {workspace && <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-sm text-muted-foreground">
           <p>No accessible chats in this workspace.</p>
           <Button variant="outline" disabled={workspaceActions.busy || workspaceActions.retry || !workspace.participation || !workflowIsActive(workspace.workflow)} onClick={() => void workspaceActions.command("new")}>New session in workspace</Button>
         </div>}
@@ -1044,6 +1044,9 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
             </div>
             <div className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-2">
               <StatusBadge value={status} />
+              {composerBlocked && (running || stopping) && <Button type="button" variant="ghost" size="icon-sm" disabled={sending || stopping} onClick={() => void stop()} aria-label="Stop" title="Stop response">
+                {sending || stopping ? <Loader2 className="motion-safe:animate-spin" /> : <Square className="fill-current" />}
+              </Button>}
               {session && <SessionExecutionIndicator executionMode={session.executionMode} />}
               {fullPage && workspace && <Button variant="ghost" size="icon-sm" className="hidden min-[900px]:inline-flex" aria-label="Toggle workspace" aria-pressed={workspaceVisible} onClick={() => setWorkspaceVisible(value => !value)}><PanelRight /></Button>}
               {session && (
@@ -1084,7 +1087,6 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
         )}
       </header>
       {!showSessions && pendingDecision && <div className="flex shrink-0 items-center gap-2 border-b border-warning-foreground/25 bg-warning-soft px-3 py-2 text-sm text-warning-foreground"><Diamond className="size-4 shrink-0" /><span className="min-w-0 flex-1">Needs you · {pendingDecision.type === "approval_request" ? "Approval requested" : "Answer requested"}</span><Button size="sm" variant="outline" onClick={() => { decisionCard.current?.scrollIntoView({ block: "center", behavior: "instant" }); decisionCard.current?.focus(); }}>Review</Button></div>}
-      {!showSessions && !pendingDecision && (running || stopping) && <div className="flex shrink-0 items-center border-b bg-info-soft"><div className="min-w-0 flex-1"><AssistantActivity status={status} activity={activity?.activity ?? null} connection={connection} stopping={stopping} appNames={appNames} /></div><Button variant="ghost" size="sm" className="mr-2" disabled={stopping} onClick={() => void stop()}><Square className="size-3" />Stop</Button></div>}
       {session && !showSessions && <SessionRetention sessionId={session.id} revision={`${status}:${workspace?.workflow.revision ?? ""}`} />}
 
       {!showSessions && session && <SessionCredentials key={`credentials-${session.id}`} sessionId={session.id} />}

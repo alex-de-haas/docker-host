@@ -40,8 +40,9 @@ export function RetainedWorkspacePane({ children, open, visible, reviewing, onCl
     {modal && <button type="button" tabIndex={-1} aria-label="Close workspace" className="fixed inset-0 z-30 bg-black/30" onClick={onClose} />}
     <div ref={pane} role={modal ? "dialog" : undefined} aria-modal={modal || undefined} aria-label={modal ? "Workspace" : undefined}
       className={cn("min-h-0 min-w-0 border-l min-[900px]:w-[344px] min-[900px]:flex-none", reviewing ? "hidden" : open ? "harness-workspace-sheet block" : "hidden", !reviewing && visible ? "min-[900px]:block" : "min-[900px]:hidden")}>
-      {open && <div className="flex items-center justify-between border-b bg-background px-3 py-2 min-[900px]:hidden"><span className="text-sm font-medium">Workspace</span><Button ref={close} variant="ghost" size="sm" onClick={onClose}>Back to conversation</Button></div>}
+      {open && <div className="shrink-0 border-b bg-background px-3 py-2 text-sm font-medium min-[900px]:hidden">Workspace</div>}
       {children}
+      {open && <div className="flex shrink-0 justify-end border-t bg-background p-3 min-[900px]:hidden"><Button ref={close} variant="outline" size="sm" onClick={onClose}>Back to conversation</Button></div>}
     </div>
   </>;
 }

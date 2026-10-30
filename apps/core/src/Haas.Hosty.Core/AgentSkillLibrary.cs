@@ -4,7 +4,7 @@ using System.Text;
 namespace Haas.Hosty.Core;
 
 /// <summary>One current-content library with serialized publication and independent native exports.</summary>
-internal sealed class AgentSkillLibrary(CoreDataPaths paths, IAgentSkillGit git, ISourceGitAccess access, IClock clock, ILogger<AgentSkillLibrary>? logger = null)
+internal sealed partial class AgentSkillLibrary(CoreDataPaths paths, IAgentSkillGit git, ISourceGitAccess access, IClock clock, ILogger<AgentSkillLibrary>? logger = null)
 {
     private readonly SemaphoreSlim gate = new(1, 1);
     private string Root => Path.Combine(paths.CoreRoot, "skills");
@@ -114,6 +114,12 @@ internal sealed class AgentSkillLibrary(CoreDataPaths paths, IAgentSkillGit git,
             return Entry(Id("git", request.Source.Repository, request.Source.Ref, p), package,
                 "git", null, null, request.Source.Repository, request.Source.Ref, p, checkout.Commit, grant);
         }).ToArray();
+        await PublishGitAsync(entries, ct);
+        return await CatalogAsync(ct);
+    }
+
+    private async Task PublishGitAsync(AgentSkillEntry[] entries, CancellationToken ct)
+    {
         CoreAgentSkills.RejectReservedNames(entries.Select(e => e.Info.Name));
         await gate.WaitAsync(ct);
         try
@@ -123,7 +129,6 @@ internal sealed class AgentSkillLibrary(CoreDataPaths paths, IAgentSkillGit git,
             await PublishAsync(state with { Skills = state.Skills.Where(s => !entries.Any(e => e.Info.Id == s.Info.Id)).Concat(entries).ToArray() }, ct);
         }
         finally { gate.Release(); }
-        return await CatalogAsync(ct);
     }
 
     private AgentSkillEntry Entry(string id, AgentSkillPackage package, string kind, string? appId,

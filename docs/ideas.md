@@ -5,7 +5,7 @@ updated: 2026-10-30
 
 # Ideas
 
-<!-- idea-id-high-water: 18 -->
+<!-- idea-id-high-water: 19 -->
 
 This living document collects early possibilities, questions and examples that may expand or
 complement the [vision](vision.md). The vision describes the system the owner wants to build;
@@ -461,6 +461,11 @@ plan. Serialized work can be scoped to a task or resource where needed rather th
 - Feedback loops: an agent triggered by a comment event writes a comment, which triggers it again.
   Record the originating actor on events, suppress self-triggering and cap chain depth.
 
+**Scoped planning, 2026-10-29:** [Assistant Events And Session Continuation](features/assistant-events-and-continuation/plan.md)
+owns activity/result delivery into a bound assistant conversation. It consumes Notifications D6 and
+Durable Agent Jobs D7; scheduling and automation applications retain their existing owners. The plan
+remains Draft and creates no live automation.
+
 ## I7. Personal Speech Correction And A Reusable Dataset
 
 **Owner exploration:** Preserve raw recognition output, let the speaker correct names such as
@@ -601,6 +606,11 @@ need to be identified as its own execution mechanism. This idea adds no new impl
 - Deep fan-out makes a flat trace unreadable. Collapse children by default and show one summary
   line per child.
 
+**Related planning, 2026-10-29:** [Assistant Events And Session Continuation](features/assistant-events-and-continuation/plan.md)
+addresses cross-app task-result delivery to a parent wait. Native subagent lifecycle stays with its
+provider; a completion must not be injected twice. This does not select a general subagent UI/control
+contract or complete the capability investigation above.
+
 ## I10. Interactive Sessions That Wait For User Actions
 
 **Owner exploration:** A user could ask an assistant to start an interactive activity, act in an
@@ -661,6 +671,12 @@ sampling is deprecated.
 - MCP clients apply tool-call timeouts, so an open tool call cannot wait at a person's pace.
 - Every action that starts a model run costs latency and money. Decide per activity whether to run
   on every action, on request, or only on significant events.
+
+**Scoped planning, 2026-10-29:** The owner requested
+[Assistant Events And Session Continuation](features/assistant-events-and-continuation/plan.md) for
+activity/conversation bindings, authorized reactions, context recovery and delegated-task results.
+Chess is the first interactive example, with game state in the game and chat history in the selected
+compatible assistant. This scopes a Draft proposal; broader interactive activities remain ideas.
 
 ## I11. Application-Provided Roles, Instructions And Interaction Profiles
 
@@ -739,6 +755,14 @@ addition to any feature plan.
   steer the model. App-supplied profiles are the same channel, so show them, pin them, and require
   review of changed instructions on update, as manifests are reviewed today.
 - Personas drift over long conversations. Keep profiles short and send them again each turn.
+
+**Scoped planning, 2026-10-29:** The independent
+[Hosty Chess Draft](https://github.com/alex-de-haas/hosty-chess/blob/main/docs/features/chess-v1/plan.md)
+selects agent-chosen legal moves and activity-scoped tone/language with an existing assistant panel.
+That plan is currently local and unpublished. It depends on
+[Assistant Events And Session Continuation](features/assistant-events-and-continuation/plan.md).
+It does not introduce shared Harness profiles, calibrated Elo, engine-based moves or the broader
+coaching/difficulty controls considered in this idea.
 
 ## I12. Workspace, Session And Material Lifetimes
 
@@ -1035,7 +1059,48 @@ explicit reads/reports, already excludes automatic Codex synchronization, and is
 approved by this note.
 
 
-## I18. Feedback Follow-Up And Automated Handling
+## I18. Active Pull Request Inbox And Repository Observation
+
+**Owner clarification, 2026-10-29:** Provide one convenient Harness view of active pull requests
+in repositories of installed Hosty applications, including Dependabot and PRs created outside Hosty
+conversations/workspaces. Derive the set automatically from installed app source metadata, including
+stopped apps, and deduplicate shared repositories. No favorites or manual repository selection is
+needed. The owner selects this browsing feature first: a dedicated Harness navigation page with
+PR list and detailed description/status view, plus a separate list-only side panel with compact
+CI summaries following workspace cards. Neither surface requires an assistant chat. The owner also
+selects adaptive Core polling with a shared cache and demand-based cadence, without webhooks for the
+first version. Relevant live stream subscriptions request minute discovery and faster updates for
+active PRs, equally for a compact list or workspace. Without subscribers, discovery and PR reads use
+the five-minute baseline. Reuse existing personal connections and track only accessible installed-app
+repositories; retained metadata or local files do not establish provider access. The owning plan
+records stream lifetime, selection rules, cadence transitions and budgets.
+
+**Developed into a Draft, 2026-10-29:** The owner requested the separate
+[Harness Pull Request Inbox plan](features/harness-pull-request-inbox/plan.md). That plan now owns
+installed-app repository derivation, observation, active PR browsing, page/panel presentation, optional
+related-work links and their open design decisions. I18 retains the origin without duplicating its
+deliverables. The owner subsequently delegated the remaining technical decisions and requested
+Ready on 2026-10-29, then explicitly authorized implementation without commits. The
+[read-only page and panel](features/harness-pull-request-inbox/feature.md) now have local implementation
+and managed fixture acceptance; real GitHub acceptance remains open at the owner’s request. No live
+routine, watch or commit is authorized by this record.
+
+**Possible observation alternative:** The owner has public production origins and wants to preserve
+webhooks as a later option. The ready PR plan separates polling from a shared cache/invalidation input
+so a future authorized receiver can reuse the same UI stream. Callback registration, secrets,
+signature/delivery validation, recovery and deployment need their own scoped implementation plan
+when selected. This idea creates no receiver/relay/tunnel deliverable in the first browsing version.
+
+**General mechanism, separate consumer:** PR events are one example among arbitrary application
+events. [Assistant Events](features/assistant-events-and-continuation/plan.md),
+[Durable Agent Jobs](features/durable-agent-jobs/plan.md) and
+[Shared Decisions](features/shared-decisions/plan.md) retain the general contracts and behavior.
+The PR view can work without them. A Dependabot routine could later analyze a revision and report,
+ask or merge under configured authority. PR browsing is selected first, while live automation and
+the first event producer remain separately scoped decisions. External PR mutations require their
+own scope; green CI is not merge authority.
+
+## I19. Feedback Follow-Up And Automated Handling
 
 **Owner exploration, 2026-10-30:** Ordinary users might later browse their own submitted feedback
 and its progress, possibly through a separate feedback application. No reporter client, notifications or

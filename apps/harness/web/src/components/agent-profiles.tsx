@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { AgentProfileForm } from "./agent-profile-form";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogBody, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { listAgentConnections } from "@/lib/assistant-api";
 import { listProfiles, profileSkills, saveProfile, deleteProfile, defaultProfile, type AgentProfileConfig, type AgentProfile, type ProfileDirectory, type ProfileSkill } from "@/lib/profiles-api";
 import type { AgentConnection } from "./agent-providers";
@@ -75,16 +75,18 @@ export function AgentProfiles() {
       </div>
     </article>)}</div>
     <Dialog open={editing !== null} onOpenChange={open => { if (!open && !busy) setEditing(null); }}>
-      <DialogContent onCloseAutoFocus={restoreFocus} className="max-h-[90dvh] overflow-y-auto sm:max-w-2xl"><DialogHeader><DialogTitle>{editing?.id ? "Edit profile" : "Create profile"}</DialogTitle>
+      <DialogContent onCloseAutoFocus={restoreFocus} className="sm:max-w-2xl"><DialogHeader><DialogTitle>{editing?.id ? "Edit profile" : "Create profile"}</DialogTitle>
         <DialogDescription>Changes apply when this configuration is selected for a new conversation. Started conversations keep their instructions.</DialogDescription></DialogHeader>
-        {editing && <form className="space-y-5" onSubmit={e => { e.preventDefault(); void change(() => saveProfile(editing.value, editing.revision, editing.id), "Profile saved.", true); }}>
-          <AgentProfileForm value={editing.value} onChange={value => setEditing(current => current ? { ...current, value } : null)} connections={connections} defaultConnectionId={defaultConnectionId} skills={skills} skillsError={skillsError} disabled={busy} />
-          {formError && <div className="space-y-2"><p role="alert" className="text-sm text-destructive-foreground">{formError}</p>
-            <Button type="button" size="sm" variant="outline" disabled={busy} onClick={async () => {
-              try { const latest = await listProfiles(); setDirectory(latest); const saved = latest.profiles.find(p => p.id === editing.id);
-                setEditing({ id: saved?.id, revision: latest.revision, value: saved ? config(saved) : editing.value }); setFormError(""); }
-              catch (e) { setFormError(e instanceof Error ? e.message : "Could not reload profiles."); }
-            }}>Reload saved profile</Button></div>}
+        {editing && <form className="flex min-h-0 flex-1 flex-col gap-4" onSubmit={e => { e.preventDefault(); void change(() => saveProfile(editing.value, editing.revision, editing.id), "Profile saved.", true); }}>
+          <DialogBody>
+            <AgentProfileForm value={editing.value} onChange={value => setEditing(current => current ? { ...current, value } : null)} connections={connections} defaultConnectionId={defaultConnectionId} skills={skills} skillsError={skillsError} disabled={busy} />
+            {formError && <div className="space-y-2"><p role="alert" className="text-sm text-destructive-foreground">{formError}</p>
+              <Button type="button" size="sm" variant="outline" disabled={busy} onClick={async () => {
+                try { const latest = await listProfiles(); setDirectory(latest); const saved = latest.profiles.find(p => p.id === editing.id);
+                  setEditing({ id: saved?.id, revision: latest.revision, value: saved ? config(saved) : editing.value }); setFormError(""); }
+                catch (e) { setFormError(e instanceof Error ? e.message : "Could not reload profiles."); }
+              }}>Reload saved profile</Button></div>}
+          </DialogBody>
           <DialogFooter><Button type="button" variant="outline" disabled={busy} onClick={() => setEditing(null)}>Cancel</Button>
             <Button type="submit" disabled={busy || !editing.value.name.trim()}>{busy ? "Saving…" : "Save profile"}</Button></DialogFooter>
         </form>}
@@ -92,7 +94,9 @@ export function AgentProfiles() {
     </Dialog>
     <Dialog open={removing !== null} onOpenChange={open => { if (!open && !busy) setRemoving(null); }}>
       <DialogContent onCloseAutoFocus={restoreFocus}><DialogHeader><DialogTitle>Delete {removing?.name}?</DialogTitle><DialogDescription>Existing conversations keep their settings and history. You can create another profile later.</DialogDescription></DialogHeader>
-        {error && <p role="alert" className="text-sm text-destructive-foreground">{error}</p>}
+        <DialogBody>
+          {error && <p role="alert" className="text-sm text-destructive-foreground">{error}</p>}
+        </DialogBody>
         <DialogFooter><Button variant="outline" disabled={busy} onClick={() => setRemoving(null)}>Cancel</Button><Button variant="destructive" disabled={busy} onClick={() => { if (removing && directory) void change(() => deleteProfile(removing.id, directory.revision), "Profile deleted."); }}>Delete profile</Button></DialogFooter>
       </DialogContent>
     </Dialog>

@@ -7,7 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogBody, DialogDescription, DialogFooter, DialogTitle, DialogHeader } from "@/components/ui/dialog";
 import { workspaceAction } from "@/lib/assistant-api";
 import type { Worktree } from "@/lib/development-api";
 
@@ -141,8 +141,8 @@ export function LocalRepositoryActions({ sessionId, appId, tree, disabled, refre
       <Button size="sm" variant="outline" disabled={disabled || busy} onClick={() => void run(pending)}>Retry repository action</Button>
       <Button size="sm" variant="ghost" disabled={busy} onClick={() => void inspectPending()}>Check last action</Button></div>}
     {error && <p role="alert" className="text-destructive-foreground">{error}</p>}
-    <Dialog open={!!action} onOpenChange={open => { if (!open) setAction(null); }}><DialogContent className="max-h-[85vh] overflow-y-auto">
-      <DialogTitle>{action ? labels[action] : "Repository"}</DialogTitle>
+    <Dialog open={!!action} onOpenChange={open => { if (!open) setAction(null); }}><DialogContent>
+      <DialogHeader><DialogTitle>{action ? labels[action] : "Repository"}</DialogTitle>
       <DialogDescription>{action === "remote-connect" ? "Connect an existing repository. This preserves local source and worktree identity and sends no source."
         : action === "merge-upstream" ? "Merge the reviewed upstream commit into this worktree. Local main stays unchanged. Conflicts remain visible for resolution or Abort integration."
           : action === "abort-merge" ? "Abort the current merge using Git and return to the pre-merge worktree."
@@ -151,24 +151,26 @@ export function LocalRepositoryActions({ sessionId, appId, tree, disabled, refre
             : action === "remote-push-base" ? "Send the accepted local main to the selected missing remote branch. An existing different branch will not be overwritten."
               : action === "pr-configure" ? "Bind publication to the selected source connection. CI and reviews are reported by the provider; no additional release evidence is required."
                 : action === "pr-push" ? "Send the exact clean workspace commit to its remote branch. No pull request is created."
-                  : "Send the reviewed workspace commit and create or update its draft pull request."}</DialogDescription>
-      <p className="break-all text-sm">{appId}<br />Workspace branch: {tree.branch}<br />Commit: {tree.observation?.head}
-        {status?.remote && <><br />Remote: {status.remote.repository}<br />Target branch: {status.remote.targetBranch}</>}
-        {action === "remote-push-base" && <><br />Accepted base to publish: {status?.acceptedHead}</>}</p>
-      {action === "remote-connect" && <>
-        <label>Repository URL<Input className={field} value={repository} onChange={e => setRepository(e.target.value)} /></label>
-        <label>Target branch<Input className={field} value={targetBranch} onChange={e => setTargetBranch(e.target.value)} /></label>
-        <label>Source connection<Select value={connectionId} onValueChange={setConnectionId}><SelectTrigger className={field} aria-label="Source connection"><SelectValue placeholder="Choose a connection" /></SelectTrigger><SelectContent>{connections.map(c => <SelectItem key={c.id} value={c.id}>{c.label} · {c.accountName}</SelectItem>)}</SelectContent></Select></label>
-      </>}
-      {(action === "commit" || action === "merge-upstream") && <>
-        {action === "commit" && <fieldset><legend>Selected changes</legend>{files.map(file => <label key={file.path} className="flex items-center gap-2 break-all"><Checkbox checked={paths.includes(file.path)} onCheckedChange={value => setPaths(current => value === true ? [...current, file.path] : current.filter(p => p !== file.path))} />{file.path}</label>)}</fieldset>}
-        {action === "merge-upstream" && <><p className="break-all">Upstream commit: {observed?.head}</p>{!observed?.related && <label className="flex items-start gap-2"><Checkbox checked={allowUnrelatedHistories} onCheckedChange={value => setAllowUnrelatedHistories(value === true)} /> I reviewed both histories and allow merging unrelated histories.</label>}</>}
-        <label>Commit message<Textarea className={field} value={message} onChange={e => setMessage(e.target.value)} /></label>
-        <label>Author name<Input className={field} value={authorName} onChange={e => setAuthorName(e.target.value)} /></label>
-        <label>Author email<Input className={field} value={authorEmail} onChange={e => setAuthorEmail(e.target.value)} /></label>
-      </>}
-      {action === "pr-publish" && <><label>PR title<Input className={field} value={title} onChange={e => setTitle(e.target.value)} /></label><label>PR description<Textarea className={field} value={body} onChange={e => setBody(e.target.value)} /></label></>}
-      {error && <p role="alert" className="text-destructive-foreground">{error}</p>}
+                  : "Send the reviewed workspace commit and create or update its draft pull request."}</DialogDescription></DialogHeader>
+      <DialogBody>
+        <p className="break-all text-sm">{appId}<br />Workspace branch: {tree.branch}<br />Commit: {tree.observation?.head}
+          {status?.remote && <><br />Remote: {status.remote.repository}<br />Target branch: {status.remote.targetBranch}</>}
+          {action === "remote-push-base" && <><br />Accepted base to publish: {status?.acceptedHead}</>}</p>
+        {action === "remote-connect" && <>
+          <label>Repository URL<Input className={field} value={repository} onChange={e => setRepository(e.target.value)} /></label>
+          <label>Target branch<Input className={field} value={targetBranch} onChange={e => setTargetBranch(e.target.value)} /></label>
+          <label>Source connection<Select value={connectionId} onValueChange={setConnectionId}><SelectTrigger className={field} aria-label="Source connection"><SelectValue placeholder="Choose a connection" /></SelectTrigger><SelectContent>{connections.map(c => <SelectItem key={c.id} value={c.id}>{c.label} · {c.accountName}</SelectItem>)}</SelectContent></Select></label>
+        </>}
+        {(action === "commit" || action === "merge-upstream") && <>
+          {action === "commit" && <fieldset><legend>Selected changes</legend>{files.map(file => <label key={file.path} className="flex items-center gap-2 break-all"><Checkbox checked={paths.includes(file.path)} onCheckedChange={value => setPaths(current => value === true ? [...current, file.path] : current.filter(p => p !== file.path))} />{file.path}</label>)}</fieldset>}
+          {action === "merge-upstream" && <><p className="break-all">Upstream commit: {observed?.head}</p>{!observed?.related && <label className="flex items-start gap-2"><Checkbox checked={allowUnrelatedHistories} onCheckedChange={value => setAllowUnrelatedHistories(value === true)} /> I reviewed both histories and allow merging unrelated histories.</label>}</>}
+          <label>Commit message<Textarea className={field} value={message} onChange={e => setMessage(e.target.value)} /></label>
+          <label>Author name<Input className={field} value={authorName} onChange={e => setAuthorName(e.target.value)} /></label>
+          <label>Author email<Input className={field} value={authorEmail} onChange={e => setAuthorEmail(e.target.value)} /></label>
+        </>}
+        {action === "pr-publish" && <><label>PR title<Input className={field} value={title} onChange={e => setTitle(e.target.value)} /></label><label>PR description<Textarea className={field} value={body} onChange={e => setBody(e.target.value)} /></label></>}
+        {error && <p role="alert" className="text-destructive-foreground">{error}</p>}
+      </DialogBody>
       <DialogFooter><Button variant="outline" onClick={() => setAction(null)}>Cancel</Button><Button disabled={locked || (action === "remote-connect" && (!repository.trim() || !targetBranch.trim() || !connectionId)) || (action === "commit" && (!paths.length || !message.trim() || !authorName.trim() || !authorEmail.trim())) || (action === "merge-upstream" && (!message.trim() || !authorName.trim() || !authorEmail.trim() || (!observed?.related && !allowUnrelatedHistories))) || (action === "pr-publish" && !title.trim())} onClick={() => void run()}>{busy ? "Working…" : "Confirm " + (action ? labels[action].toLowerCase() : "action")}</Button></DialogFooter>
     </DialogContent></Dialog>
   </section>;

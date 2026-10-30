@@ -8,13 +8,14 @@ const core = 'apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj';
 const cli = 'apps/cli/src/Haas.Hosty.Cli/Haas.Hosty.Cli.csproj';
 const coreTests = 'apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj';
 const cliTests = 'apps/cli/tests/Haas.Hosty.Cli.Tests/Haas.Hosty.Cli.Tests.csproj';
-const windowsFilter = 'FullyQualifiedName~WindowsProcessControlTests|FullyQualifiedName~StopAsync_OnWindowsKillsAdoptedJobDescendantAfterShellExited|FullyQualifiedName~CoreDevelopmentTests|FullyQualifiedName~ExplicitStop|FullyQualifiedName~SourceDocuments_ReferenceMetadataSupportsLfAndCrLf|FullyQualifiedName~WorkspaceGit_|FullyQualifiedName~JsonStorageTests';
-export const suites = Object.freeze(['activation', 'dependencies', 'sessions', 'tasks', 'windows', 'transport', 'worker', 'whisper', 'opus', 'documents', 'desktop', 'harness-local', 'feedback', 'shell', 'observability']);
+const windowsFilter = 'FullyQualifiedName~WindowsProcessControlTests|FullyQualifiedName~StopAsync_OnWindowsKillsAdoptedJobDescendantAfterShellExited|FullyQualifiedName~CoreDevelopmentTests|FullyQualifiedName~ExplicitStop|FullyQualifiedName~SourceDocuments_ReferenceMetadataSupportsLfAndCrLf|FullyQualifiedName~WorkspaceGit_|FullyQualifiedName~WorkspaceDelete_|FullyQualifiedName~JsonStorageTests';
+export const suites = Object.freeze(['activation', 'dependencies', 'sessions', 'tasks', 'windows', 'transport', 'worker', 'whisper', 'opus', 'documents', 'desktop', 'harness-local', 'feedback', 'shell', 'observability', 'skills', 'pull-requests']);
 const usage = 'Usage: npm run test:integration -- <' + suites.join('|') + '> [--dry-run]\n'
   + 'Runs one explicitly selected local suite. Builds its fixtures first; no automatic retries.\n'
   + 'activation: .NET, Git, Python, Docker; isolated managed Core Return and recovery\n'
   + 'dependencies: .NET, Python, Docker; dependency startup in an isolated managed Core\n'
   + 'sessions: .NET, Git, Python, Docker; shared workspaces with isolated users and Harness\n'
+  + 'pull-requests: .NET, Git, Python, Docker; installed PR reads and scoped streams in a managed Core\n'
   + 'tasks: .NET, Git, Python, Docker; task API, UI and scripted executor in a managed Core\n'
   + 'windows: Windows and .NET; focused process, path and shared receipt tests\n'
   + 'transport: .NET, Python, Docker; isolated Core/container network checks\n'
@@ -23,6 +24,7 @@ const usage = 'Usage: npm run test:integration -- <' + suites.join('|') + '> [--
   + 'documents: .NET, Git, Python, Docker; current docs, workspace progress and scoped events in a managed Core\n'
   + 'shell: .NET, Git, Python, Docker; isolated Shell identity and workspace inventory with browser review\n'
   + 'feedback: .NET, Git, Python, Node/npm, Docker; feedback intake, SDK browser capture and exact-prompt processing in a managed Core\n'
+  + 'skills: .NET, Git, Python, Docker; selected Git imports and CLI exports in a managed Core\n'
   + 'harness-local: .NET, Git, Python, Node/npm, Docker; managed Core production local startup and recovery\n'
   + 'worker: Docker; builds the manifest-matching worker image and checks its lifecycle\n'
   + 'whisper: .NET; downloads the pinned model and runs native CPU inference\n'
@@ -40,6 +42,19 @@ export function suitePlan(suite, { platform = process.platform, node = process.e
   const pythonCheck = command(python, ['--version']);
   const build = project => command('dotnet', ['build', project]);
   switch (suite) {
+    case 'skills':
+      return { prerequisites: [dotnet, command('git', ['--version']), pythonCheck, docker], steps: [
+        build(core), build(cli),
+        command(python, ['scripts/check-workspace-activation.py', '.', 'skills', '--managed']),
+      ] };
+    case 'pull-requests':
+      return { prerequisites: [dotnet, command('git', ['--version']), pythonCheck, docker], steps: [
+        build(core), build(cli), build('apps/core/tests/Haas.Hosty.PrAcceptance/Haas.Hosty.PrAcceptance.csproj'),
+        command('docker', ['build', '-f', 'apps/harness/Dockerfile', '-t', 'hosty-harness-api-acceptance:local', '.']),
+        command('docker', ['build', '-f', 'apps/harness/worker/Dockerfile', '-t', 'hosty-harness-worker-acceptance:local', '.']),
+        command('docker', ['build', '-f', 'apps/shell/Dockerfile', '-t', 'hosty-shell-acceptance:local', '.']),
+        command(python, ['scripts/check-workspace-activation.py', '.', 'pull-requests', '--managed', ...(process.env.HOSTY_ACCEPTANCE_HOLD_UI === '1' ? ['--hold-ui'] : [])]),
+      ] };
     case 'observability':
       return { prerequisites: [dotnet, command('git', ['--version']), pythonCheck, docker], steps: [
         build(core), build(cli),
@@ -69,11 +84,13 @@ export function suitePlan(suite, { platform = process.platform, node = process.e
     case 'sessions': {
       const manifest = readManifest();
       const images = ['api', 'worker'].map(key => suite === 'sessions' ? `hosty-harness-${key}-acceptance:local` : manifest.services.find(service => service.key === key).runtimes.docker.image);
+      const holdUi = suite === 'sessions' && process.env.HOSTY_ACCEPTANCE_HOLD_UI === '1';
       return { prerequisites: [dotnet, command('git', ['--version']), pythonCheck, docker], steps: [
         build(core), build(cli),
         command('docker', ['build', '-f', 'apps/harness/Dockerfile', '-t', images[0], '.']),
         command('docker', ['build', '-f', 'apps/harness/worker/Dockerfile', '-t', images[1], '.']),
-        command(python, ['scripts/check-workspace-activation.py', '.', suite, '--managed']),
+        ...(holdUi ? [command('docker', ['build', '-f', 'apps/shell/Dockerfile', '-t', 'hosty-shell-acceptance:local', '.'])] : []),
+        command(python, ['scripts/check-workspace-activation.py', '.', suite, '--managed', ...(holdUi ? ['--hold-ui'] : [])]),
       ] };
     }
     case 'windows':
