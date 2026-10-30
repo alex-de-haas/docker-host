@@ -605,7 +605,7 @@ sanitized evidence and Finish the sandbox through its owner, confirming resource
 Implementation ships one feature PR with a Core/platform minor and Harness minor bump from their
 then-current versions. No SDK or Shell implementation change is required by this design; ordinary
 manifest navigation is consumed by existing hosts. If an actual integration defect needs their code
-changed, apply their normal artifact version policy and document the deviation. The implementation changes Core/platform 0.164.0 to 0.165.0 and Harness 0.80.0 to 0.81.0.
+changed, apply their normal artifact version policy and document the deviation. The implementation changes Core/platform 0.164.0 to 0.165.0 and Harness 0.80.1 to 0.81.0.
 The owner continues to prohibit commits. Isolated managed acceptance does not authorize a live-data trial.
 
 ## Details, Related Work And Mutation Boundary
@@ -975,3 +975,19 @@ scoped logic corrections; focused UI tests and the managed HTTP journey cover th
 The explicitly deferred real GitHub read remains part of D7; this correction does not complete D7
 or the final D8 reconciliation. The existing pending Core 0.164.0 and Harness 0.81.0 versions cover
 this batch. No commits, publication, primary-instance restart or real GitHub mutation occurred.
+
+
+## Publication Candidate (2026-10-30)
+
+The owner authorized PR publication, review corrections, CI and regular-merge completion while
+retaining the previously deferred real GitHub acceptance. The publication branch integrates main's
+skills CLI release and Harness chat controls without changing the worktree used by the running Core.
+Its release outcomes are Core/platform 0.164.0 to 0.165.0 and Harness 0.80.1 to 0.81.0.
+
+On macOS arm64, the integrated candidate passes the managed pull-requests suite, including normal
+authentication, fixture actions/recovery, revocation and explicit parent Finish/resource cleanup.
+The affected Core selection passes all 237 tests. Harness has 1,923 passing tests in its full run;
+the sole initial failure required the static settings export, and all 63 gateway tests pass after
+that prerequisite build. The production web build, Harness lint/type checks (one existing tasks
+hook warning), 15 integration-runner tests, version consistency and documentation checks pass.
+D7 retains live-provider acceptance; D8 retains final closure and plan removal after that acceptance.
