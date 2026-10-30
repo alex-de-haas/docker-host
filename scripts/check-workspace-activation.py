@@ -336,7 +336,7 @@ try:
         check(globals())
         success = True
         sys.exit(0)
-    if scenario == 'harness-local':
+    if scenario in ('harness-local', 'feedback'):
         assert managed, 'Harness local acceptance requires a managed child Core'
         import importlib.util
         sys.dont_write_bytecode = True

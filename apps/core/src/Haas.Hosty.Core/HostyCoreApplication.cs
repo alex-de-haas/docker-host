@@ -236,6 +236,7 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<ToolActivityService>();
         builder.Services.AddHostedService(sp => sp.GetRequiredService<ToolActivityService>());
         builder.Services.AddSingleton<UiPanelService>();
+        builder.Services.AddSingleton<FeedbackStore>();
         builder.Services.AddSingleton<InstallationApprovalStore>();
         builder.Services.AddSingleton<ProtectedSettingsChanges>();
         builder.Services.AddSingleton<HostPathApprovalService>();
@@ -267,6 +268,7 @@ internal static class HostyCoreApplication
         ProviderEndpoints.Map(app);
         CoreEnvironmentEndpoints.Map(app);
         UiPanelEndpoints.Map(app);
+        FeedbackEndpoints.Map(app);
 
         app.MapGet("/healthz", () => CoreJson.Json(new HealthResponse("ok"))).WithMetadata(new CoreDiagnosticsTransport());
         app.MapGet("/api/core/status", async (

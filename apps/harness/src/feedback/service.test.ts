@@ -1,0 +1,158 @@
+import { beforeEach, afterEach, expect, it, vi } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import os from "node:os";
+import path from "node:path";
+import { FeedbackService, feedbackTurn } from "./service.js";
+import { SessionManager } from "../sessions/manager.js";
+import { SessionStore, type StoredEvent } from "../sessions/store.js";
+import { ProviderDirectory } from "../settings/providers.js";
+import { DevelopmentClient } from "../sessions/development.js";
+import { AuditReporter } from "../audit.js";
+import type { HarnessAdapter, HarnessStartOptions } from "../harness/adapter.js";
+import type { FeedbackServerClient } from "@hosty-sdk/app/feedback/server";
+import type { FeedbackDispatch, FeedbackDispatchInput, FeedbackDelivery, FeedbackOutcome, FeedbackReport } from "@hosty-sdk/app/feedback";
+let dir: string, manager: SessionManager, service: FeedbackService, run: HarnessStartOptions;
+let report: FeedbackReport, attempts: FeedbackDispatch[], directory: ProviderDirectory;
+const buildManager = (development: DevelopmentClient | null = null) => new SessionManager(new SessionStore(dir), adapter, new AuditReporter(null, null, "harness"), dir, null, directory, null, null, "http://localhost:1234", null, null, development);
+const sent = vi.fn();
+const adapter: HarnessAdapter = { name: "controlled", capabilities: { questions: true, appMcp: true, liveReconfigure: false, autoAllow: false, denyReason: false }, probe: async () => ({ available: true }),
+  start: options => { run = options; return { send: sent, resolveApproval: () => true, resolveQuestion: () => true, setMcpServers: async () => false, interrupt: async () => {}, stop: async () => {}, stopAndWait: async () => {} }; } };
+const client = {
+  capabilities: vi.fn(async () => ({ appId: "harness", installation: "one", userId: "owner" })),
+  list: vi.fn(async () => ({ reports: [report], dispatches: attempts })),
+  reserve: vi.fn(async (input: FeedbackDispatchInput) => {
+    const prior = attempts.find(d => d.id === input.requestId); if (prior) { expect(input).toEqual(prior.input); return prior; }
+    const d: FeedbackDispatch = { id: input.requestId, input, actorId: "owner", callerAppId: "harness", callerInstallation: "one", snapshot: [report], createdAt: "now", state: "reserved", workspaceId: null, messageSequence: null, outcomes: null, error: null }; attempts.push(d); return d;
+  }),
+  delivery: vi.fn(async (id: string, value: FeedbackDelivery) => {
+    const d = attempts.find(a => a.id === id)!; if (["succeeded", "failed", "cancelled", "rejected"].includes(d.state)) return d;
+    Object.assign(d, value); return d;
+  }),
+  outcomes: vi.fn(async (id: string, outcomes: FeedbackOutcome[]) => { const d = attempts.find(a => a.id === id)!; d.outcomes = outcomes; return d; }),
+  image: vi.fn(async () => new Response(new Uint8Array([1, 2, 3]), { headers: { "content-type": "image/png" } })),
+};
+beforeEach(async () => {
+  vi.stubEnv("HOSTY_PUBLIC_ORIGIN_HTTP", "https://feedback.example.test");
+  dir = await mkdtemp(path.join(os.tmpdir(), "hosty-feedback-service-")); vi.clearAllMocks(); attempts = [];
+  report = { id: "a".repeat(64), revision: 1, workspaceId: null, currentAttemptId: null, disposition: null, status: "unprocessed", reporterId: "reporter", comment: "Align controls",
+    context: { appId: "independent.app", appName: "App", installation: "one", version: "1.0", observedAt: "now", executionKind: "package", workspaceId: null, sourceRevision: null },
+    annotations: [{ id: randomUUID(), text: "Move button", route: "/", capturedAt: "now", mediaType: "image/png" }] };
+  directory = new ProviderDirectory(null, null, "harness");
+  vi.spyOn(directory, "readApps").mockResolvedValue([{ id: "independent.app", displayName: "App" }]);
+  manager = buildManager();
+  service = new FeedbackService(manager, () => client as unknown as FeedbackServerClient, directory);
+});
+afterEach(async () => { await service.close(); await manager.shutdown(); vi.unstubAllEnvs(); await rm(dir, { recursive: true, force: true }); });
+const body = (id: string) => ({ requestId: randomUUID(), sessionId: id, workspaceId: null, reports: [{ id: report.id, revision: 1 }], instruction: "Keep the label" });
+it("replays a lost acceptance reply without creating another native turn", async () => {
+  const session = await manager.createSession({ createdBy: "owner" }); const input = body(session.id);
+  client.delivery.mockRejectedValueOnce(new Error("Lost response after admission"));
+  await expect(service.send(input, "own-app-grant", "owner")).rejects.toThrow("Lost response");
+  await service.send(input, "own-app-grant", "owner"); expect(sent).toHaveBeenCalledTimes(1);
+  expect((await manager.store.readEvents(session.id)).filter(e => e.type === "user_message")).toHaveLength(1);
+  expect(attempts).toHaveLength(1); expect(attempts[0]!.messageSequence).toBeGreaterThan(0);
+});
+it("refuses a busy or foreign chat before reserving any feedback", async () => {
+  const foreign = await manager.createSession({ createdBy: "other" });
+  await expect(service.send(body(foreign.id), "grant", "owner")).rejects.toMatchObject({ status: 403 });
+  const session = await manager.createSession({ createdBy: "owner" });
+  await manager.postMessage(session.id, "Existing work", undefined, [], { clientRequestId: randomUUID(), actorUserId: "owner" });
+  await expect(service.send(body(session.id), "grant", "owner")).rejects.toMatchObject({ code: "session_busy" });
+  expect(client.reserve).not.toHaveBeenCalled(); expect(sent).toHaveBeenCalledTimes(1);
+});
+it("scopes tools to the exact prompt, records explicit results and observes terminal success", async () => {
+  const session = await manager.createSession({ createdBy: "owner" });
+  await expect(manager.feedbackAction!(session.id, "feedback-current", {}, "grant")).rejects.toMatchObject({ code: "feedback_prompt_unbound" });
+  const attempt = await service.send(body(session.id), "grant", "owner");
+  expect(await manager.feedbackAction!(session.id, "feedback-current", {}, "grant")).toMatchObject({ attemptId: attempt.id });
+  await expect(manager.feedbackAction!(session.id, "feedback-image", { reportId: "foreign", annotationId: report.annotations[0]!.id }, "grant")).rejects.toMatchObject({ status: 404 });
+  expect(client.image).not.toHaveBeenCalled();
+  await manager.feedbackAction!(session.id, "feedback-result", { outcomes: [{ reportId: report.id, summary: "Aligned", handledAnnotationIds: report.annotations.map(n => n.id) }] }, "grant");
+  expect(attempt.state).toBe("accepted");
+  run.onEvent({ type: "result", status: "success" });
+  await vi.waitFor(() => expect(attempt.state).toBe("succeeded"));
+  await expect(manager.feedbackAction!(session.id, "feedback-result", { outcomes: [] }, "grant")).rejects.toMatchObject({ code: "feedback_prompt_unbound" });
+});
+it("does not use an unrelated later turn, idle state, or failed result as success", () => {
+  const events = (...items: Record<string, unknown>[]) => items.map((item, i) => ({ seq: i + 1, ts: "now", ...item })) as StoredEvent[];
+  expect(feedbackTurn(events({ type: "user_message" }, { type: "session_status", status: "idle" }), 1)).toBeNull();
+  expect(feedbackTurn(events({ type: "user_message" }, { type: "user_message" }, { type: "result", status: "success" }), 1)).toMatchObject({ state: "unknown" });
+  expect(feedbackTurn(events({ type: "user_message" }, { type: "result", status: "error" }), 1)).toMatchObject({ state: "failed" });
+  expect(feedbackTurn(events({ type: "user_message" }, { type: "question_request" }), 1)).toBeNull();
+});
+
+it("keeps foreign-client and prior-installation attempts read-only while reconciling its own", async () => {
+  const session = await manager.createSession({ createdBy: "owner" });
+  const own = await service.send(body(session.id), "grant", "owner");
+  attempts.push({ ...own, id: randomUUID(), callerAppId: "another.client", input: { ...own.input, sessionId: "foreign-chat" } },
+    { ...own, id: randomUUID(), callerInstallation: "previous", input: { ...own.input, sessionId: "old-chat" } });
+  client.delivery.mockClear();
+  const subscribe = vi.spyOn(manager, "subscribe");
+  const receipt = vi.spyOn(manager, "messageReceipt");
+  const listed = await service.list("grant", "owner");
+  expect(listed.dispatches).toHaveLength(3);
+  expect(client.delivery.mock.calls.every(([id]) => id === own.id)).toBe(true);
+  expect(receipt.mock.calls.every(([id]) => id === session.id)).toBe(true);
+  expect(subscribe.mock.calls.every(([id]) => id === session.id)).toBe(true);
+  run.onEvent({ type: "result", status: "success" });
+  await vi.waitFor(() => expect(own.state).toBe("succeeded"));
+  expect(attempts.slice(1).every(d => d.state === "accepted")).toBe(true);
+});
+
+it("reconciles a terminal result persisted while restoring a feedback subscription", async () => {
+  const session = await manager.createSession({ createdBy: "owner" });
+  const attempt = await service.send(body(session.id), "grant", "owner");
+  await service.close();
+  service = new FeedbackService(manager, () => client as unknown as FeedbackServerClient, directory);
+  const subscribe = manager.subscribe.bind(manager);
+  vi.spyOn(manager, "subscribe").mockImplementationOnce(async (...args) => {
+    const events = await manager.store.readEvents(session.id);
+    await manager.store.appendEvent(session.id, { seq: events.at(-1)!.seq + 1, ts: new Date().toISOString(), type: "result", status: "success" });
+    return subscribe(...args);
+  });
+  const result = await service.list("grant", "owner");
+  expect(attempt.state).toBe("succeeded");
+  expect(result.dispatches[0]!.state).toBe("succeeded");
+});
+
+it("starts a chat for retained feedback after its application is uninstalled", async () => {
+  vi.mocked(directory.readApps).mockResolvedValue([]);
+  const { sessionId: _unused, ...input } = body("");
+  const attempt = await service.send(input, "grant", "owner");
+  expect((await manager.getSession(attempt.input.sessionId))!.appIds).toEqual([]);
+  expect(attempt.snapshot[0]!.context.appId).toBe("independent.app");
+  expect(sent.mock.calls[0]![0]).toContain("independent.app");
+});
+
+it.each(["attach", "reserve"])("replays original workspace attachment after a lost %s response and app removal", async failure => {
+  const workspaceId = "b".repeat(64);
+  const development = new DevelopmentClient("http://core.test", "harness", "service");
+  let revision = 4, lost = failure === "attach";
+  const inventory = vi.spyOn(development, "inspection").mockImplementation(async () => ({ workspaces: [{ id: workspaceId, participation: { revision } }] }));
+  vi.spyOn(development, "activity").mockResolvedValue({ workspaceId, revision: 5, stopRequested: false, state: "in-progress" });
+  const calls = vi.spyOn(development, "call").mockImplementation(async (_id, _token, action, command) => {
+    if (action === "attach") {
+      expect(command.expectedRevision).toBe(4); revision = 5;
+      if (lost) { lost = false; throw new Error("Lost attach response"); }
+      return { workspace: { id: workspaceId, revision } };
+    }
+    return { workspaces: [] };
+  });
+  await service.close(); await manager.shutdown(); manager = buildManager(development);
+  service = new FeedbackService(manager, () => client as unknown as FeedbackServerClient, directory);
+  if (failure === "reserve") client.reserve.mockRejectedValueOnce(new Error("Lost reserve response"));
+  const { sessionId: _unused, ...input } = { ...body(""), workspaceId };
+  await expect(service.send(input, "grant", "owner")).rejects.toThrow("Lost " + failure + " response");
+  const created = (await manager.store.listRecords())[0]!;
+  await service.close(); await manager.shutdown(); manager = buildManager(development);
+  service = new FeedbackService(manager, () => client as unknown as FeedbackServerClient, directory);
+  vi.mocked(directory.readApps).mockResolvedValue([]);
+  const attempt = await service.send(input, "grant", "owner");
+  expect(attempt.input.sessionId).toBe(created.id);
+  expect(await manager.store.listRecords()).toHaveLength(1);
+  expect(sent).toHaveBeenCalledTimes(1);
+  expect(inventory).toHaveBeenCalledTimes(1);
+  const attachments = calls.mock.calls.filter(c => c[2] === "attach");
+  expect(attachments).toHaveLength(2); expect(attachments[1]).toEqual(attachments[0]);
+});

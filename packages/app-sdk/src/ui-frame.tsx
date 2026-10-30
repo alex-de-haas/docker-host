@@ -127,7 +127,7 @@ export function HostyAppFrame(props: HostyAppFrameProps) {
   return <>
     {review && <><SdkChromeStyles /><a data-hosty-sdk className="hosty-panel-review" href={review} target="_blank" rel="noopener noreferrer">Review access in Core</a></>}
     <iframe ref={ref} className={className} title={title} src={launch} sandbox={frameSandbox(surface.framePolicy)}
-      allow={surface.framePolicy.microphone ? "clipboard-write; microphone 'src'" : "clipboard-write"}
+      allow={surface.framePolicy.microphone ? "clipboard-write; display-capture 'src'; microphone 'src'" : "clipboard-write; display-capture 'src'"}
       style={{ border: 0, height: "100%", width: "100%", colorScheme: resolvedTheme }} onLoad={() => setLoaded(true)} />
   </>;
 }

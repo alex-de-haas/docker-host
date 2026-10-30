@@ -108,6 +108,7 @@ interface LiveSession {
 }
 
 export class SessionManager {
+  feedbackAction?: (sessionId: string, action: string, input: Record<string, unknown>, credential?: string) => Promise<unknown>;
   taskAction?: (sessionId: string, action: string, input: Record<string, unknown>, credential?: string) => Promise<unknown>;
   readonly mcpPolicy: McpToolPolicy;
   readonly developmentMcp = new DevelopmentMcp(async (id, action, input, dispatchGuard) => {
@@ -399,6 +400,13 @@ export class SessionManager {
     if (userId && this.live.get(id)?.record.createdBy === userId && this.live.get(id)?.record.status === "suggesting") {
       await this.endSuggestions(id);
       this.clearSuggestion(this.live.get(id)!);
+    }
+    if (action.startsWith("feedback-")) {
+      const session = await this.requireLive(id);
+      if (userId && session.record.createdBy !== userId) throw new AppContextError(403, "feedback_forbidden", "This chat belongs to another user.");
+      if (!this.feedbackAction) throw new AppContextError(503, "feedback_unavailable", "Feedback is unavailable.");
+      await dispatchGuard?.();
+      return this.feedbackAction(id, action, input, credential ?? session.workspaceCredential ?? session.credential ?? undefined);
     }
     if (action.startsWith("task-")) {
       const session = await this.requireLive(id);

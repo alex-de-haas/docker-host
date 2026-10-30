@@ -16,7 +16,7 @@ it("uses target frame policy and exact peer review routing, retaining a link whe
   try {
     await act(async () => root.render(<UiHostContext.Provider value={host}><HostyAppFrame surface={surface} title="Tool" onAttention={attention} /></UiHostContext.Provider>));
     const frame = element.querySelector("iframe")!;
-    expect(frame.getAttribute("allow")).toBe("clipboard-write; microphone 'src'");
+    expect(frame.getAttribute("allow")).toBe("clipboard-write; display-capture 'src'; microphone 'src'");
     expect(frame.getAttribute("sandbox")).not.toContain("allow-popups-to-escape-sandbox");
     const send = (data: object, origin = surface.origin, source: Window | null = frame.contentWindow) => window.dispatchEvent(new MessageEvent("message", { origin, source, data }));
     await act(async () => {
@@ -47,7 +47,7 @@ it("delivers theme changes without navigating the tool and grants popup escape o
     await act(async () => frame.dispatchEvent(new Event("load")));
     await act(async () => root.render(<HostyAppFrame surface={surface} title="Tool" theme="dark" themePreference="dark" />));
     expect(element.querySelector("iframe")).toBe(frame); expect(frame.src).toBe(src);
-    expect(frame.getAttribute("allow")).toBe("clipboard-write"); expect(frame.getAttribute("sandbox")).toContain("allow-popups-to-escape-sandbox");
+    expect(frame.getAttribute("allow")).toBe("clipboard-write; display-capture 'src'"); expect(frame.getAttribute("sandbox")).toContain("allow-popups-to-escape-sandbox");
     expect(post).toHaveBeenLastCalledWith({ type: "hosty:shell-theme", theme: "dark", preference: "dark" }, surface.origin);
   } finally { await act(async () => root.unmount()); element.remove(); }
 });

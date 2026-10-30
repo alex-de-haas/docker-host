@@ -3,6 +3,7 @@ import { subscribePullRequests } from "@/lib/pull-requests-events";
 import { prRequest } from "@/lib/pull-requests-api";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import type { WorkspaceSessionActions } from "@/lib/use-workspace-session-actions";
+import { FeedbackInbox } from "./feedback-inbox";
 import { WorkspaceSessions } from "./workspace-sessions";
 import { WorkspaceReview, type ReviewChoice } from "./workspace-review";
 import { FileDiff, FolderGit2, GitBranch, MoreHorizontal, Pencil, RefreshCw } from "lucide-react";
@@ -214,6 +215,7 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
           else { setDiffChoices(previous => ({ ...previous, [tree.id]: choice })); setDiffTree(tree.id); }
         }} />))}
       </section>}
+      <FeedbackInbox key={"feedback:" + workspace.id} workspaceId={workspace.id} sessionId={sessionId} running={running} disabled={!canManage || busy || recovering || !workflowIsActive(state)} />
       <WorkspacePreviews key={`previews:${workspace.id}`} workspaceId={workspace.id} canStart={!state.closure && state.state === "in-progress"} disabled={busy || recovering} refresh={refresh} />
       {trees.some(tree => tree.apps.length || tree.leases.length || tree.consumers?.length) && <div className="space-y-3 border-t pt-4"><h3 className="text-xs font-semibold text-muted-foreground">Used by</h3>
       <WorkspaceActivation key={workspace.id} workspaceId={workspace.id} appMetadata={appMetadata} apps={[...new Map(trees.flatMap(tree => tree.apps).map(app => [app.appId, app])).values()]}

@@ -1,11 +1,11 @@
 ---
 created: 2026-10-23
-updated: 2026-10-29
+updated: 2026-10-30
 ---
 
 # Ideas
 
-<!-- idea-id-high-water: 18 -->
+<!-- idea-id-high-water: 19 -->
 
 This living document collects early possibilities, questions and examples that may expand or
 complement the [vision](vision.md). The vision describes the system the owner wants to build;
@@ -1099,6 +1099,26 @@ The PR view can work without them. A Dependabot routine could later analyze a re
 ask or merge under configured authority. PR browsing is selected first, while live automation and
 the first event producer remain separately scoped decisions. External PR mutations require their
 own scope; green CI is not merge authority.
+
+## I19. Feedback Follow-Up And Automated Handling
+
+**Owner exploration, 2026-10-30:** Ordinary users might later browse their own submitted feedback
+and its progress, possibly through a separate feedback application. No reporter client, notifications or
+post-submission user access is selected for the current
+[Feedback Inbox](features/app-feedback-inbox/feature.md) delivery; it supports draft capture/submission
+and administrator-only records in Harness.
+
+A future orchestrator or routine could inspect unprocessed reports and route related groups to
+specialized agents, for example implementation or design. The execution owner, trigger, grouping,
+concurrency, cancellation and recovery semantics need a separate proposal once that orchestration
+exists. General prompt queues are likewise a separate session capability, not a hidden queue in
+Feedback. This overlaps the event/schedule exploration in [I6](#i6-events-schedules-and-optional-automation-applications)
+and the independently scoped [Harness orchestration](features/harness-work-orchestration/plan.md)
+and [Durable Agent Jobs](features/durable-agent-jobs/plan.md) plans.
+
+Former Feedback D6 was retired by this explicit scope revision, not implemented or silently counted
+as complete. These possibilities are not a delivery commitment. The owner keeps feedback and tasks
+independent: no task conversion, attachment or task-domain dependency is selected.
 
 ## Platform Precedents
 

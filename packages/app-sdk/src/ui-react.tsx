@@ -1,4 +1,5 @@
 "use client";
+import { FeedbackCapture } from "./feedback-react";
 import { SdkChromeStyles, SdkIcon } from "./sdk-chrome";
 import { useContext, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from "react";
 import { bindUiClient, ui, type UiClient } from "./ui";
@@ -66,6 +67,7 @@ export function HostyUiRoot({ children, uiPath, panelLayout = "auto", active = t
         <button type="button" onClick={() => window.location.reload()}>Reconnect</button>
       </> : "Connecting to the workspace…"}
     </div>}
+    <FeedbackCapture active={active && !!allowed} uiPath={uiPath} />
     {host && <HostyPresentationLayer layer={layer} host={host} active={!!allowed} />}
   </UiFrameLayerContext.Provider></UiCompositionContext.Provider></UiHostContext.Provider>;
 }

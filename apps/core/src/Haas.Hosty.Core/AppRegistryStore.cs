@@ -744,7 +744,7 @@ internal sealed record AppUiContract(
                 var path = NormalizePath(string.IsNullOrWhiteSpace(item.Path) ? entry.Path : item.Path);
                 var label = string.IsNullOrWhiteSpace(item.Label) ? path : item.Label.Trim();
                 var endpointKey = FirstNonBlank(item.Endpoint, item.PortKey, entry.EndpointKey);
-                return new AppNavigationContract(label, path, endpointKey, NullIfBlank(item.IconAsset));
+                return new AppNavigationContract(label, path, endpointKey, NullIfBlank(item.IconAsset), item.FeedbackReview);
             })
             .ToArray();
 
@@ -825,7 +825,7 @@ internal sealed record AppUiContract(
     private sealed record UiEntrypoint(string? EndpointKey, string Path);
 }
 
-internal sealed record AppNavigationContract(string Label, string Path, string? EndpointKey, string? IconAsset = null);
+internal sealed record AppNavigationContract(string Label, string Path, string? EndpointKey, string? IconAsset = null, bool FeedbackReview = false);
 
 /// <summary>A settings or panel surface as declared, before its endpoint is resolved to a URL.</summary>
 internal sealed record AppSurfaceContract(string Path, string? EndpointKey, string? Label, string? Icon = null, string? Id = null);

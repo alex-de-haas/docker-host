@@ -592,6 +592,32 @@ navigation/launcher and disabled tools until they provide a panel host. `panelLa
 rendering choice, not a disable policy: explicitly disable local tools or register a renderer.
 See [UI composition and browser acceptance](../../docs/features/sdk-ui-composition/feature.md).
 
+## Annotated feedback (Core 0.165.0 / SDK 0.38.0)
+
+`HostyUiRoot` includes an authenticated Annotate entry through the existing UI server adapter.
+Users can select an element/region or add a page comment, enter text beside it, edit that same note
+in the side panel and submit several annotations as one report. IndexedDB preserves text and image
+blobs by Core/app/installation/user. Storage failure is visible; confirmed submission clears the
+draft, while an uncertain response retains its exact UUID for retry.
+
+Screenshots use the standard Screen Capture API chooser, still-image preview/crop and explicit
+inclusion. Shared SDK frames delegate `display-capture` to their source; browser/webview support and
+parent policy still apply. Text feedback works when capture is unsupported or denied. Optional
+dictation requires an approved `providers.speech-to-text` permission and discovered provider.
+
+Own-app intake needs app access, not a management grant. Administrator clients can use
+`FeedbackServerClient` from `@hosty-sdk/app/feedback/server` with the reviewed `apps.feedback.manage`
+permission and the current app-user token; DTOs are exported from `@hosty-sdk/app/feedback`.
+These server methods expose fixed Core contracts, never a browser-accessible arbitrary proxy.
+
+A feedback-review client can mark its declared navigation item with `feedbackReview: true`. Core
+resolves its own endpoint/path through normal app launch with a `feedback=<report-id>` query. The
+client opens a review, not an automatic dispatch. The declaration grants no authority. Ordinary
+reporters get immediate submission confirmation but no processing inbox or notifications.
+
+See [App Feedback Inbox](../../docs/features/app-feedback-inbox/feature.md) for limits, access,
+manual chat dispatch, exact-prompt outcomes and workspace deletion retention.
+
 ## Child Core sandbox controls
 
 `@hosty-sdk/app/sandbox/react` exports `CoreEnvironmentPanel` for operator-facing child Core
