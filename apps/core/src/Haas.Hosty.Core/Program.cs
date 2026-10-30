@@ -72,6 +72,10 @@ if (!string.IsNullOrWhiteSpace(generation) && Path.GetDirectoryName(Path.GetFull
 else generation = null;
 
 HostyCoreApplication.ConfigureServices(builder, config);
+#if HOSTY_PR_ACCEPTANCE
+// Only the separate acceptance executable defines this symbol. Shipping Core has no fixture switch.
+PullRequestAcceptance.Register(builder);
+#endif
 DockerCoreListener.Configure(builder, config);
 // Registered for disposal with the host so the lock is held for the full process lifetime and
 // released cleanly on shutdown (the OS releases it on any harder exit).

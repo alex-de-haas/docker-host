@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-25
-updated: 2026-10-27
+updated: 2026-10-29
 summary: Compose app-owned task providers and executors through Core contracts, with Harness profiles, optional resources, decisions and artifact handoffs.
 components: [apps/core, apps/harness, apps/documents, packages/app-sdk]
 ---
@@ -289,6 +289,27 @@ one execution -> an observable result. No document, workspace or hierarchy is re
 decision and parked continuation integration follows; Documents is an optional producer. Basic Tasks
 owns complete first-feature acceptance. This umbrella compares later richer compositions; its work
 is not a gate for Basic Tasks implementation.
+
+## Assistant Events And Interactive Activities (2026-10-29)
+
+[Assistant Events And Session Continuation](../assistant-events-and-continuation/plan.md) is the
+scoped owner for app-activity bindings, authorized event admission and result-triggered continuation
+of an existing assistant conversation. Its examples are chess and one delegated task result. It
+consumes Notifications D6 and Durable Agent Jobs D7, preserves direct provider messaging and private
+session boundaries, and leaves hierarchy/coordination with Harness Work Orchestration.
+
+An interactive activity needs no task per move, and one parent wait needs no organization tree.
+This is an additional bounded composition linked from I6/I10/I11, not approval of this umbrella or
+completion of its deliverables. The independent chess repository owns game behavior and consumes
+the public platform contract. The new plan records dependency sequencing as an open Ready decision.
+
+[Harness Pull Request Inbox](../harness-pull-request-inbox/plan.md) is a separate read-only
+repository-observation and page/panel proposal. Its optional event/routine/decision links reuse the
+same owners; the browsing feature does not require them. The owner selects PR browsing first,
+with its own navigation page and a compact list-only panel. Its plan is Ready after the delegated
+technical design; this umbrella remains Draft. That priority does not select the first
+live event producer or approve Dependabot automation. Preserve domain-neutral contracts rather
+than turning the example into a platform-wide workflow requirement.
 
 ## Proposed Investigation Order
 

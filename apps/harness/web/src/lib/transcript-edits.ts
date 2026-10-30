@@ -1,6 +1,7 @@
 import type { AssistantEvent } from "./assistant-api";
 import type { DevelopmentWorkspace } from "./development-api";
 import { describeApproval } from "./tool-display";
+import { workspaceSessionIds } from "./workspace-navigation";
 import type { TranscriptFileEdit, TranscriptReviewReference } from "../../../src/sessions/transcript-edit-types";
 export type { TranscriptFileEdit, TranscriptReviewReference };
 
@@ -32,12 +33,12 @@ export function transcriptEdits(event: AssistantEvent): TranscriptFileEdit[] {
   })) : [];
 }
 
-/** Require the exact session, owner, repository and tree, even when another source has the same path. */
+/** Require the exact accessible session association, repository and tree, even for matching filenames. */
 export function resolveTranscriptReview(ref: TranscriptReviewReference, sessionId: string | undefined,
   workspaces: readonly DevelopmentWorkspace[]) {
   if (!sessionId || ref.sessionId !== sessionId || !reference(ref)) return;
   const matches = workspaces.filter(w => w.id === ref.workspaceId && w.workflow.state !== "deleted"
-    && w.owner.kind === "assistant" && w.owner.appId === "hosty.harness" && w.owner.reference === sessionId)
+    && workspaceSessionIds(w).includes(sessionId))
     .flatMap(workspace => workspace.worktrees.filter(tree => tree.id === ref.worktreeId && tree.workspaceId === workspace.id
       && tree.repository === ref.repository && tree.state !== "deleted").map(tree => ({ workspace, tree })));
   return matches.length === 1 ? matches[0] : undefined;

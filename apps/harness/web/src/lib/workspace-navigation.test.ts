@@ -23,7 +23,7 @@ it("counts each current participant once across simultaneous work, attention, an
 it("expires active observations while retaining terminal failures and never infers external activity from leases", () => {
   const space = workspace([participant("work", "running"), participant("failed", "failed"), participant("waiting", "awaiting_question"), participant("stopping", "stopping")]);
   expect(workspaceCounts(space, [], now + 50_000)).toEqual({ working: 0, waiting: 0, failed: 1, unknown: 3 });
-  expect(workspaceCounts({ ...space, owner: { kind: "external", label: "Codex", reference: "task" } }, [], now)).toEqual({ working: 0, waiting: 0, failed: 0, unknown: 0 });
+  expect(workspaceCounts({ ...space, participation: undefined, owner: { kind: "external", label: "Codex", reference: "task" } }, [], now)).toEqual({ working: 0, waiting: 0, failed: 0, unknown: 0 });
 });
 it("uses newer authorized own-session changes without aliasing a foreign session with the same id", () => {
   const space = workspace([participant("same", "failed", true), participant("same", "awaiting_question")]);
@@ -41,4 +41,14 @@ it("keeps workspace ordering stable and lists all chats independently of attachm
   expect(navigationItems([space], [mine, solo], now, "chats").map(i => i.key)).toEqual(["session:solo", "session:mine"]);
   space.participation!.sessions[0].attached = false;
   expect(navigationItems([space], [mine, solo], now).map(i => i.key)).toEqual(["workspace:shared"]);
+});
+
+it("navigates and counts hosted chats in external workspaces without exposing foreign tabs", () => {
+  const space = { ...workspace([participant("mine", "idle", true), participant("private", "running")]),
+    owner: { kind: "external" as const, label: "Codex", reference: "external-task" } };
+  const mine = { id: "mine", title: "Review external changes", status: "idle", createdAt: new Date(now).toISOString() } as AssistantSession;
+  expect(workspaceSessionIds(space)).toEqual(["mine"]);
+  const item = navigationItems([space], [mine], now)[0];
+  expect(item.matches).toEqual([mine]); expect(item.search).toContain("review external changes");
+  expect(item.counts).toEqual({ working: 1, waiting: 0, failed: 0, unknown: 0 });
 });

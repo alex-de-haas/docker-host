@@ -102,6 +102,49 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.DoesNotContain("sourceGrant", CoreJson.Text(detail), StringComparison.OrdinalIgnoreCase);
     }
     [Fact]
+    public async Task WorkspaceInspection_ExternalAllocationSupportsPrivateAssistantSessionsWithoutSyntheticActivity()
+    {
+        var (f, _) = await SourceFixtureAsync();
+        var service = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock);
+        var owner = WorkspaceOwner.ForExternal("admin", "oauth:external", "external-task", "External client");
+        var request = WorkspaceRequest(owner.SessionId) with { SessionPath = null, LeaseId = Guid.NewGuid().ToString() };
+        var tree = await service.PrepareAsync(owner, request, default);
+        await File.WriteAllTextAsync(Path.Combine(tree.Path, "README.md"), "unfinished external edit");
+        var app = (await f.Apps.GetAppAsync(SourceTestApp))!;
+        var inspection = new WorkspaceInspectionService(service, f.Apps, f.Clock);
+        var empty = Assert.Single((await inspection.ListAsync("admin", default, callerAppId: app.Id)).Workspaces);
+        Assert.Empty(empty.Participation!.Sessions);
+        Assert.Equal("external", empty.Owner.Kind);
+        Assert.Equal(owner.SessionId, empty.Owner.Reference);
+        var first = new WorkspaceOwner(app.Id, app.InstalledAt, "admin", "internal-one");
+        var second = first with { SessionId = "internal-two" };
+        var foreign = first with { UserId = "other-admin", SessionId = "private-other" };
+        var state = await service.ParticipationAsync(tree.WorkspaceId, "admin", default);
+        foreach (var actor in new[] { first, second, foreign })
+            state = await service.ChangeSessionAsync(state.Id, actor, "attach", new(Guid.NewGuid().ToString(), state.Revision,
+                actor.SessionId, "/chat/" + actor.SessionId), default);
+        var mixed = Assert.Single((await inspection.ListAsync("admin", default, callerAppId: app.Id)).Workspaces);
+        Assert.Equal(3, mixed.Participation!.Sessions.Length);
+        Assert.Equal(2, mixed.Participation.Sessions.Count(s => s.CanOpen));
+        var privateRow = Assert.Single(mixed.Participation.Sessions, s => s.UserId == foreign.UserId);
+        Assert.False(privateRow.CanOpen); Assert.Null(privateRow.ViewerPath);
+        Assert.DoesNotContain(mixed.Participation.Sessions, s => s.SessionId == owner.SessionId);
+        var prepared = await service.PrepareAsync(first, WorkspaceRequest(first.SessionId), default);
+        Assert.Equal(tree.Id, prepared.Id); Assert.Equal(tree.Path, prepared.Path);
+        Assert.Equal(tree.Branch, prepared.Branch); Assert.Equal(tree.OriginalBase, prepared.OriginalBase);
+        Assert.Equal(owner, prepared.Owner); Assert.Contains(request.LeaseId!, prepared.Leases);
+        Assert.Single((await service.SessionListAsync(second, default)).Workspaces);
+        state = await service.ChangeSessionAsync(state.Id, first, "detach", new(Guid.NewGuid().ToString(), state.Revision), default);
+        Assert.Null(await service.SessionParticipationAsync(first, default));
+        Assert.Equal(tree.WorkspaceId, (await service.SessionParticipationAsync(second, default))!.Id);
+        Assert.Equal(tree.Id, (await service.PrepareAsync(owner, request, default)).Id);
+        Assert.Equal("unfinished external edit", await File.ReadAllTextAsync(Path.Combine(tree.Path, "README.md")));
+        var restart = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock);
+        Assert.Equal(owner, (await restart.ReadParticipationAsync(tree.WorkspaceId, default))!.AllocationOwner);
+        Assert.Single((await restart.SessionListAsync(second, default)).Workspaces);
+    }
+
+    [Fact]
     public async Task WorkspaceInspection_PublicationFactsRequireOwnerRepositoryConnectionAndPublishedHead()
     {
         var f = await PublicationFixture();

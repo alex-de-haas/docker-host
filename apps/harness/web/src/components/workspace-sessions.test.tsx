@@ -122,3 +122,28 @@ it("unlocks actions when a successful attach cannot refresh the conversation lis
   expect(container.textContent).toContain("List unavailable"); expect(sessionStorage.length).toBe(0);
   expect(refresh).toHaveBeenCalledOnce(); expect(button("New session in workspace").disabled).toBe(false);
 });
+
+it("creates idle sessions and switches only accessible tabs in an external workspace", async () => {
+  const space = workspace(); space.owner = { kind: "external", label: "Codex", reference: "external-task" };
+  const select = vi.fn(), refresh = vi.fn();
+  const mine = { id: "second", title: "My chat", status: "idle" } as AssistantSession;
+  const another = { ...mine, id: "third", title: "Another chat" };
+  space.participation!.sessions.push({ ...space.participation!.sessions[1], sessionId: another.id, title: another.title! });
+  function View() {
+    const actions = useWorkspaceSessionActions(space, refresh, select);
+    return <WorkspaceSessionTabs workspace={space} sessions={[mine, another]} activeId={mine.id} onPick={select} actions={actions} />;
+  }
+  await act(async () => root.render(<View />));
+  expect(container.querySelectorAll('[role="tab"]')).toHaveLength(2);
+  expect(container.textContent).not.toContain("Private owner chat");
+  expect(createWorkspaceSession).not.toHaveBeenCalled();
+  const tabs = [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+  tabs[0].focus();
+  await act(async () => tabs[0].dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true })));
+  expect(select).toHaveBeenCalledWith(another);
+  vi.mocked(createWorkspaceSession).mockResolvedValue({ ...mine, id: "new" });
+  await act(async () => button("New session in workspace").click());
+  expect(createWorkspaceSession).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: space.id, expectedRevision: 4 }));
+  expect(select).toHaveBeenLastCalledWith(expect.objectContaining({ id: "new" }));
+  expect(refresh).toHaveBeenCalledOnce();
+});

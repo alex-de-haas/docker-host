@@ -1,4 +1,5 @@
 "use client";
+import { PullRequestSummary } from "./pull-request-summary";
 import { useId, useState } from "react";
 import { ChevronDown, ExternalLink, FileDiff } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -20,9 +21,8 @@ export function WorkspacePullRequest({ tree, pr, now, onReview }: { tree: Worktr
   const href = webLink(pr.url);
   return <Collapsible open={open} onOpenChange={setOpen} className="min-w-0 overflow-hidden rounded-xl border bg-card" data-slot="pull-request-card">
     <CollapsibleTrigger asChild><Button type="button" variant="ghost" className="h-auto w-full min-w-0 justify-start gap-2 rounded-none px-3 py-3 text-left" aria-describedby={summaryId} aria-label={`${open ? "Collapse" : "Expand"} ${name}: ${observation?.title || "Pull request"}`}>
-      <PullRequestStatus pr={pr} stale={stale} /><span className="min-w-0 flex-1"><span className="flex min-w-0 items-start gap-2 text-xs font-medium"><span className="min-w-0 truncate">{observation?.title || "Pull request"}</span><span className="shrink-0 font-mono font-normal tabular-nums text-muted-foreground">#{number || "?"}</span></span>
-        <span id={summaryId} className="mt-1 block truncate text-xs font-normal text-muted-foreground"><span className="font-mono">{repository}</span><span> · </span><span>{state}</span><span> · </span><span className={ci.color}>{ci.label}</span>{observation?.unresolvedThreads !== undefined && <span> · {observation.unresolvedThreads} unresolved {observation.unresolvedThreads === 1 ? "thread" : "threads"}</span>}{observation?.draft && <span> · not ready for review</span>}</span>
-      </span><ChevronDown className={`size-3.5 shrink-0 text-muted-foreground ${open ? "rotate-180" : ""}`} aria-hidden />
+      <PullRequestSummary icon={<PullRequestStatus pr={pr} stale={stale} />} title={observation?.title || "Pull request"} number={number || "?"} repository={repository} identity={state} ci={ci.label} ciColor={ci.color} descriptionId={summaryId}
+        extra={<>{observation?.unresolvedThreads !== undefined && observation.unresolvedThreads >= 0 && <span> · {observation.unresolvedThreads} unresolved {observation.unresolvedThreads === 1 ? "thread" : "threads"}</span>}{observation?.draft && <span> · not ready for review</span>}</>} /><ChevronDown className={`size-3.5 shrink-0 text-muted-foreground ${open ? "rotate-180" : ""}`} aria-hidden />
     </Button></CollapsibleTrigger>
     <CollapsibleContent className="space-y-3 border-t p-3">
       <div className="flex flex-wrap gap-1.5"><Badge variant="outline">{state}</Badge>{observation?.reviewDecision && <Badge variant="outline">{reviewDecisionLabel(observation.reviewDecision)}</Badge>}{pr.historical && <Badge variant="outline">Historical</Badge>}{stale && !pr.historical && <Badge variant="outline">Outdated</Badge>}</div>

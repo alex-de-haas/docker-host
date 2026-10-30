@@ -11,7 +11,6 @@ export function countStatus(counts: ActivityCounts, status: string) {
   else if (["unknown", "stopping"].includes(status)) counts.unknown++;
 }
 export function workspaceSessionIds(workspace: DevelopmentWorkspace): string[] {
-  if (workspace.owner.kind === "external") return [];
   return workspace.participation ? workspace.participation.sessions.filter(s => s.attached && s.canOpen).map(s => s.sessionId)
     : workspace.owner.kind === "assistant" && workspace.owner.appId === "hosty.harness" ? [workspace.owner.reference] : [];
 }
@@ -21,7 +20,6 @@ export function workspaceChats(workspace: DevelopmentWorkspace, sessions: readon
 }
 export function workspaceCounts(workspace: DevelopmentWorkspace, sessions: readonly AssistantSession[], now = Date.now()): ActivityCounts {
   const counts = emptyCounts();
-  if (workspace.owner.kind === "external") return counts;
   if (!workspace.participation) {
     workspaceChats(workspace, sessions).forEach(s => countStatus(counts, s.status));
     return counts;

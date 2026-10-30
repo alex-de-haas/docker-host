@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { HostyMark } from "../../../../../shared/web/hosty-mark";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogBody, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ContinueBuilding } from "@/components/continue-building";
 import { cn } from "@/lib/utils";
 
@@ -100,8 +100,10 @@ export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, 
         <DialogHeader><DialogTitle>Delete session?</DialogTitle>
           <DialogDescription>Delete the session “{deleting ? sessionLabel(deleting) : "Untitled session"}” and its conversation history? This cannot be undone. The session is stopped and detached. Shared source and other conversations are retained; unresolved session resources must be reconciled first.</DialogDescription>
         </DialogHeader>
-        {error && <p role="alert" className="text-sm text-destructive-foreground">{error}</p>}
-        <DialogFooter>
+      <DialogBody>
+          {error && <p role="alert" className="text-sm text-destructive-foreground">{error}</p>}
+      </DialogBody>
+      <DialogFooter>
           <Button variant="outline" disabled={pending} onClick={() => setDeleting(null)}>Keep session</Button>
           <Button variant="destructive" disabled={pending} onClick={async () => {
             if (!deleting || deletionPending.current) return;

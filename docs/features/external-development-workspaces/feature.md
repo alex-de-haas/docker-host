@@ -58,14 +58,14 @@ Shell provides ordinary app navigation and has no workspace source access.
 
 ## Pull Request Observation
 
-Core's existing 30-second publication observer excludes deleting/deleted workspaces, handles ordinary
-publications first, then refreshes
-at most ten external PR references within a ten-second provider deadline. A rotating cursor carries
-remaining references into later cycles, including after a slow request. Previously observed facts
-remain available with their original timestamps until their turn; a timeout replaces only that
-reference's facts with an explicit unavailable result.
-The read-only path reuses the source provider's PR/check/review query; it never creates publication
-commands, merges, pushes, resolves review threads or schedules source cleanup.
+Core's [shared PR scheduler](../harness-pull-request-inbox/feature.md#shared-observation) excludes
+inactive and deleting/deleted workspaces. Visible authorized workspace scopes promote active CI to
+the ten-second target and quiet PRs to one minute; without demand, reads use a five-minute baseline.
+The common queue, account pacing and compact observation cache coordinate ordinary publications,
+external references and the installed-app inbox. Provider work has a bounded deadline; failed reads
+retain the prior evidence timestamp and are retried under the shared budget.
+The read-only path never creates publication commands, merges, pushes, resolves review threads or
+schedules source cleanup. Compact facts carry no publication-completion or review-body evidence.
 
 Core uses the workspace's reviewed Git connection when present. For public source without a
 selected connection, it uses the owner's sole connected account for that provider. Missing,
@@ -162,6 +162,9 @@ characters. OAuth binds ownership to the current administrator and durable grant
 retains that binding. A newly authorized grant has its own allocation context but can access the same retained source
 through the workspace operation permission. Tasks remain separate allocations. A task ID, agent label,
 conversation ID or original credential is not an authorization boundary. Core records no imported conversation and provides no external-session URL.
+[Harness sessions](../workspace-sessions/feature.md) can attach to the same workspace without
+changing its allocation identity or importing the external transcript. Their private chats and
+activity are tracked separately from the external client and its leases.
 
 1. Read the user's approved scope and select an installed app with declared source. Do not register
    an arbitrary repository, change app source selection or install/start an app merely to obtain

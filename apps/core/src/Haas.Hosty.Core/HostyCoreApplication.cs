@@ -100,6 +100,8 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<UserConnectionService>();
         builder.Services.AddSingleton(sp => new PrivateSourceService(sp.GetRequiredService<UserConnectionService>(),
             new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false }) { Timeout = TimeSpan.FromSeconds(30) }));
+        builder.Services.AddSingleton<PullRequestProviderBudget>();
+        builder.Services.AddSingleton<PullRequestObservationCache>();
         builder.Services.AddHttpClient<GitHubSourceProvider>(client => client.Timeout = TimeSpan.FromSeconds(30))
             .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false });
         builder.Services.AddSingleton(sp => new AppManifestService(AppManifestService.CreateDefaultHttpClient(), sp.GetRequiredService<PrivateSourceService>()));
@@ -128,8 +130,10 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<SourceDocumentAuthorization>();
         builder.Services.AddSingleton<WorkspaceAuthorization>();
         builder.Services.AddSingleton<PublicationService>();
+        builder.Services.AddSingleton<InstalledPullRequestRepositories>();
+        builder.Services.AddSingleton<PullRequestService>();
+        builder.Services.AddHostedService<PullRequestObserver>();
         builder.Services.AddHostedService<WorkspaceDeletionRecovery>();
-        builder.Services.AddHostedService<PublicationObserver>();
         builder.Services.AddHostedService<DevelopmentWorkspaceObserver>();
         // Shared flag the control-plane stop endpoint sets and the runtime-app supervisor reads at
         // shutdown to decide whether a stop leaves app containers running (keep-apps light restart).
@@ -436,6 +440,7 @@ internal static class HostyCoreApplication
         SourceDocumentEndpoints.Map(app);
         WorkspaceInspectionEndpoints.Map(app);
         PublicationEndpoints.Map(app);
+        PullRequestEndpoints.Map(app);
         ControlIdentityEndpoints.Map(app);
         AppDirectoryEndpoints.Map(app);
         AppAssetEndpoints.Map(app);

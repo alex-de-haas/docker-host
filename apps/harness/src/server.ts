@@ -1,3 +1,4 @@
+import { pullRequestsRoute, requestPullRequests } from "./pull-requests-proxy.js";
 import { TaskService } from "./tasks/service.js";
 import { isSkillManagementRoute, manageSkills, migrateSkillSelection, validSkillIds } from "./skills.js";
 import { createHash } from "node:crypto";
@@ -695,6 +696,15 @@ async function route(
     sendJson(response, 200, await manager.newBuildingSession(actor.userId, credential, {
       appId: body.appId as string, requestId: body.requestId as string, expectedLocalHead: body.expectedLocalHead as string }));
     return;
+  }
+
+  if (pullRequestsRoute(method, url.pathname)) {
+    const credential = actor.via === "app-session" ? readAppCredential(request) : null;
+    if (!credential) throw new AppContextError(401, "reauth_required", "Open Harness through Core to read pull requests.");
+    response.setHeader("cache-control", "no-store");
+    const result = await requestPullRequests(method, url.pathname + url.search, credential,
+      method === "POST" ? await readJson(request, 32768) : undefined);
+    sendJson(response, result.status, result.body); return;
   }
 
   if (url.pathname === "/api/development-workspaces/events" && method === "GET") {
