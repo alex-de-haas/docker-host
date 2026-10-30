@@ -220,7 +220,7 @@ public static class CommandLine
         WriteCommandGroup(console, "Apps & users",
         [
             ("apps", "Install, update, back up, and inspect apps"),
-            ("skills", "Read the shared skill library and provision native skill exports"),
+            ("skills", "Manage the shared skill library and provision native skill exports"),
             ("mcp", "Serve this host's app tools to an agent client (MCP)"),
             ("storage", "Manage shared host-path mounts"),
             ("users", "List app users"),

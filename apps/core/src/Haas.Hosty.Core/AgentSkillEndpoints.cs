@@ -68,6 +68,18 @@ internal static class AgentSkillEndpoints
         });
         MapReads(control);
         MapExports(control);
+        control.MapPost("/discover", (AgentSkillSelectionRequest body, AgentSkillLibrary library, CancellationToken ct) =>
+            Handle(() => library.DiscoverSelectedAsync(body, ct)));
+        control.MapPost("/install", (AgentSkillSelectedInstallRequest body, HttpContext http, AgentSkillLibrary library,
+            AuditStore audit, IClock clock, CancellationToken ct) => Handle(async () =>
+        {
+            var installed = await library.InstallSelectedAsync(body, ct);
+            // Publication has completed. A disconnected client must not cancel its audit record.
+            await audit.AppendAsync(new AuditRecord($"audit_{Guid.NewGuid():N}", "skills.library.modified",
+                "skill-library", http.Request.Path, "succeeded", null, clock.UtcNow,
+                new Dictionary<string, string> { ["method"] = "POST", ["via"] = "local-control" }), CancellationToken.None);
+            return installed;
+        }));
     }
 
     private static string User(HttpContext http) => ((string)http.Items[OwnerKey]!)[5..];

@@ -18,6 +18,47 @@ internal static partial class AgentSkillPackages
 
     public static AppLifecycleException Invalid(string message) => new("skill_package_invalid", message);
 
+    public static bool IsValidName([System.Diagnostics.CodeAnalysis.NotNullWhen(true)] string? name) =>
+        name is { Length: > 0 and <= 64 } && NamePattern().IsMatch(name);
+
+    public static async Task<AgentSkillPackage> ReadMetadataAsync(string directory, CancellationToken ct)
+    {
+        var path = Path.Combine(directory, "SKILL.md");
+        if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
+            throw Invalid("Skill metadata cannot be a symbolic link.");
+        await AppSourceService.RequireRegularFileAsync(path, ct);
+        await using var stream = File.OpenRead(path);
+        // Discovery needs only frontmatter. An unselected instruction body can exceed package
+        // limits; selected packages still pass the complete reader before publication.
+        var content = new byte[MaxInstructionsBytes];
+        var length = 0;
+        var scanned = 0;
+        var lineStart = 0;
+        while (length < content.Length)
+        {
+            var count = await stream.ReadAsync(content.AsMemory(length, Math.Min(4096, content.Length - length)), ct);
+            length += count;
+            for (; scanned < length; scanned++)
+            {
+                if (content[scanned] != '\n') continue;
+                if (ClosesFrontmatter(scanned)) return Validate([new("SKILL.md", content[..(scanned + 1)])]);
+                lineStart = scanned + 1;
+            }
+            if (count == 0 || length == stream.Length)
+            {
+                if (ClosesFrontmatter(length)) return Validate([new("SKILL.md", content[..length])]);
+                break;
+            }
+        }
+        throw Invalid("SKILL.md frontmatter must be terminated within 256 KiB.");
+
+        bool ClosesFrontmatter(int end)
+        {
+            if (end > lineStart && content[end - 1] == '\r') end--;
+            return lineStart > 0 && end - lineStart == 3 && content.AsSpan(lineStart, 3).SequenceEqual("---"u8);
+        }
+    }
+
     public static string RelativePath(string value, bool allowEmpty = false)
     {
         if (value is null) throw Invalid("Package paths cannot be null.");
@@ -138,7 +179,7 @@ internal static partial class AgentSkillPackages
             parser.Consume<StreamEnd>();
         }
         catch (YamlException) { throw Invalid("SKILL.md contains invalid YAML metadata."); }
-        if (name is null || name.Length > 64 || !NamePattern().IsMatch(name))
+        if (!IsValidName(name))
             throw Invalid("Skill name must be 1–64 lowercase letters, digits and single hyphens.");
         if (directoryName is not null && name != directoryName)
             throw Invalid("Skill name must match its directory name.");

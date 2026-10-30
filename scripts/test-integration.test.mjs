@@ -42,6 +42,13 @@ test('worker uses the declared service image, without an npm install or host tsx
   assert.throws(() => suitePlan('worker', { readManifest: () => ({}) }), /worker image/);
 });
 
+test('skills builds Core and CLI before running selected imports in a managed child', () => {
+  const plan = suitePlan('skills', { platform: 'darwin' });
+  assert.deepEqual(plan.steps.slice(0, 2).map(step => step.args[0]), ['build', 'build']);
+  assert.deepEqual(plan.steps[2].args, ['scripts/check-workspace-activation.py', '.', 'skills', '--managed']);
+  assert.ok(plan.prerequisites.some(step => step.file === 'docker'));
+});
+
 test('preflight failure prevents builds and runtime work, preserves exit status and never retries', () => {
   const calls = [];
   const code = main(['activation'], { ...options, run(file) { calls.push(file); return { status: 7 }; } });
