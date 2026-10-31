@@ -217,3 +217,17 @@ it("invalidates shared continuations and pending delivery when overlapping discl
   expect(current.data).toMatchObject({ kind: "message", parts: [{ type: "text", text: "later shared needle" }] });
   await history.deliver(recipient, current, () => { delivered = true; }); expect(delivered).toBe(true);
 });
+
+it.each([false, true])("requires a notification rescan after overlapping disclosure expires (attachments=%s)", async attachments => {
+  await share();
+  await share({ selection: { entryIds: [entry(attachments ? 1 : 2).id] }, includeAttachments: attachments, expiresAt: new Date(now + 1000).toISOString() });
+  const first = await history.notifications(recipient, { conversation: ref(), waitSeconds: 0 });
+  now += 1001;
+  const changed = await history.notifications(recipient, { conversation: ref(), cursor: first.cursor, waitSeconds: 0 });
+  expect(changed).toMatchObject({ changes: [], rescanRequired: true });
+  const continued = await history.notifications(recipient, { conversation: ref(), cursor: changed.cursor, waitSeconds: 0 });
+  expect(continued).toMatchObject({ changes: [], rescanRequired: false });
+  const current = await history.read(recipient, { conversation: ref() });
+  expect(current.entries.map(e => e.ref.id)).toEqual([entry(1).id]);
+  expect(JSON.stringify(current)).not.toContain('"type":"attachment"');
+});

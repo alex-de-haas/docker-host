@@ -48,7 +48,8 @@ expose their current revisions, not an immutable copy. Attachments and named ext
 explicit inclusion. Recipients cannot reshare or gain task, source or execution authority. Revocation,
 owner changes and deleted content invalidate subsequent reads and derived results. Expiration of an
 overlapping share also invalidates snapshots and pending responses when its disclosure changes, even
-without a stored ACL or entry revision change.
+without a stored ACL or entry revision change. Notification cursors bind that disclosure too and
+require a rescan after expiration so consumers remove previously visible content.
 
 Attachment resolution produces a short-lived subject-bound Core handle. Each bounded range read
 rechecks source access. The provider's storage URL and credentials are not exposed. History and run

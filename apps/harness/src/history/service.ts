@@ -354,7 +354,7 @@ export class HistoryService {
       try {
         const result = await this.synchronized(actor, async state => {
           const source = this.visible(state, key, actor);
-          const scope = fingerprint({ kind: "notifications", user: actor.userId, principal: actor.principalId, conversation: input.conversation, acl: source.acl });
+          const scope = fingerprint({ kind: "notifications", user: actor.userId, principal: actor.principalId, conversation: input.conversation, acl: source.acl, disclosure: this.disclosure(state, key, actor) });
           let after = state.sequence, rescanRequired = !input.cursor;
           if (input.cursor) {
             try { after = await this.exportCursors.read(scope, input.cursor); }
