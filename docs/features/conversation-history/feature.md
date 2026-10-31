@@ -27,7 +27,9 @@ Capabilities declare supported kinds, namespaced versioned extensions, page boun
 and change retention. Provider-specific execution state remains private. Unknown extensions are not
 implicitly interpreted or shared.
 
-Opaque cursors bind their query and source snapshot. Responses report coverage, high water and
+Opaque cursors bind their query and source snapshot. Multi-provider enumeration retains each source
+page size across continuation requests and can return a shorter aggregate page to preserve that query
+without buffering source content. Responses report coverage, high water and
 availability; expired or invalidated snapshots require a fresh query. Revisions are decimal strings
 across SDKs. Source failures, missing capabilities, denied access and unavailable data are distinct
 outcomes. Core bounds bodies, pages, searches, resources and cursors before forwarding or returning data.

@@ -4,7 +4,7 @@ using HostySdk.App;
 namespace Haas.Hosty.Core;
 
 internal sealed record CoreConversationSource(HostyProviderRef Provider, string? Cursor, bool Done,
-    string? SnapshotId, string? HighWater, CoreHistoryProviderCoverage Coverage, DateTimeOffset? LastUpdatedAt = null, string? LastId = null);
+    string? SnapshotId, string? HighWater, CoreHistoryProviderCoverage Coverage, DateTimeOffset? LastUpdatedAt = null, string? LastId = null, int? PageSize = null);
 internal sealed record CoreConversationPage(HostyConversation[] Conversations, string? NextCursor,
     HostyHistoryCoverage Coverage, CoreHistoryProviderCoverage[] Providers);
 
@@ -21,15 +21,21 @@ internal sealed partial class CoreHistoryAdapter
         var fingerprint = SandboxValidation.Hash("conversations|" + CoreJson.Text(input with { Providers = selected, Cursor = null }));
         var previous = input.Cursor is null ? null : await cursors.ReadAsync(caller, input.Cursor, fingerprint, ct);
         var sources = previous?.ConversationSources?.ToList() ?? selected.Select(p => new CoreConversationSource(p, null, false, null, null, new(p, "complete"))).ToList();
-        var conversations = new List<HostyConversation>(); var changed = false; var calls = 0;
-        for (var i = 0; i < sources.Count && conversations.Count < input.Limit && calls < 16; i++)
+        if (sources.Any(s => s.Cursor is not null && s.PageSize is null))
+            throw new CoreProviderException("cursor_expired", "Restart enumeration to establish each provider's stable query.", 410);
+        var conversations = new List<HostyConversation>(); var changed = false; var calls = 0; var pageFull = false;
+        for (var i = 0; i < sources.Count && conversations.Count < input.Limit && calls < 16 && !pageFull; i++)
         {
             while (!sources[i].Done && conversations.Count < input.Limit && calls < 16)
             {
                 var source = sources[i];
+                var pageSize = source.PageSize ?? input.Limit - conversations.Count;
+                // A source cursor binds its original query, including page size. End this aggregate
+                // page early rather than changing that query or retaining provider-owned content.
+                if (pageSize > input.Limit - conversations.Count) { pageFull = true; break; }
                 try
                 {
-                    var query = new CoreConversationSourceQuery(source.Provider, input.Title, source.Cursor, input.Limit - conversations.Count);
+                    var query = new CoreConversationSourceQuery(source.Provider, input.Title, source.Cursor, pageSize);
                     var raw = await Send(caller, source.Provider, "conversations.query", "POST", "/conversations/query", query, [], null, ct); calls++;
                     var page = raw.Deserialize(CoreJson.TypeInfo<HostyConversationPage>()) ?? throw Invalid();
                     if (page.Conversations is null || page.Conversations.Length > query.Limit || page.NextCursor?.Length > 16384
@@ -57,7 +63,7 @@ internal sealed partial class CoreHistoryAdapter
                         catch (CoreProviderException ex) when (ex.Status is 403 or 404 or 409 or 410) { changed = true; }
                     }
                     sources[i] = source with { Cursor = page.NextCursor, Done = page.NextCursor is null, SnapshotId = page.SnapshotId,
-                        HighWater = page.HighWater, Coverage = new(source.Provider, page.Coverage.State), LastUpdatedAt = lastAt, LastId = lastId };
+                        HighWater = page.HighWater, Coverage = new(source.Provider, page.Coverage.State), LastUpdatedAt = lastAt, LastId = lastId, PageSize = pageSize };
                 }
                 catch (Exception ex) when (ex is CoreProviderException or AppIdentityException)
                 {

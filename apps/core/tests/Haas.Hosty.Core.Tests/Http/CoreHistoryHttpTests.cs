@@ -265,6 +265,34 @@ public sealed class CoreHistoryHttpTests
         Assert.Equal(1, mcp.GetProperty("structuredContent").GetProperty("conversations").GetArrayLength());
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task MultiProviderConversationCursorsKeepTheirOriginalPageSize(bool changedEntry)
+    {
+        using var source = new Source(); await using var host = await Start(source);
+        var second = source.App with { Id = "z.second.archive", Endpoints = [new("api", "http", "http://second.invalid", true)] };
+        await host.Services.GetRequiredService<AppRegistryStore>().UpsertAppAsync(second);
+        var provider = new HostyProviderRef(second.Id, PanelIdentity.Installation(second), "archive");
+        var items = Enumerable.Range(0, 7).Select(i => source.Conversation with { Ref = new(provider, "chat-" + i.ToString("D2")) }).ToArray();
+        source.ConversationSources = new() { ["archive.invalid"] = (source.App, [source.Conversation]), ["second.invalid"] = (second, items) };
+        if (changedEntry) source.ChangedConversation = "chat-03";
+        using var client = host.CreateClient(); client.DefaultRequestHeaders.Authorization = new("Bearer", await Token(host, AccessTokenScopes.McpRead, AccessTokenScopes.McpHistoryRead));
+        var input = new CoreConversationQuery([source.Reference, provider], Limit: 3);
+        var found = new List<HostyConversationRef>(); string? cursor = null; var pages = 0;
+        do
+        {
+            var page = await Post<CoreConversationPage>(client, "/api/history/v1/conversations/query", input with { Cursor = cursor });
+            Assert.InRange(page.Conversations.Length, 0, input.Limit);
+            Assert.DoesNotContain(page.Providers, p => p.State == "unavailable");
+            found.AddRange(page.Conversations.Select(c => c.Ref)); cursor = page.NextCursor;
+            Assert.True(++pages < 10);
+        } while (cursor is not null);
+        Assert.Equal(changedEntry ? 7 : 8, found.Count); Assert.Equal(found.Count, found.Distinct().Count());
+        Assert.All(source.ConversationLimits["second.invalid"], size => Assert.Equal(2, size));
+        Assert.Equal(items.Where(c => c.Ref.Id != source.ChangedConversation).Select(c => c.Ref.Id), found.Where(c => c.Provider == provider).Select(c => c.Id));
+    }
+
     private static async Task<T> Post<T>(HttpClient client, string route, object body)
     {
         using var response = await client.PostAsJsonAsync(route, body);
@@ -296,14 +324,39 @@ public sealed class CoreHistoryHttpTests
         internal IServiceProvider Services = null!; internal AppRecord App = null!; internal HostyProviderRef Reference = null!;
         internal HostyConversation Conversation = null!; internal HostyHistoryEntry Entry = null!;
         internal HostyHistoryCapabilities Capabilities = new(1, ["message"], [], 200, 900, 604800);
+        internal Dictionary<string, (AppRecord App, HostyConversation[] Items)>? ConversationSources;
+        internal Dictionary<string, List<int>> ConversationLimits = new(); internal string? ChangedConversation;
         internal CoreProviderInvocation? Invocation; internal int Calls; internal bool DenyEntry, StaleHit, HoldNotifications;
         public HttpClient CreateClient(string name) { Assert.Equal(CoreProviderMediation.ClientName, name); return new(this, false); }
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             Calls++; var path = request.RequestUri!.AbsolutePath[3..]; var operation = path.Trim('/').Replace('/', '.');
             var bytes = request.Content is null ? [] : await request.Content.ReadAsByteArrayAsync(ct);
-            Invocation = await Services.GetRequiredService<CoreProviderMediation>().IntrospectAsync(App,
+            var collection = ConversationSources?.GetValueOrDefault(request.RequestUri.Host);
+            Invocation = await Services.GetRequiredService<CoreProviderMediation>().IntrospectAsync(collection?.App ?? App,
                 new(request.Headers.Authorization!.Parameter!, "conversation-history", "archive", operation, request.Method.Method, path, CoreProviderMediation.Hash(bytes)), ct);
+            if (collection is { } selected && (path is "/conversations/query" or "/conversations/get"))
+            {
+                using var input = JsonDocument.Parse(bytes); object pagedResult;
+                if (path == "/conversations/get")
+                {
+                    var current = selected.Items.Single(c => c.Ref.Id == input.RootElement.GetProperty("conversation").GetProperty("id").GetString());
+                    pagedResult = current.Ref.Id == ChangedConversation ? current with { Revision = "2" } : current;
+                }
+                else
+                {
+                    var limit = input.RootElement.GetProperty("limit").GetInt32();
+                    if (!ConversationLimits.TryGetValue(request.RequestUri.Host, out var sizes)) ConversationLimits[request.RequestUri.Host] = sizes = [];
+                    sizes.Add(limit);
+                    var cursor = input.RootElement.TryGetProperty("cursor", out var value) ? value.GetString() : null;
+                    var parts = cursor?.Split(':'); var offset = parts is null ? 0 : int.Parse(parts[1]);
+                    if (parts is not null && int.Parse(parts[0]) != limit)
+                        return new(HttpStatusCode.Gone) { Content = JsonContent.Create(new { error = new { code = "cursor_expired", message = "Source query page size changed", retryable = false } }) };
+                    var page = selected.Items.Skip(offset).Take(limit).ToArray(); offset += page.Length;
+                    pagedResult = new HostyConversationPage(page, offset < selected.Items.Length ? limit + ":" + offset : null, selected.App.Id + "-snapshot", "1", new("complete", []));
+                }
+                return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(pagedResult, pagedResult.GetType(), JsonSerializerOptions.Web), System.Text.Encoding.UTF8, "application/json") };
+            }
             if (path == "/entries/get" && DenyEntry) return new(HttpStatusCode.NotFound) { Content = JsonContent.Create(new { error = new { code = "not_found", message = "Not found", retryable = false } }) };
             if (path == "/attachments/content")
             {
