@@ -1,6 +1,6 @@
 ---
 created: 2026-10-23
-updated: 2026-10-27
+updated: 2026-10-30
 ---
 
 # Ideas
@@ -86,6 +86,8 @@ The existing MCP direction places provider discovery and authority in Core and t
 apps. A new Core-hosted memory facade would require an explicit reconciliation with that boundary.
 Provider selection, unavailable providers and the scopes visible to each user/session also remain
 open. Neither a shared workspace nor a common index implies access to all users' knowledge.
+The 2026-10-30 conversation-history decision in I2 settles Core API/MCP exposure for that narrower
+source/history domain only; it does not select a learned-memory facade or move knowledge storage.
 
 **Vision exploration (moved 2026-10-23):** Knowledge is broader than project documentation:
 personal information, documents, selected conversation excerpts, requirements, decisions and
@@ -136,6 +138,16 @@ apply to retrieval and derived copies; indexing is not a new access grant.
   the model; recall never widens tool permissions.
 
 ## I2. Search Across Knowledge Providers
+
+**Conversation-history direction, 2026-10-30:** The owner selects the concrete chat-history slice
+for [Conversation History](features/conversation-history/plan.md): Core-owned common schemas and
+API/MCP reads, explicit sharing and search over provider-owned source records, including declared
+provider extensions and an indexer-compatible change/deletion contract. The owner confirms Qdrant
+as the intended future indexing integration and explicitly defers connecting it now. That plan
+verifies compatibility with a test consumer; no Qdrant deployment, embedding model or vector schema
+is selected for implementation. This promotes only the history slice: general knowledge ingestion,
+learned memory and automatic context insertion remain ideas. The historical options below are
+comparison material, not competing ownership for the new plan.
 
 **Owner exploration:** A separate search provider might search knowledge stored by another provider.
 The difficult part is supplying information through a common contract without exposing a database's

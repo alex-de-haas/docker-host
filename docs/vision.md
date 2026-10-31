@@ -1,6 +1,6 @@
 ---
 created: 2026-08-19
-updated: 2026-10-29
+updated: 2026-10-31
 ---
 
 # Hosty Platform Vision
@@ -1191,6 +1191,90 @@ Decisions 1–5: 2026-08-19.
     approved the initial external-server adapter for implementation on the same date. Separate
     application extraction remains Draft; no live runtime switch is authorized.
 
+66. **Canonical platform MCP and provider-owned tasks (2026-10-30).**
+    The owner requests a review of platform operations exposed through Harness development MCP,
+    especially child Core environment lifecycle. Standard platform operations belong in Core MCP
+    and must be usable without a Harness conversation. Core already owns environment and publication
+    services; their missing direct-client adapters must reuse those services. Harness retains its
+    conversations, client context, execution integration and UI.
+
+    The owner explicitly selects provider-owned task storage with unified MCP access. Decision 62's
+    provider/executor split remains; no universal Core task store or task-data migration is selected.
+    The proposed common Core MCP adapter uses the platform task contract and an explicitly qualified
+    provider, preserving application/user authority and independent implementations. This narrows
+    the intended extension to standard provider capabilities; arbitrary app-domain proxying and
+    moving model runners or private Harness profiles into Core are outside this decision.
+
+    The owner also accepts separate identities for a user conversation, a provider-native
+    resumable session and an execution run. This need not create three user-facing objects.
+    Conversations remain application-owned; providers own native state/processes; Core knows the
+    shared references and resource-facing status/control contract without owning private transcripts.
+    Native resume and reconstruction from retained context are distinct recovery modes. The exact
+    same-provider/account recovery guarantees and UI behavior remain open under Agent Provider D2
+    and Durable Agent Jobs D7. Decision 61's exclusion of in-chat provider switching remains.
+
+    Environments have their own Core resource identity and lifecycle. Core owns deployment,
+    readiness, access mediation and cleanup; Harness is a client. Chat/session/run associations
+    are optional context, and a chat ending does not itself Stop or Finish an environment. Access
+    by additional agents, lifetime/consumer rules and existing-owner migration still need a concrete
+    contract; approval of the boundary does not broaden current grants.
+
+    The owner accepts feature-based tool sections with a separate Applications group. Display
+    grouping does not change tool authority or imply that Harness context belongs to Core.
+    [Core MCP Capability Boundaries](features/core-mcp/plan.md) owns the catalog, client migration,
+    task adapter and settings design. [External Development](features/external-development-workspaces/plan.md)
+    retains direct environment/publication authority and acceptance. Both plans remain Draft;
+    this direction does not approve unresolved contracts, implementation or a live runtime switch.
+
+67. **Common history contracts with provider-owned detail and future indexing (2026-10-30).**
+    The owner selects a common Core-owned interface for conversations, messages and history,
+    exposed through API and MCP for explicit sharing, cross-chat search and an independent indexer.
+    Core defines the exchange contract and authority; Harness and other history providers retain
+    original records, their own storage representation and richer native details. Optional typed
+    events and declared, namespaced/versioned extensions accommodate tool input/output, timings,
+    usage and dynamic provider data without requiring every assistant to support every capability.
+
+    This extends decision 66 beyond minimal references/status: shared history reads/search are now
+    an intended platform capability. It does not select a central Core transcript database, expose
+    all private native state or restore decision 61's abandoned in-chat provider switching. Sharing
+    remains explicit and authorized; workspace membership or an index is not a transcript grant.
+    Common display/search history does not promise a complete execution-recovery checkpoint.
+
+    The owner confirms Qdrant as the intended future indexing integration and explicitly defers
+    connecting it now. Prepare stable identities/revisions, bounded source reads, incremental
+    changes/deletions and current-access checks without installing a vector database or choosing
+    an embedding model. Source providers remain authoritative; derived indexes must follow source
+    edits, deletion and changed access. Automatic learned memory and context insertion are separate.
+
+    [Conversation History](features/conversation-history/plan.md) owns schemas, API/MCP sharing/search,
+    provider adapters and indexing compatibility. [Core MCP](features/core-mcp/plan.md) owns catalog
+    integration; [Agent Providers](features/agent-provider-interface/plan.md) retains native execution.
+    [Ideas I2](ideas.md#i2-search-across-knowledge-providers) retains the later Qdrant integration and
+    broader knowledge search. Detailed contracts remain Draft; this is direction approval, not
+    implementation, database installation or publication authorization.
+
+68. **Core MCP, history and direct-client v1 contracts approved (2026-10-31).**
+    The owner explicitly accepts the concrete candidate contracts proposed under decisions 66-67,
+    requests recording the decisions, promotes the corresponding plans to Ready, and authorizes
+    beginning implementation. This supersedes their earlier pending-contract wording: qualified
+    conversation/native-session/run references; separate history and execution interfaces;
+    provider-owned storage; optional event/extension support; independent read/share/export/control
+    grants; named-user live-reference sharing; provider lexical search; and a change/deletion
+    export contract for a later indexer are accepted. Qdrant integration remains deferred.
+
+    Core owns environment lifecycle independently of chats, with current-user cross-client
+    management, separate child-API/source/publication authority, registered-consumer stop evidence
+    and explicit recovery. Native resume stays bound to the same provider/account; reconstruction
+    is explicit, bounded and preserves the conversation without replaying prior tool effects.
+    Tasks retain provider storage and executor-bound result submission. Canonical tool migration
+    preserves Disabled and does not carry Run across broader authority.
+
+    [Core MCP](features/core-mcp/plan.md), [Conversation History](features/conversation-history/plan.md)
+    and [External Development](features/external-development-workspaces/plan.md) own implementation
+    and acceptance. The bounded agent-session and ordinary-chat recovery decisions are also recorded
+    in their owning plans; the wider provider extraction and durable scheduler remain Draft.
+    This approval authorizes development, not commits, publication or a live runtime switch.
+
 ## Personal And Shared Environments (owner exploration, 2026-10-23)
 
 ### Composition And Extension Boundaries
@@ -1337,6 +1421,8 @@ the manifest contract. Two standing consequences:
 
 ## Spanned Features
 
+[conversation-history](features/conversation-history/plan.md) ·
+[core-mcp](features/core-mcp/plan.md) ·
 [composable-agent-systems](features/composable-agent-systems/plan.md) ·
 [basic-tasks](features/basic-tasks/feature.md) ·
 [shared-tasks](features/shared-tasks/plan.md) ·

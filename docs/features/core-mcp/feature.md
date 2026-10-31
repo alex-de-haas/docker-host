@@ -1,6 +1,6 @@
 ---
 created: 2026-08-09
-updated: 2026-10-26
+updated: 2026-10-31
 summary: Core MCP exposes app state, logs and bounded audit search, with explicit grants for lifecycle actions and reviewed updates.
 components: [apps/core]
 ---
@@ -268,7 +268,32 @@ Return. Runtime consumers persist independently of workspace Close and sandbox F
 participation requires separate Core authority; ordinary source or lifecycle access is insufficient.
 Return preserves current data and live source edits.
 
+## Core-Owned Capability Metadata
+
+The existing 37 tool definitions carry versioned `io.hosty/core-tool` metadata in MCP `tools/list`.
+CoreMcpCatalog explicitly assigns each implemented tool to Host & Core, App management, Logs & audit,
+Workspaces, Git & pull requests, App creation, or Runtime development. Tool names remain unchanged.
+The metadata contains schemaVersion, platform owner `hosty:core`, stable operationId, feature ID/title,
+and the current direct-scope/app-permission requirements. Conditional scope entries describe worktree
+and Core-participant requirements; resource-specific guards remain in the owning domain services.
+
+Feature membership and authority are not inferred from names or `readOnlyHint`. For example,
+get_workspace is a read operation requiring mcp:workspaces, and get_app_dev_mode requires
+mcp:lifecycle. A null appPermission means the current assistant-app MCP path does not admit the tool;
+it is not permission-free access. The existing 14 app-permission mappings use the same catalog,
+including background-grant review. No new scope or installed-app grant is issued by metadata.
+
+Core rejects invocation of a registered tool that lacks a reviewed catalog entry and refuses to
+produce an incomplete catalog. The SDK descriptors are copied before decoration, preserving schemas,
+annotations and other protocol metadata across requests. These assignments are Core-owned and do
+not use runtime app IDs to select providers or classify app-supplied tools. The settings UI and
+Harness development wrappers retain their existing behavior.
+
 ## Testing Expectations
+
+- Core catalog metadata is verified over real MCP HTTP requests with an empty app registry. Cover
+  unchanged public names, scoped read operations, independent descriptor copies, schema/annotation
+  preservation and invocation denial before an unmapped registered tool body executes.
 
 - HTTP suite over the real pipeline: `initialize`, then `tools/list`, then `tools/call` for **every**
   tool. Listing alone is not enough — attribute-declared tools are discovered by reflection, so the

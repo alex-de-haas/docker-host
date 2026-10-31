@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-26
-updated: 2026-10-29
+updated: 2026-10-31
 summary: Durable jobs and recoverable Harness sessions with scheduling, bounded context, same-provider continuation, budgets and decision waits.
 components: [apps/harness, apps/core, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -83,6 +83,32 @@ and revoked access remain explicit. Context limits, summary policy and attachmen
 design before Ready. [Shared Artifacts](../shared-artifacts/plan.md) owns selected cross-session
 handoffs; it neither imports a whole private transcript nor transfers provider-native hidden state.
 
+## Ordinary-Chat Recovery Candidate (2026-10-30)
+
+[Core MCP Q2](../core-mcp/plan.md#q2-resume-automatically-reconstruct-explicitly) records the concrete
+D7 recovery policy approved by the owner on 2026-10-31: automatic exact-provider/account native resume, then an explicit reconstruction
+action if supported, preserving the conversation. Apply only after prior native stop is confirmed;
+reconcile unknown effects, revalidate access/resources and preserve the instruction snapshot and
+attributed context coverage. Current tool policy applies; old approvals are not replayed. The input
+budget is the smaller of 32,768 tokens and half the provider input window, with a declared safe
+estimator if needed. Without a safe budget or required context, retain the chat and report why.
+
+The conversation-owning app provides POST /conversations/{id}/recovery/plan with expectedRevision
+and source NativeSessionRef. It returns `{planId, planDigest, expiresAt, includedRanges, summaryRef,
+omissions, targetProvider, connectionIdentity, stopEvidence, estimatedTokens}`; the plan expires
+after 15 minutes. It contains authorized references and bounded preview metadata, not provider
+credentials. POST /conversations/{id}/recovery/apply takes planId, planDigest, requestId and
+expectedRevision. Recheck stop evidence, actor, connection, history/source revisions and access;
+changed inputs require a new preview. Apply uses durable request replay and returns the old/new
+native refs and the unchanged conversation ID, with pending/complete/error operation state.
+If the underlying create outcome is unknown, recover it using the same request ID before retry.
+
+The new session records a visible recovery event and its context coverage. An unsupported provider
+returns unsupported_capability; no automatic different-provider/account fallback is allowed.
+These app-owned commands are distinct from Core history read/share APIs. The full scheduler and
+parked-job plan remains Draft; owner acceptance on 2026-10-31 settles only the bounded D7 design,
+without claiming it implemented or approving unrelated deliverables.
+
 ## Workspace Maintenance Consumer (Owner Decision, 2026-10-29)
 
 A job with application workspace authority and a valid authorizing user's rights can inspect the
@@ -144,8 +170,10 @@ parked continuation; it consumes the same task-execution receipts where work is 
 
 - What persistence/claim mechanism fits one host and separately deployed compatible executors?
 - Which retry classes are safe, and which uncertain effects require reconciliation or human attention?
-- Which provider capabilities support native resume, reconstruction or neither, and what context
-  budget, summary coverage and attachment/checkpoint retention fit each supported path?
+- Beyond the bounded ordinary-chat D7 candidate above, which provider capabilities and retention
+  policies support parked scheduler checkpoints, summaries and attachments? D7's same-provider
+  recovery and default context budget were approved on 2026-10-31; the remaining scheduler design
+  still needs approval before implementing D7 under this broader plan.
 - What are the resource-wait default, missed-schedule policy, cancellation propagation and aggregate budget rules?
 
 ## Verification

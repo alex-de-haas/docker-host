@@ -72,6 +72,69 @@ public sealed class McpHttpTests
     }
 
     [Fact]
+    public async Task CatalogMetadataIsCompleteOnAnEmptyCoreAndRetainsSensitiveReadScopes()
+    {
+        await using var harness = await CoreHttpHarness.StartAsync();
+        var admin = await SeedSessionAsync(harness, "host.admin");
+        using var client = harness.CreateClient();
+        await InitializeAsync(client, admin);
+        var result = await CallAsync(client, admin, "tools/list", new { });
+        var tools = result.GetProperty("tools").EnumerateArray().ToArray();
+        Assert.Equal(CoreMcpCatalog.Tools.Keys.Order(StringComparer.Ordinal),
+            tools.Select(tool => tool.GetProperty("name").GetString()!).Order(StringComparer.Ordinal));
+
+        foreach (var tool in tools)
+        {
+            var name = tool.GetProperty("name").GetString()!;
+            var metadata = tool.GetProperty("_meta").GetProperty(CoreMcpCatalog.MetadataKey);
+            Assert.Equal(1, metadata.GetProperty("schemaVersion").GetInt32());
+            Assert.Equal("hosty:core", metadata.GetProperty("owner").GetString());
+            Assert.Equal(name, metadata.GetProperty("operationId").GetString());
+            Assert.False(string.IsNullOrWhiteSpace(metadata.GetProperty("feature").GetProperty("id").GetString()));
+            Assert.False(string.IsNullOrWhiteSpace(metadata.GetProperty("feature").GetProperty("title").GetString()));
+        }
+        var workspace = tools.Single(tool => tool.GetProperty("name").GetString() == "get_workspace");
+        Assert.True(workspace.GetProperty("annotations").GetProperty("readOnlyHint").GetBoolean());
+        var authority = workspace.GetProperty("_meta").GetProperty(CoreMcpCatalog.MetadataKey).GetProperty("authority");
+        Assert.True(authority.GetProperty("directOnly").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, authority.GetProperty("appPermission").ValueKind);
+        Assert.Contains(authority.GetProperty("directScopes").EnumerateArray(), scope => scope.GetString() == "mcp:workspaces");
+
+        // Metadata remains identical between requests and is not a per-user grant or provider registry.
+        var repeated = await CallAsync(client, admin, "tools/list", new { });
+        Assert.Equal(result.GetRawText(), repeated.GetRawText());
+    }
+
+    [Fact]
+    public async Task AnUnmappedRegisteredReadToolCannotExecuteEvenForAnAdministrator()
+    {
+        var calls = new UnmappedToolCalls();
+        await using var harness = await CoreHttpHarness.StartAsync(configure: services =>
+        {
+            services.AddSingleton(calls);
+            services.AddMcpServer().WithTools<UnmappedTools>();
+        });
+        var admin = await SeedSessionAsync(harness, "host.admin");
+        using var client = harness.CreateClient();
+        await InitializeAsync(client, admin);
+
+        var result = await CallAsync(client, admin, "tools/call", new { name = "unmapped_read", arguments = new { } });
+        Assert.True(result.GetProperty("isError").GetBoolean());
+        Assert.Contains("mcp_tool_unmapped", result.GetProperty("content")[0].GetProperty("text").GetString());
+        Assert.Equal(0, calls.Count);
+    }
+
+    public sealed class UnmappedToolCalls { public int Count { get; set; } }
+
+    [ModelContextProtocol.Server.McpServerToolType]
+    public sealed class UnmappedTools(UnmappedToolCalls calls)
+    {
+        [ModelContextProtocol.Server.McpServerTool(Name = "unmapped_read", ReadOnly = true)]
+        [System.ComponentModel.Description("Read a test-only value without a reviewed Core catalog entry.")]
+        public string Read() { calls.Count++; return "must-not-execute"; }
+    }
+
+    [Fact]
     public async Task SearchesTheAuditAndSaysWhatWindowProducedTheAnswer()
     {
         await using var harness = await CoreHttpHarness.StartAsync();

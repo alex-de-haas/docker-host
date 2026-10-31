@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-10
-updated: 2026-10-29
+updated: 2026-10-31
 summary: Explore a shared app-facing interface for independently provided agents and models, including multi-model providers and structured results.
 components: [apps/core, apps/harness, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -253,6 +253,51 @@ request to replay. [Action Summary D4](../assistant-action-summary/plan.md#deliv
 existing Harness journal's correlated event foundation; [Durable Agent Jobs D7](../durable-agent-jobs/plan.md#deliverables)
 owns common session commands, same-provider continuation and bounded context. Reuse these as the
 Harness adapter's implementation, without requiring independent providers to share its storage.
+
+## Conversation And Execution Identity Clarification (2026-10-30)
+
+The owner accepts the distinction between a user conversation, a provider-native resumable session
+and an execution run. These identities do not require separate user-facing screens. The conversation
+belongs to its consumer application; the provider owns its native state and execution. Core consumes
+a qualified reference and the minimal status/control contract needed for resource coordination,
+without owning a transcript or requiring a chat for independent environment/workspace operations.
+See [Core MCP accepted direction and Q1-Q2](../core-mcp/plan.md#sequence-and-open-decisions) and
+[vision decision 66](../../vision.md).
+
+The subsequent owner clarification selects a common Core-owned history schema and API/MCP for
+sharing/search, with provider-owned original records and declared dynamic extensions. The
+[Conversation History](../conversation-history/plan.md) plan owns that public read/share/search
+contract and indexing compatibility. D2-D3 reuse its qualified conversation references while owning
+execution status/control and native recovery. Common history access does not imply native-state
+portability or access to private provider data. Qdrant integration is explicitly deferred.
+
+D2-D3 must settle the public reference, status/freshness and confirmed-stop contract. D2 must also
+specify native resume versus same-provider/account reconstruction, supported retained context,
+unknown-effect reconciliation and user-visible recovery outcomes. A replacement native session
+need not replace the conversation, but the interface must not promise full reconstruction from a
+bounded UI transcript. Durable Agent Jobs D7 retains the implementation owner for Harness session
+commands/context; no deliverable is duplicated here. Decision 61's exclusion of in-chat provider
+switching remains. The bounded session/recovery choices below were approved on 2026-10-31;
+the broader provider extraction remains Draft.
+
+## Minimal Session Contract Candidate (2026-10-30)
+
+[Core MCP Q1-Q2](../core-mcp/plan.md#q1-qualified-references-and-provider-resolved-status) supplies the
+approved `agent-sessions` v1 contract (owner acceptance 2026-10-31): installation-qualified refs; provider-resolved list/get;
+run status with freshness and confirmed stop; idempotent cancel and metadata SSE; dedicated read/
+control grants. This is a narrow observation/control profile, not the full `providers.agent`
+invocation contract. Current Harness can provide it before native runner extraction. D2-D3 consume
+its identities and authority rules instead of requiring a new Core registry of private sessions.
+
+Native resume is automatic for the same installation/connection/account; reconstruction is an
+explicit, bounded recovery action retaining the same conversation, with verified prior stop,
+resource revalidation and no replay of historical tool effects. Durable Agent Jobs D7 remains its
+implementation owner. Common history projections and sharing/search are owned by Conversation
+History, and neither require native-state portability nor change the provider-switching exclusion.
+
+Owner acceptance of these bounded profiles on 2026-10-31 settles their contract decisions only. The full generation API,
+independent provider extraction and broader D1-D6 acceptance retain the review/implementation
+requirements above; do not mark this entire provider plan Ready from a history/MCP approval alone.
 
 ## Optional Usage Reporting Coordination (2026-10-28)
 

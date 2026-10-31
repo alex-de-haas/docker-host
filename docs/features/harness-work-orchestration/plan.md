@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-26
-updated: 2026-10-29
+updated: 2026-10-30
 summary: Deferred Harness task decomposition, hierarchy, artifact and decision integration, parked continuation and selected cross-session context access.
 components: [apps/harness]
 ---
@@ -70,6 +70,13 @@ attachments or credentials. Revalidate current access on reconnect, reads and ac
 derived summaries; revoked access must not persist through cached results. Sharing an entire
 conversation needs its own selected contract rather than being implied by this transfer.
 These are material/session boundaries, not a new per-profile permission system.
+
+Owner clarification, 2026-10-30: [Conversation History](../conversation-history/plan.md) now owns
+Core's common history schema and API/MCP for explicitly authorized sharing/search. D7 consumes its
+history access and source references for orchestration UI/context selection instead of defining a
+second history contract. Exact whole-conversation/excerpt and live-reference/snapshot semantics
+remain in that plan's D2. Private-by-default access and the exclusion of in-chat provider switching
+remain; a common API is not blanket transcript sharing. Qdrant integration is deferred.
 
 ## Dependencies And Ownership
 

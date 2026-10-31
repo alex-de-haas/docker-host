@@ -1,7 +1,7 @@
 ---
-status: Draft
+status: Ready
 created: 2026-10-16
-updated: 2026-10-29
+updated: 2026-10-31
 summary: Support privileged external agents through convenient managed sandbox operations and factual reconciliation of Git and publication actions.
 components: [apps/core]
 ---
@@ -10,12 +10,13 @@ components: [apps/core]
 
 ## Recovery And Current Baseline (2026-10-18)
 
-This is a recovered Draft, not the earlier completed plan at this path. Its local D1-D6 labels
+This plan was recovered as a Draft, separately from the earlier completed plan at this path. Its local D1-D6 labels
 collided with retired deliverables; they are recorded here as D7-D12 respectively. The current
 workspace API already links external PRs and exposes authorized provider observations. Sandbox
 and child Core services, Harness integration and unified ordinary-app dev mode have also shipped.
 The remaining proposal concerns direct-client adapters and broader reconciliation acceptance,
-not reimplementation of those services. Re-verify gaps before promoting implementation to Ready.
+not reimplementation of those services. The owner approved its direct-client contract on
+2026-10-31; verify current gaps as each adapter is implemented.
 The normal workflow now uses registered worktrees and sandbox preview. Live-data dev mode remains
 a separately authorized operation, and a privileged external client's native actions remain facts
 to observe rather than evidence of a Core-executed mutation.
@@ -29,8 +30,32 @@ Core. Source-based execution remains. Removing native localCommand, arbitrary ov
 current installed-app dev workflow is conditional on later acceptance and a separate migration
 decision owned by [Development Controls D1](../app-development-controls/plan.md#deliverables).
 
-This Draft records missing client integration; it does not approve implementation or change the
-shipped child Core service in [Sandbox](../app-sandbox-runtimes/feature.md).
+The owner approved the direct-client contract and requested implementation on 2026-10-31. D7 is
+complete and this plan is Ready. Reuse the shipped child Core service in
+[Sandbox](../app-sandbox-runtimes/feature.md); no live-data dev trial or remote publication is implied.
+
+## Canonical Core MCP Coordination (2026-10-30)
+
+The owner requested a review of platform capabilities exposed only through Harness development
+MCP. [Core MCP Capability Boundaries](../core-mcp/plan.md) records the verified boundary and owns
+canonical catalog metadata, cross-client dispatch consistency, Harness migration and feature-based
+settings. This plan retains D7-D9 for direct environment/publication authority and adapters, and
+D10/D12 for external acceptance and reconciliation; no deliverable is transferred or duplicated.
+
+D8 targets the shipped child Core environment service. The legacy app-specific sandbox tools have
+been retired; do not recreate them to satisfy older sandbox wording here. Existing Core HTTP services
+already own lifecycle, storage, consent and recovery. The missing direct MCP adapter must work
+without a Harness installation or conversation and must preserve distinct environment/publication
+authority rather than widening the existing workspace scope. Coordinate the canonical inputs,
+results and caller mapping with the approved Core MCP D1-D3 contract.
+
+The owner subsequently confirms independent environment identity/lifetime and Core-owned access and
+lifecycle. [Core MCP Q3-Q4](../core-mcp/plan.md#sequence-and-open-decisions) record the approved access
+and consumer/cleanup decisions. D7 must specify direct-client ownership, any explicitly shared
+cross-application access, permission scopes, revocation and migration of existing caller-bound
+resources. D8/D10 must preserve consumer coordination and exact-request recovery. A conversation
+association is optional context; closing a chat is not implicit authority to Stop or Finish its
+resources. This direction does not silently grant every agent access to an existing environment.
 
 ## Usage And Trust Clarification (2026-10-16)
 
@@ -105,20 +130,62 @@ publication authority still apply even when Git/provider facts were produced out
 
 ## Deliverables
 
-- [ ] D7. Define the direct external-client sandbox/publication authority, owner binding, supported operations, credential/revocation rules and compatibility with existing workspace grants; obtain approval before implementation.
+- [x] D7. Define the direct external-client sandbox/publication authority, owner binding, supported operations, credential/revocation rules and compatibility with existing workspace grants; obtain approval before implementation.
 - [ ] D8. Adapt the existing Core sandbox service to the approved direct-client contract, including owned input selection, operation replay, readiness, preview/test evidence and disposal, with a documented ordinary-use sequence and actionable errors, without requiring Harness or rewriting installed-app source.
 - [ ] D9. Adapt existing Core publication and CI/review/completion services to approved external owners and provider connections, preserving repository authority, exact-head checks and replay/observation behavior without native-CLI credential workarounds.
 - [ ] D10. Verify an external-client journey across same-repository apps and an additional dependency repository, browser testing, PR correction, CI/review, reconnect/revocation and consumer-aware cleanup; compose with the development-session umbrella acceptance.
 - [ ] D11. Update the external-agent setup/workflow and current feature documentation, bump affected implementation artifacts, remove this plan and regenerate the index when all deliverables pass.
 - [ ] D12. Verify and complete reconciliation of native edits/commits/pushes and externally created PRs for external workspace owners, using Git and authorized provider facts with verified discovery/linking, observation freshness and honest unknown states; preserve audit attribution, replay and cleanup guards.
 
-## Open Questions
+## Candidate Direct-Client Contract (2026-10-30)
 
-- Which separately reviewed scopes and consent surface cover sandbox and publication operations?
-  Reuse [execution authorization](../assistant-execution-authorization/plan.md) where applicable
-  without making its broader future execution model an unexamined prerequisite.
-- Which client/host combination demonstrates the first full external journey, and what source,
-  recipe and dependency cases establish parity before considering retirement of existing controls?
+Use [Core MCP Q3-Q4](../core-mcp/plan.md#q3-environment-and-publication-authority) as the approved
+scope/owner/lifecycle contract for D7-D9. It reuses management inspect/operate across creating apps
+for the same current administrator, keeps legacy creator-scoped routes intact, separates child API
+and publication authority, and requires consumer stop evidence before destructive resource cleanup.
+No per-chat ACL or fabricated installed-assistant identity is introduced. New scopes are Core-only,
+reviewed explicitly and never inferred from mcp:workspaces or an MCP read-only annotation.
+
+Environment calls use the existing /api/core-environments services with explicit direct credential
+dispatch; canonical MCP keeps environment_* names and the existing resource/revision/request inputs.
+Retain resource/operation identities and current consent; broadened access requires its reviewed
+grant. Optional Context references are attribution, not allocation/authority prerequisites.
+
+Add a direct neutral publication adapter under /api/publications/v1:
+
+| Route | Input / existing domain behavior |
+| --- | --- |
+| POST /query | workspaceId or explicit worktreeIds and bounded filters; visible retained publications. |
+| POST /connections | workspaceId/worktreeId; the acting user's compatible provider connections, no credentials. |
+| POST /get | worktreeId and recorded publication reference; fresh observation or explicit unavailable. |
+| POST /commands/{kind} | worktreeId, existing PublicationCommand fields including original UUID/expectedHead and explicit connection binding; existing publication/review service and receipt. |
+
+The direct adapter normalizes to an authenticated actor, never a synthetic session. Distinguish
+local metadata/source mutation from remote publication: remote-status/connections/PR observation
+requires publication-read; source fetch/connect and local commit require workspace/source authority;
+remote pushes, PR creation/updates/review writes and merge additionally require publication-write.
+Existing domain validation determines applicable head/revision/repository/author fields for each
+kind. Core MCP's exhaustive map keeps the public tool names and legacy adapters consistent.
+
+The first full external acceptance fixture is local macOS arm64 with a direct OAuth client, a
+registered repository with two declared apps sharing a worktree, a second authorized dependency
+repository, and a Core-managed child using Docker app services. Include current/release and
+registered-source Core selection, native edits, publication receipts, lost replies and revocation.
+Use an unrelated app ID for the second authorized consumer. Runtime readiness, normal browser
+setup/login and owned resource removal must be observed. A provider test fixture verifies denied
+and replayed publication; actual remote mutation requires a separately authorized disposable test
+repository. Lack of that authority is a named acceptance blocker, not a simulated pass.
+
+No retirement of native/system execution or existing controls follows from this fixture. Other
+host-matrix acceptance retains its existing sandbox-plan deliverables. D12 verifies facts from
+native/external actions rather than claiming they were Core-mediated.
+
+## Approval Status
+
+The owner accepted the complete linked candidate on 2026-10-31 and requested implementation.
+D7 is complete and this plan is Ready. D8-D12 retain their full work and verification. Approval
+does not claim existing sandbox/publication adapters, authorize live mutation, or complete the
+broader execution-authorization plan.
 
 ## Verification And Dependencies
 
