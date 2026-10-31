@@ -1,6 +1,6 @@
 ---
 created: 2026-10-20
-updated: 2026-10-30
+updated: 2026-10-31
 summary: Affected component CI, explicit local integration checks and publication of verified main revisions.
 components: [.github, scripts]
 ---
@@ -62,8 +62,10 @@ npm run test:integration -- windows
 npm run test:integration -- transport
 npm run test:integration -- worker
 npm run test:integration -- sessions
+npm run test:integration -- pull-requests
 npm run test:integration -- tasks
 npm run test:integration -- harness-local
+npm run test:integration -- feedback
 npm run test:integration -- whisper
 npm run test:integration -- opus
 npm run test:integration -- desktop
@@ -82,14 +84,16 @@ GitHub Actions. Its small command-construction tests remain in the CI policy job
 | Suite | Preparation and local behavior |
 | --- | --- |
 | activation | Requires .NET, Git, Python and Docker; builds Core/CLI and runs Return plus detached-helper recovery in parent-owned isolated Core environments. |
-| windows | Requires Windows, Git and .NET; runs the focused process/path/document/storage Core tests and CLI shared-receipt tests. Other operating systems receive an explicit refusal. |
+| windows | Requires Windows, Git and .NET; runs the focused process/path/document/storage Core tests, workspace deletion regressions and CLI shared-receipt tests. Other operating systems receive an explicit refusal. |
 | dependencies | Requires .NET, Python and Docker; builds Core/CLI and checks dependency waits, recovery, cancellation and boot in a parent-owned isolated Core. |
 | skills | Requires .NET, Git, Python and Docker; builds Core/CLI, verifies selected public Git imports, table/JSON output, exports and atomic failures in a parent-owned child Core, then probes the requested awesome-copilot package and Finishes the child. |
 | transport | Requires .NET, Python and Docker; builds Core and runs its isolated real-Docker listener/transport fixture. |
 | worker | Requires Docker; builds the worker image named by the current manifest and runs its process/mount/control fixtures. |
 | shell | Requires .NET, Git, Python and Docker; builds Shell and verifies password identity and workspace inventory in a managed child Core. `HOSTY_SHELL_BROWSER_REVIEW` names a private temporary browser checkpoint; its `.continue` marker resumes Finish cleanup. |
 | harness-local | Requires Node/npm, .NET, Git, Python and Docker for the parent-managed child Core; verifies native production cold/warm startup, password/app identity, compiled assets, recovery and Finish cleanup. |
+| feedback | Requires the harness-local prerequisites and Playwright Chromium; verifies annotated capture/drafts, one reviewed batch, exact-prompt outcomes, partial repeat, workspace retention and Finish cleanup. See [feedback acceptance](../app-feedback-inbox/feature.md#testing-expectations). |
 | tasks | Requires .NET, Git, Python and Docker; builds Core/CLI and Harness images, verifies human/profile/independent-provider tasks, explicit MCP results, cancellation, existing workspaces and restart in a managed child Core. `HOSTY_TASKS_BROWSER=1` adds the Playwright browser journey. |
+| pull-requests | Requires .NET, Git, Python and Docker; uses a test-only provider executable in a parent-managed child Core to verify installed repositories, PR reads, scoped SSE, access isolation and Finish cleanup. |
 | sessions | Requires .NET, Git, Python and Docker; builds Core/CLI and both Harness images, then runs multi-user workspace acceptance in a parent-managed child Core with separate password-authenticated users and data. |
 | opus | Requires Node 24 and uv; builds the app, verifies real OPUS-MT Big inference, cancellation and model-cache reuse/recovery. `HOSTY_OPUS_TEST_CACHE` reuses a dedicated cache. |
 | whisper | Requires .NET; explicitly enables only NativeSpeechTests, including pinned-model download and real CPU inference. `HOSTY_WHISPER_TEST_CACHE` can reuse a verified cache. |
@@ -113,6 +117,13 @@ integration uses isolated data, normal setup/login and the supported Core-manage
 ## Publication
 
 Image and native-release workflows react to completed main push CI and validate its exact source identity before selecting an affected artifact from that CI run's saved selection manifest. Retained format-1 manifests from before local integration separation remain readable: only the five known retired profiles are accepted, with consistent required membership and no duplicates; current CI still rejects those profiles. Publication does not recompute a smaller last-commit diff that could omit earlier changes in a multi-commit push. Failed, cancelled and non-push runs cannot authorize automatic publication. Unrelated image publication runs are short no-ops, avoiding idle publication runners during ordinary CI. The two SDK workflows retain their path-filtered push triggers and wait for the exact main result: their trusted-publisher execution and automatic provenance stay tied to the package source revision.
+
+The publication gate allows up to two minutes, within its existing overall deadline, for a
+successful run's exact-attempt `ci-required` job to appear or finish in GitHub's jobs API.
+Each retry revalidates the run and attempt; it never publishes from the workflow conclusion alone.
+Duplicate required jobs, terminal non-success results, malformed responses and API errors fail
+immediately. Automatic publication also rejects a concurrent CI rerun instead of waiting for a
+different attempt. Pending and timeout messages include the observed job count/status/conclusion.
 
 Core/CLI publication also checks for native changes since the last completed `cli-dev` release when
 the successful push's own manifest selects no native component. It compares the validated source
@@ -194,7 +205,7 @@ three invited/password-authenticated users in a parent-managed child Core. See
 - Policy tests cover affected/shared/unknown inputs, semantic version metadata, deleted/renamed paths, exact source resolution and exclusion of local runtime suites from every CI selection.
 - Local launcher tests cover explicit selection, prerequisite and command failures, unsupported platforms, shell-free arguments, native inference opt-in and side-effect-free previews.
 - Gate tests cover failed classification, missing/cancelled/failed/required-skipped jobs, workflow coverage and bounded process startup for large changesets without weakening required results.
-- Publication tests cover exact main identity, stale source, current run attempts, failed or missing CI, complete verified artifact consumption, and required signing identity/source/workflow fields.
+- Publication tests cover exact main identity, stale source, current run attempts, delayed required-job evidence and its bounded timeout, failed or missing CI, complete verified artifact consumption, and required signing identity/source/workflow fields.
 - Native recovery tests cover cumulative unpublished changes, legacy/missing receipts, unchanged releases, renamed/shared paths, truncated comparisons, API failures and failure before the completion receipt is written.
 - GitHub Actions syntax and composite shell scripts are linted; docs/index and version checks run on every PR.
 - Hosted operating-system and publication results are reported separately from local static/unit validation. Branch protection migrates only after a successful hosted aggregate.

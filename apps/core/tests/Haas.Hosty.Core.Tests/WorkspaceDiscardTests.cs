@@ -18,7 +18,9 @@ public sealed partial class CoreLifecycleServiceTests
 
     private static async Task<DiscardFixture> DiscardFixtureAsync(bool external = false, LocalCommandProcessRegistry? processes = null)
     {
-        var (f, origin) = await SourceFixtureAsync();
+        // Linked-worktree Git metadata also includes the allocation ID; Windows fixtures
+        // need the existing short-root option before they can exercise physical cleanup.
+        var (f, origin) = await SourceFixtureAsync(shortPaths: true);
         var service = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock, processes);
         var owner = external ? ExternalOwner() : WorkspaceTestOwner(f);
         var input = (external ? ExternalPrepare() : WorkspaceRequest()) with { Name = "Unwanted test work" };

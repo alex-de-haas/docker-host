@@ -432,14 +432,14 @@ internal sealed partial class DevelopmentWorkspaceService
                             else await ValidateTree(tree, ct);
                             var fresh = journal.Direct ? null : await InspectDiscardTree(tree, ct);
                             if (fresh is not null && (fresh.Head != reviewed.Head || fresh.Fingerprint != reviewed.Fingerprint)) throw Error("discard_review_changed", "Source changed before physical removal. Prepare a fresh removal review.");
-                            if (journal.Direct) Directory.Delete(tree.Path, recursive: true);
+                            if (journal.Direct) CoreOwnedDirectoryCleanup.Delete(tree.Path, ct);
                             else await Git(RepoPath(tree.RepositoryId), ["worktree", "remove", "--force", "--force", tree.Path], ct);
                         }
                         else if (PathEntryExists(tree.Path)) throw Error("ownership_invalid", "The source path was replaced with a link or unexpected entry.");
                         if (journal.Direct)
                         {
-                            var registrations = await Git(RepoPath(tree.RepositoryId), ["worktree", "list", "--porcelain"], ct);
-                            if (registrations.StandardOutput.Split('\n').Contains("worktree " + tree.Path))
+                            var registrations = await Git(RepoPath(tree.RepositoryId), ["worktree", "list", "--porcelain", "-z"], ct);
+                            if (GitWorktreeRegistrations.Contains(registrations.StandardOutput, tree.Path))
                                 await Git(RepoPath(tree.RepositoryId), ["worktree", "remove", "--force", "--force", tree.Path], ct);
                         }
                         var reference = "refs/heads/" + tree.Branch;
@@ -450,8 +450,8 @@ internal sealed partial class DevelopmentWorkspaceService
                         {
                             var head = branch.StandardOutput.Split(' ')[0];
                             if (!journal.Direct && head != reviewed.Head) throw Error("stale_head", "The workspace branch changed and was preserved.");
-                            var registrations = await Git(RepoPath(tree.RepositoryId), ["worktree", "list", "--porcelain"], ct);
-                            if (registrations.StandardOutput.Split('\n').Any(line => line == "worktree " + tree.Path || line == "branch " + reference))
+                            var registrations = await Git(RepoPath(tree.RepositoryId), ["worktree", "list", "--porcelain", "-z"], ct);
+                            if (GitWorktreeRegistrations.Contains(registrations.StandardOutput, tree.Path, reference))
                                 throw Error("in_use", "The workspace still has a Git registration.");
                             await Git(RepoPath(tree.RepositoryId), ["update-ref", "--no-deref", "-d", reference, head], ct);
                         }
@@ -475,7 +475,7 @@ internal sealed partial class DevelopmentWorkspaceService
                 await RequireDiscardReviewUnderOwnerLock(owner, journal, ex.Message);
                 throw;
             }
-            catch (Exception ex) when (ex is AppLifecycleException or IOException or OperationCanceledException)
+            catch (Exception ex) when (ex is AppLifecycleException or IOException or UnauthorizedAccessException or OperationCanceledException)
             {
                 await SaveDiscardAsync(journal with { Error = ex.Message });
                 throw;
@@ -495,8 +495,8 @@ internal sealed partial class DevelopmentWorkspaceService
                 if (!result.Direct) await CheckDiscardConsumers(tree, [], ct);
                 var branch = await Git(RepoPath(tree.RepositoryId), ["show-ref", "--verify", "--quiet", "refs/heads/" + tree.Branch], ct, true);
                 if (branch.ExitCode != 1) throw Error("cleanup_pending", "The private branch is present or cannot be verified.");
-                var registrations = await Git(RepoPath(tree.RepositoryId), ["worktree", "list", "--porcelain"], ct);
-                if (registrations.StandardOutput.Split('\n').Any(line => line == "worktree " + tree.Path || line == "branch refs/heads/" + tree.Branch))
+                var registrations = await Git(RepoPath(tree.RepositoryId), ["worktree", "list", "--porcelain", "-z"], ct);
+                if (GitWorktreeRegistrations.Contains(registrations.StandardOutput, tree.Path, "refs/heads/" + tree.Branch))
                     throw Error("cleanup_pending", "A Git worktree registration remains.");
             }
         }

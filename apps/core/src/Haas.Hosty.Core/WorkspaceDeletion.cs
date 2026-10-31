@@ -149,9 +149,8 @@ internal sealed partial class DevelopmentWorkspaceService
                 {
                     var branch = await Git(repo, ["show-ref", "--verify", "--quiet", "refs/heads/" + tree.Branch], ct, true);
                     if (branch.ExitCode != 1) throw Error("cleanup_pending", "Workspace branch is present or cannot be verified.");
-                    var registrations = await Git(repo, ["worktree", "list", "--porcelain"], ct);
-                    if (registrations.StandardOutput.Split('\n').Any(line => line == "worktree " + tree.Path
-                        || line == "branch refs/heads/" + tree.Branch))
+                    var registrations = await Git(repo, ["worktree", "list", "--porcelain", "-z"], ct);
+                    if (GitWorktreeRegistrations.Contains(registrations.StandardOutput, tree.Path, "refs/heads/" + tree.Branch))
                         throw Error("cleanup_pending", "Workspace still has a Git registration.");
                 }
             }
@@ -172,6 +171,7 @@ internal sealed partial class DevelopmentWorkspaceService
                 var job = await JsonStorage.ReadAsync<WorkspaceCleanupJob>(path, ct);
                 if (job?.WorkspaceId == id && job.UserId == owner.UserId) DeleteMetadata(path);
             }
+            await new FeedbackStore(paths, clock).DeleteWorkspaceAsync(id, ct);
             await RetireParticipationAsync(id, ct);
             DeleteMetadata(MetadataPath(owner));
             DeleteMetadata(WorkflowPath(owner));

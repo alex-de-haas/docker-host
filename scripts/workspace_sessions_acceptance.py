@@ -204,8 +204,8 @@ def check(context):
     third = owner.harness('/workspace-sessions', {'requestId': str(uuid.uuid4()), 'workspaceId': workspace_id, 'expectedRevision': state['revision']})
     assert next(row for row in action(owner, third, 'list')['workspaces'] if row['id'] == tree['id'])['path'] == str(source)
     say('PASS: all-workspace access survives creator-chat deletion; deleting both chats preserves dirty source; sessionless workspace accepts a new idle chat')
-    # External work has no participant roster. Pause must still reach Core's lease checks,
-    # and recovering a verified stopped fixture lease must finish the original request.
+    # External allocation can host private assistant sessions without becoming a synthetic chat.
+    # Pause must still retain the independent external lease until its verified recovery.
     development = request('/api/core/development')
     external_source = request('/api/core/source', {'revision': development['source']['revision'], 'overridePath': None,
         'repository': {'repositoryUrl': context['repository'], 'ref': 'main', 'projectPath': context['project'], 'connectionId': None}}, method='PUT', confirm_settings=True)
@@ -215,6 +215,41 @@ def check(context):
     external_path = '/development-workspaces/'+external['workspaceId']
     external_file = pathlib.Path(external['path'])/'retained-pause.txt'
     external_file.write_text('unfinished external work\n')
+    external_participants = external_path+'/participants'
+    state = owner.harness(external_participants)
+    assert state['sessions'] == []
+    def external_session(browser, title):
+        state = browser.harness(external_participants)
+        command = {'requestId': str(uuid.uuid4()), 'workspaceId': external['workspaceId'], 'expectedRevision': state['revision']}
+        session = browser.harness('/workspace-sessions', command)
+        assert browser.harness('/workspace-sessions', command)['id'] == session['id']
+        assert session['status'] == 'idle'
+        browser.harness('/sessions/'+session['id'], {'title': title}, method='PATCH')
+        shared = action(browser, session, 'list')['workspaces']
+        assert len(shared) == 1 and shared[0]['id'] == external['id']
+        assert shared[0]['path'] == external['path'] and shared[0]['branch'] == external['branch']
+        assert lease in shared[0]['leases']
+        return session
+    internal_first = external_session(owner, 'External implementation')
+    internal_second = external_session(owner, 'External review')
+    internal_foreign = external_session(member, 'Private external review')
+    aggregate = next(w for w in owner.harness('/development-workspaces')['workspaces'] if w['id'] == external['workspaceId'])
+    assert aggregate['owner']['kind'] == 'external'
+    roster = aggregate['participation']['sessions']
+    assert len(roster) == 3 and sum(s['canOpen'] for s in roster) == 2
+    assert all(not s['canOpen'] and not s.get('viewerPath') for s in roster if s['userId'] == member.user)
+    member.harness('/sessions/'+internal_first['id'], expected=404)
+    owner.harness('/sessions/'+internal_foreign['id'], expected=404)
+    assert 'unfinished external work' in action(owner, internal_first, 'diff', workspaceId=external['id'], path=external_file.name)['combined']
+    state = owner.harness(external_participants)
+    action(owner, internal_first, 'detach', workspaceId=external['workspaceId'], requestId=str(uuid.uuid4()), expectedRevision=state['revision'])
+    assert action(owner, internal_first, 'list')['workspaces'] == []
+    owner.harness('/sessions/'+internal_second['id'], method='DELETE')
+    assert action(member, internal_foreign, 'list')['workspaces'][0]['path'] == external['path']
+    member.harness('/sessions/'+internal_foreign['id'], method='DELETE')
+    assert external_file.read_text() == 'unfinished external work\n'
+    assert lease in owner.harness(external_path+'/worktrees/'+external['id'])['leases']
+    say('PASS: external allocation hosts independent idle chats; exact creation replay, shared dirty source, private routes and detach/delete preserve external lease and source')
     workflow = owner.harness(external_path+'/workflow')
     pause = {'requestId': str(uuid.uuid4()), 'expectedRevision': workflow['revision']}
     refusal = owner.harness(external_path+'/workflow/pause', pause, expected=409)
@@ -261,7 +296,10 @@ def check(context):
         external = request('/api/core/source/workspaces', {'requestId': str(uuid.uuid4()), 'taskId': 'navigation-external-fixture', 'leaseId': external_lease,
             'sourceRevision': source_settings['revision'], 'targetBranch': 'main', 'label': 'External checkout', 'principalLabel': 'Navigation acceptance'})
         (pathlib.Path(external['path'])/'delete-ui-fixture.txt').write_text('Disposable unfinished source for Delete UI acceptance.\n')
-        shell_manifest = workspace/'apps/shell/manifest.json'
+        shell = json.loads((workspace/'apps/shell/manifest.json').read_text())
+        shell['services'][0]['runtimes']['docker']['image'] = 'hosty-shell-acceptance:local'
+        shell_manifest = base/'shell-manifest.json'
+        shell_manifest.write_text(json.dumps(shell))
         run([cli, '--data-root', root, 'apps', 'install', shell_manifest, '--runtime', 'docker', '--no-autostart'])
         run([cli, '--data-root', root, 'apps', 'start', 'hosty.shell'])
         wait_for(lambda: request('/api/apps/hosty.shell/health')['status'] == 'healthy', 120)

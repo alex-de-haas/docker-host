@@ -3901,6 +3901,8 @@ internal sealed class RuntimeAppUiSurfaceManifest
 
 internal sealed class RuntimeAppUiNavigationItemManifest
 {
+    // Declares the standard ?feedback=<report-id> review intent; opening never dispatches work.
+    public bool FeedbackReview { get; init; }
     public string? Label { get; init; }
     public string? Path { get; init; }
     public string? Endpoint { get; init; }

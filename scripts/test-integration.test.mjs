@@ -22,6 +22,7 @@ test('unsupported Windows acceptance refuses before any process starts', () => {
   const plan = suitePlan('windows', { platform: 'win32' });
   assert.equal(plan.steps.length, 2);
   assert.match(plan.steps[0].args.at(-1), /WindowsProcessControlTests/);
+  assert.match(plan.steps[0].args.at(-1), /WorkspaceDelete_/);
   assert.match(plan.steps[1].args.at(-1), /SharedReceiptSharingTests/);
 });
 
@@ -127,4 +128,11 @@ test('observability builds all affected images and uses the managed child fixtur
   const plan = suitePlan('observability');
   assert.equal(plan.steps.filter(step => step.file === 'docker' && step.args[0] === 'build').length, 3);
   assert.deepEqual(plan.steps.at(-1).args, ['scripts/check-workspace-activation.py', '.', 'observability', '--managed']);
+});
+
+
+test('feedback uses native Harness and managed Core with browser acceptance', () => {
+  const plan = suitePlan('feedback', { platform: 'darwin' });
+  assert.deepEqual(plan.steps[2].args, ['scripts/check-workspace-activation.py', '.', 'feedback', '--managed']);
+  assert.equal(plan.steps.some(step => step.bin === 'docker' && step.args.includes('build')), false);
 });

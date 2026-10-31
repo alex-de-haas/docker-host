@@ -229,7 +229,7 @@ Decisions 1–5: 2026-08-19.
     own reviewed observation directly. Submission alone starts no agent and grants no source access;
     feedback items are input to sessions, not a second development task model. The capture mechanism,
     narrow user-facing authority, durable evidence and triage UX remain Draft work owned by
-    [app feedback inbox](features/app-feedback-inbox/plan.md).
+    [app feedback inbox](features/app-feedback-inbox/feature.md).
 
 12. **Dedicated native Harness client (2026-09-25).** Build a separate Swift client focused on
     Hosty Harness sessions over AHP, including remote conversation, permission/question requests,
@@ -536,7 +536,8 @@ Decisions 1–5: 2026-08-19.
     session or explicitly let the assistant organize it into several tasks/sessions. Independent
     repositories can proceed in parallel; independent changes to one repository may use separate
     worktrees/PRs with overlap/merge-order handling. Every item keeps provenance and partial outcomes.
-    [Feedback Inbox](features/app-feedback-inbox/plan.md) owns intake/grouping/dispatch integration;
+    Decision 66 narrows the first delivery to manual one-session dispatch; automatic grouping is
+    deferred exploration. [Feedback Inbox](features/app-feedback-inbox/feature.md) owns intake/dispatch;
     [Durable Agent Jobs](features/durable-agent-jobs/plan.md) retains general
     execution/delegation. Feedback remains optional for the local demonstration, and neither
     reporting nor approval alone launches an agent or grants source access.
@@ -1191,7 +1192,43 @@ Decisions 1–5: 2026-08-19.
     approved the initial external-server adapter for implementation on the same date. Separate
     application extraction remains Draft; no live runtime switch is authorized.
 
-66. **Canonical platform MCP and provider-owned tasks (2026-10-30).**
+66. **Core feedback records, SDK annotations and Harness triage (2026-10-30).** Refine
+    decisions 11 and 37: one report can contain several related element/region annotations, comments
+    and images explaining one problem. Preserve reports as units when selecting a dispatch batch.
+    Core owns submitted reports, evidence and trusted current app/runtime context; SDK owns capture
+    and browser-local unsent drafts. Harness initially hosts a global Feedback page and a
+    workspace-details section. No separate feedback application or development UI extraction is required. Core remains client-neutral;
+    reporting does not require administrator-only Harness.
+    Workspace dispatch proposes the currently displayed chat, previews reports and any instruction,
+    and runs only after confirmation. Global dispatch defaults to a new session that normally
+    prepares a new workspace; an explicitly selected existing workspace/chat is also valid.
+    Observed origin and work destination remain distinct. Take available current context from Core
+    at first submission acceptance, with unknown fields and an update-time mismatch allowed; exact
+    served-build tracking is not required. Preserve this snapshot on retries. Unsent text and image
+    drafts survive reload in browser storage (IndexedDB is the selected technical default), and
+    remain until confirmed acceptance or explicit discard. Retry uses the same submission identity
+    to avoid duplicates. Permissions, capture feasibility and remaining visual details belong to
+    [Feedback Inbox](features/app-feedback-inbox/feature.md). The selected capture interaction places
+    comment entry beside the element and also permits editing the same annotation in the side panel.
+
+    The owner further limits this delivery to manually selected reports sent to one session.
+    Ordinary reporters get draft/submission feedback only, with no post-submission view, status or
+    notifications; administrators inspect records in Harness. Busy-chat sends are simply refused
+    with the selection preserved, without queuing or automatic retry. Address all excludes reports
+    already processed or accepted/in progress. A processing indication follows the exact dispatched
+    prompt and its per-report outcome. There is no separate Closed state. Retain processed reports
+    and screenshots for explicit Send again with additional explanations and a new attempt history.
+    Each report has zero or one current workspace binding; reassignment replaces it while preserving
+    the observed app version/context. Workspace deletion removes currently processed reports and
+    their evidence, but detaches every other report intact into the unassigned inbox. A historical
+    origin/dispatch reference is not another binding. PR state and app rollout neither gate
+    processing nor trigger deletion. Browser screenshots use Screen Capture API with user permission;
+    no DOM-renderer workaround is included. Automated pickup, multi-agent routing and possible
+    reporter access remain [ideas](ideas.md#i19-feedback-follow-up-and-automated-handling).
+    Feedback has no task association or task creation. The owner subsequently approved implementation
+    on October 30; the feature document records the delivered manual flow. Automatic agent triggers remain outside this scope.
+
+67. **Canonical platform MCP and provider-owned tasks (2026-10-30).**
     The owner requests a review of platform operations exposed through Harness development MCP,
     especially child Core environment lifecycle. Standard platform operations belong in Core MCP
     and must be usable without a Harness conversation. Core already owns environment and publication
@@ -1226,7 +1263,7 @@ Decisions 1–5: 2026-08-19.
     retains direct environment/publication authority and acceptance. Both plans remain Draft;
     this direction does not approve unresolved contracts, implementation or a live runtime switch.
 
-67. **Common history contracts with provider-owned detail and future indexing (2026-10-30).**
+68. **Common history contracts with provider-owned detail and future indexing (2026-10-30).**
     The owner selects a common Core-owned interface for conversations, messages and history,
     exposed through API and MCP for explicit sharing, cross-chat search and an independent indexer.
     Core defines the exchange contract and authority; Harness and other history providers retain
@@ -1234,7 +1271,7 @@ Decisions 1–5: 2026-08-19.
     events and declared, namespaced/versioned extensions accommodate tool input/output, timings,
     usage and dynamic provider data without requiring every assistant to support every capability.
 
-    This extends decision 66 beyond minimal references/status: shared history reads/search are now
+    This extends decision 67 beyond minimal references/status: shared history reads/search are now
     an intended platform capability. It does not select a central Core transcript database, expose
     all private native state or restore decision 61's abandoned in-chat provider switching. Sharing
     remains explicit and authorized; workspace membership or an index is not a transcript grant.
@@ -1253,7 +1290,7 @@ Decisions 1–5: 2026-08-19.
     broader knowledge search. Detailed contracts remain Draft; this is direction approval, not
     implementation, database installation or publication authorization.
 
-68. **Core MCP, history and direct-client v1 contracts approved (2026-10-31).**
+69. **Core MCP, history and direct-client v1 contracts approved (2026-10-31).**
     The owner explicitly accepts the concrete candidate contracts proposed under decisions 66-67,
     requests recording the decisions, promotes the corresponding plans to Ready, and authorizes
     beginning implementation. This supersedes their earlier pending-contract wording: qualified

@@ -1,6 +1,6 @@
 ---
 created: 2026-10-08
-updated: 2026-10-29
+updated: 2026-10-30
 summary: SDK-owned React overlay combines session and required-permission readiness, hides blocked content and preserves same-user state through recovery.
 components: [packages/app-sdk, apps/shell, apps/marketplace, apps/documents, apps/demo-app, apps/harness, apps/telemetry-ui]
 ---
@@ -117,7 +117,7 @@ continuous sessions; older Core retains its fixed activity deadline. The optiona
 slot exposes explicitly public/local UI during an outage outside the protected root. See
 [session lifecycle](../auth-session-lifecycle/feature.md) and [activity window](../app-activity-window/feature.md).
 Element picking, screenshots and assistant evidence belong to
-[App Feedback Inbox](../app-feedback-inbox/plan.md), separately from this overlay.
+[App Feedback Inbox](../app-feedback-inbox/feature.md), separately from this overlay.
 
 ## Shared Panel Composition
 

@@ -280,6 +280,8 @@ try:
     if managed:
         parent = (root, origin, jar, browser, csrf)
         environment_request = {'requestId':str(uuid.uuid4()), 'label':'Workspace activation acceptance', 'mode':'source', 'projectPath':str(workspace/project)}
+        if scenario == 'pull-requests':
+            environment_request['projectPath'] = str(workspace/'apps/core/tests/Haas.Hosty.PrAcceptance/Haas.Hosty.PrAcceptance.csproj')
         if scenario == 'documents':
             child_mode = os.environ.get('HOSTY_DOCUMENTS_CHILD_MODE', 'source')
             assert child_mode in ('source', 'current'), 'Documents comparison supports source or current Core only'
@@ -310,6 +312,13 @@ try:
         check(globals())
         success = True
         sys.exit(0)
+    if scenario == 'pull-requests':
+        assert managed, 'PR acceptance requires a managed child Core'
+        sys.dont_write_bytecode = True
+        from pull_requests_acceptance import check
+        check(globals())
+        success = True
+        sys.exit(0)
     if scenario == 'shell':
         assert managed, 'Shell acceptance requires a managed child Core'
         import importlib.util
@@ -327,7 +336,7 @@ try:
         check(globals())
         success = True
         sys.exit(0)
-    if scenario == 'harness-local':
+    if scenario in ('harness-local', 'feedback'):
         assert managed, 'Harness local acceptance requires a managed child Core'
         import importlib.util
         sys.dont_write_bytecode = True

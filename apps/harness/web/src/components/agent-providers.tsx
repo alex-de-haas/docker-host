@@ -4,7 +4,7 @@ import { ProviderUsageIndicator } from "./provider-usage";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Dialog,
-  DialogContent,
+  DialogContent, DialogBody,
   DialogDescription,
   DialogFooter,
   DialogHeader,
@@ -433,7 +433,6 @@ export function AgentProviders() {
           }}
         >
           <DialogContent
-            className="max-h-[90dvh] overflow-y-auto"
             showCloseButton={!busy}
             onCloseAutoFocus={(event) => {
               event.preventDefault();
@@ -445,7 +444,7 @@ export function AgentProviders() {
             }}
           >
             <form
-              className="flex flex-col gap-6"
+              className="flex min-h-0 flex-1 flex-col gap-4"
               onSubmit={(event) => {
                 event.preventDefault();
                 void act(async () => {
@@ -489,210 +488,212 @@ export function AgentProviders() {
                     : "Update this connection’s name or settings."}
                 </DialogDescription>
               </DialogHeader>
-              {error && (
-                <Alert variant="destructive">
-                  <AlertDescription>{error}</AlertDescription>
-                </Alert>
-              )}
-              <FieldGroup>
-                <FieldGroup className="sm:flex-row">
+              <DialogBody>
+                {error && (
+                  <Alert variant="destructive">
+                    <AlertDescription>{error}</AlertDescription>
+                  </Alert>
+                )}
+                <FieldGroup>
+                  <FieldGroup className="sm:flex-row">
+                    <Field data-disabled={busy || editing !== "new"}>
+                      <FieldLabel htmlFor="connection-kind">Provider</FieldLabel>
+                      <Select
+                        value={kind}
+                        disabled={busy || editing !== "new"}
+                        onValueChange={(selected: string) => {
+                          const value = selected as AgentConnection["kind"];
+                          setKind(value);
+                          setAuth(
+                            value === "ollama"
+                              ? "none"
+                              : value === "codex"
+                                ? "chatgpt"
+                                : "api-key",
+                          );
+                          setSecret("");
+                        }}
+                      >
+                        <SelectTrigger id="connection-kind">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectGroup>
+                            <SelectItem value="codex">Codex</SelectItem>
+                            <SelectItem value="claude">Claude</SelectItem>
+                            <SelectItem value="ollama">Ollama</SelectItem>
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select>
+                    </Field>
+                    <Field data-disabled={busy}>
+                      <FieldLabel htmlFor="connection-name">
+                        Connection name
+                      </FieldLabel>
+                      <Input
+                        id="connection-name"
+                        value={name}
+                        placeholder={
+                          kind === "ollama"
+                            ? "Local Ollama"
+                            : kind === "codex"
+                              ? "My Codex"
+                              : "My Claude"
+                        }
+                        required
+                        maxLength={100}
+                        disabled={busy}
+                        onChange={(e) => setName(e.target.value)}
+                      />
+                    </Field>
+                  </FieldGroup>
                   <Field data-disabled={busy || editing !== "new"}>
-                    <FieldLabel htmlFor="connection-kind">Provider</FieldLabel>
+                    <FieldLabel htmlFor="connection-auth">
+                      Authentication
+                    </FieldLabel>
                     <Select
-                      value={kind}
+                      value={auth}
                       disabled={busy || editing !== "new"}
                       onValueChange={(selected: string) => {
-                        const value = selected as AgentConnection["kind"];
-                        setKind(value);
-                        setAuth(
-                          value === "ollama"
-                            ? "none"
-                            : value === "codex"
-                              ? "chatgpt"
-                              : "api-key",
-                        );
+                        setAuth(selected as AgentConnection["auth"]);
                         setSecret("");
                       }}
                     >
-                      <SelectTrigger id="connection-kind">
+                      <SelectTrigger id="connection-auth">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectGroup>
-                          <SelectItem value="codex">Codex</SelectItem>
-                          <SelectItem value="claude">Claude</SelectItem>
-                          <SelectItem value="ollama">Ollama</SelectItem>
+                          {(kind === "ollama"
+                            ? (["none"] as const)
+                            : kind === "codex"
+                              ? (["chatgpt", "api-key", "host-login"] as const)
+                              : (["api-key", "claude-token"] as const)
+                          ).map((value) => (
+                            <SelectItem key={value} value={value}>
+                              {authLabels[value]}
+                            </SelectItem>
+                          ))}
                         </SelectGroup>
                       </SelectContent>
                     </Select>
                   </Field>
-                  <Field data-disabled={busy}>
-                    <FieldLabel htmlFor="connection-name">
-                      Connection name
-                    </FieldLabel>
-                    <Input
-                      id="connection-name"
-                      value={name}
-                      placeholder={
-                        kind === "ollama"
-                          ? "Local Ollama"
-                          : kind === "codex"
-                            ? "My Codex"
-                            : "My Claude"
-                      }
-                      required
-                      maxLength={100}
-                      disabled={busy}
-                      onChange={(e) => setName(e.target.value)}
-                    />
-                  </Field>
+                  {kind === "ollama" && (
+                    <Field data-disabled={busy}>
+                      <FieldLabel htmlFor="connection-url">
+                        Ollama server URL
+                      </FieldLabel>
+                      <Input
+                        id="connection-url"
+                        type="url"
+                        value={baseUrl}
+                        maxLength={2048}
+                        disabled={busy}
+                        placeholder={
+                          directory?.ollamaDefaultUrl ?? "http://127.0.0.1:11434"
+                        }
+                        aria-describedby="connection-url-description"
+                        onChange={(e) => setBaseUrl(e.target.value)}
+                      />
+                      <FieldDescription id="connection-url-description">
+                        Connect to an existing Ollama server. Leave blank to use{" "}
+                        {directory?.ollamaDefaultUrl ?? "the local default"}.
+                        Models stay on that server; Hosty does not download them.
+                      </FieldDescription>
+                    </Field>
+                  )}
+                  {auth === "chatgpt" && (
+                    <p className="text-sm text-muted-foreground">
+                      Sign in using your ChatGPT account in the browser. Hosty
+                      displays a code and waits for your confirmation.
+                    </p>
+                  )}
+                  {auth === "host-login" && (
+                    <Field data-disabled={busy}>
+                      <FieldLabel htmlFor="connection-home">
+                        Codex home on the Hosty server
+                      </FieldLabel>
+                      <Input
+                        id="connection-home"
+                        aria-describedby="connection-home-description"
+                        value={hostDirectory}
+                        placeholder="/home/hosty/.codex"
+                        required
+                        disabled={busy}
+                        onChange={(e) => setHostDirectory(e.target.value)}
+                      />
+                      <FieldDescription id="connection-home-description">
+                        Use the directory where you ran{" "}
+                        <code>CODEX_HOME=&lt;directory&gt; codex login</code>,
+                        accessible to the user running Core. Hosty uses this
+                        existing account and leaves the directory in place when
+                        you remove the connection.
+                      </FieldDescription>
+                    </Field>
+                  )}
+                  {(auth === "api-key" || auth === "claude-token") && (
+                    <Field data-disabled={busy}>
+                      <FieldLabel htmlFor="connection-secret">
+                        {authLabels[auth]}
+                        {editing !== "new" && " (leave blank to keep current)"}
+                      </FieldLabel>
+                      <Input
+                        id="connection-secret"
+                        aria-describedby="connection-secret-description"
+                        type="password"
+                        autoComplete="new-password"
+                        value={secret}
+                        required={editing === "new"}
+                        disabled={busy}
+                        onChange={(e) => setSecret(e.target.value)}
+                      />
+                      <FieldDescription id="connection-secret-description">
+                        {auth === "claude-token" ? (
+                          <>
+                            Paste the token from <code>claude setup-token</code>.
+                            When it expires, replace it here. See{" "}
+                            <a
+                              href="https://code.claude.com/docs/en/authentication"
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="underline"
+                            >
+                              Claude authentication
+                            </a>
+                            .
+                          </>
+                        ) : (
+                          <>
+                            Create a key in{" "}
+                            <a
+                              className="underline"
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              href={
+                                kind === "codex"
+                                  ? "https://platform.openai.com/api-keys"
+                                  : "https://console.anthropic.com/settings/keys"
+                              }
+                            >
+                              {kind === "codex"
+                                ? "OpenAI Platform"
+                                : "Anthropic Console"}
+                            </a>
+                            . API usage uses that account&apos;s API billing.
+                          </>
+                        )}
+                      </FieldDescription>
+                    </Field>
+                  )}
                 </FieldGroup>
-                <Field data-disabled={busy || editing !== "new"}>
-                  <FieldLabel htmlFor="connection-auth">
-                    Authentication
-                  </FieldLabel>
-                  <Select
-                    value={auth}
-                    disabled={busy || editing !== "new"}
-                    onValueChange={(selected: string) => {
-                      setAuth(selected as AgentConnection["auth"]);
-                      setSecret("");
-                    }}
-                  >
-                    <SelectTrigger id="connection-auth">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>
-                        {(kind === "ollama"
-                          ? (["none"] as const)
-                          : kind === "codex"
-                            ? (["chatgpt", "api-key", "host-login"] as const)
-                            : (["api-key", "claude-token"] as const)
-                        ).map((value) => (
-                          <SelectItem key={value} value={value}>
-                            {authLabels[value]}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                </Field>
-                {kind === "ollama" && (
-                  <Field data-disabled={busy}>
-                    <FieldLabel htmlFor="connection-url">
-                      Ollama server URL
-                    </FieldLabel>
-                    <Input
-                      id="connection-url"
-                      type="url"
-                      value={baseUrl}
-                      maxLength={2048}
-                      disabled={busy}
-                      placeholder={
-                        directory?.ollamaDefaultUrl ?? "http://127.0.0.1:11434"
-                      }
-                      aria-describedby="connection-url-description"
-                      onChange={(e) => setBaseUrl(e.target.value)}
-                    />
-                    <FieldDescription id="connection-url-description">
-                      Connect to an existing Ollama server. Leave blank to use{" "}
-                      {directory?.ollamaDefaultUrl ?? "the local default"}.
-                      Models stay on that server; Hosty does not download them.
-                    </FieldDescription>
-                  </Field>
-                )}
-                {auth === "chatgpt" && (
-                  <p className="text-sm text-muted-foreground">
-                    Sign in using your ChatGPT account in the browser. Hosty
-                    displays a code and waits for your confirmation.
+                {editing !== "new" && (
+                  <p className="text-xs text-muted-foreground">
+                    Stop open chats before replacing credentials. Chats started
+                    with the previous credentials keep their history and require a
+                    new chat to use the updated account.
                   </p>
                 )}
-                {auth === "host-login" && (
-                  <Field data-disabled={busy}>
-                    <FieldLabel htmlFor="connection-home">
-                      Codex home on the Hosty server
-                    </FieldLabel>
-                    <Input
-                      id="connection-home"
-                      aria-describedby="connection-home-description"
-                      value={hostDirectory}
-                      placeholder="/home/hosty/.codex"
-                      required
-                      disabled={busy}
-                      onChange={(e) => setHostDirectory(e.target.value)}
-                    />
-                    <FieldDescription id="connection-home-description">
-                      Use the directory where you ran{" "}
-                      <code>CODEX_HOME=&lt;directory&gt; codex login</code>,
-                      accessible to the user running Core. Hosty uses this
-                      existing account and leaves the directory in place when
-                      you remove the connection.
-                    </FieldDescription>
-                  </Field>
-                )}
-                {(auth === "api-key" || auth === "claude-token") && (
-                  <Field data-disabled={busy}>
-                    <FieldLabel htmlFor="connection-secret">
-                      {authLabels[auth]}
-                      {editing !== "new" && " (leave blank to keep current)"}
-                    </FieldLabel>
-                    <Input
-                      id="connection-secret"
-                      aria-describedby="connection-secret-description"
-                      type="password"
-                      autoComplete="new-password"
-                      value={secret}
-                      required={editing === "new"}
-                      disabled={busy}
-                      onChange={(e) => setSecret(e.target.value)}
-                    />
-                    <FieldDescription id="connection-secret-description">
-                      {auth === "claude-token" ? (
-                        <>
-                          Paste the token from <code>claude setup-token</code>.
-                          When it expires, replace it here. See{" "}
-                          <a
-                            href="https://code.claude.com/docs/en/authentication"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="underline"
-                          >
-                            Claude authentication
-                          </a>
-                          .
-                        </>
-                      ) : (
-                        <>
-                          Create a key in{" "}
-                          <a
-                            className="underline"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            href={
-                              kind === "codex"
-                                ? "https://platform.openai.com/api-keys"
-                                : "https://console.anthropic.com/settings/keys"
-                            }
-                          >
-                            {kind === "codex"
-                              ? "OpenAI Platform"
-                              : "Anthropic Console"}
-                          </a>
-                          . API usage uses that account&apos;s API billing.
-                        </>
-                      )}
-                    </FieldDescription>
-                  </Field>
-                )}
-              </FieldGroup>
-              {editing !== "new" && (
-                <p className="text-xs text-muted-foreground">
-                  Stop open chats before replacing credentials. Chats started
-                  with the previous credentials keep their history and require a
-                  new chat to use the updated account.
-                </p>
-              )}
+              </DialogBody>
               <DialogFooter>
                 <Button type="submit" size="sm" disabled={busy}>
                   {busy ? (

@@ -15,14 +15,14 @@ exposed through both ordinary API and MCP. The concrete consumers are authorized
 conversations and applications, search over retained chats, and a separately connected indexer.
 Core understands the common exchange contract; the application storing the messages understands
 its richer native representation. Harness is one history provider, not a required platform service.
-See [vision decision 67](../../vision.md).
+See [vision decision 68](../../vision.md).
 
 The owner identifies Qdrant as the intended future indexing integration and explicitly defers
 connecting it now. This plan prepares source and search contracts without installing Qdrant,
 choosing embeddings or deploying a vector database. An index is derived data; providers retain
 the authoritative conversations and full native records. No migration into a Core transcript store
 is selected. The owner approved the complete v1 schema, grants and implementation scope on 2026-10-31
-and requested development. D1-D2 are complete and this plan is Ready; see vision decision 68.
+and requested development. D1-D2 are complete and this plan is Ready; see vision decision 69.
 
 ## Baseline And Existing Owners
 

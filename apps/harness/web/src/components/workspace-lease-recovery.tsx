@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Dialog, DialogContent, DialogTitle, DialogDescription, DialogHeader, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogBody, DialogTitle, DialogDescription, DialogHeader, DialogFooter } from "@/components/ui/dialog";
 import { DevelopmentRequestError, developmentRequest, repositoryName, type Worktree, type Workflow } from "@/lib/development-api";
 
 export type CloseRequest = { kind: string; requestId: string; expectedRevision: number };
@@ -101,8 +101,10 @@ export function WorkspaceLeaseRecovery({ workspaceId, trees, closure, closeReque
       <DialogHeader><DialogTitle>Pause unconfirmed work?</DialogTitle><DialogDescription>
         Confirm that all agent executions and commands using these repositories have stopped. Core removes their reviewed activity protections and finishes pausing the workspace. It checks known consumers again. This does not stop unknown processes, complete the work or delete any source files.
       </DialogDescription></DialogHeader>
-      <ul className="list-disc pl-5 text-sm">{trees.map(t => <li key={t.id}>{repositoryName(t.repository)}</li>)}</ul>
-      {error && <p role="alert" className="text-sm text-destructive-foreground">{error}</p>}
+      <DialogBody>
+        <ul className="list-disc pl-5 text-sm">{trees.map(t => <li key={t.id}>{repositoryName(t.repository)}</li>)}</ul>
+        {error && <p role="alert" className="text-sm text-destructive-foreground">{error}</p>}
+      </DialogBody>
       <DialogFooter><Button variant="outline" disabled={busy} onClick={() => setReview(null)}>Cancel</Button>
         <Button disabled={disabled || busy || blocked} onClick={() => { if (review) void recover(review); }}>{busy ? "Pausing…" : "Work has stopped — pause workspace"}</Button>
       </DialogFooter>

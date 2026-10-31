@@ -123,6 +123,61 @@ permission or mandatory integration proof. The workspace service owns actual exe
 this plan owns schedule, claims, retries and reporting. These examples create no live automation
 and authorize no deletion during planning.
 
+## Assistant Event Admission (2026-10-29)
+
+[Assistant Events And Session Continuation](../assistant-events-and-continuation/plan.md) owns the
+cross-app activity/conversation binding, inbound-event receipt and admission contract. Its assistant
+adapter maps an eligible event to D7's common idempotent session command; it does not own a second
+recovery engine, transcript or scheduler. Interactive chess uses this path without creating a task
+or scheduled job for each turn. Delegated task results can satisfy a registered parent wait.
+
+D7 here retains provider/account-bound recovery and bounded context, while D1-D5 retain job policy
+and parked waits. Coordinate source/receipt/command IDs, busy/paused/cancelled behavior and unknown
+acceptance with that consumer. Its approval does not approve this plan. Agree delivery boundaries
+before Ready if the ordinary-session primitive is needed ahead of general scheduling; no deliverable
+is transferred or completed by this coordination note.
+
+## Domain-Neutral Routine Triggers (2026-10-29)
+
+The owner clarifies that PR processing is one possible routine, not the runner's event model.
+Configure a compatible source/event type, bounded filter, action/executor choice, budgets and
+authority without requiring GitHub, a repository or an existing conversation. The owning source
+defines subject/revision semantics; PR/head grouping below is one adapter-specific policy.
+Application job results, activity changes and addressed answers must fit the same activation and
+recovery contract. This generality belongs to existing D1-D3 and the assistant-event contract.
+Neither a new PR inbox nor a decision to implement PR automation first is a prerequisite.
+
+## Event-Triggered Routine Example (2026-10-29)
+
+The owner's Dependabot example extends the existing event-triggered runner scope. Its PR source
+derives repository membership from installed applications, deduplicating shared repositories and
+reconciling install/uninstall/source changes. It has no favorites or manual repository enrollment.
+A routine keeps event/author/update filters, action instructions or skill references, assistant/
+executor selection, configuration revision, budgets and action policy. Display filters in the PR
+panel do not alter the routine's subscription or the underlying installed-app scope. Reuse app-owned profile choices;
+there is no shared Core agent principal. A routine can create new work when no chat exists, whereas
+later CI changes and decision answers can continue its already accepted work.
+
+Consume [Assistant Events And Session Continuation](../assistant-events-and-continuation/plan.md#design-consumer-repository-events-and-dependabot-routines)
+and Notifications D6. Persist activation identity before creating the job/session, reconcile lost
+responses and prevent competing workers or repeated observations from creating duplicate reviews.
+Group logical work by routine/configuration, repository, PR and head revision; keep event identity,
+retry attempts and deliberate reanalysis separate. Filter and wait for required CI without periodic
+model invocations. Define initial/backfill behavior, concurrency and invalidation after a new head.
+
+Policy can report only, request a decision, or perform a bounded action under previously configured
+authority. Ask-first uses [Shared Decisions](../shared-decisions/plan.md); its persisted answer resumes
+the same work. Automatic mode does not ask again within its authorized scope, but still rechecks
+current rights, exact reviewed revision and repository merge conditions. A routine recommendation
+is not a grant. Unattended operation consumes existing background grants and survives a closed UI.
+
+D1-D3 here retain routine/job activation and recovery; D4 retains parked decisions. Repository-wide
+PR discovery and the aggregate view now belong to the separate
+[Harness Pull Request Inbox](../harness-pull-request-inbox/feature.md), developed from I18. Its
+read-only view works without this runner. Existing workspace publication APIs must not be assumed to merge arbitrary
+external PRs without a supported contract. No live routine, GitHub mutation or implementation is
+authorized by this example.
+
 ## Dependencies And Ownership
 
 - [Agent Providers](../agent-provider-interface/plan.md) owns invocation, results, cancellation and
@@ -148,8 +203,8 @@ and authorize no deletion during planning.
 
 ## Deliverables
 
-- [ ] D1. Define durable job/attempt/wait identity, accepted-command ownership, scheduling and cancellation states, persisted observations, audit correlation and boundaries with tasks, sessions and provider runs.
-- [ ] D2. Define current-grant dispatch, revocation/assignment/executor-option/contract-change behavior and recovery from uncertain effects; specify schedule/missed-run policy, concurrency, retry/backoff, time and cost budgets.
+- [ ] D1. Define durable job/attempt/wait identity, accepted-command ownership, scheduling and cancellation states, persisted observations, audit correlation and boundaries with tasks, sessions and provider runs; include versioned event-triggered routine configuration and recoverable creation of work before a conversation exists.
+- [ ] D2. Define current-grant dispatch, revocation/assignment/executor-option/contract-change behavior and recovery from uncertain effects; specify schedule/missed-run policy, concurrency, retry/backoff, time and cost budgets, including event filters, initial/backfill policy, trigger deduplication and input-revision invalidation for configured routines.
 - [ ] D3. After explicit Ready approval, implement persistence, claims, scheduling and retry/recovery over provider and resource APIs, including notification delivery bookkeeping and observable stopped/failed outcomes.
 - [ ] D4. Implement recoverable live/parked decision waits and response-triggered continuation with Shared Decisions and the D7 session recovery contract, preserving pending inputs, stopped-consumer lease discipline and cancellation.
 - [ ] D5. Verify recurring monitoring and one authorized source job, restart/duplicate claims, lost provider responses, expired/revoked grants, budget exhaustion and failed notification delivery; cover overnight and response/parking races without duplicate effects.

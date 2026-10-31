@@ -17,17 +17,17 @@ those capabilities and owns its conversations, execution adapters and presentati
 On 2026-10-30 the owner requested a substantial review of the Core/Harness boundary, specifically
 environment lifecycle and tasks, and accepted the proposed feature-based grouping with a separate
 Applications group. The owner then selected provider-owned task storage with unified MCP access, preserving decision 62.
-[Vision decision 66](../../vision.md) records this direction. On 2026-10-31 the owner explicitly
+[Vision decision 67](../../vision.md) records this direction. On 2026-10-31 the owner explicitly
 approved the complete bounded contract, authorization and migration design below and requested
 implementation. D1 is complete. Implementation started on 2026-10-31 with the canonical catalog
 and authority metadata.
-See vision decision 68; approval does not authorize a live runtime switch or publication.
+See vision decision 69; approval does not authorize a live runtime switch or publication.
 
 The later owner clarification selects a common Core-owned history schema and API/MCP access for
 sharing, search and future indexing, while keeping original data with its provider. The separate
 [Conversation History](../conversation-history/plan.md) plan owns that domain contract and adapters;
 this plan incorporates its tools into the canonical catalog without duplicating deliverables.
-Qdrant is the named future integration, explicitly deferred for now. See vision decision 67.
+Qdrant is the named future integration, explicitly deferred for now. See vision decision 68.
 
 ## Verified Baseline
 

@@ -1,7 +1,7 @@
 ---
 status: In Progress
 created: 2026-08-18
-updated: 2026-09-27
+updated: 2026-10-30
 summary: Remaining assistant entry points, letting apps hand context to the assistant without driving it.
 components: [apps/shell, apps/harness, packages/app-sdk]
 ---
@@ -13,13 +13,12 @@ an app *drive* it.
 
 ## Feedback Intake Boundary (2026-09-25)
 
-[App feedback inbox](../app-feedback-inbox/plan.md)
-owns a proposed app feedback capture/inbox and administrator-reviewed batch dispatch. Ordinary users
+[App feedback inbox](../app-feedback-inbox/feature.md)
+owns app feedback capture/inbox and administrator-reviewed batch dispatch. Ordinary users
 can submit observations there without seeing or invoking the assistant. Reuse verified app provenance
 and draft review where appropriate, but do not expand `hosty:ask-assistant` into an automatic send or
-give its admin-only panel to regular users. Structured screenshots/element context need a separately
-designed contract; they are not already supported by this plan's plain-text message. Capture, durable
-intake and batching deliverables stay in the new Draft rather than being duplicated here.
+give its admin-only panel to regular users. Structured screenshots/element context use the feedback contract; they do not change this plan's
+plain-text message. Capture, durable intake and batching are implemented by the feedback feature.
 
 ## Goal
 

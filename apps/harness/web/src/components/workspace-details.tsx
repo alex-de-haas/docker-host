@@ -1,6 +1,9 @@
 "use client";
+import { subscribePullRequests } from "@/lib/pull-requests-events";
+import { prRequest } from "@/lib/pull-requests-api";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import type { WorkspaceSessionActions } from "@/lib/use-workspace-session-actions";
+import { FeedbackInbox } from "./feedback-inbox";
 import { WorkspaceSessions } from "./workspace-sessions";
 import { WorkspaceReview, type ReviewChoice } from "./workspace-review";
 import { FileDiff, FolderGit2, GitBranch, MoreHorizontal, Pencil, RefreshCw } from "lucide-react";
@@ -40,6 +43,19 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
   refresh: () => void; deleteConversation?: () => Promise<void>; onReview?: (tree: Worktree, choice?: ReviewChoice) => void;
 }) {
   const canManage = workspace.permissions?.manage !== false;
+  const updatePrConsumer = useEffectEvent(() => refresh());
+  const hasTrackedPr = workspace.worktrees.some(tree => tree.pullRequests.length > 0);
+  const activePrConsumer = hasTrackedPr && workflowIsActive(workspace.workflow);
+  useEffect(() => {
+    if (!activePrConsumer) return;
+    const abort = new AbortController(); let unsubscribe: (() => void) | undefined;
+    void prRequest<{ storageScope: string }>("/repositories", undefined, abort.signal).then(scope => {
+      if (abort.signal.aborted) return;
+      unsubscribe = subscribePullRequests(scope.storageScope, { scope: { workspaces: [workspace.id] },
+        sync: async () => updatePrConsumer(), failed: () => { /* The existing workspace card reports unavailable observations. */ } });
+    }).catch(() => { /* Older Core installations retain their existing workspace event stream. */ });
+    return () => { abort.abort(); unsubscribe?.(); };
+  }, [workspace.id, activePrConsumer]);
   const [trees, setTrees] = useState<Worktree[]>(() => workspace.worktrees.map(t => ({ ...t, sessionChanges: undefined })));
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState("");
@@ -145,7 +161,7 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
     </div>
     <div className="space-y-4 p-4">
       {workspace.participation && <WorkspaceSessions actions={sessionActions} workspace={workspace} sessionId={sessionId} running={running} refresh={refresh} onSelect={onSessionSelected} />}
-      {workspace.owner.kind === "external" && <p className="text-xs text-muted-foreground">External work: {workspace.owner.label}. Conversation and agent activity are not synchronized.</p>}
+      {workspace.owner.kind === "external" && <p className="text-xs text-muted-foreground">External work: {workspace.owner.label}. The external conversation and its agent activity are not synchronized.</p>}
       {running && <p className="text-xs text-muted-foreground">An agent is running. Pause workspace fences all participants and waits for confirmed execution stops.</p>}
       {(state.closure || state.state === "deferred") && !["deleting", "deleted"].includes(state.state) && <p role="status" className="text-xs text-muted-foreground">{state.closure === "closing" ? "Pausing: new development work is blocked while execution stop is verified." : "Paused: source, previews and conversation are retained. Resume to continue development."}</p>}
       {(!externalClose || loadError) && (error || loadError || operation?.error) && <p role="alert" className="text-sm text-destructive-foreground">{error || loadError || operation?.error}</p>}
@@ -199,6 +215,7 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
           else { setDiffChoices(previous => ({ ...previous, [tree.id]: choice })); setDiffTree(tree.id); }
         }} />))}
       </section>}
+      <FeedbackInbox key={"feedback:" + workspace.id} workspaceId={workspace.id} sessionId={sessionId} running={running} disabled={!canManage || busy || recovering || !workflowIsActive(state)} />
       <WorkspacePreviews key={`previews:${workspace.id}`} workspaceId={workspace.id} canStart={!state.closure && state.state === "in-progress"} disabled={busy || recovering} refresh={refresh} />
       {trees.some(tree => tree.apps.length || tree.leases.length || tree.consumers?.length) && <div className="space-y-3 border-t pt-4"><h3 className="text-xs font-semibold text-muted-foreground">Used by</h3>
       <WorkspaceActivation key={workspace.id} workspaceId={workspace.id} appMetadata={appMetadata} apps={[...new Map(trees.flatMap(tree => tree.apps).map(app => [app.appId, app])).values()]}

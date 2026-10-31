@@ -49,6 +49,7 @@ export function useWorkspaceSessionActions(workspace: DevelopmentWorkspace | und
       try { if (key) sessionStorage.removeItem(key); } catch { /* Receipt remains recoverable. */ }
       if (!isCurrent()) return;
       setPending(null); refresh();
+      return true;
     } catch (cause) {
       if (!isCurrent()) return;
       setError(cause instanceof Error ? cause.message : String(cause));

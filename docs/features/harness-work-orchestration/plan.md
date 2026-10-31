@@ -78,6 +78,30 @@ second history contract. Exact whole-conversation/excerpt and live-reference/sna
 remain in that plan's D2. Private-by-default access and the exclusion of in-chat provider switching
 remain; a common API is not blanket transcript sharing. Qdrant integration is deferred.
 
+## Delegated Results And Parent Continuation (2026-10-29)
+
+[Assistant Events And Session Continuation](../assistant-events-and-continuation/plan.md) owns the
+minimal exchange from an authorized task result to a registered parent-session wait. It correlates
+task/provider/attempt/result evidence and selected accessible output, including failures and late
+completion, without importing the child's private conversation. Existing native subagent completion
+must not also enter the parent through an independent duplicate delivery path.
+
+D4 here retains decomposition, child relationships, hierarchy, routing, aggregate budgets and
+cancellation policy; D7 retains selected session/material visibility. One explicit child-result
+exchange does not deliver this richer orchestration or require an organization tree. Consume the
+shared event/continuation contract rather than adding another wakeup channel or session engine.
+
+## Independent PR Entry Point (2026-10-29)
+
+[Harness Pull Request Inbox](../harness-pull-request-inbox/feature.md) owns the aggregate page/panel for
+active PRs from repositories derived from installed applications, including external PRs with no
+task/workspace/conversation. Shared repositories appear once with their associated apps.
+It can show authorized links to related work and decisions, but it neither owns this plan's joined
+decision UI/hierarchy nor depends on them to browse. Event-triggered analysis remains with the common
+runner; PRs do not become the universal subject of orchestration. The owner selects the independent
+PR browsing page/panel first; its technical plan is Ready without starting implementation. Richer
+orchestration and event-triggered automation remain separate and retain this plan's Draft status.
+
 ## Dependencies And Ownership
 
 - [Basic Tasks](../basic-tasks/feature.md) owns the common task/provider/executor contract, provider
