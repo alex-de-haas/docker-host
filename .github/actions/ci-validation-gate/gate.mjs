@@ -2,6 +2,7 @@ import { appendFileSync, readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
 const runningStatuses = new Set(['queued', 'in_progress', 'waiting', 'pending', 'requested']);
+const jobEvidenceTimeoutMs = 120_000;
 
 export function publicationContext(eventName, event, env) {
   if (eventName === 'workflow_run') return { ref: 'refs/heads/main', event: eventName,
@@ -46,6 +47,7 @@ export async function waitForValidation({ context, request, timeoutMs = 1_800_00
   const repository = context.repository.split('/').map(encodeURIComponent).join('/');
   const runsPath = `/repos/${repository}/actions/workflows/ci.yml/runs?event=push&branch=main&head_sha=${context.sha}&per_page=100`;
   let waitingFor = 'CI run registration';
+  let evidenceWait;
   while (now() < deadline) {
     const response = context.event === 'workflow_run'
       ? { workflow_runs: [await request(`/repos/${repository}/actions/runs/${context.trigger.id}`, deadline - now())] }
@@ -56,6 +58,7 @@ export async function waitForValidation({ context, request, timeoutMs = 1_800_00
     const run = response.workflow_runs.toSorted((a, b) => b.id - a.id)[0];
     if (run) {
       waitingFor = `CI run ${run.id} (${run.status})`;
+      if (evidenceWait?.runId !== run.id || evidenceWait?.attempt !== run.run_attempt) evidenceWait = undefined;
       if (run.status === 'completed') {
         if (run.conclusion !== 'success') {
           throw new Error(`CI run ${run.id} concluded ${run.conclusion}; publication is blocked.`);
@@ -69,8 +72,13 @@ export async function waitForValidation({ context, request, timeoutMs = 1_800_00
           if (page === 10) throw new Error('CI job list exceeds the validation bound.');
         }
         const required = jobs.filter(job => job.name === 'ci-required');
-        if (required.length !== 1 || required[0].status !== 'completed' || required[0].conclusion !== 'success') {
-          throw new Error('The exact CI attempt must contain one successful ci-required job.');
+        const job = required[0];
+        const evidence = `${required.length} matching jobs among ${jobs.length}; status ${job?.status ?? 'missing'}, conclusion ${job?.conclusion ?? 'none'}`;
+        const ready = required.length === 1 && job.status === 'completed' && job.conclusion === 'success';
+        // Run completion and job-list updates can become visible at different times. Retry only
+        // absent or unfinished evidence; terminal failures and ambiguity still fail closed.
+        if (required.length > 1 || job && !ready && !runningStatuses.has(job.status)) {
+          throw new Error(`The exact CI attempt must contain one successful ci-required job. Observed ${evidence}.`);
         }
         // Re-read after inspecting jobs: a concurrent rerun must finish its current attempt too.
         const current = await request(`/repos/${repository}/actions/runs/${run.id}`, deadline - now());
@@ -78,9 +86,17 @@ export async function waitForValidation({ context, request, timeoutMs = 1_800_00
         if (current.id !== run.id) throw new Error('CI run identity changed during validation.');
         if (current.run_attempt !== run.run_attempt || current.status !== 'completed') {
           if (context.event === 'workflow_run') throw new Error('The triggering CI run is being rerun; wait for its next successful completion.');
+          evidenceWait = undefined;
           waitingFor = `CI rerun ${run.id}`;
         } else if (current.conclusion !== 'success') {
           throw new Error(`CI run ${run.id} no longer succeeds; publication is blocked.`);
+        } else if (!ready) {
+          evidenceWait ??= { runId: run.id, attempt: run.run_attempt,
+            deadline: Math.min(deadline, now() + jobEvidenceTimeoutMs) };
+          waitingFor = `one successful ci-required job in CI run ${run.id}, attempt ${run.run_attempt} (${evidence})`;
+          if (now() >= evidenceWait.deadline) {
+            throw new Error(`Timed out waiting for ${waitingFor}; publication is blocked.`);
+          }
         } else {
           log(`Validated CI run ${run.id}, attempt ${run.run_attempt}, for main commit ${context.sha}.`);
           return { runId: String(run.id), sourceSha: context.sha };
@@ -91,10 +107,12 @@ export async function waitForValidation({ context, request, timeoutMs = 1_800_00
         throw new Error(`Unrecognized CI status ${run.status}; publication is blocked.`);
       }
     }
-    const remaining = deadline - now();
+    const remaining = Math.min(deadline, evidenceWait?.deadline ?? deadline) - now();
     if (remaining > 0) {
       log(`Waiting for ${waitingFor} for ${context.sha}.`);
       await sleep(Math.min(pollMs, remaining));
+    } else {
+      throw new Error(`Timed out waiting for ${waitingFor}; publication is blocked.`);
     }
   }
   throw new Error(`Timed out waiting for ${waitingFor} for exact main commit ${context.sha}; publication is blocked.`);

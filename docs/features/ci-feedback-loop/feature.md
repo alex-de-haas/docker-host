@@ -1,6 +1,6 @@
 ---
 created: 2026-10-20
-updated: 2026-10-30
+updated: 2026-10-31
 summary: Affected component CI, explicit local integration checks and publication of verified main revisions.
 components: [.github, scripts]
 ---
@@ -118,6 +118,13 @@ integration uses isolated data, normal setup/login and the supported Core-manage
 
 Image and native-release workflows react to completed main push CI and validate its exact source identity before selecting an affected artifact from that CI run's saved selection manifest. Retained format-1 manifests from before local integration separation remain readable: only the five known retired profiles are accepted, with consistent required membership and no duplicates; current CI still rejects those profiles. Publication does not recompute a smaller last-commit diff that could omit earlier changes in a multi-commit push. Failed, cancelled and non-push runs cannot authorize automatic publication. Unrelated image publication runs are short no-ops, avoiding idle publication runners during ordinary CI. The two SDK workflows retain their path-filtered push triggers and wait for the exact main result: their trusted-publisher execution and automatic provenance stay tied to the package source revision.
 
+The publication gate allows up to two minutes, within its existing overall deadline, for a
+successful run's exact-attempt `ci-required` job to appear or finish in GitHub's jobs API.
+Each retry revalidates the run and attempt; it never publishes from the workflow conclusion alone.
+Duplicate required jobs, terminal non-success results, malformed responses and API errors fail
+immediately. Automatic publication also rejects a concurrent CI rerun instead of waiting for a
+different attempt. Pending and timeout messages include the observed job count/status/conclusion.
+
 Core/CLI publication also checks for native changes since the last completed `cli-dev` release when
 the successful push's own manifest selects no native component. It compares the validated source
 against the release notes' `Published commit:` receipt using the shared CI path policy. Failed or
@@ -198,7 +205,7 @@ three invited/password-authenticated users in a parent-managed child Core. See
 - Policy tests cover affected/shared/unknown inputs, semantic version metadata, deleted/renamed paths, exact source resolution and exclusion of local runtime suites from every CI selection.
 - Local launcher tests cover explicit selection, prerequisite and command failures, unsupported platforms, shell-free arguments, native inference opt-in and side-effect-free previews.
 - Gate tests cover failed classification, missing/cancelled/failed/required-skipped jobs, workflow coverage and bounded process startup for large changesets without weakening required results.
-- Publication tests cover exact main identity, stale source, current run attempts, failed or missing CI, complete verified artifact consumption, and required signing identity/source/workflow fields.
+- Publication tests cover exact main identity, stale source, current run attempts, delayed required-job evidence and its bounded timeout, failed or missing CI, complete verified artifact consumption, and required signing identity/source/workflow fields.
 - Native recovery tests cover cumulative unpublished changes, legacy/missing receipts, unchanged releases, renamed/shared paths, truncated comparisons, API failures and failure before the completion receipt is written.
 - GitHub Actions syntax and composite shell scripts are linted; docs/index and version checks run on every PR.
 - Hosted operating-system and publication results are reported separately from local static/unit validation. Branch protection migrates only after a successful hosted aggregate.
