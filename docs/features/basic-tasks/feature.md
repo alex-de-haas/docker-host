@@ -1,6 +1,6 @@
 ---
 created: 2026-10-27
-updated: 2026-10-27
+updated: 2026-10-31
 summary: Provider-owned tasks with qualified numbers, human or app assignment, durable execution, Harness profile options, review and a live Tasks UI.
 components: [apps/core, apps/harness, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -231,6 +231,14 @@ Executor selection marks the draft dirty immediately. Delayed option responses p
 title/description edits and are ignored after another selection, discard, navigation or submission.
 External task providers receive an absolute conversation link built from Core's public Harness
 endpoint; same-app links remain relative. An unavailable or invalid public origin omits the link.
+
+## Canonical Core Access
+
+The `/api/tasks/v1` and task MCP entry points mediate discovery, options, listing, read, creation,
+replacement and actions across explicitly selected providers. Core and both SDKs share the task wire
+contract; optional null fields are omitted while an explicit null assignee remains meaningful.
+Provider storage and existing UI remain authoritative. See [Core MCP](../core-mcp/feature.md) for
+receipt-bound executor dispatch, current origin revalidation and scoped workspace admission.
 
 ## Testing Expectations
 

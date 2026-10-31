@@ -85,8 +85,8 @@ handoffs; it neither imports a whole private transcript nor transfers provider-n
 
 ## Ordinary-Chat Recovery Candidate (2026-10-30)
 
-[Core MCP Q2](../core-mcp/plan.md#q2-resume-automatically-reconstruct-explicitly) records the concrete
-D7 recovery policy approved by the owner on 2026-10-31: automatic exact-provider/account native resume, then an explicit reconstruction
+The owner approved this D7 recovery policy on 2026-10-31 alongside the
+[Core MCP boundary](../core-mcp/feature.md): automatic exact-provider/account native resume, then an explicit reconstruction
 action if supported, preserving the conversation. Apply only after prior native stop is confirmed;
 reconcile unknown effects, revalidate access/resources and preserve the instruction snapshot and
 attributed context coverage. Current tool policy applies; old approvals are not replayed. The input

@@ -1,6 +1,6 @@
 ---
 created: 2026-10-23
-updated: 2026-10-30
+updated: 2026-10-31
 ---
 
 # Ideas
@@ -140,7 +140,7 @@ apply to retrieval and derived copies; indexing is not a new access grant.
 ## I2. Search Across Knowledge Providers
 
 **Conversation-history direction, 2026-10-30:** The owner selects the concrete chat-history slice
-for [Conversation History](features/conversation-history/plan.md): Core-owned common schemas and
+for [Conversation History](features/conversation-history/feature.md): Core-owned common schemas and
 API/MCP reads, explicit sharing and search over provider-owned source records, including declared
 provider extensions and an indexer-compatible change/deletion contract. The owner confirms Qdrant
 as the intended future indexing integration and explicitly defers connecting it now. That plan

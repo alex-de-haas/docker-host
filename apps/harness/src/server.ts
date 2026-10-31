@@ -1,3 +1,7 @@
+import { AgentSessionService } from "./agent-sessions/service.js";
+import { agentSessionRoute } from "./agent-sessions/routes.js";
+import { HistoryService } from "./history/service.js";
+import { historyRoute } from "./history/routes.js";
 import { FeedbackService } from "./feedback/service.js";
 import { FeedbackError } from "@hosty-sdk/app/feedback";
 import { pullRequestsRoute, requestPullRequests } from "./pull-requests-proxy.js";
@@ -73,6 +77,8 @@ export function createGatewayServer(
   internal?: (request: IncomingMessage, response: ServerResponse) => Promise<boolean>,
 ): Server & { stopTaskDispatch: () => Promise<void> } {
   const tasks = new TaskService(manager);
+  const history = new HistoryService(manager.store, { appId: process.env.HOSTY_APP_ID ?? "hosty.harness", installationId: process.env.HOSTY_APP_INSTALLATION_ID ?? "standalone", key: "default" });
+  const execution = new AgentSessionService(manager, history.provider);
   const feedback = new FeedbackService(manager, undefined, providers);
   const handoffs = new HandoffStore(manager, settings, providers);
   const eventStreams = new EventStreamTransport(manager, Date.now, connections);
@@ -85,7 +91,7 @@ export function createGatewayServer(
   const timer = setInterval(() => { void handoffs.sweep().catch(error => console.error("[handoff] cleanup failed", error)); }, 60_000);
   timer.unref();
   const server = createServer((request, response) => {
-    void recovered.then(async () => { if (await internal?.(request, response)) return; return route(request, response, manager, adapter, settings, providers, proxy, facade, connections, handoffs, translations, eventStreams, tasks, feedback); }).catch((error) => {
+    void recovered.then(async () => { if (await internal?.(request, response)) return; return route(request, response, manager, adapter, settings, providers, proxy, facade, connections, handoffs, translations, eventStreams, tasks, feedback, history, execution); }).catch((error) => {
       if (response.destroyed) return;
       if (error instanceof ProviderError || error instanceof FeedbackError) { sendJson(response, error.status, { code: error.code, message: error.message }); return; }
       if (error instanceof SessionBusyError) {
@@ -116,7 +122,7 @@ export function createGatewayServer(
   const taskServer = Object.assign(server, { stopTaskDispatch: async () => { await tasks.close(); await feedback.close(); } });
   const close = server.close.bind(server);
   server.close = ((callback?: (error?: Error) => void) => { void tasks.close(); eventStreams.close(); return close(callback); }) as typeof server.close;
-  server.on("close", () => { clearInterval(timer); tasks.close(); void feedback.close(); });
+  server.on("close", () => { history.close(); clearInterval(timer); tasks.close(); void feedback.close(); });
   return taskServer;
 }
 
@@ -137,6 +143,8 @@ async function route(
   eventStreams: EventStreamTransport,
   tasks: TaskService,
   feedback: FeedbackService,
+  history: HistoryService,
+  execution: AgentSessionService,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", "http://gateway.local");
   const method = request.method ?? "GET";
@@ -149,6 +157,8 @@ async function route(
 
   // This surface accepts only its exact Core provider credential, never operator cookies.
   if (await translationRoute(request, response, url, translations)) return;
+  if (await historyRoute(request, response, url, history)) return;
+  if (await agentSessionRoute(request, response, url, execution)) return;
 
   // Outside /api and ahead of the operator gate, like the proxy below and for the same kind of
   // reason: an external agent client authenticates with a scoped access token of its own, which
@@ -540,7 +550,9 @@ async function route(
     const credential = await delegationCredential(request);
     if (!credential) throw new AppContextError(401, "credentials_required", "Refresh your Hosty session.");
     const unavailable = await manager.discoverMcpTools(credential);
-    sendJson(response, 200, { unavailable, catalogs: manager.mcpPolicy.snapshot(), settings: await settings.read() }); return;
+    const discoveredSettings = await settings.read();
+    sendJson(response, 200, { unavailable, catalogs: manager.mcpPolicy.snapshot(), settings: discoveredSettings,
+      mcpRevision: mcpPreferencesRevision(discoveredSettings) }); return;
   }
 
   if (url.pathname === "/api/settings" && settings && (method === "GET" || method === "PUT")) {

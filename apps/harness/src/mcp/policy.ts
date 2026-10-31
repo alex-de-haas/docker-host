@@ -1,4 +1,5 @@
 import { randomUUID, createHash } from "node:crypto";
+import { migrateCorePolicy, migratedTool, coreAliases } from "./core-migration.js";
 import type { SettingsStore } from "../settings/store.js";
 import { openSession, listTools, type UpstreamTool } from "./upstream.js";
 
@@ -9,7 +10,7 @@ export function validDefaults(value: unknown): value is Record<string, ProviderD
     Object.values(value).every(v => v && typeof v === "object" && typeof v.identity === "string" && v.identity.length < 3000 && ["ask", "run"].includes(v.mode)));
 }
 export interface ToolRule { identity: string; mode: ToolMode; definition?: string }
-export interface ToolCatalog { provider: string; identity: string; tools: UpstreamTool[] }
+export interface ToolCatalog { provider: string; identity: string; tools: UpstreamTool[]; localOwner?: { appId: string; displayName: string; installationId?: string } }
 const definition = (tool: UpstreamTool) => createHash("sha256").update(JSON.stringify(tool)).digest("hex");
 export const ruleKey = (provider: string, name: string) => JSON.stringify([provider, name]);
 function validKey(key: string): boolean {
@@ -33,7 +34,31 @@ export class McpToolPolicy {
     private readonly settled: (session: string, id: string, tool: string, allowed: boolean, automatic: boolean) => Promise<void>,
     private readonly timeout = 90_000,
     private readonly autonomous: (session: string) => boolean = () => false) {}
-  snapshot(): ToolCatalog[] { return [...this.catalogs.values()]; }
+  localOwner?: { appId: string; displayName: string; installationId?: string };
+  get localIdentity(): string {
+    const owner = this.localOwner;
+    return this.canonicalCore && owner?.installationId ? JSON.stringify(["hosty-local-v2", owner.appId, owner.installationId]) : "hosty-development-v1";
+  }
+  async localCatalog(tools: UpstreamTool[]): Promise<UpstreamTool[]> {
+    return this.catalog("hosty:development", this.localIdentity,
+      this.canonicalCore ? tools.filter(t => !Object.hasOwn(coreAliases, t.name)) : tools);
+  }
+  async authorizeLocal(session: string, requestId: string, name: string, input: unknown, signal: AbortSignal): Promise<() => Promise<void>> {
+    const canonical = coreAliases[name], core = this.catalogs.get("hosty:core");
+    return canonical && this.canonicalCore && core
+      ? this.authorize(session, "hosty:core", core.identity, requestId, canonical, input, signal)
+      : this.authorize(session, "hosty:development", this.localIdentity, requestId, name, input, signal);
+  }
+  get canonicalCore(): boolean {
+    return this.catalogs.get("hosty:core")?.tools.some(tool => {
+      const metadata = tool._meta?.["io.hosty/core-tool"] as { schemaVersion?: unknown; owner?: unknown } | undefined;
+      return metadata?.schemaVersion === 1 && metadata.owner === "hosty:core";
+    }) ?? false;
+  }
+  snapshot(): ToolCatalog[] {
+    return [...this.catalogs.values()].map(catalog => catalog.provider === "hosty:development" && this.canonicalCore
+      ? { ...catalog, localOwner: this.localOwner, tools: catalog.tools.filter(t => !Object.hasOwn(coreAliases, t.name)) } : catalog);
+  }
   async catalog(provider: string, identity: string, tools: UpstreamTool[]): Promise<UpstreamTool[]> {
     if (tools.length > 1000 || new Set(tools.map(t => t.name)).size !== tools.length ||
         tools.some(t => typeof t.name !== "string" || !t.name || t.name.length > 200 || /[\x00-\x1f]/.test(t.name)))
@@ -50,11 +75,23 @@ export class McpToolPolicy {
         else if (!rule && first && current.mcpAutoAllow[provider] && tool.annotations?.readOnlyHint === true)
           rules[key] = { identity, definition: definition(tool), mode: "run" };
       }
-      return { mcpToolRules: rules, mcpPolicyMigrated: [...new Set([...(current.mcpPolicyMigrated ?? []), `provider:${provider}`])].slice(-2000) };
+      let mcpCoreMigration = provider === "hosty:core" ? migrateCorePolicy(current, identity, tools, rules, definition) : current.mcpCoreMigration;
+      if (provider === "hosty:development" && identity !== "hosty-development-v1" && mcpCoreMigration) {
+        const archived = { ...mcpCoreMigration.legacyRules };
+        for (const tool of tools) {
+          const old = current.mcpToolRules?.[ruleKey(provider, tool.name)];
+          if (old?.identity === "hosty-development-v1" && !archived[tool.name]) archived[tool.name] = { ...old };
+        }
+        mcpCoreMigration = { ...mcpCoreMigration, legacyRules: archived };
+      }
+      return { mcpCoreMigration, mcpToolRules: rules, mcpPolicyMigrated: [...new Set([...(current.mcpPolicyMigrated ?? []), `provider:${provider}`])].slice(-2000) };
     };
     const settings = await this.settings?.transform(change);
     this.catalogs.set(provider, { provider, identity, tools });
-    return tools.filter(t => settings?.mcpToolRules?.[ruleKey(provider, t.name)]?.mode !== "disabled");
+    return tools.filter(t => {
+      const migrated = migratedTool(settings, provider, identity, t.name);
+      return settings?.mcpToolRules?.[ruleKey(migrated?.provider ?? provider, migrated?.tool ?? t.name)]?.mode !== "disabled";
+    });
   }
   async update(rules: Record<string, ToolRule>): Promise<void> {
     if (!validRules(rules)) throw new Error("Invalid MCP tool rules.");
@@ -84,6 +121,8 @@ export class McpToolPolicy {
   }
   async mode(provider: string, identity: string, tool: string): Promise<ToolMode> {
     const settings = await this.settings?.read();
+    const migrated = migratedTool(settings, provider, identity, tool);
+    if (migrated) return this.mode(migrated.provider, migrated.identity, migrated.tool);
     const rule = settings?.mcpToolRules?.[ruleKey(provider, tool)];
     if (rule?.mode === "disabled") return "disabled";
     if (rule?.identity === identity && rule.mode === "ask") return "ask";
@@ -127,10 +166,19 @@ export class McpToolPolicy {
     if (signal.aborted || this.generations.get(scope) !== generation) throw new Error("MCP request was canceled before dispatch.");
     const observedTool = this.catalogs.get(provider)?.tools.find(t => t.name === tool);
     const observedDefinition = observedTool && definition(observedTool);
+    const effectiveDefinition = async () => {
+      const target = migratedTool(await this.settings?.read(), provider, identity, tool);
+      if (!target) return null;
+      const catalog = this.catalogs.get(target.provider), entry = catalog?.tools.find(t => t.name === target.tool);
+      return JSON.stringify([target.identity, catalog?.identity, entry && definition(entry)]);
+    };
+    const observedEffectiveDefinition = await effectiveDefinition();
     if (!observedDefinition || this.catalogs.get(provider)?.identity !== identity) throw new Error("Unknown or changed tool; discover tools again.");
     const canRunAutomatically = async (effective: ToolMode) => {
-      const rule = (await this.settings?.read())?.mcpToolRules?.[ruleKey(provider, tool)];
-      const explicitAsk = rule?.identity === identity && rule.mode === "ask";
+      const current = await this.settings?.read();
+      const migrated = migratedTool(current, provider, identity, tool);
+      const rule = current?.mcpToolRules?.[ruleKey(migrated?.provider ?? provider, migrated?.tool ?? tool)];
+      const explicitAsk = rule?.identity === (migrated?.identity ?? identity) && rule.mode === "ask";
       return effective === "run" || this.autonomous(session) && !explicitAsk;
     };
     const automatic = await canRunAutomatically(mode);
@@ -139,6 +187,7 @@ export class McpToolPolicy {
       const current = this.catalogs.get(provider);
       const currentTool = current?.tools.find(t => t.name === tool);
       if (signal.aborted || this.generations.get(scope) !== generation || current?.identity !== identity || !currentTool || definition(currentTool) !== observedDefinition ||
+          observedEffectiveDefinition !== await effectiveDefinition() ||
           currentMode === "disabled" || automatic && !await canRunAutomatically(currentMode))
         throw new Error("Tool policy changed or the request was canceled before dispatch. Retry with a new MCP request.");
     };

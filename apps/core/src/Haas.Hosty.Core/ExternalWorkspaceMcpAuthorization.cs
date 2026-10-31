@@ -1,13 +1,22 @@
+using Haas.Hosty.Launch;
+
 namespace Haas.Hosty.Core;
 
 // Current credential scopes and the initiating user authorize the whole workspace collection.
 // Credential identity remains attribution; revocation is rechecked on every call.
 internal sealed class ExternalWorkspaceMcpAuthorization(UserDirectoryStore users, OAuthStore oauth,
-    IClock clock, CoreSettingsService settings)
+    IClock clock, CoreSettingsService settings, CoreCapabilityAuthorization capabilities)
 {
     public async Task<ExternalWorkspaceMcpCaller> RequireAsync(HttpContext? http, CancellationToken ct)
     {
         var bearer = http is null ? null : CoreSessionAuthorization.ReadBearerToken(http.Request);
+        if (http is not null && (AppManagementAuthorization.Caller(http.Request) is not null ||
+            bearer?.StartsWith(AssistantMcpAccess.Prefix, StringComparison.Ordinal) == true))
+        {
+            var current = await capabilities.RequireAsync(http.Request,
+                [AccessTokenScopes.McpRead, AccessTokenScopes.McpWorkspaces], [CoreAppPermissions.Sources], ct);
+            return new(current.User.Id, current.PrincipalId, current.App!.DisplayName ?? current.App.Id, current.App, current.Authority);
+        }
         var credential = ScopedCredentials.Resolve(await users.ReadAsync(ct), bearer, clock.UtcNow,
             settings.AuthLifetimes, AccessTokenScopes.CoreAudience);
         if (credential is null ||
@@ -54,9 +63,17 @@ internal sealed class ExternalWorkspaceMcpAuthorization(UserDirectoryStore users
     }
 }
 
-internal sealed record ExternalWorkspaceMcpCaller(string UserId, string PrincipalId, string Label)
+internal sealed record ExternalWorkspaceMcpCaller(string UserId, string PrincipalId, string Label, AppRecord? App = null, CoreCallerAuthority? Authority = null)
 {
+    internal WorkspaceActivationActor ActivationActor() => App is null
+        ? new(UserId, "direct-mcp", Principal: PrincipalId)
+        : new(UserId, "app-mcp", App.Id, App.InstalledAt, PrincipalId,
+            AppIdentityHash: Authority?.IdentityHash ?? Authority?.Mcp?.GrantHash,
+            Mcp: Authority?.Mcp is { } mcp ? new(mcp.GrantHash, mcp.GrantRevision, mcp.SessionId,
+                Authority.InvokedTool ?? throw DeniedOrigin(), mcp.Expires, mcp.LeaseRevision) : null);
+    private static AppIdentityException DeniedOrigin() => new("workspace_authority_required", "The originating Core tool is required.");
+
     public WorkspaceOwner Owner(string taskId, string? label = null)
-        => WorkspaceOwner.ForExternal(UserId, PrincipalId, taskId,
+        => App is not null ? new(App.Id, App.InstalledAt, UserId, taskId) : WorkspaceOwner.ForExternal(UserId, PrincipalId, taskId,
             label is null ? Label : ExternalWorkspaceMcpAuthorization.NormalizeLabel(label));
 }

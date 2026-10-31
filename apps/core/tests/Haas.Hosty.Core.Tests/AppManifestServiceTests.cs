@@ -106,6 +106,11 @@ public sealed class AppManifestServiceTests
     [InlineData("{\"version\":1}", false)]
     [InlineData("{\"version\":1,\"capabilities\":[\"attachments\",\"attachments\"]}", false)]
     [InlineData("{\"version\":1,\"capabilities\":[\"\"]}", false)]
+    [InlineData("{\"version\":1,\"capabilities\":[\"history.search.text\",\"history.tool-events\"]}", true)]
+    [InlineData("{\"version\":1,\"capabilities\":[\"history..read\"]}", false)]
+    [InlineData("{\"version\":1,\"capabilities\":[\".read\"]}", false)]
+    [InlineData("{\"version\":1,\"capabilities\":[\"history:read\"]}", false)]
+    [InlineData("{\"version\":1,\"capabilities\":[\"history.read\",\"history.read\"]}", false)]
     public async Task AssistantInterfaceRequiresVersionedCapabilities(string declaration, bool valid)
     {
         var manifestPath = await WriteManifestAsync("com.example.assistant", role: $$""", "interfaces": { "assistant": [{{declaration}}] } """);

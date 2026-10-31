@@ -1,3 +1,7 @@
+import { ProviderClient as CoreProviderClient } from "@hosty-sdk/app/providers/server";
+import { canonicalAlias } from "../mcp/core-aliases.js";
+import { coreAliases } from "../mcp/core-migration.js";
+import { AgentObservations } from "../agent-sessions/observations.js";
 import { ollamaAttachments } from "../harness/ollama/attachments.js";
 import { SUGGESTION_TTL_MS, suggestionText } from "../harness/prompt-suggestion.js";
 import { SuggestionPreferences } from "./suggestion-preferences.js";
@@ -10,14 +14,14 @@ import { harnessEnvironmentActions } from "./environment-tools.js";
 import { projectWorktreePaths } from "../worker/resources.js";
 import { transcriptFileEdits } from "./transcript-edits.js";
 import type { ConnectionService } from "../connections/service.js";
-import { hasResourceHistory, reconcileRetentionSnapshot, retentionBusy, retentionStatus, type RetentionStatus } from "./retention.js";
+import { hasWorkspaceHistory, hasResourceHistory, reconcileRetentionSnapshot, retentionBusy, retentionStatus, type RetentionStatus } from "./retention.js";
 import type { RetentionSnapshot } from "./development.js";
 import { DEFAULT_WORKFLOW_PROMPT } from "../settings/workflow.js";
 import { WorkerError } from "../runtime/errors.js";
 import type { WorkerClient } from "../worker/client.js";
 import { McpToolPolicy } from "../mcp/policy.js";
 import { type CoreEnvironmentAction, type CoreEnvironment } from "@hosty-sdk/app/sandbox/server";
-import { DevelopmentClient, DevelopmentMcp, DEVELOPMENT_PROVIDER, DEVELOPMENT_IDENTITY, developmentTools, workspaceInstructions, type DevelopmentAction, type DevelopmentWorkspace } from "./development.js";
+import { DevelopmentClient, DevelopmentMcp, developmentTools, workspaceInstructions, type DevelopmentAction, type DevelopmentWorkspace } from "./development.js";
 import { ConnectionError } from "../connections/errors.js";
 import type { AgentConnections, ConnectionBinding } from "../connections/registry.js";
 import { AppContextError, parseAppIds, validateSelection, captureContext, withAppContext } from "./app-context.js";
@@ -109,14 +113,75 @@ interface LiveSession {
 
 export class SessionManager {
   feedbackAction?: (sessionId: string, action: string, input: Record<string, unknown>, credential?: string) => Promise<unknown>;
-  taskAction?: (sessionId: string, action: string, input: Record<string, unknown>, credential?: string) => Promise<unknown>;
+  taskAction?: (sessionId: string, action: string, input: Record<string, unknown>, credential?: string, dispatchGuard?: () => Promise<void>) => Promise<unknown>;
   readonly mcpPolicy: McpToolPolicy;
   readonly developmentMcp = new DevelopmentMcp(async (id, action, input, dispatchGuard) => {
     const session = this.live.get(id);
     if (!session || !["running", "awaiting_approval", "awaiting_question"].includes(session.record.status))
       throw new AppContextError(409, "workspace_turn_inactive", "Workspace agent tools require an active turn.");
-    return this.workspaceAction(id, action, input, undefined, undefined, dispatchGuard);
+    const platform = coreAliases[action.replaceAll("-", "_")];
+    if (!platform) return this.workspaceAction(id, action, input, undefined, undefined, dispatchGuard);
+    if (!this.development?.available) throw new AppContextError(503, "core_unavailable", "Core platform tools are unavailable.");
+    const context = () => ({ sessionId: id, leaseId: session.record.developmentLease,
+      workspaceId: session.record.workspaceAssociation?.id ?? session.record.developmentWorkspaces?.find(w => w.state === "active")?.workspaceId });
+    return this.development.withCoreMcp(context, call => this.invokeCoreTool(id, call.name, call.arguments, dispatchGuard),
+      () => this.workspaceAction(id, action, input, undefined, undefined, dispatchGuard));
   });
+  /** Adapt the client's native lifecycle to the platform contract without moving it into Core. */
+  async coordinateCoreTool(id: string, name: string, args: unknown, guard: () => Promise<void>): Promise<{ result: unknown } | null> {
+    if (!args || typeof args !== "object" || Array.isArray(args)) return null;
+    const input = args as Record<string, unknown>;
+    const object = (value: unknown): Record<string, unknown> => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) throw new AppContextError(400, "core_arguments_invalid", "Use the current Core tool schema.");
+      return value as Record<string, unknown>;
+    };
+    let action: DevelopmentAction, command: Record<string, unknown>;
+    if (name === "prepare_workspace") { action = "prepare"; command = input; }
+    else if (name === "app_create") {
+      const creation = object(input.input);
+      action = "app-create"; command = { ...object(creation.input), taskId: creation.taskId, leaseId: creation.leaseId };
+    } else if (name === "workspace_activation" && ["apply", "resume", "return"].includes(String(input.kind))) {
+      action = `activation-${input.kind}` as DevelopmentAction; command = { ...object(input.input), workspaceId: input.workspaceId };
+    } else if (name === "select_app_execution_target") {
+      action = "execution-select"; command = { ...object(input.input), appId: input.appId };
+    } else if (["workflow_complete", "workflow_resume", "workflow_pause"].includes(name)) {
+      const change = object(input.input), session = await this.requireLive(id);
+      const workspaceId = session.record.workspaceAssociation?.id ?? session.record.developmentWorkspaces?.find(w => w.state === "active")?.workspaceId;
+      if (!workspaceId || change.workspaceId !== workspaceId) return null;
+      // A native agent cannot confirm its own exit; the client performs the stop handshake.
+      if (change.confirm) throw new AppContextError(409, "workspace_stop_required", "Pause confirmation belongs to the client after native execution stops.");
+      action = name.replaceAll("_", "-") as DevelopmentAction; command = object(change.input);
+    } else return null;
+    const session = await this.requireLive(id);
+    if (!["running", "awaiting_approval", "awaiting_question"].includes(session.record.status))
+      throw new AppContextError(409, "workspace_turn_inactive", "Source coordination requires an active native turn.");
+    if (!this.development?.available) throw new AppContextError(503, "core_unavailable", "Core source coordination is unavailable.");
+    if (["prepare", "app-create"].includes(action) && (command.taskId !== id || typeof command.leaseId !== "string"))
+      throw new AppContextError(400, "workspace_context_invalid", "Use this conversation's taskId and a stable native lease UUID.");
+    const context = () => ({ sessionId: id, leaseId: session.record.developmentLease,
+      workspaceId: session.record.workspaceAssociation?.id ?? session.record.developmentWorkspaces?.find(w => w.state === "active")?.workspaceId });
+    const result = await this.development.withCoreMcp(context, call => this.invokeCoreTool(id, call.name, call.arguments, guard),
+      () => this.workspaceAction(id, action, command, undefined, undefined, guard));
+    return { result: await this.developmentMcp.project(result) };
+  }
+
+  async invokeCoreTool(id: string, name: string, input: Record<string, unknown>, dispatchGuard?: () => Promise<void>): Promise<unknown> {
+    const session = await this.requireLive(id), core = this.providers?.core();
+    const credential = session.workspaceCredential ?? session.credential;
+    if (!credential || !core?.url || !core.policyIdentity || !this.exchange)
+      throw new AppContextError(403, "mcp_access_denied", "Refresh this conversation's current Core MCP access.");
+    if (await this.mcpPolicy.mode("hosty:core", core.policyIdentity, name) === "disabled")
+      throw new AppContextError(403, "mcp_tool_disabled", "This canonical Core tool is disabled.");
+    return this.exchange.invokeCore(credential, id, core.url, name, input, dispatchGuard);
+  }
+
+  async invokeCoreTask(id: string, action: string, input: Record<string, unknown>, taskProvider: import("@hosty-sdk/app/tasks").TaskProviderRef, dispatchGuard?: () => Promise<void>): Promise<unknown> {
+    const call = canonicalAlias(action, input, { sessionId: id, taskProvider });
+    if (!call) throw new AppContextError(400, "task_action_invalid", "Unknown Core task operation.");
+    return this.invokeCoreTool(id, call.name, call.arguments, dispatchGuard);
+  }
+
+  private readonly queuedDevelopment = new Map<string, () => Promise<unknown>>();
   private readonly activationGuards = new Map<string, () => Promise<void>>();
   private readonly live = new Map<string, LiveSession>();
   private readonly suggestionEpoch = randomUUID();
@@ -191,6 +256,7 @@ export class SessionManager {
   // the drain can find the set empty, return, and have that late event dispatch into a process that
   // is already exiting.
   private stopping = false;
+  readonly observations: AgentObservations;
 
   constructor(
     readonly store: SessionStore,
@@ -210,6 +276,7 @@ export class SessionManager {
     private readonly executionMode?: "native" | "docker",
     readonly profiles: ProfileStore | null = null,
   ) {
+    this.observations = new AgentObservations(store);
     this.mcpPolicy = new McpToolPolicy(settings,
       (id, event) => this.serialize(id, async () => {
         const session = this.live.get(id);
@@ -228,6 +295,11 @@ export class SessionManager {
         if (allowed) this.audit.report(automatic ? "ai_action_auto_allowed" : "ai_action_approved", { sessionId: id, toolName, mode: automatic ? session.record.autonomy === "autonomous" ? "autonomous" : "run" : "ask" });
       }), 90_000, id => this.live.get(id)?.record.autonomy === "autonomous");
     this.developmentMcp.policy = this.mcpPolicy;
+    this.developmentMcp.prepareCatalog = async id => {
+      if (this.mcpPolicy.canonicalCore) return;
+      const session = this.live.get(id), credential = session?.workspaceCredential ?? session?.credential;
+      if (credential && this.exchange && this.providers) await this.discoverMcpTools(credential);
+    };
     this.developmentMcp.allowRemoteWorker = Boolean(worker);
     this.developmentMcp.project = async value => {
       const trees = (await this.worker?.capabilities())?.resources?.trees;
@@ -235,6 +307,7 @@ export class SessionManager {
     };
     if (proxy) {
       proxy.policy = this.mcpPolicy;
+      proxy.platformCall = (id, name, input, guard) => this.coordinateCoreTool(id, name, input, guard);
       proxy.deniedTools = async appId => {
         const snapshot = await providers?.read();
         const provider = [providers?.core(), ...(snapshot?.providers ?? [])].find(p => p?.appId === appId);
@@ -320,8 +393,9 @@ export class SessionManager {
 
   async discoverMcpTools(credential: string): Promise<string[]> {
     const unavailable: string[] = [];
-    if (this.development?.available) await this.mcpPolicy.catalog(DEVELOPMENT_PROVIDER, DEVELOPMENT_IDENTITY, developmentTools());
+
     const snapshot = await this.providers?.read();
+    this.mcpPolicy.localOwner = this.providers?.ownApplication();
     if (!snapshot) return unavailable;
     for (const p of [this.providers?.core(), ...snapshot.providers]) {
       if (!p?.url || !p.policyIdentity) continue;
@@ -331,6 +405,7 @@ export class SessionManager {
         await this.mcpPolicy.catalog(p.appId, p.policyIdentity, tools);
       } catch { unavailable.push(p.appId); }
     }
+    if (this.development?.available) await this.mcpPolicy.localCatalog(developmentTools());
     return unavailable;
   }
 
@@ -413,7 +488,7 @@ export class SessionManager {
       if (userId && session.record.createdBy !== userId) throw new AppContextError(403, "task_forbidden", "This session belongs to another user.");
       if (!this.taskAction) throw new AppContextError(503, "tasks_unavailable", "Tasks are unavailable.");
       await dispatchGuard?.();
-      return this.taskAction(id, action, input, credential ?? session.workspaceCredential ?? session.credential ?? undefined);
+      return this.taskAction(id, action, input, credential ?? session.workspaceCredential ?? session.credential ?? undefined, dispatchGuard);
     }
     if (contextActions.includes(action as ContextAction)) return this.contextAction(id, action as ContextAction, input, credential, userId, dispatchGuard);
     if (action.startsWith("environment-")) return this.environmentAction(id, action as CoreEnvironmentAction, input, credential, userId);
@@ -425,6 +500,15 @@ export class SessionManager {
       if (!token) throw new AppContextError(401, "workspace_credentials_required", "Refresh the session's Hosty credentials before using workspaces.");
       if (!["delete-workspace", "workspace-inventory", "association", "attach", "detach", "participants", "commit-review", "execution-select", "execution-status", "rename", "activation-plan", "activation-apply", "activation-status", "activation-list", "activation-cancel", "activation-resume", "activation-return", "app-dev-logs", "app-dev-status", "app-dev-plan", "app-dev-apply", "merge-upstream", "remote-status", "remote-connect", "remote-fetch", "remote-push-base", "pr-push", "app-local-status", "app-local-accept", "app-local-use", "app-creation-guide", "app-create", "app-creation-status", "app-creation-capabilities", "workflow-status", "workflow-complete", "workflow-resume", "workflow-pause", "workflow-defer", "workflow-delete", "list", "prepare", "status", "diff", "viewer", "commit", "refresh", "merge", "abort-merge", "cleanup", "references", "pr-resolve-review", "pr-commit", "pr-list", "pr-connections", "pr-status", "pr-configure", "pr-publish", "pr-link", "pr-ready", "pr-merge", "pr-complete", "pr-corrective"].includes(action))
         throw new AppContextError(400, "workspace_action_invalid", "Unknown workspace action.");
+      if (["prepare", "app-create"].includes(action) && (input.taskId !== undefined || input.leaseId !== undefined)) {
+        if (input.taskId !== id || typeof input.leaseId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.leaseId))
+          throw new AppContextError(400, "workspace_context_invalid", "Use this conversation's taskId and a stable native lease UUID.");
+        if (session.record.developmentLease && session.record.developmentLease !== input.leaseId)
+          throw new AppContextError(409, "workspace_lease_conflict", "Reuse the existing native lease for this conversation.");
+        session.record.developmentLease = input.leaseId;
+        session.record.developmentLeaseState = "admitting";
+        await this.store.saveRecord(session.record);
+      }
       if (action === "attach" || action === "detach") {
         if (!userId) throw new AppContextError(403, "workspace_operator_required", "Attach and detach are explicit user actions.");
         if (["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) throw new SessionBusyError();
@@ -458,11 +542,13 @@ export class SessionManager {
       if (["execution-select", "activation-apply", "activation-return", "activation-resume"].includes(action) && ["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) {
         if (userId) throw new SessionBusyError();
         if (!dispatchGuard) throw new AppContextError(403, "activation_review_required", "Activation requires the tool policy's reviewed dispatch.");
+        if (session.record.workflowCompletion?.state === "queued") throw new AppContextError(409, "workflow_request_pending", "Finish the queued completion before selecting a runtime.");
         const queued = session.record.workspaceActivation;
         if (queued?.state === "queued" && (queued.action !== action || JSON.stringify(queued.input) !== JSON.stringify(input)))
           throw new AppContextError(409, "activation_pending", "Preserve the already queued selection. Finish this turn before another activation.");
         session.record.workspaceActivation = { action: action as "execution-select" | "activation-apply" | "activation-return" | "activation-resume", input: structuredClone(input), state: "queued" };
         this.activationGuards.set(id, dispatchGuard);
+        this.queuedDevelopment.set(`${id}:activation`, this.development.captureCall(id, token, action, structuredClone(input)));
         await this.store.saveRecord(session.record);
         return { state: "queued", requestId: input.requestId ?? input.activationId, message: "Finish this turn. Harness dispatches the reviewed request only after native execution stops and workspace leases release. Observe the original ID after reconnect." };
       }
@@ -475,9 +561,11 @@ export class SessionManager {
       if (action === "workflow-complete" && !userId && ["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) {
         if (typeof input.requestId !== "string" || !/^[0-9a-f-]{36}$/i.test(input.requestId) || !Number.isSafeInteger(input.expectedRevision))
           throw new AppContextError(400, "workflow_request_invalid", "Supply a UUID requestId and expectedRevision.");
+        if (session.record.workspaceActivation?.state === "queued") throw new AppContextError(409, "activation_pending", "Finish the queued runtime selection before requesting completion.");
         const current = session.record.workflowCompletion;
         if (current?.state === "queued" && (current.requestId !== input.requestId || current.expectedRevision !== input.expectedRevision))
           throw new AppContextError(409, "workflow_request_pending", "Keep the existing completion request until the turn finishes.");
+        this.queuedDevelopment.set(`${id}:completion`, this.development.captureCall(id, token, action, structuredClone(input)));
         session.record.workflowCompletion = { requestId: input.requestId, expectedRevision: input.expectedRevision as number, state: "queued" };
         await this.store.saveRecord(session.record);
         return { state: "queued", message: "Completion will be verified after this turn exits and releases its source leases. This is not a completion result." };
@@ -529,6 +617,8 @@ export class SessionManager {
         await this.store.saveRecord(session.record);
       }
       if (action === "app-create") {
+        session.record.developmentLease ??= randomUUID();
+        await this.store.saveRecord(session.record);
         const appIds = parseAppIds([...(session.record.appIds ?? []), String(input.appId)]);
         if (typeof input.requestId !== "string" || !/^[0-9a-f-]{36}$/i.test(input.requestId))
           throw new AppContextError(400, "creation_request_invalid", "Use a UUID requestId.");
@@ -638,14 +728,73 @@ export class SessionManager {
     });
   }
 
+  async prepareTaskWorkspace(id: string, dispatch: import("@hosty-sdk/app/providers").TaskDispatchRef, executionId: string, workspaceId: string): Promise<void> {
+    await this.serialize(id, async () => {
+      const session = await this.requireLive(id);
+      if (!this.development?.available) throw new AppContextError(503, "task_workspace_unavailable", "Task source execution requires the managed Core connection.");
+      if (session.record.createdBy !== dispatch.userId || session.record.taskExecutionId !== executionId)
+        throw new AppContextError(403, "task_workspace_forbidden", "This conversation is not bound to the selected task execution.");
+      const prior = session.record.taskWorkspace;
+      if (prior && (prior.executionId !== executionId || prior.workspaceId !== workspaceId || JSON.stringify(prior.dispatch) !== JSON.stringify(dispatch)))
+        throw new AppContextError(409, "task_workspace_conflict", "Recover this task with its original workspace and authority.");
+      session.record.developmentLease ??= prior?.leaseId ?? randomUUID();
+      session.record.taskWorkspace ??= { dispatch, executionId, workspaceId, leaseId: session.record.developmentLease };
+      session.record.developmentLeaseState ??= "stopped";
+      await this.store.saveRecord(session.record);
+      const observed = await this.taskWorkspaceCall(session, { kind: "observe" }) as {
+        association: { workspace: import("./development.js").WorkspaceParticipation | null }; sources: { workspaces: DevelopmentWorkspace[] };
+      };
+      if (observed.association.workspace?.id !== workspaceId) throw new AppContextError(409, "task_workspace_changed", "The bound workspace is unavailable.");
+      const pending = session.record.associationRequests?.find(r => r.id === executionId);
+      const input = pending?.input ?? { workspaceId, requestId: executionId, expectedRevision: observed.association.workspace.revision,
+        title: session.record.title ?? "Task execution", viewerPath: `/assistant?session=${encodeURIComponent(id)}` };
+      if (!pending) {
+        session.record.associationRequests = [...session.record.associationRequests ?? [], { id: executionId, action: "attach", input, state: "pending" }];
+        await this.store.saveRecord(session.record);
+      }
+      const attached = await this.taskWorkspaceCall(session, { kind: "attach", requestId: executionId,
+        expectedRevision: input.expectedRevision as number, title: input.title as string, navigationPath: input.viewerPath as string }) as typeof observed;
+      const workspace = attached.association.workspace;
+      if (!workspace || workspace.id !== workspaceId) throw new AppContextError(409, "task_workspace_changed", "The task workspace association changed.");
+      session.record.associationRequests!.find(r => r.id === executionId)!.state = "succeeded";
+      session.record.workspaceAssociation = { id: workspace.id, revision: workspace.revision };
+      session.record.developmentWorkspaces = attached.sources.workspaces;
+      await this.store.saveRecord(session.record);
+    });
+  }
+
+  private taskWorkspaceCall(session: LiveSession, input: Pick<import("@hosty-sdk/app/providers").TaskWorkspaceRequest, "kind" | "requestId" | "expectedRevision" | "title" | "navigationPath" | "activity">): Promise<unknown> {
+    const binding = session.record.taskWorkspace;
+    if (!binding) throw new AppContextError(403, "task_workspace_missing", "No retained task workspace authority is available.");
+    return new CoreProviderClient().taskWorkspace({ ...binding, ...input, sessionId: session.record.id });
+  }
+
   private async leaseWorkspaces(session: LiveSession, acquire: boolean, outcome = session.record.status): Promise<void> {
     if (!this.development || !session.record.developmentLease) return;
     const credential = session.workspaceCredential ?? session.credential;
+    if (session.record.taskWorkspace) {
+      if (acquire) {
+        session.record.developmentLeaseState = "admitting";
+        await this.store.saveRecord(session.record);
+        const result = await this.taskWorkspaceCall(session, { kind: "lease", requestId: randomUUID() }) as { sources: { workspaces: DevelopmentWorkspace[] } };
+        session.record.developmentWorkspaces = result.sources.workspaces;
+        await this.store.saveRecord(session.record);
+        this.scheduleWorkspaceActivity(session);
+      } else {
+        await this.reportWorkspaceActivity(session, undefined, { status: outcome === "failed" ? "failed" : "idle", leaseId: session.record.developmentLease, stopped: true });
+        delete session.record.developmentLease;
+        delete session.record.developmentLeaseState;
+        if (session.workspaceActivityTimer) clearTimeout(session.workspaceActivityTimer);
+        session.workspaceActivityTimer = undefined;
+        await this.store.saveRecord(session.record);
+      }
+      return;
+    }
     if (!credential) throw new AppContextError(401, "workspace_credentials_required", "Refresh Hosty credentials before continuing development.");
     if (!acquire) {
       // Called only after verified execution exit. Revoked membership cannot prevent the
       // authenticated session releasing its own exact lease; another user's identity is never used.
-      await this.reportWorkspaceActivity(session, credential, { status: outcome === "failed" ? "failed" : "idle", leaseId: session.record.developmentLease, stopped: true, title: session.record.title ?? undefined });
+      await this.reportWorkspaceActivity(session, credential ?? undefined, { status: outcome === "failed" ? "failed" : "idle", leaseId: session.record.developmentLease, stopped: true, title: session.record.title ?? undefined });
       delete session.record.developmentLease;
       delete session.record.developmentLeaseState;
       if (session.workspaceActivityTimer) clearTimeout(session.workspaceActivityTimer);
@@ -666,10 +815,13 @@ export class SessionManager {
     this.scheduleWorkspaceActivity(session);
   }
 
-  private async reportWorkspaceActivity(session: LiveSession, credential: string, input: Parameters<DevelopmentClient["activity"]>[2]) {
+  private async reportWorkspaceActivity(session: LiveSession, credential: string | undefined, input: Parameters<DevelopmentClient["activity"]>[2]) {
     session.record.workspaceActivitySequence = (session.record.workspaceActivitySequence ?? 0) + 1;
     await this.store.saveRecord(session.record);
-    return this.development!.activity(session.record.id, credential, { ...input, sequence: session.record.workspaceActivitySequence });
+    const activity = { ...input, sequence: session.record.workspaceActivitySequence };
+    if (session.record.taskWorkspace) return this.taskWorkspaceCall(session, { kind: "activity", activity: { ...activity, leaseId: session.record.taskWorkspace.leaseId } }) as Promise<{ workspaceId: string | null; revision: number | null; stopRequested: boolean; state: string }>;
+    if (!credential) throw new AppContextError(401, "workspace_credentials_required", "Refresh current source authority.");
+    return this.development!.activity(session.record.id, credential, activity);
   }
 
   private scheduleWorkspaceActivity(session: LiveSession): void {
@@ -680,8 +832,8 @@ export class SessionManager {
         if (this.stopping || !session.record.developmentLease || !["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) return;
         try {
           const credential = session.workspaceCredential ?? session.credential;
-          if (!credential) throw new Error("Workspace credentials are unavailable.");
-          const result = await this.reportWorkspaceActivity(session, credential, {
+          if (!credential && !session.record.taskWorkspace) throw new Error("Workspace credentials are unavailable.");
+          const result = await this.reportWorkspaceActivity(session, credential ?? undefined, {
             status: session.record.status, leaseId: session.record.developmentLease, title: session.record.title ?? undefined,
           });
           if (result.stopRequested) throw new Error("Workspace access or execution admission changed.");
@@ -1139,7 +1291,7 @@ export class SessionManager {
   }
 
   private async inspectRetention(record: SessionRecord, now: Date): Promise<{ status: RetentionStatus; snapshot?: RetentionSnapshot }> {
-    if (retentionBusy(record))
+    if (retentionBusy(record) || !this.live.get(record.id)?.run && await this.observations.change(state => state.runs.some(r => r.conversation === record.id && !r.stopConfirmed)))
       return { status: { state: "protected", observedAt: now.toISOString(), message: "Active work or unresolved operations are retained." } };
     try {
       const snapshot = await this.retentionSnapshot(record);
@@ -1187,6 +1339,10 @@ export class SessionManager {
               if (result.workflow?.state !== "deleted" || !result.resourcesFinished) throw new Error("Core cleanup is still pending; retry uses the saved request ID.");
             } else if (!snapshot.resourcesFinished) throw new Error("Retained resources must finish before deleting the conversation.");
           }
+          // Stop only this conversation's executor. Environment lifecycle remains independent.
+          await this.cancelSessionLocked(record.id);
+          if (await this.observations.change(state => state.runs.some(r => r.conversation === record.id && !r.stopConfirmed)))
+            throw new AppContextError(409, "exit_unconfirmed", "Native termination is unconfirmed; conversation history is retained.");
           // This lock also guards new turns, so no session can resume between verification and removal.
           await this.removeSessionRecord(record, "retention");
           deleted.push(record.id);
@@ -1248,8 +1404,10 @@ export class SessionManager {
       record = live.record;
       if (credential) live.workspaceCredential = credential;
       await this.cancelSessionLocked(id);
+      if (await this.observations.change(state => state.runs.some(r => r.conversation === id && !r.stopConfirmed)))
+        throw new AppContextError(409, "exit_unconfirmed", "Confirm this conversation's native execution has stopped before deleting its record.");
       let snapshot = await this.retentionSnapshot(record);
-      if (!snapshot.resourcesFinished)
+      if (!snapshot.resourcesFinished && !snapshot.independentEnvironments)
         throw new AppContextError(409, "resource_retained", "Finish this session's sandbox resources before deleting its conversation.");
       if (record.coreEnvironmentOperations?.some(o => o.state === "pending") || record.associationRequests?.some(o => o.state === "pending" && o.action !== "detach"))
         throw new AppContextError(409, "resource_operation_pending", "Recover outstanding operations before deleting this conversation.");
@@ -1272,7 +1430,8 @@ export class SessionManager {
         await this.store.saveRecord(record);
         snapshot = await this.retentionSnapshot(record);
       }
-      if (snapshot.kind === "chat" && hasResourceHistory(record) && !snapshot.sessionDetached)
+      if (snapshot.kind === "chat" && hasResourceHistory(record) && !snapshot.sessionDetached
+          && !(snapshot.independentEnvironments && snapshot.workspaceAbsent && !hasWorkspaceHistory(record)))
         throw new AppContextError(409, "resource_retained", "Reconcile retained resource history before deleting the conversation.");
       return this.removeSessionRecord(record, deletedBy);
     });
@@ -1365,7 +1524,7 @@ export class SessionManager {
           ["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) throw new SessionBusyError();
       if ((session.record.autonomy ?? "normal") === value) return session.record;
       // Recreate the native client so a resumed thread cannot retain its previous permission mode.
-      if (session.run) { await session.run.stop(); session.run = null; }
+      if (session.run) { await (session.run.stopAndWait ? session.run.stopAndWait() : session.run.stop()); session.run = null; }
       this.clearRefresh(session);
       this.proxy?.unregister(id);
       this.developmentMcp.unregister(id);
@@ -1557,7 +1716,12 @@ export class SessionManager {
         throw new SessionBusyError();
       }
       const workspaceCredential = context.workspaceCredential ?? credential ?? session.workspaceCredential ?? session.credential;
-      if (this.development?.available && workspaceCredential) {
+      if (session.record.taskWorkspace) {
+        if (!context.taskDispatch || session.record.taskExecutionId !== session.record.taskWorkspace.executionId)
+          throw new AppContextError(403, "task_workspace_forbidden", "Retained task workspace access cannot authorize a new conversation turn.");
+        await this.taskWorkspaceCall(session, { kind: "observe" });
+        // The subsequent lease command rechecks workflow and writer admission before model start.
+      } else if (this.development?.available && workspaceCredential) {
         // Legacy delegation cannot authenticate the workspace API. The service-owned snapshot
         // still observes Core state even when the conversation lost its local associations.
         const workflow = workspaceCredential.startsWith("hosty_delegated.")
@@ -1735,7 +1899,9 @@ export class SessionManager {
           session.suggestion = { revision: (session.suggestion?.revision ?? 0) + 1, state: unsupported ? "unavailable" : "empty",
             ...(unsupported ? { reason: "unsupported" } : {}), attemptId: session.record.workerRun?.id };
           this.fanOut(session, this.suggestionEvent(session));
-          session.run = selectedAdapter.start({
+          session.record.agentRunId = await this.observations.begin(session.record);
+          await this.store.saveRecord(session.record);
+          session.run = this.observations.attach(session.record.agentRunId, selectedAdapter.start({
             promptSuggestions: session.suggestionAllowed,
             operation: session.record.taskExecutionId ? "task" : "chat",
             skillExportId: skillExport?.id,
@@ -1758,10 +1924,10 @@ export class SessionManager {
             // session when one was captured, per the reattach/resume decision in the plan.
             resumeHarnessSessionId: session.record.harnessSessionId ?? undefined,
             onEvent: (event) => this.dispatchHarnessEvent(id, event, runEpoch),
-          });
+          }));
         }
         this.scheduleMcpRefresh(id);
-        const prompt = (selectedAdapter.name === "ollama" ? text + attachedText : withAttachedPaths(text, attached.map((file) => file.path))) + (this.development?.available ? "\n\n" + workspaceInstructions(await this.developmentMcp.project(session.record.developmentWorkspaces ?? []) as DevelopmentWorkspace[]) : "");
+        const prompt = (selectedAdapter.name === "ollama" ? text + attachedText : withAttachedPaths(text, attached.map((file) => file.path))) + (this.development?.available ? "\n\n" + workspaceInstructions(await this.developmentMcp.project(session.record.developmentWorkspaces ?? []) as DevelopmentWorkspace[], this.mcpPolicy.canonicalCore ? { sessionId: id, leaseId: session.record.developmentLease } : undefined) : "");
         dispatched = true;
         session.run.send(snapshot.apps.length || snapshot.revision > 0 ? withAppContext(prompt, snapshot) : prompt);
         if (context.dispatchId && session.record.handoffDispatch) {
@@ -2160,6 +2326,20 @@ export class SessionManager {
     );
   }
 
+  /** Cancel only the explicitly observed attempt; a replacement run cannot inherit an old command. */
+  async cancelObservedRun(conversation: string, runId: string, owner: string, expectedRevision: string | null, validate: () => Promise<unknown>): Promise<void> {
+    await this.serialize(conversation, async () => {
+      const record = await this.store.readRecord(conversation);
+      if (!record || record.createdBy !== owner || record.agentRunId !== runId) throw new AppContextError(404, "not_found", "Execution resource not found.");
+      const observed = await this.observations.change(state => state.runs.find(r => r.id === runId));
+      if (!observed || expectedRevision !== null && observed.revision !== expectedRevision) throw new AppContextError(409, "revision_conflict", "Read the current execution revision.");
+      if (observed.stopConfirmed) return;
+      const live = await this.requireLive(conversation);
+      if (!live.run) throw new AppContextError(503, "provider_unavailable", "The native execution handle is unavailable; its exit is not confirmed.");
+      await validate(); await this.cancelSessionLocked(conversation);
+    });
+  }
+
   async cancelSession(id: string): Promise<void> {
     const session = this.live.get(id);
     if (session?.record.status === "suggesting") {
@@ -2172,12 +2352,13 @@ export class SessionManager {
     const session = await this.requireLive(id);
     this.clearSuggestion(session);
     if (this.worker || session.record.developmentLease || session.record.taskExecutionId) await this.finishExecution(session);
-    session.runEpoch = undefined;
     this.setActivity(session, null);
     if (session.run) {
-      await session.run.stop().catch(() => undefined);
+      if (session.run.stopAndWait) await session.run.stopAndWait();
+      else await session.run.stop().catch(() => undefined);
       session.run = null;
     }
+    session.runEpoch = undefined;
     // Native adapter stop does not verify process-tree exit or detached writers. Keep
     // source leases until verified execution acknowledgement; finishExecution supplies that proof.
     session.pendingApprovals.clear();
@@ -2239,6 +2420,9 @@ export class SessionManager {
   async shutdown(): Promise<void> {
     this.mcpPolicy.close();
     this.stopping = true;
+    // Start the event deadline before native shutdown and final metadata writes. A slow store
+    // must not defer the deadline until after its own pending writes have completed.
+    const draining = this.drainHarnessEvents();
     for (const session of this.live.values()) {
       clearTimeout(session.suggestionTimer);
       if (session.workspaceActivityTimer) clearTimeout(session.workspaceActivityTimer);
@@ -2252,7 +2436,7 @@ export class SessionManager {
         // Coordinator restart keeps the persisted run and specific source leases for reattachment.
       }
       if (session.run) {
-        await session.run.stop().catch(() => undefined);
+        await (session.run.stopAndWait ? session.run.stopAndWait() : session.run.stop()).catch(() => undefined);
         session.run = null;
       }
       this.clearRefresh(session);
@@ -2260,7 +2444,8 @@ export class SessionManager {
       this.developmentMcp.unregister(session.record.id);
     }
 
-    await this.drainHarnessEvents();
+    await draining;
+    this.observations.close();
   }
 
   /** Waits for handlers already dispatched, after the runs that feed them have stopped. */
@@ -2363,7 +2548,8 @@ export class SessionManager {
     this.live.set(id, session);
     if (this.worker && record.workerRun) {
       const epoch = session.runEpoch = randomUUID();
-      session.run = this.worker.attach(record.workerRun.id, {
+      if (!record.agentRunId) { record.agentRunId = await this.observations.begin(record, true); await this.store.saveRecord(record); }
+      session.run = this.observations.attach(record.agentRunId, this.worker.attach(record.workerRun.id, {
         sessionId: id, cwd: this.workDir,
         onEvent: event => this.dispatchHarnessEvent(id, event, epoch),
         onWorkerEvent: frame => this.receiveWorkerEvent(session, frame, epoch),
@@ -2375,7 +2561,7 @@ export class SessionManager {
           }
           this.notifyToolActivity();
         },
-      });
+      }));
     }
     return session;
   }
@@ -2384,6 +2570,7 @@ export class SessionManager {
     const handled = this.serialize(session.record.id, async () => {
       const run = session.record.workerRun;
       if (this.stopping || session.runEpoch !== epoch || !run || run.id !== frame.runId || frame.sequence <= run.sequence) return;
+      if (session.record.agentRunId) await this.observations.markCurrent(session.record.agentRunId);
       if (run.generation && run.generation !== frame.generation) throw new Error("Worker generation changed.");
       const terminal = frame.event.type === "result" || frame.event.type === "error";
       try {
@@ -2565,11 +2752,10 @@ export class SessionManager {
       case "error": {
         this.clearSuggestion(session);
         if (!persisted) await this.append(id, { ...event });
-        // The run is dead: drop it so the next message starts a fresh harness (resuming the
-        // captured harness session when possible) instead of feeding a terminated input stream.
+        // An error frame is not native-exit evidence. Await the executor's stop proof when
+        // available; keep a failed termination handle so explicit cancellation can recover it.
         if (this.worker || session.record.developmentLease || session.record.taskExecutionId) await this.finishExecution(session, false, event.workerRunId !== undefined, "failed");
         const failedRun = session.run;
-        if (event.workerRunId === undefined) session.run = null;
         session.pendingApprovals.clear();
         session.pendingQuestions.clear();
         // Only the dead harness held this session's proxy key, so the route has no legitimate user
@@ -2577,7 +2763,10 @@ export class SessionManager {
         this.proxy?.unregister(id);
         this.developmentMcp.unregister(id);
         if (failedRun && event.workerRunId === undefined) {
-          void failedRun.stop().catch(() => undefined);
+          try {
+            await (failedRun.stopAndWait ? failedRun.stopAndWait() : failedRun.stop());
+            session.run = null;
+          } catch { /* Keep the handle and unconfirmed observation for cancellation recovery. */ }
         }
         await this.setStatus(id, "failed", event.workerRunId !== undefined);
         return;
@@ -2701,7 +2890,10 @@ export class SessionManager {
           try { await this.finishExecution(session); } catch { return; }
         }
         session.runEpoch = undefined;
-        if (session.run) { await session.run.stop().catch(() => undefined); session.run = null; }
+        if (session.run) {
+          try { await (session.run.stopAndWait ? session.run.stopAndWait() : session.run.stop()); session.run = null; }
+          catch { return; }
+        }
         session.pendingApprovals.clear();
         session.pendingQuestions.clear();
         session.mcpAppIds = [];
@@ -2724,7 +2916,7 @@ export class SessionManager {
     }
 
     if ((this.worker || session.record.taskExecutionId) && !["running", "suggesting", "awaiting_approval", "awaiting_question"].includes(status)) {
-      try { await this.finishExecution(session, status === "idle" && session.record.workspaceActivation?.state === "queued", preserveWorkerRun, status); }
+      try { await this.finishExecution(session, status === "idle" && (session.record.workspaceActivation?.state === "queued" || session.record.workflowCompletion?.state === "queued"), preserveWorkerRun, status); }
       catch (error) {
         if (session.record.taskExecutionId) {
           // Cleanup can fail after native exit has already been durably confirmed.
@@ -2757,7 +2949,7 @@ export class SessionManager {
       }
     }
     if (status === "idle" && session.record.developmentLease && !this.worker && !session.record.taskExecutionId)
-      await this.finishExecution(session, session.record.workspaceActivation?.state === "queued");
+      await this.finishExecution(session, session.record.workspaceActivation?.state === "queued" || session.record.workflowCompletion?.state === "queued");
     if (status === "running" && session.record.taskExecutionId) session.record.taskRun = { started: true, exitConfirmed: false };
     session.record.status = status;
     if (["running", "awaiting_approval", "awaiting_question"].includes(status)) this.scheduleWorkspaceActivity(session);
@@ -2766,8 +2958,8 @@ export class SessionManager {
     await this.store.saveRecord(session.record);
     if (["running", "awaiting_approval", "awaiting_question"].includes(status) && session.record.developmentLease && this.development?.available) {
       const credential = session.workspaceCredential ?? session.credential;
-      if (credential) {
-        try { await this.reportWorkspaceActivity(session, credential, { status, leaseId: session.record.developmentLease, title: session.record.title ?? undefined }); }
+      if (credential || session.record.taskWorkspace) {
+        try { await this.reportWorkspaceActivity(session, credential ?? undefined, { status, leaseId: session.record.developmentLease, title: session.record.title ?? undefined }); }
         catch { /* The activity timer verifies authority and requests stop if recovery fails. */ }
       }
     }
@@ -2779,7 +2971,9 @@ export class SessionManager {
         const guard = this.activationGuards.get(id);
         if (status !== "idle" || !credential || !guard || !this.development) throw new Error("Execution did not finish with a retained review. Retry explicitly after inspection.");
         await guard();
-        await this.development.call(id, credential, queued.action, queued.input);
+        const dispatch = this.queuedDevelopment.get(`${id}:activation`);
+        if (!dispatch) throw new Error("The original reviewed transport is unavailable. Retry explicitly.");
+        await dispatch();
         session.record.workspaceActivation = { ...queued, state: "dispatched" };
         await this.append(id, { type: "notice", message: "Execution selection dispatched to Core. Observe the original request ID for progress." });
       } catch (error) {
@@ -2787,6 +2981,7 @@ export class SessionManager {
         await this.append(id, { type: "notice", message: `Workspace activation was not confirmed: ${session.record.workspaceActivation.error}` });
       } finally {
         this.activationGuards.delete(id);
+        this.queuedDevelopment.delete(`${id}:activation`);
         this.developmentMcp.unregister(id);
         await this.store.saveRecord(session.record);
       }
@@ -2796,13 +2991,17 @@ export class SessionManager {
       try {
         const credential = session.workspaceCredential ?? session.credential;
         if (status !== "idle" || !credential || !this.development) throw new Error("Execution did not finish successfully. Review and request completion again.");
-        await this.development.call(id, credential, "workflow-complete", { requestId: request.requestId, expectedRevision: request.expectedRevision });
+        const dispatch = this.queuedDevelopment.get(`${id}:completion`);
+        if (!dispatch) throw new Error("The original reviewed transport is unavailable. Retry explicitly.");
+        await dispatch();
         delete session.record.workflowCompletion;
         await this.append(id, { type: "notice", message: "Core verified workspace completion. Source and previews are retained for operator review." });
       } catch (error) {
         session.record.workflowCompletion = { ...request, state: "blocked", error: error instanceof Error ? error.message : String(error) };
         await this.append(id, { type: "notice", message: `Workspace completion was not confirmed: ${session.record.workflowCompletion.error}` });
       }
+      this.queuedDevelopment.delete(`${id}:completion`);
+      this.developmentMcp.unregister(id);
       await this.store.saveRecord(session.record);
     }
     // Announced on *entering* the state, which this method already guarantees: it returns early when

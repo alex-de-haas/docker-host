@@ -127,6 +127,31 @@ def check(context):
     assert selected['workspaceAssociation']['id']==tree['workspaceId'] and any(w['id']==tree['id'] for w in selected['developmentWorkspaces'])
     assert any(w['id']==tree['id'] for w in h('/sessions/'+source_session['id']+'/workspaces',{'action':'list'})['workspaces'])
     say('PASS: existing workspace reused and retained after completion')
+    # The canonical Core entry point retains the original caller and admits a workspace-bound
+    # execution without giving the executor a general browser or MCP credential.
+    canonical_input={'provider':provider,'input':{'requestId':str(uuid.uuid4()),'input':{
+        'title':'Canonical Core workspace task','markdown':'TASK_ACCEPTANCE:RESULT','assignee':assignee,
+        'workspaceId':tree['workspaceId'],'requiresReview':False,'resources':[]}}}
+    canonical=call(origin,'/api/tasks/v1/create',canonical_input)
+    assert call(origin,'/api/tasks/v1/create',canonical_input)==canonical
+    canonical_action={'taskRef':canonical['ref'],'input':{'requestId':str(uuid.uuid4()),'expectedRevision':canonical['revision'],'action':'ready'}}
+    canonical=call(origin,'/api/tasks/v1/action',canonical_action)
+    canonical=settle(canonical)
+    assert len(canonical['attempts'])==1 and canonical['attempts'][0]['receipt']['stopConfirmed']
+    canonical_session=h('/sessions/'+canonical['attempts'][0]['receipt']['sessionRef']['id'])
+    assert canonical_session['workspaceAssociation']['id']==tree['workspaceId']
+    assert any(w['id']==tree['id'] for w in canonical_session['developmentWorkspaces'])
+    canonical_read=call(origin,'/api/tasks/v1/get',{'taskRef':canonical['ref']})
+    assert canonical_read['status']=='Done' and canonical_read['ref']==canonical['ref']
+    conversation={'provider':provider,'id':canonical_session['id']}
+    history=call(origin,'/api/history/v1/entries/query',{'conversation':conversation})
+    assert any(entry['data']['kind']=='message' for entry in history['entries'])
+    search=call(origin,'/api/history/v1/search',{'providers':[provider],'conversations':[conversation],'q':'TASK_ACCEPTANCE'})
+    assert search['hits']
+    native=call(origin,'/api/agent-sessions/v1/sessions/query',{'provider':provider,'conversation':conversation})
+    assert native['availability']=='available' and native['sessions']
+    assert all(row['conversation']==conversation for row in native['sessions'])
+    say('PASS: canonical Core task replay, receipt-bound native workspace admission, explicit stopped result and common history/search/session projection')
     image=next(s for s in manifest['services'] if s['key']=='api')['runtimes']['docker']['image']; fixture_id='example.task-conformance'
     fixture_image='hosty-tasks-conformance:'+uuid.uuid4().hex
     image_context=base/'task-fixture-image'; image_context.mkdir()

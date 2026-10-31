@@ -47,7 +47,7 @@ internal sealed partial class DevelopmentWorkspaceService
         }, ct), ct);
     }
 
-    public async Task<LocalRemoteStatus> RemoteCommandAsync(string id, WorkspaceOwner owner, string kind, LocalRemoteCommand input, CancellationToken ct)
+    public async Task<LocalRemoteStatus> RemoteCommandAsync(string id, WorkspaceOwner owner, string kind, LocalRemoteCommand input, CancellationToken ct, Func<CancellationToken, Task>? validateCaller = null)
     {
         RequestId(input.RequestId);
         if (kind is not ("connect" or "fetch" or "push-base") || string.IsNullOrWhiteSpace(input.AppId) || input.AppId.Length > 63)
@@ -58,10 +58,10 @@ internal sealed partial class DevelopmentWorkspaceService
         var grant = kind == "connect"
             ? await RemoteGit.BindAsync(owner.UserId, input.ConnectionId ?? "", input.Repository ?? "", false, ct)
             : app.SourceState!.Remote?.Grant ?? throw Error("remote_required", "Connect an existing repository first.");
-        return await RemoteCommandLocked(id, owner, kind, input, grant, ct);
+        return await RemoteCommandLocked(id, owner, kind, input, grant, ct, validateCaller);
     }
 
-    private async Task<LocalRemoteStatus> RemoteCommandLocked(string id, WorkspaceOwner owner, string kind, LocalRemoteCommand input, SourceReadGrant admittedGrant, CancellationToken ct)
+    private async Task<LocalRemoteStatus> RemoteCommandLocked(string id, WorkspaceOwner owner, string kind, LocalRemoteCommand input, SourceReadGrant admittedGrant, CancellationToken ct, Func<CancellationToken, Task>? validateCaller = null)
     {
         RequestId(input.RequestId);
         if (kind is not ("connect" or "fetch" or "push-base") || string.IsNullOrWhiteSpace(input.AppId) || input.AppId.Length > 63)
@@ -77,6 +77,7 @@ internal sealed partial class DevelopmentWorkspaceService
                 () => Locked("repository-admission:" + tree.RepositoryId,
                 () => RemoteGit.WithConnectionAsync(admittedGrant, async connection =>
             {
+                if (validateCaller is not null) await validateCaller(ct);
                 var w = await Read(id, owner, ct);
                 var app = await RequireLocalRemoteApp(w, input.AppId, ct, validateGrant: false);
                 if (app.SourceState!.Remote is { } selected && (selected.Grant.ConnectionId != connection.Id || selected.Grant.OwnerId != connection.UserId))
@@ -126,12 +127,14 @@ internal sealed partial class DevelopmentWorkspaceService
                         if (head is not null && head != accepted)
                             throw Error("remote_exists", "The remote target already exists with different history. Fetch and reconcile it explicitly; it will not be overwritten.");
                         op = op with { ResultHead = accepted }; w = Put(w, op); await Save(w);
+                        if (validateCaller is not null) await validateCaller(ct);
                         if (head is null)
                             // An absence lease is create-only: even a concurrent creator cannot be overwritten.
                             await RemoteGit.GitWithConnectionAsync(binding.Grant, binding.Repository, w.Path,
                                 ["push", "--no-verify", "--force-with-lease=refs/heads/" + binding.TargetBranch + ":", binding.Repository, accepted + ":refs/heads/" + binding.TargetBranch], connection, ct);
                     }
                     var observation = await FetchRemote(w, binding, ct, connection);
+                    if (validateCaller is not null) await validateCaller(ct);
                     if (kind == "connect")
                     {
                         await apps.UpdateAppAsync(app.Id, current => current with { SourceState = current.SourceState! with { Remote = binding } }, ct);
@@ -141,7 +144,7 @@ internal sealed partial class DevelopmentWorkspaceService
                     await Save(w);
                     return RemoteStatus(w, app, w.Operations.Single(o => o.Id == op.Id));
                 }
-                catch (Exception ex) when (ex is AppLifecycleException or UserConnectionException or IOException or OperationCanceledException or HttpRequestException)
+                catch (Exception ex) when (ex is AppLifecycleException or AppIdentityException or SandboxException or UserConnectionException or IOException or OperationCanceledException or HttpRequestException)
                 {
                     // Keep the exact request available for reconciliation; never infer a failed push
                     // from a lost response or delete the user's source to recover connectivity.

@@ -261,17 +261,17 @@ and an execution run. These identities do not require separate user-facing scree
 belongs to its consumer application; the provider owns its native state and execution. Core consumes
 a qualified reference and the minimal status/control contract needed for resource coordination,
 without owning a transcript or requiring a chat for independent environment/workspace operations.
-See [Core MCP accepted direction and Q1-Q2](../core-mcp/plan.md#sequence-and-open-decisions) and
+See [Core MCP capability boundaries](../core-mcp/feature.md) and
 [vision decision 67](../../vision.md).
 
 The subsequent owner clarification selects a common Core-owned history schema and API/MCP for
 sharing/search, with provider-owned original records and declared dynamic extensions. The
-[Conversation History](../conversation-history/plan.md) plan owns that public read/share/search
+[Conversation History](../conversation-history/feature.md) implements the public read/share/search
 contract and indexing compatibility. D2-D3 reuse its qualified conversation references while owning
 execution status/control and native recovery. Common history access does not imply native-state
 portability or access to private provider data. Qdrant integration is explicitly deferred.
 
-D2-D3 must settle the public reference, status/freshness and confirmed-stop contract. D2 must also
+D2-D3 reuse the shipped minimal reference, status/freshness and confirmed-stop contract. D2 must also
 specify native resume versus same-provider/account reconstruction, supported retained context,
 unknown-effect reconciliation and user-visible recovery outcomes. A replacement native session
 need not replace the conversation, but the interface must not promise full reconstruction from a
@@ -280,13 +280,13 @@ commands/context; no deliverable is duplicated here. Decision 61's exclusion of 
 switching remains. The bounded session/recovery choices below were approved on 2026-10-31;
 the broader provider extraction remains Draft.
 
-## Minimal Session Contract Candidate (2026-10-30)
+## Minimal Session Contract And Recovery Boundary
 
-[Core MCP Q1-Q2](../core-mcp/plan.md#q1-qualified-references-and-provider-resolved-status) supplies the
+[Core MCP](../core-mcp/feature.md) implements the
 approved `agent-sessions` v1 contract (owner acceptance 2026-10-31): installation-qualified refs; provider-resolved list/get;
 run status with freshness and confirmed stop; idempotent cancel and metadata SSE; dedicated read/
 control grants. This is a narrow observation/control profile, not the full `providers.agent`
-invocation contract. Current Harness can provide it before native runner extraction. D2-D3 consume
+invocation contract. Harness implements it without native runner extraction. D2-D3 consume
 its identities and authority rules instead of requiring a new Core registry of private sessions.
 
 Native resume is automatic for the same installation/connection/account; reconstruction is an

@@ -17,6 +17,7 @@ internal static class AuditDetailsPolicy
     private static readonly HashSet<string> WorkspaceFields = Fields("requestId assistant");
     private static readonly HashSet<string> DevModeFields = Fields("requestId operationId via worktreeId installation head manifest review");
     private static readonly HashSet<string> AgentFields = Fields("offered assistants approvedSkills");
+    private static readonly HashSet<string> HistoryFields = Fields("revision consumerKind consumerAppId corpusDigest");
     private static readonly HashSet<string> SkillFields = Fields("method via");
 
     public static IReadOnlyDictionary<string, string> Constrain(AuditRecord record)
@@ -31,6 +32,7 @@ internal static class AuditDetailsPolicy
             var action when action.StartsWith("development.workspace.", StringComparison.Ordinal) => WorkspaceFields,
             "app.development.enter" or "app.development.restart" or "app.development.return" or "app.development.progress" => DevModeFields,
             "agent.policy.updated" => AgentFields,
+            "history.export.approval" => HistoryFields,
             "skills.library.modified" => SkillFields,
             // Reports cannot claim a Core action: their route permits only an unqualified action name.
             var action when record.Outcome == "reported" && action.StartsWith("app.", StringComparison.Ordinal) => AppReportFields,

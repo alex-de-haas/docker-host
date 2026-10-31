@@ -3,7 +3,7 @@ using Haas.Hosty.Launch;
 namespace Haas.Hosty.Core;
 
 internal sealed class WorkspaceActivationAccess(UserDirectoryStore users, OAuthStore oauth, AppRegistryStore apps,
-    CoreSettingsService settings, IClock clock, AppIdentityService identity)
+    CoreSettingsService settings, IClock clock, AppIdentityService identity, AssistantMcpAccess? assistants = null)
 {
     internal async Task ValidateAsync(WorkspaceActivationActor actor, bool core, CancellationToken ct, bool sourceRequired = true)
     {
@@ -11,7 +11,17 @@ internal sealed class WorkspaceActivationAccess(UserDirectoryStore users, OAuthS
         if (!state.Users.Any(u => u.Id == actor.UserId && !u.Disabled && AppAccessPolicy.IsAdmin(u))) throw Denied();
         if (actor.AppId is { } appId)
         {
-            if (actor.AppIdentityHash is null || (await identity.RequireActivityHashAsync(actor.AppIdentityHash, appId, ct)).UserId != actor.UserId) throw Denied();
+            if (actor.Mcp is { } origin)
+            {
+                if (assistants is null || actor.Installation is null) throw Denied();
+                var current = await assistants.ValidateClaimsAsync(new(appId, AgentMcpDirectory.CoreId, actor.UserId,
+                    origin.GrantHash, actor.Installation.Value, null, origin.GrantRevision, origin.Expires,
+                    origin.SessionId, origin.LeaseRevision), AgentMcpDirectory.CoreId, ct, retainedOperation: true);
+                if (current is null || current.DiscoveryOnly || current.DeniedTools?.Contains(origin.Tool) == true ||
+                    current.AllowedTools is { } allowed && !allowed.Contains(origin.Tool) ||
+                    !McpEndpoints.HasAppToolPermission(current.Caller, origin.Tool)) throw Denied();
+            }
+            else if (actor.AppIdentityHash is null || (await identity.RequireActivityHashAsync(actor.AppIdentityHash, appId, ct)).UserId != actor.UserId) throw Denied();
             var app = await apps.GetAppAsync(appId, ct);
             if (app is null || app.InstalledAt != actor.Installation ||
                 sourceRequired && !AppManagementAuthorization.HasPermission(app, CoreAppPermissions.Sources) ||

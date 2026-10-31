@@ -37,8 +37,8 @@ public sealed class CoreMcpCatalogTests
     }
 
     [Theory]
-    [InlineData("get_workspace", "workspaces", "mcp:workspaces", true)]
-    [InlineData("get_workspace_diff", "git", "mcp:workspaces", true)]
+    [InlineData("get_workspace", "workspaces", "mcp:workspaces", false)]
+    [InlineData("get_workspace_diff", "git", "mcp:workspaces", false)]
     [InlineData("get_app_dev_mode", "development", "mcp:lifecycle", false)]
     public void ReadOnlyHintsDoNotReduceDeclaredAuthority(string name, string feature, string scope, bool directOnly)
     {
@@ -51,14 +51,15 @@ public sealed class CoreMcpCatalogTests
         Assert.Equal(feature, metadata["feature"]!["id"]!.GetValue<string>());
         Assert.Contains(metadata["authority"]!["directScopes"]!.AsArray(), value => value!.GetValue<string>() == scope);
         Assert.Equal(directOnly, metadata["authority"]!["directOnly"]!.GetValue<bool>());
-        Assert.Null(metadata["authority"]!["appPermission"]);
+        if (scope == "mcp:workspaces") Assert.Equal(CoreAppPermissions.Sources, metadata["authority"]!["appPermission"]!.GetValue<string>());
+        else Assert.Equal(CoreAppPermissions.AppLifecycle, metadata["authority"]!["appPermission"]!.GetValue<string>());
     }
 
     [Fact]
     public void UnknownNamesCannotBorrowAPrefixOrAnAppPermission()
     {
         Assert.Null(CoreMcpCatalog.AppPermission("get_app_private_history"));
-        Assert.Null(CoreMcpCatalog.AppPermission("list_workspaces"));
+        Assert.Equal(CoreAppPermissions.Sources, CoreMcpCatalog.AppPermission("list_workspaces"));
         Assert.Equal(CoreAppPermissions.ReadApps, CoreMcpCatalog.AppPermission("get_app"));
         Assert.Throws<InvalidOperationException>(() => CoreMcpCatalog.Describe(new Tool
         {

@@ -13,7 +13,11 @@ internal sealed record WorkspaceRuntimeActivation(string Id, string WorkspaceId,
     WorkspaceCoreReturnTarget? CoreReturnTarget = null, string? ReplacesCoreActivationId = null, string? CoreSupersededBy = null);
 
 internal sealed record WorkspaceActivationActor(string UserId, string Via, string? AppId = null,
-    DateTimeOffset? Installation = null, string? Principal = null, string? Review = null, string? AppIdentityHash = null);
+    DateTimeOffset? Installation = null, string? Principal = null, string? Review = null, string? AppIdentityHash = null, WorkspaceMcpAuthority? Mcp = null);
+
+// Verified Core MCP origin retained with admitted work. These are references, never bearer tokens.
+internal sealed record WorkspaceMcpAuthority(string GrantHash, string GrantRevision, string? SessionId,
+    string Tool, long Expires, string? LeaseRevision = null);
 
 internal sealed record WorkspaceReturnAppMutation(string RequestId, string AppId);
 internal sealed record WorkspaceReturnRequest(string RequestId, string[] Apps, bool Core, bool AcceptDataChanges);

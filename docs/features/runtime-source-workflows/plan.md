@@ -1,7 +1,7 @@
 ---
 status: On Hold
 created: 2026-10-16
-updated: 2026-10-18
+updated: 2026-10-31
 summary: Deferred source-recovery proposal pending workspace and sandbox validation and the decision on legacy overrides and native runtimes.
 components: [apps/core, apps/cli, apps/shell]
 ---
@@ -31,8 +31,8 @@ Source-based execution remains part of the target. Restricting or removing host-
 `localCommand`, retiring arbitrary overrides and replacing the current installed-app dev workflow
 are conditional migration options, not approved removals. Validate the new journey and obtain the
 owner's acceptance first. [Development Controls D1](../app-development-controls/plan.md#deliverables)
-owns that migration decision; [external development](../external-development-workspaces/plan.md)
-tracks the missing direct-client workflow, and [Sandbox](../app-sandbox-runtimes/plan.md) owns test
+owns that migration decision; [external development](../external-development-workspaces/feature.md)
+provides the direct-client workflow, and [Sandbox](../app-sandbox-runtimes/plan.md) owns test
 execution.
 
 The target design and D1-D6 below retain the earlier recovery proposal for evaluation. They are

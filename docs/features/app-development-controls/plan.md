@@ -1,7 +1,7 @@
 ---
 status: In Progress
 created: 2026-09-16
-updated: 2026-10-24
+updated: 2026-10-31
 summary: Deferred source-override migration assessment and retained legacy development-request refusal recovery after unified ordinary-app development.
 components: [apps/core, apps/cli, apps/harness, apps/shell]
 ---
@@ -27,7 +27,7 @@ start a migration without a separate owner decision.
 
 The owner selects registered workspaces and child Core sandbox preview as the default development
 workflow. The recovered [source-recovery proposal](../runtime-source-workflows/plan.md) stays On Hold;
-the [external-client Draft](../external-development-workspaces/plan.md) owns missing direct adapters.
+the [external-client feature](../external-development-workspaces/feature.md) supplies the direct adapters.
 D1 must retain private/local/no-Git and system/Harness self-development parity, including dependent
 apps and external agents. Evaluate restrictions on host-native localCommand separately from source
 runtime support. Clearing obsolete local Source settings is authorized operational cleanup, not

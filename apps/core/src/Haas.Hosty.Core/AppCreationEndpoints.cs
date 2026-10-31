@@ -68,9 +68,10 @@ internal static class AppCreationEndpoints
                 return created with { Workspace = tree };
             }));
     }
-    private static async Task<IResult> Handle<T>(Func<Task<T>> action)
+    internal static async Task<IResult> Handle<T>(Func<Task<T>> action)
     {
         try { return CoreJson.Json(await action()); }
+        catch (SandboxException ex) { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), ex.Status); }
         catch (AppIdentityException ex) { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), AuthEndpoints.MapIdentityErrorStatus(ex.Code)); }
         catch (AppLifecycleException ex) { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), ex.Code == AppDevelopmentGuideReader.InvalidTopicCode ? 400 : ex.Code is "creation_not_found" or "workspace_not_found" ? 404 : ex.Code == "workspace_forbidden" ? 403 : 409); }
         catch (AppManifestException ex) { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), 409); }

@@ -687,7 +687,7 @@ Decisions 1–5: 2026-08-19.
     API boundary in decision 40 or granting publication/lifecycle rights through workspace access.
     [Source recovery](features/runtime-source-workflows/plan.md) is On Hold rather than becoming a
     permanent redesign of the old controls. [Development Controls D1](features/app-development-controls/plan.md#deliverables)
-    owns parity and conditional retirement; [external development](features/external-development-workspaces/plan.md)
+    owns parity and conditional retirement; [external development](features/external-development-workspaces/feature.md)
     owns missing direct-client adapters/authority; [Development Sessions D1-D2](features/assistant-development-sessions/plan.md#deliverables)
     owns integrated acceptance. Sandbox and PR services retain their own implementation ownership.
     This direction authorizes documentation alignment, not new implementation, experiments or
@@ -716,7 +716,7 @@ Decisions 1–5: 2026-08-19.
     use, with practical examples and actionable failures. External native publication must not
     corrupt workspace tracking or make a Core-only publish path a correctness prerequisite.
     [Sandbox D6/D9](features/app-sandbox-runtimes/plan.md#deliverables) owns client usability;
-    [external development](features/external-development-workspaces/plan.md) owns its adapters and
+    [external development](features/external-development-workspaces/feature.md) owns its adapters and
     external-action reconciliation acceptance. [Execution Authorization](features/assistant-execution-authorization/plan.md)
     and [Containment](features/assistant-runtime-containment/plan.md) own restricted-operator
     authority and execution prerequisites. Ordinary-user MCP-only sessions retain their separate
@@ -1258,8 +1258,8 @@ Decisions 1–5: 2026-08-19.
 
     The owner accepts feature-based tool sections with a separate Applications group. Display
     grouping does not change tool authority or imply that Harness context belongs to Core.
-    [Core MCP Capability Boundaries](features/core-mcp/plan.md) owns the catalog, client migration,
-    task adapter and settings design. [External Development](features/external-development-workspaces/plan.md)
+    [Core MCP Capability Boundaries](features/core-mcp/feature.md) owns the catalog, client migration,
+    task adapter and settings design. [External Development](features/external-development-workspaces/feature.md)
     retains direct environment/publication authority and acceptance. Both plans remain Draft;
     this direction does not approve unresolved contracts, implementation or a live runtime switch.
 
@@ -1283,8 +1283,8 @@ Decisions 1–5: 2026-08-19.
     an embedding model. Source providers remain authoritative; derived indexes must follow source
     edits, deletion and changed access. Automatic learned memory and context insertion are separate.
 
-    [Conversation History](features/conversation-history/plan.md) owns schemas, API/MCP sharing/search,
-    provider adapters and indexing compatibility. [Core MCP](features/core-mcp/plan.md) owns catalog
+    [Conversation History](features/conversation-history/feature.md) owns schemas, API/MCP sharing/search,
+    provider adapters and indexing compatibility. [Core MCP](features/core-mcp/feature.md) owns catalog
     integration; [Agent Providers](features/agent-provider-interface/plan.md) retains native execution.
     [Ideas I2](ideas.md#i2-search-across-knowledge-providers) retains the later Qdrant integration and
     broader knowledge search. Detailed contracts remain Draft; this is direction approval, not
@@ -1306,8 +1306,8 @@ Decisions 1–5: 2026-08-19.
     Tasks retain provider storage and executor-bound result submission. Canonical tool migration
     preserves Disabled and does not carry Run across broader authority.
 
-    [Core MCP](features/core-mcp/plan.md), [Conversation History](features/conversation-history/plan.md)
-    and [External Development](features/external-development-workspaces/plan.md) own implementation
+    [Core MCP](features/core-mcp/feature.md), [Conversation History](features/conversation-history/feature.md)
+    and [External Development](features/external-development-workspaces/feature.md) own implementation
     and acceptance. The bounded agent-session and ordinary-chat recovery decisions are also recorded
     in their owning plans; the wider provider extraction and durable scheduler remain Draft.
     This approval authorizes development, not commits, publication or a live runtime switch.
@@ -1458,8 +1458,8 @@ the manifest contract. Two standing consequences:
 
 ## Spanned Features
 
-[conversation-history](features/conversation-history/plan.md) ·
-[core-mcp](features/core-mcp/plan.md) ·
+[conversation-history](features/conversation-history/feature.md) ·
+[core-mcp](features/core-mcp/feature.md) ·
 [composable-agent-systems](features/composable-agent-systems/plan.md) ·
 [basic-tasks](features/basic-tasks/feature.md) ·
 [shared-tasks](features/shared-tasks/plan.md) ·

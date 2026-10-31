@@ -101,3 +101,44 @@ it("restores an awaiting-input task after the remote executor returns the unchan
   expect(recovered.attempts).toHaveLength(1);
   expect(recovered.attempts[0]!.receipt!.revision).toBe(2);
 });
+
+it("binds v2 writes to exact bytes and isolates request UUIDs by original principal", async () => {
+  vi.stubEnv("HOSTY_APP_SERVICE_TOKEN", "test-service"); await start();
+  const { ProviderClient } = await import("@hosty-sdk/app/providers/server");
+  const invocation = { version: 2 as const, userId: "owner", hostRole: "host.admin", principalId: "direct-one", callerAppId: null, callerInstallation: null, kind: "tasks" as const, key: "default", operation: "create", resourceIds: [] };
+  const validate = vi.spyOn(ProviderClient.prototype, "validateMediated").mockResolvedValue(invocation);
+  const payload = JSON.stringify({ requestId: randomUUID(), input: { title: "Private task", markdown: "Private instructions", assignee: null, resources: [] } }, null, 2);
+  const request = () => fetch(origin + "/api/tasks/v1/tasks", { method: "POST", headers: { authorization: "Bearer hosty_provider.2.test.signature", "content-type": "application/json" }, body: payload });
+  const created = await request(); expect(created.status).toBe(201); const first = await created.json() as TaskRecord;
+  expect((await (await request()).json() as TaskRecord).ref.id).toBe(first.ref.id);
+  validate.mockResolvedValue({ ...invocation, principalId: "direct-two" });
+  expect((await (await request()).json() as TaskRecord).ref.id).not.toBe(first.ref.id);
+  for (const [, kind, actual] of validate.mock.calls) { expect(kind).toBe("tasks"); expect(actual).toMatchObject({ method: "POST", operation: "create", path: "/tasks" }); expect(Buffer.from(actual.body).toString()).toBe(payload); }
+});
+
+it("recovers v2 executor dispatch after source restart without saving a bearer token", async () => {
+  vi.stubEnv("HOSTY_APP_SERVICE_TOKEN", "test-service"); await start();
+  const { ProviderClient } = await import("@hosty-sdk/app/providers/server");
+  const { ProviderError } = await import("@hosty-sdk/app/providers");
+  vi.spyOn(service.executor, "tick").mockResolvedValue();
+  const actor = { userId: "owner", appId: null }, executor = { appId: "unrelated.runner", installationId: "two", key: "default" };
+  let task = await service.store.create(actor, { requestId: randomUUID(), input: { title: "Delegated work", markdown: "Work", resources: [], assignee: { kind: "app", executor } } });
+  const requestId = randomUUID(), dispatch = { userId: "owner", principalId: "original-client", requestId };
+  const invocation = { version: 2 as const, ...dispatch, hostRole: "host.admin", callerAppId: null, callerInstallation: null, kind: "tasks" as const, key: "default", operation: "execute", resourceIds: [task.ref.id], taskDispatch: dispatch };
+  vi.spyOn(ProviderClient.prototype, "validateMediated").mockImplementation(async (_token, _kind, request) => {
+    if (request.operation === "action") throw new ProviderError("token_invalid", "Execution operation required", 401);
+    return invocation;
+  });
+  vi.spyOn(ProviderClient.prototype, "taskDispatchAuthority").mockResolvedValue({ dispatch, scope: { taskRef: task.ref, executor, inputRevision: 1, inputHash: "digest", optionId: "writer", executionId: null } });
+  const delegated = vi.spyOn(ProviderClient.prototype, "taskDispatch").mockImplementation(async input => (input.operation === "options"
+    ? { options: [{ id: "writer", name: "Writer", capabilities: [] }], defaultId: "writer" }
+    : { executionId: input.executionId, revision: 1, state: "running", stopConfirmed: false, createdAt: "now", updatedAt: "now" }) as never);
+  const response = await call(`/tasks/${task.ref.id}/actions`, "hosty_provider.2.test.signature", { requestId, expectedRevision: task.revision, action: "ready" });
+  expect(response.status).toBe(200); task = await response.json() as TaskRecord;
+  expect(await service.store.dispatch(task.ref.id)).toEqual(dispatch);
+  await service.close(); service = new TaskService({ store: { dataDir: directory } } as SessionManager); vi.spyOn(service.executor, "tick").mockResolvedValue();
+  delegated.mockClear(); await service.tick();
+  expect(delegated).toHaveBeenCalledWith(expect.objectContaining({ dispatch, operation: "get", executionId: task.attempts[0]!.executionId }), undefined);
+  const state = await import("node:fs/promises").then(fs => fs.readFile(path.join(directory, "tasks", "tasks.json"), "utf8"));
+  expect(state).not.toContain("hosty_provider.2.test.signature");
+});

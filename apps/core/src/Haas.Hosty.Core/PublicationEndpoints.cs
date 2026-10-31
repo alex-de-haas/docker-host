@@ -25,9 +25,10 @@ internal static class PublicationEndpoints
             HttpRequest request, WorkspaceAuthorization auth, PublicationService service, CancellationToken ct)
             => await Handle(async () => await service.CommandAsync(id, await auth.RequireAsync(request, appId, sessionId, ct), kind, input, ct)));
     }
-    private static async Task<IResult> Handle<T>(Func<Task<T>> action)
+    internal static async Task<IResult> Handle<T>(Func<Task<T>> action)
     {
         try { return CoreJson.Json(await action()); }
+        catch (SandboxException e) { return CoreJson.Json(new ErrorResponse(e.Code, e.Message), e.Status); }
         catch (AppIdentityException e) { return CoreJson.Json(new ErrorResponse(e.Code, e.Message), e.Code is "token_invalid" or "reauth_required" ? 401 : 403); }
         catch (PublicationException e) { return CoreJson.Json(new ErrorResponse(e.Code, e.Message), e.Code == "publication_forbidden" ? 403 : 409); }
         catch (UserConnectionException e) { return CoreJson.Json(new ErrorResponse(e.Code, e.Message), e.Status); }

@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-26
-updated: 2026-10-30
+updated: 2026-10-31
 summary: Deferred Harness task decomposition, hierarchy, artifact and decision integration, parked continuation and selected cross-session context access.
 components: [apps/harness]
 ---
@@ -71,7 +71,7 @@ derived summaries; revoked access must not persist through cached results. Shari
 conversation needs its own selected contract rather than being implied by this transfer.
 These are material/session boundaries, not a new per-profile permission system.
 
-Owner clarification, 2026-10-30: [Conversation History](../conversation-history/plan.md) now owns
+Owner clarification, 2026-10-30: [Conversation History](../conversation-history/feature.md) now owns
 Core's common history schema and API/MCP for explicitly authorized sharing/search. D7 consumes its
 history access and source references for orchestration UI/context selection instead of defining a
 second history contract. Exact whole-conversation/excerpt and live-reference/snapshot semantics

@@ -40,7 +40,19 @@ internal static class CoreAppPermissions
     public const string TaskProviders = "providers.tasks";
     public const string TaskExecutors = "providers.task-executor";
     public const string AssistantProviders = "providers.assistant";
-    public static readonly string[] Known = [FeedbackManage, ReadCredentials, RevokeCredentials, RequestMcpAccess, WorkspaceCore, Install, ReadApps, ReadPanels, AppLogs, Notifications, AppLifecycle, ConfigureApps, ReadCore, UpdateCore, CoreLifecycle, ConfigureCore, CoreLogs, ReadUsers, ManageUsers, Sources, SourcesRead, WorkspacesRead, WorkspacesCleanup, CoreEnvironmentsRead, CoreEnvironmentsManage, CoreEnvironmentsInspect, CoreEnvironmentsOperate, SourceConnections, ReadSkills, ManageSkills, SpeechProviders, TranslationProviders, AssistantProviders, TaskProviders, TaskExecutors];
+    public const string CoreEnvironmentsApi = "core.environments.api";
+    public const string PublicationWrite = "core.publications.write";
+    public const string TasksRead = "core.tasks.read";
+    public const string TasksWrite = "core.tasks.write";
+    public const string TasksExecute = "core.tasks.execute";
+    public const string HistoryProviders = "providers.conversation-history";
+    public const string HistoryRead = "core.history.read";
+    public const string HistoryShare = "core.history.share";
+    public const string HistoryExport = "core.history.export";
+    public const string AgentSessionProviders = "providers.agent-sessions";
+    public const string AgentSessionsRead = "core.agent-sessions.read";
+    public const string AgentSessionsControl = "core.agent-sessions.control";
+    public static readonly string[] Known = [CoreEnvironmentsApi, PublicationWrite, TasksRead, TasksWrite, TasksExecute, HistoryProviders, HistoryRead, HistoryShare, HistoryExport, AgentSessionProviders, AgentSessionsRead, AgentSessionsControl, FeedbackManage, ReadCredentials, RevokeCredentials, RequestMcpAccess, WorkspaceCore, Install, ReadApps, ReadPanels, AppLogs, Notifications, AppLifecycle, ConfigureApps, ReadCore, UpdateCore, CoreLifecycle, ConfigureCore, CoreLogs, ReadUsers, ManageUsers, Sources, SourcesRead, WorkspacesRead, WorkspacesCleanup, CoreEnvironmentsRead, CoreEnvironmentsManage, CoreEnvironmentsInspect, CoreEnvironmentsOperate, SourceConnections, ReadSkills, ManageSkills, SpeechProviders, TranslationProviders, AssistantProviders, TaskProviders, TaskExecutors];
 
     // The old name grants exactly the same authority. Other retired permissions remain unsupported.
     public static string Normalize(string permission) => permission == LegacySources ? Sources : permission;
@@ -66,12 +78,24 @@ internal static class CoreAppPermissions
 
     public static string Describe(string permission) => permission switch
     {
+        CoreEnvironmentsApi => "Set up test identity and access the full JSON API of an authorized child Core",
+        PublicationWrite => "Push source and create or change pull requests with the acting user’s reviewed repository access",
+        TasksRead => "Read provider-owned tasks as the acting user",
+        TasksWrite => "Create and modify provider-owned tasks as the acting user",
+        TasksExecute => "Dispatch or cancel authorized task execution",
+        HistoryProviders => "Discover and use declared conversation history providers",
+        HistoryRead => "Read and search your own or explicitly shared conversation history",
+        HistoryShare => "Provide or revoke named-user access to your conversation history",
+        HistoryExport => "Export an explicitly approved conversation corpus to its designated index consumer",
+        AgentSessionProviders => "Discover and use declared agent session providers",
+        AgentSessionsRead => "Observe authorized agent sessions and execution runs",
+        AgentSessionsControl => "Cancel authorized execution runs",
         FeedbackManage => "Read user feedback and screenshots, reassign reports and record agent processing as the initiating administrator",
         Sources => "Access and modify application source code, including code Hosty executes on this host in development mode; create, read, edit and delete all Core workspaces as the initiating user; use separately authorized source-provider connections",
         WorkspacesCleanup => "Delete this assistant installation's explicitly completed workspaces and owned temporary resources in the background after fresh Core verification",
         WorkspacesRead => "Read all Core development workspaces and retained source as the initiating administrator; no mutations",
         CoreEnvironmentsInspect => "Inspect child Core environments and application status across creating apps as an administrator",
-        CoreEnvironmentsOperate => "Create and control trusted child Core environments across creating apps, set up test accounts and permanently delete their temporary resources",
+        CoreEnvironmentsOperate => "Create and control trusted child Core environments across creating apps and permanently delete their temporary resources",
         CoreEnvironmentsRead => "Inspect owned child Core environments and their local preview addresses",
         CoreEnvironmentsManage => "Launch trusted child Core processes sharing Docker, configure their full API, and finish their temporary resources",
         SourcesRead => "Read repository documentation and development workspace document changes as the current administrator; no source edits or workspace mutations",

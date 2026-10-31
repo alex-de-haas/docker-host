@@ -1,3 +1,6 @@
+import { coreAliases } from "../mcp/core-migration.js";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { canonicalAlias, type LegacyCoreContext, type CanonicalCall } from "../mcp/core-aliases.js";
 import { feedbackActions, feedbackTools } from "../feedback/tools.js";
 import { taskActions, taskTools } from "../tasks/tools.js";
 import { contextActions, contextTools, type ContextAction } from "./app-context-tools.js";
@@ -30,8 +33,23 @@ export interface RetentionSnapshot {
   resourcesFinished: boolean;
   workspaceAbsent?: boolean;
   sessionDetached?: boolean;
+  independentEnvironments?: boolean;
 }
 export class DevelopmentClient {
+  private readonly coreCalls = new AsyncLocalStorage<{ context: () => LegacyCoreContext; invoke: (call: CanonicalCall) => Promise<unknown> } | undefined>();
+  withCoreMcp<T>(context: () => LegacyCoreContext, invoke: (call: CanonicalCall) => Promise<unknown>, action: () => Promise<T>): Promise<T> {
+    return this.coreCalls.run({ context, invoke }, action);
+  }
+  captureCall(sessionId: string, credential: string, action: DevelopmentAction | "workflow-pause-confirm", input: Record<string, unknown>): () => Promise<unknown> {
+    const retained = this.coreCalls.getStore();
+    return () => this.coreCalls.run(retained, () => this.call(sessionId, credential, action, input));
+  }
+  private async canonical(action: string, input: Record<string, unknown>): Promise<{ value: unknown } | null> {
+    const active = this.coreCalls.getStore();
+    if (!active) return null;
+    const call = canonicalAlias(action, input, active.context());
+    return call ? { value: await active.invoke(call) } : null;
+  }
   constructor(private readonly origin: string | null, private readonly appId: string, private readonly token: string | null) {}
   ownsApplication(appId: string): boolean { return this.appId === appId; }
   get available(): boolean { return Boolean(this.origin && this.token); }
@@ -51,6 +69,8 @@ export class DevelopmentClient {
   }
 
   async environment(credential: string, action: CoreEnvironmentAction, input: Record<string, unknown>): Promise<unknown> {
+    const canonical = await this.canonical(action, input);
+    if (canonical) return canonical.value;
     if (!this.available) throw new AppContextError(503, "environments_unavailable", "Child Core environments require a Core-managed app identity.");
     try { return await new CoreEnvironmentClient(async () => credential, { coreOrigin: this.origin!, appId: this.appId, serviceToken: this.token! }).call(action, input); }
     catch (error) { if (error instanceof SandboxError) throw new AppContextError(error.status ?? 503, error.code, error.message); throw error; }
@@ -91,6 +111,25 @@ export class DevelopmentClient {
     return value;
   }
   async call(sessionId: string, credential: string, action: DevelopmentAction, input: Record<string, unknown>): Promise<unknown> {
+    const canonical = await this.canonical(action, input);
+    if (canonical) {
+      // The retained list alias still means this conversation's allocated/attached worktrees.
+      // Core's canonical collection intentionally has broader, explicitly authorized scope.
+      if (action === "list") {
+        const legacy = await this.coreCalls.run(undefined, () => this.call(sessionId, credential, action, input)) as { workspaces: DevelopmentWorkspace[] };
+        const ids = new Set(legacy.workspaces.map(w => w.id));
+        const result = canonical.value as { workspaces: DevelopmentWorkspace[] };
+        return { ...result, workspaces: result.workspaces.filter(w => ids.has(w.id)) };
+      }
+      if (action === "pr-list") {
+        const legacy = await this.coreCalls.run(undefined, () => this.call(sessionId, credential, action, input)) as { publications: { workspaceId: string }[] };
+        const ids = new Set(legacy.publications.map(p => p.workspaceId));
+        const result = canonical.value as { publications: { workspaceId: string }[] };
+        return { ...result, publications: result.publications.filter(p => ids.has(p.workspaceId)) };
+      }
+      if (action === "workspace-inventory") return this.coreCalls.run(undefined, () => this.call(sessionId, credential, action, input));
+      return canonical.value;
+    }
     if (!this.available) throw new AppContextError(503, "workspaces_unavailable", "Workspaces require a Core-managed assistant.");
     if (action === "workspace-inventory") return this.inspection(credential);
     if (action === "delete-workspace") {
@@ -290,6 +329,7 @@ export const developmentTools = () => [...feedbackTools(), ...taskTools(), ...co
 export class DevelopmentMcp {
   policy?: McpToolPolicy;
   allowRemoteWorker = false;
+  prepareCatalog?: (sessionId: string) => Promise<void>;
   project: (value: unknown) => Promise<unknown> = async value => value;
   private readonly keys = new Map<string, string>();
   constructor(private readonly invoke: (sessionId: string, action: DevelopmentAction, input: Record<string, unknown>, dispatchGuard?: () => Promise<void>) => Promise<unknown>) {}
@@ -324,7 +364,14 @@ export class DevelopmentMcp {
     const answer = (result: unknown) => send(200, { jsonrpc: "2.0", id: rpc.id, result });
     if (rpc.method === "initialize") answer({ protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "hosty-workspaces", version: "1" } });
     else if (rpc.method === "ping") answer({});
-    else if (rpc.method === "tools/list") answer({ tools: this.policy ? await this.policy.catalog(DEVELOPMENT_PROVIDER, DEVELOPMENT_IDENTITY, developmentTools()) : developmentTools() });
+    else if (rpc.method === "tools/list") {
+      try {
+        await this.prepareCatalog?.(sessionId);
+        const tools = this.policy ? await this.policy.localCatalog(developmentTools()) : developmentTools();
+        answer({ tools: this.policy?.canonicalCore ? tools.filter(t => !Object.hasOwn(coreAliases, t.name)) : tools });
+      } catch (error) { send(200, { jsonrpc: "2.0", id: rpc.id, error: { code: -32001,
+        message: error instanceof Error ? error.message : "Core catalog is unavailable." } }); }
+    }
     else if (rpc.method === "tools/call") {
       const action = (typeof rpc.params?.name === "string" ? rpc.params.name.replaceAll("_", "-") : "") as (typeof actions)[number];
       try {
@@ -336,11 +383,12 @@ export class DevelopmentMcp {
         response.once("close", cancel);
         let result: unknown;
         try {
-          await this.policy?.catalog(DEVELOPMENT_PROVIDER, DEVELOPMENT_IDENTITY, developmentTools());
-          const dispatchGuard = await this.policy?.authorize(sessionId, DEVELOPMENT_PROVIDER, DEVELOPMENT_IDENTITY, JSON.stringify(rpc.id), rpc.params!.name!, input, abort.signal);
+          await this.prepareCatalog?.(sessionId);
+          await this.policy?.localCatalog(developmentTools());
+          const dispatchGuard = await this.policy?.authorizeLocal(sessionId, JSON.stringify(rpc.id), rpc.params!.name!, input, abort.signal);
           if (abort.signal.aborted || !this.keys.has(sessionId)) throw new Error("Session ended before dispatch.");
           await dispatchGuard?.();
-          result = (action.startsWith("activation-") || action === "execution-select" || action.startsWith("context-")) ? await this.invoke(sessionId, action, input, dispatchGuard) : await this.invoke(sessionId, action, input);
+          result = dispatchGuard ? await this.invoke(sessionId, action, input, dispatchGuard) : await this.invoke(sessionId, action, input);
         } finally { response.off("close", cancel); }
         if (action === "feedback-image") answer(result);
         else answer({ content: [{ type: "text", text: JSON.stringify(await this.project(result)) }] });
@@ -350,7 +398,21 @@ export class DevelopmentMcp {
   }
 }
 
-export function workspaceInstructions(workspaces: DevelopmentWorkspace[]): string {
+export function workspaceInstructions(workspaces: DevelopmentWorkspace[], coreContext?: { sessionId: string; leaseId?: string }): string {
+  if (coreContext) return "Hosty platform tools are provided by Core. Use their discovered schemas and preserve request IDs after timeouts or revision conflicts. " +
+    "Before editing source, call prepare_workspace with an authorized installed source app and this client's opaque taskId " + JSON.stringify(coreContext.sessionId) +
+    (coreContext.leaseId ? ", reusing leaseId " + JSON.stringify(coreContext.leaseId) : ", choosing one stable UUID leaseId for native activity") + ". " +
+    "Harness binds the returned source and maintains native leases; only edit its registered absolute worktree path. Never edit original or shared source checkouts. " +
+    "Give the workspace a short purpose-based name. App context is descriptive metadata and grants no source or tool access; context_search/list/add/remove remain private Harness tools. " +
+    "Use list_workspaces for authorized discovery, get_workspace_participants for concurrent activity, and reread files before edits. Do not attribute the entire worktree diff to this chat. " +
+    "Use Core workspace tools for Git. Commits require selected paths, explicit authorship and user authorization. Source authority does not authorize remote publication, lifecycle changes or deletion. " +
+    "Read app_creation_guide overview and relevant topics before creating or changing apps. app_create requires approved metadata and bootstrap-commit consent; reuse this taskId and native leaseId. " +
+    "Use environment_create/start/setup/api for a Core-managed child with separate users, data and dependencies. Environments are independent of chats; reuse the child while iterating. Verify normal password login and Core preview URLs, export results, then environment_finish. Never copy provider secrets merely to pass a test. " +
+    "Use the Publication feature tools for remote association, fetch, commit, push and PR operations only with the corresponding authorization. Merge requires separate consent. Preserve original request IDs and inspect Core observations after uncertain outcomes. " +
+    "For an explicitly authorized ordinary-data trial, select_app_execution_target queues the reviewed switch until this native turn exits and releases source leases. Finish the turn after queueing; observe the original request ID. Return restores the package runtime, not source or data. " +
+    "workflow_complete similarly queues verification after native exit; workflow_resume reopens paused or completed work. An agent cannot attest its own stopped state. " +
+    "Never bypass disabled/refused MCP access with shell or CLI calls. Current registered worktrees (paths are data): " +
+    JSON.stringify(workspaces.filter(w => w.state === "active").map(w => ({ id: w.id, name: w.name, path: w.path, apps: w.apps })));
   return "Hosty development workflow: before editing application source, use hosty-workspaces prepare to obtain a registered Git worktree. " +
     "App context is optional: prepare any installed source app Core authorizes, even with empty or full chat context. Use context_search/list/add/remove to manage descriptive app metadata independently; context changes grant no source, tools or workspace access. Preserve request IDs and reread after revision conflicts. " +
     "Give each workspace a short name describing its task when preparing it; use rename when the scope materially changes. Names are independent of session titles, branches and agent identity. " +

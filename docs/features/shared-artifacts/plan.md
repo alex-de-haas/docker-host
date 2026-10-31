@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-26
-updated: 2026-10-30
+updated: 2026-10-31
 summary: Minimal described and versioned work artifacts with authorized save, discovery and reads, durable references and explicit agent handoffs.
 components: [apps/core, apps/harness, apps/documents, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -63,7 +63,7 @@ Finding a script does not authorize execution; record its prerequisites without 
 [Durable Agent Jobs D7](../durable-agent-jobs/plan.md#deliverables) owns session continuation/context
 assembly over the existing journal; [Harness Work Orchestration D7](../harness-work-orchestration/plan.md#deliverables)
 owns the consuming session/material visibility rules.
-[Conversation History](../conversation-history/plan.md), selected on 2026-10-30, owns common
+[Conversation History](../conversation-history/feature.md), selected on 2026-10-30, owns common
 provider-backed history reads, explicit sharing, search and indexing compatibility. Reuse its source
 references for selected excerpts instead of duplicating a transcript store here. Its broader history
 contract does not require automatic conversation capture or a semantic index for these deliverables;

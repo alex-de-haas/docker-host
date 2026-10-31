@@ -7,7 +7,7 @@ export type Provider = { appId: string; displayName: string; url: string | null;
 /** The provider id Core's own tools are offered under — the gateway's constant, mirrored here. */
 export const CORE_PROVIDER_ID = "hosty:core";
 
-export type ToolCatalog = { provider: string; identity: string; tools: { name: string; description?: string; annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean } }[] };
+export type ToolCatalog = { provider: string; identity: string; localOwner?: { appId: string; displayName: string }; tools: { name: string; description?: string; annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean }; _meta?: Record<string, unknown> }[] };
 export type ToolRule = { identity: string; mode: "ask" | "run" | "disabled" };
 export type Settings = {
   skillIds?: string[];
