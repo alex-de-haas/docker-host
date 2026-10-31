@@ -76,6 +76,8 @@ interface Registration {
 export class McpProxy {
   allowRemoteWorker = false;
   policy?: McpToolPolicy;
+  /** Client-side source binding and native stop coordination; Core still authorizes the invocation. */
+  platformCall?: (sessionId: string, name: string, input: unknown, guard: () => Promise<void>) => Promise<{ result: unknown } | null>;
   identity?: (appId: string) => Promise<string>;
   deniedTools?: (appId: string) => Promise<readonly string[]>;
   private readonly sessions = new Map<string, Registration>();
@@ -219,7 +221,10 @@ export class McpProxy {
             if (!this.sessions.has(sessionId) || abort.signal.aborted) throw new Error("Session ended before dispatch.");
             if ((await this.deniedTools?.(appId) ?? []).includes(rpc.params.name)) throw new Error("Core has disabled this tool.");
             await dispatchGuard();
-            await this.forward(request, response, target, token.token, body);
+            const coordinated = appId === "hosty:core" ? await this.platformCall?.(sessionId, rpc.params.name, rpc.params.arguments ?? {}, dispatchGuard) : null;
+            if (coordinated) sendJson(response, 200, { jsonrpc: "2.0", id: rpc.id,
+              result: { content: [{ type: "text", text: JSON.stringify(coordinated.result) }] } });
+            else await this.forward(request, response, target, token.token, body);
           }
         } catch (error) { if (!response.headersSent && !response.destroyed) sendJson(response, 200, { jsonrpc: "2.0", id: rpc.id,
           error: { code: -32001, message: error instanceof Error ? error.message : "MCP request refused." } }); }

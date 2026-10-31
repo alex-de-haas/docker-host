@@ -4,7 +4,7 @@ using System.Net.Sockets;
 
 namespace Haas.Hosty.Core;
 
-internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEnvironmentRuntime runtime, IClock clock, DevelopmentWorkspaceService? workspaces = null, WorkspaceInspectionService? inspection = null, CoreEnvironmentConsentService? consent = null)
+internal sealed partial class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEnvironmentRuntime runtime, IClock clock, DevelopmentWorkspaceService? workspaces = null, WorkspaceInspectionService? inspection = null, CoreEnvironmentConsentService? consent = null, ICoreAgentRunAccess? agentRuns = null)
 {
     private readonly SemaphoreSlim allocation = new(1, 1);
     private readonly ConcurrentDictionary<string, SemaphoreSlim> gates = new(StringComparer.Ordinal);
@@ -18,7 +18,7 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
         record.Request.Mode, record.Request.ProjectPath, record.Request.Context, record.State, record.Revision, record.Port,
         record.State == "finished" ? null : store.Root(record.Id), $"http://core.i-{record.Id}.hosty.localhost:{record.Port}",
         record.Process, record.Error, record.Operations ?? [], CoreEnvironmentResources.Limits(record), record.State == "finished" ? null : record.Usage,
-        InitializationRequested: record.Request.Initialization is not null, CoreVersion: record.Process?.Version ?? record.ObservedCoreVersion);
+        InitializationRequested: record.Request.Initialization is not null, CoreVersion: record.Process?.Version ?? record.ObservedCoreVersion, Consumers: record.Consumers ?? []);
     private async Task<CoreEnvironmentView> ViewAsync(CoreEnvironmentRecord record, CancellationToken ct, Dictionary<string, Task<string>>? digests = null)
         => View(record) with { Access = consent is null ? null : await consent.AccessAsync(record, ct, digests) };
     internal Task RequireConsentAsync(SandboxActor actor, CoreEnvironmentRecord record, bool launch, CancellationToken ct)
@@ -219,6 +219,8 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
     }
     private async Task ValidateWorktreesAsync(SandboxActor actor, CoreEnvironmentCreate input, CancellationToken ct)
     {
+        if (input.Mode == "source" || input.WorktreeIds?.Length > 0)
+            actor.Capability?.Require(AccessTokenScopes.McpWorkspaces, CoreAppPermissions.Sources);
         var trees = new List<DevelopmentWorkspace>();
         foreach (var treeId in input.WorktreeIds ?? [])
         {
@@ -234,7 +236,7 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
             if (tree.State != "active") throw new SandboxException("environment_worktree_unavailable", "The worktree is not active.", 409);
             trees.Add(tree);
         }
-        if (actor.AppId is not null && input.Mode == "source"
+        if ((actor.AppId is not null || actor.PrincipalId is not null || actor.Capability?.App is not null) && input.Mode == "source"
             && !trees.Any(tree => !CoreDataPaths.ContainsSymbolicLink(tree.Path, input.ProjectPath!)))
             throw new SandboxException("environment_project_forbidden", "Select a Core project inside an attached worktree owned by this session, without symlinks.", 403);
     }
@@ -294,6 +296,9 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
                 if (prior.Fingerprint != fingerprint) throw ReplayConflict();
                 if (prior.State == "succeeded" || operations.Last().Id != requestId || record.State == "finished") return await ViewAsync(record, ct);
             }
+            if (kind is "stop" or "restart" or "finish") RequireStoppedConsumers(record);
+            if (kind is "start" or "restart" && (record.Request.Mode == "source" || record.Request.WorktreeIds?.Length > 0))
+                actor.Capability?.Require(AccessTokenScopes.McpWorkspaces, CoreAppPermissions.Sources);
             // Exact terminal replays do not launch anything. New and retryable operations still
             // require live consent before changing the journal or preparing the child.
             if (kind is "start" or "restart") await RequireConsentAsync(actor, record, true, ct);

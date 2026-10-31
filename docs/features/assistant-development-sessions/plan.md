@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-24
-updated: 2026-10-30
+updated: 2026-10-31
 summary: Umbrella for assistant sessions that own a conversation, its source workspaces, tests and pull requests.
 components: [apps/harness, apps/core, apps/shell]
 ---
@@ -206,8 +206,7 @@ a child to the same logical workspace. Adding a dependency does not itself grant
 start its installed instance. Sandbox data and runtime resources remain independent of source.
 
 [External workspace preparation](../external-development-workspaces/feature.md) already supplies the
-direct-client source path. Its [remaining plan](../external-development-workspaces/plan.md) owns the
-missing sandbox/publication client adapters and authority. D1-D2 here verify that the services form
+direct-client source path and the canonical sandbox/publication adapters and authority. D1-D2 here verify that the services form
 one recoverable journey without requiring an installed assistant for an external owner. The same
 workflow must not depend on changing installed-app overrides or invoking host-native localCommand.
 

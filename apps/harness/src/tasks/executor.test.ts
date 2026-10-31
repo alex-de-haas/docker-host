@@ -1,5 +1,6 @@
+import { DevelopmentClient } from "../sessions/development.js";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, mkdir } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
@@ -19,7 +20,7 @@ const input: TaskExecutionInput = { taskRef: { appId: "example.producer", instal
   input: { title: "Write summary", markdown: "A plain task without a workspace.", requiresReview: false, resources: [] } };
 const adapter: HarnessAdapter = { name: "controlled", capabilities: { questions: true, appMcp: true, liveReconfigure: false, autoAllow: false, denyReason: false }, probe: async () => ({ available: true }),
   start: options => { runOptions = options; return { send: sent, resolveApproval: () => true, resolveQuestion: () => true, setMcpServers: async () => false, interrupt: async () => {}, stop: stopped, stopAndWait: stopped } satisfies HarnessRun; } };
-function openManager() { return new SessionManager(new SessionStore(dir), adapter, new AuditReporter(null, null, "example.harness"), dir, new SettingsStore(dir), null, null, null, "http://localhost:1234", null, null, null, null, undefined, profiles); }
+function openManager(development: DevelopmentClient | null = null) { return new SessionManager(new SessionStore(dir), adapter, new AuditReporter(null, null, "example.harness"), dir, new SettingsStore(dir), null, null, null, "http://localhost:1234", null, null, development, null, undefined, profiles); }
 beforeEach(async () => {
   vi.stubEnv("HOSTY_PUBLIC_ORIGIN_HTTP", "https://harness.example.test");
   dir = await mkdtemp(path.join(os.tmpdir(), "hosty-executor-")); runOptions = undefined; vi.clearAllMocks();
@@ -247,4 +248,44 @@ it.each(["", "file:///tmp/harness", "https://user:password@harness.test"])("omit
   const receipt = await executor.accept(randomUUID(), input, actor);
   expect(receipt.state).toBe("accepted");
   expect(receipt.sessionRef).toBeUndefined();
+});
+
+it("admits a mediated task workspace without user credentials and releases only after native exit", async () => {
+  await manager.shutdown();
+  vi.stubEnv("HOSTY_CORE_ORIGIN", "http://core.test"); vi.stubEnv("HOSTY_APP_ID", "independent.runner"); vi.stubEnv("HOSTY_APP_SERVICE_TOKEN", "runner-service");
+  const workspaceId = "f".repeat(64), treeId = "e".repeat(64), sourcePath = path.join(dir, "registered-source");
+  await mkdir(sourcePath);
+  const calls: import("@hosty-sdk/app/providers").TaskWorkspaceRequest[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+    expect(String(url)).toBe("http://core.test/api/internal/apps/independent.runner/task-workspace");
+    expect(new Headers(init!.headers).get("X-Hosty-User-Token")).toBeNull();
+    const body = JSON.parse(String(init!.body)) as typeof calls[number]; calls.push(body);
+    if (body.kind === "activity") return Response.json({ workspaceId, revision: 2, stopRequested: false, state: body.activity!.status });
+    return Response.json({ association: { workspace: { id: workspaceId, revision: 2 } }, sources: { workspaces: [{ id: treeId, workspaceId,
+      path: sourcePath, branch: "task", targetBranch: "main", originalBase: "base", state: "active", repository: "repo", sessionPath: "/run",
+      leases: body.kind === "lease" ? [body.leaseId] : [], pullRequests: [], apps: [], operations: [] }] } });
+  });
+  manager = openManager(new DevelopmentClient("http://core.test", "independent.runner", "runner-service")); executor = new HarnessTaskExecutor(manager);
+  const id = randomUUID(), dispatch = { userId: "owner", principalId: "manual:original", requestId: randomUUID() };
+  const authority = { ...actor, taskDispatch: dispatch, principalId: dispatch.principalId };
+  const accepted = await executor.accept(id, { ...input, input: { ...input.input, workspaceId } }, authority);
+  await executor.tick();
+  const running = await executor.get(id, authority);
+  expect(running.error).toBeUndefined();
+  expect(running.state).toBe("running");
+  expect(sent).toHaveBeenCalledOnce();
+  expect(calls.map(c => c.kind)).toEqual(expect.arrayContaining(["observe", "attach", "lease", "activity"]));
+  expect(calls.every(c => c.dispatch.requestId === dispatch.requestId && c.executionId === id && c.sessionId === accepted.sessionRef!.id)).toBe(true);
+  const record = (await manager.getSession(accepted.sessionRef!.id))!;
+  expect(record.developmentWorkspaces?.[0]?.path).toBe(sourcePath);
+  let confirm!: () => void;
+  stopped.mockImplementationOnce(() => new Promise<void>(resolve => { confirm = resolve; }));
+  await executor.cancel(id, randomUUID(), authority);
+  const stopping = executor.tick();
+  await vi.waitFor(() => expect(stopped).toHaveBeenCalledOnce());
+  expect(calls.some(c => c.activity?.stopped)).toBe(false);
+  confirm(); await stopping;
+  expect(calls.filter(c => c.activity?.stopped)).toHaveLength(1);
+  expect(calls.find(c => c.activity?.stopped)?.leaseId).toBe(record.taskWorkspace?.leaseId);
+  expect(await executor.get(id, authority)).toMatchObject({ state: "cancelled", stopConfirmed: true });
 });

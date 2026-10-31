@@ -62,8 +62,32 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<AppIdentityTokenService>();
         // Core MCP: the protocol server plus the tool type it reflects over. The tools resolve Core's
         // own services per call, so the MCP layer holds no state of its own.
-        builder.Services.AddMcpServer().WithHttpTransport().WithTools<HostyCoreTools>().WithTools<ExternalWorkspaceMcpTools>().WithTools<AppDevModeMcpTools>().WithTools<WorkspaceActivationMcpTools>(CoreJsonSerializerContext.Default.Options).WithTools<AppExecutionTargetMcpTools>(CoreJsonSerializerContext.Default.Options);
+        builder.Services.AddMcpServer().WithHttpTransport().WithTools<HostyCoreTools>().WithTools<ExternalWorkspaceMcpTools>(CoreJsonSerializerContext.Default.Options).WithTools<AppDevModeMcpTools>().WithTools<WorkspaceActivationMcpTools>(CoreJsonSerializerContext.Default.Options).WithTools<AppExecutionTargetMcpTools>(CoreJsonSerializerContext.Default.Options)
+            .WithTools<CoreEnvironmentMcpTools>(CoreJsonSerializerContext.Default.Options)
+            .WithTools<CoreWorkflowMcpTools>(CoreJsonSerializerContext.Default.Options)
+            .WithTools<CoreAppCreationMcpTools>(CoreJsonSerializerContext.Default.Options)
+            .WithTools<CorePublicationMcpTools>(CoreJsonSerializerContext.Default.Options)
+            .WithTools<CoreProviderMcpTools>(CoreJsonSerializerContext.Default.Options)
+            .WithTools<CoreHistoryMcpTools>(CoreJsonSerializerContext.Default.Options)
+            .WithTools<CoreHistoryExportMcpTools>(CoreJsonSerializerContext.Default.Options)
+            .WithRequestFilters(CoreMcpCatalog.ConfigureFilters);
         builder.Services.AddSingleton<ExternalWorkspaceMcpAuthorization>();
+        builder.Services.AddSingleton<CoreCapabilityAuthorization>();
+        builder.Services.AddSingleton<CoreProviderOperationStore>();
+        builder.Services.AddSingleton<CoreTaskAdapter>();
+        builder.Services.AddSingleton<CoreTaskWorkspace>();
+        builder.Services.AddSingleton<CoreHistoryAdapter>();
+        builder.Services.AddSingleton<CoreHistorySubscriptions>();
+        builder.Services.AddSingleton<CoreAgentRunSubscriptions>();
+        builder.Services.AddSingleton<CoreHistoryCursorStore>();
+        builder.Services.AddSingleton<CoreHistoryExportStore>();
+        builder.Services.AddSingleton<CoreHistoryExports>();
+        builder.Services.AddSingleton<CoreHistoryAttachmentHandles>();
+        builder.Services.AddSingleton<CoreAgentSessionAdapter>();
+        builder.Services.AddSingleton<ICoreAgentRunAccess>(sp => sp.GetRequiredService<CoreAgentSessionAdapter>());
+        builder.Services.AddSingleton<CoreProviderMediation>();
+        builder.Services.AddHttpClient(CoreProviderMediation.ClientName, client => client.Timeout = TimeSpan.FromSeconds(30))
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false });
         // The MCP mutation tools read the caller's grants out of HttpContext.Items, where the
         // endpoint filter put them; the accessor is how a static tool method reaches the request.
         builder.Services.AddHttpContextAccessor();
@@ -130,6 +154,9 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<SourceDocumentAuthorization>();
         builder.Services.AddSingleton<WorkspaceAuthorization>();
         builder.Services.AddSingleton<PublicationService>();
+        builder.Services.AddSingleton<CorePublicationAdapter>();
+        builder.Services.AddSingleton<CoreAppCreationAdapter>();
+        builder.Services.AddSingleton<CoreWorkflowAdapter>();
         builder.Services.AddSingleton<InstalledPullRequestRepositories>();
         builder.Services.AddSingleton<PullRequestService>();
         builder.Services.AddHostedService<PullRequestObserver>();
@@ -266,6 +293,15 @@ internal static class HostyCoreApplication
         ProtectedSettingsChanges.Map(app);
         InstallationApprovalEndpoints.Map(app);
         ProviderEndpoints.Map(app);
+        CoreProviderApi.Map(app);
+        CoreSourceApi.Map(app);
+        CorePublicationApi.Map(app);
+        CoreAppCreationApi.Map(app);
+        CoreWorkflowApi.Map(app);
+        CoreHistoryEndpoints.Map(app);
+        CoreHistorySubscriptions.Map(app);
+        CoreAgentRunSubscriptions.Map(app);
+        CoreHistoryExportEndpoints.Map(app);
         CoreEnvironmentEndpoints.Map(app);
         UiPanelEndpoints.Map(app);
         FeedbackEndpoints.Map(app);

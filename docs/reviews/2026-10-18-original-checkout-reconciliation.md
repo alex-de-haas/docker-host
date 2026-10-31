@@ -13,7 +13,7 @@ changed/untracked files and binary patches. Raw evidence and logs are not part o
   and limitations remain in the plan. Corrected obsolete sandbox/shared-worker baseline statements.
 - [Source recovery](../features/runtime-source-workflows/plan.md): full On Hold proposal, with
   historical defect observations explicitly separated from shipped unified dev mode.
-- [External development](../features/external-development-workspaces/plan.md): recovered Draft.
+- [External development](https://github.com/alex-de-haas/docker-host/blob/a3a3a9a363b59040f2a9d8f68e196bc9eca87cd6/docs/features/external-development-workspaces/plan.md): recovered Draft.
   Its unpublished D1-D6 collided with retired IDs from the earlier completed plan; the preserved
   proposal uses D7-D12 respectively, with updated cross-references.
 - [Vision](../vision.md): local decisions 41/42 become 46/47 because main already assigned 41-43.

@@ -21,6 +21,8 @@ def check(context):
     base, root, workspace = (context[key] for key in ('base', 'root', 'workspace'))
     run, request, say, wait_for = (context[key] for key in ('run', 'request', 'say', 'wait_for'))
     origin, password, cli = (context[key] for key in ('origin', 'password', 'cli'))
+    from core_mcp_acceptance import empty_core, harness_history
+    empty_core(context)
     app = 'hosty.harness'
     def app_summary(app_id):
         return next(row for row in request('/api/apps')['apps'] if row['id'] == app_id)
@@ -127,6 +129,7 @@ def check(context):
     assert owner.harness('/preferences/prompt-suggestions', {'enabled':True, 'revision':0}, method='PUT', expected=409)['code'] == 'preference_changed'
     say('PASS: personal suggestion preferences are isolated and reject stale writes')
     first = owner.harness('/sessions', {'title': 'Owner implementation'})
+    harness_history(context, owner, member, first)
     def action(browser, session, kind, **payload):
         return browser.harness('/sessions/'+session['id']+'/workspaces', {'action': kind, **payload})
     tree = action(owner, first, 'prepare', requestId=str(uuid.uuid4()), appId=stopped_app, targetBranch='main')

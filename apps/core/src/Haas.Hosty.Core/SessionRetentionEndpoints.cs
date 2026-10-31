@@ -1,7 +1,7 @@
 namespace Haas.Hosty.Core;
 
 internal sealed record SessionRetentionRequest(string UserId, WorkspaceWorkflowCommand? Cleanup = null);
-internal sealed record SessionRetentionSnapshot(string Kind, WorkspaceWorkflow? Workflow, bool ResourcesFinished, bool WorkspaceAbsent = false, bool SessionDetached = false);
+internal sealed record SessionRetentionSnapshot(string Kind, WorkspaceWorkflow? Workflow, bool ResourcesFinished, bool WorkspaceAbsent = false, bool SessionDetached = false, bool IndependentEnvironments = false);
 
 internal static class SessionRetentionEndpoints
 {
@@ -52,7 +52,7 @@ internal static class SessionRetentionEndpoints
                 return CoreJson.Json(new SessionRetentionSnapshot(trees.Length > 0 || workflow?.State == "deleted" ? "workspace" :
                     children.Length > 0 ? "sandbox" : "chat", workflow,
                     children.All(e => e.State == "finished"),
-                    await workspaces.SessionWorkspaceAbsentAsync(owner, ct), detached));
+                    await workspaces.SessionWorkspaceAbsentAsync(owner, ct), detached, IndependentEnvironments: true));
             }
             catch (AppIdentityException ex) { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), AuthEndpoints.MapIdentityErrorStatus(ex.Code)); }
             catch (AppLifecycleException ex) { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), 409); }

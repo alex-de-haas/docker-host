@@ -153,3 +153,17 @@ it("keeps completed-workspace retention Off after its records have been removed"
   expect(await manager.sweepRetention(now)).toEqual([]);
   expect((await manager.sessionRetention(record.id, now)).state).toBe("off");
 });
+
+it("deletes a reconciled chat without finishing its independent Core environment", async () => {
+  const record = await old({ coreEnvironments: [{ id: "environment-one", state: "running" }] } as Partial<SessionRecord>);
+  vi.mocked(core.retention).mockResolvedValue({ kind: "sandbox", workflow: null, resourcesFinished: false, workspaceAbsent: true, independentEnvironments: true });
+  const lifecycle = vi.spyOn(core, "environment");
+  expect(await manager.deleteSession(record.id, "admin")).toBe(true);
+  expect(lifecycle).not.toHaveBeenCalled(); expect(vi.mocked(core.retention).mock.calls.every(call => !call[2])).toBe(true);
+});
+it("expires ordinary chat history while retaining independently owned environment resources", async () => {
+  const record = await old();
+  vi.mocked(core.retention).mockResolvedValue({ kind: "sandbox", workflow: null, resourcesFinished: false, workspaceAbsent: true, independentEnvironments: true });
+  const lifecycle = vi.spyOn(core, "environment");
+  expect(await manager.sweepRetention(now)).toEqual([record.id]); expect(lifecycle).not.toHaveBeenCalled();
+});

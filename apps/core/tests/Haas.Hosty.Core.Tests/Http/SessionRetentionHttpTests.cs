@@ -68,6 +68,10 @@ public sealed class SessionRetentionHttpTests
         var actor = new SandboxActor(owner.UserId, owner.AppId, owner.Installation);
         var stale = await environments.CreateAsync(actor, new(Guid.NewGuid().ToString(), "Unaccepted cleanup", Context: new(WorkspaceId: tree.WorkspaceId)), default, operatorApproved: true);
         var accepted = await environments.CreateAsync(actor, new(Guid.NewGuid().ToString(), "Interrupted cleanup", Context: new(WorkspaceId: tree.WorkspaceId)), default, operatorApproved: true);
+        var retained = (await (await Read()).Content.ReadFromJsonAsync(CoreJson.TypeInfo<SessionRetentionSnapshot>()))!;
+        Assert.True(retained.IndependentEnvironments); Assert.False(retained.ResourcesFinished);
+        Assert.Equal(stale.State, (await environments.ReadAsync(actor, stale.Id, default)).State);
+        Assert.Equal(accepted.State, (await environments.ReadAsync(actor, accepted.Id, default)).State);
         var staleRequest = Guid.NewGuid().ToString(); var acceptedRequest = Guid.NewGuid().ToString();
         await environments.CommandAsync(new(owner.UserId), stale.Id, "stop", new(Guid.NewGuid().ToString(), stale.Revision), default);
         runtime.FailOnce = accepted.Id;

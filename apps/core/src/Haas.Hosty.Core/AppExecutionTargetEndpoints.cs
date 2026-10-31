@@ -152,7 +152,7 @@ internal sealed class AppExecutionTargetMcpTools(IHttpContextAccessor accessor, 
         try
         {
             var caller = await authorization.RequireAsync(accessor.HttpContext, ct);
-            return await action(new(caller.UserId, "direct-mcp", Principal: caller.PrincipalId));
+            return await action(caller.ActivationActor());
         }
         catch (AppIdentityException ex) { return CoreJson.Text(new ErrorResponse(ex.Code, ex.Message)); }
         catch (AppLifecycleException ex) { return CoreJson.Text(new ErrorResponse(ex.Code, ex.Message)); }

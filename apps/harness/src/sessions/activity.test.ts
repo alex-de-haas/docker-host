@@ -14,7 +14,7 @@ class ManualAdapter extends FakeHarnessAdapter {
   override start(options: HarnessStartOptions): HarnessRun {
     this.callbacks.push(options.onEvent);
     return { send() {}, resolveApproval: () => true, resolveQuestion: () => true,
-      setMcpServers: async () => true, interrupt: async () => {}, stop: async () => {} };
+      setMcpServers: async () => true, interrupt: async () => {}, stop: async () => {}, stopAndWait: async () => {} };
   }
   emit(event: HarnessEvent) { this.callbacks.at(-1)!(event); }
 }

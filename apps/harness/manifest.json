@@ -3,7 +3,7 @@
   "id": "hosty.harness",
   "name": "Hosty Harness",
   "description": "Hosty assistant with Docker and Local production runtimes, managed Claude and Codex connections, chat and settings.",
-  "version": "0.82.0",
+  "version": "0.83.0",
   "role": "system",
   "source": {
     "type": "git",
@@ -78,7 +78,7 @@
         },
         "docker": {
           "type": "docker",
-          "image": "ghcr.io/alex-de-haas/hosty-harness:0.82.0",
+          "image": "ghcr.io/alex-de-haas/hosty-harness:0.83.0",
           "environment": {
             "HOSTY_HARNESS_RUNTIME": "docker",
             "PORT": "3400"
@@ -165,7 +165,7 @@
         },
         "docker": {
           "type": "docker",
-          "image": "ghcr.io/alex-de-haas/hosty-harness-worker:0.82.0",
+          "image": "ghcr.io/alex-de-haas/hosty-harness-worker:0.83.0",
           "environment": {
             "HOSTY_HARNESS_RUNTIME": "docker",
             "PORT": "3401"
@@ -381,6 +381,37 @@
           "existing-workspace"
         ]
       }
+    ],
+    "conversation-history": [
+      {
+        "key": "default",
+        "endpoint": "http",
+        "path": "/api/history/v1",
+        "version": 1,
+        "capabilities": [
+          "history.read",
+          "history.search.text",
+          "history.sharing",
+          "history.attachments",
+          "history.changes",
+          "history.tool-events",
+          "history.usage"
+        ]
+      }
+    ],
+    "agent-sessions": [
+      {
+        "key": "default",
+        "endpoint": "http",
+        "path": "/api/agent-sessions/v1",
+        "version": 1,
+        "capabilities": [
+          "session.read",
+          "session.list",
+          "run.cancel",
+          "run.events"
+        ]
+      }
     ]
   },
   "capabilities": [
@@ -448,7 +479,9 @@
     "assistant",
     "translation",
     "tasks",
-    "task-executor"
+    "task-executor",
+    "conversation-history",
+    "agent-sessions"
   ],
   "corePermissions": [
     "apps.read",
@@ -472,7 +505,21 @@
     "core.environments.manage",
     "core.workspace.activate",
     "providers.task-executor",
-    "providers.tasks"
+    "providers.tasks",
+    "core.environments.inspect",
+    "core.environments.operate",
+    "core.environments.api",
+    "core.publications.write",
+    "core.tasks.read",
+    "core.tasks.write",
+    "core.tasks.execute",
+    "providers.conversation-history",
+    "core.history.read",
+    "core.history.share",
+    "core.history.export",
+    "providers.agent-sessions",
+    "core.agent-sessions.read",
+    "core.agent-sessions.control"
   ],
   "externalMounts": {
     "development": {
