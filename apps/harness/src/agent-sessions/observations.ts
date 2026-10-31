@@ -44,7 +44,9 @@ export class AgentObservations {
         try {
           const file = await open(temp, "wx", 0o600); try { await file.writeFile(after); await file.sync(); } finally { await file.close(); }
           await rename(temp, this.file);
-          const directory = await open(path.dirname(this.file), "r"); try { await directory.sync(); } finally { await directory.close(); }
+          if (process.platform !== "win32") {
+            const directory = await open(path.dirname(this.file), "r"); try { await directory.sync(); } finally { await directory.close(); }
+          }
         } finally { await rm(temp, { force: true }); }
         const prior = new Map((JSON.parse(before) as Observations).runs.map(r => [r.id, r.revision]));
         for (const run of state.runs) if (prior.get(run.id) !== run.revision) for (const notify of this.listeners.get(run.id) ?? []) notify();

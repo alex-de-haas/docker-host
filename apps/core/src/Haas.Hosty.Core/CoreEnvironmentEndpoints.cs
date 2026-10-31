@@ -167,9 +167,10 @@ internal static class CoreEnvironmentEndpoints
         SandboxActor Actor(HostUserRecord user)
         {
             var app = AppManagementAuthorization.Caller(request)?.App;
-            var caller = new CoreCapabilityCaller(user, app is null ? "operator:" + user.Id : CoreCapabilityAuthorization.AppPrincipal(app), app, null, app is null)
+            var credentialHash = app is null ? AppIdentityService.HashToken(CoreSessionAuthorization.ReadSessionCredential(request).Value!) : null;
+            var caller = new CoreCapabilityCaller(user, app is null ? CoreCapabilityAuthorization.OperatorPrincipal(user.Id, credentialHash!) : CoreCapabilityAuthorization.AppPrincipal(app), app, null, app is null)
             { Authority = app is null
-                ? new("operator", CredentialHash: AppIdentityService.HashToken(CoreSessionAuthorization.ReadSessionCredential(request).Value!))
+                ? new("operator", CredentialHash: credentialHash)
                 : new("app", AppId: app.Id, Installation: app.InstalledAt, PermissionRevision: app.PermissionRevision,
                     IdentityHash: AppIdentityService.HashToken(request.Headers[AppManagementAuthorization.IdentityHeader].ToString())) };
             // Retain existing create fingerprints, while request-local capability checks keep source

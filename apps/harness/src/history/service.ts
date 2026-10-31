@@ -23,7 +23,7 @@ const byteSize = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
 export class HistoryService {
   readonly storage: HistoryStorage;
   private readonly exportCursors: ExportCursors;
-  private readonly deliveryGuards = new WeakMap<object, { acls: Record<string, number>; entries: Array<{ conversation: string; id: string; revision: string }> }>();
+  private readonly deliveryGuards = new WeakMap<object, { acls: Record<string, number>; disclosures: Record<string, string>; entries: Array<{ conversation: string; id: string; revision: string }> }>();
   private readonly waiters = new Map<string, Set<() => void>>();
   private readonly unsubscribe: () => void;
   readonly capabilities: HistoryCapabilities = { version: 1, entryKinds: ["message", "tool_call", "tool_result", "usage"], extensions: [], maxPageSize: 200, snapshotLifetimeSeconds: 900, changeRetentionSeconds: 604800 };
@@ -44,11 +44,11 @@ export class HistoryService {
     this.check(actor);
     return this.storage.locked(async () => {
       const state = await this.sync(); const result = await read(state);
-      if (result && typeof result === "object" && !this.deliveryGuards.has(result)) this.deliveryGuards.set(result, this.deliveryGuard(state, result));
+      if (result && typeof result === "object" && !this.deliveryGuards.has(result)) this.deliveryGuards.set(result, this.deliveryGuard(state, result, actor));
       return result;
     });
   }
-  private deliveryGuard(state: HistoryState, value: object) {
+  private deliveryGuard(state: HistoryState, value: object, actor: HistoryActor) {
     const conversations = new Set<string>(), entries: Array<{ conversation: string; id: string; revision: string }> = [];
     const inspect = (value: unknown): void => {
       if (!value || typeof value !== "object") return;
@@ -69,7 +69,8 @@ export class HistoryService {
       if (object.type === "upsert") inspect(object.entry);
     };
     inspect(value);
-    return { acls: Object.fromEntries([...conversations].map(id => [id, state.conversations[id]?.acl ?? -1])), entries };
+    return { acls: Object.fromEntries([...conversations].map(id => [id, state.conversations[id]?.acl ?? -1])),
+      disclosures: Object.fromEntries([...conversations].map(id => [id, this.disclosure(state, id, actor)])), entries };
   }
   /** Perform the final local ACL check and synchronous response write under the source gate. */
   async deliver(actor: HistoryActor, value: object, write: () => void): Promise<void> {
@@ -80,7 +81,7 @@ export class HistoryService {
       const state = await this.sync();
       for (const [key, acl] of Object.entries(guard.acls)) {
         const source = state.conversations[key];
-        if (!source || source.acl !== acl || source.metadata.ownerUserId !== actor.userId && !this.grants(state, key, actor).length)
+        if (!source || source.acl !== acl || guard.disclosures[key] !== this.disclosure(state, key, actor) || source.metadata.ownerUserId !== actor.userId && !this.grants(state, key, actor).length)
           fail("revision_conflict", "Source access changed before delivery. Read the current source again.", 409);
       }
       for (const item of guard.entries) {
@@ -152,6 +153,10 @@ export class HistoryService {
   private grants(state: HistoryState, conversation: string, actor: HistoryActor): HistoryShare[] {
     return state.shares.filter(g => g.ref.id === conversation && g.state === "active" && g.recipientUserIds.includes(actor.userId)
       && (!g.expiresAt || Date.parse(g.expiresAt) > this.now()));
+  }
+  private disclosure(state: HistoryState, conversation: string, actor: HistoryActor): string {
+    // Share expiry changes effective disclosure without writing a new ACL revision.
+    return state.conversations[conversation]?.metadata.ownerUserId === actor.userId ? "owner" : fingerprint(this.grants(state, conversation, actor));
   }
   private visible(state: HistoryState, conversation: string, actor: HistoryActor): SourceConversation {
     const value = state.conversations[conversation];
@@ -266,14 +271,14 @@ export class HistoryService {
       }
       if (count >= 256 || byteSize(items) > 64 * 1024 * 1024) fail("budget_exceeded", "The history snapshot budget is exhausted.", 429);
       snapshot = { id: randomUUID().replaceAll("-", ""), user: actor.userId, principal: actor.principalId, query, expires: this.now() + 900000,
-        highWater: kind === "export" ? String(state.sequence) : BigInt("0x" + fingerprint(items).slice(0, 32)).toString(), acls: Object.fromEntries(items.map(i => [i.conversation, state.conversations[i.conversation]!.acl])), items, offset: 0 };
+        highWater: kind === "export" ? String(state.sequence) : BigInt("0x" + fingerprint(items).slice(0, 32)).toString(), acls: Object.fromEntries(items.map(i => [i.conversation, state.conversations[i.conversation]!.acl])), items, disclosures: Object.fromEntries(items.map(i => [i.conversation, this.disclosure(state, i.conversation, actor)])), offset: 0 };
       await this.storage.writeFile(`snapshot-${snapshot.id}.json`, snapshot);
     }
     const page: Snapshot["items"] = []; let bytes = 0, changed = false;
     while (offset < snapshot.items.length && page.length < limit) {
       const item = snapshot.items[offset]!, current = state.conversations[item.conversation];
       if (!current || current.metadata.ownerUserId !== actor.userId && !this.grants(state, item.conversation, actor).length) { changed = true; offset++; continue; }
-      if (snapshot.acls[item.conversation] !== current.acl) fail("cursor_expired", "Source sharing changed. Start a fresh query.", 410);
+      if (snapshot.acls[item.conversation] !== current.acl || snapshot.disclosures?.[item.conversation] !== this.disclosure(state, item.conversation, actor)) fail("cursor_expired", "Source sharing changed. Start a fresh query.", 410);
       if (item.entry) {
         const live = current.entries.find(e => e.ref.id === item.entry!.ref.id);
         if (!live || !this.entry(state, current, live, actor)) { changed = true; offset++; continue; }
@@ -367,7 +372,7 @@ export class HistoryService {
           }
           const result = { conversation: input.conversation, revision: this.metadata(state, source, actor).revision,
             cursor: await this.exportCursors.issue(scope, String(state.sequence)), changes, rescanRequired };
-          this.deliveryGuards.set(result, { acls: { [key]: source.acl }, entries: [] });
+          this.deliveryGuards.set(result, { acls: { [key]: source.acl }, disclosures: { [key]: this.disclosure(state, key, actor) }, entries: [] });
           return result;
         });
         if (result.rescanRequired || result.changes.length || Date.now() >= deadline || signal?.aborted) return result;

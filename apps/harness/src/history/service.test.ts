@@ -199,3 +199,21 @@ it("wakes a bounded live wait on source writes and serves no transcript in notif
   expect(JSON.stringify(change)).not.toContain("new text stays at source");
   let delivered = false; await history.deliver(owner, change, () => { delivered = true; }); expect(delivered).toBe(true);
 });
+
+it("invalidates shared continuations and pending delivery when overlapping disclosure expires", async () => {
+  await event(3, "user_message", { text: "later shared needle", attachments: ["private.txt"] });
+  await share({ selection: { includeFutureEntries: true } });
+  await share({ selection: { includeFutureEntries: true }, includeAttachments: true, expiresAt: new Date(now + 1000).toISOString(), label: "Temporary attachment access" });
+  const first = await history.read(recipient, { conversation: ref(), limit: 1 });
+  expect(first.nextCursor).toBeTruthy();
+  const pending = await history.get(recipient, { entry: entry(3) });
+  expect(pending.data).toMatchObject({ kind: "message", parts: expect.arrayContaining([expect.objectContaining({ type: "attachment" })]) });
+  now += 1001;
+  await expect(history.read(recipient, { conversation: ref(), limit: 1, cursor: first.nextCursor! })).rejects.toMatchObject({ code: "cursor_expired" });
+  let delivered = false;
+  await expect(history.deliver(recipient, pending, () => { delivered = true; })).rejects.toMatchObject({ code: "revision_conflict" });
+  expect(delivered).toBe(false);
+  const current = await history.get(recipient, { entry: entry(3) });
+  expect(current.data).toMatchObject({ kind: "message", parts: [{ type: "text", text: "later shared needle" }] });
+  await history.deliver(recipient, current, () => { delivered = true; }); expect(delivered).toBe(true);
+});

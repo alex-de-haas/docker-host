@@ -16,7 +16,7 @@ export type SourceConversation = { metadata: Conversation; entries: HistoryEntry
 export type Change = { sequence: string; at: string; owner: string; conversation: string; entry?: string; revision: string; type: "upsert" | "delete" | "access_reset"; reason?: string };
 export type ShareReceipt = { principal: string; user: string; requestId: string; fingerprint: string; result: HistoryShareReceipt };
 export type HistoryState = { version: 1; sequence: number; floor: number; conversations: Record<string, SourceConversation>; shares: HistoryShare[]; receipts: ShareReceipt[]; changes: Change[] };
-export type Snapshot = { id: string; user: string; principal: string; query: string; expires: number; highWater: string; acls: Record<string, number>;
+export type Snapshot = { id: string; user: string; principal: string; query: string; expires: number; highWater: string; acls: Record<string, number>; disclosures?: Record<string, string>;
   items: Array<{ conversation: string; entry?: HistoryEntry; metadata?: Conversation }>; offset: number };
 
 export class HistoryStorage {

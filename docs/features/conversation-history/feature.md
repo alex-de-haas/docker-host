@@ -44,7 +44,9 @@ Conversations remain private by default. An owner can share fixed selected entry
 include a whole conversation and future entries with named users in the same Core. Selected IDs
 expose their current revisions, not an immutable copy. Attachments and named extensions require
 explicit inclusion. Recipients cannot reshare or gain task, source or execution authority. Revocation,
-owner changes and deleted content invalidate subsequent reads and derived results.
+owner changes and deleted content invalidate subsequent reads and derived results. Expiration of an
+overlapping share also invalidates snapshots and pending responses when its disclosure changes, even
+without a stored ACL or entry revision change.
 
 Attachment resolution produces a short-lived subject-bound Core handle. Each bounded range read
 rechecks source access. The provider's storage URL and credentials are not exposed. History and run
