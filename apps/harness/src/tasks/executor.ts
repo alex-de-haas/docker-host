@@ -6,7 +6,7 @@ import { taskExecutionTerminal } from "@hosty-sdk/app/tasks";
 import type { SessionManager } from "../sessions/manager.js";
 import { fingerprint, providerRef, taskError, taskInput, taskResult, uuid, sameActor } from "./store.js";
 
-export type ExecutionAuthority = { actor: TaskActor; scope: string; credential?: string; validate: () => Promise<void> };
+export type ExecutionAuthority = { actor: TaskActor; scope: string; credential?: string; principalId?: string; taskDispatch?: import("@hosty-sdk/app/providers").TaskDispatchRef; mediatedOperation?: string; validate: () => Promise<void> };
 type Execution = {
   scope: string; actor: TaskActor; hash?: string; input?: TaskExecutionInput; receipt: TaskExecutionReceipt;
   sessionId?: string; launchRequested: boolean; cancellation: boolean;
@@ -176,6 +176,8 @@ export class HarnessTaskExecutor {
         if (!authority) return;
         await authority.validate();
         if (r.input!.input.workspaceId) {
+          if (authority.taskDispatch) await this.manager.prepareTaskWorkspace(r.sessionId, authority.taskDispatch, r.receipt.executionId, r.input!.input.workspaceId);
+          else {
           if (!authority.credential) return taskError("workspace_credentials_required", "Open this task in Harness to authorize its existing workspace.", 401);
           const inventory = await this.manager.workspaceInventory(authority.credential) as { workspaces: { id: string; participation?: { revision: number } | null }[] };
           const workspace = inventory.workspaces.find(w => w.id === r.input!.input.workspaceId);
@@ -183,6 +185,7 @@ export class HarnessTaskExecutor {
           const session = await this.manager.getSession(r.sessionId);
           const prior = session?.associationRequests?.find(a => a.id === r.receipt.executionId);
           await this.manager.workspaceAction(r.sessionId, "attach", prior?.input ?? { workspaceId: workspace.id, expectedRevision: workspace.participation.revision, requestId: r.receipt.executionId }, authority.credential, authority.actor.userId!);
+          }
         }
         // Persist intent before native dispatch. The session's durable message receipt owns any
         // crash ambiguity after this point; recovery must never send a fresh turn automatically.

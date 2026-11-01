@@ -24,7 +24,9 @@ internal static class PlatformCapabilities
     public const string Translation = "translation";
     public const string Tasks = "tasks";
     public const string TaskExecutor = "task-executor";
-    public static readonly IReadOnlyList<string> ConsentRoles = [Assistant, SpeechToText, Translation, Tasks, TaskExecutor];
+    public const string ConversationHistory = "conversation-history";
+    public const string AgentSessions = "agent-sessions";
+    public static readonly IReadOnlyList<string> ConsentRoles = [Assistant, SpeechToText, Translation, Tasks, TaskExecutor, ConversationHistory, AgentSessions];
 
     // Only recognized consent-bearing roles participate; legacy provisioning slots stay unchanged.
     public static IReadOnlyList<string> RequestedRoles(IReadOnlyList<string> provides)
@@ -35,6 +37,8 @@ internal static class PlatformCapabilities
         SpeechToText => "Provide speech recognition for authorized apps",
         Translation => "Provide text translation for authorized apps using configured translation accounts",
         Tasks => "Store and manage tasks for authorized callers",
+        ConversationHistory => "Provide conversation history, sharing and search to authorized callers",
+        AgentSessions => "Provide native agent-session status and explicitly authorized run control",
         TaskExecutor => "Execute tasks for authorized callers using this application",
         Assistant => "Provide an assistant that receives conversations and app context chosen in Shell",
         _ => role,

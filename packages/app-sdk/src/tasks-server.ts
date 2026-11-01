@@ -45,3 +45,13 @@ export class TaskExecutorClient {
     return this.call<TaskExecutionReceipt>(`/executions/${encodeURIComponent(executionId)}/cancel`, "POST", { requestId }, signal);
   }
 }
+
+/** Core-mediated child calls retain the original caller and the exact task-provider attribution. */
+export class MediatedTaskExecutorClient {
+  constructor(private readonly providers: ProviderClient, private readonly executor: TaskProviderRef,
+    private readonly dispatch: import("./providers.js").TaskDispatchRef) {}
+  options(signal?: AbortSignal) { return this.providers.taskDispatch<TaskExecutorOptions>({ dispatch: this.dispatch, executor: this.executor, operation: "options" }, signal); }
+  get(executionId: string, signal?: AbortSignal) { return this.providers.taskDispatch<TaskExecutionReceipt>({ dispatch: this.dispatch, executor: this.executor, operation: "get", executionId }, signal); }
+  accept(executionId: string, input: TaskExecutionInput, signal?: AbortSignal) { return this.providers.taskDispatch<TaskExecutionReceipt>({ dispatch: this.dispatch, executor: this.executor, operation: "accept", executionId, input }, signal); }
+  cancel(executionId: string, requestId: string, signal?: AbortSignal) { return this.providers.taskDispatch<TaskExecutionReceipt>({ dispatch: this.dispatch, executor: this.executor, operation: "cancel", executionId, requestId }, signal); }
+}

@@ -972,3 +972,65 @@ it.each([false, true])("retains confirmed Local task exit across lease cleanup f
   expect(recovered.developmentLease).toBeUndefined();
   expect(starts).toHaveLength(1);
 });
+
+it("binds canonical preparation to the current native conversation and retains the supplied lease", async () => {
+  const record = await manager.createSession({ createdBy: "admin", appIds: ["notes"] });
+  await manager.postMessage(record.id, "work", "token");
+  const leaseId = (await store.readRecord(record.id))!.developmentLease ?? "44667ea1-e980-49bb-b46d-6e7e7402c544";
+  const bound = { ...tree, workspaceId: "b".repeat(64), repository: "https://github.com/example/notes" };
+  const invoke = vi.spyOn(manager, "invokeCoreTool").mockResolvedValue(bound);
+  const original = DevelopmentClient.prototype.call.bind(client);
+  vi.mocked(client.call).mockImplementation(async (id, token, action, input) => action === "prepare"
+    ? original(id, token, action, input) : action === "list" ? { workspaces: [bound] } : bound);
+  const input = { taskId: record.id, leaseId, requestId: "1e3214ed-fb38-4f60-a948-3ed25f9b96dd", appId: "notes", name: "Canonical source" };
+  await expect(manager.coordinateCoreTool(record.id, "prepare_workspace", { ...input, taskId: "another-chat" }, async () => {})).rejects.toThrow("taskId");
+  const guard = vi.fn().mockResolvedValue(undefined);
+  await expect(manager.coordinateCoreTool(record.id, "prepare_workspace", input, guard)).resolves.toMatchObject({ result: bound });
+  await expect(manager.coordinateCoreTool(record.id, "prepare_workspace", { ...input, leaseId: "62871f36-664f-486f-a4ea-892675ca4970" }, async () => {})).rejects.toThrow("existing native lease");
+  expect(invoke).toHaveBeenCalledWith(record.id, "prepare_workspace", expect.objectContaining(input), guard);
+  expect((await store.readRecord(record.id))!.developmentWorkspaces).toContainEqual(bound);
+});
+
+it("retains the canonical Core transport across deferred native handover", async () => {
+  const record = await manager.createSession({ createdBy: "admin", appIds: ["notes"] });
+  await manager.postMessage(record.id, "work", "token");
+  const input = { appId: "notes", input: { requestId: "fcf41637-d57a-49ee-bef5-d776aaec9b1e", kind: "package" } };
+  const invoke = vi.spyOn(manager, "invokeCoreTool").mockResolvedValue({ state: "accepted" });
+  const original = DevelopmentClient.prototype.call.bind(client);
+  vi.mocked(client.call).mockImplementation(async (id, token, action, args) => action === "execution-select"
+    ? original(id, token, action, args) : action === "list" ? { workspaces: [tree] } : tree);
+  const guard = vi.fn().mockResolvedValue(undefined);
+  await expect(manager.coordinateCoreTool(record.id, "select_app_execution_target", input, guard)).resolves.toMatchObject({ result: { state: "queued" } });
+  expect(invoke).not.toHaveBeenCalled();
+  await finish(record.id);
+  await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith(record.id, "select_app_execution_target", input, guard));
+  expect(guard).toHaveBeenCalled();
+});
+
+it("retains a real policy review until queued canonical completion has passed native exit", async () => {
+  const bound = { ...tree, workspaceId: "b".repeat(64) };
+  vi.mocked(client.call).mockImplementation(async (_id, _token, action) => action === "list" ? { workspaces: [bound] } : bound);
+  const record = await manager.createSession({ createdBy: "admin", appIds: ["notes"] });
+  await manager.workspaceAction(record.id, "prepare", { appId: "notes" }, "token", "admin");
+  await manager.postMessage(record.id, "work", "token");
+  const command = { requestId: "101c0a25-5a4f-41c3-a551-1fb43a4174d0", expectedRevision: 0 };
+  const input = { input: { workspaceId: bound.workspaceId, input: command } };
+  await manager.mcpPolicy.catalog("hosty:core", "core-installation", [{ name: "workflow_complete", inputSchema: { type: "object" } }]);
+  await manager.mcpPolicy.update({ [JSON.stringify(["hosty:core", "workflow_complete"])]: { identity: "core-installation", mode: "run" } });
+  const review = manager.mcpPolicy.authorize(record.id, "hosty:core", "core-installation", "reviewed-completion", "workflow_complete", input, new AbortController().signal);
+  await vi.waitFor(async () => expect((await store.readRecord(record.id))!.mcpPendingApprovals).toHaveLength(1));
+  const approval = (await store.readRecord(record.id))!.mcpPendingApprovals![0]!;
+  expect(manager.mcpPolicy.resolve(record.id, approval.id, true)).toBe(true);
+  const guard = await review;
+  const invoke = vi.spyOn(manager, "invokeCoreTool").mockImplementation(async (_id, _name, _input, dispatchGuard) => {
+    await dispatchGuard?.(); return { state: "completed" };
+  });
+  const original = DevelopmentClient.prototype.call.bind(client);
+  vi.mocked(client.call).mockImplementation(async (id, token, action, args) => action === "workflow-complete"
+    ? original(id, token, action, args) : action === "list" ? { workspaces: [bound] } : bound);
+  await expect(manager.coordinateCoreTool(record.id, "workflow_complete", input, guard)).resolves.toMatchObject({ result: { state: "queued" } });
+  expect(invoke).not.toHaveBeenCalled();
+  await finish(record.id);
+  await vi.waitFor(async () => expect((await store.readRecord(record.id))!.workflowCompletion).toBeUndefined());
+  expect(invoke).toHaveBeenCalledWith(record.id, "workflow_complete", input, guard);
+});

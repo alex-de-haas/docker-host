@@ -14,6 +14,41 @@ public sealed class ExternalWorkspaceMcpHttpTests
     private const string SourceApp = "com.example.external-source";
     private static readonly string[] WorkspaceScopes = [AccessTokenScopes.McpRead, AccessTokenScopes.McpWorkspaces];
 
+    [Fact]
+    public async Task CanonicalWorkspaceApi_AllowsAnIndependentSourceClientWithoutAnAssistantConversation()
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        await SeedAdminAsync(host);
+        await SeedSourceAsync(host);
+        var apps = host.Services.GetRequiredService<AppRegistryStore>();
+        var clientApp = AssistantMcpAccessHttpTests.Record("independent.source.editor", DateTimeOffset.UtcNow) with {
+            GrantedCorePermissions = [CoreAppPermissions.Sources], ConfirmedRoles = [], Interfaces = null };
+        await apps.UpsertAppAsync(clientApp);
+        var identity = await BrowserAuthorityFixture.Grant(host, clientApp.Id, "admin");
+        using var client = host.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new("Bearer", host.Services.GetRequiredService<AppServiceTokenService>().CreateToken(clientApp.Id));
+        client.DefaultRequestHeaders.Add(AppManagementAuthorization.IdentityHeader, identity.AccessToken);
+        var input = new CanonicalWorkspacePrepare(Guid.NewGuid().ToString(), "opaque-work-context", SourceApp,
+            Guid.NewGuid().ToString(), "Improve source behavior", "main");
+        using var response = await client.PostAsJsonAsync("/api/workspaces/v1/prepare", input);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var tree = (await response.Content.ReadFromJsonAsync<DevelopmentWorkspace>())!;
+        Assert.Equal(clientApp.Id, tree.Owner.AppId);
+        Assert.Equal(input.TaskId, tree.Owner.SessionId);
+        Assert.Null(tree.SessionPath);
+        Assert.True(Directory.Exists(tree.Path));
+        Assert.Equal(tree.Id, (await (await client.PostAsJsonAsync("/api/workspaces/v1/prepare", input)).Content.ReadFromJsonAsync<DevelopmentWorkspace>())!.Id);
+        var inventory = (await (await client.PostAsJsonAsync("/api/workspaces/v1/query", new CoreWorkspaceQuery())).Content.ReadFromJsonAsync<WorkspaceList>())!;
+        Assert.Equal(tree.Id, Assert.Single(inventory.Workspaces).Id);
+        using var direct = host.CreateClient();
+        var token = await IssueAsync(host, WorkspaceScopes);
+        Assert.Equal(tree.Id, (await ToolAsync(direct, token, "get_workspace", new { workspaceId = tree.Id })).GetProperty("id").GetString());
+        Assert.Equal(HttpStatusCode.Conflict, (await client.PostAsJsonAsync($"/api/workspaces/v1/{tree.Id}/commands/cleanup", new WorkspaceCommand(Guid.NewGuid().ToString()))).StatusCode);
+        await apps.UpsertAppAsync(clientApp with { GrantedCorePermissions = [] });
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync("/api/workspaces/v1/query", new CoreWorkspaceQuery())).StatusCode);
+        Assert.True(Directory.Exists(tree.Path));
+    }
+
     [Theory]
     [InlineData("read-only")]
     [InlineData("browser")]
@@ -335,7 +370,7 @@ public sealed class ExternalWorkspaceMcpHttpTests
         using var response = await McpAsync(client, "browser-admin", "tools/list", new { });
         var allTools = (await McpResultAsync(response)).GetProperty("tools").EnumerateArray().ToArray();
         var tools = allTools.Where(tool => tool.GetProperty("name").GetString()!.Contains("workspace", StringComparison.Ordinal)).ToArray();
-        string[] expected = ["workspace_activation", "prepare_workspace", "list_workspaces", "get_workspace", "rename_workspace",
+        string[] expected = ["get_workspace_participants", "get_workspace_commit_review", "merge_workspace_upstream", "workspace_activation", "prepare_workspace", "list_workspaces", "get_workspace", "rename_workspace",
             "get_workspace_diff", "refresh_workspace", "commit_workspace", "merge_workspace_target", "abort_workspace_merge",
             "acquire_workspace_lease", "release_workspace_lease", "record_workspace_pull_requests", "delete_workspace",
             "select_workspace_execution", "get_workspace_execution_selection", "configure_workspace_runtime"];
@@ -402,7 +437,7 @@ public sealed class ExternalWorkspaceMcpHttpTests
             host.Services.GetRequiredService<IClock>(), host.Services.GetRequiredService<AuthLifetimes>(), default,
             audience: scopes is null ? null : AccessTokenScopes.CoreAudience, scopes: scopes)).Id;
 
-    private static async Task<string> SeedSourceAsync(CoreHttpHarness host)
+    internal static async Task<string> SeedSourceAsync(CoreHttpHarness host)
     {
         var paths = host.Services.GetRequiredService<CoreDataPaths>();
         var origin = Path.Combine(paths.CoreRoot, "external-source");

@@ -1,13 +1,20 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json.Serialization;
 
 namespace Haas.Hosty.Core;
 
 // Workspace/session identifiers are optional context. The verified caller and target/input
 // references are the authorization boundary for every client, including background jobs.
 internal sealed record SandboxActor(string UserId, string? AppId = null, DateTimeOffset? Installation = null,
-    string? GrantId = null, string? ScopeId = null)
+    string? GrantId = null, string? ScopeId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? PrincipalId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? CreatorAppId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DateTimeOffset? CreatorInstallation = null)
 {
+    [System.Text.Json.Serialization.JsonIgnore]
+    public CoreCapabilityCaller? Capability { get; init; }
+
     // Server-only authority for deleting resources belonging to an admitted workspace.
     // Never accepted from a JSON client or persisted as a transferable credential.
     [System.Text.Json.Serialization.JsonIgnore]
@@ -22,6 +29,7 @@ internal sealed record SandboxActor(string UserId, string? AppId = null, DateTim
     [System.Text.Json.Serialization.JsonIgnore]
     public string Key => SandboxValidation.Hash(CoreJson.Text(this));
     public bool SameOwner(SandboxActor other) => UserId == other.UserId && AppId == other.AppId && Installation == other.Installation
+        && PrincipalId == other.PrincipalId
         && (GrantId is null || (GrantId == other.GrantId && ScopeId == other.ScopeId));
 }
 internal sealed record SandboxContext(string? WorkspaceId = null, string? SessionId = null, string? JobId = null);

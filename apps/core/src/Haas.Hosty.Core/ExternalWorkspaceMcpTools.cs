@@ -9,19 +9,19 @@ namespace Haas.Hosty.Core;
 internal sealed class ExternalWorkspaceMcpTools
 {
     [McpServerTool(Name = "prepare_workspace", ReadOnly = false, Destructive = false, Idempotent = true)]
-    [Description("Prepare a Core-owned worktree for an installed source app on this local host. Requires direct Core mcp:read and mcp:workspaces authority. Use one stable opaque taskId per work context and a UUID requestId; reuse the same request and arguments after an uncertain response. Supply name as a short, purpose-based description of the work (for example Simplify runtime switching), not an agent name or generated branch/ID. Use rename_workspace when the task scope changes materially. Supply a UUID activity lease before editing or starting native processes. Read repository instructions and approved plans in the returned absolute directory. Keep verified plan progress current without waiting for commits. No app runtime, publication or conversation is created.")]
+    [Description("Prepare a Core-owned worktree for an installed source app on this local host. Requires direct mcp:read and mcp:workspaces, or reviewed application source authority. Use one stable opaque taskId per work context and a UUID requestId; reuse the same request and arguments after an uncertain response. Supply name as a short, purpose-based description of the work (for example Simplify runtime switching), not an agent name or generated branch/ID. Use rename_workspace when the task scope changes materially. Supply a UUID activity lease before editing or starting native processes. Read repository instructions and approved plans in the returned absolute directory. Keep verified plan progress current without waiting for commits. No app runtime, publication or conversation is created.")]
     public static Task<string> PrepareAsync(string requestId, string taskId, string appId, string leaseId, string name,
         ExternalWorkspaceMcpAuthorization authorization, DevelopmentWorkspaceService workspaces,
         IHttpContextAccessor accessor, AuditStore audit, IClock clock, CancellationToken cancellationToken,
-        string? targetBranch = null, string? label = null)
+        string? targetBranch = null, string? label = null, string? navigationPath = null)
         => ExecuteAsync(async caller =>
         {
             DevelopmentWorkspaceService.ValidateWorkspaceName(name!);
             var owner = caller.Owner(taskId, label);
             var result = await workspaces.PrepareAsync(owner,
-                new WorkspacePrepare(requestId, taskId, appId, null, targetBranch, leaseId, label, Name: name), cancellationToken);
+                new WorkspacePrepare(requestId, taskId, appId, navigationPath, targetBranch, leaseId, label, Name: name), cancellationToken);
             await AuditAsync(audit, clock, caller, result, requestId, "prepare");
-            return CoreJson.Text(result);
+            return CoreJson.Text(await workspaces.SessionProjectionAsync(result, owner, cancellationToken));
         }, authorization, accessor, cancellationToken);
 
     [McpServerTool(Name = "list_workspaces", ReadOnly = true)]
@@ -61,7 +61,7 @@ internal sealed class ExternalWorkspaceMcpTools
             authorization, accessor, cancellationToken);
 
     [McpServerTool(Name = "rename_workspace", ReadOnly = false, Destructive = false, Idempotent = true)]
-    [Description("Rename an logical workspace with a short purpose-based name of at most 120 plain-text characters. Requires direct Core mcp:read and mcp:workspaces authority. workspaceId may be an worktree id or aggregate workspaceId. Use a UUID requestId; repeat the same name and requestId after an uncertain response. Only display metadata changes: source, branch, grants, active runtime and execution approvals remain intact. Update the name when the scope materially changes; do not ask the user to invent it.")]
+    [Description("Rename an logical workspace with a short purpose-based name of at most 120 plain-text characters. Requires direct mcp:read and mcp:workspaces, or reviewed application source authority. workspaceId may be an worktree id or aggregate workspaceId. Use a UUID requestId; repeat the same name and requestId after an uncertain response. Only display metadata changes: source, branch, grants, active runtime and execution approvals remain intact. Update the name when the scope materially changes; do not ask the user to invent it.")]
     public static Task<string> RenameAsync(string workspaceId, string requestId, string name,
         ExternalWorkspaceMcpAuthorization authorization, DevelopmentWorkspaceService workspaces,
         IHttpContextAccessor accessor, CancellationToken cancellationToken)
@@ -145,10 +145,34 @@ internal sealed class ExternalWorkspaceMcpTools
             if (workspaceId is not null)
             {
                 if (all || workspaceIds is not null) throw DevelopmentWorkspaceService.Error("request_invalid", "Choose workspaceId, workspaceIds or all.");
-                return CoreJson.Text(await cleanup.ApplyDeleteAsync(workspaceId, caller.UserId, null, new(requestId), cancellationToken));
+                return CoreJson.Text(await cleanup.ApplyDeleteAsync(workspaceId, caller.UserId, caller.App?.Id, new(requestId), cancellationToken));
             }
-            return CoreJson.Text(await cleanup.DeleteBatchAsync(caller.UserId, null, new(requestId, workspaceIds, all), cancellationToken));
+            return CoreJson.Text(await cleanup.DeleteBatchAsync(caller.UserId, caller.App?.Id, new(requestId, workspaceIds, all), cancellationToken));
         }, authorization, accessor, cancellationToken);
+
+    [McpServerTool(Name = "get_workspace_participants", ReadOnly = true)]
+    [Description("Read a registered workspace's current participants and activity. Requires direct workspace or reviewed application source authority; does not attach a conversation or grant membership.")]
+    public static Task<string> ParticipantsAsync(string workspaceId, ExternalWorkspaceMcpAuthorization authorization,
+        DevelopmentWorkspaceService workspaces, UserDirectoryStore users, AppRegistryStore apps,
+        IHttpContextAccessor accessor, CancellationToken cancellationToken)
+        => ExecuteAsync(async caller => CoreJson.Text(await WorkspaceParticipationEndpoints.Project(
+            await workspaces.ParticipationAsync(workspaceId, caller.UserId, cancellationToken), caller.UserId,
+            caller.App?.Id ?? "", users, apps, cancellationToken)), authorization, accessor, cancellationToken);
+
+    [McpServerTool(Name = "get_workspace_commit_review", ReadOnly = false, Destructive = false, Idempotent = true)]
+    [Description("Prepare a bounded exact-file commit review at the expected HEAD. Retain requestId, selected paths and review ID; this creates no commit or publication. Requires workspace authority.")]
+    public static Task<string> CommitReviewAsync(string workspaceId, WorkspaceCommitReviewRequest input,
+        ExternalWorkspaceMcpAuthorization authorization, DevelopmentWorkspaceService workspaces,
+        IHttpContextAccessor accessor, CancellationToken cancellationToken)
+        => ExecuteAsync(async caller => CoreJson.Text(await workspaces.PrepareCommitReviewAsync(workspaceId,
+            await OwnerAsync(workspaceId, caller, workspaces, cancellationToken), input, cancellationToken)), authorization, accessor, cancellationToken);
+
+    [McpServerTool(Name = "merge_workspace_upstream", ReadOnly = false, Destructive = true, Idempotent = true)]
+    [Description("Merge the explicitly reviewed upstream into a registered worktree at expectedHead. Uses the selected source connection; allowUnrelatedHistories is an explicit opt-in. Retain the same requestId after uncertainty. This never pushes or merges a remote pull request.")]
+    public static Task<string> MergeUpstreamAsync(string workspaceId, WorkspaceCommand input,
+        ExternalWorkspaceMcpAuthorization authorization, DevelopmentWorkspaceService workspaces,
+        IHttpContextAccessor accessor, AuditStore audit, IClock clock, CancellationToken cancellationToken)
+        => CommandAsync(workspaceId, "merge-upstream", input, authorization, workspaces, accessor, audit, clock, cancellationToken);
 
     private static Task<string> CommandAsync(string id, string kind, WorkspaceCommand command,
         ExternalWorkspaceMcpAuthorization authorization, DevelopmentWorkspaceService workspaces,
@@ -176,14 +200,14 @@ internal sealed class ExternalWorkspaceMcpTools
         { return CoreJson.Text(new McpError(ex.Message)); }
     }
 
-    private static async Task AuditAsync(AuditStore audit, IClock clock, ExternalWorkspaceMcpCaller caller,
-        DevelopmentWorkspace workspace, string requestId, string kind)
+    internal static async Task AuditAsync(AuditStore audit, IClock clock, ExternalWorkspaceMcpCaller caller,
+        DevelopmentWorkspace workspace, string requestId, string kind, string via = "mcp")
     {
         try
         {
             await audit.AppendAsync(new("audit_" + Guid.NewGuid().ToString("N"), "development.workspace." + kind,
                 "workspace", workspace.Id, workspace.Operations.FirstOrDefault(o => o.Id == requestId)?.State ?? workspace.State,
-                caller.UserId, clock.UtcNow, new Dictionary<string, string> { ["via"] = "mcp", ["requestId"] = requestId,
+                caller.UserId, clock.UtcNow, new Dictionary<string, string> { ["via"] = via, ["requestId"] = requestId,
                     ["principal"] = caller.PrincipalId }), CancellationToken.None);
         }
         catch (Exception ex) { Console.Error.WriteLine("[audit] Cannot record external workspace operation: " + ex.Message); }

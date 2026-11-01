@@ -75,6 +75,15 @@ internal static class CoreEnvironmentEndpoints
         routes.MapPost(root + "/{id}/api", async (string id, CoreEnvironmentApiRequest input, HttpRequest request,
             UserDirectoryStore users, IClock clock, CoreEnvironmentAccess access, CancellationToken ct) =>
             await Admin(request, users, clock, false, actor => access.SendAsync(actor, id, input, ct), ct));
+        routes.MapPost(root + "/{id}/consumers/register", async (string id, CoreEnvironmentConsumerRegister input, HttpRequest request,
+            UserDirectoryStore users, IClock clock, CoreEnvironmentService service, CancellationToken ct) =>
+            await Admin(request, users, clock, false, actor => service.RegisterConsumerAsync(actor, id, input, ct), ct));
+        routes.MapPost(root + "/{id}/consumers/release", async (string id, CoreEnvironmentConsumerRelease input, HttpRequest request,
+            UserDirectoryStore users, IClock clock, CoreEnvironmentService service, CancellationToken ct) =>
+            await Admin(request, users, clock, false, actor => service.ReleaseConsumerAsync(actor, id, input, false, ct), ct));
+        routes.MapPost(root + "/{id}/consumers/reconcile", async (string id, CoreEnvironmentConsumerRelease input, HttpRequest request,
+            UserDirectoryStore users, IClock clock, CoreEnvironmentService service, CancellationToken ct) =>
+            await Admin(request, users, clock, false, actor => service.ReleaseConsumerAsync(actor, id, input, true, ct), ct));
         const string internalRoot = "/api/internal/apps/{appId}/core-environments";
         routes.MapPost(internalRoot + "/consent", async (string appId, CoreEnvironmentCreate input, HttpRequest request,
             CoreEnvironmentAuthorization auth, CoreEnvironmentService service, CoreEnvironmentConsentService consent,
@@ -137,15 +146,50 @@ internal static class CoreEnvironmentEndpoints
             HttpRequest request, CoreEnvironmentAuthorization auth, CoreEnvironmentAccess access, CancellationToken ct) =>
             await Handle(async () => await access.SendAsync(await auth.RequireAsync(request, appId, false, ct), id, input, ct)));
     }
-    private static Task<IResult> Admin<T>(HttpRequest request, UserDirectoryStore users, IClock clock, bool read,
+    private static async Task<IResult> Admin<T>(HttpRequest request, UserDirectoryStore users, IClock clock, bool read,
         Func<SandboxActor, Task<T>> action, CancellationToken ct)
-        => !read && AppManagementAuthorization.Caller(request) is { } caller
-            ? AppAccessPolicy.IsAdmin(caller.User) ? Handle(() => action(new(caller.User.Id)))
-                : Task.FromResult<IResult>(CoreJson.Json(new ErrorResponse("admin_required", "Administrator required."), 403))
-            : read ? CoreSessionAuthorization.RequireSessionAsync(request, users, clock, user => AppAccessPolicy.IsAdmin(user)
-            ? Handle(() => action(new(user.Id)))
+    {
+        var services = request.HttpContext.RequestServices;
+        var bearer = CoreSessionAuthorization.ReadBearerToken(request);
+        var scoped = bearer is null ? null : ScopedCredentials.Resolve(await users.ReadAsync(ct), bearer, clock.UtcNow,
+            services.GetRequiredService<CoreSettingsService>().AuthLifetimes, AccessTokenScopes.CoreAudience);
+        if (scoped is not null)
+            return await Handle(async () =>
+            {
+                var scopes = new List<string> { AccessTokenScopes.McpEnvironmentsRead };
+                if (!read) scopes.Add(AccessTokenScopes.McpEnvironmentsManage);
+                if (FullApi(request.Path)) scopes.Add(AccessTokenScopes.McpEnvironmentApi);
+                var caller = await services.GetRequiredService<CoreCapabilityAuthorization>().RequireAsync(request, scopes, [], ct);
+                return await action(caller.EnvironmentActor());
+            });
+        if (FullApi(request.Path) && AppManagementAuthorization.RequireAdditional(request, CoreAppPermissions.CoreEnvironmentsApi) is { } denied)
+            return denied;
+        SandboxActor Actor(HostUserRecord user)
+        {
+            var app = AppManagementAuthorization.Caller(request)?.App;
+            var credentialHash = app is null ? AppIdentityService.HashToken(CoreSessionAuthorization.ReadSessionCredential(request).Value!) : null;
+            var caller = new CoreCapabilityCaller(user, app is null ? CoreCapabilityAuthorization.OperatorPrincipal(user.Id, credentialHash!) : CoreCapabilityAuthorization.AppPrincipal(app), app, null, app is null)
+            { Authority = app is null
+                ? new("operator", CredentialHash: credentialHash)
+                : new("app", AppId: app.Id, Installation: app.InstalledAt, PermissionRevision: app.PermissionRevision,
+                    IdentityHash: AppIdentityService.HashToken(request.Headers[AppManagementAuthorization.IdentityHeader].ToString())) };
+            // Retain existing create fingerprints, while request-local capability checks keep source
+            // authority and consumer attribution separate from the resource owner's user identity.
+            return new(user.Id) { Capability = caller };
+        }
+        // Preserve existing browser/installed-operator create replay identities and legacy consent.
+        return !read && AppManagementAuthorization.Caller(request) is { } app
+            ? AppAccessPolicy.IsAdmin(app.User) ? await Handle(() => action(Actor(app.User)))
+                : CoreJson.Json(new ErrorResponse("admin_required", "Administrator required."), 403)
+            : read ? await CoreSessionAuthorization.RequireSessionAsync(request, users, clock, user => AppAccessPolicy.IsAdmin(user)
+            ? Handle(() => action(Actor(user)))
             : Task.FromResult<IResult>(CoreJson.Json(new ErrorResponse("admin_required", "Administrator required."), 403)), cancellationToken: ct)
-        : CoreSessionAuthorization.RequireAdminBrowserAsync(request, users, clock, user => Handle(() => action(new(user.Id))), ct);
+            : await CoreSessionAuthorization.RequireAdminBrowserAsync(request, users, clock, user => Handle(() => action(Actor(user))), ct);
+    }
+    private static bool FullApi(PathString path) => path.Value?.EndsWith("/api", StringComparison.Ordinal) == true
+        || path.Value?.EndsWith("/setup", StringComparison.Ordinal) == true
+        || path.Value?.EndsWith("/setup-link", StringComparison.Ordinal) == true
+        || path.Value?.EndsWith("/initialization/resume", StringComparison.Ordinal) == true;
     internal static async Task<IResult> Handle<T>(Func<Task<T>> action)
     {
         try { return CoreJson.Json(await action()); }

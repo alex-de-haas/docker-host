@@ -2,6 +2,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { validRules, validDefaults, type ToolRule, type ProviderDefault } from "../mcp/policy.js";
+import { validCoreMigration, type CorePolicyMigration } from "../mcp/core-migration.js";
 import { DEFAULT_WORKFLOW_PROMPT } from "./workflow.js";
 import { CORE_PROVIDER_ID } from "./providers.js";
 import type { ConnectionBinding } from "../connections/registry.js";
@@ -33,6 +34,7 @@ export interface AssistantSettings {
   translationModels?: Partial<Record<"codex" | "claude", string | null>>;
   mcpToolRules?: Record<string, ToolRule>;
   mcpPolicyMigrated?: string[];
+  mcpCoreMigration?: CorePolicyMigration;
   mcpDefaults?: Record<string, ProviderDefault>;
   mcpSkillApprovals?: Record<string, SkillAcceptance>;
   mcpSkillsMigrated?: boolean;
@@ -139,6 +141,7 @@ export class SettingsStore {
         mcpSkillApprovals: validSkillAcceptances(parsed.mcpSkillApprovals) ? parsed.mcpSkillApprovals : {},
         mcpSkillsMigrated: parsed.mcpSkillsMigrated === true,
         mcpToolRules: validRules(parsed.mcpToolRules) ? parsed.mcpToolRules : {},
+        mcpCoreMigration: validCoreMigration(parsed.mcpCoreMigration) ? parsed.mcpCoreMigration : undefined,
         mcpPolicyMigrated: Array.isArray(parsed.mcpPolicyMigrated) ? parsed.mcpPolicyMigrated.filter(v => typeof v === "string") : [],
         systemPrompt: typeof parsed.systemPrompt === "string" ? parsed.systemPrompt : "",
         mcpProviders: isBooleanRecord(parsed.mcpProviders) ? parsed.mcpProviders : {},
@@ -203,6 +206,7 @@ export class SettingsStore {
       mcpSkillApprovals: patch.mcpSkillApprovals ?? current.mcpSkillApprovals ?? {},
       mcpSkillsMigrated: patch.mcpSkillsMigrated ?? current.mcpSkillsMigrated ?? false,
       mcpToolRules: patch.mcpToolRules ?? current.mcpToolRules ?? {},
+      mcpCoreMigration: patch.mcpCoreMigration ?? current.mcpCoreMigration,
       mcpPolicyMigrated: patch.mcpPolicyMigrated ?? current.mcpPolicyMigrated ?? [],
       immediateHandoffs: patch.immediateHandoffs ?? current.immediateHandoffs ?? false,
       systemPrompt: (patch.systemPrompt ?? current.systemPrompt).slice(0, MAX_SYSTEM_PROMPT_CHARS),

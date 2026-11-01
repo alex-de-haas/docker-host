@@ -28,6 +28,8 @@ export type SessionStatus =
 export type SessionAutonomy = "normal" | "autonomous";
 
 export interface SessionRecord {
+  /** Provider-owned execution attempt identity; distinct from chat and native session IDs. */
+  agentRunId?: string;
   taskExecutionId?: string;
   taskRun?: { started: boolean; exitConfirmed: boolean; error?: string };
   agentProfile?: import("../profiles/types.js").AgentProfile | null;
@@ -47,6 +49,7 @@ export interface SessionRecord {
   autonomy?: SessionAutonomy;
   developmentWorkspaces?: import("./development.js").DevelopmentWorkspace[];
   developmentLease?: string;
+  taskWorkspace?: { dispatch: import("@hosty-sdk/app/providers").TaskDispatchRef; executionId: string; workspaceId: string; leaseId: string };
   developmentLeaseState?: "admitting" | "stopped";
   workspaceAssociation?: { id: string; revision: number } | null;
   associationRequests?: { id: string; action: "attach" | "detach"; input: Record<string, unknown>; state: "pending" | "succeeded" | "rejected" }[];
@@ -197,6 +200,13 @@ export class SessionStore {
   }
 
   private readonly writes = new Map<string, Promise<void>>();
+  private readonly observers = new Set<(id: string) => Promise<void>>();
+  /** Source projections observe durable writes and deletion; they never become source authority. */
+  observeChanges(observer: (id: string) => Promise<void>): () => void {
+    this.observers.add(observer); return () => this.observers.delete(observer);
+  }
+  private async changed(id: string): Promise<void> { for (const observer of this.observers) await observer(id); }
+
 
   async saveRecord(record: SessionRecord): Promise<void> {
     const content = JSON.stringify(record, null, 2);
@@ -207,7 +217,7 @@ export class SessionStore {
       await rename(`${target}.tmp`, target);
     });
     this.writes.set(record.id, task);
-    try { await task; } finally { if (this.writes.get(record.id) === task) this.writes.delete(record.id); }
+    try { await task; await this.changed(record.id); } finally { if (this.writes.get(record.id) === task) this.writes.delete(record.id); }
   }
 
   private messageReceiptPath(id: string, requestId: string): string {
@@ -277,6 +287,7 @@ export class SessionStore {
       `${JSON.stringify(event)}\n`,
       "utf8",
     );
+    await this.changed(id);
   }
 
   async readEvents(id: string, afterSeq = 0): Promise<StoredEvent[]> {
@@ -309,6 +320,7 @@ export class SessionStore {
   async deleteSession(id: string): Promise<void> {
     await this.removeWorkspace(id);
     await rm(this.sessionDir(id), { recursive: true, force: true });
+    await this.changed(id);
   }
 
 }

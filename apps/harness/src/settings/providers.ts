@@ -50,6 +50,11 @@ export class ProviderDirectory {
 
   get revision(): string | undefined { return this.snapshot?.agents.revision; }
 
+  ownApplication(): { appId: string; displayName: string; installationId?: string } | undefined {
+    const app = this.snapshot?.apps.find(a => a.id === this.appId);
+    return app && typeof app.displayName === "string" ? { appId: this.appId, displayName: app.displayName, installationId: process.env.HOSTY_APP_INSTALLATION_ID } : undefined;
+  }
+
   settingsUrl(): string | null { return this.snapshot?.agents.settingsUrl ?? null; }
 
   core(): McpProvider | null {

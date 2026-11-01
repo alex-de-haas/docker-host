@@ -18,6 +18,9 @@ export function retentionBusy(record: SessionRecord): boolean {
     || !!record.mcpPendingApprovals?.length
     || !!record.coreEnvironmentOperations?.some(o => o.state === "pending");
 }
+export function hasWorkspaceHistory(record: SessionRecord): boolean {
+  return !!(record.appCreations?.some(o => o.state !== "rejected") || record.developmentLease || record.developmentWorkspaces?.length || record.publicationReferences?.length || record.retentionCleanup);
+}
 export function hasResourceHistory(record: SessionRecord): boolean {
   return !!(record.appCreations?.some(o => o.state !== "rejected") || record.developmentLease || record.developmentWorkspaces?.length || record.publicationReferences?.length || record.coreEnvironments?.length
     || record.coreEnvironmentOperations?.length);
@@ -35,7 +38,8 @@ export function reconcileRetentionSnapshot(record: SessionRecord, snapshot: Rete
 export function retentionStatus(record: SessionRecord, policy: RetentionSettings, snapshot: RetentionSnapshot, now: Date): RetentionStatus {
   const base = { observedAt: now.toISOString(), kind: snapshot.kind };
   if (retentionBusy(record)) return { ...base, state: "protected", message: "Active work, pending input or unresolved operations are retained." };
-  if (snapshot.kind === "chat" && hasResourceHistory(record) && !snapshot.sessionDetached) return { ...base, state: "blocked", message: "Resource history could not be reconciled with Core." };
+  if (snapshot.kind === "chat" && hasResourceHistory(record) && !snapshot.sessionDetached
+      && !(snapshot.independentEnvironments && snapshot.workspaceAbsent && !hasWorkspaceHistory(record))) return { ...base, state: "blocked", message: "Resource history could not be reconciled with Core." };
   const workflow = snapshot.workflow;
   if (snapshot.kind === "workspace" && workflow?.state !== "deleted" && !(workflow?.state === "deleting" && record.retentionCleanup))
     return { ...base, state: "protected", message: "Attached development conversations are retained. Detach the chat or explicitly delete the workspace; automatic chat expiry never removes shared source." };
@@ -43,7 +47,7 @@ export function retentionStatus(record: SessionRecord, policy: RetentionSettings
     return { ...base, state: "protected", message: "An interrupted workspace action must be recovered before retention." };
   if (snapshot.kind === "workspace" && (!workflow || !["completed", "deleted", "deleting"].includes(workflow.state)))
     return { ...base, state: "protected", message: "Unfinished or deferred workspace. No automatic deletion." };
-  if (!snapshot.resourcesFinished && snapshot.kind !== "workspace")
+  if (!snapshot.resourcesFinished && !snapshot.independentEnvironments && snapshot.kind !== "workspace")
     return { ...base, state: "protected", message: "Finish retained sandbox resources before conversation cleanup." };
   const days = snapshot.kind === "workspace" ? policy.completedWorkspaceDays : policy.ordinaryDays;
   if (days === null) return { ...base, state: "off", message: "Automatic deletion is off." };

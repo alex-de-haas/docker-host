@@ -4,7 +4,8 @@ import { isSameOriginRequest, resolveAdminActor } from "../auth.js";
 import { delegationCredential } from "../session-delegation.js";
 import { ProviderClient } from "@hosty-sdk/app/providers/server";
 import { ProviderError, type ProviderInvocation } from "@hosty-sdk/app/providers";
-import { TaskExecutorClient } from "@hosty-sdk/app/tasks/server";
+import { mediatedTaskRequest } from "./mediation.js";
+import { MediatedTaskExecutorClient, TaskExecutorClient } from "@hosty-sdk/app/tasks/server";
 import { taskStatuses, type TaskAction, type TaskActor, type TaskAssignee, type TaskCreate, type TaskEdit,
   type TaskExecutionInput, type TaskProviderRef, type TaskRecord, type TaskStatus } from "@hosty-sdk/app/tasks";
 import { TaskStore, activeAttempt, taskError, providerRef } from "./store.js";
@@ -28,7 +29,7 @@ export class TaskService {
     this.executor = new HarnessTaskExecutor(manager);
     this.timer = setInterval(() => { void this.tick(); }, 2000); this.timer.unref();
     this.unsubscribe = this.store.subscribe(() => { queueMicrotask(() => { void this.tick(); }); });
-    manager.taskAction = (id, action, input, credential) => this.tool(id, action, input, credential);
+    manager.taskAction = (id, action, input, credential, dispatchGuard) => this.tool(id, action, input, credential, dispatchGuard);
   }
   close(): Promise<void> {
     this.closed = true;
@@ -40,9 +41,11 @@ export class TaskService {
   private ownScope() { return `${this.provider.appId}:${this.provider.installationId}`; }
   private own(executor: TaskProviderRef) { return executor.appId === this.provider.appId && executor.installationId === this.provider.installationId && executor.key === this.provider.key; }
   private remote(executor: TaskProviderRef, authority: Authority) {
+    if (authority.taskDispatch) return new MediatedTaskExecutorClient(new ProviderClient(), executor, authority.taskDispatch);
     return new TaskExecutorClient(new ProviderClient(), executor, authority.credential ? async () => authority.credential! : undefined);
   }
   private remember(authority: Authority) {
+    if (authority.principalId) return;
     if (authority.actor.userId && (authority.credential || !this.current.get(authority.actor.userId)?.credential)) this.current.set(authority.actor.userId, authority);
   }
   private executionAuthority(task: TaskRecord, authority: Authority): Authority {
@@ -55,7 +58,7 @@ export class TaskService {
       if (!directory.some(u => u.id === assignee.userId)) return taskError("assignee_unavailable", "The selected person is no longer available.");
       return assignee;
     }
-    const options = this.own(assignee.executor) ? await this.executor.options() : await this.remote(assignee.executor, authority).options();
+    const options = this.own(assignee.executor) && !authority.taskDispatch ? await this.executor.options() : await this.remote(assignee.executor, authority).options();
     const id = assignee.optionId ?? options.defaultId;
     const option = options.options.find(o => o.id === id);
     if (!option) return taskError("executor_option_unavailable", "Select an available executor option.");
@@ -63,7 +66,11 @@ export class TaskService {
   }
   async action(id: string, authority: Authority, input: TaskAction) {
     await authority.validate(); this.remember(authority);
-    return this.store.action(id, authority.actor, input, t => this.selection(t, authority));
+    return this.store.action(id, authority.actor, input, t => this.selection(t, authority), authority.principalId, authority.taskDispatch, task => {
+      if (authority.principalId && input.action && ["ready", "start", "cancel"].includes(input.action)
+          && (task.assignee?.kind === "app" || activeAttempt(task)) && authority.mediatedOperation !== "execute")
+        return taskError("execution_permission_required", "This action requires an exact Core execution authorization.", 403);
+    });
   }
   tick(): Promise<void> {
     if (this.closed) return this.inFlight ?? Promise.resolve();
@@ -81,7 +88,10 @@ export class TaskService {
           continue;
         }
         if ((this.retries.get(attempt.executionId)?.after ?? 0) > Date.now() && !attempt.cancelRequested) continue;
-        const authority = task.owner.userId ? this.current.get(task.owner.userId) : undefined;
+        const dispatch = await this.store.dispatch(task.ref.id);
+        const authority: Authority | undefined = dispatch ? { actor: { userId: dispatch.userId, appId: null }, scope: this.ownScope(), principalId: dispatch.principalId, taskDispatch: dispatch,
+          validate: async () => { await new ProviderClient().taskDispatchAuthority(dispatch); } }
+          : task.owner.userId ? this.current.get(task.owner.userId) : undefined;
         if (!authority) {
           const receipt = this.own(attempt.executor) ? await this.executor.peek(attempt.executionId, this.ownScope(), task.owner.userId) : null;
           if (receipt) await this.store.observe(task.ref.id, attempt.executionId, receipt);
@@ -90,7 +100,7 @@ export class TaskService {
         }
         try {
           await authority.validate();
-          const local = this.own(attempt.executor), bound = this.executionAuthority(task, authority), remote = local ? null : this.remote(attempt.executor, authority);
+          const local = this.own(attempt.executor) && !authority.taskDispatch, bound = this.executionAuthority(task, authority), remote = local ? null : this.remote(attempt.executor, authority);
           let receipt;
           if (attempt.cancelRequested) receipt = local ? await this.executor.cancel(attempt.executionId, attempt.executionId, bound) : await remote!.cancel(attempt.executionId, attempt.executionId);
           else {
@@ -131,28 +141,14 @@ export class TaskService {
       return { ...a, receipt: { ...a.receipt, sessionRef: permitted ? ref : undefined } };
     }) };
   }
-  private async tool(sessionId: string, action: string, input: Record<string, unknown>, credential?: string) {
+  private async tool(sessionId: string, action: string, input: Record<string, unknown>, credential?: string, dispatchGuard?: () => Promise<void>) {
     const session = await this.manager.getSession(sessionId);
     if (!session) return taskError("session_missing", "Session is unavailable.", 404);
     if (action === "task-result") return this.executor.report(sessionId, input.requestId as string, input.result);
     if (!credential) return taskError("task_credentials_required", "Refresh the session's Hosty credentials before managing tasks.", 401);
-    const request = { headers: { authorization: `Bearer ${credential}` } } as IncomingMessage;
-    const authority: Authority = { actor: { userId: session.createdBy, appId: null }, scope: this.ownScope(), credential,
-      validate: async () => { const actor = await resolveAdminActor(request); if (actor?.userId !== session.createdBy) return taskError("task_unauthorized", "Task access is no longer authorized.", 403); } };
-    await authority.validate(); this.remember(authority);
-    if (action === "task-list") {
-      const page = await this.store.list(authority.actor, input.cursor as string, input.limit as number);
-      return { ...page, tasks: page.tasks.map(t => this.publicTask(t, authority.actor)) };
-    }
-    if (action === "task-options") return input.executor
-      ? (this.own(providerRef(input.executor)) ? this.executor.options() : this.remote(providerRef(input.executor), authority).options())
-      : { provider: this.provider, users: await this.users(), executors: await new ProviderClient().list("task-executor") };
-    if (action === "task-get") return this.publicTask(await this.store.get(input.taskId as string, authority.actor), authority.actor);
-    if (action === "task-create") return this.store.create(authority.actor, input as TaskCreate);
-    if (action === "task-edit") return this.publicTask(await this.store.edit(input.taskId as string, authority.actor, input as TaskEdit), authority.actor);
-    if (action === "task-action") return this.publicTask(await this.action(input.taskId as string, authority, input as TaskAction), authority.actor);
-    return taskError("task_action_invalid", "Unknown task operation.", 400);
+    return this.manager.invokeCoreTask(sessionId, action, input, this.provider, dispatchGuard);
   }
+
   async route(request: IncomingMessage, response: ServerResponse, url: URL, readJson: () => Promise<Record<string, unknown>>): Promise<boolean> {
     const tasks = url.pathname === "/api/tasks/v1" || url.pathname.startsWith("/api/tasks/v1/");
     const executions = url.pathname === "/api/task-executor/v1" || url.pathname.startsWith("/api/task-executor/v1/");
@@ -160,8 +156,15 @@ export class TaskService {
     if (this.closed) return taskError("tasks_stopping", "Task dispatch is stopping.", 503);
     const kind = tasks ? "tasks" : "task-executor", method = request.method ?? "GET";
     const bearer = request.headers.authorization?.replace(/^Bearer /i, "");
+    const mediated = await mediatedTaskRequest(request, url, kind, this.provider.key);
+    if (mediated) readJson = mediated.read;
     let invocation: ProviderInvocation | null = null;
     const validate = async () => {
+      if (mediated) {
+        const v = await mediated.validate();
+        if (v.hostRole !== "host.admin") return taskError("admin_required", "Harness tasks require an acting administrator.", 403);
+        return v.userId;
+      }
       if (bearer?.startsWith("hosty_provider.")) {
         const v = await new ProviderClient().validate(bearer, kind);
         if (!v.userId || v.hostRole !== "host.admin") return taskError("admin_required", "Harness tasks require an acting administrator.", 403);
@@ -174,26 +177,29 @@ export class TaskService {
     };
     const userId = await validate();
     // Provider credentials are never reinterpreted as ordinary app/user credentials.
-    const call = invocation as ProviderInvocation | null;
-    const authority: Authority = { actor: { userId, appId: call?.callerAppId ?? null, ...(call ? { installationId: call.callerInstallation } : {}) },
-      scope: call ? `${call.callerAppId}:${call.callerInstallation}` : this.ownScope(),
-      credential: call ? undefined : await delegationCredential(request), validate: async () => { if (await validate() !== userId) return taskError("actor_changed", "Task actor changed.", 403); } };
+    const call = (mediated?.invocation ?? invocation) as ProviderInvocation | import("@hosty-sdk/app/providers").MediatedProviderInvocation | null;
+    const delegation = mediated?.invocation.taskDelegation;
+    const source = delegation?.taskRef;
+    const authority: Authority = { actor: { userId, appId: source?.appId ?? call?.callerAppId ?? null, ...(source ? { installationId: source.installationId } : call?.callerInstallation ? { installationId: call.callerInstallation } : {}) },
+      scope: source ? `${source.appId}:${source.installationId}` : call ? `${call.callerAppId}:${call.callerInstallation}` : this.ownScope(),
+      ...(mediated ? { principalId: mediated.invocation.principalId, taskDispatch: delegation?.dispatch ?? mediated.invocation.taskDispatch ?? undefined, mediatedOperation: mediated.invocation.operation } : {}),
+      credential: call ? undefined : await delegationCredential(request), validate: async () => { if (delegation) { const current = await new ProviderClient().taskDispatchAuthority(delegation.dispatch); if (current.scope.executionId !== delegation.executionId || current.dispatch.userId !== userId) return taskError("execution_changed", "Execution authority changed.", 403); return; } if (await validate() !== userId) return taskError("actor_changed", "Task actor changed.", 403); } };
     if (this.closed) return taskError("tasks_stopping", "Task dispatch is stopping.", 503);
     this.remember(authority);
-    const send = (status: number, body: unknown) => { response.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" }); response.end(JSON.stringify(body)); };
+    const send = async (status: number, body: unknown) => { await validate(); response.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" }); response.end(JSON.stringify(body)); };
     const route = url.pathname.slice(tasks ? "/api/tasks/v1".length : "/api/task-executor/v1".length);
     if (tasks) {
-      if (method === "GET" && route === "/capabilities") { send(200, { version: 1, prefix: this.store.prefix, statuses: taskStatuses, maxPageSize: 100 }); return true; }
+      if (method === "GET" && route === "/capabilities") { await send(200, { version: 1, prefix: this.store.prefix, statuses: taskStatuses, maxPageSize: 100 }); return true; }
       if (method === "GET" && route === "/directory") {
         const options = await this.executor.options();
         let others: unknown[] = [], warning: string | undefined;
         try { others = (await new ProviderClient().list("task-executor")).filter(p => p.appId !== this.provider.appId).map(p => ({ ...p, options: null })); }
         catch (e) { warning = e instanceof Error ? e.message : "Executor directory unavailable."; }
         const workspaces = authority.credential ? await this.manager.workspaceInventory(authority.credential).catch(() => ({ workspaces: [] })) : { workspaces: [] };
-        send(200, { provider: this.provider, users: await this.users(), executors: [{ ...this.provider, displayName: "Harness", available: true, ...options }, ...others], workspaces, warning }); return true;
+        await send(200, { provider: this.provider, users: await this.users(), executors: [{ ...this.provider, displayName: "Harness", available: true, ...options }, ...others], workspaces, warning }); return true;
       }
       if (method === "POST" && route === "/executor-options") {
-        const ref = providerRef(await readJson()); send(200, this.own(ref) ? await this.executor.options() : await this.remote(ref, authority).options()); return true;
+        const ref = providerRef(await readJson()); await send(200, this.own(ref) ? await this.executor.options() : await this.remote(ref, authority).options()); return true;
       }
       if (method === "GET" && route === "/events") {
         response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive" });
@@ -205,32 +211,33 @@ export class TaskService {
       }
       if (route === "/tasks" && method === "GET") {
         const page = await this.store.list(authority.actor, url.searchParams.get("cursor") ?? "", Number(url.searchParams.get("limit") ?? 50), (url.searchParams.get("status") || undefined) as TaskStatus | undefined);
-        send(200, { ...page, tasks: page.tasks.map(t => this.publicTask(t, authority.actor)) }); return true;
+        await send(200, { ...page, tasks: page.tasks.map(t => this.publicTask(t, authority.actor)) }); return true;
       }
-      if (route === "/tasks" && method === "POST") { send(201, await this.store.create(authority.actor, await readJson() as TaskCreate)); return true; }
+      if (route === "/tasks" && method === "POST") { await send(201, await this.store.create(authority.actor, await readJson() as TaskCreate, authority.principalId)); return true; }
       const match = route.match(/^\/tasks\/([a-f0-9-]{36})(\/actions)?$/i);
       if (match) {
-        if (method === "GET" && !match[2]) send(200, this.publicTask(await this.store.get(match[1]!, authority.actor), authority.actor));
-        else if (method === "PATCH" && !match[2]) send(200, this.publicTask(await this.store.edit(match[1]!, authority.actor, await readJson() as TaskEdit), authority.actor));
-        else if (method === "POST" && match[2]) send(200, this.publicTask(await this.action(match[1]!, authority, await readJson() as TaskAction), authority.actor));
-        else send(405, { code: "method_not_allowed", message: "Unsupported task method." });
+        if (method === "GET" && !match[2]) await send(200, this.publicTask(await this.store.get(match[1]!, authority.actor), authority.actor));
+        else if (method === "PATCH" && !match[2]) await send(200, this.publicTask(await this.store.edit(match[1]!, authority.actor, await readJson() as TaskEdit, authority.principalId), authority.actor));
+        else if (method === "POST" && match[2]) await send(200, this.publicTask(await this.action(match[1]!, authority, await readJson() as TaskAction), authority.actor));
+        else await send(405, { code: "method_not_allowed", message: "Unsupported task method." });
         return true;
       }
     } else {
-      if (method === "GET" && route === "/options") { send(200, await this.executor.options()); return true; }
+      if (method === "GET" && route === "/options") { await send(200, await this.executor.options()); return true; }
       const match = route.match(/^\/executions\/([a-f0-9-]{36})(\/cancel)?$/i);
       if (match) {
         if (method === "PUT" && !match[2]) {
           const input = await readJson() as TaskExecutionInput;
-          if (call && (input.taskRef?.appId !== call.callerAppId || input.taskRef?.installationId !== call.callerInstallation))
+          if (call && (input.taskRef?.appId !== (source?.appId ?? call.callerAppId) || input.taskRef?.installationId !== (source?.installationId ?? call.callerInstallation)
+              || source && (input.taskRef?.id !== source.id || input.taskRef?.key !== source.key || match[1] !== delegation?.executionId)))
             return taskError("task_provider_mismatch", "The calling provider must own the task reference.", 403);
-          send(202, await this.executor.accept(match[1]!, input, authority));
-        } else if (method === "GET" && !match[2]) send(200, await this.executor.get(match[1]!, authority));
-        else if (method === "POST" && match[2]) send(200, await this.executor.cancel(match[1]!, (await readJson()).requestId as string, authority));
-        else send(405, { code: "method_not_allowed", message: "Unsupported execution method." });
+          await send(202, await this.executor.accept(match[1]!, input, authority));
+        } else if (method === "GET" && !match[2]) await send(200, await this.executor.get(match[1]!, authority));
+        else if (method === "POST" && match[2]) await send(200, await this.executor.cancel(match[1]!, (await readJson()).requestId as string, authority));
+        else await send(405, { code: "method_not_allowed", message: "Unsupported execution method." });
         return true;
       }
     }
-    send(404, { code: "not_found", message: "Unknown task operation." }); return true;
+    await send(404, { code: "not_found", message: "Unknown task operation." }); return true;
   }
 }

@@ -70,7 +70,7 @@ it("keeps skill selection outside MCP tool access", async () => {
 it("explains future-tool availability once, on demand", async () => {
   await render(); expect(container.textContent).not.toContain("New tools from enabled");
   await click(container.querySelector('[aria-label="About new tools"]')!);
-  expect(document.body.textContent).toContain("New tools from enabled applications become available automatically");
+  expect(document.body.textContent).toContain("New Core tools require approval");
   expect(document.querySelectorAll('[data-slot="popover-content"]')).toHaveLength(1);
 });
 it("keeps unavailable tool denials when enabling the application's current catalog", async () => {
@@ -106,8 +106,8 @@ it("shows legacy disabled built-in tools and reenables them locally without Core
   data.toolCatalogs!.push({ provider: "hosty:development", identity: "development-1", tools: [{ name: "edit_file" }] });
   const key = JSON.stringify(["hosty:development", "edit_file"]);
   data.settings.mcpToolRules![key] = { identity: "development-1", mode: "disabled" };
-  await render(); expect(button("Development tools").textContent).toContain("0/1");
-  await click(button("Development tools"));
+  await render(); expect(button("Harness private tools").textContent).toContain("0/1");
+  await click(button("Harness private tools"));
   const toggle = document.getElementById("tool-hosty:development-edit_file")!;
   expect(toggle.getAttribute("data-state")).toBe("unchecked");
   expect(container.querySelector('[aria-label="Approval for edit_file"]')?.hasAttribute("disabled")).toBe(true);
@@ -117,7 +117,7 @@ it("shows legacy disabled built-in tools and reenables them locally without Core
 });
 it("disables a built-in tool through the local preferences save", async () => {
   data.toolCatalogs!.push({ provider: "hosty:development", identity: "development-1", tools: [{ name: "edit_file" }] });
-  await render(); await click(button("Development tools"));
+  await render(); await click(button("Harness private tools"));
   await click(document.getElementById("tool-hosty:development-edit_file")!); await save();
   expect(vi.mocked(call).mock.calls.map(args => args[0])).toEqual(["/settings/mcp/preferences"]);
   expect(JSON.parse(vi.mocked(call).mock.calls[0]![1]!.body as string).rules).toEqual({
@@ -146,7 +146,7 @@ it("keeps overlapping access edits on their reviewed base until explicitly disca
 it("keeps overlapping local tool edits on their original preference revision", async () => {
   data.toolCatalogs!.push({ provider: "hosty:development", identity: "development-1", tools: [{ name: "edit_file" }] });
   const key = JSON.stringify(["hosty:development", "edit_file"]);
-  await render(); await click(button("Development tools"));
+  await render(); await click(button("Harness private tools"));
   await click(document.getElementById("tool-hosty:development-edit_file")!);
   data = { ...data, mcpRevision: "local-two", settings: { ...data.settings, mcpToolRules: { [key]: { identity: "development-1", mode: "run" } } } };
   await click(button("Refresh tools"));
@@ -341,4 +341,73 @@ it("retains access drafts while refreshed tool discovery is pending and when it 
   expect(button("Save").disabled).toBe(false);
   expect(call).toHaveBeenCalledExactlyOnceWith("/settings/tools");
   expect(saveSettings).not.toHaveBeenCalled();
+});
+
+const coreTool = (name: string, feature: string) => ({ name, _meta: { "io.hosty/core-tool": {
+  owner: "hosty:core", schemaVersion: 1, operationId: name, feature: { id: feature },
+} } });
+function withCore() {
+  data.providers.unshift({ appId: "hosty:core", displayName: "Hosty Core", running: true, offered: true, url: "/api/mcp", deniedTools: ["restart_core", "temporarily_missing"] });
+  data.toolCatalogs!.push({ provider: "hosty:core", identity: "core-1", tools: [coreTool("get_host_status", "host"),
+    coreTool("restart_core", "host"), coreTool("get_workspace", "workspaces"), { name: "unrecognized" }] });
+  data.settings.mcpDefaults!["hosty:core"] = { identity: "core-1", mode: "run" };
+}
+it("groups only authenticated Core metadata and keeps unknown tools visible", async () => {
+  withCore(); data.toolCatalogs![0]!.tools.push(coreTool("pretend_core", "host"));
+  await render();
+  expect(container.querySelectorAll('section[aria-label="Hosty tools"]')).toHaveLength(1);
+  expect(container.querySelectorAll('section[aria-label="Applications"]')).toHaveLength(1);
+  expect(button("Host & Core").textContent).toContain("1/2");
+  expect(button("Workspaces").textContent).toContain("1/1");
+  expect(button("Other Hosty tools").textContent).toContain("1/1");
+  expect(button("Notes").textContent).toContain("3/3");
+  expect(container.textContent).toContain("All enabled tools");
+  expect(container.textContent).not.toContain("All enabled applications");
+  expect(container.querySelector('section[aria-label="Hosty tools"] > button')).toBeNull();
+});
+it("applies a feature preference only to that feature's available enabled tools", async () => {
+  withCore(); await render();
+  const select = container.querySelector<HTMLElement>('[aria-label="Approval for Host & Core"]')!;
+  await act(async () => select.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })));
+  await click([...document.querySelectorAll<HTMLElement>('[role="option"]')].find(node => node.textContent === "Ask")!);
+  await save();
+  expect(vi.mocked(call).mock.calls.map(args => args[0])).toEqual(["/settings/mcp/preferences"]);
+  const input = JSON.parse(vi.mocked(call).mock.calls[0]![1]!.body as string);
+  expect(input.rules).toEqual({ '["hosty:core","get_host_status"]': { identity: "core-1", mode: "ask" } });
+  expect(input.defaults).toEqual({}); expect(input.resetProviders).toEqual([]);
+});
+it("feature access changes preserve other features and missing-tool denials", async () => {
+  withCore(); await render(); await click(container.querySelector('[aria-label="Allow Workspaces"]')!); await save();
+  const input = JSON.parse(vi.mocked(call).mock.calls[0]![1]!.body as string);
+  expect(input.targets).toEqual([{ targetId: "hosty:core", enabled: true, deniedTools: ["restart_core", "temporarily_missing", "get_workspace"] }]);
+});
+it("retains a visible unavailable Core row and saved choices", async () => {
+  withCore(); data.toolCatalogs = data.toolCatalogs!.filter(c => c.provider !== "hosty:core");
+  await render(); await click(button("Hosty tools"));
+  expect(container.textContent).toContain("unavailable catalog");
+  expect(container.querySelector('[aria-label="Approval for Hosty tools"]')?.hasAttribute("disabled")).toBe(true);
+  expect(button("Save").disabled).toBe(true);
+});
+
+it("uses the migrated policy and revision from initial discovery on the first save", async () => {
+  withCore();
+  const migrated = structuredClone(data.settings);
+  migrated.mcpToolRules!['["hosty:core","get_workspace"]'] = { identity: "core-1", mode: "ask" };
+  vi.mocked(call).mockImplementation(async url => Response.json(url === "/settings/tools"
+    ? { catalogs: data.toolCatalogs, settings: migrated, mcpRevision: "after-migration" } : {}));
+  await render();
+  expect(container.querySelector('[aria-label="Approval for Workspaces"]')?.textContent).toContain("Ask");
+  const select = container.querySelector<HTMLElement>('[aria-label="Approval for Host & Core"]')!;
+  await act(async () => select.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })));
+  await click([...document.querySelectorAll<HTMLElement>('[role="option"]')].find(node => node.textContent === "Ask")!);
+  await save();
+  const preferences = vi.mocked(call).mock.calls.find(args => args[0] === "/settings/mcp/preferences")!;
+  expect(JSON.parse(preferences[1]!.body as string).revision).toBe("after-migration");
+});
+it("labels the remaining local tools with the actual owning application", async () => {
+  data.toolCatalogs!.push({ provider: "hosty:development", identity: "local", localOwner: { appId: "custom.agent", displayName: "Independent assistant" }, tools: [{ name: "task_result" }] });
+  await render();
+  expect(button("Independent assistant").textContent).toContain("1/1");
+  expect(container.textContent).not.toContain("Development tools");
+  expect(container.querySelector('section[aria-label="Applications"]')?.textContent).toContain("Independent assistant");
 });

@@ -182,9 +182,9 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
                 if (input.LeaseId is null || !Guid.TryParse(input.LeaseId, out _))
                     throw Error("lease_invalid", "External preparation requires an explicit activity lease UUID.");
             }
-            else if (string.IsNullOrWhiteSpace(input.SessionPath) || input.SessionPath.Length > 2048 ||
+            else if (input.SessionPath is not null && (string.IsNullOrWhiteSpace(input.SessionPath) || input.SessionPath.Length > 2048 ||
                 !input.SessionPath.StartsWith('/') || input.SessionPath.StartsWith("//") || input.SessionPath.Contains('\\') ||
-                input.SessionPath.Any(char.IsControl) || input.ExternalLabel is not null)
+                input.SessionPath.Any(char.IsControl)) || input.ExternalLabel is not null)
                 throw Error("session_path_invalid", "Session path must be relative to the assistant origin.");
             var app = core is not null ? null : await apps.GetAppAsync(input.AppId ?? "", ct)
                 ?? throw Error("app_missing", "An installed source app is required.");
@@ -386,6 +386,7 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
             var changed = await Git(w.Path, ["diff", "--name-only", "-z", "--no-renames", w.OriginalBase, "--"], ct);
             var files = changed.StandardOutput.Split('\0', StringSplitOptions.RemoveEmptyEntries).Concat(local.Files.Where(f => f.Status == "??").Select(f => f.Path)).Distinct().Order(StringComparer.Ordinal).ToArray();
             var merge = await Git(w.Path, ["rev-parse", "--verify", "MERGE_HEAD"], ct, true);
+            if (merge.ExitCode != 0) w = await ReconcileNativeMergesAsync(w, local.Head, ct);
             var sourceStamp = SourceActivityStamp(w.Path, local, merge.ExitCode == 0);
             // First observation of a legacy record establishes a baseline without making it new.
             if (w.SourceStamp is null && w.Observation is { } previousObservation && previousObservation.Head == local.Head
@@ -402,6 +403,29 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
         else observationState?.ObservationFailed(w.Id);
         return w;
     }
+    // A native conflict resolution is a factual completion of the retained request, not a new
+    // merge. Require both ancestry proofs and a stable registered HEAD; never replay Git here.
+    private async Task<DevelopmentWorkspace> ReconcileNativeMergesAsync(DevelopmentWorkspace tree, string head, CancellationToken ct)
+    {
+        foreach (var operation in tree.Operations.Where(o => o.Kind is "merge" or "merge-upstream" &&
+            o.State is "conflict" or "unknown" or "pending" && o.BeforeHead is not null && o.ResultHead is not null))
+        {
+            var targetIncluded = (await Git(tree.Path, ["merge-base", "--is-ancestor", operation.ResultHead!, head], ct, true)).ExitCode == 0;
+            var beforeIncluded = (await Git(tree.Path, ["merge-base", "--is-ancestor", operation.BeforeHead!, head], ct, true)).ExitCode == 0;
+            if ((await Git(tree.Path, ["rev-parse", "HEAD"], ct)).StandardOutput.Trim() != head ||
+                (await Git(tree.Path, ["rev-parse", "--verify", "MERGE_HEAD"], ct, true)).ExitCode == 0) continue;
+            if (!targetIncluded || !beforeIncluded)
+            {
+                if (operation.State == "conflict") tree = Put(tree, operation with { State = "unknown",
+                    Error = "The pending Git merge ended without proof that both retained heads were integrated. No mutation was replayed." });
+                continue;
+            }
+            tree = Put(tree, operation with { State = "succeeded", Error = null });
+            if (operation.Kind == "merge") tree = tree with { IntegrationBase = operation.ResultHead! };
+        }
+        return tree;
+    }
+
     private static string SourceActivityStamp(string root, AppSourceStatus local, bool conflict)
     {
         var stamp = new StringBuilder().Append(local.Head).Append('|').Append(conflict);
@@ -486,6 +510,7 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
             if (old is not null)
             {
                 if (old.Kind != kind || old.Fingerprint != fingerprint) throw Error("request_conflict", "This request ID was used for a different operation.");
+                if (old.State is "conflict" or "unknown" && old.Kind is "merge" or "merge-upstream") return await Observe(w, ct);
                 if (old.State != "pending") return w;
                 return await Recover(w, old, ct);
             }
@@ -575,7 +600,12 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
                     case "abort-merge":
                         RequireHead(input);
                         if (!w.Observation.Conflict) throw Error("no_merge", "There is no pending merge to abort.");
-                        await Git(w.Path, ["merge", "--abort"], ct); break;
+                        var abortedTarget = (await Git(w.Path, ["rev-parse", "--verify", "MERGE_HEAD"], ct)).StandardOutput.Trim();
+                        await Git(w.Path, ["merge", "--abort"], ct);
+                        w = w with { Operations = w.Operations.Select(previous => previous.Kind is "merge" or "merge-upstream" &&
+                            previous.State is "conflict" or "pending" or "unknown" && previous.ResultHead == abortedTarget && previous.BeforeHead == op.BeforeHead
+                            ? previous with { State = "failed", Error = "Explicitly aborted by workspace request " + input.RequestId + "." } : previous).ToArray() };
+                        break;
                     case "cleanup":
                         RequireHead(input);
                         await CheckCleanup(w, ct);

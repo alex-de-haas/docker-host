@@ -66,8 +66,8 @@ export function activeAttempt(task: TaskRecord) {
   const last = task.attempts.at(-1);
   return last && (!last.receipt || !taskExecutionTerminal(last.receipt.state) || !last.receipt.stopConfirmed) ? last : undefined;
 }
-type RequestReceipt = { actor: TaskActor; requestId: string; hash: string; taskId: string; result: TaskRecord };
-type State = { version: 1; next: number; tasks: TaskRecord[]; requests: RequestReceipt[] };
+type RequestReceipt = { principalId?: string; actor: TaskActor; requestId: string; hash: string; taskId: string; result: TaskRecord };
+type State = { version: 1; next: number; tasks: TaskRecord[]; requests: RequestReceipt[]; dispatches?: Record<string, import("@hosty-sdk/app/providers").TaskDispatchRef> };
 
 /** One writer and one fsynced atomic state replacement cover numbering, lifecycle and dispatch intent. */
 export class TaskStore {
@@ -103,13 +103,13 @@ export class TaskStore {
     if (!t || actor && !canRead(t, actor)) return taskError("task_not_found", "Task not found.", 404);
     return t;
   }
-  private replay(s: State, actor: TaskActor, requestId: string, input: unknown, taskId?: string) {
-    const r = s.requests.find(r => sameActor(r.actor, actor) && r.requestId === requestId);
+  private replay(s: State, actor: TaskActor, requestId: string, input: unknown, taskId?: string, principalId?: string) {
+    const r = s.requests.find(r => sameActor(r.actor, actor) && r.requestId === requestId && r.principalId === principalId);
     if (r && (r.hash !== fingerprint(input) || taskId !== undefined && r.taskId !== taskId)) return taskError("request_conflict", "This request ID already has different input.");
     return r?.result;
   }
-  private remember(s: State, actor: TaskActor, id: string, input: unknown, result: TaskRecord) {
-    s.requests.push({ actor, requestId: id, hash: fingerprint(input), taskId: result.ref.id, result: structuredClone(result) });
+  private remember(s: State, actor: TaskActor, id: string, input: unknown, result: TaskRecord, principalId?: string) {
+    s.requests.push({ actor, principalId, requestId: id, hash: fingerprint(input), taskId: result.ref.id, result: structuredClone(result) });
   }
   private touch(t: TaskRecord) { t.revision++; t.updatedAt = new Date().toISOString(); }
   all(): Promise<TaskRecord[]> { return this.serial(async () => (await this.load()).tasks); }
@@ -121,37 +121,39 @@ export class TaskStore {
       const start = Number(cursor || 0); return { tasks: rows.slice(start, start + limit), nextCursor: start + limit < rows.length ? String(start + limit) : null };
     });
   }
-  create(actor: TaskActor, input: TaskCreate) {
+  dispatch(id: string) { return this.serial(async () => (await this.load()).dispatches?.[uuid(id)]); }
+  create(actor: TaskActor, input: TaskCreate, principalId?: string) {
     return this.serial(async () => {
-      const id = uuid(input.requestId), s = await this.load(); const replay = this.replay(s, actor, id, { operation: "create", ...input });
+      const id = uuid(input.requestId), s = await this.load(); const replay = this.replay(s, actor, id, { operation: "create", ...input }, undefined, principalId);
       if (replay) { this.find(s, replay.ref.id, actor); return replay; }
       const value = taskInput(input.input), now = new Date().toISOString();
       if (!Number.isSafeInteger(s.next + 1)) return taskError("numbers_exhausted", "Task number range exhausted.");
       const task: TaskRecord = { ...value, ref: { ...this.provider, id: randomUUID() }, number: `${this.prefix}-${s.next++}`,
         revision: 1, inputRevision: 1, status: "Draft", createdBy: actor, owner: actor.userId ? { userId: actor.userId, appId: null } : actor,
         createdAt: now, updatedAt: now, cancelRequested: false, attempts: [], outcomes: [] };
-      s.tasks.push(task); this.remember(s, actor, id, { operation: "create", ...input }, task); await this.save(s); return task;
+      s.tasks.push(task); this.remember(s, actor, id, { operation: "create", ...input }, task, principalId); await this.save(s); return task;
     });
   }
-  edit(id: string, actor: TaskActor, input: TaskEdit) {
+  edit(id: string, actor: TaskActor, input: TaskEdit, principalId?: string) {
     return this.mutate(id, actor, input, "edit", t => {
       if (t.status !== "Draft" || activeAttempt(t)) return taskError("task_not_editable", "Return stopped work to Draft before editing.");
       const value = taskInput(input.input);
       Object.assign(t, value);
       if (!value.workspaceId) delete t.workspaceId;
       t.inputRevision++;
-    });
+    }, principalId);
   }
-  private mutate(id: string, actor: TaskActor, input: TaskAction | TaskEdit, operation: string, fn: (t: TaskRecord) => void | Promise<void>) {
+  private mutate(id: string, actor: TaskActor, input: TaskAction | TaskEdit, operation: string, fn: (t: TaskRecord) => void | Promise<void>, principalId?: string, dispatch?: import("@hosty-sdk/app/providers").TaskDispatchRef) {
     return this.serial(async () => {
       const requestId = uuid(input.requestId), s = await this.load(), t = this.find(s, id, actor);
-      const payload = { operation, id, ...input }; const replay = this.replay(s, actor, requestId, payload, id); if (replay) return replay;
+      const payload = { operation, id, ...input }; const replay = this.replay(s, actor, requestId, payload, id, principalId); if (replay) return replay;
       if (input.expectedRevision !== t.revision) return taskError("task_changed", "Task changed. Reload before applying this action.");
-      await fn(t); this.touch(t); this.remember(s, actor, requestId, payload, t); await this.save(s); return t;
+      await fn(t); if (dispatch) (s.dispatches ??= {})[t.ref.id] = dispatch; this.touch(t); this.remember(s, actor, requestId, payload, t, principalId); await this.save(s); return t;
     });
   }
-  action(id: string, actor: TaskActor, input: TaskAction, prepare?: (t: TaskRecord) => Promise<TaskAssignee>) {
+  action(id: string, actor: TaskActor, input: TaskAction, prepare?: (t: TaskRecord) => Promise<TaskAssignee>, principalId?: string, dispatch?: import("@hosty-sdk/app/providers").TaskDispatchRef, guard?: (t: TaskRecord) => void) {
     return this.mutate(id, actor, input, "action", async t => {
+      guard?.(t);
       const active = activeAttempt(t);
       if (t.cancelRequested && input.action !== "cancel") return taskError("cancellation_pending", "Wait for confirmed cancellation.");
       switch (input.action) {
@@ -196,7 +198,7 @@ export class TaskStore {
           else { t.status = "Cancelled"; t.cancelRequested = false; delete t.blocked; } return;
         default: return taskError("action_invalid", "Unknown task action.", 400);
       }
-    });
+    }, principalId, dispatch);
   }
   observe(id: string, executionId: string, receipt: TaskExecutionReceipt) {
     return this.serial(async () => {

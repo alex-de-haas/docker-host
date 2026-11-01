@@ -12,12 +12,13 @@ internal sealed record CoreEnvironmentRecord(string Id, SandboxActor Owner, Core
     CoreEnvironmentProcess? Process = null, string? Executable = null, string? Error = null,
     IReadOnlyList<CoreEnvironmentOperation>? Operations = null, bool RootDeletionStarted = false,
     string[]? CleanupOwners = null, CoreEnvironmentUsage? Usage = null, CoreEnvironmentConsent? Consent = null, bool OperatorApproved = false, bool HasStarted = false,
-    string? ObservedCoreVersion = null);
+    string? ObservedCoreVersion = null, IReadOnlyList<CoreEnvironmentConsumer>? Consumers = null,
+    IReadOnlyList<CoreEnvironmentConsumerOperation>? ConsumerOperations = null);
 internal sealed record CoreEnvironmentView(string Id, string Label, string Mode, string? ProjectPath,
     SandboxContext? Context, string State, long Revision, int Port, string? DataRoot, string PreviewUrl,
     CoreEnvironmentProcess? Process, string? Error, IReadOnlyList<CoreEnvironmentOperation> Operations,
     CoreEnvironmentLimits? Limits = null, CoreEnvironmentUsage? Usage = null, CoreEnvironmentEffectiveAccess? Access = null, bool InitializationRequested = false,
-    string? CoreVersion = null);
+    string? CoreVersion = null, IReadOnlyList<CoreEnvironmentConsumer>? Consumers = null);
 internal sealed record CoreEnvironmentList(IReadOnlyList<CoreEnvironmentView> Environments, IReadOnlyList<CoreEnvironmentSavedConsent>? Consents = null);
 internal sealed record CoreEnvironmentSetup(string Email, string DisplayName, string Password);
 internal sealed record CoreEnvironmentApiRequest(string Method, string Path, System.Text.Json.JsonElement? Body = null);

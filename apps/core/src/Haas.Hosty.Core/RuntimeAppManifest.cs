@@ -17,6 +17,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
     private const string SupportedSchemaVersion = "app.0.1";
     private const int MaxManifestBytes = 1024 * 1024;
     private static readonly Regex ContractKeyPattern = new("^[a-z][a-z0-9-]{0,62}$", RegexOptions.Compiled);
+    private static readonly Regex CapabilityNamePattern = new("^[a-z][a-z0-9-]{0,62}(?:\\.[a-z][a-z0-9-]{0,62})*$", RegexOptions.Compiled);
     // External-mount keys allow camelCase (e.g. "catalogRoots") since they surface as
     // HOSTY_MOUNT_{KEY} env names and `/mnt/{key}/...` container paths, not lowercase contract keys.
     private static readonly Regex ExternalMountKeyPattern = new("^[A-Za-z][A-Za-z0-9_-]{0,62}$", RegexOptions.Compiled);
@@ -1528,16 +1529,16 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
             var seen = new HashSet<string>(StringComparer.Ordinal);
             foreach (var declaration in declarations)
             {
-                if (name is "assistant" or "speech-to-text" or "translation" or "tasks" or "task-executor" && (declaration.Version is null or < 1 || declaration.Capabilities is null))
+                if (name is "assistant" or "speech-to-text" or "translation" or "tasks" or "task-executor" or "conversation-history" or "agent-sessions" && (declaration.Version is null or < 1 || declaration.Capabilities is null))
                 {
                     var code = $"app_manifest_{name.Replace('-', '_')}_contract_required";
                     errors.Add(new(code, $"The {name} interface requires a positive integer version and a capabilities array.", path));
                 }
                 if (declaration.Version is < 1 || declaration.Capabilities is { } capabilities &&
-                    (capabilities.Any(capability => string.IsNullOrWhiteSpace(capability) || !ContractKeyPattern.IsMatch(capability)) ||
+                    (capabilities.Any(capability => string.IsNullOrWhiteSpace(capability) || capability.Length > 200 || !CapabilityNamePattern.IsMatch(capability)) ||
                      capabilities.Distinct(StringComparer.Ordinal).Count() != capabilities.Count))
                 {
-                    errors.Add(new("app_manifest_interface_contract_invalid", "Interface version must be positive and capability names must be unique contract keys.", path));
+                    errors.Add(new("app_manifest_interface_contract_invalid", "Interface version must be positive and capability names must be unique contract keys or dot-qualified contract keys.", path));
                 }
                 var key = string.IsNullOrWhiteSpace(declaration.Key) ? "default" : declaration.Key.Trim();
                 if (!ContractKeyPattern.IsMatch(key))

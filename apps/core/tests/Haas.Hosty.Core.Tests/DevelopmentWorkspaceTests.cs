@@ -229,6 +229,47 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.False(w.Observation!.Conflict);
         Assert.Equal(head, w.Observation.Head);
         Assert.Empty(w.Observation.Local!.Files);
+        Assert.DoesNotContain(w.Operations, operation => operation.State is "pending" or "unknown" or "conflict");
+        Assert.Contains(w.Operations, operation => operation.Kind == "merge" && operation.State == "failed");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Workspace_NativeMergeResolutionReconcilesOnlyProvenAncestry(bool complete)
+    {
+        var (f, origin) = await SourceFixtureAsync();
+        var service = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock);
+        var owner = WorkspaceTestOwner(f);
+        var tree = await service.PrepareAsync(owner, WorkspaceRequest() with { SessionPath = null }, default);
+        await File.WriteAllTextAsync(Path.Combine(tree.Path, "README.md"), "workspace change\n");
+        tree = await service.CommandAsync(tree.Id, owner, "commit", WorkspaceCommit(tree.OriginalBase, "workspace", "README.md"), default);
+        await File.WriteAllTextAsync(Path.Combine(origin, "README.md"), "target change\n");
+        await RunGitAsync(origin, ["add", "."]);
+        await RunGitAsync(origin, ["-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "-m", "target"]);
+        var input = WorkspaceCommit(tree.Observation!.Head!, "Merge target");
+        tree = await service.CommandAsync(tree.Id, owner, "merge", input, default);
+        var pending = tree.Operations.Last();
+        Assert.Equal("conflict", pending.State);
+        if (complete)
+        {
+            await File.WriteAllTextAsync(Path.Combine(tree.Path, "README.md"), "resolved change\n");
+            await RunGitAsync(tree.Path, ["add", "README.md"]);
+            await RunGitAsync(tree.Path, ["-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "--no-edit"]);
+            // Further uncommitted work must remain untouched by reconciliation.
+            await File.WriteAllTextAsync(Path.Combine(tree.Path, "later.txt"), "preserve this\n");
+        }
+        else await RunGitAsync(tree.Path, ["merge", "--abort"]);
+        service = new(f.Paths, f.Apps, f.Clock);
+        tree = await service.ObserveAsync(tree.Id, owner, default);
+        Assert.False(tree.Observation!.Conflict);
+        Assert.Equal(complete ? "succeeded" : "unknown", tree.Operations.Last().State);
+        Assert.Equal(complete ? pending.ResultHead : tree.OriginalBase, tree.IntegrationBase);
+        var head = tree.Observation.Head;
+        tree = await service.CommandAsync(tree.Id, owner, "merge", input, default);
+        Assert.Equal(head, tree.Observation!.Head);
+        Assert.Equal(pending.Fingerprint, tree.Operations.Last().Fingerprint);
+        if (complete) Assert.Equal("preserve this\n", await File.ReadAllTextAsync(Path.Combine(tree.Path, "later.txt")));
     }
 
     [Fact]

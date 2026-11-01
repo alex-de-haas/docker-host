@@ -1,8 +1,8 @@
 ---
 created: 2026-10-07
-updated: 2026-10-29
-summary: Local external agents use authorized Core-owned worktrees, separate plan progress, and read-only pull request tracking through Harness and Core.
-components: [apps/core, apps/documents]
+updated: 2026-10-31
+summary: Authorized external clients use registered Core worktrees, independent test environments, canonical publication and native Git/provider reconciliation.
+components: [apps/core, apps/harness, apps/documents]
 ---
 
 # External Development Workspaces
@@ -23,9 +23,10 @@ identity. Replaying preparation with changed explicit arguments is refused.
 
 The direct Core MCP workspace tools require both `mcp:read` and the separately reviewed
 `mcp:workspaces` permission, including listing, observation and byte-bearing diffs. Every call resolves
-the current credential, administrator, OAuth grant/client and source grant. Browser-only, device,
-app and delegated credentials do not establish this external authority. Other Core operation scopes
-remain independent. Existing Harness session tools keep their installed-app authorization.
+the current credential, administrator, OAuth grant/client and source grant. Browser-only and device credentials do not establish this external allocation authority. Independently
+named applications use the canonical installed-app caller adapter with current user/source permission;
+this does not turn an app credential into an external principal. Other operation scopes remain
+independent. Legacy session endpoints retain their installed-app authorization.
 
 Listing includes every retained workspace allowed by the application's operation permission and the
 initiating administrator's current rights. Creator, session, credential and source-provider grant do
@@ -219,10 +220,62 @@ in the installed app's Core, with recoverable Return. It does not mount ordinary
 Core or imply source/data rollback.
 
 The direct external workspace scope does not itself authorize sandbox or publication operations.
-Clients use their supported, separately authorized Harness/Core adapters; absent adapter support
-is reported explicitly. The [remaining Draft](plan.md) owns broader direct-client integration.
+Clients use the canonical Core API/MCP adapters with separately reviewed environment and publication
+authority. An older Core without those adapters has an explicit capability limitation; its workspace
+grant cannot be repurposed into lifecycle or publication authority.
 Repositories without a registered source binding retain their authorized repository workflow;
 the guidance does not create bindings or permission grants implicitly.
+
+## Canonical Environment, Publication And Work Lifecycle
+
+Direct OAuth/manual callers use Core API/MCP without installing Harness or creating a chat. Application
+callers use the same domain services through their current installation, initiating user and reviewed
+permissions. Creator identity records attribution; authorized same-user access is not limited to the
+client that originally created the resource. Other-user resources and revoked source access remain denied.
+
+Environment discovery uses `mcp:environments-read`; mutations additionally require
+`mcp:environments-manage`. Child API/setup needs the distinct `mcp:environment-api` scope. Registered
+source inputs also require workspace authority. `environment_consent` validates a proposed creation;
+it does not grant authority or start a child. Create, start, stop, restart and Finish retain their
+UUID/revision checks. Status reports observed process identity and readiness. Optional task/conversation
+references do not determine the environment's lifetime. Active or unknown registered consumers block
+Stop, Restart and Finish until their owners provide exact stop evidence; disconnect and elapsed time
+are not evidence. Source cleanup and test-data disposal remain separate operations.
+
+Publication reads require workspace plus `mcp:publication-read`; remote publication mutations also
+require `mcp:publication-write` and a current authorized source-provider connection. `/api/publications/v1`
+and `pr_*` MCP operations compose existing configure, commit, push, publish, link, review, ready, merge,
+completion and corrective-cycle services. They retain selected-file review receipts, expected heads,
+request fingerprints and current actor checks. A read grant never creates remote publication authority.
+Connection discovery and cached observations revalidate the acting user; unavailable or ambiguous
+provider facts do not imply successful publication or cleanup eligibility.
+
+`/api/workflows/v1` and `workflow_*` tools expose status, pause, resume and completion for a registered
+aggregate workspace. Pause first prepares a closure; confirmation follows stopped consumers under the
+same request. Completion consumes fresh publication evidence. Harness retains responsibility for
+stopping its own native writers and releasing leases before a queued handover; it cannot establish
+stop merely by submitting a completion tool call. None of these operations deletes conversations or
+Finishes independent environments.
+
+A normal external workflow prepares source, edits/builds/tests it, creates and starts a separate test
+Core, verifies readiness and normal password identity, exports useful evidence and Finishes that test
+Core. Publication then uses the authorized provider with exact-head review and retained request IDs.
+After a lost reply, observe or repeat the original request and arguments. Do not invent a replacement
+UUID, copy another application's credentials or switch the ordinary Core to bypass unavailable support.
+
+## Native Git And Provider Reconciliation
+
+Core observes native edits and commits from Git, including the current branch, HEAD, dirty files and
+ancestry. An interrupted managed merge can be reconciled when native Git has completed the exact
+recorded merge: both expected parents must be ancestors and no merge remains in progress. Dirty
+source is preserved. Uncertain or incompatible state stays explicit rather than being marked complete.
+
+Authorized provider observation can discover an externally created PR on the exact repository and
+branch. Discovery does not fabricate a Core push/publication receipt or automatically set a reviewed
+published head. Explicit `pr_link` verifies the selected repository, branch and head before adoption;
+multiple candidates, foreign forks, unrelated refs and unavailable authority retain their refusal or
+unknown outcome. The canonical adapter preserves the original creator and records the current actor.
+An existing PR or native push never bypasses exact-head completion, active-consumer or cleanup checks.
 
 ## Workspace Tools And Recovery
 
@@ -299,7 +352,8 @@ Return preserves current data and live source edits.
   original bases and Harness session bindings through upgrade/restart.
 - Exercise real OAuth consent and PKCE redemption, token refresh, same-grant tasks, independent grants,
   manual credentials, expiry/revocation, client deletion, current administrator role and Core-only scopes.
-  Read-only, browser, device, app and delegated credentials cannot call workspace tools or read diffs.
+  Read-only/browser/device credentials cannot create external allocations or read workspace diffs.
+  Independently named applications require the canonical source permission and current initiating user.
 - Retain local workspace access after provider authorization changes; omit malformed records
   individually and require current user/app permission on every read or operation.
 - Check same-request replay, conflicting arguments, cross-actor access, native commits and uncommitted
@@ -309,5 +363,9 @@ Return preserves current data and live source edits.
 - Verify a real local client against a Core-managed instance with ordinary password login and OAuth
   consent. Use the returned directory, verify distinct target/workspace progress and two logical tasks,
   inspect the Core/Plans responses and UI, revoke authority and preserve source until authorized cleanup.
+- Exercise canonical source/publication callers, cross-creator same-user access, revoked admission, native
+  commits, discovered-but-unlinked PRs and exact-head linking without fabricating remote mutations.
+- Run managed sessions/tasks/pull-requests integration with independent users, same-repository apps, an
+  additional dependency repository, reconnect/replay and owner-confirmed test-resource removal.
 - Run affected Core/MCP and Plans tests, exact Core build, Native AOT publish, lint/production app build,
   version consistency, canonical documentation validation and repository diff checks.

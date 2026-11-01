@@ -6,6 +6,17 @@ let server: Server | undefined;
 afterEach(async () => { vi.unstubAllGlobals(); if (server) { server.closeAllConnections(); await new Promise<void>(resolve => server!.close(() => resolve())); server = undefined; } });
 
 describe("Core workspaces transport", () => {
+  it("retains the legacy publication collection across canonical migration", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ publications: [{ workspaceId: "allowed" }] })));
+    vi.stubGlobal("fetch", fetcher);
+    const client = new DevelopmentClient("http://core.test", "example.assistant", "service");
+    const invoke = vi.fn().mockResolvedValue({ publications: [{ workspaceId: "allowed" }, { workspaceId: "other-client" }] });
+    const result = await client.withCoreMcp(() => ({ sessionId: "chat" }), invoke, () => client.call("chat", "user", "pr-list", {}));
+    expect(result).toEqual({ publications: [{ workspaceId: "allowed" }] });
+    expect(invoke).toHaveBeenCalledWith({ name: "pr_list", arguments: { input: {} } });
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+
   it("advertises ordinary child environments and no removed relay operations", () => {
     const names = developmentTools().map(tool => tool.name);
     expect(names).toEqual(expect.arrayContaining(["environment_create", "environment_start", "environment_setup", "environment_api", "environment_finish"]));

@@ -37,6 +37,24 @@ public sealed class HostyProviderException(string code, string message, int stat
 /// <param name="options">The consuming or providing app's Core credentials.</param>
 public sealed class HostyProviderClient(HttpClient http, HostyAppOptions options)
 {
+    /// <summary>Use only the task's bound workspace; the response is its source/association or activity projection.</summary>
+    public Task<JsonElement> TaskWorkspaceAsync(HostyTaskWorkspaceRequest input, CancellationToken cancellationToken = default)
+    {
+        if (input.Kind is not ("observe" or "attach" or "lease" or "activity")) throw new ArgumentException("Unknown task workspace operation.", nameof(input));
+        return CoreAsync<JsonElement>("/task-workspace", input, null, cancellationToken);
+    }
+    /// <summary>Observe only an existing execution authorization bound to this source or executor.</summary>
+    public Task<HostyTaskDispatchAuthority> TaskDispatchAuthorityAsync(HostyTaskDispatchRef dispatch, CancellationToken cancellationToken = default)
+        => CoreAsync<HostyTaskDispatchAuthority>("/task-dispatch-authority", new TaskDispatchSelection(dispatch), null, cancellationToken);
+    /// <summary>Read options from the exact executor selected by the original task action.</summary>
+    public Task<HostyTaskExecutorOptions> TaskDispatchOptionsAsync(HostyTaskDispatchRef dispatch, HostyTaskProviderRef executor, CancellationToken cancellationToken = default)
+        => CoreAsync<HostyTaskExecutorOptions>("/task-dispatch", new HostyTaskDispatchRequest(dispatch, executor, "options"), null, cancellationToken);
+    /// <summary>Read, accept or cancel the bound immutable attempt without forwarding a user credential.</summary>
+    public Task<HostyTaskExecutionReceipt> DispatchTaskAsync(HostyTaskDispatchRequest input, CancellationToken cancellationToken = default)
+    {
+        if (input.Operation is not ("get" or "accept" or "cancel")) throw new ArgumentException("Use get, accept or cancel for execution receipts.", nameof(input));
+        return CoreAsync<HostyTaskExecutionReceipt>("/task-dispatch", input, null, cancellationToken);
+    }
     /// <summary>Read effective grants. No provider permission is required to read one's own grants.</summary>
     public Task<HostyProviderPermissions> PermissionsAsync(CancellationToken cancellationToken = default)
         => CoreAsync<HostyProviderPermissions>("/permissions", null, null, cancellationToken);
@@ -53,6 +71,38 @@ public sealed class HostyProviderClient(HttpClient http, HostyAppOptions options
     {
         RequireKind(kind);
         return CoreAsync<HostyProviderInvocation>("/provider/introspect", new ProviderValidation(token, kind, key), null, cancellationToken);
+    }
+
+    /// <summary>Read control metadata for an export explicitly approved for this installation.</summary>
+    public Task<HostyHistoryExportGrant> GetHistoryExportAsync(string exportGrantId, CancellationToken cancellationToken = default)
+        => CoreAsync<HostyHistoryExportGrant>("/history-exports/get", new HistoryExportSelection(exportGrantId), null, cancellationToken);
+    /// <summary>Acknowledge a source cursor or completed purge without granting new content access.</summary>
+    public Task<HostyHistoryExportGrant> AcknowledgeHistoryExportAsync(HostyHistoryExportAcknowledge input, CancellationToken cancellationToken = default)
+        => CoreAsync<HostyHistoryExportGrant>("/history-exports/acknowledge", input, null, cancellationToken);
+    /// <summary>Read a bounded initial snapshot of an owner-approved source partition.</summary>
+    public Task<HostyHistoryExportSnapshot> ReadHistoryExportSnapshotAsync(HostyHistoryExportQuery input, CancellationToken cancellationToken = default)
+        => CoreAsync<HostyHistoryExportSnapshot>("/history-exports/snapshot", input, null, cancellationToken);
+    /// <summary>Read replacements, tombstones and explicit access resets from the approved source.</summary>
+    public Task<HostyHistoryChangePage> ReadHistoryExportChangesAsync(HostyHistoryExportQuery input, CancellationToken cancellationToken = default)
+        => CoreAsync<HostyHistoryChangePage>("/history-exports/changes", input, null, cancellationToken);
+
+    /// <summary>Validate a Core-mediated invocation against the actual request bytes and route.
+    /// Apply source resource ownership and sharing rules after introspection; never cache this result.</summary>
+    public async Task<HostyMediatedProviderInvocation> ValidateMediatedAsync(string token, string kind,
+        HostyMediatedProviderRequest input, string key = "default", CancellationToken cancellationToken = default)
+    {
+        RequireKind(kind);
+        if (!token.StartsWith("hosty_provider.2.", StringComparison.Ordinal) || !input.Path.StartsWith('/')
+            || input.Path.StartsWith("//", StringComparison.Ordinal) || input.Body.Length > 1024 * 1024
+            || input.Method is not ("GET" or "POST" or "PATCH" or "PUT" or "DELETE"))
+            throw new HostyProviderException("token_invalid", "An exact bounded mediated request is required.", 401);
+        var request = new MediatedProviderValidation(token, kind, key, input.Operation, input.Method, input.Path,
+            Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(input.Body.Span)).ToLowerInvariant());
+        var result = await CoreAsync<HostyMediatedProviderInvocation>("/provider/introspect-v2", request, null, cancellationToken);
+        if (result.Version != 2 || result.Kind != kind || result.Key != key || result.Operation != input.Operation
+            || string.IsNullOrWhiteSpace(result.UserId) || string.IsNullOrWhiteSpace(result.PrincipalId) || result.ResourceIds is null)
+            throw new HostyProviderException("token_invalid", "Core returned an invalid mediated invocation.", 401);
+        return result;
     }
 
     /// <summary>Read the selected speech provider's supported formats, limits and readiness.</summary>
@@ -175,6 +225,7 @@ public sealed class HostyProviderClient(HttpClient http, HostyAppOptions options
             ProviderFailure? failure = null;
             try { failure = await JsonSerializer.DeserializeAsync(stream, ProviderJsonContext.Default.ProviderFailure, ct); }
             catch (JsonException) { }
+            failure = failure?.Error ?? failure;
             throw new HostyProviderException(failure?.Code ?? "provider_failed", failure?.Message ?? "Provider request failed.", (int)response.StatusCode);
         }
         var value = await JsonSerializer.DeserializeAsync(stream, ProviderJsonContext.Default.GetTypeInfo(typeof(T))!, ct);
@@ -182,20 +233,42 @@ public sealed class HostyProviderClient(HttpClient http, HostyAppOptions options
     }
     private static void RequireKind(string kind)
     {
-        if (kind is not ("speech-to-text" or "assistant" or "translation" or "tasks" or "task-executor")) throw new ArgumentException("Unknown provider category.", nameof(kind));
+        if (kind is not ("speech-to-text" or "assistant" or "translation" or "tasks" or "task-executor" or "conversation-history" or "agent-sessions")) throw new ArgumentException("Unknown provider category.", nameof(kind));
     }
 }
 
+internal sealed record TaskDispatchSelection(HostyTaskDispatchRef Dispatch);
+internal sealed record HistoryExportSelection(string ExportGrantId);
 internal sealed record ProviderList(HostyProvider[] Providers);
 internal sealed record ProviderSelection(string ProviderAppId, string Key);
 internal sealed record ProviderBinding(string Token, DateTimeOffset ExpiresAt, HostyProvider Provider);
 internal sealed record ProviderValidation(string Token, string Kind, string Key);
-internal sealed record ProviderFailure(string Code, string Message);
+internal sealed record ProviderFailure(string? Code = null, string? Message = null, ProviderFailure? Error = null);
+internal sealed record MediatedProviderValidation(string Token, string Kind, string Key, string Operation, string Method, string Path, string BodyHash);
+/// <summary>Actual provider request metadata and bytes, computed by the receiving application.</summary>
+public record HostyMediatedProviderRequest(string Operation, string Method, string Path, ReadOnlyMemory<byte> Body);
+/// <summary>The current original caller. Direct principals have no fabricated application identity.</summary>
+public record HostyMediatedProviderInvocation(int Version, string UserId, string HostRole, string PrincipalId,
+    string? CallerAppId, string? CallerInstallation, string Kind, string Key, string Operation, string[] ResourceIds, HostyHistoryExportScope? Export = null, HostyTaskDispatchRef? TaskDispatch = null, HostyTaskExecutorDelegation? TaskDelegation = null);
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
 [JsonSerializable(typeof(ProviderList))]
+[JsonSerializable(typeof(TaskDispatchSelection))]
+[JsonSerializable(typeof(HostyTaskDispatchRequest))]
+[JsonSerializable(typeof(HostyTaskWorkspaceRequest))]
+[JsonSerializable(typeof(HostyTaskDispatchAuthority))]
+[JsonSerializable(typeof(HostyTaskExecutorOptions))]
+[JsonSerializable(typeof(HostyTaskExecutionReceipt))]
 [JsonSerializable(typeof(ProviderSelection))]
 [JsonSerializable(typeof(ProviderBinding))]
 [JsonSerializable(typeof(ProviderValidation))]
+[JsonSerializable(typeof(HistoryExportSelection))]
+[JsonSerializable(typeof(HostyHistoryExportQuery))]
+[JsonSerializable(typeof(HostyHistoryExportAcknowledge))]
+[JsonSerializable(typeof(HostyHistoryExportGrant))]
+[JsonSerializable(typeof(HostyHistoryExportSnapshot))]
+[JsonSerializable(typeof(HostyHistoryChangePage))]
+[JsonSerializable(typeof(MediatedProviderValidation))]
+[JsonSerializable(typeof(HostyMediatedProviderInvocation))]
 [JsonSerializable(typeof(ProviderFailure))]
 [JsonSerializable(typeof(HostyProviderPermissions))]
 [JsonSerializable(typeof(HostyProviderInvocation))]
@@ -205,3 +278,6 @@ internal sealed record ProviderFailure(string Code, string Message);
 [JsonSerializable(typeof(HostyTranslationResult))]
 [JsonSerializable(typeof(HostyTranslationCapabilities))]
 internal partial class ProviderJsonContext : JsonSerializerContext;
+
+/// <summary>The exact owner-approved source partition for a mediated export invocation.</summary>
+public sealed record HostyHistoryExportScope(string GrantId, string Revision, string OwnerUserId, HostyProviderRef Provider, string[]? ConversationIds);

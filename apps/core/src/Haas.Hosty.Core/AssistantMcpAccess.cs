@@ -108,11 +108,11 @@ internal sealed class AssistantMcpAccess(AppRegistryStore apps, AppServiceTokenS
         { return null; }
     }
 
-    internal async Task<AssistantMcpActor?> ValidateClaimsAsync(AssistantMcpClaims claims, string audience, CancellationToken ct)
+    internal async Task<AssistantMcpActor?> ValidateClaimsAsync(AssistantMcpClaims claims, string audience, CancellationToken ct, bool retainedOperation = false)
     {
         try
         {
-            if (claims.Audience != audience || claims.Expires <= clock.UtcNow.ToUnixTimeSeconds()) return null;
+            if (claims.Audience != audience || !retainedOperation && claims.Expires <= clock.UtcNow.ToUnixTimeSeconds()) return null;
             var link = await RequireLinkAsync(claims.Caller, audience, ct, claims.DiscoveryOnly);
             if (link.Caller.InstalledAt != claims.CallerInstallation || link.Target?.InstalledAt != claims.TargetInstallation
                 || link.Grant.Revision != claims.GrantRevision) return null;

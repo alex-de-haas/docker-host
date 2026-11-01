@@ -31,6 +31,8 @@ internal sealed class ProviderAccessService(AppRegistryStore apps, AppServiceTok
         "assistant" => CoreAppPermissions.AssistantProviders,
         "tasks" => CoreAppPermissions.TaskProviders,
         "task-executor" => CoreAppPermissions.TaskExecutors,
+        "conversation-history" => CoreAppPermissions.HistoryProviders,
+        "agent-sessions" => CoreAppPermissions.AgentSessionProviders,
         _ => throw new AppIdentityException("provider_kind_invalid", "Unknown provider category."),
     };
 
@@ -54,7 +56,7 @@ internal sealed class ProviderAccessService(AppRegistryStore apps, AppServiceTok
         return new((await apps.ListAppRecordsAsync(ct)).SelectMany(p => Describe(p, kind)).ToArray());
     }
 
-    private static IEnumerable<ProviderDescriptor> Describe(AppRecord provider, string kind)
+    internal static IEnumerable<ProviderDescriptor> Describe(AppRecord provider, string kind)
     {
         if (provider.ConfirmedRoles?.Contains(kind, StringComparer.Ordinal) != true) yield break;
         var summary = AppSummary.From(provider);
@@ -84,6 +86,8 @@ internal sealed class ProviderAccessService(AppRegistryStore apps, AppServiceTok
         string? userCredential, CancellationToken ct)
     {
         RequireGrant(caller, kind);
+        if (kind is "conversation-history" or "agent-sessions")
+            throw new AppIdentityException("version_unsupported", "Use the canonical Core API with operation-bound mediated provider credentials.");
         if (string.IsNullOrWhiteSpace(input.ProviderAppId) || string.IsNullOrWhiteSpace(input.Key))
             throw new AppIdentityException("provider_selection_invalid", "Select a provider and interface key.");
         var provider = await apps.GetAppAsync(input.ProviderAppId, ct)
@@ -123,6 +127,8 @@ internal sealed class ProviderAccessService(AppRegistryStore apps, AppServiceTok
 
     internal async Task<ProviderInvocation> ValidateAsync(AppRecord provider, ProviderIntrospectionRequest input, CancellationToken ct)
     {
+        if (input.Kind is "conversation-history" or "agent-sessions")
+            throw new AppIdentityException("version_unsupported", "This interface requires version-two mediated introspection.");
         ProviderTokenClaims? claims;
         try
         {
@@ -190,6 +196,27 @@ internal static class ProviderEndpoints
             HttpRequest request, ProviderAccessService access, CancellationToken ct) =>
             await Handle(async () => CoreJson.Json(await access.IssueAsync(await access.AuthenticateAsync(appId, request, ct), kind,
                 input, request.Headers["X-Hosty-User-Token"].ToString(), ct))));
+        app.MapPost(root + "/task-workspace", async (string appId, CoreTaskWorkspaceRequest input,
+            HttpRequest request, ProviderAccessService access, CoreTaskWorkspace workspace, CancellationToken ct) =>
+            await Handle(async () =>
+            {
+                try
+                {
+                    var value = await workspace.Run(await access.AuthenticateAsync(appId, request, ct), input, ct);
+                    return value switch { CoreTaskWorkspaceView view => CoreJson.Json(view), WorkspaceActivityReceipt activity => CoreJson.Json(activity),
+                        _ => CoreJson.Json(new ErrorResponse("workspace_response_invalid", "Invalid task workspace response."), 502) };
+                }
+                catch (AppLifecycleException ex) { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), ex.Code == "workspace_forbidden" ? 403 : 409); }
+            }));
+        app.MapPost(root + "/task-dispatch-authority", async (string appId, CoreTaskDispatchAuthorityRequest input,
+            HttpRequest request, ProviderAccessService access, CoreProviderMediation mediation, CancellationToken ct) =>
+            await Handle(async () => CoreJson.Json(await mediation.TaskDispatchAuthorityAsync(await access.AuthenticateAsync(appId, request, ct), input.Dispatch, ct))));
+        app.MapPost(root + "/task-dispatch", async (string appId, CoreTaskDispatchRequest input,
+            HttpRequest request, ProviderAccessService access, CoreProviderMediation mediation, CancellationToken ct) =>
+            await Handle(async () => CoreJson.Json(await mediation.DispatchTaskAsync(await access.AuthenticateAsync(appId, request, ct), input, ct))));
+        app.MapPost(root + "/provider/introspect-v2", async (string appId, CoreProviderIntrospectionRequest input,
+            HttpRequest request, ProviderAccessService access, CoreProviderMediation mediation, CancellationToken ct) =>
+            await Handle(async () => CoreJson.Json(await mediation.IntrospectAsync(await access.AuthenticateAsync(appId, request, ct), input, ct))));
         app.MapPost(root + "/provider/introspect", async (string appId, ProviderIntrospectionRequest input,
             HttpRequest request, ProviderAccessService access, CancellationToken ct) =>
             await Handle(async () => CoreJson.Json(await access.ValidateAsync(await access.AuthenticateAsync(appId, request, ct), input, ct))));
@@ -198,6 +225,7 @@ internal static class ProviderEndpoints
     private static async Task<IResult> Handle(Func<Task<IResult>> action)
     {
         try { return await action(); }
+        catch (CoreProviderException ex) { return CoreJson.Json(new CoreProviderFailure(ex.Error), ex.Status); }
         catch (AppIdentityException ex)
         {
             return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), ex.Code switch

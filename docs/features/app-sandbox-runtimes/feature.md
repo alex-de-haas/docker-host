@@ -1,6 +1,6 @@
 ---
 created: 2026-10-14
-updated: 2026-10-29
+updated: 2026-10-31
 summary: Parent-managed child Core environments with ordinary applications and accounts, private copied or workspace builds, lifecycle recovery and unified Dashboard controls.
 components: [apps/core, apps/harness, apps/shell, apps/demo-app, packages/app-sdk]
 ---
@@ -234,6 +234,16 @@ its normal app-installation and shared-mount review are not replaced by parent-s
 
 The [2026-10-15 trusted-Core acceptance](../../reviews/2026-10-15-trusted-core-consent-acceptance.md) verifies one-run/saved consent, revocation, dedicated Redis dependencies, shared mount limits, ordinary roles, nested cleanup and Linux-in-Docker interrupted Finish. It records the measured resource envelope and remaining host-coverage limits.
 
+
+## Canonical Environment Access
+
+Core also exposes `/api/core-environments` and the `environment_*` MCP tools without a Harness
+conversation. Current same-user environment read/manage grants cover independent creators; creation
+attribution remains immutable. Legacy creator-bound routes retain their original authority. Source
+inputs additionally require registered workspace authority; child setup/API access has its own grant.
+Registered active or unknown consumers block Stop, Restart and Finish. A timeout, closed chat or
+caller-supplied stopped claim is not native exit proof. Readiness and retained request receipts remain
+the authoritative lifecycle result. See [Core MCP](../core-mcp/feature.md).
 
 ## Testing Expectations
 

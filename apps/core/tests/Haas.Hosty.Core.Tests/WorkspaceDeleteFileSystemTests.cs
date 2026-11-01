@@ -118,7 +118,9 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.False(Directory.Exists(f.Tree.Path));
         Assert.Equal("unrelated working directory survives", await File.ReadAllTextAsync(Path.Combine(other, "keep.txt")));
         Assert.Contains("refs/heads/" + f.Tree.Branch, await RunGitAsync(repo, ["show-ref"]));
-        Assert.True(GitWorktreeRegistrations.Contains(await RunGitAsync(repo, ["worktree", "list", "--porcelain", "-z"]), other));
+        // Git canonicalizes the macOS /var temporary-directory alias when registering a tree.
+        var registeredOther = (await RunGitAsync(other, ["rev-parse", "--show-toplevel"])).Trim();
+        Assert.True(GitWorktreeRegistrations.Contains(await RunGitAsync(repo, ["worktree", "list", "--porcelain", "-z"]), registeredOther));
         // Resolve only the intentionally created test consumer, then recover the accepted request.
         await RunGitAsync(repo, ["worktree", "remove", "--force", other]);
         Assert.Equal("removed", (await cleanup.ApplyDeleteAsync(f.Tree.WorkspaceId, "another-admin", null, command, default)).State);

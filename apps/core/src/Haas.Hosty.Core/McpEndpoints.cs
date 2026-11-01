@@ -14,17 +14,7 @@ internal static class McpEndpoints
 {
     internal static bool HasAppToolPermission(AppRecord caller, string name) => ToolPermission(name) is { } permission
         && AppManagementAuthorization.HasPermission(caller, permission);
-    private static string? ToolPermission(string name) => name switch
-    {
-        "list_apps" or "get_app" or "get_app_development_guide" => CoreAppPermissions.ReadApps,
-        "get_host_status" or "get_core_operation" or "get_core_development" => CoreAppPermissions.ReadCore,
-        "tail_app_logs" => CoreAppPermissions.AppLogs,
-        "search_audit" => CoreAppPermissions.CoreLogs,
-        "start_app" or "stop_app" or "restart_app" => CoreAppPermissions.AppLifecycle,
-        "plan_app_update" or "apply_app_update" => CoreAppPermissions.Install,
-        "restart_core" => CoreAppPermissions.CoreLifecycle,
-        _ => null,
-    };
+    private static string? ToolPermission(string name) => CoreMcpCatalog.AppPermission(name);
 
     public static void Map(WebApplication app)
     {
