@@ -87,8 +87,11 @@ try {
   assert.notEqual(await form.getByLabel('Feedback application').inputValue(),'host','Feedback form belongs to its provider application');
   if(process.env.HOSTY_FEEDBACK_SCREENSHOT)await page.screenshot({path:process.env.HOSTY_FEEDBACK_SCREENSHOT+'.panels.png'});
   console.log('PASS: ordinary concurrent tool panels, embedded/host selection, cleared frame hover and feedback on the provider form');
+  await form.getByLabel('Comment 1',{exact:true}).focus();
   await page.setViewportSize({width:800,height:900});
-  const tab=page.getByRole('tab',{name:'Feedback',exact:true});await tab.click();await form.getByLabel('Comment 1',{exact:true}).waitFor();
+  const tab=page.getByRole('tab',{name:'Feedback',exact:true});
+  assert.equal(await tab.getAttribute('aria-selected'),'true','The last focused iframe remains selected after narrowing');
+  await form.getByLabel('Comment 1',{exact:true}).waitFor();
   assert.equal(await form.getByLabel('Comment 1',{exact:true}).inputValue(),'Feedback form observation');
   await page.setViewportSize({width:1360,height:960});
   if(config.desktop){
@@ -181,6 +184,7 @@ try {
     await detail2.getByRole('button',{name:'Close Hosty Harness — PR #102',exact:true}).click();
     await dockHarness.click();
     console.log('PASS: independent instances, exact PR destination reuse, distinct PR windows, Dock selection and retained source document');
+    await win.locator('.traffic.maximize').click();
     await page.locator('.menubar').getByRole('button',{name:'Feedback',exact:true}).click();
     await page.locator('.hosty-panel-viewport[aria-owns]').waitFor();
     const rootPresentation=await page.locator('.hosty-panel-viewport').getAttribute('aria-owns');assert.ok(rootPresentation);
@@ -188,6 +192,23 @@ try {
     await rootForm.getByLabel('Feedback application').selectOption('host');
     await page.locator('.hosty-panel-body').getByText('This tool has not confirmed that it loaded.',{exact:false}).waitFor({state:'hidden'});await rootForm.getByRole('button',{name:'Page comment',exact:true}).click();
     await rootForm.getByLabel('Comment 1',{exact:true}).fill('Desktop root observation');await rootForm.getByRole('button',{name:'Done',exact:true}).click();
+    await page.waitForFunction(id=>{
+      const desktop=document.querySelector('.desktop')?.getBoundingClientRect();
+      const frame=document.querySelector('[data-window-id="'+id+'"]')?.getBoundingClientRect();
+      return desktop&&frame&&frame.right<=desktop.right&&frame.bottom<=desktop.bottom;
+    },winId);
+    await page.setViewportSize({width:800,height:960});
+    await page.locator('[data-hosty-panel-layout="stacked"]').waitFor();
+    assert.equal(await page.locator('.hosty-panel-document[inert]').count(),0);
+    await rootForm.getByRole('button',{name:'Select element',exact:true}).click();
+    await mainFrame.getByRole('heading',{name:/^Chats/}).click();
+    await rootForm.locator('select[aria-label="Feedback application"] option:checked:not([value="host"])').waitFor({state:'attached'});
+    await rootForm.getByRole('textbox',{name:/^Comment /}).last().fill('Compact Desktop application selection');
+    await rootForm.getByRole('button',{name:'Done',exact:true}).last().click();
+    assert.notEqual(await rootForm.getByLabel('Feedback application').inputValue(),'host');
+    assert.equal(await mainDocument.evaluate((frame,previous)=>frame===previous,originalDocument),true);
+    await page.setViewportSize({width:1360,height:960});
+    console.log('PASS: Desktop bounds follow the root tool workspace and compact Feedback permits application selection');
     if(process.env.HOSTY_FEEDBACK_SCREENSHOT)await page.screenshot({path:process.env.HOSTY_FEEDBACK_SCREENSHOT+'.desktop.png'});
     console.log('PASS: Desktop window and root use ordinary provider tools with separate targets');
   }

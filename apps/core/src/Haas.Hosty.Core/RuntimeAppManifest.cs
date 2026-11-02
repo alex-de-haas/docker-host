@@ -524,7 +524,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
             {
                 if (panelUi.Panels[index].AssistantKey is { } assistantKey
                     && (!manifest.Interfaces.TryGetValue("assistant", out var assistants)
-                        || !assistants.Any(item => item.Key == assistantKey)))
+                        || !assistants.Any(item => (string.IsNullOrWhiteSpace(item.Key) ? "default" : item.Key.Trim()) == assistantKey)))
                     errors.Add(new("app_manifest_ui_panel_assistant_invalid", "An assistant panel must reference one of this app's declared assistant interface keys.", $"$.ui.panels[{index}].assistantKey"));
                 if (panelUi.Panels[index].Id is not { } id) continue;
                 if (!PanelIdentity.IsExplicitId(id))

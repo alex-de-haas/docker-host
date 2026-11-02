@@ -178,14 +178,15 @@ export class UiHost implements UiClient {
     state.generation++; this.hideFromWorkspace(state, id); this.publishWorkspaces();
     if (state.expanded && state.selectedId) state.renderer?.focus(state.selectedId);
   };
-  focusPresentation = (id: string) => {
+  /** Record observed focus without moving the active DOM control when focus is false. */
+  focusPresentation = (id: string, options?: { focus?: boolean }) => {
     const tool = this.snapshot.tools.find(t => t.presentationId === id);
     if (!tool) return false;
     this.requireTools();
     const state = this.workspaces.get(tool.workspaceId)!;
     state.generation++; this.showPresentation(state, id);
     this.update({ tools: this.snapshot.tools.map(t => t === tool ? { ...t, focusedAt: ++this.focusSequence } : t) });
-    this.publishWorkspaces(); state.renderer?.focus(id); return true;
+    this.publishWorkspaces(); if (options?.focus !== false) state.renderer?.focus(id); return true;
   };
   collapseWorkspace = (id: string) => {
     this.feedback.cancel();

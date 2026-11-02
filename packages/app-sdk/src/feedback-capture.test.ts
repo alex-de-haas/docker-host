@@ -30,3 +30,15 @@ it("crops only after the browser verifies the source document", async () => {
   expect(await cropCaptureToDocument({cropTo} as unknown as MediaStreamTrack)).toBe(false);
   expect(await cropCaptureToDocument()).toBe(false);
 });
+
+it.each([false, true])("crops without a crop-status observer (custom crop: %s)", async custom => {
+  const stop = vi.fn(), cropTo = vi.fn().mockResolvedValue(undefined), crop = vi.fn().mockResolvedValue(true);
+  const track = { stop, cropTo };
+  vi.stubGlobal("CropTarget", { fromElement: vi.fn().mockResolvedValue({}) });
+  vi.stubGlobal("navigator", { mediaDevices: { getDisplayMedia: vi.fn().mockResolvedValue({ getTracks: () => [track], getVideoTracks: () => [track] }) } });
+  vi.spyOn(HTMLMediaElement.prototype, "play").mockRejectedValue(new Error("Source closed"));
+  await expect(captureStill(vi.fn(), new AbortController().signal, undefined, custom ? crop : undefined)).rejects.toThrow("Source closed");
+  expect(custom ? crop : cropTo).toHaveBeenCalledTimes(1);
+  if (custom) expect(crop).toHaveBeenCalledWith(track);
+  expect(stop).toHaveBeenCalled();
+});

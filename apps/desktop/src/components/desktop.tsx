@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { APP_ACTIVITY_RENEWED, APP_SESSION_RESTORED } from "@hosty-sdk/app/browser-auth";
 import { AppWindow, ArrowLeftToLine, ArrowRightToLine, ChevronRight, CircleHelp, Grid2X2, LogOut, Maximize2, Minus, Monitor, Moon, Pin, Play, Power, RotateCw, Search, Settings2, Sun, PinOff, UserRound, X, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { readDesktop, lifecycle } from "@/lib/api";
@@ -54,6 +54,7 @@ function WorkspaceDesktop({ user, apps, ownId, coreOrigin, refresh, connectionEr
   user: User; apps: App[]; ownId: string; coreOrigin: string; refresh: () => Promise<void>; connectionError: string | null;
 }) {
   const admin = isAdministrator(user), available = useMemo(() => visibleApps(apps, user, ownId), [apps, user, ownId]);
+  const desktop = useRef<HTMLElement>(null);
   const [viewport, setViewport] = useState<Viewport>(() => ({ width: window.innerWidth, height: window.innerHeight }));
   const [workspace, setWorkspace] = useState<Workspace>(() => {
     let raw: string | null = null; try { raw = localStorage.getItem(storageKey(user.id)); } catch { /* An ephemeral desktop still works. */ }
@@ -111,7 +112,7 @@ function WorkspaceDesktop({ user, apps, ownId, coreOrigin, refresh, connectionEr
     finally { await refresh(); pendingRef.current.delete(app.id); setPending(current => { const next = { ...current }; delete next[app.id]; return next; }); }
   }, [admin, refresh]);
   const openApp = useCallback((app: App, fresh = false) => { open(app.id, fresh); if (admin && app.runtimeState !== "running" && !isBusy(app)) void runAction(app, "start"); }, [admin, open, runAction]);
-  const context = (id: string, x: number, y: number) => { setMenu({ id, x: Math.min(x, viewport.width - 250), y: Math.min(y, viewport.height - 330) }); setAccountOpen(false); };
+  const context = (id: string, x: number, y: number) => { setMenu({ id, x: Math.min(x, (viewport.left ?? 0) + viewport.width - 250), y: Math.min(y, (viewport.top ?? 0) + viewport.height - 330) }); setAccountOpen(false); };
 
   useEffect(() => {
     try { localStorage.setItem(storageKey(user.id), JSON.stringify(workspace)); }
@@ -124,9 +125,20 @@ function WorkspaceDesktop({ user, apps, ownId, coreOrigin, refresh, connectionEr
   useEffect(() => {
     const query = matchMedia("(prefers-color-scheme: dark)");
     const changed = () => setSystemDark(query.matches); query.addEventListener("change", changed);
-    const resize = () => setViewport({ width: innerWidth, height: innerHeight }); window.addEventListener("resize", resize);
     const timer = setInterval(() => setClock(new Date()), 30_000);
-    return () => { query.removeEventListener("change", changed); window.removeEventListener("resize", resize); clearInterval(timer); };
+    return () => { query.removeEventListener("change", changed); clearInterval(timer); };
+  }, []);
+  useLayoutEffect(() => {
+    const node = desktop.current; if (!node) return;
+    const measure = () => {
+      const rect = node.getBoundingClientRect();
+      const next = { width: rect.width || window.innerWidth, height: rect.height || window.innerHeight, left: rect.left, top: rect.top };
+      setViewport(previous => previous.width === next.width && previous.height === next.height && previous.left === next.left && previous.top === next.top ? previous : next);
+    };
+    measure();
+    const observer = new ResizeObserver(measure); observer.observe(node);
+    window.addEventListener("resize", measure); window.addEventListener("scroll", measure, true);
+    return () => { observer.disconnect(); window.removeEventListener("resize", measure); window.removeEventListener("scroll", measure, true); };
   }, []);
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -154,7 +166,7 @@ function WorkspaceDesktop({ user, apps, ownId, coreOrigin, refresh, connectionEr
   const menuWindow = menuWindows.at(-1);
   const matches = available.filter(app => app.displayName.toLowerCase().includes((search || "").toLowerCase()));
 
-  return <DesktopTools onNavigate={navigateMain} revision={JSON.stringify(apps.map(app => [app.id, app.installationId, app.runtimeState, app.health?.status]))}><main className={`desktop theme-${theme}`} style={{ "--wallpaper": `url("${wallpaper}")` } as CSSProperties}
+  return <DesktopTools onNavigate={navigateMain} revision={JSON.stringify(apps.map(app => [app.id, app.installationId, app.runtimeState, app.health?.status]))}><main ref={desktop} className={`desktop theme-${theme}`} style={{ "--wallpaper": `url("${wallpaper}")` } as CSSProperties}
     onContextMenu={event => { if (event.target === event.currentTarget) { event.preventDefault(); open(APPEARANCE); } }}>
     <div className="desktop-wallpaper" aria-hidden="true" />
     <header className="menubar">

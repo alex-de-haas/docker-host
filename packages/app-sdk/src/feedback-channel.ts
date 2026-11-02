@@ -181,17 +181,18 @@ export class FeedbackHost {
         const allowed = this.available(id);
         if (operation.action === 'pick') {
             this.cancel();
-            const candidates = allowed.filter(s => operation.mode === 'element' || s.id === operation.sourceId);
+            const mode = operation.mode ?? 'element';
+            const candidates = allowed.filter(s => mode === 'element' || s.id === operation.sourceId);
             if (!candidates.length)
                 throw new Error('Open the application before selecting an element.');
             const generation = ++this.generation;
             this.picking = { owner: id, generation, ids: candidates.map(s => s.id) };
-            this.snapshot = { picking: true, pickMode: operation.mode ?? 'element' };
-            this.composers.get(id)?.receive({ type: 'picking', mode: operation.mode ?? 'element' });
+            this.snapshot = { picking: true, pickMode: mode };
+            this.composers.get(id)?.receive({ type: 'picking', mode });
             for (const l of this.listeners)
                 l();
             for (const s of candidates)
-                void this.sources.get(s.id)!.invoke(operation).then(value => {
+                void this.sources.get(s.id)!.invoke({ ...operation, mode }).then(value => {
                     if (this.picking?.generation !== generation)
                         return;
                     if (!value) {

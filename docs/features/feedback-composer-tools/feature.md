@@ -14,7 +14,9 @@ by application ID, vendor, label or internal route. An empty registry supplies n
 Harness declares `/feedback-panel` as its Feedback tool. Shell lists and pins it normally; the
 special SDK form and host-only menu entry are absent. Desktop window tools use the same catalog.
 Desktop's menu-bar shortcut resolves declared providers into its root tool workspace; more than
-one provider opens the ordinary picker. Standalone apps use their existing tool workspace.
+one provider opens the ordinary picker. Standalone apps use their existing tool workspace. Below
+the standard SDK docking breakpoint, the composer stacks below the active document without making
+it inert; selection remains available in Desktop root and standalone layouts.
 
 ## Provider Integration
 
@@ -52,7 +54,7 @@ panel is visible. Refreshing its own capture capabilities does not disconnect th
 
 The broker supports source discovery, element/region picking, cancellation, page context,
 highlighting, browser crop targets, legacy draft recovery and scoped submission. The first selected
-source wins and all other pickers cancel. Visibility changes refresh retained composer source lists.
+source wins and all other pickers cancel. A pick request with no mode defaults to element selection. Visibility changes refresh retained composer source lists.
 Metadata, annotation count and image payloads are bounded. Providers receive no credentials,
 arbitrary DOM, input values or unrelated source drafts. A submit request must match the chosen
 source's Core/app/installation/user key; the source adapter and Core revalidate intake authority.

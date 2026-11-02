@@ -11,7 +11,8 @@ export async function captureStill(hide: (hidden: boolean) => void, signal: Abor
   signal.addEventListener("abort", stop, { once: true });
   try {
     signal.throwIfAborted(); hide(true);
-    onCrop?.(await (crop ?? cropCaptureToDocument)(stream.getVideoTracks?.()[0]));
+    const cropped = await (crop ?? cropCaptureToDocument)(stream.getVideoTracks?.()[0]);
+    onCrop?.(cropped);
     // Let the hidden overlay reach the compositor before consuming the live stream.
     await new Promise<void>(resolve => setTimeout(resolve, 100));
     signal.throwIfAborted();

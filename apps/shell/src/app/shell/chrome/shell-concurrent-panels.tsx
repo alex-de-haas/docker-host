@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -36,6 +36,21 @@ export function ShellConcurrentPanels({ children, panels, focusedId, onFocus, on
   const arrangement = panelArrangement(width, pageMinimum, open.map(panel => panel.width));
   const selected = open.some(panel => panel.id === focusedId) ? focusedId : open.at(-1)?.id;
   const tabs = arrangement.tabs || arrangement.stacked;
+  useEffect(() => {
+    let pending: ReturnType<typeof setTimeout> | undefined;
+    const frameFocus = () => {
+      clearTimeout(pending);
+      // activeElement can still be the old document control during the blur event.
+      pending = setTimeout(() => {
+        if (!(document.activeElement instanceof HTMLIFrameElement) || !root.current?.contains(document.activeElement)) return;
+        const column = document.activeElement.closest<HTMLElement>("[data-shell-tool-column]");
+        const id = column?.dataset.shellToolColumn;
+        if (id && !column?.hidden && id !== selected) onFocus(id);
+      }, 0);
+    };
+    window.addEventListener("blur", frameFocus);
+    return () => { clearTimeout(pending); window.removeEventListener("blur", frameFocus); };
+  }, [onFocus, selected]);
   return <div ref={root} className="flex h-full min-h-0 min-w-0 flex-col pr-3 pb-3 max-[599px]:p-0" data-shell-panel-layout={tabs ? "tabs" : "columns"}>
     {tabs && open.length > 0 && <div role="tablist" data-hosty-feedback-control={captureActive ? "" : undefined} aria-label="Open tools" className="flex shrink-0 gap-1 overflow-x-auto pb-2" onKeyDown={event => {
       if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
@@ -64,6 +79,8 @@ export function ShellConcurrentPanels({ children, panels, focusedId, onFocus, on
               node.addEventListener("pointermove", move); node.addEventListener("pointerup", end); node.addEventListener("pointercancel", end);
             }}><span className="h-8 w-1 rounded-full group-hover:bg-border group-focus-visible:bg-ring" /></div>
           <div id={`${id}-panel-${panel.id}`} role={tabs ? "tabpanel" : undefined} aria-labelledby={tabs && panel.open ? `${id}-tab-${panel.id}` : undefined} hidden={!visible} inert={!visible} data-shell-tool-column={panel.id}
+            onFocusCapture={() => { if (visible && selected !== panel.id) onFocus(panel.id); }}
+            onPointerDownCapture={() => { if (visible && selected !== panel.id) onFocus(panel.id); }}
             className={cn("min-h-0 min-w-0 overflow-hidden rounded-xl border bg-background shadow-xs", !visible && "hidden")}
             style={visible ? arrangement.stacked ? { flex: "1 1 55%", width: "100%" } : { flex: `0 0 ${size}px`, width: size } : undefined}>
             {panel.content}

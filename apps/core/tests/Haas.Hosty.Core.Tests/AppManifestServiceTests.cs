@@ -283,6 +283,21 @@ public sealed class AppManifestServiceTests
     }
 
     [Theory]
+    [InlineData(null, "default")]
+    [InlineData("", "default")]
+    [InlineData("  ", "default")]
+    [InlineData(" conversation ", "conversation")]
+    public async Task LoadAsync_AssistantPanelUsesNormalizedInterfaceKey(string? interfaceKey, string panelKey)
+    {
+        var manifestPath = await WriteSystemUiManifestAsync(null, $$"""
+            , "interfaces": { "assistant": [{ "key": {{JsonSerializer.Serialize(interfaceKey)}}, "endpoint": "web", "path": "/agent", "version": 1, "capabilities": [] }] },
+              "ui": { "panels": [{ "id": "conversation", "path": "/tool", "icon": "star", "assistantKey": {{JsonSerializer.Serialize(panelKey)}} }] }
+            """);
+        var selection = await new AppManifestService().LoadAsync(manifestPath);
+        Assert.Equal(panelKey, selection.Manifest.Ui!.Panels[0].AssistantKey);
+    }
+
+    [Theory]
     [InlineData("", "app_manifest_ui_panel_id_invalid")]
     [InlineData("Upper", "app_manifest_ui_panel_id_invalid")]
     [InlineData("legacy-old", "app_manifest_ui_panel_id_invalid")]

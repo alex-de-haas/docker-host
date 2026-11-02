@@ -232,7 +232,9 @@ The standard SDK renderer docks at 900 CSS pixels of inner workspace width: a 48
 12-pixel gap, default 360-pixel body, 280–800 bounds and at least 480 pixels reserved for the
 document. Shell uses its own ReUI split layout and document-dependent width constraints, described
 in [Shell Panel Resize](../shell-panel-resize/feature.md). The standard SDK renderer uses a drawer
-up to 440 pixels wide below its docking breakpoint; Shell uses retained tabs and phone stacking.
+up to 440 pixels wide below its docking breakpoint. A declared feedback composer instead stacks
+below the document without a backdrop or inert content, so visible sources remain selectable.
+Shell uses retained tabs and phone stacking.
 Constraints do not overwrite preferred widths. Arrow keys resize and double-click resets the
 Shell separators. Rail arrow/Home/End keys move focus. The drawer makes
 covered content inert, traps focus and restores it on dismissal; an unhandled Escape inside a

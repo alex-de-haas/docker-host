@@ -14,11 +14,12 @@ const user: User = { id: "alice", displayName: "Alice", role: "host.admin" };
 let root: Root, container: HTMLDivElement;
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
   localStorage.clear(); api.readDesktop.mockResolvedValue({ user, apps: [notes, stopped] }); api.lifecycle.mockReset();
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
 });
-afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); });
+afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 async function render() { await act(async () => { root.render(<Desktop appId="hosty.desktop" coreOrigin="https://core.example" />); }); }
 async function click(label: string) {
   const target = [...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.getAttribute("aria-label") === label || button.textContent === label);
@@ -89,4 +90,21 @@ it("opens independent instances, lists them in Dock, and preserves a sibling whe
   expect(api.lifecycle).not.toHaveBeenCalled();
   await act(async () => root.unmount()); root = createRoot(container); await render();
   expect(container.querySelectorAll('iframe[title="Notes"]')).toHaveLength(1);
+});
+
+it("fits maximized and tiled windows to the Desktop container after a root tool resizes it", async () => {
+  let measure = () => {};
+  let width = 1400, height = 900;
+  vi.stubGlobal("ResizeObserver", class { constructor(callback: () => void) { measure = callback; } observe() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function(this: HTMLElement) {
+    return new DOMRect(40, 20, this.classList.contains("desktop") ? width : 0, this.classList.contains("desktop") ? height : 0);
+  });
+  await render(); await click("Notes"); await click("Maximize Notes");
+  const frame = container.querySelector('iframe[title="Notes"]')!, win = frame.closest('section')!;
+  expect(win.style.width).toBe("1376px");
+  width = 950; height = 760; await act(async () => measure());
+  expect(win.style.width).toBe("926px"); expect(win.style.height).toBe("620px");
+  await openDockMenu("Notes"); await click("Tile right");
+  expect(parseFloat(win.style.left) + parseFloat(win.style.width)).toBeLessThanOrEqual(width);
+  expect(container.querySelector('iframe[title="Notes"]')).toBe(frame);
 });

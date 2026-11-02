@@ -1449,16 +1449,17 @@ describe("feedback channel binding", () => {
 
 describe("workspace visible presentations", () => {
   it.each([false, true])("keeps focus separate from visible panels with multiple=%s", async multiple => {
-    host = createUiHost(); const h = host;
+    host = createUiHost(); const h = host, focus = vi.fn();
     h.registerWorkspace({ workspaceId: "default", multiple, renderer: {
-      present: async () => "accepted", focus() {}, collapse() {}, release() {}, showToolPicker: async () => "accepted",
+      present: async () => "accepted", focus, collapse() {}, release() {}, showToolPicker: async () => "accepted",
     } });
     await h.refresh();
     for (let i = 0; i < 2; i++) expect(await h.openSurface(target, { placement: "side", reuse: "new", requestId: createPresentationRequestId() })).toMatchObject({ status: "opened" });
     const [first, second] = h.getSnapshot().tools.map(t => t.presentationId);
     const slot = () => h.getSnapshot().workspaces!.find(w => w.workspaceId === "default")!;
     expect(slot()).toMatchObject({ selectedId: second, visibleIds: multiple ? [first, second] : [second] });
-    h.focusPresentation(first);
+    focus.mockClear(); h.focusPresentation(first, { focus: false });
+    expect(focus).not.toHaveBeenCalled(); expect(slot().selectedId).toBe(first);
     expect(slot().visibleIds).toEqual(multiple ? [first, second] : [first]);
     h.collapseWorkspace("default"); h.setExpanded(true);
     expect(slot()).toMatchObject({ expanded: true, selectedId: first, visibleIds: multiple ? [first, second] : [first] });

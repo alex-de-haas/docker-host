@@ -17,13 +17,15 @@ Assistant handoff messages still name their verified presentation and never reta
 Workspace registration opts into concurrent visibility with `multiple: true`. Its `visibleIds` list
 is independent of `selectedId` (focus), and `expanded` controls the workspace as a whole.
 `focusPresentation` exposes and focuses one instance; `hidePresentation` removes just that instance
-from visibility. Close removes the presentation. The next remaining visible panel receives focus.
+from visibility. Hosts can pass `{ focus: false }` when recording focus already received by a
+control or iframe, avoiding a second programmatic focus. Close removes the presentation. The next remaining visible panel receives focus.
 Collapsing retains the visible list, while account/installation invalidation clears affected instances.
 The default registration remains single-panel for Desktop, standalone and existing SDK consumers.
 This state belongs to the authenticated host; it grants no new iframe or provider authority.
 
 Columns reserve the document minimum and contract to 280 px per panel before switching to tabs.
-Compact tabs retain all instances, with ArrowLeft/ArrowRight/Home/End keyboard support. Phone
+Pointer and keyboard focus within a visible column, including its iframe, selects that panel for
+the next compact layout. Compact tabs retain all instances, with ArrowLeft/ArrowRight/Home/End keyboard support. Phone
 workspaces stack the document and selected tool. Resizing and layout changes preserve iframe nodes,
 routes, browser drafts and unsent messages. Width preferences are described in
 [Shell panel resizing](../shell-panel-resize/feature.md).

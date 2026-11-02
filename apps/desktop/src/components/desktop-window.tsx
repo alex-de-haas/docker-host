@@ -17,7 +17,7 @@ export function DesktopWindow({ window: state, viewport, title, active, index, c
     event.preventDefault();
     onFocus();
     const bounds = kind === "move" && state.mode !== "normal"
-      ? clampBounds({ ...state.bounds, x: event.clientX - state.bounds.width / 2, y: event.clientY - 22 }, viewport) : box;
+      ? clampBounds({ ...state.bounds, x: event.clientX - (viewport.left ?? 0) - state.bounds.width / 2, y: event.clientY - (viewport.top ?? 0) - 22 }, viewport) : box;
     gesture.current = { kind, x: event.clientX, y: event.clientY, bounds };
     event.currentTarget.setPointerCapture(event.pointerId);
     setDragging(true); onChange({ mode: "normal", bounds });
@@ -28,7 +28,7 @@ export function DesktopWindow({ window: state, viewport, title, active, index, c
     let next = { ...start.bounds };
     if (start.kind === "move") {
       next = { ...next, x: next.x + dx, y: next.y + dy };
-      onSnapPreview(event.clientY < 46 ? "maximized" : event.clientX < 24 ? "left" : event.clientX > viewport.width - 24 ? "right" : null);
+      onSnapPreview(event.clientY - (viewport.top ?? 0) < 46 ? "maximized" : event.clientX - (viewport.left ?? 0) < 24 ? "left" : event.clientX - (viewport.left ?? 0) > viewport.width - 24 ? "right" : null);
     } else {
       if (start.kind.includes("e")) next.width += dx;
       if (start.kind.includes("s")) next.height += dy;
@@ -40,7 +40,7 @@ export function DesktopWindow({ window: state, viewport, title, active, index, c
   function end(event: PointerEvent<HTMLElement>) {
     if (!gesture.current) return;
     if (gesture.current.kind === "move" && event.type !== "pointercancel") {
-      const mode = event.clientY < 46 ? "maximized" : event.clientX < 24 ? "left" : event.clientX > viewport.width - 24 ? "right" : "normal";
+      const mode = event.clientY - (viewport.top ?? 0) < 46 ? "maximized" : event.clientX - (viewport.left ?? 0) < 24 ? "left" : event.clientX - (viewport.left ?? 0) > viewport.width - 24 ? "right" : "normal";
       onChange({ mode });
     }
     gesture.current = null; setDragging(false); onSnapPreview(null);

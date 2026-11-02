@@ -34,7 +34,8 @@ describe('composer broker',()=>{
   it('only the first picked source wins and all participants cancel',async()=>{
     const h=new FeedbackHost(),receive=vi.fn(),resolvers=new Map<string,(v:unknown)=>void>(),cancels:string[]=[];
     for(const id of ['one','two'])h.register({...source,id,visible:()=>true,invoke:(o:FeedbackOperation)=>o.action==='pick'?new Promise(r=>{resolvers.set(id,r);}):Promise.resolve(cancels.push(id))});
-    const p=h.connect('composer',{workspaceId:'window-a',visible:()=>true,receive});await p.request({action:'pick',mode:'element'});
+    const p=h.connect('composer',{workspaceId:'window-a',visible:()=>true,receive});await p.request({action:'pick'});
+    expect([...resolvers.keys()]).toEqual(['one','two']);
     const note={id:'note',text:'',route:'/page',capturedAt:new Date().toISOString(),target:{kind:'element',label:'button'}};
     resolvers.get('two')!(note);await Promise.resolve();resolvers.get('one')!(note);await Promise.resolve();
     expect(receive.mock.calls.filter(([e])=>e.type==='selection')).toHaveLength(1);expect(cancels.sort()).toEqual(['one','two']);expect(h.getSnapshot().picking).toBe(false);

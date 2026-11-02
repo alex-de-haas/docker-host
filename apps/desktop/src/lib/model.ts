@@ -14,7 +14,7 @@ export type App = {
   grantedCorePermissions?: string[] | null;
 };
 export type Bounds = { x: number; y: number; width: number; height: number };
-export type Viewport = { width: number; height: number };
+export type Viewport = { width: number; height: number; left?: number; top?: number };
 export type WindowMode = "normal" | "maximized" | "left" | "right";
 export type WindowDestination = { endpoint: string; route: string };
 export type DesktopWindow = { id: string; appId?: string; installationId?: string; destination?: WindowDestination; currentRoute?: string; title?: string; bounds: Bounds; mode: WindowMode; minimized: boolean; page: number; navigationMode?: "expanded" | "compact" };

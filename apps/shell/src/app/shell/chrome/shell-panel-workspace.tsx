@@ -206,7 +206,7 @@ export function ShellPanelWorkspace({ children, initialWidth = 360, pageMinimum 
   return <div ref={root} className="h-full min-h-0 min-w-0">
     <style>{frameStyles}</style>
     <ShellConcurrentPanels panels={columns} focusedId={focusedId} pageMinimum={pageMinimum} captureActive={feedbackState.picking}
-      onFocus={id => { host?.focusPresentation(id); setFocusRequest(null); setFocusedId(id); }}
+      onFocus={id => { host?.focusPresentation(id, { focus: false }); setFocusRequest(null); setFocusedId(id); }}
       onResize={rememberWidth}>
       {children}
     </ShellConcurrentPanels>

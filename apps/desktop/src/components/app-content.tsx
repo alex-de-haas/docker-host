@@ -12,8 +12,10 @@ export function AppContent({ app, windowId, destination, installationId, onSurfa
   error?: string; onPage: (index: number) => void; onStart: () => void; onRetry: () => void;
 }) {
   if (!app) return <div className="window-state"><ShieldAlert size={36} /><h2>Application unavailable</h2><p>Your access may have changed, or this application was removed.</p></div>;
-  const pages = appPages(app), page = pages[Math.min(pageIndex, pages.length - 1)];
+  const pages = appPages(app);
   const target = destination && destinationPage(app, destination, installationId);
+  const selectedIndex = target ? target.index : Math.min(pageIndex, pages.length - 1);
+  const page = pages[selectedIndex];
   const url = target?.url ?? pageUrl(app, page), ready = pageReady(app, page);
   const waiting = Boolean(pending || isBusy(app) || app.runtimeState === "running" && !ready);
   const canStart = admin && app.runtimeState !== "running";
@@ -35,7 +37,7 @@ export function AppContent({ app, windowId, destination, installationId, onSurfa
   return <div className="app-layout" data-navigation={navigationCompact ? "compact" : "expanded"}>
     {pages.length > 1 && <nav id={`pages-${windowId}`} className="window-sidebar" aria-label={`${app.displayName} pages`}>
       <div className="sidebar-caption">{app.displayName}</div>
-      {pages.map((item, index) => <button key={`${item.endpoint}:${item.path}`} className={index === pageIndex ? "selected" : ""} aria-label={item.label} title={item.label} aria-current={index === pageIndex ? "page" : undefined} onClick={() => onPage(index)}><PageIcon src={item.iconUrl} /><span>{item.label}</span></button>)}
+      {pages.map((item, index) => <button key={`${item.endpoint}:${item.path}`} className={index === selectedIndex ? "selected" : ""} aria-label={item.label} title={item.label} aria-current={index === selectedIndex ? "page" : undefined} onClick={() => onPage(index)}><PageIcon src={item.iconUrl} /><span>{item.label}</span></button>)}
     </nav>}
     <div className="app-document">{content}</div>
   </div>;

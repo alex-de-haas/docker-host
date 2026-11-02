@@ -64,7 +64,9 @@ account and clock controls.
 
 Window geometry, open/minimized state, dock preferences and appearance are saved in localStorage
 under the Core user ID. Invalid stored data and inaccessible application IDs are discarded.
-Layouts are clamped to the current viewport; narrow browser surfaces maximize windows.
+Layouts are clamped to the measured desktop document area, including space occupied by a root
+tool panel; maximize, tiling and drag snapping use those same bounds. Narrow document surfaces maximize windows.
+Restored routes determine the selected page and endpoint even when manifest navigation is reordered.
 Container queries keep a narrow tiled window's own controls usable.
 
 Administrators share one Core event stream for app changes and refresh on reconnect.
