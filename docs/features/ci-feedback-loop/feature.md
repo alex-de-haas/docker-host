@@ -1,6 +1,6 @@
 ---
 created: 2026-10-20
-updated: 2026-10-31
+updated: 2026-11-02
 summary: Affected component CI, explicit local integration checks and publication of verified main revisions.
 components: [.github, scripts]
 ---
@@ -39,7 +39,7 @@ bounded gate contract: version, selected components/profiles, required jobs and 
 object. This keeps both `CI_PLAN` and the copied `needs` environment small for large changesets,
 while the aggregate still validates every required result and rejects failed unexpected jobs.
 
-Core's managed build/unit suite and NativeAOT publication are independent jobs. A production Core source/configuration/dependency change selects NativeAOT; isolated unit-test edits do not require it. The AOT script retains its cold Release compile and zero-new-warning check.
+Core's managed build/unit suite and NativeAOT publication are independent jobs. A production Core source/configuration/dependency change selects NativeAOT; isolated unit-test edits do not require it. The AOT script retains its cold Release compile and zero-new-warning check. CI checks the same four native targets as Core/CLI release publication: macOS ARM64, Linux ARM64/x64 and Windows x64. macOS Intel (`osx-x64`) has no CI build or published build.
 
 ## Local Integration Checks
 
