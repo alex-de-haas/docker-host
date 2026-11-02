@@ -119,5 +119,7 @@ its own provider page as feedback targets. Trial activation does not publish pac
 - Managed browser acceptance uses normal login in a separate child Core and exercises screenshots,
   transactional stale writes, Shell concurrent tools, iframe/host selection, provider self-feedback,
   compact restoration and Desktop window/root boundaries. Finish removes test resources.
-- Build affected SDK, Core and consumers; validate versions and docs. Live workspace activation is
-  an explicitly authorized trial and does not follow automatically from sandbox success.
+- Build affected SDK, Core and consumers; validate versions and docs. Run the SDK published-package
+  overlay upgrade check so both single-quoted and double-quoted relative imports resolve in Node ESM.
+  Live workspace activation is an explicitly authorized trial and does not follow automatically from
+  sandbox success.
