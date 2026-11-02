@@ -304,7 +304,7 @@ attestations cover every binary. The firmware OTA client downloads only
 `hosty-cardputer.bin` from this compiled-in release location; Core cannot
 select or serve firmware.
 
-For development and early usage, CLI and Core artifacts are published to one rolling GitHub prerelease with tag `cli-dev`. The `cli-dev` workflow overwrites existing release assets for every new release build, so installation URLs stay stable while the binaries track the latest development build.
+For development and early usage, CLI and Core artifacts are published to one rolling GitHub prerelease with tag `cli-dev`. The `cli-dev` workflow overwrites existing release assets for every new release build, so installation URLs stay stable while the binaries track the latest development build. Before uploading new assets, it removes any retired Intel macOS binaries from the existing rolling release. Missing retired assets are harmless on retries; failed asset listing or deletion stops publication before its completion receipt advances.
 
 Unix users install the current development CLI through `scripts/install.sh`:
 

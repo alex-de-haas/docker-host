@@ -102,7 +102,9 @@ test('retains independent SDK publishing and Core/CLI production RID matrix', ()
   for (const job of [jobsIn(ci).get('core-aot'), jobsIn(cli).get('publish-artifacts')]) {
     assert.deepEqual([...job.matchAll(/\brid: ([\w-]+)/g)].map(match => match[1]), supportedRids);
   }
-  assert.doesNotMatch(cli, /hosty-(?:core-)?darwin-x64/);
+  const build = jobsIn(cli).get('publish-artifacts');
+  const preparation = cli.split('      - name: Prepare release assets\n')[1].split('      - name: ')[0];
+  for (const section of [build, preparation]) assert.doesNotMatch(section, /hosty-(?:core-)?darwin-x64/);
   assert.match(cli, /npm run core:test/);
   assert.match(cli, /npm run cli:test/);
   assert.match(cli, /dotnet publish apps\/core/);
