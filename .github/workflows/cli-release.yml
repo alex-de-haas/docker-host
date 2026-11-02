@@ -90,10 +90,6 @@ jobs:
             rid: osx-arm64
             artifact: hosty-darwin-arm64
             core_artifact: hosty-core-darwin-arm64
-          - os: macos-latest
-            rid: osx-x64
-            artifact: hosty-darwin-x64
-            core_artifact: hosty-core-darwin-x64
           - os: ubuntu-24.04-arm
             rid: linux-arm64
             artifact: hosty-linux-arm64
@@ -249,12 +245,10 @@ jobs:
           mkdir -p dist
           expected=(
             hosty-darwin-arm64
-            hosty-darwin-x64
             hosty-linux-arm64
             hosty-linux-x64
             hosty-windows-x64.exe
             hosty-core-darwin-arm64
-            hosty-core-darwin-x64
             hosty-core-linux-arm64
             hosty-core-linux-x64
             hosty-core-windows-x64.exe

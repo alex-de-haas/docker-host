@@ -97,7 +97,12 @@ test('retains independent SDK publishing and Core/CLI production RID matrix', ()
     assert.match(text, /id-token: write/);
   }
   const cli = readFileSync(new URL('cli-release.yml', workflowDirectory), 'utf8');
-  for (const rid of ['osx-arm64', 'osx-x64', 'linux-arm64', 'linux-x64', 'win-x64']) assert.match(cli, new RegExp(`rid: ${rid}`));
+  const ci = readFileSync(new URL('ci.yml', workflowDirectory), 'utf8');
+  const supportedRids = ['osx-arm64', 'linux-arm64', 'linux-x64', 'win-x64'];
+  for (const job of [jobsIn(ci).get('core-aot'), jobsIn(cli).get('publish-artifacts')]) {
+    assert.deepEqual([...job.matchAll(/\brid: ([\w-]+)/g)].map(match => match[1]), supportedRids);
+  }
+  assert.doesNotMatch(cli, /hosty-(?:core-)?darwin-x64/);
   assert.match(cli, /npm run core:test/);
   assert.match(cli, /npm run cli:test/);
   assert.match(cli, /dotnet publish apps\/core/);

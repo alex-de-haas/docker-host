@@ -1,6 +1,6 @@
 ---
 created: 2026-05-12
-updated: 2026-10-21
+updated: 2026-11-02
 summary: The repository layout, release artifacts and versioning rules for every component.
 ---
 
@@ -256,11 +256,13 @@ each also publishes `latest` and `sha-<commit>` into its own repository.
 
 Across these images, `sha-<commit>` records a short source SHA. It is a lookup tag, not a verified immutable build identity: a rerun can rebuild the same source. Verified artifact reuse requires the full source SHA and content digest. Version tags are written once and never moved; `:latest` follows a source revision that still passes the main freshness guard. A stale run may create an absent immutable version, but cannot move a rolling tag over newer main.
 
+Core and CLI publish native executables for macOS ARM64, Linux ARM64/x64 and Windows x64.
+macOS Intel (`osx-x64`) is excluded from CI and release builds.
+
 CLI release artifacts:
 
 ```text
 hosty-darwin-arm64
-hosty-darwin-x64
 hosty-linux-arm64
 hosty-linux-x64
 hosty-windows-x64.exe
@@ -270,7 +272,6 @@ Core release artifacts:
 
 ```text
 hosty-core-darwin-arm64
-hosty-core-darwin-x64
 hosty-core-linux-arm64
 hosty-core-linux-x64
 hosty-core-windows-x64.exe
@@ -402,6 +403,7 @@ During early development, `cli-dev` is the main platform distribution channel. I
 - A .NET SDK floor change preserves supported build environments and passes Core/CLI Native AOT publication on the affected native target, plus affected .NET suites.
 - `scripts/check-versions.mjs` fails when any two copies of one component's version disagree.
 - `ci.yml` gates each component job on its own paths filter, and a skipped job still reports a status.
+- Core NativeAOT CI and Core/CLI release matrices contain the same four supported targets, and release asset preparation requires only their binaries.
 - Workflows pass `actionlint`, which type-checks expressions, `needs`/`outputs` references, and every `run:` block.
 - Composite action scripts under `.github/actions/**/*.sh` pass `shellcheck`.
 - A publishing run whose commit is no longer the tip of `main` moves no mutable tag: it publishes
