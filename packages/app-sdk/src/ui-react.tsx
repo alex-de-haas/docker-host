@@ -1,4 +1,6 @@
 "use client";
+import { bindFeedbackClient } from "./feedback-client";
+export { HostyFeedbackLauncher, useHostyFeedback } from "./feedback-workspace";
 import { FeedbackCapture } from "./feedback-react";
 import { SdkChromeStyles, SdkIcon } from "./sdk-chrome";
 import { useContext, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from "react";
@@ -43,9 +45,10 @@ export function HostyUiRoot({ children, uiPath, panelLayout = "auto", active = t
     const client = window.parent === window ? createUiHost({ uiPath: path, active: activeRef.current, chrome }) : new EmbeddedUiClient(path, chrome);
     client.setActive(activeRef.current); client.composition.attachRouter(navigation?.router);
     clientRef.current = client;
+    const releaseFeedback = bindFeedbackClient(client.connectFeedback);
     const release = bindUiClient(client), stop = client.subscribe(event => { if (event.type === "environment") setEnvironment(event.value); });
     if (client instanceof EmbeddedUiClient) setHost(null); else setHost(client);
-    return () => { stop(); release(); client.dispose(); clientRef.current = null; };
+    return () => { stop(); releaseFeedback(); release(); client.dispose(); clientRef.current = null; };
   }, [uiPath]);
   useEffect(() => { clientRef.current?.composition.configure(chrome ?? {}); }, [chrome]);
   useEffect(() => { clientRef.current?.composition.attachRouter(navigation?.router); }, [navigation?.router]);
@@ -67,7 +70,7 @@ export function HostyUiRoot({ children, uiPath, panelLayout = "auto", active = t
         <button type="button" onClick={() => window.location.reload()}>Reconnect</button>
       </> : "Connecting to the workspace…"}
     </div>}
-    <FeedbackCapture active={active && !!allowed} uiPath={uiPath} />
+    <FeedbackCapture active={active && !!allowed} uiPath={uiPath} client={clientRef.current} />
     {host && <HostyPresentationLayer layer={layer} host={host} active={!!allowed} />}
   </UiFrameLayerContext.Provider></UiCompositionContext.Provider></UiHostContext.Provider>;
 }
@@ -227,7 +230,7 @@ export function HostyPanelWorkspace({ children, workspaceId = DEFAULT_WORKSPACE,
     style={{ "--hosty-panel-width": `${width}px`, ...(unsupported ? { display: "contents" } : {}) } as CSSProperties}>
     <SdkChromeStyles /><style>{styles}</style>
     <div ref={content} className="hosty-panel-document" style={unsupported ? { display: "contents" } : undefined} inert={expanded && drawer}>{children}</div>
-    <nav data-hosty-sdk className="hosty-panel-rail" aria-label="Tools" style={unsupported || !chrome.tools.enabled || chrome.tools.launcher === "hide" ? { display: "none" } : undefined} inert={unsupported || expanded && drawer}>
+    <nav data-hosty-sdk className="hosty-panel-rail" aria-label="Tools" style={unsupported || !chrome.tools.enabled || chrome.tools.launcher === "hide" ? { display: "none" } : undefined} inert={expanded && drawer}>
       {tabs.map((panel, index) => <button key={panelKey(panel.panel)} type="button" title={`${panel.appName}: ${panel.label}`} aria-label={panel.label}
         aria-controls={bodyId} aria-expanded={expanded && selectedKey === panelKey(panel.panel)} onClick={() => void select(panel)}
         onKeyDown={event => { const delta = event.key === "ArrowDown" ? 1 : event.key === "ArrowUp" ? -1 : 0;
@@ -236,7 +239,7 @@ export function HostyPanelWorkspace({ children, workspaceId = DEFAULT_WORKSPACE,
         }}>{renderIcon?.(panel) ?? panel.label.slice(0, 2)}
         {workspaceTools.some(t => t.key === panelKey(panel.panel) && t.attention > 0) ? <span className="hosty-panel-attention" aria-label="Needs attention"><SdkIcon name="warning" /></span> : null}
       </button>)}
-      <button type="button" aria-label="Add tool" title="Add tool" onClick={() => { setError(null); setChooser(true); void host?.refresh(); }}><SdkIcon name="plus" /></button>
+      <button hidden={unsupported} type="button" aria-label="Add tool" title="Add tool" onClick={() => { setError(null); setChooser(true); void host?.refresh(); }}><SdkIcon name="plus" /></button>
     </nav>
     {expanded && drawer && <button type="button" className="hosty-panel-backdrop" aria-label="Return to document" onClick={() => host?.setExpanded(false, workspaceId)} />}
     <aside data-hosty-sdk ref={body} id={bodyId} className="hosty-panel-body" hidden={!expanded} inert={!expanded}

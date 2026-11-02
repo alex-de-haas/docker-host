@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { appFetch } from "./browser-auth";
+import { appFetch } from "@hosty-sdk/app/browser-auth";
 import { recordingWave } from "./feedback-audio";
 type Provider = { appId: string; key: string; displayName: string; available: boolean };
 type Recording = { controller: AbortController; stream?: MediaStream; recorder?: MediaRecorder; timer?: ReturnType<typeof setTimeout> };
@@ -9,7 +9,8 @@ const dispose = (op: Recording | null) => { if (!op) return; op.controller.abort
 export function FeedbackSpeech({ path, disabled, onText, onBusyChange }: { path: string; disabled: boolean; onText: (text: string) => void; onBusyChange: (busy: boolean) => void }) {
   const [providers, setProviders] = useState<Provider[]>([]), [choice, setChoice] = useState("");
   const [phase, setPhase] = useState("idle"), [error, setError] = useState("");
-  const active = useRef<Recording | null>(null), result = useRef(onText); result.current = onText;
+  const active = useRef<Recording | null>(null), result = useRef(onText); 
+  useEffect(() => { result.current = onText; }, [onText]);
   const endpoint = path + "/speech";
   useEffect(() => { onBusyChange(phase !== "idle"); return () => onBusyChange(false); }, [phase, onBusyChange]);
   useEffect(() => {
@@ -20,6 +21,8 @@ export function FeedbackSpeech({ path, disabled, onText, onBusyChange }: { path:
     }).catch(e => { if (!abort.signal.aborted) setError(e.message); });
     return () => { abort.abort(); dispose(active.current); active.current = null; };
   }, [endpoint]);
+  // Recording cancellation synchronizes browser media resources with the disabled state.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { if (disabled) { dispose(active.current); active.current = null; setPhase("idle"); } }, [disabled]);
   const selected = providers.find(p => JSON.stringify([p.appId, p.key]) === choice) ?? (providers.length === 1 ? providers[0] : undefined);
   function cancel() { dispose(active.current); active.current = null; setPhase("idle"); }

@@ -140,7 +140,7 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
   };
   const externalClose = canManage && !!pending && ["pause", "close", "defer"].includes(pending.kind) && state.closure === "closing" && trees.some(t => t.leases.length > 0);
   const currentDiff = trees.find(t => t.id === diffTree);
-  return <aside aria-label="Workspace details" className="h-full overflow-y-auto">
+  return <aside aria-label="Workspace details" className="relative h-full overflow-y-auto">
     <div className="border-b p-4">
       <div className="mb-3 flex items-center justify-between gap-2"><p className="text-xs font-semibold text-muted-foreground">Workspace</p>
         <Badge variant="outline" className="bg-muted text-xs font-medium">{workflowLabel(state)}</Badge></div>

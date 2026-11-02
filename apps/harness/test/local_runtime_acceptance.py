@@ -6,6 +6,7 @@ import json
 import os
 import pathlib
 import re
+import shutil
 import time
 import urllib.parse
 import urllib.request
@@ -38,6 +39,7 @@ def check(context):
         worker.setdefault('environment', {})['HOSTY_HARNESS_CODEX_COMMAND'] = str(workspace/'apps/harness/test/fake-codex-server.mjs')
     target = base/'harness-manifest.json'
     target.write_text(json.dumps(manifest))
+    shutil.copytree(workspace/'apps/harness/assets', base/'assets', dirs_exist_ok=True)
     run([cli, '--data-root', root, 'apps', 'install', target, '--runtime', 'local', '--no-autostart'])
     def timed(action):
         began = time.monotonic()

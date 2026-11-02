@@ -3,10 +3,10 @@ import { useRef, useState, type CSSProperties, type PointerEvent, type ReactNode
 import { Maximize2, Minus, X } from "lucide-react";
 import { clampBounds, displayedBounds, type Bounds, type DesktopWindow as WindowState, type Viewport, type WindowMode } from "@/lib/model";
 
-export function DesktopWindow({ window: state, viewport, title, active, index, children, toolbar,
+export function DesktopWindow({ window: state, viewport, title, active, index, children, toolbar, navigation,
   onFocus, onChange, onClose, onSnapPreview }: {
   window: WindowState; viewport: Viewport; title: string; active: boolean; index: number;
-  children: ReactNode; toolbar?: ReactNode; onFocus: () => void; onChange: (patch: Partial<WindowState>) => void;
+  children: ReactNode; toolbar?: ReactNode; navigation?: ReactNode; onFocus: () => void; onChange: (patch: Partial<WindowState>) => void;
   onClose: () => void; onSnapPreview: (mode: WindowMode | null) => void;
 }) {
   const gesture = useRef<{ kind: string; x: number; y: number; bounds: Bounds } | null>(null);
@@ -60,6 +60,7 @@ export function DesktopWindow({ window: state, viewport, title, active, index, c
         <button className="traffic maximize" aria-label={`Maximize ${title}`} title={state.mode === "maximized" ? "Restore size" : "Maximize"}
           onClick={() => onChange({ mode: state.mode === "maximized" ? "normal" : "maximized" })}><Maximize2 size={8} strokeWidth={3} /></button>
       </div>
+      {navigation}
       <span className="window-title">{title}</span>
       <div className="window-toolbar">{toolbar}</div>
     </header>

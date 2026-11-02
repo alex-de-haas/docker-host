@@ -2,7 +2,7 @@
 import { createContext, useContext, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { HostyAppFrame, useHostyUiHost } from "@hosty-sdk/app/ui/react";
 import type { UiHostSnapshot } from "@hosty-sdk/app/ui/host";
-import { panelKey, type UiPanel } from "@hosty-sdk/app/ui";
+import { panelKey, type UiPanel, type UiFrameSurface } from "@hosty-sdk/app/ui";
 import { Bot, LoaderCircle, PanelRightClose, Wrench, X } from "lucide-react";
 import { assistantFor, createWindowPlacement, prepareWindowDiscussion, windowWorkspace } from "@/lib/window-tools";
 import type { App } from "@/lib/model";
@@ -11,22 +11,23 @@ import { AppIcon } from "./app-icon";
 const empty: UiHostSnapshot = { bootstrap: null, catalog: [], tools: [], selected: null, expanded: false, width: 360, error: null };
 const noop = () => () => {};
 const Placement = createContext<ReturnType<typeof createWindowPlacement> | null>(null);
-export function DesktopTools({ children, revision = "" }: { children: ReactNode; revision?: string }) {
+export function DesktopTools({ children, revision = "", onNavigate }: { children: ReactNode; revision?: string; onNavigate?: (surface: UiFrameSurface) => Promise<boolean> }) {
   const host = useHostyUiHost();
   const [placement] = useState(createWindowPlacement);
   useEffect(() => { host?.setPlacementResolver(placement.resolve); return () => host?.setPlacementResolver(); }, [host, placement]);
+  useEffect(() => { host?.setMainNavigator(onNavigate); return () => host?.setMainNavigator(); }, [host, onNavigate]);
   useEffect(() => { void host?.refresh(); }, [host, revision]);
   return <Placement.Provider value={placement}>{children}</Placement.Provider>;
 }
 
-export function WindowTools({ app, apps, userId, children }: {
-  app?: App; apps: App[]; userId: string;
+export function WindowTools({ app, apps, userId, windowId, children }: {
+  app?: App; apps: App[]; userId: string; windowId: string;
   children: (toolbar: ReactNode, wrap: (content: ReactNode) => ReactNode) => ReactNode;
 }) {
   const host = useHostyUiHost(), placement = useContext(Placement);
   const state = useSyncExternalStore(host?.subscribeSnapshot ?? noop, host?.getSnapshot ?? (() => empty), () => empty);
   const appId = app?.id;
-  const workspaceId = windowWorkspace(appId ?? "");
+  const workspaceId = windowWorkspace(windowId);
   const root = useRef<HTMLDivElement>(null), mounted = useRef(false), busy = useRef(false);
   const [assistantViews, setAssistantViews] = useState<Record<string, string>>({});
   const [pending, setPending] = useState<string | null>(null), [error, setError] = useState<string | null>(null);
@@ -65,7 +66,7 @@ export function WindowTools({ app, apps, userId, children }: {
         const retained = assistantViews[key];
         const view = host.getSnapshot().tools.find(item => item.presentationId === retained && item.workspaceId === workspaceId);
         if (view?.resolved.available) { host.focusPresentation(view.presentationId); return; }
-        const discussion = await prepareWindowDiscussion(userId, app, panel, apps);
+        const discussion = await prepareWindowDiscussion(userId, app, panel, apps, windowId);
         if (!mounted.current) return;
         const result = await placement.open(host, workspaceId, discussion.target);
         if (result.status !== "opened") throw new Error(`Could not open the assistant (${result.code}). Retry to recover this discussion.`);
@@ -78,7 +79,7 @@ export function WindowTools({ app, apps, userId, children }: {
     } catch (cause) { if (mounted.current) setError(cause instanceof Error ? cause.message : "Could not open this tool."); }
     finally { busy.current = false; if (mounted.current) setPending(null); }
   }
-  const toolbar = app && catalog.length > 0 ? <div className="window-tools" role="group" aria-label={`${app.displayName} tools`}>
+  const toolbar = app ? <div className="window-tools" role="group" aria-label={`${app.displayName} tools`}>
     {catalog.map(panel => {
       const key = panelKey(panel.panel), assistant = assistantFor(panel, apps);
       const provider = apps.find(item => item.id === panel.panel.appId);

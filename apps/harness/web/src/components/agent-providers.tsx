@@ -259,7 +259,7 @@ export function AgentProviders() {
                 : (connection.reason ?? "Reconnect required")}
             </p>
           </div>
-          <ProviderUsageIndicator key={connection.id + ":" + connection.revision} connectionId={connection.id} revision={connection.revision} compact={false} />
+          <ProviderUsageIndicator key={connection.id + ":" + connection.revision} connectionId={connection.id} revision={connection.revision} />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button

@@ -1,6 +1,6 @@
 ---
 created: 2026-10-10
-updated: 2026-10-26
+updated: 2026-11-02
 summary: Shared SDK panels compose app-owned tools beside documents in Shell and standalone, with verified peers and pinned presentation targets.
 components: [packages/app-sdk, apps/core, apps/shell, apps/documents, apps/harness, apps/demo-app]
 ---
@@ -14,6 +14,19 @@ Open separately link opens an additional view of the same conversation.
 
 The separate [tool activity contract](../tool-activity/feature.md) reports server-owned state through
 Core, independently of mounted frames. Its producer uses only its app service identity.
+
+A panel can bind a contextual assistant action with `assistantKey`, referencing a key in its own
+app's `interfaces.assistant` declarations. Core validates and preserves the association in the panel
+catalog. A provider role alone does not classify its other panels as assistants. This declaration
+grants no provider permission.
+
+## Feedback Composer Tools
+
+A panel may declare `feedbackComposer: true`. Core includes this capability in its actor-scoped
+catalog and resolved surface; names and application IDs do not imply it. Hosts allow that mounted
+panel to use the SDK's `@hosty-sdk/app/feedback/client` contract within its workspace. The provider
+owns the form; source selection and intake remain verified SDK services. See
+[Feedback composer tools](../feedback-composer-tools/feature.md).
 
 ## Ownership And Identity
 
@@ -185,11 +198,13 @@ frame until a completed stop or an independently invalidated identity, destinati
 startup occurs. Reload clears the window-local tool selection; width/open preferences remain
 host-scoped. Separate opening preserves provider-persisted context, without promising transfer of
 unsent edits between windows.
-The standard header provides a minimize control (`−`) that preserves the mounted frame. Shell
-omits it in docked panels, where selecting the active rail icon minimizes the panel; its header
-retains the title and Open separately action. The SDK drawer keeps a minimize control; Shell’s drawer provides Return to document
-because the rail is inert while the drawer is open. Other host layouts can release a selected view
-through `UiHost.closePresentation`; the standard header has no close control. Shell renders its own ReUI workspace, rail and picker through the headless SDK workspace contract.
+The standard SDK header provides a minimize control (`−`) that preserves the mounted frame.
+Shell uses its own [concurrent tool columns](../concurrent-tool-panels/feature.md), with common
+headers for app tools and Feedback. Hide retains one panel, End this tool view releases it, and
+reopening an existing tool focuses it without hiding the others. `registerWorkspace({multiple:true})`
+opts a renderer into independent `visibleIds`; `selectedId` denotes focus. Omitted `multiple` retains
+the single-panel contract used by standalone and Desktop. Collapsing a workspace retains its visible
+set for restoration. Identity loss still clears presentations and visibility.
 It reuses the SDK frame transport and retains the unchanged authorization overlay.
 Retained frames receive current availability and runtime metadata, so degradation warnings appear
 and disappear with the catalog without navigating the iframe.
@@ -206,9 +221,9 @@ Legacy assistant-session notifications allocate an instance before sending their
 the outbound message names that presentation so it cannot retarget another retained draft.
 Shell chrome reads expansion from the host snapshot. Cookie or legacy localStorage preferences
 initialize the host once; an explicit session link defers default expansion until its placement.
-The top-strip toggle follows SDK changes and its first click acts on the actual host state.
+Top-strip launchers reflect visible panels and focus an existing view when reopened.
 The assistant keyboard shortcut waits for catalog metadata and selects its requested tool directly;
-it does not concurrently expand a default tool. Repeating it on the visible assistant collapses it.
+it does not concurrently expand a default tool. Repeating it on the focused assistant hides only that instance, leaving other panels open.
 Shell retires obsolete or reinstallation-mismatched pending handoff records with an explicit error.
 The next operator retry creates a new request for the current installation; it never moves the old
 discussion. Completing an older request cannot erase the replacement's pending intent.
@@ -216,10 +231,10 @@ discussion. Completing an older request cannot erase the replacement's pending i
 The standard SDK renderer docks at 900 CSS pixels of inner workspace width: a 48-pixel rail,
 12-pixel gap, default 360-pixel body, 280–800 bounds and at least 480 pixels reserved for the
 document. Shell uses its own ReUI split layout and document-dependent width constraints, described
-in [Shell Panel Resize](../shell-panel-resize/feature.md). Both renderers use a drawer up to
-440 pixels wide below the docking breakpoint. Constraints do not overwrite the preferred width.
-Arrow keys resize in SDK-defined steps for the standard renderer; Shell uses its ReUI separator
-keyboard controls and double-click reset. Rail arrow/Home/End keys move focus. The drawer makes
+in [Shell Panel Resize](../shell-panel-resize/feature.md). The standard SDK renderer uses a drawer
+up to 440 pixels wide below its docking breakpoint; Shell uses retained tabs and phone stacking.
+Constraints do not overwrite preferred widths. Arrow keys resize and double-click resets the
+Shell separators. Rail arrow/Home/End keys move focus. The drawer makes
 covered content inert, traps focus and restores it on dismissal; an unhandled Escape inside a
 cooperating child is forwarded through its verified channel. Breakpoints change CSS placement,
 not iframe identity.
@@ -273,6 +288,16 @@ owns Shell's persisted pin preferences. [Embedding restrictions](../app-embeddin
 remains On Hold: a designated standalone embedder is distinct from a full UI client, and this
 feature does not confer that deferred designation. Current CSP refusal has explicit recovery.
 
+## Document State Observations
+
+Embedded applications may include an optional `title` in `reportSurfaceState`. Hosts can observe
+ready routes and titles through `UiViewDescriptor.onSurfaceState`. The existing frame origin,
+nonce, actor and route checks still apply. Titles are trimmed and limited to 200 characters;
+control characters and oversized labels are omitted. Reported routes exclude Hosty's launch
+parameters. Main-document route changes stay within a verified route root or require a matching
+Core navigation resolution before a host receives the observation. Observations do not navigate
+or replace the document. Desktop uses them for window titles, restoration and destination reuse.
+
 ## Testing Expectations
 
 - Core HTTP/contract tests cover caller/user credentials, optional grants, actor filtering,
@@ -316,8 +341,8 @@ queued-open timeouts, channel renewal and status/open ordering. Selection tests 
   paths and fragments.
   Shortcut tests verify that a non-assistant first catalog entry is never selected, including delayed
   metadata, and that toggling the selected assistant closed creates no new placement. Shell chrome
-  tests cover delayed/refused links, cookie/legacy preference migration and the first toggle in both
-  directions against the Shell renderer connected to the real SDK host. HTTPS Shell frame tests preserve explicit standalone
+  tests cover delayed/refused links, cookie/legacy preference migration, independent visible panels
+  and focus/hide actions against the Shell renderer connected to the real SDK host. HTTPS Shell frame tests preserve explicit standalone
   recovery for HTTP workspace, settings and legacy panel surfaces while continuing to embed HTTPS.
   Frame policy tests cover older-Core speech/install grants, missing/unrelated grants and the
   precedence of explicit Core policy over fallback grants.

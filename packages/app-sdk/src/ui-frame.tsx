@@ -69,6 +69,7 @@ export function HostyAppFrame(props: HostyAppFrameProps) {
     const view = callbacks.current.view;
     return host.registerFrame(frame, surface, ready => setConnection(current => ({ ready, generation: current.generation + (ready ? 1 : 0) })),
       { viewId: defaultViewId, workspaceId: "default", chrome: { navigation: "hide", tools: { launcher: "hide" } }, ...view,
+        onSurfaceState: state => callbacks.current.view?.onSurfaceState?.(state),
         navigate: next => {
           const current = callbacks.current;
           if (current.view?.navigate) return current.view.navigate(next);

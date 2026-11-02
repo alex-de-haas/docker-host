@@ -522,6 +522,10 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
         {
             for (var index = 0; index < panelUi.Panels.Count; index++)
             {
+                if (panelUi.Panels[index].AssistantKey is { } assistantKey
+                    && (!manifest.Interfaces.TryGetValue("assistant", out var assistants)
+                        || !assistants.Any(item => item.Key == assistantKey)))
+                    errors.Add(new("app_manifest_ui_panel_assistant_invalid", "An assistant panel must reference one of this app's declared assistant interface keys.", $"$.ui.panels[{index}].assistantKey"));
                 if (panelUi.Panels[index].Id is not { } id) continue;
                 if (!PanelIdentity.IsExplicitId(id))
                     errors.Add(new("app_manifest_ui_panel_id_invalid", "Panel IDs must be lowercase kebab tokens of at most 64 characters and cannot start with legacy-.", $"$.ui.panels[{index}].id"));
@@ -3888,6 +3892,9 @@ internal sealed class RuntimeAppUiManifest
 /// </remarks>
 internal sealed class RuntimeAppUiSurfaceManifest
 {
+    public bool FeedbackComposer { get; init; }
+    // Optional binding to this app's declared assistant interface key, never inferred from its role.
+    public string? AssistantKey { get; init; }
     // Optional stable panel identity; absent in older manifests and on settings surfaces.
     public string? Id { get; init; }
     // Required for newly installed/updated panels; nullable for legacy records and settings.

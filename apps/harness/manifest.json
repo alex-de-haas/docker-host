@@ -3,7 +3,7 @@
   "id": "hosty.harness",
   "name": "Hosty Harness",
   "description": "Hosty assistant with Docker and Local production runtimes, managed Claude and Codex connections, chat and settings.",
-  "version": "0.83.0",
+  "version": "0.84.0",
   "role": "system",
   "source": {
     "type": "git",
@@ -78,7 +78,7 @@
         },
         "docker": {
           "type": "docker",
-          "image": "ghcr.io/alex-de-haas/hosty-harness:0.83.0",
+          "image": "ghcr.io/alex-de-haas/hosty-harness:0.84.0",
           "environment": {
             "HOSTY_HARNESS_RUNTIME": "docker",
             "PORT": "3400"
@@ -165,7 +165,7 @@
         },
         "docker": {
           "type": "docker",
-          "image": "ghcr.io/alex-de-haas/hosty-harness-worker:0.83.0",
+          "image": "ghcr.io/alex-de-haas/hosty-harness-worker:0.84.0",
           "environment": {
             "HOSTY_HARNESS_RUNTIME": "docker",
             "PORT": "3401"
@@ -434,33 +434,39 @@
       {
         "label": "Chats",
         "endpoint": "http",
-        "path": "/chats"
+        "path": "/chats",
+        "iconAsset": "assets/nav/message-square.svg"
       },
       {
         "label": "Workspaces",
         "endpoint": "http",
-        "path": "/development"
+        "path": "/development",
+        "iconAsset": "assets/nav/hammer.svg"
       },
       {
         "label": "Tasks",
         "endpoint": "http",
-        "path": "/tasks"
+        "path": "/tasks",
+        "iconAsset": "assets/nav/list-checks.svg"
       },
       {
         "label": "Feedback",
         "endpoint": "http",
         "path": "/feedback",
-        "feedbackReview": true
+        "feedbackReview": true,
+        "iconAsset": "assets/nav/message-square-warning.svg"
       },
       {
         "label": "Pull requests",
         "endpoint": "http",
-        "path": "/pull-requests"
+        "path": "/pull-requests",
+        "iconAsset": "assets/nav/git-pull-request.svg"
       }
     ],
     "panels": [
       {
         "id": "assistant",
+        "assistantKey": "default",
         "label": "Assistant",
         "endpoint": "http",
         "path": "/assistant",
@@ -472,6 +478,14 @@
         "endpoint": "http",
         "path": "/pull-requests-panel",
         "icon": "git-pull-request"
+      },
+      {
+        "id": "feedback",
+        "label": "Feedback",
+        "endpoint": "http",
+        "path": "/feedback-panel",
+        "icon": "message-square",
+        "feedbackComposer": true
       }
     ]
   },

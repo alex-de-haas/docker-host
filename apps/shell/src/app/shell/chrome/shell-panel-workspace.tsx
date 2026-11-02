@@ -1,25 +1,26 @@
 "use client";
 
-import { useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import { ExternalLink, PanelsTopLeft, Ellipsis, ArrowLeft, X, Pin } from "lucide-react";
-import { HostyAppFrame, useHostyUiHost, useHostyChrome, type HostyAppFrameProps } from "@hosty-sdk/app/ui/react";
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { PanelsTopLeft, Pin } from "lucide-react";
+import { HostyAppFrame, useHostyUiHost, useHostyChrome, useHostyFeedback, type HostyAppFrameProps } from "@hosty-sdk/app/ui/react";
 import type { UiHostSnapshot, UiWorkspaceRenderer } from "@hosty-sdk/app/ui/host";
 import { panelKey, type PanelTarget, type UiPanel } from "@hosty-sdk/app/ui/types";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { HostyEmptySlots, HostyLoader } from "../../../../../../shared/web/hosty-states";
 import { AppIcon } from "../app-icon";
 import { usePanelPreferences } from "./panel-preferences";
 import { useToolActivity, ToolActivityMark } from "./tool-activity";
-import { ShellWorkspaceSplit } from "./shell-workspace-split";
+import { ShellConcurrentPanels, type ShellPanelColumn } from "./shell-concurrent-panels";
+import { RIGHT_PANEL_WIDTH_PREF_KEY } from "./panel-width";
+import { ShellToolPanel } from "./shell-tool-panel";
 
 const empty: UiHostSnapshot = { bootstrap: null, catalog: [], tools: [], selected: null, expanded: false, width: 360, error: null };
 const noop = () => () => {};
+function rememberLegacyWidth(width: number) { document.cookie = `${RIGHT_PANEL_WIDTH_PREF_KEY}=${Math.round(width)}; path=/; max-age=31536000; samesite=lax`; }
 // HostyAppFrame supplies transport and recovery content; Shell supplies its presentation styles.
 const frameStyles = `
 [data-shell-panel-frame]{position:relative}
@@ -41,21 +42,34 @@ type Props = Pick<HostyAppFrameProps, "onAskAssistant" | "onAuthRequired"> & {
 export function ShellPanelWorkspace({ children, initialWidth = 360, pageMinimum = 560, onExpandedChange, onStartApp, onAskAssistant, onAuthRequired, outbound }: Props) {
   const host = useHostyUiHost();
   const chrome = useHostyChrome();
+  const { state: feedbackState } = useHostyFeedback();
   const state = useSyncExternalStore(host?.subscribeSnapshot ?? noop, host?.getSnapshot ?? (() => empty), () => empty);
   const toolsEnabled = chrome.tools.enabled && !state.error?.code.startsWith("unsupported");
   const workspace = state.workspaces?.find(w => w.workspaceId === "default");
   const tools = state.tools.filter(t => t.workspaceId === "default");
   const tool = tools.find(t => t.presentationId === workspace?.selectedId);
   const expanded = !!workspace?.expanded && !!tool;
-  const selected = state.catalog.find(p => panelKey(p.panel) === tool?.key);
   const [picker, setPicker] = useState(false), [error, setError] = useState<string | null>(null);
-  const [narrow, setNarrow] = useState(false);
+  const [focusedId, setFocusedId] = useState<string | null>(null);
+  const [widths, setWidths] = useState<Record<string, number>>({});
+  const [savedWidths, setSavedWidths] = useState<Record<string, number>>({});
+  const widthKey = state.bootstrap ? `hosty.shell.tool-widths.v1:${state.bootstrap.coreOrigin}:${state.bootstrap.userId}` : null;
+  useEffect(() => {
+    let values: Record<string, number> = {};
+    try {
+      const stored: unknown = widthKey ? JSON.parse(localStorage.getItem(widthKey) ?? "{}") : {};
+      if (stored && typeof stored === "object" && !Array.isArray(stored)) values = Object.fromEntries(Object.entries(stored).filter(([, value]) => typeof value === "number" && Number.isFinite(value) && value >= 280 && value <= 800));
+    } catch { /* Browser storage is optional. */ }
+    // Restore external browser preferences when the authenticated owner changes.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSavedWidths(values); setWidths({});
+  }, [widthKey]);
   const [query, setQuery] = useState("");
   const [focusRequest, setFocusRequest] = useState<{ id: string } | null>(null);
-  const root = useRef<HTMLDivElement>(null), body = useRef<HTMLElement>(null), dismiss = useRef<HTMLButtonElement>(null);
-  const frames = useRef(new Map<string, HTMLDivElement>());
+  const root = useRef<HTMLDivElement>(null);
   const opener = useRef<HTMLElement | null>(null);
-  const bodyId = useId();
+  const frames = useRef(new Map<string, HTMLDivElement>());
+
   const panelPreferences = usePanelPreferences();
   const latestPins = useRef(panelPreferences);
   const restorePinned = useRef<(() => void) | null>(null);
@@ -75,7 +89,7 @@ export function ShellPanelWorkspace({ children, initialWidth = 360, pageMinimum 
         // The mounted Shell slot owns the retained frame tree populated by the host snapshot.
         return !signal.aborted && root.current?.isConnected ? "accepted" : "unavailable";
       },
-      focus(id) { setFocusRequest({ id }); },
+      focus(id) { setFocusRequest({ id }); setFocusedId(id); },
       collapse() { setPicker(false); },
       release() { /* React removes frames when the host removes their presentation. */ },
       async showToolPicker(signal) {
@@ -83,7 +97,7 @@ export function ShellPanelWorkspace({ children, initialWidth = 360, pageMinimum 
         setPicker(true); return "accepted";
       },
     };
-    const unregister = host.registerWorkspace({ workspaceId: "default", renderer });
+    const unregister = host.registerWorkspace({ workspaceId: "default", renderer, multiple: true });
     host.setWidth(initialWidth);
     // Restore an expanded preference only once a catalog with an available tool arrives.
     let live = true, opening = false;
@@ -121,24 +135,12 @@ export function ShellPanelWorkspace({ children, initialWidth = 360, pageMinimum 
     }
   }, [workspaceExpanded]);
   useEffect(() => { if (picker) window.dispatchEvent(new CustomEvent("hosty:ui:modal", { detail: "picker:default" })); }, [picker]);
+  const anyOpen = expanded;
   useLayoutEffect(() => {
-    const element = root.current; if (!element) return;
-    const read = () => setNarrow((element.getBoundingClientRect().width || window.innerWidth) < pageMinimum + 320 + 24);
-    read(); const observer = new ResizeObserver(read); observer.observe(element); return () => observer.disconnect();
-  }, [pageMinimum]);
-  useLayoutEffect(() => {
-    if (!expanded) return;
+    if (!anyOpen) return;
     opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     return () => { if (opener.current?.isConnected) opener.current.focus(); };
-  }, [expanded]);
-  useEffect(() => {
-    if (!narrow || !expanded) return;
-    window.dispatchEvent(new CustomEvent("hosty:ui:modal", { detail: "tools:default" }));
-    dismiss.current?.focus();
-    const close = (event: Event) => { if ((event as CustomEvent).detail === "default") host?.collapseWorkspace("default"); };
-    window.addEventListener("hosty:ui:drawer-dismiss", close);
-    return () => window.removeEventListener("hosty:ui:drawer-dismiss", close);
-  }, [host, narrow, expanded]);
+  }, [anyOpen]);
   const selectedPresentationId = tool?.presentationId;
   useEffect(() => {
     // Host acceptance can precede React's frame commit. Retry after mounting and readiness,
@@ -147,28 +149,13 @@ export function ShellPanelWorkspace({ children, initialWidth = 360, pageMinimum 
       frames.current.get(selectedPresentationId)?.querySelector<HTMLIFrameElement>("iframe")?.focus();
     }
   }, [expanded, selectedPresentationId, tool?.readiness, focusRequest]);
-  useEffect(() => {
-    const modal = (event: Event) => {
-      const kind = (event as CustomEvent).detail;
-      if (kind !== "picker:default") setPicker(false);
-      if (narrow && kind !== "tools:default" && kind !== "picker:default") host?.collapseWorkspace("default");
-    };
-    window.addEventListener("hosty:ui:modal", modal); return () => window.removeEventListener("hosty:ui:modal", modal);
-  }, [host, narrow]);
 
   async function select(panel: UiPanel) {
     if (!host) return;
-    if (!picker && expanded && tool?.key === panelKey(panel.panel)) { host.collapseWorkspace("default"); return; }
     const result = await host.selectPanel(panel.panel);
     if (result.status === "opened") { setError(null); setPicker(false); }
     else setError(panel.available ? "Could not open this tool. Try again." : `${panel.appName} is ${panel.state}.`);
   }
-  const unavailable = !!tool && !tool.resolved.surface;
-  const notice = unavailable ? "This tool is no longer available in this view. Its access, configuration or runtime may have changed. Choose a tool to reopen it with current settings."
-    : tool?.readiness === "auth-required" ? "Check access in the tool below, then retry opening the discussion."
-    : tool?.readiness === "unreported" ? "This tool has not confirmed that it loaded. If it stays blank, open it separately."
-    : tool?.resolved.state === "degraded" ? "This app’s health check is failing. Its page may still work." : null;
-  const siblings = tools.filter(t => t.key === tool?.key);
   const search = query.trim().toLowerCase();
   const activity = useToolActivity();
   const matchingTools = state.catalog.filter(item => `${item.label} ${item.appName}`.toLowerCase().includes(search));
@@ -178,60 +165,51 @@ export function ShellPanelWorkspace({ children, initialWidth = 360, pageMinimum 
     group.items.push(item); toolGroups.set(item.panel.appId, group);
   }
 
-  const panel = <div className="flex h-full min-h-0 min-w-0">
-    {narrow && expanded && <button aria-label="Return to document" className="fixed inset-0 z-30 bg-black/40" onClick={() => host?.collapseWorkspace("default")} />}
-    <aside id={bodyId} ref={body} hidden={!expanded} inert={!expanded} aria-label={selected?.label ?? "Tool"}
-      role={narrow ? "dialog" : "complementary"} aria-modal={narrow && expanded || undefined}
-      className={cn("min-h-0 min-w-0 flex-1 flex-col bg-background", !expanded ? "hidden" : "flex",
-        narrow && "shell-tool-sheet fixed inset-y-3 right-3 z-40 w-[min(440px,calc(100vw-24px))] rounded-xl border shadow-lg")}
-      onKeyDown={event => {
-        // Portaled menus own their keyboard events even though React bubbles them through the sheet.
-        if (!narrow || event.defaultPrevented || !event.currentTarget.contains(event.target as Node)) return;
-        if (event.key === "Escape") { event.preventDefault(); host?.collapseWorkspace("default"); }
-        if (event.key === "Tab") {
-          const elements = Array.from(body.current?.querySelectorAll<HTMLElement>('button,a[href],select,iframe') ?? []).filter(e => !e.closest("[hidden]") && !(e as HTMLButtonElement).disabled);
-          const first = elements[0], last = elements.at(-1);
-          if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
-          else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
-        }
-      }}>
-      <header className="flex h-11 shrink-0 items-center gap-2 border-b px-3">
-        {narrow && <Button ref={dismiss} variant="ghost" size="icon" aria-label="Return to document" onClick={() => host?.collapseWorkspace("default")}><ArrowLeft /></Button>}
-        <span className="min-w-0 flex-1 truncate text-sm font-medium">{selected?.label ?? "Tool"}</span>
-        <Button variant="ghost" size="sm" onClick={() => { setQuery(""); setPicker(true); }}>All tools</Button>
-        {tool?.resolved.standaloneHref && <Button variant="ghost" size="icon" asChild><a href={tool.resolved.standaloneHref} target="_blank" rel="noopener noreferrer" aria-label="Open separately" title="Open separately"><ExternalLink /></a></Button>}
-        <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label="Tool actions"><Ellipsis /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem disabled={!tool} onSelect={() => { if (tool) host?.closePresentation(tool.presentationId); }}>End this tool view</DropdownMenuItem></DropdownMenuContent></DropdownMenu>
-        <Button ref={narrow ? undefined : dismiss} variant="ghost" size="icon" aria-label="Hide tool" title="Hide tool" onClick={() => host?.collapseWorkspace("default")}><X /></Button>
-      </header>
-      {notice && <Alert className="m-2 w-auto" role="status"><AlertDescription>{notice}
-        {unavailable && <Button variant="outline" size="sm" aria-label="Choose another tool" onClick={() => { setPicker(true); void host?.refresh(); }}>Choose tool</Button>}
-      </AlertDescription></Alert>}
-      {siblings.length > 1 && <label className="flex items-center gap-2 border-b p-2 text-sm">Open views
-        <Select value={tool?.presentationId ?? ""} onValueChange={value => host?.focusPresentation(value)}>
-          <SelectTrigger aria-label="Tool instance" size="sm" className="min-w-0"><SelectValue /></SelectTrigger>
-          <SelectContent><SelectGroup>
-            {siblings.map((item, index) => <SelectItem key={item.presentationId} value={item.presentationId}>{selected?.label} {index + 1}</SelectItem>)}
-          </SelectGroup></SelectContent>
-        </Select></label>}
-      {tools.map(item => <div data-shell-panel-frame key={item.presentationId} ref={element => {
-        if (element) { frames.current.set(item.presentationId, element); }
-        else frames.current.delete(item.presentationId);
-      }} hidden={!expanded || item !== tool} inert={!expanded || item !== tool} className="min-h-0 flex-1 overflow-hidden">
-        {item.resolved.surface && <HostyAppFrame surface={{ ...item.resolved.surface, panelId: item.target.panel.panelId }}
-          view={{ viewId: `tool-${item.presentationId}`, workspaceId: "default", presentationId: item.presentationId, chrome: { navigation: "hide", tools: { launcher: "hide" } } }}
-          title={state.catalog.find(p => panelKey(p.panel) === item.key)?.label ?? "Tool"} standaloneHref={item.resolved.standaloneHref}
-          onAskAssistant={onAskAssistant} onAuthRequired={onAuthRequired} onAttention={count => host?.setAttention(item.presentationId, count)}
-          outbound={outbound && panelKey(outbound.target.panel) === item.key && (outbound.presentationId ? outbound.presentationId === item.presentationId : item === tool && outbound.target.route === item.currentRoute) ? outbound : null} />}
-      </div>)}
-      {narrow && <span tabIndex={0} className="sr-only" onFocus={() => dismiss.current?.focus()} />}
-    </aside>
-
-  </div>;
-  return <div ref={root} className="h-full min-h-0 min-w-0" data-shell-panel-layout={narrow ? "drawer" : "dock"}>
+  const allTools = () => { setQuery(""); setPicker(true); };
+  const visibleIds = workspace?.expanded ? workspace.visibleIds ?? (tool ? [tool.presentationId] : []) : [];
+  const columns: ShellPanelColumn[] = tools.map(item => {
+    const label = state.catalog.find(p => panelKey(p.panel) === item.key)?.label ?? "Tool";
+    const unavailable = !item.resolved.surface;
+    const notice = unavailable ? "This tool is no longer available in this view. Choose a tool to reopen it with current settings."
+      : item.readiness === "auth-required" ? "Check access in the tool below, then retry opening the discussion."
+      : item.readiness === "unreported" ? "This tool has not confirmed that it loaded. If it stays blank, open it separately."
+      : item.resolved.state === "degraded" ? "This app’s health check is failing. Its page may still work." : null;
+    const siblings = tools.filter(candidate => candidate.key === item.key);
+    const tabLabel = siblings.length > 1 ? `${label} ${siblings.indexOf(item) + 1}` : label;
+    return { id: item.presentationId, label: tabLabel, open: visibleIds.includes(item.presentationId), width: widths[item.presentationId] ?? savedWidths[item.key] ?? initialWidth,
+      content: <ShellToolPanel title={label} onHide={() => host?.hidePresentation(item.presentationId)} onEnd={() => host?.closePresentation(item.presentationId)}
+        onAllTools={allTools} standaloneHref={item.resolved.standaloneHref}>
+        {notice && <Alert className="m-2 w-auto" role="status"><AlertDescription>{notice}
+          {unavailable && <Button variant="outline" size="sm" aria-label="Choose another tool" onClick={() => {allTools(); void host?.refresh();}}>Choose tool</Button>}
+        </AlertDescription></Alert>}
+        <div data-shell-panel-frame ref={element => {
+          if (element) frames.current.set(item.presentationId, element); else frames.current.delete(item.presentationId);
+        }} className="min-h-0 flex-1 overflow-hidden">
+          {item.resolved.surface && <HostyAppFrame surface={{ ...item.resolved.surface, panelId: item.target.panel.panelId }}
+            view={{ viewId: `tool-${item.presentationId}`, workspaceId: "default", presentationId: item.presentationId, chrome: { navigation: "hide", tools: { launcher: "hide" } } }}
+            title={label} standaloneHref={item.resolved.standaloneHref} onAskAssistant={onAskAssistant} onAuthRequired={onAuthRequired}
+            onAttention={count => host?.setAttention(item.presentationId, count)}
+            outbound={outbound && panelKey(outbound.target.panel) === item.key && (outbound.presentationId ? outbound.presentationId === item.presentationId : item === tool && outbound.target.route === item.currentRoute) ? outbound : null} />}
+        </div>
+      </ShellToolPanel> };
+  });
+  function rememberWidth(id: string, width: number) {
+    setWidths(current => ({ ...current, [id]: width }));
+    const key = tools.find(item => item.presentationId === id)?.key;
+    if (key) {
+      const next = { ...savedWidths, [key]: width }; setSavedWidths(next);
+      try { if (widthKey) localStorage.setItem(widthKey, JSON.stringify(next)); } catch { /* Resizing works without storage. */ }
+    }
+    host?.setWidth(width);
+    rememberLegacyWidth(width);
+  }
+  return <div ref={root} className="h-full min-h-0 min-w-0">
     <style>{frameStyles}</style>
-    <ShellWorkspaceSplit panel={panel} showPanel={expanded && !narrow} keepPanelVisible={expanded && narrow} railSize={0} expanded={expanded && !narrow} initialPanelWidth={initialWidth} pageMinimum={pageMinimum} onWidthChange={width => host?.setWidth(width)}>
-      <div className="h-full min-h-0" inert={narrow && expanded}>{children}</div>
-    </ShellWorkspaceSplit>
+    <ShellConcurrentPanels panels={columns} focusedId={focusedId} pageMinimum={pageMinimum} captureActive={feedbackState.picking}
+      onFocus={id => { host?.focusPresentation(id); setFocusRequest(null); setFocusedId(id); }}
+      onResize={rememberWidth}>
+      {children}
+    </ShellConcurrentPanels>
     <Dialog open={picker && toolsEnabled} onOpenChange={open => { setPicker(open); if (open) window.dispatchEvent(new CustomEvent("hosty:ui:modal", { detail: "picker:default" })); }}>
       <DialogContent><DialogHeader><DialogTitle>All tools</DialogTitle><DialogDescription>Open a tool and keep its current conversation or draft.</DialogDescription></DialogHeader>
         {(error || state.error) && <Alert role="status"><AlertDescription>{error ?? state.error?.message}</AlertDescription></Alert>}
@@ -254,7 +232,7 @@ export function ShellPanelWorkspace({ children, initialWidth = 360, pageMinimum 
           {[...toolGroups].map(([appId, group]) => <section key={appId} className="space-y-2" aria-label={`${group.appName} tools`}>
           <h3 className="text-xs font-medium text-muted-foreground">{group.appName}</h3>
           <div className="grid grid-cols-2 gap-2 min-[400px]:grid-cols-4">{group.items.map(item => <div key={panelKey(item.panel)} className="flex min-w-0 flex-col gap-2">
-            <Button variant="outline" aria-pressed={tool?.key === panelKey(item.panel)} className={cn("h-auto w-full min-w-0 flex-1 flex-col justify-start px-2 py-3", tool?.key === panelKey(item.panel) && "border-brand-strong bg-brand-soft")} onClick={() => void select(item)}><AppIcon src={null} name={item.icon} fallback={PanelsTopLeft} className="size-4" /><span className="flex min-w-0 flex-col items-start"><span className="w-full truncate">{item.label}</span><span className="w-full truncate text-xs text-muted-foreground">{item.appName}{!item.available && ` · ${item.state}`}</span><ToolActivityMark activity={activity.read(item)} /></span></Button>
+            <Button variant="outline" aria-pressed={tools.some(open => open.key === panelKey(item.panel) && visibleIds.includes(open.presentationId))} className={cn("h-auto w-full min-w-0 flex-1 flex-col justify-start px-2 py-3", tool?.key === panelKey(item.panel) && "border-brand-strong bg-brand-soft")} onClick={() => void select(item)}><AppIcon src={null} name={item.icon} fallback={PanelsTopLeft} className="size-4" /><span className="flex min-w-0 flex-col items-start"><span className="w-full truncate">{item.label}</span><span className="w-full truncate text-xs text-muted-foreground">{item.appName}{!item.available && ` · ${item.state}`}</span><ToolActivityMark activity={activity.read(item)} /></span></Button>
             <Button variant="ghost" size="sm" role="checkbox" aria-checked={panelPreferences.isPinned(item)} disabled={!panelPreferences.ready}
               aria-label={`Pin ${item.appName} — ${item.label} to top bar`} onClick={() => panelPreferences.setPinned(item, !panelPreferences.isPinned(item))}>
               <Pin className={cn("size-4", panelPreferences.isPinned(item) && "fill-current")} />{panelPreferences.isPinned(item) ? "Pinned" : "Pin"}

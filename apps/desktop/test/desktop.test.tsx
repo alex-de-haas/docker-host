@@ -6,7 +6,7 @@ const api = vi.hoisted(() => ({ readDesktop: vi.fn(), lifecycle: vi.fn() }));
 vi.mock("../src/lib/api", () => api);
 vi.mock("../src/lib/core-events", () => ({ subscribeToCoreEvents: () => () => {}, CoreEventNames: {} }));
 vi.mock("../src/lib/wallpaper", () => ({ readWallpaper: async () => null }));
-vi.mock("../src/components/app-content", () => ({ AppContent: ({ app }: { app: App }) => <iframe title={app?.displayName || "Unavailable"} /> }));
+vi.mock("../src/components/app-content", () => ({ AppContent: ({ app, navigationCompact }: { app: App; navigationCompact?: boolean }) => <iframe title={app?.displayName || "Unavailable"} data-navigation-compact={navigationCompact} /> }));
 import { Desktop } from "../src/components/desktop";
 const notes: App = { id: "notes", displayName: "Notes", runtimeState: "running", entryEndpoint: "web", embeddedUrl: "https://notes.example/" };
 const stopped: App = { ...notes, id: "music", displayName: "Music", runtimeState: "stopped" };
@@ -40,7 +40,7 @@ it("opens one waiting window and coalesces repeated starts", async () => {
   let resolve!: () => void; api.lifecycle.mockReturnValue(new Promise<void>(done => { resolve = done; }));
   await render(); await click("Music — click to start"); await click("Music — click to start");
   expect(api.lifecycle).toHaveBeenCalledTimes(1); expect(api.lifecycle).toHaveBeenCalledWith("music", "start");
-  expect(container.querySelectorAll('[data-window-id="music"]')).toHaveLength(1);
+  expect(container.querySelectorAll('iframe[title="Music"]')).toHaveLength(1);
   await act(async () => resolve());
 });
 it("hides stopped apps and lifecycle actions for an ordinary user", async () => {
@@ -56,4 +56,37 @@ it("requires the explicit shared-runtime action while cancel keeps the app runni
   await openDockMenu("Notes");
   await act(async () => [...container.querySelectorAll<HTMLButtonElement>('button[role="menuitem"]')].find(button => button.textContent === "Stop for everyone…")!.click());
   await click("Stop for everyone"); expect(api.lifecycle).toHaveBeenCalledWith("notes", "stop");
+});
+
+it("compacts navigation per window without replacing the document and restores the user's choice", async () => {
+  api.readDesktop.mockResolvedValue({ user, apps: [{ ...notes, navigation: [{ label: "Notes", path: "/" }, { label: "Archive", path: "/archive" }] }, stopped] });
+  await render(); await click("Notes");
+  const frame = container.querySelector('iframe[title="Notes"]');
+  await click("Compact Notes navigation");
+  expect(container.querySelector('iframe[title="Notes"]')).toBe(frame);
+  expect(frame?.getAttribute("data-navigation-compact")).toBe("true");
+  await click("Music — click to start");
+  expect(container.querySelector('[aria-label="Compact Music navigation"]')).toBeNull();
+  await act(async () => root.unmount()); root = createRoot(container); await render();
+  expect(container.querySelector('iframe[title="Notes"]')?.getAttribute("data-navigation-compact")).toBe("true");
+  await click("Expand Notes navigation");
+  expect(container.querySelector('iframe[title="Notes"]')?.getAttribute("data-navigation-compact")).toBe("false");
+});
+
+it("opens independent instances, lists them in Dock, and preserves a sibling when one closes", async () => {
+  await render(); await click("Notes");
+  const original = container.querySelector('iframe[title="Notes"]');
+  await openDockMenu("Notes"); await click("New window");
+  const frames = container.querySelectorAll('iframe[title="Notes"]'); expect(frames).toHaveLength(2);
+  const ids = [...frames].map(frame => frame.closest('[data-window-id]')!.getAttribute('data-window-id'));
+  expect(new Set(ids).size).toBe(2);
+  await openDockMenu("Notes");
+  expect(container.querySelector('[role="menu"]')?.textContent).toContain("Notes (1)");
+  await click("Notes (1)");
+  expect(original?.closest('section')?.classList.contains('active')).toBe(true);
+  await act(async () => (original!.closest('section')!.querySelector('[aria-label="Close Notes"]') as HTMLButtonElement).click());
+  expect(container.querySelectorAll('iframe[title="Notes"]')).toHaveLength(1);
+  expect(api.lifecycle).not.toHaveBeenCalled();
+  await act(async () => root.unmount()); root = createRoot(container); await render();
+  expect(container.querySelectorAll('iframe[title="Notes"]')).toHaveLength(1);
 });

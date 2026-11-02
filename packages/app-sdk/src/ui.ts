@@ -13,7 +13,7 @@ export interface UiClient {
   openSurface(target: PanelTarget, options: PresentationOptions): Promise<PresentationResult>;
   getPresentation(requestId: string, options?: { signal?: AbortSignal }): Promise<PresentationResult>;
   subscribe(listener: (event: UiEvent) => void): () => void;
-  reportSurfaceState(state: { route: string; state: "ready" | "blocked"; code?: string }): void;
+  reportSurfaceState(state: { route: string; state: "ready" | "blocked"; code?: string; title?: string }): void;
 }
 
 let active: UiClient | null = null;

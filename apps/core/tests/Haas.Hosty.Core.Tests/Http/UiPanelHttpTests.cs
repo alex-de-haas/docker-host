@@ -8,6 +8,38 @@ namespace Haas.Hosty.Core.Tests.Http;
 public sealed partial class UiPanelHttpTests
 {
     [Fact]
+    public async Task AssistantBindingIsProjectedPerPanelForAnUnrelatedApp()
+    {
+        await using var host = await Setup();
+        var apps = host.Services.GetRequiredService<AppRegistryStore>();
+        await apps.UpdateAppAsync("target", a => a with { Ui = a.Ui! with { Panels = [
+            new("/conversation", "web", "Discussion", "message-circle", "tool", AssistantKey: "conversation"),
+            new("/reviews", "web", "Reviews", "git-pull-request", "reviews") ] } });
+        using var client = await Client(host);
+        var catalog = (await client.GetFromJsonAsync<UiPanelCatalog>("/api/internal/apps/consumer/ui/panels"))!;
+        Assert.Equal("conversation", catalog.Panels.Single(p => p.Panel.PanelId == "tool").AssistantKey);
+        Assert.Null(catalog.Panels.Single(p => p.Panel.PanelId == "reviews").AssistantKey);
+    }
+
+    [Fact]
+    public async Task ComposerCapabilityFollowsDeclaredPanelAndResolvedInstallation()
+    {
+        await using var host = await Setup();
+        var apps = host.Services.GetRequiredService<AppRegistryStore>();
+        await apps.UpdateAppAsync("target", a => a with { Ui = a.Ui! with { Panels = [
+            new("/reports", "web", "Reports", "message-square", "reports", FeedbackComposer: true),
+            new("/normal", "web", "Normal", "star", "normal") ] } });
+        using var client = await Client(host);
+        var catalog = (await client.GetFromJsonAsync<UiPanelCatalog>("/api/internal/apps/consumer/ui/panels"))!;
+        var composer = Assert.Single(catalog.Panels, p => p.FeedbackComposer);
+        Assert.Equal("target", composer.Panel.AppId);
+        using var response = await client.PostAsJsonAsync("/api/internal/apps/consumer/ui/panels/resolve", new UiPanelTarget(composer.Panel));
+        response.EnsureSuccessStatusCode();
+        Assert.True((await response.Content.ReadFromJsonAsync<UiResolvedPanel>())!.Surface!.FeedbackComposer);
+        Assert.False(catalog.Panels.Single(p => p.Panel.PanelId == "normal").FeedbackComposer);
+    }
+
+    [Fact]
     public async Task OwnNavigationNeedsNoCatalogGrant_AndKeepsStableKeysAcrossLabels()
     {
         await using var host = await Setup();

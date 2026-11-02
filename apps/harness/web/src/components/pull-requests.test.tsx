@@ -45,6 +45,7 @@ it("renders an external PR description without workspace, routine or decision ca
   window.history.replaceState({}, "", `/pull-requests?repo=${repositoryId}&pr=12`);
   await act(async () => root.render(<PullRequests />));
   expect(container.textContent).toContain("Independent PR description");
+  expect(mock.ui.reportSurfaceState).toHaveBeenCalledWith(expect.objectContaining({ title: "PR #12", state: "ready" }));
   expect(container.querySelector('[aria-label="Pull request details"] details summary')?.textContent).toBe("Release notes");
   expect(container.textContent).not.toContain("<summary>");
   expect(container.textContent).not.toMatch(/Start analysis|Approve merge/);

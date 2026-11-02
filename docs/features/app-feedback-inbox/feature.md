@@ -1,8 +1,8 @@
 ---
 created: 2026-10-30
-updated: 2026-10-30
-summary: Core-owned annotated feedback with local SDK drafts, reviewed Harness chat delivery, exact-prompt outcomes and workspace-aware retention.
-components: [apps/core, apps/harness, packages/app-sdk]
+updated: 2026-11-02
+summary: Core-owned annotated feedback with app-owned local drafts, reviewed Harness chat delivery, exact-prompt outcomes and workspace-aware retention.
+components: [apps/core, apps/harness, apps/shell, apps/desktop, packages/app-sdk]
 ---
 
 # App Feedback Inbox
@@ -14,26 +14,44 @@ complete reports can be sent together to one chat. Feedback and tasks are indepe
 
 ## Capture And Local Drafts
 
-The SDK's authenticated `HostyUiRoot` exposes Annotate when Core supports feedback. Select element
-highlights the hovered element and suppresses activation of the selected control. Select region
-records a viewport rectangle; Page comment supplies a text fallback. The overview panel collapses
-while picking so it does not block page controls, and moves away from a selected right-edge target. Element context contains a
-bounded label, selector, rectangle and viewport, without input values or a DOM dump. Each annotation
-records its route and capture time. Selectors remain contextual hints when the original page changes.
+The [feedback composer tool](../feedback-composer-tools/feature.md) owns the form and one local
+draft per Core/app/installation/account. Harness declares the first composer. It appears in the
+ordinary tool catalog, supports Shell pinning and uses the same concurrent columns as other tools.
+Desktop uses ordinary window panels and a menu-bar shortcut for its root workspace. Standalone
+apps use the SDK tool system. Without a declared provider, the SDK does not render a feedback form.
 
-The [selected capture sketch](annotation-capture-concept.png) records the original interaction reference.
-The comment editor opens beside the selected element or region. Done saves that annotation locally.
-Edit in the side panel edits the same annotation, including its stable identity and evidence. The
-panel lists related annotations, supports removal and an overall explanation, and submits the whole
-report. Saving, editing, capturing and submitting feedback do not start an agent.
+The SDK retains source selection, bounded evidence, screen capture helpers and source-authenticated
+intake. Hosts broker the `feedback.capture.v2` channel, bound to origin, actor, installation, window,
+generation and nonce. Only a mounted declared composer may request source operations. Source
+navigation, authentication loss and provider closure invalidate requests. Source apps need the
+compatible SDK; older capture UIs are not silently treated as composer providers.
 
-Screen capture uses `getDisplayMedia` with the browser-owned chooser and permission. The current
-application tab is offered as a source. SDK capture chrome is hidden without changing page layout;
-only a still image is retained, and media tracks stop after success, failure or cancellation. A modal
-preview requires explicit inclusion and supports dragging a crop or entering crop percentages.
-Manual cropping avoids assuming that a selected window, zoom level or embedded frame maps directly
-to an element's viewport coordinates. Unsupported or denied capture retains text/element input.
-Browser and webview support determines availability; no DOM rasterization fallback is used.
+Select element highlights the hovered element and suppresses activation of the selected control.
+Hover clears when the pointer leaves its document, enters another iframe or moves onto capture
+controls; returning resumes selection. Leaving the document also abandons an unfinished region.
+In Shell, selection includes its own chrome, the main embedded app and visible tool documents.
+Desktop window capture is scoped to that window; its root workspace also permits Desktop feedback.
+The selected document determines application identity. Provider identity never substitutes for it.
+Each report belongs to one app; switching applications preserves their separate saved drafts.
+
+Select region records a viewport rectangle; Page comment records page context without a rectangle.
+Neither action automatically takes a screenshot. The provider form stays visible during selection.
+Selection adds an editable comment to that form; Done completes editing after local persistence.
+Feedback's own form can be annotated, attributed to the provider app. Only the temporary Cancel
+selection control is excluded. Element context includes a bounded label, selector, rectangle and
+viewport, never input values or a DOM dump. Each annotation records its route and capture time.
+Selectors are contextual hints when the original page changes. Reports support related annotations,
+removal, optional screenshots and an overall explanation. These actions never start an agent.
+
+Screen capture starts from the provider's button, preserving browser user activation and the
+`getDisplayMedia` chooser. The SDK captures one still and stops media tracks on success, failure or
+cancellation. The provider owns preview, explicit inclusion and manual percentage/drag cropping.
+When Region Capture is available, the source creates a browser `CropTarget` for its document and
+passes it through the verified channel. The capturing track asks the browser to crop to that source.
+Unsupported/rejected cropping retains the full selected capture with a manual-crop notice; image
+inclusion still requires approval. CropTarget covers visible geometry, including occlusion, and
+never promises DOM-subtree isolation. No viewport-coordinate guess or DOM rasterization substitutes
+for browser capture. Denied or unavailable capture leaves text feedback usable.
 
 Dictation uses an already granted `providers.speech-to-text` capability and a discovered provider.
 Multiple providers require an explicit choice. Recording is limited to one minute, stops microphone
@@ -41,7 +59,7 @@ tracks, converts audio to bounded WAV and appends returned text to the current c
 ignores late microphone grants and transcription replies. Without speech permission/provider/browser
 support, typing remains available. Dictation does not submit the report.
 
-IndexedDB stores the entire unsent draft, including image blobs. Keys include Core identity, app ID,
+The composer application’s IndexedDB stores the entire unsent draft, including image blobs. Keys include Core identity, app ID,
 installation identity and user ID. Writes are serialized and check both the saved request identity and revision in one transaction;
 an older tab cannot overwrite or discard a newer committed draft. Saved locally appears only after transaction
 commit. Storage failure preserves current in-memory text and displays Not saved locally; it does not
@@ -100,7 +118,9 @@ No private chat or source authority is created by a feedback reference.
 ## Administrator Review And Chat Delivery
 
 The global page filters by application, processing status and unassigned binding. Workspace details
-show that workspace's reports. Administrators inspect complete annotations/images, mark reports
+show all of that workspace's reports without filters; the section is hidden when the workspace has
+no reports. Loading failures remain visible with a Refresh action. Administrators inspect complete
+annotations/images, mark reports
 Dismissed or Duplicate, restore them and reassign eligible reports. Attempts from other clients/installations remain read-only history; only this client installation
 reconciles or subscribes to its own attempts. Lists refresh on entry, explicit
 Refresh, focus/visibility return and workspace chat activity changes. An open send review retains its
@@ -113,7 +133,7 @@ review defaults to the displayed chat. Global review defaults to a new chat usin
 normal source preparation establishes its development workspace. Existing workspace/chat selection
 and a new chat in an existing workspace are supported. Cancellation starts no agent work.
 
-After successful administrator capture, the SDK offers direct review links. Eligible clients declare
+After successful administrator capture, the composer offers direct review links. Eligible clients declare
 `ui.navigation[].feedbackReview: true` and hold `apps.feedback.manage`; Core resolves their declared
 endpoint/path through its normal launch contract with a `feedback` query parameter. Harness opens
 that report's send review. Core contains no Harness route or first-party app-ID selection rule.
@@ -168,7 +188,11 @@ without a workspace remain in the global inbox. Retention is independent of PR m
 - Core HTTP tests use an independently named app and ordinary/admin identities, checking intake
   without management permission, denied reporter reads and declaration-based direct review.
 - SDK tests cover fixed adapter routes, same-origin enforcement, payload limits, capture permission
-  failure/late cancellation, microphone/transcription cancellation and shared iframe policies.
+  failure/late cancellation, browser-verified crop/fallback, microphone/transcription cancellation and shared iframe policies.
+- Feedback coordination tests cover source identity, stale frame messages, visible-frame selection,
+  Desktop workspace scoping, cancellation, retained hidden tool drafts and bounded payloads. Picker
+  tests and browser acceptance cover hover handoff between the host and iframe documents, leaving
+  capture controls, window blur and abandoning an unfinished region at a document boundary.
 - Harness tests cover exact-message admission, lost replies, busy/foreign-chat refusal, scoped agent
   tools, unrelated terminal events, unprocessed-only bulk review and frozen UI retries.
 - `npm run test:integration -- feedback` builds Core/CLI and uses the existing parent-managed child
@@ -180,6 +204,10 @@ without a workspace remain in the global inbox. Retention is independent of PR m
   anchored/sidebar editing, real browser-approved capture, preview, multi-annotation reload,
   IndexedDB quota/stale-tab faults, draft scope isolation and lost-response retry. Test-only chooser
   flags select the isolated test tab; production capture still requires the browser chooser.
+  `HOSTY_FEEDBACK_BROWSER_ONLY=1` selects intake/browser verification without scripted-agent dispatch.
+  `HOSTY_FEEDBACK_DESKTOP=1` includes a separately installed Desktop. For script iteration,
+  `HOSTY_FEEDBACK_RETRY_BROWSER=1` retains the same child after a browser failure until the printed
+  retry/stop marker is created (twenty-minute limit). It does not bypass the eventual owner Finish.
 - Platform acceptance records browser/native runtime coverage explicitly; native webviews and other
   operating systems require their own acceptance and do not inherit a macOS Chrome result.
 
@@ -196,3 +224,29 @@ passed 711 and 1,930 tests respectively. SDK/Core/Harness builds, web/backend ty
 documentation/link validation, version consistency and 16 launcher tests passed. The
 web lint retains one unrelated existing warning in `tasks.tsx`. Other operating systems and native
 webviews were not exercised in this acceptance.
+
+Contextual capture acceptance on macOS/Chrome, 2026-11-02: standalone capture, iframe cropping,
+separate Shell/app drafts, two Harness surfaces sharing a draft, retained Pull requests selection,
+Desktop window capture and Desktop's own docked feedback passed. The suite also passed stale-tab,
+quota, replacement-request, reload and lost-response checks. A cold Desktop development route
+required its normal Retry action; the authenticated session and subsequent window capture passed.
+The child reported a 24.556-second cold Harness start, 2.040-second warm restart and 21.387-second
+missing-output recovery. Parent Finish confirmed resource removal. The full agent-dispatch variant
+stopped earlier in the existing scripted Codex provider with exit code 3; it is not claimed as passed.
+SDK, Shell, Desktop and Harness unit suites passed 727, 803, 32 and 1,998 tests respectively.
+SDK and all affected Next.js consumers built successfully; existing lint warnings remain unchanged.
+
+The subsequent stale-hover regression passed in both directions between Shell and an actual
+cross-origin iframe. The same managed browser run passed Desktop window and host capture after
+retrying its cold development-route connection failure in the existing child. Its cold start, warm
+restart and missing-output recovery took 27.125, 2.017 and 22.508 seconds respectively. Parent Finish
+confirmed removal of the child resources, test processes, credentials, builds and snapshots.
+
+The authorized ordinary-data trial on the same date has Shell, Harness and Desktop running from
+the same registered workspace. Harness API/worker and Desktop web report healthy. The embedded
+Chats page exposes its own feedback target through Shell's dock without a floating Annotate
+launcher. Desktop's window launcher opens the Harness-scoped draft, while its menubar launcher
+opens the Desktop target. The first Desktop entry required normal Retry actions while development
+routes compiled; the authenticated desktop and both feedback panels then loaded successfully.
+The Core release process is unchanged and the source changes remain uncommitted. The workspace
+activity lease is retained while native workspace consumers are running.
