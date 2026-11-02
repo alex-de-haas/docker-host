@@ -1,4 +1,5 @@
 "use client";
+import { StandaloneChrome, StandaloneHeader, useStandalonePreferences } from "./ui-standalone-react";
 import { bindFeedbackClient } from "./feedback-client";
 export { HostyFeedbackLauncher, useHostyFeedback } from "./feedback-workspace";
 import { FeedbackCapture } from "./feedback-react";
@@ -61,7 +62,7 @@ export function HostyUiRoot({ children, uiPath, panelLayout = "auto", active = t
   return <UiHostContext.Provider value={host}><UiCompositionContext.Provider value={clientRef.current?.composition ?? null}><UiFrameLayerContext.Provider value={layer}>
     <style>{`.hosty-app-layout{display:flex;width:100%;height:100%;min-width:0;min-height:0}.hosty-app-content{flex:1;min-width:0;min-height:0;overflow:auto;outline:none}`}</style>
     <div hidden={!allowed} inert={!allowed} style={{ display: allowed ? "contents" : "none" }}>
-      {mounted.current && (panelLayout === "auto" && host ? <HostyPanelWorkspace>{content}</HostyPanelWorkspace> : content)}
+      {mounted.current && (panelLayout === "auto" && host ? <StandaloneChrome navigation={navigation?.renderer !== "custom"}><HostyPanelWorkspace launcherLayout="topbar" standardNavigation={navigation?.renderer !== "custom"}>{content}</HostyPanelWorkspace></StandaloneChrome> : content)}
     </div>
     {!allowed && <div data-hosty-sdk role="status" className="hosty-panel-notice"><SdkChromeStyles />
       {environment?.connection === "blocked" ? <>
@@ -80,6 +81,9 @@ const noop = () => () => {};
 
 export type HostyPanelWorkspaceProps = {
   workspaceId?: string;
+  /** Automatic standalone chrome; explicit host renderers retain the rail by default. */
+  launcherLayout?: "rail" | "topbar";
+  standardNavigation?: boolean;
   /** A host-owned tool window can keep dock geometry even in a narrow container. */
   layout?: "responsive" | "dock";
   /** Keep a visible dismiss control in drawers; hosts with a tool rail can omit it in docks. */
@@ -93,13 +97,16 @@ export type HostyPanelWorkspaceProps = {
 };
 
 /** A single retained frame tree for dock and drawer; only CSS placement changes at the breakpoint. */
-export function HostyPanelWorkspace({ children, workspaceId = DEFAULT_WORKSPACE, layout = "responsive", minimizeControl = "always", railMode = "opened", className = "", initialWidth, initialExpanded,
+export function HostyPanelWorkspace({ children, workspaceId = DEFAULT_WORKSPACE, layout = "responsive", launcherLayout = "rail", standardNavigation = true, minimizeControl = "always", railMode = "opened", className = "", initialWidth, initialExpanded,
   onWidthChange, onExpandedChange, onStartApp, onAskAssistant, onAuthRequired, outbound, renderIcon }: HostyPanelWorkspaceProps) {
   const host = useHostyUiHost();
   const layer = useContext(UiFrameLayerContext), chrome = useHostyChrome();
   const viewport = useRef<HTMLDivElement>(null);
   const state = useSyncExternalStore(host?.subscribeSnapshot ?? noop, host?.getSnapshot ?? (() => empty), () => empty);
   const unsupported = state.error?.code.startsWith("unsupported") === true;
+  const standalone = launcherLayout === "topbar";
+  const topbar = standalone && !unsupported && (chrome.navigation === "show" || chrome.tools.enabled && chrome.tools.launcher !== "hide");
+  const preferences = useStandalonePreferences();
   const workspace = state.workspaces?.find(w => w.workspaceId === workspaceId);
   const workspaceTools = state.tools.filter(t => t.workspaceId === workspaceId);
   const root = useRef<HTMLDivElement>(null), content = useRef<HTMLDivElement>(null), body = useRef<HTMLElement>(null), minimize = useRef<HTMLButtonElement>(null);
@@ -230,11 +237,14 @@ export function HostyPanelWorkspace({ children, workspaceId = DEFAULT_WORKSPACE,
     const end = () => { handle.removeEventListener("pointermove", move); handle.removeEventListener("pointerup", end); handle.removeEventListener("lostpointercapture", end); };
     handle.addEventListener("pointermove", move); handle.addEventListener("pointerup", end); handle.addEventListener("lostpointercapture", end);
   };
-  return <div ref={root} className={`hosty-panel-workspace ${className}`} data-hosty-panel-layout={stacked ? "stacked" : drawer ? "drawer" : "dock"}
-    style={{ "--hosty-panel-width": `${width}px`, ...(unsupported ? { display: "contents" } : {}) } as CSSProperties}>
+  return <div ref={root} className={`hosty-panel-workspace ${topbar ? "hosty-panel-topbar" : ""} ${className}`} data-hosty-panel-layout={stacked ? "stacked" : drawer ? "drawer" : "dock"}
+    style={{ "--hosty-panel-width": `${width}px`, ...(unsupported && !topbar ? { display: "contents" } : {}) } as CSSProperties}>
     <SdkChromeStyles /><style>{styles}</style>
+    {topbar && <StandaloneHeader panels={state.catalog} selected={selectedKey} expanded={expanded} chooserOpen={chooser} canNavigate={standardNavigation}
+      onSelect={panel => void select(panel)} onChoose={() => { setError(null); setChooser(true); void host?.refresh(); }}
+      attention={panel => workspaceTools.some(t => t.key === panelKey(panel.panel) && t.attention > 0)} />}
     <div ref={content} className="hosty-panel-document" style={unsupported ? { display: "contents" } : undefined} inert={expanded && drawer}>{children}</div>
-    <nav data-hosty-sdk className="hosty-panel-rail" aria-label="Tools" style={unsupported || !chrome.tools.enabled || chrome.tools.launcher === "hide" ? { display: "none" } : undefined} inert={expanded && drawer}>
+    {!standalone && <nav data-hosty-sdk className="hosty-panel-rail" aria-label="Tools" style={standalone || unsupported || !chrome.tools.enabled || chrome.tools.launcher === "hide" ? { display: "none" } : undefined} inert={expanded && drawer}>
       {tabs.map((panel, index) => <button key={panelKey(panel.panel)} type="button" title={`${panel.appName}: ${panel.label}`} aria-label={panel.label}
         aria-controls={bodyId} aria-expanded={expanded && selectedKey === panelKey(panel.panel)} onClick={() => void select(panel)}
         onKeyDown={event => { const delta = event.key === "ArrowDown" ? 1 : event.key === "ArrowUp" ? -1 : 0;
@@ -244,7 +254,7 @@ export function HostyPanelWorkspace({ children, workspaceId = DEFAULT_WORKSPACE,
         {workspaceTools.some(t => t.key === panelKey(panel.panel) && t.attention > 0) ? <span className="hosty-panel-attention" aria-label="Needs attention"><SdkIcon name="warning" /></span> : null}
       </button>)}
       <button hidden={unsupported} type="button" aria-label="Add tool" title="Add tool" onClick={() => { setError(null); setChooser(true); void host?.refresh(); }}><SdkIcon name="plus" /></button>
-    </nav>
+    </nav>}
     {expanded && drawer && <button type="button" className="hosty-panel-backdrop" aria-label="Return to document" onClick={() => host?.setExpanded(false, workspaceId)} />}
     <aside data-hosty-sdk ref={body} id={bodyId} className="hosty-panel-body" hidden={!expanded} inert={!expanded}
       role={drawer ? "dialog" : "complementary"} aria-modal={drawer && expanded ? true : undefined} aria-label={selected?.label ?? "Tool"}
@@ -285,15 +295,29 @@ export function HostyPanelWorkspace({ children, workspaceId = DEFAULT_WORKSPACE,
       <div ref={viewport} className="hosty-panel-viewport" aria-owns={tool ? `hosty-presentation-${tool.presentationId}` : undefined} />
       {drawer && expanded && <span tabIndex={0} aria-hidden="true" className="hosty-panel-focus-guard" onFocus={() => minimize.current?.focus()} />}
     </aside>
-    <dialog data-hosty-sdk ref={chooserRef} className="hosty-tool-chooser" onCancel={() => setChooser(false)} aria-label="Add tool">
-      <header><strong>Add tool</strong><button type="button" onClick={() => setChooser(false)} aria-label="Close tool chooser"><SdkIcon name="close" /></button></header>
-      <p>Open a tool beside your document.</p>
+    <dialog data-hosty-sdk ref={chooserRef} className={`hosty-tool-chooser ${standalone ? "hosty-tool-menu" : ""}`} onCancel={() => setChooser(false)} aria-label={standalone ? "Tools" : "Add tool"}
+      onClick={event => { if (event.target !== event.currentTarget) return; const rect = event.currentTarget.getBoundingClientRect();
+        if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) setChooser(false);
+      }} onKeyDown={event => {
+        if (!standalone || !["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+        const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>("button:not(:disabled)"));
+        const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+        const next = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1 : (index + (event.key === "ArrowDown" ? 1 : -1) + buttons.length) % buttons.length;
+        event.preventDefault(); buttons[next]?.focus();
+      }}>
+      <header><strong>{standalone ? "Tools" : "Add tool"}</strong><button type="button" onClick={() => setChooser(false)} aria-label="Close tool chooser"><SdkIcon name="close" /></button></header>
+      <p>{standalone ? "Pin tools to the top bar" : "Open a tool beside your document."}</p>
+      {standalone && preferences.error && <p role="status">{preferences.error}</p>}
       {error && <p role="status">{error}</p>}
       {state.error && <p role="status">{state.error.message}</p>}
       {!state.bootstrap?.canHost && <p>This app needs optional panel access in Hosty Core to show tools here. You can still use the app.</p>}
       {state.bootstrap?.canHost && !state.catalog.length && <p>No tools are available for your account.</p>}
       <ul>{state.catalog.map(panel => <li key={panelKey(panel.panel)}>
-        <button type="button" onClick={() => void select(panel)}><strong>{panel.label}</strong><span>{panel.appName}{panel.available ? "" : ` · ${panel.state}`}</span></button>
+        <button type="button" className="hosty-tool-option" onClick={() => void select(panel)}><strong>{panel.label}</strong><span>{panel.appName}{panel.available ? "" : ` · ${panel.state}`}</span></button>
+        {standalone && <button type="button" className="hosty-tool-pin" disabled={!preferences.ready}
+          aria-label={`Pin ${panel.appName} — ${panel.label} to top bar`} aria-pressed={preferences.pins.includes(panelKey(panel.panel))}
+          title={preferences.pins.includes(panelKey(panel.panel)) ? "Unpin from top bar" : "Pin to top bar"}
+          onClick={() => preferences.setPinned(panel, !preferences.pins.includes(panelKey(panel.panel)))}><SdkIcon name="pin" /></button>}
         {!panel.available && panel.canStart && onStartApp && <button type="button" onClick={() => void Promise.resolve(onStartApp(panel.panel.appId)).then(() => host?.refresh())}>Start app</button>}
       </li>)}</ul>
       <button type="button" onClick={() => void host?.refresh()}>Refresh tools</button>
@@ -303,6 +327,21 @@ export function HostyPanelWorkspace({ children, workspaceId = DEFAULT_WORKSPACE,
 }
 
 const styles = `
+.hosty-panel-topbar{display:grid!important;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:44px minmax(0,1fr)}
+.hosty-standalone-header{grid-column:1/-1;grid-row:1;display:flex;align-items:center;gap:16px;padding:0 10px;background:var(--hs-bg);border-bottom:1px solid var(--hs-border);min-width:0}
+.hosty-standalone-identity{display:flex;align-items:center;gap:8px;min-width:0;flex:1}.hosty-standalone-identity strong{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.hosty-standalone-identity>img{width:22px;height:22px;object-fit:contain;flex:none}
+.hosty-standalone-header button{position:relative;display:inline-flex;align-items:center;justify-content:center;gap:6px;border:0;border-radius:6px;min-height:30px;padding:5px 8px;color:inherit;background:transparent;font:500 13px/20px var(--hs-font);cursor:pointer;white-space:nowrap;flex:none}
+.hosty-standalone-header button:hover,.hosty-standalone-header button[aria-expanded=true]{background:var(--hs-brand-soft)}.hosty-standalone-header button:disabled{opacity:.5;cursor:not-allowed}
+.hosty-standalone-tools,.hosty-pinned-tools{display:flex;align-items:center;gap:4px;min-width:0}.hosty-standalone-tools{max-width:70%}.hosty-pinned-tools{overflow:auto;padding:3px;scrollbar-width:thin}.hosty-pinned-tools button>span:not(.hosty-panel-attention){max-width:150px;overflow:hidden;text-overflow:ellipsis}
+.hosty-panel-topbar>.hosty-panel-document{grid-column:1;grid-row:2}.hosty-panel-topbar>.hosty-panel-body{grid-column:2;grid-row:2;width:var(--hosty-panel-width)}
+.hosty-panel-workspace.hosty-panel-topbar[data-hosty-panel-layout=drawer]>.hosty-panel-body{top:44px}.hosty-panel-topbar>.hosty-panel-backdrop{top:44px}
+.hosty-panel-workspace.hosty-panel-topbar[data-hosty-panel-layout=stacked]{grid-template-rows:44px minmax(0,45fr) minmax(0,55fr)}
+.hosty-panel-workspace.hosty-panel-topbar[data-hosty-panel-layout=stacked]>.hosty-panel-document{grid-column:1/-1;grid-row:2;height:auto}
+.hosty-panel-workspace.hosty-panel-topbar[data-hosty-panel-layout=stacked]>.hosty-panel-body{grid-column:1/-1;grid-row:3;height:auto;width:auto}
+.hosty-tool-chooser.hosty-tool-menu{position:fixed;inset:48px 8px auto auto;margin:0;width:min(360px,calc(100vw - 16px));max-height:calc(100dvh - 64px);padding:12px;border-radius:12px}.hosty-tool-chooser.hosty-tool-menu::backdrop{background:transparent}
+.hosty-tool-menu li>.hosty-tool-pin{flex:0 0 36px;display:grid;place-items:center;padding:8px}.hosty-tool-menu li>.hosty-tool-pin[aria-pressed=true]{background:var(--hs-brand-soft);color:var(--hs-brand-edge)}.hosty-tool-menu .hosty-tool-option{min-width:0}.hosty-tool-menu .hosty-tool-option :is(strong,span){display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media(max-width:600px){.hosty-standalone-header{gap:6px}.hosty-pinned-tools button>span:not(.hosty-panel-attention){display:none}.hosty-standalone-tools{max-width:55%}.hosty-standalone-identity strong{font-size:13px}}
+
 .hosty-panel-viewport{flex:1;min-height:0;min-width:0}
 .hosty-app-layout{display:flex;width:100%;height:100%;min-width:0;min-height:0}.hosty-app-content{flex:1;min-width:0;min-height:0;overflow:auto}
 .hosty-panel-workspace{display:flex;position:relative;min-width:0;min-height:0;width:100%;height:100dvh;overflow:hidden}

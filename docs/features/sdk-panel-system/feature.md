@@ -54,7 +54,7 @@ The fixed internal routes are scoped to the caller app:
 
 | Route below `/api/internal/apps/{callerAppId}/ui` | Result |
 | --- | --- |
-| `GET /bootstrap?parentOrigin=...` | Protocol version, own app/installation, actor, Core origin, hosting/pinned-open support and optional verified parent metadata |
+| `GET /bootstrap?parentOrigin=...` | Protocol version, own app/installation and optional display name/icon URL, actor, Core origin, hosting/pinned-open support and optional verified parent metadata |
 | `GET /panels` | Actor-filtered declared tools, stable identities, availability and minimal frame policy |
 | `GET /activity` | Actor-filtered current tool activity and service connection state |
 | `POST /panels/resolve` | Revalidated target, concrete frame surface and pinned standalone link |
@@ -228,9 +228,10 @@ Shell retires obsolete or reinstallation-mismatched pending handoff records with
 The next operator retry creates a new request for the current installation; it never moves the old
 discussion. Completing an older request cannot erase the replacement's pending intent.
 
-The standard SDK renderer docks at 900 CSS pixels of inner workspace width: a 48-pixel rail,
+The standard SDK renderer docks at 900 CSS pixels of inner workspace width with a
 12-pixel gap, default 360-pixel body, 280–800 bounds and at least 480 pixels reserved for the
-document. Shell uses its own ReUI split layout and document-dependent width constraints, described
+document. Its automatic standalone layout uses the [application header](../sdk-ui-composition/feature.md#standalone-application-header)
+with pinned tools and a Tools menu. Explicit host renderers retain the 48-pixel rail by default. Shell uses its own ReUI split layout and document-dependent width constraints, described
 in [Shell Panel Resize](../shell-panel-resize/feature.md). The standard SDK renderer uses a drawer
 up to 440 pixels wide below its docking breakpoint. A declared feedback composer instead stacks
 below the document without a backdrop or inert content, so visible sources remain selectable.

@@ -18,10 +18,14 @@ export function FeedbackCapture({ active, uiPath = '/api/hosty/ui', client }: {
 }) {
     const [capabilities, setCapabilities] = useState<FeedbackCapabilities | null>(null), [retry, setRetry] = useState(0);
     const pickMode = useRef<'element' | 'region' | null>(null), priorCursor = useRef<string | null>(null), resetPick = useRef(() => {});
+    const pinned = useRef(false), highlightExpiry = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+    const outlineFrame = useRef<number | undefined>(undefined);
+    const lastElement = useRef<{ id: string; element: Element; route: string } | null>(null);
+    const clearPinned = () => { pinned.current = false; clearTimeout(highlightExpiry.current); if (outlineFrame.current !== undefined) cancelAnimationFrame(outlineFrame.current); };
     const [highlight, setHighlight] = useState<FeedbackRect | null>(null);
     const pending = useRef<((value: DraftNote | null) => void) | null>(null);
     const path = uiPath.replace(/\/$/, '') + '/feedback';
-    const finish = (value: DraftNote | null) => { const done = pending.current; pending.current = null; pickMode.current = null; resetPick.current(); if(priorCursor.current !== null)document.documentElement.style.cursor=priorCursor.current;priorCursor.current=null;setHighlight(null); done?.(value); };
+    const finish = (value: DraftNote | null) => { clearPinned(); const done = pending.current; pending.current = null; pickMode.current = null; resetPick.current(); if(priorCursor.current !== null)document.documentElement.style.cursor=priorCursor.current;priorCursor.current=null;setHighlight(null); done?.(value); };
     useEffect(() => { const refresh = () => setRetry(r => r + 1); window.addEventListener(APP_SESSION_RESTORED, refresh); return () => window.removeEventListener(APP_SESSION_RESTORED, refresh); }, []);
     useEffect(() => {
         setCapabilities(null);
@@ -45,18 +49,37 @@ export function FeedbackCapture({ active, uiPath = '/api/hosty/ui', client }: {
             const key = feedbackScope(capabilities), route = location.href;
             switch (o.action) {
                 case 'pick':
-                    finish(null);
+                    finish(null); lastElement.current = null;
                     pickMode.current = o.mode ?? 'element'; priorCursor.current=document.documentElement.style.cursor;document.documentElement.style.cursor='crosshair';
                     return new Promise<DraftNote | null>(resolve => { pending.current = resolve; });
                 case 'cancel':
                     finish(null);
                     return null;
                 case 'page': return note({ kind: 'page', label: 'Page comment', viewport: viewport() });
-                case 'highlight':
+                case 'highlight': {
+                    clearPinned();
+                    const selected = o.requestId === lastElement.current?.id ? lastElement.current : null;
+                    if (selected && (!selected.element.isConnected || selected.route !== location.href))
+                        throw new Error('The selected element is no longer visible. Select it again to capture a screenshot.');
+                    pinned.current = !!o.target?.bounds;
                     setHighlight(o.target?.bounds ?? null);
+                    if (pinned.current) {
+                        // Follow layout changes until the frame is captured instead of outlining
+                        // the selected element's former position.
+                        const follow = () => {
+                            if (!pinned.current || !selected) return;
+                            if (!selected.element.isConnected) { clearPinned(); setHighlight(null); return; }
+                            const bounds = rect(selected.element.getBoundingClientRect());
+                            setHighlight(current => current && Object.keys(bounds).every(k => current[k as keyof FeedbackRect] === bounds[k as keyof FeedbackRect]) ? current : bounds);
+                            outlineFrame.current = requestAnimationFrame(follow);
+                        };
+                        follow();
+                        highlightExpiry.current = setTimeout(() => { clearPinned(); setHighlight(null); }, 10000);
+                    }
                     return null;
+                }
                 case 'crop-target': {
-                    setHighlight(null);
+                    clearPinned(); setHighlight(null);
                     const api = globalThis as typeof globalThis & {
                         CropTarget?: {
                             fromElement(e: Element): Promise<unknown>;
@@ -107,7 +130,7 @@ export function FeedbackCapture({ active, uiPath = '/api/hosty/ui', client }: {
         };
         let registeredRoute = location.href;
         const stopNavigation = client.subscribeNavigation(() => {
-            if (location.href !== registeredRoute) { registeredRoute = location.href; finish(null); }
+            if (location.href !== registeredRoute) { registeredRoute = location.href; lastElement.current = null; finish(null); }
             register();
         });
         register();
@@ -126,7 +149,7 @@ export function FeedbackCapture({ active, uiPath = '/api/hosty/ui', client }: {
             y: number;
         } | null = null;
         const inside = (event: Event) => event.composedPath().some(n => n instanceof Element && n.hasAttribute('data-hosty-feedback-control'));
-        const clearHover = () => { start = null; setHighlight(null); };
+        const clearHover = () => { start = null; if (!pinned.current) setHighlight(null); };
         resetPick.current = clearHover;
         const leaves = (e: PointerEvent) => { if (!(e.relatedTarget instanceof Element) || e.relatedTarget instanceof HTMLIFrameElement || e.relatedTarget.ownerDocument !== document)
             clearHover(); };
@@ -152,7 +175,12 @@ export function FeedbackCapture({ active, uiPath = '/api/hosty/ui', client }: {
                 return;
             e.preventDefault();
             e.stopImmediatePropagation();
-            const swallow = (click: MouseEvent) => { click.preventDefault(); click.stopImmediatePropagation(); cleanup(); };
+            const swallow = (click: MouseEvent) => {
+                // Disabled elements may never emit their click. Do not swallow the next unrelated
+                // click, such as approving the screenshot in the provider's own document.
+                if (click.composedPath().includes(element)) { click.preventDefault(); click.stopImmediatePropagation(); }
+                cleanup();
+            };
             const cleanup = () => { document.removeEventListener('click', swallow, true); clearTimeout(timer); };
             const timer = setTimeout(cleanup, 1500);
             document.addEventListener('click', swallow, { capture: true, once: true });
@@ -160,7 +188,9 @@ export function FeedbackCapture({ active, uiPath = '/api/hosty/ui', client }: {
                 start = { x: e.clientX, y: e.clientY };
                 return;
             }
-            finish(note({ kind: 'element', label: element.getAttribute('aria-label')?.slice(0, 200) || element.tagName.toLowerCase(), selector: element.id ? '#' + CSS.escape(element.id) : element.tagName.toLowerCase(), bounds: rect(element.getBoundingClientRect()), viewport: viewport() }));
+            const chosen = note({ kind: 'element', label: element.getAttribute('aria-label')?.slice(0, 200) || element.tagName.toLowerCase(), selector: element.id ? '#' + CSS.escape(element.id) : element.tagName.toLowerCase(), bounds: rect(element.getBoundingClientRect()), viewport: viewport() });
+            lastElement.current = { id: chosen.id, element, route: location.href };
+            finish(chosen);
         };
         const up = (e: PointerEvent) => { if (!pickMode.current || !start)
             return; e.preventDefault(); e.stopImmediatePropagation(); const b = { x: Math.min(start.x, e.clientX), y: Math.min(start.y, e.clientY), width: Math.abs(start.x - e.clientX), height: Math.abs(start.y - e.clientY) }; start = null; if (b.width > 3 && b.height > 3)

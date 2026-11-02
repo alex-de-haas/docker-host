@@ -36,7 +36,9 @@ everyone. Ordinary users have no lifecycle controls, and Core remains the author
 Windows support title-bar dragging, eight resize handles, minimize/restore, maximize,
 left/right tiles and edge snapping. Focus changes their stacking order without moving
 or replacing frame DOM nodes. A minimized frame remains mounted. Applications support multiple independent windows;
-multiple manifest pages appear in each window's sidebar. Window IDs are separate from app IDs,
+multiple manifest pages appear in each window's sidebar without repeating the application name.
+The title bar places the application icon before its title, using the same authenticated asset
+and fallback as the dock. Window IDs are separate from app IDs,
 and old single-window layouts migrate without discarding geometry or navigation preferences.
 Each window retains its own route, navigation mode and SDK tool workspace. Closing one instance
 leaves sibling documents and the shared application runtime intact. Page icons use Core's projected manifest
@@ -51,6 +53,9 @@ The dock contains one icon per accessible app, marks open windows, shows an inst
 dims stopped apps for administrators,
 and supports ordering and favorites. Its horizontal scroll area reserves space around enlarged
 hover/focus icons and focus rings without changing the dock's visible size.
+Application image assets fill their icon slot without a generated colored tile or inset border
+in either theme. Built-in and fallback glyphs retain their colored tile; a failed image load returns
+to that fallback. Dock state indicators and hover/focus behavior remain independent of this styling.
 An ordinary app click focuses its last active window. The app context menu offers New window
 and lists existing windows, including minimized instances; selecting one restores and focuses it.
 The desktop retains at most 30 windows. Applications and Appearance remain singletons.
@@ -60,7 +65,8 @@ keyboard focus, and dismiss on Escape or interaction. Applications and Appearanc
 Search is available from the menu bar and Command-K/Control-K. Dock context menus expose maximize and tile actions.
 When all windows are closed or minimized, the desktop displays only its wallpaper, menu bar
 and dock. The menu bar contains the Hosty launcher, active application name, search, theme,
-account and clock controls.
+account and clock controls. The account button shows the signed-in user's display name for every
+role, falling back to email when no display name is available.
 
 Window geometry, open/minimized state, dock preferences and appearance are saved in localStorage
 under the Core user ID. Invalid stored data and inaccessible application IDs are discarded.
@@ -167,6 +173,11 @@ resolution, app frames and window management use real managed services. The suit
 existing feedback scenarios and cold/warm/missing-output recovery. Parent Finish confirms
 child process, port and resource removal. The authorized live Desktop/Harness trial is restarted
 from the same registered workspace; a second live app window is confirmed through Dock.
+
+The title-bar icon, navigation-caption and image-icon background updates pass all 43 Desktop tests, lint and an
+isolated production build on macOS. Browser verification is not completed because the
+in-app browser connection is unavailable; the managed runtime integration suite is not rerun
+for this presentation-only change.
 
 ## Testing Expectations
 

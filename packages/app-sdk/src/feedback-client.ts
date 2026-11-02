@@ -1,7 +1,7 @@
 import type { FeedbackConnection, FeedbackEvent, FeedbackOperation, FeedbackPort } from './feedback-channel';
 export type { FeedbackDraft, DraftNote, FeedbackSource, FeedbackEvent, FeedbackOperation, FeedbackPort } from './feedback-channel';
 export { feedbackScope, validDraft } from './feedback-channel';
-export { captureStill, cropStill } from './feedback-capture';
+export { captureStill, captureScreen, cropStill } from './feedback-capture';
 let connect: FeedbackConnection | null = null;
 const listeners = new Set<() => void>();
 /** Internal root binding: no window globals and no credentials cross the channel. */

@@ -1,5 +1,5 @@
 import type { FeedbackRect } from "./feedback-types";
-export async function captureStill(hide: (hidden: boolean) => void, signal: AbortSignal, onCrop?: (cropped: boolean) => void, crop?: (track: MediaStreamTrack | undefined) => Promise<boolean>): Promise<Blob> {
+export async function captureStill(hide: (hidden: boolean) => void, requestedSignal: AbortSignal, onCrop?: (cropped: boolean) => void, crop?: (track: MediaStreamTrack | undefined) => Promise<boolean>): Promise<Blob> {
   if (!navigator.mediaDevices?.getDisplayMedia) throw new Error("Screen capture is unavailable in this browser. You can still send comments.");
   // Offer the application tab while retaining the browser-owned chooser and permission.
   const options: DisplayMediaStreamOptions & { preferCurrentTab: boolean; selfBrowserSurface: string } = {
@@ -8,12 +8,18 @@ export async function captureStill(hide: (hidden: boolean) => void, signal: Abor
   const stream = await navigator.mediaDevices.getDisplayMedia(options);
   const video = document.createElement("video");
   const stop = () => { stream.getTracks().forEach(t => t.stop()); };
+  const controller = new AbortController(), signal = controller.signal;
+  const abort = () => controller.abort(requestedSignal.reason);
+  const ended = () => controller.abort(new Error("Screen capture ended."));
+  requestedSignal.addEventListener("abort", abort, { once: true });
+  if (requestedSignal.aborted) abort();
+  stream.getTracks().forEach(t => t.addEventListener?.("ended", ended, { once: true }));
   signal.addEventListener("abort", stop, { once: true });
   try {
     signal.throwIfAborted(); hide(true);
-    const cropped = await (crop ?? cropCaptureToDocument)(stream.getVideoTracks?.()[0]);
+    const cropped = await abortable((crop ?? cropCaptureToDocument)(stream.getVideoTracks?.()[0]), signal);
     onCrop?.(cropped);
-    // Let the hidden overlay reach the compositor before consuming the live stream.
+    // Let the prepared outline or hidden overlay reach the compositor before reading a frame.
     await new Promise<void>(resolve => setTimeout(resolve, 100));
     signal.throwIfAborted();
     video.muted = true; video.playsInline = true;
@@ -42,7 +48,23 @@ export async function captureStill(hide: (hidden: boolean) => void, signal: Abor
     canvas.width = Math.round(video.videoWidth * scale); canvas.height = Math.round(video.videoHeight * scale);
     canvas.getContext("2d")!.drawImage(video, 0, 0, canvas.width, canvas.height);
     return await canvasBlob(canvas);
-  } finally { stop(); signal.removeEventListener("abort", stop); video.srcObject = null; hide(false); }
+  } finally {
+    stop(); signal.removeEventListener("abort", stop); requestedSignal.removeEventListener("abort", abort);
+    stream.getTracks().forEach(t => t.removeEventListener?.("ended", ended));
+    video.srcObject = null; hide(false);
+  }
+}
+/** Capture the entire browser-approved surface after the caller has prepared its selection outline. */
+export function captureScreen(signal: AbortSignal, beforeCapture?: () => Promise<void>): Promise<Blob> {
+  return captureStill(() => {}, signal, undefined, async () => { await beforeCapture?.(); return false; });
+}
+function abortable<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) abort();
+    operation.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+  });
 }
 export async function cropStill(blob: Blob, crop: FeedbackRect | null): Promise<Blob> {
   if (!crop) return blob;

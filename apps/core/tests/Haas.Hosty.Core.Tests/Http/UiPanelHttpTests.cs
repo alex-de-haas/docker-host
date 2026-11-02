@@ -141,12 +141,47 @@ public sealed partial class UiPanelHttpTests
         var origin = UiPanelService.Peer(consumer).Origins.First();
         var bootstrap = await client.GetFromJsonAsync<JsonElement>("/api/internal/apps/target/ui/bootstrap?parentOrigin=" + Uri.EscapeDataString(origin));
         Assert.False(bootstrap.GetProperty("canHost").GetBoolean());
+        Assert.Equal((await apps.GetAppAsync("target"))!.DisplayName,
+            bootstrap.GetProperty("app").GetProperty("displayName").GetString());
+        Assert.Equal("target", bootstrap.GetProperty("app").GetProperty("appId").GetString());
         Assert.Equal("consumer", bootstrap.GetProperty("peer").GetProperty("appId").GetString());
         Assert.Equal("member", bootstrap.GetProperty("userId").GetString());
         Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync("/api/internal/apps/target/ui/panels")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync("/api/internal/apps/target/ui/bootstrap?parentOrigin=https%3A%2F%2Fforeign.test")).StatusCode);
         await apps.UpsertAppAsync(consumer with { Id = "collision" });
         Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync("/api/internal/apps/target/ui/bootstrap?parentOrigin=" + Uri.EscapeDataString(origin))).StatusCode);
+    }
+
+    [Theory]
+    [InlineData("assets/app.svg", "/api/apps/target/assets/assets/app.svg")]
+    [InlineData("https://cdn.example.test/icon.svg", "https://cdn.example.test/icon.svg")]
+    [InlineData(null, null)]
+    public async Task BootstrapProjectsOnlyCallerDisplayMetadataWithoutCatalogAuthority(string? icon, string? expected)
+    {
+        await using var host = await Setup();
+        var apps = host.Services.GetRequiredService<AppRegistryStore>();
+        await apps.UpdateAppAsync("target", app => app with {
+            DisplayName = "Independent Application",
+            CatalogMetadata = new(null, null, [], icon, [], null, null, null, null, null, null)
+        });
+        using var client = await Client(host, "target");
+        var bootstrap = (await client.GetFromJsonAsync<UiBootstrap>("/api/internal/apps/target/ui/bootstrap"))!;
+        Assert.Equal("Independent Application", bootstrap.App.DisplayName);
+        Assert.Equal("target", bootstrap.App.AppId);
+        if (expected is null) Assert.Null(bootstrap.App.IconUrl);
+        else
+        {
+            var actual = new Uri(bootstrap.App.IconUrl!);
+            if (expected.StartsWith("/", StringComparison.Ordinal))
+            {
+                Assert.Equal(bootstrap.CoreOrigin, actual.GetLeftPart(UriPartial.Authority));
+                Assert.Equal(expected, actual.AbsolutePath);
+            }
+            else Assert.Equal(expected, actual.AbsoluteUri);
+        }
+        Assert.False(bootstrap.CanHost);
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync("/api/internal/apps/target/ui/panels")).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/internal/apps/consumer/ui/bootstrap")).StatusCode);
     }
 
     [Fact]

@@ -3,7 +3,7 @@ export type PanelRef = { appId: string; installationId: string; panelId: string 
 export type PanelTarget = { panel: PanelRef; route?: string };
 export type AppSurfaceRef = { appId: string; installationId: string; endpoint: string; route: string };
 export type UiFramePolicy = { microphone: boolean; popupEscape: boolean };
-export type UiPeer = { appId: string; installationId: string; origins: string[] };
+export type UiPeer = { appId: string; installationId: string; origins: string[]; displayName?: string; iconUrl?: string | null };
 export type UiBootstrap = {
   version: 1; coreOrigin: string; userId: string; app: UiPeer; canHost: boolean;
   pinnedOpen: boolean; peer?: UiPeer | null;
