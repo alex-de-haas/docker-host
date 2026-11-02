@@ -1,6 +1,7 @@
+import { isSurfaceRoute } from "@hosty-sdk/app/ui";
 export type Theme = "light" | "dark" | "system";
 export type User = { id: string; displayName: string; email?: string; role: string };
-export type AppPage = { label: string; path: string; endpoint?: string | null; service?: string | null; embeddedUrl?: string | null };
+export type AppPage = { label: string; path: string; endpoint?: string | null; service?: string | null; embeddedUrl?: string | null; iconUrl?: string | null };
 export type App = {
   id: string; installationId?: string | null; displayName: string; description?: string | null;
   runtimeState: string; lastError?: string | null; iconUrl?: string | null; icon?: string | null;
@@ -13,9 +14,10 @@ export type App = {
   grantedCorePermissions?: string[] | null;
 };
 export type Bounds = { x: number; y: number; width: number; height: number };
-export type Viewport = { width: number; height: number };
+export type Viewport = { width: number; height: number; left?: number; top?: number };
 export type WindowMode = "normal" | "maximized" | "left" | "right";
-export type DesktopWindow = { id: string; bounds: Bounds; mode: WindowMode; minimized: boolean; page: number };
+export type WindowDestination = { endpoint: string; route: string };
+export type DesktopWindow = { id: string; appId?: string; installationId?: string; destination?: WindowDestination; currentRoute?: string; title?: string; bounds: Bounds; mode: WindowMode; minimized: boolean; page: number; navigationMode?: "expanded" | "compact" };
 export type Workspace = { windows: DesktopWindow[]; pins: string[]; order: string[]; theme: Theme; wallpaper: "coast" | "night" | "custom" };
 export const APPLICATIONS = "desktop:applications", APPEARANCE = "desktop:appearance";
 export const defaultWorkspace: Workspace = { windows: [], pins: [], order: [], theme: "system", wallpaper: "coast" };
@@ -76,12 +78,18 @@ export function restoreWorkspace(raw: string | null, allowedIds: string[], viewp
     const ids = (value: unknown) => Array.isArray(value) ? [...new Set(value.filter(allowed))].slice(0, 100) : [];
     const seen = new Set<string>();
     const windows: DesktopWindow[] = Array.isArray(parsed.windows) ? parsed.windows.slice(0, 30).flatMap((window: DesktopWindow) => {
-      if (!window || !allowed(window.id) || seen.has(window.id) || !window.bounds
+      if (!window || typeof window.id !== "string" || window.id.length > 160 || seen.has(window.id) || !window.bounds
+        || (builtin(window.id) ? window.appId != null : !allowedIds.includes(window.appId ?? window.id))
         || ![window.bounds.x, window.bounds.y, window.bounds.width, window.bounds.height].every(Number.isFinite)) return [];
       seen.add(window.id);
-      return [{ id: window.id, bounds: clampBounds(window.bounds, viewport), minimized: window.minimized === true,
+      return [{ id: window.id, ...(!builtin(window.id) ? { appId: window.appId ?? window.id } : {}),
+        ...(typeof window.installationId === "string" ? { installationId: window.installationId } : {}),
+        ...(validDestination(window.destination) ? { destination: { endpoint: window.destination.endpoint,
+          route: isSurfaceRoute(window.currentRoute) ? window.currentRoute : window.destination.route } } : {}),
+        bounds: clampBounds(window.bounds, viewport), minimized: window.minimized === true,
         mode: ["normal", "maximized", "left", "right"].includes(window.mode) ? window.mode : "normal" as WindowMode,
-        page: Number.isInteger(window.page) && window.page >= 0 ? window.page : 0 }];
+        page: Number.isInteger(window.page) && window.page >= 0 ? window.page : 0,
+        ...(window.navigationMode === "compact" || window.navigationMode === "expanded" ? { navigationMode: window.navigationMode } : {}) }];
     }) : [];
     return { windows, pins: ids(parsed.pins), order: ids(parsed.order),
       theme: ["light", "dark", "system"].includes(parsed.theme) ? parsed.theme : "system",
@@ -96,3 +104,10 @@ export function dockApps(apps: App[], workspace: Workspace): App[] {
   });
 }
 export function storageKey(userId: string) { return `hosty.desktop.workspace.v1:${userId}`; }
+
+export const windowAppId = (window: DesktopWindow) => window.appId ?? window.id;
+function validDestination(value: unknown): value is WindowDestination {
+  if (!value || typeof value !== "object") return false;
+  const target = value as WindowDestination;
+  return typeof target.endpoint === "string" && target.endpoint.length > 0 && target.endpoint.length <= 128 && isSurfaceRoute(target.route);
+}

@@ -1,6 +1,6 @@
 ---
 created: 2026-10-16
-updated: 2026-10-30
+updated: 2026-11-02
 summary: Harness provides separate Chats and Workspaces pages, multi-repository details, environment previews and verified lifecycle actions.
 components: [apps/harness, apps/core, apps/shell, packages/app-sdk]
 ---
@@ -115,8 +115,13 @@ existing history. Sessionless workspaces offer explicit creation; selecting a ro
 creates a conversation automatically. Rename remains in the conversation header. Desktop navigation
 and workspace columns measure 264/344 px; transcript and composer are capped at 760 px. Tabs scroll
 horizontally with a reachable plus, and arrow/Home/End keys select tabs. Workspace details use the
-existing mobile dialog. The workspace toggle hides its retained
-column. Codex file-change approval input correlates the proposed patch from the exact active native thread,
+existing mobile dialog. Its icon lives alongside workspace session tabs (including workspaces
+with no accessible chats), or in the conversation header on Chats. On wide surfaces the same
+control toggles the retained details column; on narrow surfaces it opens the dialog. The narrow
+chat/workspace list controls live in their existing headers, without an additional page-wide
+title row when an embedded page becomes narrower. The manifest declares distinct navigation
+image assets for Chats, Workspaces, Tasks, Feedback and Pull requests so Shell and Desktop use
+the same page icons. Codex file-change approval input correlates the proposed patch from the exact active native thread,
 turn and item before persistence. Retention is bounded and proposals are consumed once; stale,
 completed, oversized or unavailable proposals cannot become another approval's patch. No patch is
 truncated and approval decisions and authority are unchanged. A real Codex proposal-only check shows the
@@ -838,6 +843,9 @@ Verified on macOS on 2026-10-29 for the Harness 0.80.0 release; the initial coun
   is deleted through the authorized API with a confirming 404 read.
 - The operator's automatic General default is cleared through Settings. Explicit profile choices
   and existing conversation snapshots remain intact.
+
+Workspace details contains positioned accessibility labels within its own scroll area. Long
+workspace content scrolls inside the pane without increasing the embedded document height.
 
 ## Testing Expectations
 

@@ -1,4 +1,6 @@
 "use client";
+import { bindFeedbackClient } from "./feedback-client";
+export { HostyFeedbackLauncher, useHostyFeedback } from "./feedback-workspace";
 import { FeedbackCapture } from "./feedback-react";
 import { SdkChromeStyles, SdkIcon } from "./sdk-chrome";
 import { useContext, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from "react";
@@ -43,9 +45,10 @@ export function HostyUiRoot({ children, uiPath, panelLayout = "auto", active = t
     const client = window.parent === window ? createUiHost({ uiPath: path, active: activeRef.current, chrome }) : new EmbeddedUiClient(path, chrome);
     client.setActive(activeRef.current); client.composition.attachRouter(navigation?.router);
     clientRef.current = client;
+    const releaseFeedback = bindFeedbackClient(client.connectFeedback);
     const release = bindUiClient(client), stop = client.subscribe(event => { if (event.type === "environment") setEnvironment(event.value); });
     if (client instanceof EmbeddedUiClient) setHost(null); else setHost(client);
-    return () => { stop(); release(); client.dispose(); clientRef.current = null; };
+    return () => { stop(); releaseFeedback(); release(); client.dispose(); clientRef.current = null; };
   }, [uiPath]);
   useEffect(() => { clientRef.current?.composition.configure(chrome ?? {}); }, [chrome]);
   useEffect(() => { clientRef.current?.composition.attachRouter(navigation?.router); }, [navigation?.router]);
@@ -67,7 +70,7 @@ export function HostyUiRoot({ children, uiPath, panelLayout = "auto", active = t
         <button type="button" onClick={() => window.location.reload()}>Reconnect</button>
       </> : "Connecting to the workspace…"}
     </div>}
-    <FeedbackCapture active={active && !!allowed} uiPath={uiPath} />
+    <FeedbackCapture active={active && !!allowed} uiPath={uiPath} client={clientRef.current} />
     {host && <HostyPresentationLayer layer={layer} host={host} active={!!allowed} />}
   </UiFrameLayerContext.Provider></UiCompositionContext.Provider></UiHostContext.Provider>;
 }
@@ -104,6 +107,13 @@ export function HostyPanelWorkspace({ children, workspaceId = DEFAULT_WORKSPACE,
   const [size, setSize] = useState(1200), [chooser, setChooser] = useState(false), [error, setError] = useState<string | null>(null);
   const chooserRef = useRef<HTMLDialogElement>(null);
   const bodyId = useId();
+  const expanded = !!workspace?.expanded && !!workspace.selectedId;
+  const tool = workspaceTools.find(t => t.presentationId === workspace?.selectedId);
+  const selectedKey = tool?.key ?? null;
+  const selected = state.catalog.find(p => panelKey(p.panel) === selectedKey);
+  const compact = layout === "responsive" && size < 900;
+  const stacked = compact && expanded && selected?.feedbackComposer === true;
+  const drawer = compact && !stacked;
   useEffect(() => {
     if (!host || !layer) return;
     const renderer: UiWorkspaceRenderer = {
@@ -126,22 +136,19 @@ export function HostyPanelWorkspace({ children, workspaceId = DEFAULT_WORKSPACE,
   }, [host, layer, workspaceId]);
   useLayoutEffect(() => {
     if (!layer || !viewport.current) return;
-    return layer.register(workspaceId, { element: viewport.current, drawer: layout === "responsive" && size < 900, onAskAssistant, onAuthRequired, outbound });
-  }, [layer, workspaceId, size, layout, onAskAssistant, onAuthRequired, outbound]);
+    return layer.register(workspaceId, { element: viewport.current, drawer, onAskAssistant, onAuthRequired, outbound });
+  }, [layer, workspaceId, drawer, onAskAssistant, onAuthRequired, outbound]);
   useEffect(() => {
     const onModal = (event: Event) => {
       const kind = (event as CustomEvent).detail;
       if (kind !== `picker:${workspaceId}`) setChooser(false);
-      if (kind === "navigation" || layout === "responsive" && size < 900 && kind !== `tools:${workspaceId}` && kind !== `picker:${workspaceId}`)
+      if (kind === "navigation" || drawer && kind !== `tools:${workspaceId}` && kind !== `picker:${workspaceId}`)
         host?.collapseWorkspace(workspaceId);
     };
     window.addEventListener("hosty:ui:modal", onModal); return () => window.removeEventListener("hosty:ui:modal", onModal);
-  }, [host, workspaceId, size, layout]);
-  const drawer = layout === "responsive" && size < 900, expanded = !!workspace?.expanded && !!workspace.selectedId;
-  const tool = workspaceTools.find(t => t.presentationId === workspace?.selectedId);
-  const selectedKey = tool?.key ?? null;
+  }, [host, workspaceId, drawer]);
+
   const tabs = railMode === "catalog" ? state.catalog : [...new Set(workspaceTools.map(tool => tool.key))].map(key => state.catalog.find(p => panelKey(p.panel) === key)).filter((p): p is UiPanel => !!p);
-  const selected = state.catalog.find(p => panelKey(p.panel) === selectedKey);
   const width = Math.min(workspace?.width ?? 360, Math.max(280, size - 480 - 60));
   const optionsRef = useRef({ onWidthChange, onExpandedChange }); optionsRef.current = { onWidthChange, onExpandedChange };
   useEffect(() => {
@@ -223,11 +230,11 @@ export function HostyPanelWorkspace({ children, workspaceId = DEFAULT_WORKSPACE,
     const end = () => { handle.removeEventListener("pointermove", move); handle.removeEventListener("pointerup", end); handle.removeEventListener("lostpointercapture", end); };
     handle.addEventListener("pointermove", move); handle.addEventListener("pointerup", end); handle.addEventListener("lostpointercapture", end);
   };
-  return <div ref={root} className={`hosty-panel-workspace ${className}`} data-hosty-panel-layout={drawer ? "drawer" : "dock"}
+  return <div ref={root} className={`hosty-panel-workspace ${className}`} data-hosty-panel-layout={stacked ? "stacked" : drawer ? "drawer" : "dock"}
     style={{ "--hosty-panel-width": `${width}px`, ...(unsupported ? { display: "contents" } : {}) } as CSSProperties}>
     <SdkChromeStyles /><style>{styles}</style>
     <div ref={content} className="hosty-panel-document" style={unsupported ? { display: "contents" } : undefined} inert={expanded && drawer}>{children}</div>
-    <nav data-hosty-sdk className="hosty-panel-rail" aria-label="Tools" style={unsupported || !chrome.tools.enabled || chrome.tools.launcher === "hide" ? { display: "none" } : undefined} inert={unsupported || expanded && drawer}>
+    <nav data-hosty-sdk className="hosty-panel-rail" aria-label="Tools" style={unsupported || !chrome.tools.enabled || chrome.tools.launcher === "hide" ? { display: "none" } : undefined} inert={expanded && drawer}>
       {tabs.map((panel, index) => <button key={panelKey(panel.panel)} type="button" title={`${panel.appName}: ${panel.label}`} aria-label={panel.label}
         aria-controls={bodyId} aria-expanded={expanded && selectedKey === panelKey(panel.panel)} onClick={() => void select(panel)}
         onKeyDown={event => { const delta = event.key === "ArrowDown" ? 1 : event.key === "ArrowUp" ? -1 : 0;
@@ -236,7 +243,7 @@ export function HostyPanelWorkspace({ children, workspaceId = DEFAULT_WORKSPACE,
         }}>{renderIcon?.(panel) ?? panel.label.slice(0, 2)}
         {workspaceTools.some(t => t.key === panelKey(panel.panel) && t.attention > 0) ? <span className="hosty-panel-attention" aria-label="Needs attention"><SdkIcon name="warning" /></span> : null}
       </button>)}
-      <button type="button" aria-label="Add tool" title="Add tool" onClick={() => { setError(null); setChooser(true); void host?.refresh(); }}><SdkIcon name="plus" /></button>
+      <button hidden={unsupported} type="button" aria-label="Add tool" title="Add tool" onClick={() => { setError(null); setChooser(true); void host?.refresh(); }}><SdkIcon name="plus" /></button>
     </nav>
     {expanded && drawer && <button type="button" className="hosty-panel-backdrop" aria-label="Return to document" onClick={() => host?.setExpanded(false, workspaceId)} />}
     <aside data-hosty-sdk ref={body} id={bodyId} className="hosty-panel-body" hidden={!expanded} inert={!expanded}
@@ -254,7 +261,7 @@ export function HostyPanelWorkspace({ children, workspaceId = DEFAULT_WORKSPACE,
       }}>
       {drawer && expanded && <span tabIndex={0} aria-hidden="true" className="hosty-panel-focus-guard"
         onFocus={() => presentationElement(workspace?.selectedId ?? "")?.querySelector<HTMLIFrameElement>("iframe")?.focus()} />}
-      <div className="hosty-panel-resize" role="separator" aria-label="Tool panel width" aria-orientation="vertical" tabIndex={drawer ? -1 : 0}
+      <div className="hosty-panel-resize" role="separator" aria-label="Tool panel width" aria-orientation="vertical" tabIndex={compact ? -1 : 0}
         aria-valuemin={280} aria-valuemax={Math.max(280, Math.min(800, size - 540))} aria-valuenow={width} onPointerDown={resize}
         onDoubleClick={() => host?.setWidth(360, workspaceId)}
         onKeyDown={event => {
@@ -263,7 +270,7 @@ export function HostyPanelWorkspace({ children, workspaceId = DEFAULT_WORKSPACE,
         }} />
       <header><strong>{selected?.label ?? "Tool"}</strong>
         {tool?.resolved.standaloneHref && <a href={tool.resolved.standaloneHref} target="_blank" rel="noopener noreferrer" title="Open separately" aria-label="Open separately"><SdkIcon name="external" /></a>}
-        {(drawer || minimizeControl === "always") && <button ref={minimize} type="button" onClick={() => host?.setExpanded(false, workspaceId)} aria-label="Minimize panel" title="Minimize panel (keep tool open)">
+        {(compact || minimizeControl === "always") && <button ref={minimize} type="button" onClick={() => host?.setExpanded(false, workspaceId)} aria-label="Minimize panel" title="Minimize panel (keep tool open)">
           <SdkIcon name="minus" />
         </button>}
       </header>
@@ -314,6 +321,11 @@ const styles = `
 .hosty-panel-resize{position:absolute;left:-12px;top:0;bottom:0;width:12px;cursor:col-resize;touch-action:none}.hosty-panel-resize:hover{background:var(--hs-brand-soft)}
 .hosty-panel-state{padding:8px 12px;font:400 13px/20px var(--hs-font);border-bottom:1px solid var(--hp-border);color:var(--hp-muted)}.hosty-panel-state a{color:var(--hs-info);text-decoration:underline;text-underline-offset:3px}.hosty-panel-state select{display:block;max-width:100%;margin-top:6px;padding:6px 10px;border:1px solid var(--hp-border);border-radius:8px;background:var(--hp-bg);color:var(--hp-fg)}
 .hosty-panel-workspace[data-hosty-panel-layout=drawer] .hosty-panel-body{position:absolute;inset:0 0 0 auto;width:min(440px,100%);z-index:102;margin:0;box-shadow:-8px 0 30px #0F1B2D29}.hosty-panel-workspace[data-hosty-panel-layout=drawer] .hosty-panel-resize{display:none}
+.hosty-panel-workspace[data-hosty-panel-layout=stacked]{flex-wrap:wrap}
+.hosty-panel-workspace[data-hosty-panel-layout=stacked]>.hosty-panel-document{flex:1 1 calc(100% - 48px);height:45%}
+.hosty-panel-workspace[data-hosty-panel-layout=stacked]>.hosty-panel-rail{order:1;height:45%}
+.hosty-panel-workspace[data-hosty-panel-layout=stacked]>.hosty-panel-body{flex:1 1 100%;height:55%;margin:0;border-left:0;border-top:1px solid var(--hp-border)}
+.hosty-panel-workspace[data-hosty-panel-layout=stacked] .hosty-panel-resize{display:none}
 .hosty-panel-backdrop{position:absolute;inset:0;border:0;background:#0F1B2D57;z-index:101;cursor:pointer}.hosty-panel-backdrop:focus-visible{outline:2px solid #A3E635;outline-offset:-2px}
 .hosty-tool-chooser{width:min(440px,calc(100vw - 32px));max-height:calc(100dvh - 32px);margin:auto;border:1px solid var(--hp-border);border-radius:14px;padding:20px;background:var(--hp-bg);color:var(--hp-fg);overflow:auto;box-shadow:0 14px 34px -8px #0F1B2D3D}.hosty-tool-chooser::backdrop{background:#0F1B2D57}.hosty-tool-chooser header{border:0;padding:0;min-height:32px}.hosty-tool-chooser>p{margin:12px 0;color:var(--hp-muted);font-size:13px}.hosty-tool-chooser ul{list-style:none;padding:0;margin:16px 0;display:grid;gap:8px}.hosty-tool-chooser li{display:flex;gap:8px}.hosty-tool-chooser li>button,.hosty-tool-chooser>button,.hosty-panel-error>button{font:500 14px/20px var(--hs-font);border:1px solid var(--hp-border);background:var(--hs-card);color:inherit;border-radius:8px;padding:8px 12px;cursor:pointer}.hosty-tool-chooser li>button{flex:1;text-align:left;padding:12px}.hosty-tool-chooser li>button:hover,.hosty-tool-chooser>button:hover,.hosty-panel-error>button:hover{background:var(--hs-brand-soft)}.hosty-tool-chooser li span{display:block;color:var(--hp-muted);font:400 13px/20px var(--hs-font)}.hosty-panel-error{position:absolute;bottom:16px;right:60px;max-width:calc(100% - 76px);z-index:4;border:1px solid var(--hp-border);border-radius:10px;padding:12px;font:400 13px/20px var(--hs-font);box-shadow:0 4px 14px -4px #0F1B2D29}.hosty-panel-error>button{margin:8px 0 0 8px}
 `;

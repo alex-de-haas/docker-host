@@ -118,8 +118,8 @@ export function PullRequests({ compact = false }: { compact?: boolean }) {
   useEffect(() => {
     if (!inventory) return;
     const route = new URL(window.location.href);
-    ui.reportSurfaceState({ route: route.pathname + route.search, state: "ready" });
-  }, [inventory, selected, ui]);
+    ui.reportSurfaceState({ route: route.pathname + route.search, state: "ready", title: !compact && selected ? `PR #${selected.number}` : "Pull requests" });
+  }, [inventory, selected, compact, ui]);
 
   async function choose(pr: PrRef) {
     const search = `?repo=${encodeURIComponent(pr.repositoryId)}&pr=${pr.number}`;

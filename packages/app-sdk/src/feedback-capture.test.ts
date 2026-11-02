@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
-import { captureStill } from "./feedback-capture";
+import { captureStill, cropCaptureToDocument } from "./feedback-capture";
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 it("denied capture leaves comments available and never hides the editor", async () => {
   vi.stubGlobal("navigator", { mediaDevices: { getDisplayMedia: vi.fn().mockRejectedValue(new DOMException("Denied", "NotAllowedError")) } });
@@ -19,4 +19,26 @@ it("a source failure stops all tracks and restores capture chrome", async () => 
   vi.spyOn(HTMLMediaElement.prototype,"play").mockRejectedValue(new Error("Source closed"));
   await expect(captureStill(hide,new AbortController().signal)).rejects.toThrow("Source closed");
   expect(stop).toHaveBeenCalled(); expect(hide.mock.calls).toEqual([[true],[false]]);
+});
+
+it("crops only after the browser verifies the source document", async () => {
+  const target = {}, cropTo = vi.fn().mockResolvedValue(undefined), fromElement = vi.fn().mockResolvedValue(target);
+  vi.stubGlobal("CropTarget", {fromElement});
+  expect(await cropCaptureToDocument({cropTo} as unknown as MediaStreamTrack)).toBe(true);
+  expect(fromElement).toHaveBeenCalledWith(document.documentElement); expect(cropTo).toHaveBeenCalledWith(target);
+  cropTo.mockRejectedValue(new Error("Not the captured tab"));
+  expect(await cropCaptureToDocument({cropTo} as unknown as MediaStreamTrack)).toBe(false);
+  expect(await cropCaptureToDocument()).toBe(false);
+});
+
+it.each([false, true])("crops without a crop-status observer (custom crop: %s)", async custom => {
+  const stop = vi.fn(), cropTo = vi.fn().mockResolvedValue(undefined), crop = vi.fn().mockResolvedValue(true);
+  const track = { stop, cropTo };
+  vi.stubGlobal("CropTarget", { fromElement: vi.fn().mockResolvedValue({}) });
+  vi.stubGlobal("navigator", { mediaDevices: { getDisplayMedia: vi.fn().mockResolvedValue({ getTracks: () => [track], getVideoTracks: () => [track] }) } });
+  vi.spyOn(HTMLMediaElement.prototype, "play").mockRejectedValue(new Error("Source closed"));
+  await expect(captureStill(vi.fn(), new AbortController().signal, undefined, custom ? crop : undefined)).rejects.toThrow("Source closed");
+  expect(custom ? crop : cropTo).toHaveBeenCalledTimes(1);
+  if (custom) expect(crop).toHaveBeenCalledWith(track);
+  expect(stop).toHaveBeenCalled();
 });

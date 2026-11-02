@@ -1,41 +1,42 @@
 ---
 created: 2026-09-22
-updated: 2026-10-12
-summary: Shell-owned ReUI document and panel containers with persistent resizing, responsive drawers and retained SDK app frames.
+updated: 2026-11-02
+summary: Shell tool columns with independent persistent resizing, compact tabs, and retained SDK app frames.
 components: [apps/shell, packages/app-sdk]
 ---
 
-# Resizable Shell Panel
+# Resizable Shell Panels
 
-Shell owns its ReUI document container, tool rail, picker and panel header. Both document and
-right-hand tools have rounded borders, background tokens and subtle shadows. The SDK owns the
-host contract and frame transport, with one retained iframe per presentation. The standard SDK
-workspace remains available to standalone applications and other hosts.
+Shell supplies a common rounded border, background, shadow and header for app tools and Feedback.
+Each panel has All tools and Hide controls; app panels also offer Open separately and End this tool
+view. The SDK owns authority, frame identity and transport. Desktop and standalone retain their
+existing SDK layouts.
 
-`ShellWorkspaceSplit` uses the ReUI resizable primitives. Its 12 px separator supports pointer
-and keyboard resizing. Double-click resets the preferred body width to 360 px, beside the 48 px
-rail. The existing bounds reserve document space and clamp the panel to available width, up to
-800 px for its body. Automatic viewport constraints do not overwrite the preferred width. Below
-900 px of workspace width, the same frame tree uses a drawer up to 440 px wide; it is not remounted.
-Docked headers expose only Open separately; the selected rail icon collapses the panel. Drawers
-provide Return to document. SDK close operations remain available to other host layouts.
+`ShellConcurrentPanels` places the document and open tools in adjacent columns. Each 12 px separator
+supports pointer resizing, ArrowLeft/ArrowRight in 20 px steps, and double-click reset to 360 px.
+Preferred panel widths range from 280 to 800 px. Available document space is reserved first; panel
+widths contract proportionally without overwriting their preferences. When even the minimum widths
+do not fit, a keyboard-accessible tab switcher presents one of the retained panels. On phone-sized
+workspaces the document and selected panel stack vertically, without a modal or inert document.
 
 ## Persistence And Embedding
 
-Shell retains `hosty.shell.right-panel-width` and `hosty.shell.right-panel-open` preferences.
-Changing preferred width/open state persists through the existing chrome callbacks. Reload uses
-those layout preferences; tool selection and opened frames belong to this browser window only.
-Standalone apps retain the SDK renderer without depending on Shell cookies.
+Shell retains the existing `hosty.shell.right-panel-width` fallback and `hosty.shell.right-panel-open`
+preference. Individual tool widths use versioned browser storage scoped to Core and account, keyed
+by tool identity. Each mounted instance can resize independently.
+Automatic viewport constraints do not rewrite saved widths. Tool selection and open frames are
+window-local; reopening a hidden tool restores its existing frame and draft.
 
-Collapse leaves opened frames mounted, hidden and inert. Switching tools also retains their frames
-and unsent input. A target/route change replaces only that tool's frame. Removed access or changed
-frame policy invalidates it. On narrow screens document/rail content becomes inert while the drawer
-is open; Escape, backdrop and Return to document close it and restore focus.
+Each iframe remains under the same keyed parent through resizing, hiding, focus changes and compact
+layout. Hide retains that instance; End this tool view releases only it. Removing access or changing
+installation, origin or frame policy still invalidates the affected frame. The shared
+[concurrent tool panel contract](../concurrent-tool-panels/feature.md) describes SDK visibility and focus.
 
 ## Testing Expectations
 
-- Shell renderer tests against the real SDK host verify retained document selection and frame nodes through collapse,
-  switching, same-target replay and the dock/drawer breakpoint; one slot is enforced.
-- Run affected Shell/SDK tests, lint and production builds.
-- Browser acceptance verifies pointer/keyboard resizing, reset, remembered width/open state,
-  assistant draft retention, Shell navigation, drawer focus/inert state, and no model submission.
+- Shell tests against the real SDK cover independent open/hide/end, same-tool instances, focus,
+  keyboard tabs, document state and iframe retention across width changes.
+- Layout tests reserve document space, clamp panel widths and restore preferences on wider screens.
+- Managed browser acceptance covers multiple tools plus Feedback, pointer/keyboard resizing,
+  source-scoped feedback, compact layout and unsent assistant draft retention.
+- Run Shell/SDK suites, affected consumer builds and lint; report unchanged existing warnings.

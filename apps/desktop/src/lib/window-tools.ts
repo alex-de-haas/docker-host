@@ -4,11 +4,13 @@ import { panelKey, type PanelTarget, type UiPanel } from "@hosty-sdk/app/ui";
 import { desktopMutation } from "./api";
 import type { App } from "./model";
 
-export const windowWorkspace = (appId: string) => `desktop-${appId}`;
+export const windowWorkspace = (windowId: string) => `desktop-${windowId}`;
 export function assistantFor(panel: UiPanel, apps: App[]) {
+  // Contextual discussion applies only to a panel explicitly bound to an assistant interface.
+  if (!panel.assistantKey || panel.feedbackComposer) return null;
   const app = apps.find(item => item.id === panel.panel.appId && item.installationId === panel.panel.installationId);
   if (!app?.confirmedRoles?.includes("assistant")) return null;
-  const declaration = app.interfaces?.assistant?.find(item => item.key === "default") ?? app.interfaces?.assistant?.[0];
+  const declaration = app.interfaces?.assistant?.find(item => item.key === panel.assistantKey);
   return declaration ? { appId: app.id, installationId: panel.panel.installationId, ...declaration } : null;
 }
 const targetKey = (target: PanelTarget) => JSON.stringify([panelKey(target.panel), target.route ?? null]);
@@ -24,12 +26,12 @@ export function createWindowPlacement() {
     finally { if (pending.get(key) === workspaceId) pending.delete(key); }
   } };
 }
-export async function prepareWindowDiscussion(userId: string, context: App, panel: UiPanel, apps: App[]) {
+export async function prepareWindowDiscussion(userId: string, context: App, panel: UiPanel, apps: App[], windowId = context.id) {
   const assistant = assistantFor(panel, apps);
   if (!assistant) throw new Error("This tool does not declare an assistant interface.");
   const problem = assistantContractError(assistant);
   if (problem) throw new Error(problem);
-  const key = `hosty.desktop.discussion:${JSON.stringify([userId, context.id, context.installationId, assistant.appId, assistant.installationId, assistant.key])}`;
+  const key = `hosty.desktop.discussion:${JSON.stringify([userId, ...(windowId === context.id ? [] : [windowId]), context.id, context.installationId, assistant.appId, assistant.installationId, assistant.key])}`;
   // Keep the request identity after uncertain transport outcomes. Retrying never submits a prompt.
   const saved = sessionStorage.getItem(key);
   const requestId = saved && /^[a-f\d]{8}(-[a-f\d]{4}){3}-[a-f\d]{12}$/i.test(saved) ? saved : createAssistantRequestId();

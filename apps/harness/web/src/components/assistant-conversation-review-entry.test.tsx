@@ -239,3 +239,20 @@ it.each(["external", "empty"])("restores a %s workspace route without creating o
   expect(api.createSession).not.toHaveBeenCalled(); expect(api.postMessage).not.toHaveBeenCalled();
   expect(controls.ui.reportSurfaceState).toHaveBeenCalledWith(expect.objectContaining({ route: `/development?workspace=${kind}`, state: "ready" }));
 });
+
+it("opens workspace details from the center tabs on narrow layouts without an extra page header", async () => {
+  vi.stubGlobal("matchMedia", (query: string) => ({ matches: query.includes("max-width: 899px"), addEventListener() {}, removeEventListener() {} }));
+  window.history.replaceState({}, "", "/development?workspace=external-workspace");
+  await act(async () => root.render(<AssistantConversation fullPage />));
+  expect(container.querySelector(".harness-conversation > header")).toBeNull();
+  const opener = container.querySelector<HTMLButtonElement>('[aria-label="Workspace navigation"] [aria-label="Workspace details"]')!;
+  expect(opener).not.toBeNull();
+  const field = container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Workspace draft external-workspace"]')!;
+  field.value = "Keep workspace edits";
+  await act(async () => opener.click());
+  expect(container.querySelector('[role="dialog"][aria-label="Workspace"]')).not.toBeNull();
+  await act(async () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+  expect(container.querySelector('[role="dialog"][aria-label="Workspace"]')).toBeNull();
+  expect(container.querySelector('textarea[aria-label="Workspace draft external-workspace"]')).toBe(field);
+  expect(field.value).toBe("Keep workspace edits");
+});

@@ -1,5 +1,5 @@
 import type { FeedbackRect } from "./feedback-types";
-export async function captureStill(hide: (hidden: boolean) => void, signal: AbortSignal): Promise<Blob> {
+export async function captureStill(hide: (hidden: boolean) => void, signal: AbortSignal, onCrop?: (cropped: boolean) => void, crop?: (track: MediaStreamTrack | undefined) => Promise<boolean>): Promise<Blob> {
   if (!navigator.mediaDevices?.getDisplayMedia) throw new Error("Screen capture is unavailable in this browser. You can still send comments.");
   // Offer the application tab while retaining the browser-owned chooser and permission.
   const options: DisplayMediaStreamOptions & { preferCurrentTab: boolean; selfBrowserSurface: string } = {
@@ -11,6 +11,8 @@ export async function captureStill(hide: (hidden: boolean) => void, signal: Abor
   signal.addEventListener("abort", stop, { once: true });
   try {
     signal.throwIfAborted(); hide(true);
+    const cropped = await (crop ?? cropCaptureToDocument)(stream.getVideoTracks?.()[0]);
+    onCrop?.(cropped);
     // Let the hidden overlay reach the compositor before consuming the live stream.
     await new Promise<void>(resolve => setTimeout(resolve, 100));
     signal.throwIfAborted();
@@ -56,4 +58,16 @@ export async function cropStill(blob: Blob, crop: FeedbackRect | null): Promise<
 }
 function canvasBlob(canvas: HTMLCanvasElement): Promise<Blob> {
   return new Promise((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error("Could not encode the screenshot.")), "image/png"));
+}
+
+/** Only the browser can prove that the chosen capture contains this document. Never infer it from dimensions. */
+export async function cropCaptureToDocument(track?: MediaStreamTrack): Promise<boolean> {
+  const api = globalThis as typeof globalThis & { CropTarget?: { fromElement(element: Element): Promise<unknown> } };
+  const capture = track as (MediaStreamTrack & { cropTo?: (target: unknown) => Promise<void> }) | undefined;
+  if (!api.CropTarget?.fromElement || !capture?.cropTo) return false;
+  try {
+    const target = await api.CropTarget.fromElement(document.documentElement);
+    await capture.cropTo(target);
+    return true;
+  } catch { return false; } // Another tab/window or unsupported geometry: explicit preview/manual crop.
 }

@@ -11,6 +11,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+import time
 
 
 def check(context, app_origin, link):
@@ -57,49 +58,50 @@ def check(context, app_origin, link):
     h('/hosty/ui/feedback', wrong_user, expected=403)
     say('PASS: authenticated intake, immutable context, no agent dispatch, exact replay and account scope')
 
-    connection = h('/connections', {'name':'Feedback acceptance', 'kind':'codex', 'auth':'api-key', 'secret':'synthetic-feedback-fixture-only'}, expected=201)
-    h('/connections/'+connection['id']+'/test', {})
-    profiles = h('/profiles')
-    profiles = h('/profiles', {'expectedRevision':profiles['revision'], 'profile':{'name':'Feedback fixture', 'description':'Scripted acceptance', 'instructions':'Exercise the feedback contract.', 'connectionId':connection['id'], 'model':'fixture-default', 'reasoningEffort':'medium', 'skillIds':[]}}, expected=201)
-    profile = next(p for p in profiles['profiles'] if p['name']=='Feedback fixture')
-    h('/profiles/default', {'profileId':profile['id'], 'expectedRevision':profiles['revision']}, method='PUT')
-    def dispatch(ids, instruction='FEEDBACK_ACCEPTANCE:HANDLE', session_id=None, workspace_id=None):
-        payload = {'requestId':str(uuid.uuid4()), 'sessionId':session_id, 'workspaceId':workspace_id,
-          'reports':[{'id':rid, 'revision':report(rid)['revision']} for rid in ids], 'instruction':instruction}
-        value = h('/feedback/dispatches', payload)
-        again = h('/feedback/dispatches', payload); assert again['id']==value['id']
-        return value
-    def settle(attempt, state='succeeded'):
-        last = None
-        def ready():
-            nonlocal last
-            session = h('/sessions/'+attempt['input']['sessionId'])
-            for approval in session.get('mcpPendingApprovals', []):
-                assert any(name in approval['tool'] for name in ['feedback_current','feedback_image','feedback_result','prepare']), approval
-                h('/sessions/'+session['id']+'/approvals/'+approval['id'], {'decision':'allow'})
-            last = next(d for d in h('/feedback')['dispatches'] if d['id']==attempt['id'])
-            if last['state'] in ('failed','cancelled','rejected') and last['state'] != state: raise AssertionError(last)
-            return last['state'] == state
-        wait_for(ready, 180)
-        return last
-    attempt = settle(dispatch([first, second]))
-    assert report(first)['status']=='processed' and report(second)['status']=='processed'
-    workspace_id = report(first)['workspaceId']; assert workspace_id and report(second)['workspaceId']==workspace_id
-    assert attempt['messageSequence'] > 0 and len(attempt['outcomes'])==2
-    say('PASS: one global batch, new chat/source workspace, screenshot tool, exact prompt and explicit per-report outcomes')
-    followup = settle(dispatch([first], 'FEEDBACK_ACCEPTANCE:PARTIAL', attempt['input']['sessionId'], workspace_id))
-    assert report(first)['status']=='partial' and report(first)['currentAttemptId']==followup['id']
-    third, _ = submit('Acceptance: unprocessed survives deletion')
-    h('/feedback/'+third, {'expectedRevision':report(third)['revision'], 'workspaceId':workspace_id})
-    wait_for(lambda: not h('/sessions/'+attempt['input']['sessionId']).get('workerRun'), 90)
-    deletion = {'requestId':str(uuid.uuid4())}
-    h('/development-workspaces/'+workspace_id+'/delete', deletion)
-    h('/development-workspaces/'+workspace_id+'/delete', deletion)
-    remaining = h('/feedback')['reports']
-    assert not any(r['id']==second for r in remaining)
-    assert report(first)['workspaceId'] is None and report(third)['workspaceId'] is None
-    assert report(first)['annotations'][0]['mediaType']=='image/png'
-    say('PASS: repeat history, partial outcome, processed-only deletion and unprocessed evidence retention')
+    if not os.environ.get('HOSTY_FEEDBACK_BROWSER_ONLY'):
+        connection = h('/connections', {'name':'Feedback acceptance', 'kind':'codex', 'auth':'api-key', 'secret':'synthetic-feedback-fixture-only'}, expected=201)
+        h('/connections/'+connection['id']+'/test', {})
+        profiles = h('/profiles')
+        profiles = h('/profiles', {'expectedRevision':profiles['revision'], 'profile':{'name':'Feedback fixture', 'description':'Scripted acceptance', 'instructions':'Exercise the feedback contract.', 'connectionId':connection['id'], 'model':'fixture-default', 'reasoningEffort':'medium', 'skillIds':[]}}, expected=201)
+        profile = next(p for p in profiles['profiles'] if p['name']=='Feedback fixture')
+        h('/profiles/default', {'profileId':profile['id'], 'expectedRevision':profiles['revision']}, method='PUT')
+        def dispatch(ids, instruction='FEEDBACK_ACCEPTANCE:HANDLE', session_id=None, workspace_id=None):
+            payload = {'requestId':str(uuid.uuid4()), 'sessionId':session_id, 'workspaceId':workspace_id,
+              'reports':[{'id':rid, 'revision':report(rid)['revision']} for rid in ids], 'instruction':instruction}
+            value = h('/feedback/dispatches', payload)
+            again = h('/feedback/dispatches', payload); assert again['id']==value['id']
+            return value
+        def settle(attempt, state='succeeded'):
+            last = None
+            def ready():
+                nonlocal last
+                session = h('/sessions/'+attempt['input']['sessionId'])
+                for approval in session.get('mcpPendingApprovals', []):
+                    assert any(name in approval['tool'] for name in ['feedback_current','feedback_image','feedback_result','prepare']), approval
+                    h('/sessions/'+session['id']+'/approvals/'+approval['id'], {'decision':'allow'})
+                last = next(d for d in h('/feedback')['dispatches'] if d['id']==attempt['id'])
+                if last['state'] in ('failed','cancelled','rejected') and last['state'] != state: raise AssertionError(last)
+                return last['state'] == state
+            wait_for(ready, 180)
+            return last
+        attempt = settle(dispatch([first, second]))
+        assert report(first)['status']=='processed' and report(second)['status']=='processed'
+        workspace_id = report(first)['workspaceId']; assert workspace_id and report(second)['workspaceId']==workspace_id
+        assert attempt['messageSequence'] > 0 and len(attempt['outcomes'])==2
+        say('PASS: one global batch, new chat/source workspace, screenshot tool, exact prompt and explicit per-report outcomes')
+        followup = settle(dispatch([first], 'FEEDBACK_ACCEPTANCE:PARTIAL', attempt['input']['sessionId'], workspace_id))
+        assert report(first)['status']=='partial' and report(first)['currentAttemptId']==followup['id']
+        third, _ = submit('Acceptance: unprocessed survives deletion')
+        h('/feedback/'+third, {'expectedRevision':report(third)['revision'], 'workspaceId':workspace_id})
+        wait_for(lambda: not h('/sessions/'+attempt['input']['sessionId']).get('workerRun'), 90)
+        deletion = {'requestId':str(uuid.uuid4())}
+        h('/development-workspaces/'+workspace_id+'/delete', deletion)
+        h('/development-workspaces/'+workspace_id+'/delete', deletion)
+        remaining = h('/feedback')['reports']
+        assert not any(r['id']==second for r in remaining)
+        assert report(first)['workspaceId'] is None and report(third)['workspaceId'] is None
+        assert report(first)['annotations'][0]['mediaType']=='image/png'
+        say('PASS: repeat history, partial outcome, processed-only deletion and unprocessed evidence retention')
     # The same child owns Shell, so embedding uses real Core app launch and SDK frame policy.
     shell_manifest = json.loads((workspace/'apps/shell/manifest.json').read_text())
     shell_manifest['source']['repository'] = context['repository']
@@ -116,7 +118,29 @@ def check(context, app_origin, link):
     config = {'core':origin, 'harness':app_origin, 'email':'activation-fixture@example.test', 'password':password, 'link':link,
               'shell':shell_origin, 'shellLink':shell_link, 'shellAppId':shell_manifest['id']}
 
-    result = subprocess.run(['node', str(workspace/'scripts/feedback-browser-acceptance.mjs')], input=json.dumps(config), text=True, cwd=workspace)
+    if os.environ.get('HOSTY_FEEDBACK_DESKTOP'):
+        desktop_manifest = json.loads((workspace/'apps/desktop/manifest.json').read_text())
+        desktop_manifest['source']['repository'] = context['repository']
+        desktop_source = context['base']/'feedback-desktop-manifest.json'
+        desktop_source.write_text(json.dumps(desktop_manifest))
+        shutil.copytree(workspace/'apps/desktop/assets', context['base']/'assets', dirs_exist_ok=True)
+        context['run']([context['cli'], '--data-root', context['root'], 'apps', 'install', desktop_source, '--runtime', 'dev', '--no-autostart'])
+        context['run']([context['cli'], '--data-root', context['root'], 'apps', 'start', desktop_manifest['id']])
+        wait_for(lambda: context['request']('/api/apps/'+desktop_manifest['id']+'/health')['status']=='healthy', 180)
+        desktop_link = json.loads(context['run']([context['cli'], '--data-root', context['root'], 'apps', 'open', desktop_manifest['id'], '--format', 'json']))['url']
+        desktop_url = urllib.parse.urlparse(desktop_link)
+        config.update(desktop=urllib.parse.urlunparse((desktop_url.scheme, desktop_url.netloc, '', '', '', '')), desktopLink=desktop_link, desktopAppId=desktop_manifest['id'])
+
+    while True:
+        result = subprocess.run(['node', str(workspace/'scripts/feedback-browser-acceptance.mjs')], input=json.dumps(config), text=True, cwd=workspace)
+        if result.returncode == 0 or not os.environ.get('HOSTY_FEEDBACK_RETRY_BROWSER'): break
+        retry = context['base']/'retry-feedback-browser'
+        stop = context['base']/'stop-feedback-browser'
+        say('BROWSER_RETRY_READY: create '+str(retry)+' to retry the script in this child, or '+str(stop)+' to finish it')
+        deadline = time.monotonic()+1200
+        while not retry.exists() and not stop.exists() and time.monotonic()<deadline: time.sleep(.5)
+        if not retry.exists(): break
+        retry.unlink()
     if result.returncode != 0:
         log = context['root']/'apps'/shell_manifest['id']/'logs/web.log'
         if log.is_file(): say(context['sanitize_diagnostic'](log.read_text()[-10000:]))

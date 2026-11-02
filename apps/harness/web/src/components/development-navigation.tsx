@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Hammer, Loader2, MessageSquarePlus, Trash2, Search, ListFilter, Diamond, CircleAlert, MessageSquare } from "lucide-react";
+import { Hammer, Loader2, MessageSquarePlus, Trash2, Search, ListFilter, Diamond, CircleAlert, MessageSquare, PanelLeftClose } from "lucide-react";
 import type { AssistantSession } from "@/lib/assistant-api";
 import type { DevelopmentWorkspace } from "@/lib/development-api";
 import { navigationItems } from "@/lib/workspace-navigation";
@@ -20,8 +20,8 @@ const statusFilters = [
   { key: "failed", label: "Failed", Icon: CircleAlert, tone: "text-destructive-foreground" },
 ] as const;
 
-export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, onNew, onDelete, activeWorkspaceId, onWorkspace, createAppAction, view = "chats" }: {
-  view?: "workspaces" | "chats";
+export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, onNew, onDelete, activeWorkspaceId, onWorkspace, createAppAction, onClose, view = "chats" }: {
+  view?: "workspaces" | "chats"; onClose?: () => void;
   activeWorkspaceId?: string; onWorkspace?: (workspace: DevelopmentWorkspace, session?: AssistantSession) => void; createAppAction?: ReactNode;
   sessions: AssistantSession[]; activeId?: string; workspaces: DevelopmentWorkspace[];
   onPick: (session: AssistantSession) => void; onNew: () => void; onDelete: (sessionId: string) => Promise<void>;
@@ -67,6 +67,7 @@ export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, 
       <div className="flex items-center justify-between gap-2">
         <h1 className="text-sm font-semibold">{title} <span className="ml-1 font-mono text-xs font-normal tabular-nums text-muted-foreground">{items.length}</span></h1>
         <div className="flex shrink-0 items-center gap-1">
+          {onClose && <Button variant="ghost" size="icon-sm" className="md:hidden" aria-label={`Hide ${title.toLowerCase()}`} title={`Hide ${title.toLowerCase()}`} onClick={onClose}><PanelLeftClose aria-hidden /></Button>}
           {view === "workspaces" && <>{createAppAction}<ContinueBuilding sessions={sessions} onPick={onPick} /></>}
           {view === "chats" && <TooltipProvider delayDuration={250}>
             <Tooltip>

@@ -1,11 +1,13 @@
 "use client";
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { APP_ACTIVITY_RENEWED, APP_SESSION_RESTORED } from "@hosty-sdk/app/browser-auth";
-import { AppWindow, ArrowLeftToLine, ArrowRightToLine, ChevronRight, CircleHelp, Grid2X2, LogOut, Maximize2, Minus, Monitor, Moon, Pin, Play, Power, RotateCw, Search, Settings2, Sun, PinOff, UserRound, X } from "lucide-react";
+import { AppWindow, ArrowLeftToLine, ArrowRightToLine, ChevronRight, CircleHelp, Grid2X2, LogOut, Maximize2, Minus, Monitor, Moon, Pin, Play, Power, RotateCw, Search, Settings2, Sun, PinOff, UserRound, X, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { readDesktop, lifecycle } from "@/lib/api";
 import { subscribeToCoreEvents, CoreEventNames } from "@/lib/core-events";
-import { APPEARANCE, APPLICATIONS, dockApps, focusWindow, initialBounds, isAdministrator, isBusy, restoreWorkspace, storageKey, visibleApps,
+import { APPEARANCE, APPLICATIONS, appPages, displayedBounds, dockApps, focusWindow, initialBounds, isAdministrator, isBusy, restoreWorkspace, storageKey, visibleApps, windowAppId,
   type App, type DesktopWindow as WindowState, type User, type Viewport, type WindowMode, type Workspace } from "@/lib/model";
+import type { UiFrameSurface } from "@hosty-sdk/app/ui";
+import { MAX_WINDOWS, destinationPage, pageDestination, openAppWindow, resolvedDestination, windowTitle } from "@/lib/windows";
 import { readWallpaper } from "@/lib/wallpaper";
 import { AppIcon } from "./app-icon";
 import { DesktopMark } from "./desktop-mark";
@@ -14,6 +16,7 @@ import { DesktopWindow } from "./desktop-window";
 import { ApplicationLibrary } from "./application-library";
 import { Appearance } from "./appearance";
 import { AppContent } from "./app-content";
+import { HostyFeedbackLauncher } from "@hosty-sdk/app/ui/react";
 import { DesktopTools, WindowTools } from "./window-tools";
 
 export function Desktop({ appId, coreOrigin }: { appId: string; coreOrigin: string }) {
@@ -51,11 +54,12 @@ function WorkspaceDesktop({ user, apps, ownId, coreOrigin, refresh, connectionEr
   user: User; apps: App[]; ownId: string; coreOrigin: string; refresh: () => Promise<void>; connectionError: string | null;
 }) {
   const admin = isAdministrator(user), available = useMemo(() => visibleApps(apps, user, ownId), [apps, user, ownId]);
+  const desktop = useRef<HTMLElement>(null);
   const [viewport, setViewport] = useState<Viewport>(() => ({ width: window.innerWidth, height: window.innerHeight }));
   const [workspace, setWorkspace] = useState<Workspace>(() => {
     let raw: string | null = null; try { raw = localStorage.getItem(storageKey(user.id)); } catch { /* An ephemeral desktop still works. */ }
     const saved = restoreWorkspace(raw, apps.map(app => app.id), { width: window.innerWidth, height: window.innerHeight });
-    saved.windows = saved.windows.filter(win => win.id.startsWith("desktop:") || available.some(app => app.id === win.id));
+    saved.windows = saved.windows.filter(win => win.id.startsWith("desktop:") || available.some(app => app.id === windowAppId(win)));
     if (!raw) saved.windows = [{ id: APPLICATIONS, bounds: initialBounds({ width: window.innerWidth, height: window.innerHeight }), mode: "normal", minimized: false, page: 0 }];
     return saved;
   });
@@ -69,7 +73,7 @@ function WorkspaceDesktop({ user, apps, ownId, coreOrigin, refresh, connectionEr
   const pendingRef = useRef(new Set<string>()), customRef = useRef<string | null>(null), dockDrag = useRef<string | null>(null);
   const [snap, setSnap] = useState<WindowMode | null>(null), [clock, setClock] = useState(() => new Date());
   const activeWindow = workspace.windows.findLast(win => !win.minimized);
-  const activeTitle = activeWindow?.id === APPLICATIONS ? "Applications" : activeWindow?.id === APPEARANCE ? "Appearance" : apps.find(app => app.id === activeWindow?.id)?.displayName || "Desktop";
+  const activeTitle = activeWindow?.id === APPLICATIONS ? "Applications" : activeWindow?.id === APPEARANCE ? "Appearance" : apps.find(app => activeWindow && app.id === windowAppId(activeWindow))?.displayName || "Desktop";
   const orderedApps = dockApps(available, workspace);
   const update = useCallback((patch: Partial<Workspace>) => setWorkspace(current => ({ ...current, ...patch })), []);
   const focus = useCallback((id: string) => setWorkspace(current => {
@@ -79,11 +83,25 @@ function WorkspaceDesktop({ user, apps, ownId, coreOrigin, refresh, connectionEr
   const patchWindow = useCallback((id: string, patch: Partial<WindowState>) => setWorkspace(current => ({ ...current,
     windows: current.windows.map(win => win.id === id ? { ...win, ...patch } : win) })), []);
   const close = useCallback((id: string) => setWorkspace(current => ({ ...current, windows: current.windows.filter(win => win.id !== id) })), []);
-  const open = useCallback((id: string) => {
+  const open = useCallback((id: string, fresh = false) => {
     setMenu(null); setSearch(null); setAccountOpen(false);
-    setWorkspace(current => current.windows.some(win => win.id === id) ? { ...current, windows: focusWindow(current.windows, id) }
+    const app = available.find(item => item.id === id), instanceId = `window:${crypto.randomUUID()}`;
+    if (workspace.windows.length >= MAX_WINDOWS && (fresh || !workspace.windows.some(win => windowAppId(win) === id))) {
+      setNotice("Close a window before opening another one (30 windows maximum)."); return;
+    }
+    setWorkspace(current => app ? openAppWindow(current, app, viewport, { id: instanceId, fresh })
+      : current.windows.some(win => win.id === id) ? { ...current, windows: focusWindow(current.windows, id) }
       : { ...current, windows: [...current.windows, { id, bounds: initialBounds(viewport, current.windows.length), mode: "normal", minimized: false, page: 0 }] });
-  }, [viewport]);
+  }, [available, viewport, workspace.windows]);
+  const navigateMain = useCallback(async (surface: UiFrameSurface) => {
+    const target = resolvedDestination(available, surface);
+    if (!target) return false;
+    const id = `window:${crypto.randomUUID()}`;
+    const next = openAppWindow(workspace, target.app, viewport, { id, destination: target.destination, page: target.page });
+    if (next === workspace) { setNotice("Close a window before opening another one (30 windows maximum)."); return false; }
+    setWorkspace(current => openAppWindow(current, target.app, viewport, { id, destination: target.destination, page: target.page }));
+    return true;
+  }, [available, viewport, workspace]);
   const runAction = useCallback(async (app: App, action: "start" | "stop" | "restart") => {
     if (!admin || pendingRef.current.has(app.id) || isBusy(app)) return;
     pendingRef.current.add(app.id); setPending(current => ({ ...current, [app.id]: action }));
@@ -93,8 +111,8 @@ function WorkspaceDesktop({ user, apps, ownId, coreOrigin, refresh, connectionEr
       setErrors(current => ({ ...current, [app.id]: message })); setNotice(message); }
     finally { await refresh(); pendingRef.current.delete(app.id); setPending(current => { const next = { ...current }; delete next[app.id]; return next; }); }
   }, [admin, refresh]);
-  const openApp = useCallback((app: App) => { open(app.id); if (admin && app.runtimeState !== "running" && !isBusy(app)) void runAction(app, "start"); }, [admin, open, runAction]);
-  const context = (id: string, x: number, y: number) => { setMenu({ id, x: Math.min(x, viewport.width - 250), y: Math.min(y, viewport.height - 330) }); setAccountOpen(false); };
+  const openApp = useCallback((app: App, fresh = false) => { open(app.id, fresh); if (admin && app.runtimeState !== "running" && !isBusy(app)) void runAction(app, "start"); }, [admin, open, runAction]);
+  const context = (id: string, x: number, y: number) => { setMenu({ id, x: Math.min(x, (viewport.left ?? 0) + viewport.width - 250), y: Math.min(y, (viewport.top ?? 0) + viewport.height - 330) }); setAccountOpen(false); };
 
   useEffect(() => {
     try { localStorage.setItem(storageKey(user.id), JSON.stringify(workspace)); }
@@ -107,9 +125,20 @@ function WorkspaceDesktop({ user, apps, ownId, coreOrigin, refresh, connectionEr
   useEffect(() => {
     const query = matchMedia("(prefers-color-scheme: dark)");
     const changed = () => setSystemDark(query.matches); query.addEventListener("change", changed);
-    const resize = () => setViewport({ width: innerWidth, height: innerHeight }); window.addEventListener("resize", resize);
     const timer = setInterval(() => setClock(new Date()), 30_000);
-    return () => { query.removeEventListener("change", changed); window.removeEventListener("resize", resize); clearInterval(timer); };
+    return () => { query.removeEventListener("change", changed); clearInterval(timer); };
+  }, []);
+  useLayoutEffect(() => {
+    const node = desktop.current; if (!node) return;
+    const measure = () => {
+      const rect = node.getBoundingClientRect();
+      const next = { width: rect.width || window.innerWidth, height: rect.height || window.innerHeight, left: rect.left, top: rect.top };
+      setViewport(previous => previous.width === next.width && previous.height === next.height && previous.left === next.left && previous.top === next.top ? previous : next);
+    };
+    measure();
+    const observer = new ResizeObserver(measure); observer.observe(node);
+    window.addEventListener("resize", measure); window.addEventListener("scroll", measure, true);
+    return () => { observer.disconnect(); window.removeEventListener("resize", measure); window.removeEventListener("scroll", measure, true); };
   }, []);
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -132,17 +161,19 @@ function WorkspaceDesktop({ user, apps, ownId, coreOrigin, refresh, connectionEr
     return () => { window.removeEventListener("keydown", key); window.removeEventListener("blur", frameFocus); };
   }, [focus]);
   const wallpaper = workspace.wallpaper === "custom" && custom ? custom : `/wallpapers/coast-${workspace.wallpaper === "night" ? "dark" : theme}.png`;
-  const menuApp = apps.find(app => app.id === menu?.id), menuWindow = workspace.windows.find(win => win.id === menu?.id);
+  const menuApp = apps.find(app => app.id === menu?.id);
+  const menuWindows = workspace.windows.filter(win => windowAppId(win) === menu?.id);
+  const menuWindow = menuWindows.at(-1);
   const matches = available.filter(app => app.displayName.toLowerCase().includes((search || "").toLowerCase()));
 
-  return <DesktopTools revision={JSON.stringify(apps.map(app => [app.id, app.installationId, app.runtimeState, app.health?.status]))}><main className={`desktop theme-${theme}`} style={{ "--wallpaper": `url("${wallpaper}")` } as CSSProperties}
+  return <DesktopTools onNavigate={navigateMain} revision={JSON.stringify(apps.map(app => [app.id, app.installationId, app.runtimeState, app.health?.status]))}><main ref={desktop} className={`desktop theme-${theme}`} style={{ "--wallpaper": `url("${wallpaper}")` } as CSSProperties}
     onContextMenu={event => { if (event.target === event.currentTarget) { event.preventDefault(); open(APPEARANCE); } }}>
     <div className="desktop-wallpaper" aria-hidden="true" />
     <header className="menubar">
       <div className="menubar-left"><button className="brand-button" onClick={() => open(APPLICATIONS)} aria-label="Hosty applications"><DesktopMark size={20} /><span>HOSTY</span></button>
         <span className="active-app-name">{activeTitle.replace(/^Hosty /, "")}</span>
       </div>
-      <div className="menubar-right"><button className="menubar-icon" title="Search applications (⌘K / Ctrl+K)" aria-label="Open Spotlight" onClick={() => setSearch("")}><Search size={17} /></button>
+      <div className="menubar-right"><HostyFeedbackLauncher className="menubar-icon" /><button className="menubar-icon" title="Search applications (⌘K / Ctrl+K)" aria-label="Open Spotlight" onClick={() => setSearch("")}><Search size={17} /></button>
         <button className="menubar-icon theme-toggle" title={`Switch to ${theme === "light" ? "dark" : "light"} theme`} aria-label="Toggle theme" onClick={() => update({ theme: theme === "light" ? "dark" : "light" })}>{theme === "light" ? <Moon size={16} /> : <Sun size={16} />}</button>
         <button className="account-button" aria-label="Account menu" aria-expanded={accountOpen} onClick={() => { setAccountOpen(!accountOpen); setMenu(null); }}><span className="avatar">{(user.displayName || user.email || "U").split(/\s/).map(value => value[0]).slice(0, 2).join("").toUpperCase()}</span><span>{admin ? "Administrator" : user.displayName}</span></button>
         <time className="desktop-clock" dateTime={clock.toISOString()}>{clock.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })}<span>{clock.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}</span></time>
@@ -151,17 +182,32 @@ function WorkspaceDesktop({ user, apps, ownId, coreOrigin, refresh, connectionEr
 
     {snap && <div className={`snap-preview snap-${snap}`} />}
     {[...workspace.windows].sort((a, b) => a.id.localeCompare(b.id)).map(win => {
-      const app = apps.find(item => item.id === win.id);
-      const title = win.id === APPLICATIONS ? "Applications" : win.id === APPEARANCE ? "Appearance" : app?.displayName || "Application";
-      return <WindowTools key={`${win.id}:${app?.installationId || ""}`} app={app} apps={apps} userId={user.id}>{(toolbar, wrap) => <DesktopWindow window={viewport.width < 700 ? { ...win, mode: "maximized" } : win} viewport={viewport} title={title}
+      const app = apps.find(item => item.id === windowAppId(win));
+      const title = win.id === APPLICATIONS ? "Applications" : win.id === APPEARANCE ? "Appearance" : windowTitle(win, app);
+      const navigationCompact = win.navigationMode ? win.navigationMode === "compact" : viewport.width < 700 || displayedBounds(win, viewport).width <= 620;
+      return <WindowTools key={`${win.id}:${app?.installationId || ""}`} app={app} apps={apps} userId={user.id} windowId={win.id}>{(toolbar, wrap) => <DesktopWindow window={viewport.width < 700 ? { ...win, mode: "maximized" } : win} viewport={viewport} title={title}
         index={workspace.windows.findIndex(item => item.id === win.id)} active={activeWindow?.id === win.id} onFocus={() => focus(win.id)}
         onChange={patch => patchWindow(win.id, patch)} onClose={() => close(win.id)} onSnapPreview={setSnap}
-        toolbar={toolbar}>
+        navigation={app && appPages(app).length > 1 && <button className="window-tool window-navigation-toggle"
+          aria-label={`${navigationCompact ? "Expand" : "Compact"} ${app.displayName} navigation`} title={navigationCompact ? "Expand navigation" : "Compact navigation"}
+          aria-controls={`pages-${win.id}`} aria-expanded={!navigationCompact}
+          onClick={() => patchWindow(win.id, { navigationMode: navigationCompact ? "expanded" : "compact" })}>
+          {navigationCompact ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+        </button>} toolbar={toolbar}>
         {wrap(win.id === APPLICATIONS ? <ApplicationLibrary apps={available} admin={admin} onOpen={openApp} onContext={(app, x, y) => context(app.id, x, y)} />
           : win.id === APPEARANCE ? <Appearance user={user} workspace={workspace} resolved={theme} custom={custom} onChange={update} onUpload={file => {
             if (customRef.current) URL.revokeObjectURL(customRef.current); customRef.current = URL.createObjectURL(file); setCustom(customRef.current);
-          }} /> : <AppContent app={app} pageIndex={win.page} theme={theme} preference={workspace.theme} admin={admin}
-            pending={pending[win.id]} error={errors[win.id]} onPage={page => patchWindow(win.id, { page })}
+          }} /> : <AppContent app={app} windowId={win.id} destination={win.destination} installationId={win.installationId} pageIndex={win.page} navigationCompact={navigationCompact} theme={theme} preference={workspace.theme} admin={admin}
+            pending={pending[windowAppId(win)]} error={errors[windowAppId(win)]}
+            onPage={page => patchWindow(win.id, { page, destination: app ? pageDestination(app, page) : undefined, currentRoute: undefined, title: undefined })}
+            onSurfaceState={state => {
+              if (!app) return;
+              const current = destinationPage(app, { endpoint: state.endpoint, route: state.route }, app.installationId || undefined);
+              if (!current) return;
+              // Observations update persistence and destination reuse, never the mounted frame's launch URL.
+              patchWindow(win.id, { page: current.index, currentRoute: state.route, title: state.title,
+                installationId: app.installationId || undefined, destination: win.installationId === app.installationId ? win.destination ?? pageDestination(app, win.page) : pageDestination(app, win.page) });
+            }}
             onStart={() => { if (app) void runAction(app, "start"); }} onRetry={refresh} />)}
       </DesktopWindow>}</WindowTools>;
     })}
@@ -177,7 +223,8 @@ function WorkspaceDesktop({ user, apps, ownId, coreOrigin, refresh, connectionEr
           const order = orderedApps.map(item => item.id).filter(value => value !== id); order.splice(order.indexOf(app.id), 0, id); update({ order, pins: order.filter(value => workspace.pins.includes(value)) }); }}
         onContextMenu={event => { event.preventDefault(); context(app.id, event.clientX, event.clientY); }}>
         <AppIcon app={app} />
-        <span className={`dock-dot ${workspace.windows.some(win => win.id === app.id) ? "open" : ""}`} />
+        <span className={`dock-dot ${workspace.windows.some(win => windowAppId(win) === app.id) ? "open" : ""}`} />
+        {workspace.windows.filter(win => windowAppId(win) === app.id).length > 1 && <span className="dock-window-count" aria-label={`${workspace.windows.filter(win => windowAppId(win) === app.id).length} windows`}>{workspace.windows.filter(win => windowAppId(win) === app.id).length}</span>}
       </DockButton>)}</div>
       <span className="dock-separator" /><DockButton label="Appearance" className="dock-item" aria-label="Appearance" onClick={() => open(APPEARANCE)}><AppIcon icon={Settings2} tone={5} /><span className={`dock-dot ${workspace.windows.some(win => win.id === APPEARANCE) ? "open" : ""}`} /></DockButton>
     </Dock>
@@ -185,11 +232,17 @@ function WorkspaceDesktop({ user, apps, ownId, coreOrigin, refresh, connectionEr
     {menu && <div className="menu-backdrop" onPointerDown={() => setMenu(null)}><div className="context-menu" role="menu" aria-label="Application actions" style={{ left: Math.max(8, menu.x), top: Math.max(44, menu.y) }} onPointerDown={event => event.stopPropagation()}>
       <span className="menu-caption">{menuApp?.displayName || (menu.id === APPEARANCE ? "Appearance" : "Applications")}</span>
       <button role="menuitem" autoFocus onClick={() => { if (menuApp) openApp(menuApp); else open(menu.id); }}><AppWindow size={16} />{menuWindow ? "Show window" : "Open"}</button>
+      {menuApp && <button role="menuitem" onClick={() => openApp(menuApp, true)}><AppWindow size={16} />New window</button>}
+      {menuWindows.length > 0 && <><div className="menu-divider" /><span className="menu-caption">Windows</span>
+        {menuWindows.map((win, index) => <button key={win.id} role="menuitem" onClick={() => { focus(win.id); setMenu(null); }}>
+          <AppWindow size={16} /><span className="menu-window-label">{windowTitle(win, menuApp)}{menuWindows.filter(other => windowTitle(other, menuApp) === windowTitle(win, menuApp)).length > 1 ? ` (${index + 1})` : ""}{win.minimized ? " — minimized" : ""}</span>
+        </button>)}
+      </>}
       {menuApp && <button role="menuitem" onClick={() => { update({ pins: workspace.pins.includes(menu.id) ? workspace.pins.filter(id => id !== menu.id) : [...workspace.pins, menu.id] }); setMenu(null); }}>{workspace.pins.includes(menu.id) ? <PinOff size={16} /> : <Pin size={16} />}{workspace.pins.includes(menu.id) ? "Unpin from favorites" : "Pin to favorites"}</button>}
-      {menuWindow && <><div className="menu-divider" /><button role="menuitem" onClick={() => { patchWindow(menu.id, { minimized: true }); setMenu(null); }}><Minus size={16} />Minimize</button>
-        <button role="menuitem" onClick={() => { patchWindow(menu.id, { mode: menuWindow.mode === "maximized" ? "normal" : "maximized", minimized: false }); setMenu(null); }}><Maximize2 size={16} />{menuWindow.mode === "maximized" ? "Restore size" : "Maximize"}</button>
-        <div className="snap-menu-row"><button role="menuitem" onClick={() => { patchWindow(menu.id, { mode: "left", minimized: false }); setMenu(null); }}><ArrowLeftToLine size={14} />Tile left</button><button role="menuitem" onClick={() => { patchWindow(menu.id, { mode: "right", minimized: false }); setMenu(null); }}><ArrowRightToLine size={14} />Tile right</button></div>
-        <button role="menuitem" onClick={() => { close(menu.id); setMenu(null); }}><X size={16} />Close window</button></>}
+      {menuWindow && <><div className="menu-divider" /><button role="menuitem" onClick={() => { patchWindow(menuWindow.id, { minimized: true }); setMenu(null); }}><Minus size={16} />Minimize</button>
+        <button role="menuitem" onClick={() => { patchWindow(menuWindow.id, { mode: menuWindow.mode === "maximized" ? "normal" : "maximized", minimized: false }); setMenu(null); }}><Maximize2 size={16} />{menuWindow.mode === "maximized" ? "Restore size" : "Maximize"}</button>
+        <div className="snap-menu-row"><button role="menuitem" onClick={() => { patchWindow(menuWindow.id, { mode: "left", minimized: false }); setMenu(null); }}><ArrowLeftToLine size={14} />Tile left</button><button role="menuitem" onClick={() => { patchWindow(menuWindow.id, { mode: "right", minimized: false }); setMenu(null); }}><ArrowRightToLine size={14} />Tile right</button></div>
+        <button role="menuitem" onClick={() => { close(menuWindow.id); setMenu(null); }}><X size={16} />Close window</button></>}
       {menuApp && admin && <><div className="menu-divider" />{menuApp.runtimeState === "stopped" ? <button role="menuitem" disabled={!!pending[menuApp.id]} onClick={() => { openApp(menuApp); setMenu(null); }}><Play size={16} />Start application</button>
         : <><button role="menuitem" disabled={!!pending[menuApp.id] || isBusy(menuApp)} onClick={() => { setConfirmAction({ app: menuApp, action: "restart" }); setMenu(null); }}><RotateCw size={16} />Restart for everyone…</button>
         <button role="menuitem" className="danger" disabled={!!pending[menuApp.id] || isBusy(menuApp)} onClick={() => { setConfirmAction({ app: menuApp, action: "stop" }); setMenu(null); }}><Power size={16} />Stop for everyone…</button></>}</>}

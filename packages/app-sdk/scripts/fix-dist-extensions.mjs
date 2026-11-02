@@ -7,14 +7,14 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const distDir = join(dirname(fileURLToPath(import.meta.url)), "..", "dist");
-const specifier = /(from\s+")(\.\.?\/[^"]+?)(")/g;
+const specifier = /(from\s+)(["'])(\.\.?\/[^"']+?)\2/g;
 
 for (const name of readdirSync(distDir)) {
   if (!/\.(js|d\.ts)$/.test(name)) continue;
   const path = join(distDir, name);
   const source = readFileSync(path, "utf8");
-  const rewritten = source.replace(specifier, (match, head, spec, tail) =>
-    /\.(js|json)$/.test(spec) ? match : `${head}${spec}.js${tail}`,
+  const rewritten = source.replace(specifier, (match, head, quote, spec) =>
+    /\.(js|json)$/.test(spec) ? match : `${head}${quote}${spec}.js${quote}`,
   );
   if (rewritten !== source) {
     writeFileSync(path, rewritten);

@@ -261,6 +261,43 @@ public sealed class AppManifestServiceTests
     }
 
     [Theory]
+    [InlineData("conversation", true)]
+    [InlineData("unknown", false)]
+    [InlineData("", false)]
+    public async Task LoadAsync_AssistantPanelReferencesAnExplicitInterface(string key, bool valid)
+    {
+        var manifestPath = await WriteSystemUiManifestAsync(null, $$"""
+            , "interfaces": { "assistant": [{ "key": "conversation", "endpoint": "web", "path": "/agent", "version": 1, "capabilities": [] }] },
+              "ui": { "panels": [{ "id": "unrelated-name", "path": "/tool", "icon": "star", "assistantKey": {{JsonSerializer.Serialize(key)}} }] }
+            """);
+        if (valid)
+        {
+            var selection = await new AppManifestService().LoadAsync(manifestPath);
+            Assert.Equal(key, selection.Manifest.Ui!.Panels[0].AssistantKey);
+        }
+        else
+        {
+            var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifestPath));
+            Assert.Contains(error.Errors, e => e.Code == "app_manifest_ui_panel_assistant_invalid");
+        }
+    }
+
+    [Theory]
+    [InlineData(null, "default")]
+    [InlineData("", "default")]
+    [InlineData("  ", "default")]
+    [InlineData(" conversation ", "conversation")]
+    public async Task LoadAsync_AssistantPanelUsesNormalizedInterfaceKey(string? interfaceKey, string panelKey)
+    {
+        var manifestPath = await WriteSystemUiManifestAsync(null, $$"""
+            , "interfaces": { "assistant": [{ "key": {{JsonSerializer.Serialize(interfaceKey)}}, "endpoint": "web", "path": "/agent", "version": 1, "capabilities": [] }] },
+              "ui": { "panels": [{ "id": "conversation", "path": "/tool", "icon": "star", "assistantKey": {{JsonSerializer.Serialize(panelKey)}} }] }
+            """);
+        var selection = await new AppManifestService().LoadAsync(manifestPath);
+        Assert.Equal(panelKey, selection.Manifest.Ui!.Panels[0].AssistantKey);
+    }
+
+    [Theory]
     [InlineData("", "app_manifest_ui_panel_id_invalid")]
     [InlineData("Upper", "app_manifest_ui_panel_id_invalid")]
     [InlineData("legacy-old", "app_manifest_ui_panel_id_invalid")]
@@ -1312,7 +1349,7 @@ public sealed class AppManifestServiceTests
     }
 
     [Theory]
-    [InlineData("harness", new[] { "bot", "git-pull-request" })]
+    [InlineData("harness", new[] { "bot", "git-pull-request", "message-square" })]
     [InlineData("demo-app", new[] { "contact-round" })]
     public async Task LoadAsync_FirstPartyPanelsMeetTheAuthoringContract(string app, string[] expectedIcons)
     {
