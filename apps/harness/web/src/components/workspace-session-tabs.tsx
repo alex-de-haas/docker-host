@@ -1,5 +1,5 @@
 "use client";
-import { useRef } from "react";
+import { useRef, type ReactNode } from "react";
 import { Loader2, Plus } from "lucide-react";
 import { Button } from "./ui/button";
 import { WorkspaceActivityCounts } from "./workspace-activity-counts";
@@ -7,14 +7,16 @@ import { countStatus, emptyCounts, workspaceSessionIds } from "@/lib/workspace-n
 import { workflowIsActive, type DevelopmentWorkspace } from "@/lib/development-api";
 import type { AssistantSession } from "@/lib/assistant-api";
 import type { WorkspaceSessionActions } from "@/lib/use-workspace-session-actions";
-export function WorkspaceSessionTabs({ workspace, sessions, activeId, onPick, actions }: {
+export function WorkspaceSessionTabs({ workspace, sessions, activeId, onPick, actions, leading, trailing }: {
+  leading?: ReactNode; trailing?: ReactNode;
   workspace: DevelopmentWorkspace; sessions: AssistantSession[]; activeId?: string;
   onPick: (session: AssistantSession) => void; actions: WorkspaceSessionActions;
 }) {
   const tabList = useRef<HTMLDivElement>(null);
   const chats = workspaceSessionIds(workspace).flatMap(id => sessions.find(s => s.id === id) ?? []);
-  return <div className="shrink-0 border-b">
+  return <div className="shrink-0 border-b" role="region" aria-label="Workspace navigation">
     <div className="flex min-w-0 items-center gap-1 px-2 pt-2">
+      {leading && <div className="mb-2 shrink-0 md:hidden">{leading}</div>}
       <div ref={tabList} role="tablist" aria-label="Workspace sessions" className="flex min-w-0 items-center gap-1 overflow-x-auto pb-2" onKeyDown={event => {
         if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
         const tabs = [...tabList.current!.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
@@ -34,6 +36,7 @@ export function WorkspaceSessionTabs({ workspace, sessions, activeId, onPick, ac
         disabled={actions.busy || actions.retry || !workflowIsActive(workspace.workflow)} onClick={() => void actions.command("new")}>
         {actions.busy ? <Loader2 className="motion-safe:animate-spin" /> : <Plus />}
       </Button>}
+      {trailing && <div className="mb-2 ml-auto shrink-0">{trailing}</div>}
     </div>
     {actions.error && <p role="alert" className="px-3 pb-2 text-xs text-destructive-foreground">{actions.error}</p>}
     {actions.retry && !actions.busy && actions.pending && <Button size="sm" variant="outline" className="m-2" onClick={() => void actions.run(actions.pending!)}>Retry same request</Button>}

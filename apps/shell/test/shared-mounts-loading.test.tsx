@@ -25,7 +25,7 @@ vi.mock("../src/components/ui/sonner", () => ({ Toaster: () => null }));
 vi.mock("../src/app/shell/sidebar/shell-sidebar", () => ({ ShellSidebar: () => null }));
 vi.mock("../src/app/shell/chrome/shell-mobile-tabs", () => ({ ShellMobileTabs: () => null }));
 vi.mock("../src/app/shell/chrome/shell-top-strip", () => ({ ShellTopStrip: () => null }));
-vi.mock("@hosty-sdk/app/ui/react", () => ({ useHostyUiHost: () => null }));
+vi.mock("@hosty-sdk/app/ui/react", () => ({ useHostyUiHost: () => null, HostyFeedbackWorkspace: ({children}: {children: ReactNode}) => children }));
 vi.mock("../src/app/shell/chrome/shell-panel-workspace", () => ({ ShellPanelWorkspace: ({ children }: { children: ReactNode }) => children }));
 
 let root: Root, container: HTMLDivElement, actions: ShellActionsContextValue, snapshot: ShellContextValue;

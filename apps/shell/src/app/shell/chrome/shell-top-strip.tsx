@@ -54,8 +54,7 @@ export function ShellTopStrip({
   const selected = snapshot.tools.find(item => item.presentationId === workspace?.selectedId);
   const preferences = usePanelPreferences();
   const pinned = preferences.ready ? snapshot.catalog.filter(preferences.isPinned) : [];
-  function openTool(item: UiPanel, toggle = false) {
-    if (toggle && workspace?.expanded && selected?.key === panelKey(item.panel)) { host?.collapseWorkspace("default"); return; }
+  function openTool(item: UiPanel) {
     void host?.selectPanel(item.panel).then(result => setToolError(result.status === "opened" ? null : `${item.appName}: ${item.available ? "could not open tool" : item.state}.`));
   }
   const activity = useToolActivity();
@@ -98,7 +97,7 @@ export function ShellTopStrip({
       <div className={cn("flex min-w-0 items-center justify-end gap-1", showPanelToggle && rightRailExpanded !== null ? "min-[600px]:w-3/5" : "shrink-0")}>
 
         {showPanelToggle && rightRailExpanded !== null && <div className="hidden min-w-0 flex-1 items-center gap-1 min-[600px]:flex">
-          <PinnedToolButtons panels={pinned} selectedKey={workspace?.expanded ? selected?.key : undefined} onSelect={item => openTool(item, true)} />
+          <PinnedToolButtons panels={pinned} selectedKey={workspace?.expanded ? selected?.key : undefined} selectedKeys={workspace?.expanded ? snapshot.tools.filter(item => workspace.visibleIds?.includes(item.presentationId)).map(item => item.key) : []} onSelect={item => openTool(item)} />
           <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="sm" className="shrink-0" aria-label="Tools"><PanelsTopLeft className="size-4" /><span className="hidden sm:inline">Tools</span><ToolsActivityBadge values={snapshot.catalog.map(activity.read)} /><ChevronDown className="size-3" /></Button></DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="max-h-[70dvh] w-64 overflow-y-auto">
               <p className="px-2 py-1.5 text-xs text-muted-foreground">Pin tools to the top bar</p>

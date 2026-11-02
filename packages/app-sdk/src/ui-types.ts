@@ -11,9 +11,9 @@ export type UiBootstrap = {
 export type UiPanel = {
   panel: PanelRef; label: string; appName: string; icon: string | null;
   endpoint: string; route: string; origin: string | null;
-  available: boolean; state: string; canStart: boolean; framePolicy: UiFramePolicy;
+  available: boolean; state: string; canStart: boolean; framePolicy: UiFramePolicy; feedbackComposer?: boolean; assistantKey?: string | null;
 };
-export type UiFrameSurface = AppSurfaceRef & { origin: string; framePolicy: UiFramePolicy; panelId?: string };
+export type UiFrameSurface = AppSurfaceRef & { origin: string; framePolicy: UiFramePolicy; feedbackComposer?: boolean; panelId?: string };
 export type UiResolvedPanel = {
   target: PanelTarget; surface: UiFrameSurface | null;
   available: boolean; state: string; standaloneHref: string | null;

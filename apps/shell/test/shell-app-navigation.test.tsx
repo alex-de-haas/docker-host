@@ -9,6 +9,7 @@ import type { UiHost, UiHostSnapshot } from "@hosty-sdk/app/ui/host";
 const toolUi = vi.hoisted(() => ({ host: null as Pick<UiHost, "getSnapshot" | "subscribeSnapshot" | "collapseWorkspace"> | null }));
 vi.mock("@hosty-sdk/app/ui/react", () => ({
   useHostyUiHost: () => toolUi.host,
+  HostyFeedbackLauncher: () => null,
   useHostyChrome: () => ({ tools: { enabled: false, launcher: "hide" } }),
 }));
 

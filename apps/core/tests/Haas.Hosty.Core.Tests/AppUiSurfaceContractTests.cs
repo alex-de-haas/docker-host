@@ -6,6 +6,26 @@ namespace Haas.Hosty.Core.Tests;
 public class AppUiSurfaceContractTests
 {
     [Fact]
+    public void AssistantBindingBelongsOnlyToTheDeclaredPanel()
+    {
+        var ui = AppUiContract.FromManifest(new RuntimeAppUiManifest { Panels = [
+            new() { Id = "arbitrary-tool", Path = "/reports", AssistantKey = "conversation" },
+            new() { Id = "assistant", Path = "/ordinary" } ] });
+        Assert.Equal("conversation", ui!.Panels![0].AssistantKey);
+        Assert.Null(ui.Panels[1].AssistantKey);
+    }
+
+    [Fact]
+    public void ComposerDeclarationIsExplicitAndIndependentOfPanelIdentity()
+    {
+        var ui = AppUiContract.FromManifest(new RuntimeAppUiManifest { Panels = [
+            new() { Id = "arbitrary-tool", Path = "/reports", FeedbackComposer = true },
+            new() { Id = "feedback", Path = "/ordinary" } ] });
+        Assert.True(ui!.Panels![0].FeedbackComposer);
+        Assert.False(ui.Panels[1].FeedbackComposer);
+    }
+
+    [Fact]
     public void ExplicitPanelIdentitySurvivesPresentationChanges()
     {
         var first = new AppSurfaceContract("/chat", "web", "Assistant", "bot", "assistant");

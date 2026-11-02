@@ -4,7 +4,7 @@ import type { App } from "../src/lib/model";
 const mutation = vi.hoisted(() => vi.fn());
 vi.mock("../src/lib/api", () => ({ desktopMutation: mutation }));
 import { prepareWindowDiscussion, createWindowPlacement } from "../src/lib/window-tools";
-const panel = { panel: { appId: "helper", installationId: "i1", panelId: "chat" } } as UiPanel;
+const panel = { assistantKey: "default", panel: { appId: "helper", installationId: "i1", panelId: "chat" } } as UiPanel;
 const context = { id: "notes", installationId: "notes-1" } as App;
 const app = { id: "helper", installationId: "i1", confirmedRoles: ["assistant"], interfaces: { assistant: [{ key: "default", version: 1, capabilities: [] }] } } as unknown as App;
 beforeEach(() => { sessionStorage.clear(); mutation.mockReset(); });
@@ -30,4 +30,11 @@ it("keeps embedded tool requests in their source window and removes completed pl
   } };
   await placement.open(host as never, "desktop-notes", target);
   expect(decide("default").workspaceId).toBe("default");
+});
+
+it("does not share an uncertain assistant request between windows of the same app", async () => {
+  mutation.mockRejectedValue(new Error("offline"));
+  for (const id of ["first", "second", "first"]) await expect(prepareWindowDiscussion("alice", context, panel, [app], id)).rejects.toThrow("offline");
+  expect(mutation.mock.calls[0][1].requestId).not.toBe(mutation.mock.calls[1][1].requestId);
+  expect(mutation.mock.calls[0][1].requestId).toBe(mutation.mock.calls[2][1].requestId);
 });

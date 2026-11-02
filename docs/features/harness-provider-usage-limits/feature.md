@@ -1,6 +1,6 @@
 ---
 created: 2026-10-28
-updated: 2026-10-30
+updated: 2026-11-02
 summary: Optional connection-level quota and credit observations for Codex and Claude, with bounded diagnostics, retained snapshots and shared Limits controls.
 components: [apps/harness]
 ---
@@ -38,8 +38,8 @@ The shipped packages are Codex CLI 0.162.1 and Claude Agent SDK 0.3.296.
 - The provider-neutral contract represents local quota as not applicable and supports USD
   balances, provider credits and percentage windows. Ollama fixtures cover included,
   purchased and legacy session balances. The local Ollama adapter reports not-applicable quota
-  without credentials or network requests, so its compact chat control stays hidden. Cloud-backed
-  models remain unsupported by that adapter; cloud account collection belongs to
+  without credentials or network requests, so its Limits control stays hidden in both settings and
+  chat. Cloud-backed models remain unsupported by that adapter; cloud account collection belongs to
   [Agent And Model Provider Interface](../agent-provider-interface/plan.md).
 
 The optional adapter capability describes snapshot/event support and meter kinds. Observations
@@ -78,9 +78,15 @@ The browser shares subscriptions, closes hidden-page streams, and reloads on rec
 Sequence ordering and request guards prevent a late HTTP response from replacing newer stream data.
 
 The Limits popover lists quota windows, credits, provider status, localized amounts and absolute
-reset/observation times. Unsupported/unavailable states do not render a fabricated percentage.
+reset/observation times. Codex quota headings show time until the reported reset in days/hours or
+hours/minutes instead of the window duration. The countdown updates locally while the popover is
+open and when the page becomes visible, without requesting provider data. An elapsed deadline says
+Reset time reached without implying restored quota; missing reset times retain the window label.
+Unsupported and not-applicable observations hide the Limits control in both settings and chat.
+Loading, unavailable and stale observations keep the control and its refresh action; a temporary
+failure does not imply absent support. Connection revision guards prevent an old account's support
+state from hiding the control for its replacement. Unknown amounts never become a fabricated zero.
 A provider-selected active row may supply the compact label; otherwise the control says Limits.
-Not-applicable quota hides the compact chat control and remains explainable in settings.
 Refresh affects only usage state, preserving settings edits and message drafts and leaving Send
 independent of diagnostic availability.
 
@@ -118,6 +124,17 @@ and versions Harness from 0.77.0 to 0.78.0. Native prompt suggestions and local 
   its demo-app fixture reports `skill_package_invalid` for an absent skill directory. Its child is
   Finished, and the exploratory fixture edits are reverted.
 
+The 2026-11-02 display refinement passed `npm run harness:test` (2,000 tests),
+`npm run harness:build-web`, and `npm run harness:lint` (one existing tasks.tsx warning).
+`npm run test:integration -- harness-local` passed with separate managed-child data: unsupported
+API-key and local Ollama controls are absent in the password-authenticated Shell settings iframe.
+Cold start, warm restart and missing-output recovery took 35.043, 2.018 and 22.397 seconds;
+parent Finish confirmed resource removal. The authorized live workspace trial also displayed the
+Codex reset countdown and retained its exact timestamp. No model prompt was submitted.
+The separate Docker worker suite was not repeated for this web-only change; native webviews and
+other operating systems were not tested. Version/documentation checks pass, and changes remain
+uncommitted in the existing Harness 0.84.0 candidate.
+
 ## Testing Expectations
 
 - Normalization covers missing/invalid values, zero, exceeded limits, multiple buckets, partial
@@ -127,7 +144,8 @@ and versions Harness from 0.77.0 to 0.78.0. Native prompt suggestions and local 
 - Connection tests cover coalescing, exclusive credential claims, rename/replacement/revocation,
   stale persistence and late results; subscriptions stop at the last consumer.
 - HTTP/stream tests verify administrator authentication and ticket admission. UI tests cover
-  unsupported states, bounded bars, absolute times and HTTP/stream ordering.
+  unsupported/local control visibility, unavailable recovery, countdown rollover, bounded bars, absolute
+  times and HTTP/stream ordering.
 - Run Harness lint, web build, tests, version/docs validation, and the worker/harness-local
   integration suites. Use a managed child Core with normal password login for browser acceptance.
   Real account checks require scoped authorization; fixture results never establish live-account

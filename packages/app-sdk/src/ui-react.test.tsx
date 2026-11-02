@@ -548,3 +548,22 @@ it.each(["running", "degraded"])("updates degradation warnings without replacing
     expect(host!.getSnapshot().tools[0]!.resolved).toMatchObject({ state, available: listedPanels[0]!.available });
   }
 });
+
+it("keeps compact feedback sources interactive without a modal backdrop or focus trap", async () => {
+  listedPanels = [{ ...catalog[0]!, feedbackComposer: true }, catalog[1]!];
+  vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({ width: 700, height: 800 } as DOMRect);
+  await render();
+  await act(async () => { await host!.selectPanel(listedPanels[0]!.panel); });
+  const frame = element.querySelector("iframe"), draft = element.querySelector<HTMLTextAreaElement>("textarea")!;
+  expect(element.querySelector('[data-hosty-panel-layout="stacked"]')).not.toBeNull();
+  expect(element.querySelector('.hosty-panel-document')!.hasAttribute('inert')).toBe(false);
+  expect(element.querySelector('.hosty-panel-backdrop')).toBeNull();
+  expect(element.querySelector('[aria-modal="true"], .hosty-panel-focus-guard')).toBeNull();
+  draft.focus(); expect(document.activeElement).toBe(draft);
+  await act(async () => { host!.setExpanded(false); });
+  expect(element.querySelector('[data-hosty-panel-layout="stacked"]')).toBeNull();
+  await act(async () => { await host!.selectPanel(listedPanels[1]!.panel); });
+  expect(element.querySelector('[data-hosty-panel-layout="drawer"]')).not.toBeNull();
+  expect(element.querySelector('.hosty-panel-document')!.hasAttribute('inert')).toBe(true);
+  expect(frame?.isConnected).toBe(true);
+});

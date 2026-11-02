@@ -86,27 +86,28 @@ export function FeedbackInbox({ workspaceId, sessionId, running, disabled = fals
     catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
   };
   const scoped = data.reports.filter(r => !workspaceId || r.workspaceId === workspaceId);
-  const rows = scoped.filter(r => (!app || r.context.appId === app) && (binding !== "unassigned" || !r.workspaceId)
+  const rows = workspaceId ? scoped : scoped.filter(r => (!app || r.context.appId === app) && (binding !== "unassigned" || !r.workspaceId)
     && (status === "all" || status === "unprocessed" ? status === "all" || feedbackEligible(r) : status === "needs-review" ? ["failed", "partial", "uncertain", "cancelled"].includes(r.status) : r.status === status));
   const selectedRows = scoped.filter(r => selected.includes(r.id) && r.status !== "pending" && !r.disposition);
   const detail = data.reports.find(r => r.id === detailId);
   const target = sessions.find(s => s.id === targetChat);
   const targetBusy = targetChat === sessionId && running || isBusy(target?.status);
   const canSend = !!review?.reports.length && !busy && !disabled && (!targetChat || !!target && !targetBusy);
+  if (workspaceId && loaded && !error && !scoped.length) return null;
   const title = workspaceId ? <h3 className="text-sm font-semibold">Feedback</h3> : <h1 className="text-2xl font-semibold tracking-tight">Feedback</h1>;
   return <section className={workspaceId ? "space-y-3 border-t pt-4" : "mx-auto max-w-5xl space-y-5 p-6"} aria-label="Feedback">
     <header className="flex flex-wrap items-center justify-between gap-2">{title}<Button variant="outline" size="sm" disabled={busy} onClick={() => void refresh()}>Refresh</Button></header>
     {!workspaceId && <p className="text-sm text-muted-foreground">Review observations, select related feedback and send it to one chat.</p>}
     {error && <p role="alert" className="text-sm text-destructive-foreground">{error}</p>}
     {notice && <p role="status" className="text-sm">{notice}</p>}
-    <div className="flex flex-wrap gap-2">
+    {!workspaceId && <div className="flex flex-wrap gap-2">
       <select aria-label="Feedback status" className={selectClass} value={status} onChange={e => setStatus(e.target.value)}>
         <option value="unprocessed">Unprocessed</option><option value="pending">In progress</option><option value="processed">Processed</option><option value="needs-review">Needs review</option><option value="all">All</option>
       </select>
-      {!workspaceId && <><select aria-label="Feedback application" className={selectClass} value={app} onChange={e => setApp(e.target.value)}><option value="">All applications</option>
+      <select aria-label="Feedback application" className={selectClass} value={app} onChange={e => setApp(e.target.value)}><option value="">All applications</option>
         {[...new Map(scoped.map(r => [r.context.appId, r.context.appName])).entries()].map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select>
-        <select aria-label="Feedback workspace filter" className={selectClass} value={binding} onChange={e => setBinding(e.target.value)}><option value="all">All workspaces</option><option value="unassigned">Unassigned</option></select></>}
-    </div>
+        <select aria-label="Feedback workspace filter" className={selectClass} value={binding} onChange={e => setBinding(e.target.value)}><option value="all">All workspaces</option><option value="unassigned">Unassigned</option></select>
+    </div>}
     <div className="flex flex-wrap gap-2">
       <Button size="sm" disabled={disabled || busy || !selectedRows.length} onClick={() => void openReview(selectedRows, selectedRows.some(r => r.status !== "unprocessed"))}>Send selected ({selectedRows.length})</Button>
       <Button size="sm" variant="outline" disabled={disabled || busy || !scoped.some(feedbackEligible)} onClick={() => void openReview(scoped.filter(feedbackEligible).slice(0, 50))}>Address all{scoped.filter(feedbackEligible).length > 50 ? " (first 50)" : ""}</Button>

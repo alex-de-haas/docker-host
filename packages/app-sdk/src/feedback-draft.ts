@@ -1,4 +1,4 @@
-import type { FeedbackCapabilities, FeedbackNoteInput, FeedbackSubmit, FeedbackTarget } from "./feedback-types";
+import type { FeedbackCapabilities, FeedbackNoteInput, FeedbackSubmit } from "./feedback-types";
 export type DraftNote = Omit<FeedbackNoteInput, "image"> & { image?: Blob };
 export type FeedbackDraft = { key: string; revision: number; requestId: string; comment: string; annotations: DraftNote[]; submitting: boolean };
 const database = "hosty-feedback-v1";
@@ -24,20 +24,6 @@ export async function readDraft(key: string): Promise<FeedbackDraft | null> {
     tx.oncomplete = () => resolve(value); tx.onerror = () => reject(tx.error); tx.onabort = () => reject(tx.error);
   }); } finally { db.close(); }
 }
-/** Read-check-write is one transaction: an older tab cannot overwrite a newer draft. */
-export async function saveDraft(draft: FeedbackDraft, expectedRevision: number, expectedRequestId: string | null): Promise<void> {
-  const db = await open();
-  try { await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction("drafts", "readwrite"); const store = tx.objectStore("drafts");
-    const read = store.get(draft.key); let conflict = false;
-    read.onsuccess = () => {
-      if ((read.result?.revision ?? 0) !== expectedRevision || (read.result?.requestId ?? null) !== expectedRequestId) { conflict = true; tx.abort(); return; }
-      store.put(draft);
-    };
-    tx.oncomplete = () => resolve();
-    tx.onabort = tx.onerror = () => reject(conflict ? new Error("This draft changed in another tab. Reload to restore its latest saved version.") : tx.error ?? new Error("Draft could not be saved locally."));
-  }); } finally { db.close(); }
-}
 export async function deleteDraft(key: string, requestId: string, expectedRevision: number): Promise<void> {
   const db = await open();
   try { await new Promise<void>((resolve, reject) => {
@@ -50,12 +36,6 @@ export async function deleteDraft(key: string, requestId: string, expectedRevisi
     tx.oncomplete = () => resolve();
     tx.onabort = tx.onerror = () => reject(conflict ? new Error("This draft changed in another tab. Reload before discarding its saved content.") : tx.error ?? new Error("Draft could not be removed locally."));
   }); } finally { db.close(); }
-}
-export function blankDraft(key: string): FeedbackDraft {
-  return { key, revision: 0, requestId: crypto.randomUUID(), comment: "", annotations: [], submitting: false };
-}
-export function makeNote(target: FeedbackTarget): DraftNote {
-  return { id: crypto.randomUUID(), text: "", route: location.pathname, capturedAt: new Date().toISOString(), target };
 }
 export async function submission(draft: FeedbackDraft): Promise<FeedbackSubmit> {
   const [coreId, appId, installation, userId] = JSON.parse(draft.key) as string[];

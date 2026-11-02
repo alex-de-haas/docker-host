@@ -7,7 +7,7 @@ export const RESPONSE_TIMEOUT = 10_000;
 export type UiMessage = Record<string, unknown> & { type: string; version: 1 };
 export function readUiMessage(value: unknown): UiMessage | null {
   if (!value || typeof value !== "object") return null;
-  try { if (new TextEncoder().encode(JSON.stringify(value)).length > 16_384) return null; } catch { return null; }
+  try { if (new TextEncoder().encode(JSON.stringify(value)).length > ((value as {type?: string}).type?.startsWith("hosty:ui:feedback-") ? 262_144 : 16_384)) return null; } catch { return null; }
   const msg = value as Record<string, unknown>;
   return msg.version === UI_VERSION && typeof msg.type === "string" && msg.type.startsWith("hosty:ui:") ? msg as UiMessage : null;
 }

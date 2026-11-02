@@ -85,18 +85,19 @@ it("shows the real collapsed state during a delayed/refused session link and ope
   refused = false;
   await act(async () => toggle(false).click());
   expect(toggle(true)?.getAttribute("aria-pressed")).toBe("true");
-  expect(container.querySelector("aside")?.hidden).toBe(false);
+  expect(container.querySelector("aside")?.closest<HTMLElement>("[data-shell-tool-column]")?.hidden).toBe(false);
 });
-it("applies a legacy open preference to the workspace and collapses on the first toggle", async () => {
+it("applies a legacy open preference and focuses an already visible tool without hiding it", async () => {
   localStorage.setItem(RIGHT_PANEL_OPEN_PREF_KEY, "true");
   await render(null);
   expect(toggle(true)?.getAttribute("aria-pressed")).toBe("true");
-  expect(container.querySelector("aside")?.hidden).toBe(false);
+  expect(container.querySelector("aside")?.closest<HTMLElement>("[data-shell-tool-column]")?.hidden).toBe(false);
   expect(document.cookie).toContain(`${RIGHT_PANEL_OPEN_PREF_KEY}=true`);
+  const frame = container.querySelector("iframe");
   await act(async () => toggle(true).click());
-  expect(host!.getSnapshot().expanded).toBe(false);
-  expect(toggle(false)).not.toBeNull();
-  expect(container.querySelector("aside")?.hidden).toBe(true);
+  expect(host!.getSnapshot().expanded).toBe(true);
+  expect(toggle(true)).not.toBeNull();
+  expect(container.querySelector("iframe")).toBe(frame);
 });
 it("defers a legacy open preference to the explicit session link instead of selecting the first tool", async () => {
   localStorage.setItem(RIGHT_PANEL_OPEN_PREF_KEY, "true"); refused = true;
@@ -133,17 +134,17 @@ it("performs one resolution for the first top-strip opening after catalog discov
   expect(select).toHaveBeenCalledTimes(1);
   expect(requests()).toHaveLength(1);
   expect(host!.getSnapshot().selected).toEqual(panels[1].panel);
-  expect(container.querySelector("aside")?.hidden).toBe(false);
+  expect(container.querySelector("aside")?.closest<HTMLElement>("[data-shell-tool-column]")?.hidden).toBe(false);
 });
 
-it("retains tool frames across rail toggles, switching and the drawer breakpoint", async () => {
+it("retains tool frames across rail toggles, switching and the compact breakpoint", async () => {
   const originalWidth = window.innerWidth;
   await render(false);
   await act(async () => { await host!.selectPanel(panels[1].panel); });
   const assistant = container.querySelector<HTMLIFrameElement>('iframe[title="assistant"]')!;
   expect(assistant).not.toBeNull();
   expect(container.querySelector(".hosty-panel-workspace")).toBeNull();
-  expect(container.querySelector('#workspace')?.firstElementChild?.className).toContain("border");
+  expect(container.querySelector('[data-shell-document]')?.className).toContain("border");
   expect(container.querySelector('[aria-label="Open separately"]')).not.toBeNull();
   expect(container.querySelector('[aria-label="Minimize panel"]')).toBeNull();
   expect(container.querySelector('[aria-label="Close tool"]')).toBeNull();
@@ -156,11 +157,11 @@ it("retains tool frames across rail toggles, switching and the drawer breakpoint
   try {
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 600 });
     await act(async () => resizeWorkspace());
-    expect(container.querySelector('[data-shell-panel-layout="drawer"]')).not.toBeNull();
-    expect(container.querySelector('aside[role="dialog"]')?.getAttribute("aria-modal")).toBe("true");
+    expect(container.querySelector('[data-shell-panel-layout="tabs"]')).not.toBeNull();
+    expect(container.querySelector('[role="tablist"][aria-label="Open tools"]')).not.toBeNull();
     expect(container.querySelector('nav[aria-label="Tools"]')).toBeNull();
     expect(container.querySelector('iframe[title="assistant"]')).toBe(assistant);
-    await act(async () => container.querySelector("aside")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    await act(async () => host!.collapseWorkspace("default"));
     expect(host!.getSnapshot().expanded).toBe(false);
     expect(container.querySelector('iframe[title="assistant"]')).toBe(assistant);
   } finally { Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth }); }
@@ -214,14 +215,14 @@ it.each(["disabled", "hidden"])("honors %s tool chrome and restores the rail whe
   expect(toggle(false)).toBeNull();
   expect(toggle(true)).toBeNull();
   expect(container.querySelector('nav[aria-label="Tools"]')).toBeNull();
-  expect(container.querySelector('#right-panel')?.hasAttribute("hidden")).toBe(true);
+  expect(container.querySelectorAll('[data-shell-tool-column]:not([hidden])')).toHaveLength(0);
   if (mode === "disabled") {
     expect(document.querySelector('[role="dialog"]')).toBeNull();
     await act(async () => { expect((await ui.openToolPicker({ requestId: createPresentationRequestId() })).status).not.toBe("accepted"); });
   }
   await act(async () => host!.setViewChrome("root", {}));
   expect(container.querySelector('[aria-label="Tools"]')).not.toBeNull();
-  expect(container.querySelector('#right-panel')?.hasAttribute("hidden")).toBe(true);
+  expect(container.querySelectorAll('[data-shell-tool-column]:not([hidden])')).toHaveLength(0);
 });
 
 
@@ -299,62 +300,57 @@ it("retains page drafts and the same selected tool through the 599/600 phone bou
       await act(async () => resizeWorkspace());
       expect(container.querySelector('iframe[title="assistant"]')).toBe(frame);
       expect(container.querySelector('[aria-label="Document draft"]')).toBe(draft); expect(draft.value).toBe("Unsaved document text");
-      expect(container.querySelector('[data-shell-panel-layout]')?.getAttribute("data-shell-panel-layout")).toBe(width < 904 ? "drawer" : "dock");
+      expect(container.querySelector('[data-shell-panel-layout]')?.getAttribute("data-shell-panel-layout")).toBe(width < 852 ? "tabs" : "columns");
     }
     await act(async () => host!.collapseWorkspace("default"));
     expect(container.querySelector('iframe[title="assistant"]')).toBe(frame); expect(draft.value).toBe("Unsaved document text");
   } finally { Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth }); }
 });
 
-it("changes only the selected tool presentation through Open views while retaining both frames", async () => {
-  HTMLElement.prototype.scrollIntoView = vi.fn();
-  await render(false);
-  await act(async () => { await host!.selectPanel(panels[1].panel); });
-  const firstId = host!.getSnapshot().tools[0].presentationId;
-  await act(async () => { await host!.openSurface({ panel: panels[1].panel }, { placement: "side", reuse: "new", requestId: createPresentationRequestId() }); });
-  const frames = [...container.querySelectorAll<HTMLIFrameElement>('iframe[title="assistant"]')];
-  expect(frames).toHaveLength(2);
-  const trigger = container.querySelector<HTMLButtonElement>('[aria-label="Tool instance"]')!;
-  expect(trigger.getAttribute("role")).toBe("combobox");
-  expect(trigger.textContent).toBe("assistant 2");
-  const requests = vi.mocked(fetch).mock.calls.length;
-  await act(async () => trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })));
-  const first = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(node => node.textContent === "assistant 1")!;
-  await act(async () => first.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
-  expect(host!.getSnapshot().workspaces?.find(item => item.workspaceId === "default")?.selectedId).toBe(firstId);
-  expect(trigger.textContent).toBe("assistant 1");
-  expect([...container.querySelectorAll('iframe[title="assistant"]')]).toEqual(frames);
-  expect(frames[0].closest('[data-shell-panel-frame]')?.hasAttribute("hidden")).toBe(false);
-  expect(frames[1].closest('[data-shell-panel-frame]')?.hasAttribute("hidden")).toBe(true);
-  expect(vi.mocked(fetch).mock.calls).toHaveLength(requests);
-});
-
-it("closes the portaled Open views menu before Escape dismisses the narrow tool sheet", async () => {
+it("shows multiple tools and retains both frames while closing one and switching compact tabs", async () => {
   const originalWidth = window.innerWidth;
-  HTMLElement.prototype.scrollIntoView = vi.fn();
   try {
-    Object.defineProperty(window, "innerWidth", { configurable: true, value: 600 });
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1800 });
     await render(false);
-    await act(async () => { await host!.selectPanel(panels[1].panel); });
-    await act(async () => { await host!.openSurface({ panel: panels[1].panel }, { placement: "side", reuse: "new", requestId: createPresentationRequestId() }); });
-    const selectedId = host!.getSnapshot().workspaces?.find(item => item.workspaceId === "default")?.selectedId;
-    const frames = [...container.querySelectorAll('iframe[title="assistant"]')];
-    const trigger = container.querySelector<HTMLButtonElement>('[aria-label="Tool instance"]')!;
-    expect(container.querySelector('aside[role="dialog"]')?.hasAttribute("hidden")).toBe(false);
-    await act(async () => trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })));
-    const option = document.querySelector<HTMLElement>('[role="option"]')!;
-    expect(option).not.toBeNull();
-    expect(container.querySelector("aside")?.contains(option)).toBe(false);
-    await act(async () => option.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
-    expect(document.querySelector('[role="listbox"]')).toBeNull();
-    expect(container.querySelector('aside[role="dialog"]')?.hasAttribute("hidden")).toBe(false);
-    expect(host!.getSnapshot().workspaces?.find(item => item.workspaceId === "default")).toMatchObject({ expanded: true, selectedId });
-    expect([...container.querySelectorAll('iframe[title="assistant"]')]).toEqual(frames);
-    await act(async () => { await vi.waitFor(() => expect(document.activeElement).toBe(trigger)); });
-    await act(async () => trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
-    expect(host!.getSnapshot().expanded).toBe(false);
-    expect([...container.querySelectorAll('iframe[title="assistant"]')]).toEqual(frames);
+    await act(async () => { await host!.selectPanel(panels[0].panel); await host!.selectPanel(panels[1].panel); });
+    const frames = [...container.querySelectorAll("iframe")];
+    const [first, second] = host!.getSnapshot().tools;
+    expect(container.querySelectorAll('[data-shell-tool-column]:not([hidden])')).toHaveLength(2);
+    await act(async () => toggleAssistantPanel(host!, "assistant"));
+    expect(host!.getSnapshot().workspaces?.[0].visibleIds).toEqual([first.presentationId]);
+    expect([...container.querySelectorAll("iframe")]).toEqual(frames);
+    await act(async () => toggleAssistantPanel(host!, "assistant"));
+    expect(host!.getSnapshot().workspaces?.[0].visibleIds).toEqual([first.presentationId, second.presentationId]);
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 600 });
+    await act(async () => resizeWorkspace());
+    const tabs = [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+    expect(tabs.map(t => t.textContent)).toEqual(["notes", "assistant"]);
+    await act(async () => tabs[1].dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true, cancelable: true })));
+    expect(document.activeElement).toBe(tabs[0]);
+    expect(host!.getSnapshot().selectedPresentationId).toBe(first.presentationId);
+    expect(container.querySelector(`[data-shell-tool-column="${first.presentationId}"]`)?.hasAttribute("hidden")).toBe(false);
+    expect([...container.querySelectorAll("iframe")]).toEqual(frames);
+    await act(async () => host!.hidePresentation(first.presentationId));
+    expect(host!.getSnapshot().workspaces?.[0].visibleIds).toEqual([second.presentationId]);
+    expect([...container.querySelectorAll("iframe")]).toEqual(frames);
+    await act(async () => host!.focusPresentation(first.presentationId));
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1800 });
+    await act(async () => resizeWorkspace());
+    expect(container.querySelectorAll('[data-shell-tool-column]:not([hidden])')).toHaveLength(2);
+    expect([...container.querySelectorAll("iframe")]).toEqual(frames);
+    await act(async () => host!.closePresentation(first.presentationId));
+    expect([...container.querySelectorAll("iframe")]).toEqual([frames[1]]);
   } finally { Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth }); }
+});
+it("distinguishes multiple instances of the same tool in compact tabs", async () => {
+  await render(false);
+  await act(async () => { await host!.selectPanel(panels[1].panel); await host!.openSurface({ panel: panels[1].panel }, { placement: "side", reuse: "new", requestId: createPresentationRequestId() }); });
+  const frames = [...container.querySelectorAll("iframe")];
+  const tabs = [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+  expect(tabs.map(t => t.textContent)).toEqual(["assistant 1", "assistant 2"]);
+  await act(async () => tabs[0].click());
+  expect(tabs[0].getAttribute("aria-selected")).toBe("true");
+  expect([...container.querySelectorAll("iframe")]).toEqual(frames);
 });
 
 const pinLabel = (name: string) => `Pin ${name} — ${name} to top bar`;

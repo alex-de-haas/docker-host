@@ -60,7 +60,7 @@ Plans: 14 In Progress · 1 Blocked · 43 Draft · 7 On Hold.
 - [Feature: App Data Backup Retention](features/app-data-backup-retention/feature.md) — Retention and cleanup of app data backups, which cover only each app's primary data directory. · [plan](features/app-data-backup-retention/plan.md): Draft, 0/2, updated 2026-10-05
 - [Development Controls For Existing Apps](features/app-development-controls/feature.md) — Core-owned execution selection runs installed packages or registered workspace manifests on ordinary app data, with scoped access review and recoverable lifecycle operations. · [plan](features/app-development-controls/plan.md): In Progress, 8/10, updated 2026-10-31
 - [App Embedding Restrictions — Only Operator-Designated Embedders May Frame An App](features/app-embedding-restrictions/plan.md) — Restrict app framing to operator-designated embedders while preserving the assistant browser runner. · On Hold, 0/7, updated 2026-10-10
-- [App Feedback Inbox](features/app-feedback-inbox/feature.md) — Core-owned annotated feedback with local SDK drafts, reviewed Harness chat delivery, exact-prompt outcomes and workspace-aware retention.
+- [App Feedback Inbox](features/app-feedback-inbox/feature.md) — Core-owned annotated feedback with app-owned local drafts, reviewed Harness chat delivery, exact-prompt outcomes and workspace-aware retention.
 - [Runtime App Feeds](features/app-feeds/feature.md) — Apps publish named update sources in an app-owned feeds.json that Core validates and follows without a catalog or Marketplace.
 - [App Installation SDK And Core Confirmation](features/app-installation-sdk/feature.md) — A shared install dialog for Marketplace and Shell, with final authorization on a separate Core-origin confirmation page.
 - [App Lifecycle States — Intermediate `starting` And `stopping`](features/app-lifecycle-states/feature.md) — Intermediate starting and stopping runtime states, so every client sees a lifecycle action while it is in flight.
@@ -103,6 +103,7 @@ Plans: 14 In Progress · 1 Blocked · 43 Draft · 7 On Hold.
 - [CLI Bootstrap](features/cli-bootstrap/feature.md) — The hosty CLI installs itself and Core, discovers the Core control API and manages runtime apps.
 - [Feature: Cloudflare Ingress](features/cloudflare-ingress/feature.md) — An opt-in Cloudflare Tunnel provider that publishes app endpoints and derives their public origins.
 - [Composable Human And Agent Work](features/composable-agent-systems/plan.md) — Compose app-owned task providers and executors through Core contracts, with Harness profiles, optional resources, decisions and artifact handoffs. · Draft, 0/5, updated 2026-10-31
+- [Concurrent Tool Panels](features/concurrent-tool-panels/feature.md) — Shell displays multiple retained app tools and Feedback with common chrome, independent visibility, resizing and compact tabs.
 - [Container Capabilities And Devices](features/container-capabilities/feature.md) — A docker service can add named Linux capabilities and device nodes under /dev, opt-in per service and never as --privileged.
 - [Continuous App Access](features/continuous-app-access/feature.md) — Silent maintenance of browser and native app sessions, with separately authorized and revocable background delegation.
 - [Conversation History](features/conversation-history/feature.md) — Provider-owned conversation history with Core API/MCP read, sharing, lexical search, attachment access and explicit consumer-bound exports.
@@ -141,6 +142,7 @@ Plans: 14 In Progress · 1 Blocked · 43 Draft · 7 On Hold.
 - [External Development Workspaces](features/external-development-workspaces/feature.md) — Authorized external clients use registered Core worktrees, independent test environments, canonical publication and native Git/provider reconciliation.
 - [External Host-Path Mounts](features/external-mounts/feature.md) — Apps declare external mount slots and operators bind host folders to them, injected as HOSTY_MOUNT_{KEY} and never backed up or deleted.
 - [Workspace Permissions And Deletion](features/external-workspace-access-continuity/feature.md) — Existing app and initiating-user permissions cover all Core workspaces, with stable allocation identity and one UI/MCP Delete operation.
+- [Feedback Composer Tools](features/feedback-composer-tools/feature.md) — App-provided feedback tools own forms and drafts while verified SDK source services supply selection, capture and scoped intake.
 - [Global (Shared) Host-Path Mounts](features/global-mounts/feature.md) — A host-level library of shared host folders that apps attach by reference.
 - [Harness Context Usage](features/harness-context-usage/feature.md) — Current context-window usage for Claude and Codex conversations, with durable replay and a compact composer indicator.
 - [Harness Development UI](features/harness-development-ui/feature.md) — Harness provides separate Chats and Workspaces pages, multi-repository details, environment previews and verified lifecycle actions.
@@ -201,7 +203,7 @@ Plans: 14 In Progress · 1 Blocked · 43 Draft · 7 On Hold.
 - [Shell Access And System Apps](features/shell-access-and-system-apps/feature.md) — Assignments apply equally to system and ordinary apps, and management views are administrator-only.
 - [Shell Navigation](features/shell-navigation/feature.md) — Shell routes, role-specific home, sidebar app launchers and phone navigation.
 - [Shell operation feedback](features/shell-operation-feedback/feature.md) — Shell separates confirmations, transient operation results and persistent diagnostics.
-- [Resizable Shell Panel](features/shell-panel-resize/feature.md) — Shell-owned ReUI document and panel containers with persistent resizing, responsive drawers and retained SDK app frames.
+- [Resizable Shell Panels](features/shell-panel-resize/feature.md) — Shell tool columns with independent persistent resizing, compact tabs, and retained SDK app frames.
 - [Source Providers](features/source-providers/feature.md) — Core owns a typed source-provider registry with built-in GitHub, owner-scoped connections and Shell account management.
 - [Swift Shell](features/swift-shell/feature.md) — A native SwiftUI client for iOS, iPadOS and macOS that manages a host's installed apps.
 - [Telemetry Over MCP](features/telemetry-mcp/feature.md) — Stored logs, traces and resource metrics exposed as an MCP interface behind a scoped credential.

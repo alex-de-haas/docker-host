@@ -23,7 +23,7 @@ import { PromptSuggestionCard } from "@/components/prompt-suggestion";
 import { AppMentionInput, type AppMentionInputHandle } from "@/components/app-mention-input";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuCheckboxItem } from "@/components/ui/dropdown-menu";
 import { AppContextPicker, type AppContextPickerHandle } from "@/components/app-context-picker";
-import { ArrowLeft, History, Loader2, MessageSquarePlus, Paperclip, Plus, Blocks, Send, Sparkles, Square, PanelRight, Diamond, Pencil } from "lucide-react";
+import { ArrowLeft, History, Loader2, MessageSquarePlus, Paperclip, Plus, Blocks, Send, Sparkles, Square, PanelRight, PanelLeft, Diamond, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Alert, InlineError, StatusBadge } from "@/components/status";
@@ -1006,19 +1006,24 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
       }}><Plus aria-hidden /></Button>
   ) : null;
 
+  const workspaceTabs = fullPage && navigation === "workspaces" && !!workspace;
+  const navigationToggle = fullPage && <Button className="md:hidden shrink-0" size="icon-sm" variant="ghost"
+    aria-label={`Show ${navigationTitle.toLowerCase()}`} title={`Show ${navigationTitle.toLowerCase()}`}
+    onClick={() => { setMobileSessions(true); setMobileDetails(false); }}><PanelLeft aria-hidden /></Button>;
+  const workspaceToggle = fullPage && workspace && <Button size="icon-sm" variant="ghost" aria-label="Workspace details" title="Workspace details"
+    aria-expanded={narrowWorkspace ? mobileDetails : workspaceVisible}
+    onClick={() => { if (narrowWorkspace) { setMobileDetails(v => !v); setMobileSessions(false); } else setWorkspaceVisible(v => !v); }}><PanelRight aria-hidden /></Button>;
+
   return (
     <div className={`harness-conversation flex h-dvh min-h-0 min-w-0 flex-col overflow-hidden ${review ? "harness-review-active" : ""}`}>
-      {fullPage && !review && <header inert={workspaceModal} className="flex min-[900px]:hidden shrink-0 items-center gap-2 border-b px-3 py-2">
-        <Button className="md:hidden" size="sm" variant="ghost" onClick={() => { setMobileSessions(v => !v); setMobileDetails(false); }}>{navigationTitle}</Button>
-        {workspace && <Button className="ml-auto" size="sm" variant="outline" onClick={() => { setMobileDetails(v => !v); setMobileSessions(false); }}>Workspace details</Button>}
-      </header>}
       {fullPage && inventory.error && <p role="alert" className="border-b px-4 py-2 text-sm text-destructive-foreground">{inventory.error}</p>}
       <div className="flex min-h-0 flex-1">
       {fullPage && <div inert={workspaceModal} className={`${review ? "hidden" : mobileSessions ? "block md:block" : "hidden md:block"} w-full shrink-0 border-r md:w-[264px]`}><DevelopmentNavigation view={navigation} sessions={listedSessions} activeId={session?.id} activeWorkspaceId={navigation === "workspaces" ? workspace?.id : undefined} workspaces={inventory.workspaces}
-        createAppAction={createAppAction} onWorkspace={pickWorkspace} onNew={() => { setMobileSessions(false); void startNew(); }} onPick={pickSession} onDelete={remove} /></div>}
+        createAppAction={createAppAction} onClose={() => setMobileSessions(false)} onWorkspace={pickWorkspace} onNew={() => { setMobileSessions(false); void startNew(); }} onPick={pickSession} onDelete={remove} /></div>}
       <main ref={conversationRef} tabIndex={-1} inert={workspaceModal} className={`${review ? "hidden" : fullPage && mobileSessions ? "hidden md:flex" : "flex"} min-h-0 min-w-0 flex-1 flex-col`}>
 
-      {fullPage && navigation === "workspaces" && workspace && <WorkspaceSessionTabs workspace={workspace} sessions={listedSessions} activeId={chatVisible ? session?.id : undefined} onPick={record => pickSession(record, true)} actions={workspaceActions} />}
+      {fullPage && navigation === "workspaces" && workspace && <WorkspaceSessionTabs workspace={workspace} sessions={listedSessions} activeId={chatVisible ? session?.id : undefined} onPick={record => pickSession(record, true)} actions={workspaceActions} leading={navigationToggle} trailing={workspaceToggle} />}
+      {fullPage && !workspaceTabs && (!chatVisible || !session) && <div className="flex shrink-0 items-center gap-2 border-b px-3 py-2 md:hidden">{navigationToggle}{workspaceToggle}</div>}
       {fullPage && (!chatVisible || !session) ? <div className="min-h-0 flex-1" aria-label="Workspace center">
         {!workspace && <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-sm text-muted-foreground">
           <p>{navigation === "workspaces" ? "Choose a workspace, create an app or continue building." : "Choose a chat or start a new one."}</p>
@@ -1031,6 +1036,7 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
         {error && <p role="alert" className="p-3 text-sm text-destructive-foreground">{error}</p>}
       </div> : <div id="workspace-chat" role={fullPage && navigation === "workspaces" && workspace ? "tabpanel" : undefined} aria-labelledby={fullPage && navigation === "workspaces" && workspace && session ? `workspace-tab-${session.id}` : undefined} className="flex min-h-0 flex-1 flex-col">
       <header className="flex flex-wrap shrink-0 items-center gap-2 border-b px-3 py-2">
+        {!workspaceTabs && navigationToggle}
         {showSessions ? (
           <>
             {session && <Button variant="ghost" size="icon-sm" aria-label="Back to conversation" title="Back to conversation" onClick={() => setHistoryOpen(false)}><ArrowLeft /></Button>}
@@ -1048,7 +1054,7 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
                 {sending || stopping ? <Loader2 className="motion-safe:animate-spin" /> : <Square className="fill-current" />}
               </Button>}
               {session && <SessionExecutionIndicator executionMode={session.executionMode} />}
-              {fullPage && workspace && <Button variant="ghost" size="icon-sm" className="hidden min-[900px]:inline-flex" aria-label="Toggle workspace" aria-pressed={workspaceVisible} onClick={() => setWorkspaceVisible(value => !value)}><PanelRight /></Button>}
+              {!workspaceTabs && workspaceToggle}
               {session && (
                 <AppContextPicker key={session.id} ref={contextPickerRef} opener={addButtonRef} compact side="bottom" session={session} busy={sending || mentionSaving || providerSaving} onBusyChange={setContextSaving} running={running}
                   onChange={onSessionChange} />
