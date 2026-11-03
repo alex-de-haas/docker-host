@@ -184,9 +184,11 @@ try {
   await page.locator('iframe[title="Assistant"]').waitFor({state:'visible'});
   if(process.env.HOSTY_FEEDBACK_SCREENSHOT)await page.screenshot({path:process.env.HOSTY_FEEDBACK_SCREENSHOT+'.panels.png'});
   console.log('PASS: ordinary concurrent tool panels, embedded/host selection, cleared frame hover and feedback on the provider form');
-  await form.getByLabel('Comment 1',{exact:true}).focus();
+  await form.getByLabel('Comment 1',{exact:true}).click();
+  await page.waitForFunction(()=>document.activeElement instanceof HTMLIFrameElement && document.activeElement.title==='Feedback');
   await page.setViewportSize({width:800,height:900});
   const tab=page.getByRole('tab',{name:'Feedback',exact:true});
+  await page.getByRole('tab',{name:'Feedback',exact:true,selected:true}).waitFor();
   assert.equal(await tab.getAttribute('aria-selected'),'true','The last focused iframe remains selected after narrowing');
   await form.getByLabel('Comment 1',{exact:true}).waitFor();
   assert.equal(await form.getByLabel('Comment 1',{exact:true}).inputValue(),'Feedback form observation');
