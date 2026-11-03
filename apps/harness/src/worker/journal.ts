@@ -34,7 +34,7 @@ export class WorkerJournal {
       });
       record.receipt = sanitizeWorkerCommandReceipt(record.receipt);
       record.bytes = record.events.reduce((bytes, frame) => bytes + Buffer.byteLength(JSON.stringify(frame)), 0);
-      if (terminal(record.receipt.state) && Date.now() - Date.parse(record.receipt.updatedAt) > this.replayMs) {
+      if (terminal(record.receipt.state) && record.receipt.state !== "parked" && Date.now() - Date.parse(record.receipt.updatedAt) > this.replayMs) {
         record.events = []; record.bytes = 0; record.replayExpired = true;
       }
       return record;
@@ -58,11 +58,15 @@ export class WorkerJournal {
       const record = await this.load(file.slice(0, -5));
       if (!terminal(record.receipt.state)) {
         record.receipt.exitConfirmed = this.boundary === "container" && record.receipt.boundary === "container";
-        record.receipt.state = "interrupted"; record.receipt.error = "Worker restarted; the previous run was not repeated.";
-        record.receipt.pending = [];
+        const parked = record.receipt.exitConfirmed && record.receipt.state === "parking"
+          && record.receipt.pending?.length && record.receipt.pending.every(frame => frame.event.type === "question_request" && frame.event.blocking !== false)
+          && Object.values(record.controls).every(control => control.applied);
+        record.receipt.state = parked ? "parked" : "interrupted";
+        record.receipt.error = parked ? undefined : "Worker restarted; the previous run was not repeated.";
+        if (!parked) record.receipt.pending = [];
         record.receipt.revision++; record.receipt.updatedAt = new Date().toISOString();
       }
-      if (Date.now() - Date.parse(record.receipt.updatedAt) > this.replayMs) { record.events = []; record.bytes = 0; record.replayExpired = true; }
+      if (record.receipt.state !== "parked" && Date.now() - Date.parse(record.receipt.updatedAt) > this.replayMs) { record.events = []; record.bytes = 0; record.replayExpired = true; }
       await this.save(record);
     }
   }
@@ -71,7 +75,7 @@ export class WorkerJournal {
       for (const file of await readdir(this.directory)) {
         if (!file.endsWith(".json")) continue;
         const record = JSON.parse(await readFile(path.join(this.directory, file), "utf8")) as StoredRun;
-        if (!record.replayExpired && terminal(record.receipt.state) && Date.now() - Date.parse(record.receipt.updatedAt) > this.replayMs) {
+        if (!record.replayExpired && terminal(record.receipt.state) && record.receipt.state !== "parked" && Date.now() - Date.parse(record.receipt.updatedAt) > this.replayMs) {
           record.events = []; record.bytes = 0; record.replayExpired = true; await this.save(record);
         }
       }
@@ -93,7 +97,7 @@ export class WorkerJournal {
   }
   async update(id: string, state: WorkerReceipt["state"], error?: string): Promise<WorkerReceipt> {
     const record = await this.load(id); record.receipt.state = state;
-    if (terminal(state)) { record.receipt.pending = []; record.receipt.exitConfirmed = state !== "interrupted"; }
+    if (terminal(state)) { if (state !== "parked") record.receipt.pending = []; record.receipt.exitConfirmed = state !== "interrupted"; }
     record.receipt.revision++; record.receipt.updatedAt = new Date().toISOString();
     if (error) record.receipt.error = error;
     await this.save(record); return record.receipt;
@@ -136,8 +140,12 @@ export class WorkerJournal {
     record.controls[controlId] = { hash, applied: false }; await this.save(record); await apply(record);
     record.controls[controlId]!.applied = true;
     const eventId = (value as { eventId?: number }).eventId;
-    if (eventId !== undefined) record.receipt.pending = record.receipt.pending?.filter(event => event.sequence !== eventId);
+    if (eventId !== undefined && (value as { kind?: string }).kind !== "park") record.receipt.pending = record.receipt.pending?.filter(event => event.sequence !== eventId);
     await this.save(record); return true;
+  }
+  async controlOutcome(id: string, controlId: string): Promise<{ state: "missing" | "unknown" | "applied" }> {
+    const control = (await this.load(id)).controls[controlId];
+    return { state: control ? control.applied ? "applied" : "unknown" : "missing" };
   }
   subscribe(id: string, listener: () => void): () => void {
     const listeners = this.listeners.get(id) ?? new Set(); listeners.add(listener); this.listeners.set(id, listeners);

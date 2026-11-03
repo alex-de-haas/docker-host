@@ -178,6 +178,7 @@ internal static class AccessTokenScopes
     public const string McpPublicationRead = "mcp:publication-read";
     public const string McpPublicationWrite = "mcp:publication-write";
     public const string McpAppCreate = "mcp:app-create";
+    public const string McpDecisions = "mcp:decisions";
     public const string McpTasksRead = "mcp:tasks-read";
     public const string McpTasksWrite = "mcp:tasks-write";
     public const string McpTasksExecute = "mcp:tasks-execute";
@@ -187,7 +188,7 @@ internal static class AccessTokenScopes
     public const string McpAgentSessionsRead = "mcp:agent-sessions-read";
     public const string McpAgentSessionsControl = "mcp:agent-sessions-control";
 
-    public static readonly string[] Known = [McpRead, McpLifecycle, McpUpdate, McpCoreRestart, McpWorkspaces, McpEnvironmentsRead, McpEnvironmentsManage, McpEnvironmentApi, McpPublicationRead, McpPublicationWrite, McpAppCreate, McpTasksRead, McpTasksWrite, McpTasksExecute, McpHistoryRead, McpHistoryShare, McpHistoryExport, McpAgentSessionsRead, McpAgentSessionsControl];
+    public static readonly string[] Known = [McpRead, McpLifecycle, McpUpdate, McpCoreRestart, McpWorkspaces, McpEnvironmentsRead, McpEnvironmentsManage, McpEnvironmentApi, McpPublicationRead, McpPublicationWrite, McpAppCreate, McpTasksRead, McpTasksWrite, McpTasksExecute, McpHistoryRead, McpHistoryShare, McpHistoryExport, McpAgentSessionsRead, McpAgentSessionsControl, McpDecisions];
 
     /// <summary>
     /// Scopes that are Core's own authority and mean nothing on an app audience.
@@ -196,7 +197,7 @@ internal static class AccessTokenScopes
     /// A set rather than a check per scope: the guards that use it were written for one scope, and a
     /// second copied beside it is how the next scope gets added to only one of them.
     /// </remarks>
-    public static readonly string[] CoreOnly = [McpLifecycle, McpUpdate, McpCoreRestart, McpWorkspaces, McpEnvironmentsRead, McpEnvironmentsManage, McpEnvironmentApi, McpPublicationRead, McpPublicationWrite, McpAppCreate, McpTasksRead, McpTasksWrite, McpTasksExecute, McpHistoryRead, McpHistoryShare, McpHistoryExport, McpAgentSessionsRead, McpAgentSessionsControl];
+    public static readonly string[] CoreOnly = [McpLifecycle, McpUpdate, McpCoreRestart, McpWorkspaces, McpEnvironmentsRead, McpEnvironmentsManage, McpEnvironmentApi, McpPublicationRead, McpPublicationWrite, McpAppCreate, McpTasksRead, McpTasksWrite, McpTasksExecute, McpHistoryRead, McpHistoryShare, McpHistoryExport, McpAgentSessionsRead, McpAgentSessionsControl, McpDecisions];
 
     public static bool IsKnownScope(string scope)
         => Known.Contains(scope, StringComparer.Ordinal);

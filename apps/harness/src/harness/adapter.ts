@@ -48,16 +48,20 @@ export interface HarnessCapabilities {
 // (verified against the shipped types, not assumed) so nothing is lost in translation: 1-4
 // questions, each with 2-4 options carrying a label and a description.
 export interface HarnessQuestion {
+  /** Stable within the native request; absent only in legacy persisted events. */
+  id?: string;
+  allowText?: boolean;
   question: string;
   /** Very short chip label, max ~12 chars. */
   header: string;
   multiSelect: boolean;
-  options: Array<{ label: string; description: string; preview?: string }>;
+  options: Array<{ id?: string; label: string; description: string; preview?: string }>;
 }
 
 export type HarnessEvent =
   | import("./prompt-suggestion.js").PromptSuggestion
   | { type: "answer_complete" }
+  | { type: "execution_parked"; runId: string }
   | { type: "provider_usage"; usage: import("./provider-usage.js").ProviderUsage }
   | { type: "context_usage"; usage: import("./context-usage.js").ContextUsage | null }
   | { type: "execution_model"; requested: { model: string | null; reasoningEffort: string | null }; reported: { model: string | null; reasoningEffort: string | null } }
@@ -91,7 +95,7 @@ export type HarnessEvent =
    * approval: approving the act of being asked a question is nonsense, and the resolution carries
    * answers rather than a verdict.
    */
-  | { type: "question_request"; questionId: string; questions: HarnessQuestion[] }
+  | { type: "question_request"; questionId: string; questions: HarnessQuestion[]; blocking?: boolean; native?: { threadId?: string; turnId?: string; itemId?: string } }
   | {
       type: "result";
       status: string;
@@ -137,6 +141,8 @@ export interface HarnessStartOptions {
   isAutoAllowed?: (toolName: string) => boolean;
   /** Harness-native session id to resume after a gateway restart, when the harness supports it. */
   resumeHarnessSessionId?: string;
+  /** Refuse a missing native thread; never silently reconstruct a decision continuation. */
+  requireNativeResume?: boolean;
   onEvent: (event: HarnessEvent) => void;
 }
 
@@ -149,7 +155,7 @@ export interface HarnessRun {
   /** Returns false when the approval id is unknown (already resolved or never issued). */
   resolveApproval(approvalId: string, decision: "allow" | "deny", message?: string): boolean | Promise<boolean>;
   /**
-   * Answers a pending question, keyed by question text (the SDK's own keying). Returns false when
+   * Answers a pending question by stable question ID (legacy events retain text keys). Returns false when
    * the id is unknown — already answered, or never asked.
    */
   resolveQuestion(questionId: string, answers: Record<string, string>): boolean | Promise<boolean>;

@@ -18,6 +18,8 @@ def check(context):
     app = 'hosty.harness'
     manifest = json.loads((workspace/'apps/harness/manifest.json').read_text())
     manifest['source']['repository'] = context['repository']
+    for service in manifest['services']:
+        if service['key'] in ['api', 'worker']: service['runtimes']['docker']['image'] = 'hosty-harness-'+service['key']+'-acceptance:local'
     next(s for s in manifest['services'] if s['key']=='worker')['runtimes']['docker']['environment']['HOSTY_HARNESS_CODEX_COMMAND'] = '/repo/apps/harness/test/fake-codex-server.mjs'
     for permission in ['providers.tasks','providers.task-executor']:
         manifest['optionalCorePermissions'].remove(permission); manifest['corePermissions'].append(permission)
@@ -110,6 +112,8 @@ def check(context):
                     if event.get('type') in ['error','notice']: say('Session event: '+json.dumps(event))
             raise
         return last
+    from decisions_acceptance import check as check_decisions
+    check_decisions({**context, 'h':h, 'call':call, 'profile':profile, 'assignee':assignee, 'create':create, 'action':action, 'read':read, 'settle':settle, 'login_app':login_app})
     task=settle(action(create('Native profile without workspace',assignee,markdown='TASK_ACCEPTANCE:RESULT'),'ready'))
     first_id=task['attempts'][0]['executionId']; assert task['attempts'][0]['receipt']['stopConfirmed'] and len(task['attempts'])==1
     sid=task['attempts'][0]['receipt']['sessionRef']['id']; session=h('/sessions/'+sid)

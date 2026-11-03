@@ -59,6 +59,36 @@ describe("codex harness adapter", () => {
     return run;
   }
 
+  it.each(["question-blocking", "question-nonblocking"])("delivers stable native question IDs and text answers (%s)", async prompt => {
+    const active = start(); active.send(prompt);
+    const asked = await waitFor(() => events.find(event => event.type === "question_request"), "question");
+    if (asked.type !== "question_request") throw new Error("Expected question");
+    expect(asked.blocking).toBe(prompt === "question-blocking");
+    expect(asked.questions.map(q => q.id)).toEqual(["first", "second"]);
+    expect(asked.questions[0]!.options.map(o => o.id)).toEqual(["o1", "o2"]);
+    expect(asked.questions[1]!.allowText).toBe(true);
+    expect(active.resolveQuestion(asked.questionId, { "Same wording": "ambiguous" })).toBe(false);
+    expect(active.resolveQuestion(asked.questionId, { first: "Same label — Second option", second: "Free text" })).toBe(true);
+    await waitFor(() => events.find(e => e.type === "result"), "native continuation");
+    expect(events.some(e => e.type === "assistant_text" && e.text.includes('"second":{"answers":["Free text"]}'))).toBe(true);
+    expect(active.resolveQuestion(asked.questionId, { first: "again", second: "again" })).toBe(false);
+  });
+
+  it("rejects secret native questions without storing their content as a question", async () => {
+    start().send("question-secret");
+    await waitFor(() => events.find(e => e.type === "result"), "secret rejection");
+    expect(events.some(e => e.type === "question_request")).toBe(false);
+    expect(events.some(e => e.type === "notice" && e.message.includes("secure credential setup"))).toBe(true);
+  });
+
+  it("does not answer a cancelled native question", async () => {
+    const active = start(); active.send("question-blocking");
+    const asked = await waitFor(() => events.find(e => e.type === "question_request"), "question");
+    if (asked.type !== "question_request") throw new Error("Expected question");
+    await active.stop();
+    expect(active.resolveQuestion(asked.questionId, { first: "Yes", second: "Text" })).toBe(false);
+  });
+
   it.each(["text", "null", "failed", "unsupported"])("receives a bounded Codex prediction (%s) for the exact native turn", async shape => {
     run = new CodexHarnessAdapter({ dataDir: authDir }).start({ sessionId: "s1", cwd: process.cwd(), promptSuggestions: true, onEvent: e => events.push(e) });
     run.send(`suggestion-${shape}`);

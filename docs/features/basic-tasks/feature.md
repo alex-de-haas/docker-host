@@ -1,6 +1,6 @@
 ---
 created: 2026-10-27
-updated: 2026-10-31
+updated: 2026-11-03
 summary: Provider-owned tasks with qualified numbers, human or app assignment, durable execution, Harness profile options, review and a live Tasks UI.
 components: [apps/core, apps/harness, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -24,10 +24,10 @@ owner, creator and human assignee within that boundary. Results and resource ref
 expose private transcripts; only the owner receives a linked execution conversation. The destination
 checks its own access. Human assignment does not grant operator-chat access to ordinary users.
 
-Automatic workspace allocation, task trees, orchestration, parked waits and artifact storage belong
-to the separate [workspace coordination](../shared-tasks/plan.md),
-[orchestration](../harness-work-orchestration/plan.md), [durable jobs](../durable-agent-jobs/plan.md),
-[decisions](../shared-decisions/plan.md) and [artifacts](../shared-artifacts/plan.md) plans.
+Question waits and parked continuation use [Shared Decisions](../shared-decisions/feature.md).
+Automatic workspace allocation, task trees, general orchestration and artifact storage remain in
+[workspace coordination](../shared-tasks/plan.md), [orchestration](../harness-work-orchestration/plan.md),
+[durable jobs](../durable-agent-jobs/plan.md) and [artifacts](../shared-artifacts/plan.md).
 
 ## Task Contract
 

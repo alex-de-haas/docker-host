@@ -68,12 +68,16 @@ internal static class HostyCoreApplication
             .WithTools<CoreAppCreationMcpTools>(CoreJsonSerializerContext.Default.Options)
             .WithTools<CorePublicationMcpTools>(CoreJsonSerializerContext.Default.Options)
             .WithTools<CoreProviderMcpTools>(CoreJsonSerializerContext.Default.Options)
+            .WithTools<CoreDecisionMcpTools>(CoreJsonSerializerContext.Default.Options)
             .WithTools<CoreHistoryMcpTools>(CoreJsonSerializerContext.Default.Options)
             .WithTools<CoreHistoryExportMcpTools>(CoreJsonSerializerContext.Default.Options)
             .WithRequestFilters(CoreMcpCatalog.ConfigureFilters);
         builder.Services.AddSingleton<ExternalWorkspaceMcpAuthorization>();
         builder.Services.AddSingleton<CoreCapabilityAuthorization>();
         builder.Services.AddSingleton<CoreProviderOperationStore>();
+        builder.Services.AddSingleton<CoreDecisionStore>();
+        builder.Services.AddSingleton<CoreDecisionService>();
+        builder.Services.AddHostedService<CoreDecisionRetention>();
         builder.Services.AddSingleton<CoreTaskAdapter>();
         builder.Services.AddSingleton<CoreTaskWorkspace>();
         builder.Services.AddSingleton<CoreHistoryAdapter>();
@@ -298,6 +302,7 @@ internal static class HostyCoreApplication
         CorePublicationApi.Map(app);
         CoreAppCreationApi.Map(app);
         CoreWorkflowApi.Map(app);
+        CoreDecisionEndpoints.Map(app);
         CoreHistoryEndpoints.Map(app);
         CoreHistorySubscriptions.Map(app);
         CoreAgentRunSubscriptions.Map(app);

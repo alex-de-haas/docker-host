@@ -13,7 +13,7 @@ const cleanups: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
 const request = (): WorkerRunRequest => ({ conversationId: "chat-1", binding: { connectionId: "account-1", connectionRevision: 1, harnessKind: "codex" },
   selection: { model: null, reasoningEffort: null }, resource: { kind: "conversation", id: "chat-1" }, input: "test", options: {}, autoAllowedPrefixes: [] });
-async function setup() {
+async function setup(stopAndWait: () => Promise<void> = async () => {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "hosty-worker-test-")); cleanups.push(() => rm(root, { recursive: true, force: true }));
   const journal = new WorkerJournal(path.join(root, "journal")); await journal.initialize();
   const identity = await ensureServiceIdentity(path.join(root, "auth"));
@@ -23,7 +23,7 @@ async function setup() {
     adapter: async () => ({ name: "fixture", capabilities: { questions: true, appMcp: true, liveReconfigure: false, autoAllow: true, denyReason: true },
       probe: async () => ({ available: true }), start: value => { starts++; options = value; return {
         send() {}, resolveApproval: () => true, resolveQuestion: () => true, setMcpServers: async () => false,
-        interrupt: async () => {}, stop: async () => {}, stopAndWait: async () => {},
+        interrupt: async () => {}, stop: async () => {}, stopAndWait,
       }; } }),
   }, 1);
   const server = createWorkerServer(engine, async () => identity, {
@@ -73,6 +73,38 @@ describe("direct worker contract", () => {
     expect((await restarted.accept("run-1", request())).fresh).toBe(false);
     expect(JSON.stringify(record)).not.toContain('"input"');
   });
+  it("parks only a blocking question, retaining its checkpoint and releasing execution capacity", async () => {
+    const f = await setup(); await f.put("run-1"); await expect.poll(f.starts).toBe(1);
+    f.options()!.onEvent({ type: "harness_session", harnessSessionId: "native-session" });
+    f.options()!.onEvent({ type: "question_request", questionId: "question-1", blocking: true,
+      questions: [{ id: "q1", question: "Continue?", header: "Choice", multiSelect: false, options: [], allowText: true }] });
+    await expect.poll(async () => (await f.journal.load("run-1")).receipt.state).toBe("awaiting_input");
+    const before = (await f.journal.load("run-1")).receipt;
+    const command = { controlId: "park-1", id: "question-1", expectedRevision: before.revision, eventId: before.pending![0]!.sequence };
+    const park = () => fetch(`${f.base}/v1/runs/run-1/park`, { method: "POST", headers: f.headers, body: JSON.stringify(command) });
+    const response = await park(); expect(response.status).toBe(200);
+    const receipt = await response.json() as import("./contracts.js").WorkerReceipt;
+    expect(receipt).toMatchObject({ state: "parked", exitConfirmed: true, snapshot: { nativeSessionId: "native-session" } });
+    expect(receipt.pending).toHaveLength(1);
+    expect((await park()).status).toBe(200);
+    expect((await f.put("run-2")).status).toBe(202);
+    const restarted = new WorkerJournal(path.join(f.root, "journal")); await restarted.initialize();
+    expect((await restarted.load("run-1")).receipt).toMatchObject({ state: "parked", exitConfirmed: true });
+  });
+
+  it("keeps independent work running when a question is nonblocking", async () => {
+    const f = await setup(); await f.put("run-1"); await expect.poll(f.starts).toBe(1);
+    f.options()!.onEvent({ type: "question_request", questionId: "question-1", blocking: false,
+      questions: [{ id: "q1", question: "Continue?", header: "Choice", multiSelect: false, options: [] }] });
+    await expect.poll(async () => (await f.journal.load("run-1")).receipt.pending?.length).toBe(1);
+    const before = (await f.journal.load("run-1")).receipt;
+    expect(before.state).toBe("running");
+    await expect(f.engine.park("run-1", { controlId: "park-1", id: "question-1", expectedRevision: before.revision, eventId: before.pending![0]!.sequence })).rejects.toMatchObject({ code: "stale_parking" });
+    expect((await f.journal.load("run-1")).receipt.state).toBe("running");
+    await f.engine.respond("run-1", { controlId: "answer-1", id: "question-1", kind: "question", answers: { q1: "Yes" }, expectedRevision: before.revision, eventId: before.pending![0]!.sequence });
+    expect(await f.journal.controlOutcome("run-1", "answer-1")).toEqual({ state: "applied" });
+  });
+
   it("cancels a run without stopping its service", async () => {
     const f = await setup(); await f.put("run-1"); await expect.poll(f.starts).toBe(1);
     const response = await fetch(`${f.base}/v1/runs/run-1/cancel`, { method: "POST", headers: f.headers, body: JSON.stringify({ controlId: "cancel-1" }) });
@@ -131,4 +163,51 @@ it("does not retain child setup passwords in replay or pending-decision snapshot
   await expect.poll(async () => (await f.journal.load("privacy")).receipt.state).toBe("awaiting_input");
   const stored = JSON.stringify(await f.journal.load("privacy"));
   expect(stored).not.toContain("fixture-secret"); expect(stored).toContain("[redacted]");
+});
+
+async function blockingQuestion(f: Awaited<ReturnType<typeof setup>>) {
+  await f.put("run-1"); await expect.poll(f.starts).toBe(1);
+  f.options()!.onEvent({ type: "harness_session", harnessSessionId: "native-session" });
+  f.options()!.onEvent({ type: "question_request", questionId: "question-1", blocking: true,
+    questions: [{ id: "q1", question: "Continue?", header: "Choice", multiSelect: false, options: [], allowText: true }] });
+  await expect.poll(async () => (await f.journal.load("run-1")).receipt.state).toBe("awaiting_input");
+  const before = (await f.journal.load("run-1")).receipt;
+  return { controlId: "park-1", id: "question-1", expectedRevision: before.revision, eventId: before.pending![0]!.sequence };
+}
+it("retains capacity and the parking identity until native exit is proven", async () => {
+  let uncertain = true;
+  const f = await setup(async () => { if (uncertain) throw new Error("no exit proof"); });
+  const command = await blockingQuestion(f);
+  await expect(f.engine.park("run-1", command)).rejects.toMatchObject({ code: "exit_unconfirmed" });
+  expect((await f.journal.load("run-1")).receipt.state).toBe("parking");
+  expect((await f.journal.load("run-1")).receipt.exitConfirmed).not.toBe(true);
+  expect((await f.put("replacement")).status).toBe(409);
+  uncertain = false;
+  expect(await f.engine.park("run-1", command)).toMatchObject({ state: "parked", exitConfirmed: true });
+  expect((await f.put("replacement")).status).toBe(202);
+});
+it("cancellation wins a parking race and a late native answer cannot restart work", async () => {
+  let release!: () => void;
+  const stopped = new Promise<void>(resolve => { release = resolve; });
+  const f = await setup(() => stopped), command = await blockingQuestion(f);
+  const parking = f.engine.park("run-1", command);
+  await expect.poll(async () => (await f.journal.load("run-1")).receipt.state).toBe("parking");
+  await expect(f.engine.respond("run-1", { ...command, controlId: "late-answer", kind: "question", answers: { q1: "Yes" } })).rejects.toMatchObject({ code: "stale_control" });
+  const cancellation = f.engine.cancel("run-1", "cancel-1");
+  await expect.poll(async () => (await f.journal.load("run-1")).receipt.state).toBe("cancelling");
+  release(); await Promise.all([parking, cancellation]);
+  expect((await f.journal.load("run-1")).receipt).toMatchObject({ state: "cancelled", exitConfirmed: true });
+  expect(f.starts()).toBe(1);
+});
+it.each(["local", "container"] as const)("reconciles interrupted parking using only the %s execution boundary", async boundary => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "worker-parking-restart-"));
+  cleanups.push(() => rm(root, { recursive: true, force: true }));
+  const journal = new WorkerJournal(root, undefined, undefined, boundary); await journal.initialize();
+  await journal.accept("parked", request());
+  await journal.append("parked", { type: "question_request", questionId: "q", blocking: true, questions: [] });
+  await journal.update("parked", "parking");
+  const restarted = new WorkerJournal(root, undefined, undefined, boundary); await restarted.initialize();
+  const receipt = (await restarted.load("parked")).receipt;
+  expect(receipt).toMatchObject({ state: boundary === "container" ? "parked" : "interrupted", exitConfirmed: boundary === "container" });
+  expect(receipt.pending?.length ?? 0).toBe(boundary === "container" ? 1 : 0);
 });

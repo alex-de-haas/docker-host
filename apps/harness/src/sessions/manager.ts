@@ -1,3 +1,5 @@
+import { decisionSnapshot, continuationInput, type DecisionWait } from "../decisions/waits.js";
+import type { DecisionsService } from "../decisions/service.js";
 import { ProviderClient as CoreProviderClient } from "@hosty-sdk/app/providers/server";
 import { canonicalAlias } from "../mcp/core-aliases.js";
 import { coreAliases } from "../mcp/core-migration.js";
@@ -257,6 +259,7 @@ export class SessionManager {
   // is already exiting.
   private stopping = false;
   readonly observations: AgentObservations;
+  decisions?: DecisionsService;
 
   constructor(
     readonly store: SessionStore,
@@ -323,6 +326,112 @@ export class SessionManager {
     }
   }
 
+  async bindTaskDecisionReference(sessionId: string, executionId: string, owner: string, reference: import("@hosty-sdk/app/decisions").DecisionReference): Promise<void> {
+    await this.serialize(sessionId, async () => {
+      const session = await this.requireLive(sessionId);
+      if (session.record.taskExecutionId !== executionId || session.record.createdBy !== owner)
+        throw new AppContextError(403, "task_binding_required", "Only this admitted task can bind its question reference.");
+      if (session.record.taskDecisionReference && JSON.stringify(session.record.taskDecisionReference) !== JSON.stringify(reference))
+        throw new AppContextError(409, "stale_input", "This task's question reference is immutable.");
+      session.record.taskDecisionReference = reference; await this.store.saveRecord(session.record);
+    });
+  }
+
+  private checkDecisionRecord(record: SessionRecord, wait: Pick<DecisionWait, "id" | "owner" | "snapshot" | "cancellationGeneration">): void {
+    if (record.createdBy !== wait.owner || !record.decisionWaitIds?.includes(wait.id)
+      || (record.decisionGeneration ?? 0) !== wait.cancellationGeneration || ["cancelled", "abandoned"].includes(record.status))
+      throw new AppContextError(409, "stale_input", "The originating work changed or was cancelled.");
+    if (decisionSnapshot(record) !== wait.snapshot) throw new AppContextError(409, "stale_input", "The reviewed instructions, provider, account or inputs changed. The answer remains saved.");
+  }
+  async checkDecision(wait: DecisionWait): Promise<void> {
+    await this.serialize(wait.sessionId, async () => this.checkDecisionRecord((await this.requireLive(wait.sessionId)).record, wait));
+  }
+  async recordDecisionAnswer(wait: DecisionWait, answers: Record<string, string>): Promise<void> {
+    await this.serialize(wait.sessionId, async () => {
+      const session = await this.requireLive(wait.sessionId);
+      if (session.record.createdBy !== wait.owner) throw new AppContextError(403, "session_forbidden", "This conversation belongs to another user.");
+      if ((await this.store.readEvents(wait.sessionId)).some(e => e.type === "question_answered" && e.questionId === wait.questionId)) return;
+      await this.append(wait.sessionId, { type: "question_answered", questionId: wait.questionId, answers,
+        decisionId: wait.core!.id, resolutionRevision: wait.core!.resolution!.revision });
+    });
+  }
+  async deliverDecision(wait: DecisionWait): Promise<void> {
+    await this.serialize(wait.sessionId, async () => {
+      const session = await this.requireLive(wait.sessionId); this.checkDecisionRecord(session.record, wait);
+      if (!this.worker || !wait.control || session.record.workerRun?.id !== wait.native.workerRunId)
+        throw new AppContextError(409, "unknown_admission", "The original native question is unavailable.");
+      const receipt = await this.worker.request<import("../worker/contracts.js").WorkerReceipt>(`/v1/runs/${wait.native.workerRunId}/responses`, "POST", wait.control, true);
+      session.pendingQuestions.delete(wait.questionId);
+      await this.setStatus(wait.sessionId, receipt.state === "awaiting_input" ? session.pendingApprovals.size ? "awaiting_approval" : "awaiting_question" : "running");
+    });
+  }
+  async parkDecision(wait: DecisionWait): Promise<void> {
+    await this.serialize(wait.sessionId, async () => {
+      const session = await this.requireLive(wait.sessionId);
+      if (session.record.createdBy !== wait.owner) throw new AppContextError(403, "session_forbidden", "This execution belongs to another user.");
+      if (!this.worker || !wait.park || session.record.workerRun?.id !== wait.native.workerRunId)
+        throw new AppContextError(409, "unknown_stop", "The original execution cannot be parked from this session.");
+      await this.worker.request(`/v1/runs/${wait.native.workerRunId}/park`, "POST", wait.park, true);
+    });
+  }
+  async resumeDecision(wait: DecisionWait, credential: string): Promise<void> {
+    await this.checkDecision(wait);
+    const session = await this.getSession(wait.sessionId);
+    if (!session || session.parkedQuestionRun?.id !== wait.native.workerRunId || session.workerRun || !wait.native.sessionId)
+      throw new AppContextError(409, "unknown_stop", "Wait for confirmed parking and source release before resuming.");
+    await this.postMessage(wait.sessionId, continuationInput(wait), credential, [], {
+      clientRequestId: wait.commandId, actorUserId: wait.owner, taskDispatch: !!session.taskExecutionId,
+      expectedRevision: session.appContextRevision ?? 0, selectionRevision: session.selectionRevision ?? 0,
+      decisionContinuation: { id: wait.id, owner: wait.owner, snapshot: wait.snapshot, cancellationGeneration: wait.cancellationGeneration },
+    });
+  }
+  async stopDecisionExecution(wait: DecisionWait): Promise<void> {
+    if (wait.event.blocking === false) return;
+    await this.serialize(wait.sessionId, async () => {
+      const record = await this.store.readRecord(wait.sessionId);
+      if (!record || record.createdBy !== wait.owner) return;
+      // A decision may stop only its original segment or its one recorded continuation.
+      const owned = record.workerRun?.id && [wait.native.workerRunId, wait.resumedRunId].includes(record.workerRun.id);
+      const parked = !record.workerRun && record.parkedQuestionRun?.id === wait.native.workerRunId;
+      if (owned || parked) await this.cancelSessionLocked(wait.sessionId);
+    });
+  }
+  async finishDecision(wait: DecisionWait): Promise<void> {
+    await this.serialize(wait.sessionId, async () => {
+      const record = await this.store.readRecord(wait.sessionId); if (!record || record.createdBy !== wait.owner) return;
+      const session = await this.requireLive(wait.sessionId);
+      session.record.decisionWaitIds = session.record.decisionWaitIds?.filter(id => id !== wait.id);
+      await this.store.saveRecord(session.record);
+    });
+  }
+
+  async decisionProjections(owner: string): Promise<{ items: Array<{ id: string; kind: "permission" | "recovery"; sessionId: string;
+    title: string; createdAt: string; event?: StoredEvent; available: boolean; error?: string }>; warnings: string[] }> {
+    const items: Awaited<ReturnType<SessionManager["decisionProjections"]>>["items"] = [], warnings: string[] = [];
+    for (const record of (await this.store.listRecords()).filter(record => record.createdBy === owner)) {
+      const live = this.live.get(record.id);
+      if (record.status === "awaiting_approval" || live?.pendingApprovals.size || record.mcpPendingApprovals?.length) {
+        try {
+          const events = await this.store.readEvents(record.id);
+          const resolved = new Set(events.filter(event => event.type === "approval_decision").map(event => String(event.approvalId)));
+          for (const event of events.filter(event => event.type === "approval_request" && !resolved.has(String(event.approvalId)))) {
+            const approvalId = String(event.approvalId);
+            const available = !!live?.pendingApprovals.has(approvalId) || !!record.mcpPendingApprovals?.some(item => item.id === approvalId);
+            items.push({ id: `permission:${record.id}:${approvalId}`, kind: "permission", sessionId: record.id,
+              title: record.title ?? "Tool permission", createdAt: event.ts, event, available,
+              ...(!available ? { error: "The original permission request is no longer live. Open its chat to inspect recovery." } : {}) });
+          }
+        } catch { warnings.push(`Permissions in ${record.title ?? "a chat"} are unavailable.`); }
+      }
+      if (record.status === "failed" || record.taskRun?.error || record.developmentLeaseState === "admitting" && !live?.run) {
+        items.push({ id: `recovery:${record.id}`, kind: "recovery", sessionId: record.id,
+          title: record.title ?? "Interrupted execution", createdAt: record.updatedAt, available: true,
+          error: record.taskRun?.error ?? "Inspect the original execution and its stop evidence before continuing." });
+      }
+    }
+    return { items, warnings };
+  }
+
   async recoverWorkerRuns(): Promise<void> {
     for (const record of await this.store.listRecords()) if (record.workerRun) await this.requireLive(record.id);
   }
@@ -361,6 +470,7 @@ export class SessionManager {
   /** Identity readiness is independent of unrelated conversation queues; keep only the latest actor credential. */
   scheduleActorCredentialRefresh(userId: string, credential: string): void {
     if (this.stopping) return;
+    this.decisions?.authorize(userId, credential);
     const pending = this.actorCredentialRefreshes.get(userId);
     if (pending) { pending.credential = credential; return; }
     const request = { credential };
@@ -1486,6 +1596,7 @@ export class SessionManager {
       this.proxy?.unregister(id);
       this.developmentMcp.unregister(id);
       if (record.skillExportId) await skillRequest(`/exports/${record.skillExportId}`, "DELETE");
+      await this.decisions?.deleteSession(record.createdBy, id);
       await this.store.deleteSession(id);
       this.notifyToolActivity();
       // Reported like every other lifecycle transition, and with the administrator who asked for it:
@@ -1676,7 +1787,7 @@ export class SessionManager {
     });
   }
 
-  async postMessage(id: string, text: string, credential?: string, attachments: string[] = [], context: { promptSuggestions?: boolean; taskDispatch?: boolean; selectionRevision?: unknown; expectedRevision?: unknown; withoutDetails?: boolean; dispatchId?: string; workspaceCredential?: string | null; clientRequestId?: unknown; actorUserId?: string } = {}): Promise<MessageReceipt | void> {
+  async postMessage(id: string, text: string, credential?: string, attachments: string[] = [], context: { decisionContinuation?: Pick<DecisionWait, "id" | "owner" | "snapshot" | "cancellationGeneration">; promptSuggestions?: boolean; taskDispatch?: boolean; selectionRevision?: unknown; expectedRevision?: unknown; withoutDetails?: boolean; dispatchId?: string; workspaceCredential?: string | null; clientRequestId?: unknown; actorUserId?: string } = {}): Promise<MessageReceipt | void> {
     const clientRequestId = context.clientRequestId === undefined ? undefined : this.messageRequest(context.clientRequestId);
     const actorUserId = clientRequestId ? this.messageActor(context.actorUserId) : undefined;
     const fingerprint = clientRequestId ? createHash("sha256").update(JSON.stringify({
@@ -1700,7 +1811,8 @@ export class SessionManager {
           return result;
         }
       }
-      if (session.record.taskExecutionId && (!context.taskDispatch || clientRequestId !== session.record.taskExecutionId))
+      if (context.decisionContinuation) this.checkDecisionRecord(session.record, context.decisionContinuation);
+      if (session.record.taskExecutionId && (!context.taskDispatch || clientRequestId !== session.record.taskExecutionId && !context.decisionContinuation))
         throw new AppContextError(409, "task_managed_session", "Use the task lifecycle to start a new attempt. This conversation belongs to one immutable task execution.");
       if (session.record.associationRequests?.some(request => request.state === "pending"))
         throw new AppContextError(409, "workspace_association_pending", "Retry the pending workspace attachment or detachment before sending another message.");
@@ -1712,7 +1824,8 @@ export class SessionManager {
       } else if (session.record.handoffDispatch?.state === "queued") {
         throw new AppContextError(409, "handoff_queued", "The accepted handoff is still queued. Retry its finalization.");
       }
-      if (session.record.workerRun || ["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) {
+      if (session.record.workerRun || ["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)
+        && !(context.decisionContinuation && session.record.status === "awaiting_question" && session.record.parkedQuestionRun)) {
         throw new SessionBusyError();
       }
       const workspaceCredential = context.workspaceCredential ?? credential ?? session.workspaceCredential ?? session.credential;
@@ -1786,6 +1899,7 @@ export class SessionManager {
           }
         }
         if (credential) {
+          if (!credential.startsWith("hosty_delegated.")) this.decisions?.authorize(session.record.createdBy, credential);
           if (context.workspaceCredential === undefined) session.workspaceCredential = null;
           // A fresh credential is also the documented recovery from a lapsed chain, so an existing run
           // gets its servers rebuilt here rather than waiting for the next timer tick — otherwise
@@ -1843,7 +1957,8 @@ export class SessionManager {
           ...(clientRequestId ? { clientRequestId } : {}),
           executionSelection: session.record.executionSelection ?? { model: null, reasoningEffort: null },
           selectionRevision: session.record.selectionRevision ?? 0,
-          text,
+          // The native resume envelope is private coordinator input, not operator-facing prose.
+          text: context.decisionContinuation ? "Continue with the saved answer." : text,
           appContext: snapshot,
           ...(attached.length > 0 ? { attachments: attached.map((file) => file.name) } : {}),
         });
@@ -1855,6 +1970,7 @@ export class SessionManager {
           if (this.worker) {
             preparedWorker = true; session.persistedWorkerSequences = new Set();
             session.record.workerRun = { id: randomUUID(), sequence: 0 };
+            if (context.decisionContinuation && clientRequestId) (session.record.decisionRunIds ??= {})[clientRequestId] = session.record.workerRun.id;
             await this.store.saveRecord(session.record);
           }
           // Read at start, not at every turn: the system prompt is the session's instruction set, so a
@@ -1902,6 +2018,7 @@ export class SessionManager {
           session.record.agentRunId = await this.observations.begin(session.record);
           await this.store.saveRecord(session.record);
           session.run = this.observations.attach(session.record.agentRunId, selectedAdapter.start({
+            requireNativeResume: !!context.decisionContinuation,
             promptSuggestions: session.suggestionAllowed,
             operation: session.record.taskExecutionId ? "task" : "chat",
             skillExportId: skillExport?.id,
@@ -2286,6 +2403,8 @@ export class SessionManager {
     answers: Record<string, string>,
   ): Promise<boolean> {
     const session = await this.requireLive(id);
+    if (this.decisions && await this.decisions.waits.read((await import("../decisions/waits.js")).waitId(id, questionId)))
+      throw new AppContextError(409, "shared_decision_required", "Answer this question through its shared Decisions record.");
     const questions = session.pendingQuestions.get(questionId);
     if (!session.run || questions === undefined) {
       return false;
@@ -2350,6 +2469,9 @@ export class SessionManager {
 
   private async cancelSessionLocked(id: string): Promise<void> {
     const session = await this.requireLive(id);
+    session.record.decisionGeneration = (session.record.decisionGeneration ?? 0) + 1;
+    await this.store.saveRecord(session.record);
+    this.decisions?.kick();
     this.clearSuggestion(session);
     if (this.worker || session.record.developmentLease || session.record.taskExecutionId) await this.finishExecution(session);
     this.setActivity(session, null);
@@ -2557,7 +2679,7 @@ export class SessionManager {
           session.pendingApprovals.clear(); session.pendingQuestions.clear();
           for (const { event } of frames) {
             if (event.type === "approval_request") session.pendingApprovals.set(event.approvalId, event.toolName);
-            if (event.type === "question_request") session.pendingQuestions.set(event.questionId, event.questions.map(q => q.question));
+            if (event.type === "question_request") session.pendingQuestions.set(event.questionId, event.questions.map(q => q.id ?? q.question));
           }
           this.notifyToolActivity();
         },
@@ -2572,7 +2694,7 @@ export class SessionManager {
       if (this.stopping || session.runEpoch !== epoch || !run || run.id !== frame.runId || frame.sequence <= run.sequence) return;
       if (session.record.agentRunId) await this.observations.markCurrent(session.record.agentRunId);
       if (run.generation && run.generation !== frame.generation) throw new Error("Worker generation changed.");
-      const terminal = frame.event.type === "result" || frame.event.type === "error";
+      const terminal = frame.event.type === "result" || frame.event.type === "error" || frame.event.type === "execution_parked";
       try {
         // Transcript IDs recover append-before-cursor crashes, including terminal events.
         session.persistedWorkerSequences ??= new Set((await this.store.readEvents(session.record.id))
@@ -2734,15 +2856,31 @@ export class SessionManager {
         await this.append(id, { ...event });
         await this.setStatus(id, "awaiting_approval");
         return;
+      case "execution_parked":
+        session.record.parkedQuestionRun = { id: event.runId, confirmedAt: new Date().toISOString() };
+        await this.finishExecution(session, false, true, "awaiting_question");
+        if (!persisted) await this.append(id, { ...event });
+        await this.setStatus(id, "awaiting_question");
+        return;
       case "question_request":
+        if (this.decisions) {
+          const wait = await this.decisions.register(session.record, event);
+          session.record.decisionWaitIds = [...new Set([...(session.record.decisionWaitIds ?? []), wait.id])];
+          await this.store.saveRecord(session.record);
+          // Registration is durable locally; the shared record appears only after its Core receipt.
+          await this.append(id, { ...event, decisionWaitId: wait.id });
+          session.pendingQuestions.set(event.questionId, event.questions.map(q => q.id ?? q.question));
+          if (event.blocking !== false) await this.setStatus(id, "awaiting_question");
+          return;
+        }
         session.pendingQuestions.set(
           event.questionId,
-          event.questions.map((question) => question.question),
+          event.questions.map((question) => question.id ?? question.question),
         );
         // Persisted, not live-only: a reconnecting client rebuilds the card from the event log, the
         // same way a pending approval already does.
         await this.append(id, { ...event });
-        await this.setStatus(id, "awaiting_question");
+        if (event.blocking !== false) await this.setStatus(id, "awaiting_question");
         return;
       case "result":
         if (session.suggestion?.state === "collecting") this.clearSuggestion(session);
