@@ -27,7 +27,7 @@ internal static class AppSignInStorageResponse
         var action = $"/api/apps/{Uri.EscapeDataString(intent.AppId)}/open?requestId={intent.Id}";
         var origin = new Uri(intent.RedirectUri).GetLeftPart(UriPartial.Authority);
         return Results.Content($$"""
-            <!doctype html><html lang="en"><meta charset="utf-8"><title>Hosty sign-in</title>
+            <!doctype html><html lang="en"><meta charset="utf-8"><title>Hosty sign-in</title>{{CoreBrowserPages.Favicon}}
             <p id="status">Continuing sign-in.</p>
             <noscript>JavaScript is required for named-localhost sign-in. Return to the app and start again after enabling JavaScript.</noscript>
             <script nonce="{{scriptNonce}}">
@@ -103,7 +103,7 @@ internal static class AppSignInStorageResponse
     {
         var scriptNonce = Protect(response, intent.Mode);
         return Results.Content($$"""
-            <!doctype html><html lang="en"><meta charset="utf-8"><title>Hosty sign-in</title>
+            <!doctype html><html lang="en"><meta charset="utf-8"><title>Hosty sign-in</title>{{CoreBrowserPages.Favicon}}
             <p>Continuing sign-in.</p>
             <script nonce="{{scriptNonce}}">
             {{(terminal ? Clear(intent) : "")}}
@@ -118,7 +118,7 @@ internal static class AppSignInStorageResponse
         var scriptNonce = Protect(response, intent.Mode);
         var origin = new Uri(intent.RedirectUri).GetLeftPart(UriPartial.Authority);
         return Results.Content($$"""
-            <!doctype html><html lang="en"><meta charset="utf-8"><title>Hosty sign-in</title>
+            <!doctype html><html lang="en"><meta charset="utf-8"><title>Hosty sign-in</title>{{CoreBrowserPages.Favicon}}
             <p id="status">Completing sign-in. You can close this window.</p>
             <script nonce="{{scriptNonce}}">
             {{Clear(intent)}}
@@ -136,7 +136,7 @@ internal static class AppSignInStorageResponse
     {
         var scriptNonce = Protect(response, intent.Mode);
         return Results.Content($$"""
-            <!doctype html><html lang="en"><meta charset="utf-8"><title>Hosty sign-in</title>
+            <!doctype html><html lang="en"><meta charset="utf-8"><title>Hosty sign-in</title>{{CoreBrowserPages.Favicon}}
             <p>{{WebUtility.HtmlEncode(message)}}</p>
             <script nonce="{{scriptNonce}}">{{Clear(intent)}}</script></html>
             """, "text/html", statusCode: statusCode);
@@ -149,7 +149,7 @@ internal static class AppSignInStorageResponse
     {
         var nonce = Convert.ToBase64String(RandomNumberGenerator.GetBytes(24));
         response.Headers.CacheControl = "no-store";
-        response.Headers["Content-Security-Policy"] = $"default-src 'none'; script-src 'nonce-{nonce}'; form-action 'self'; base-uri 'none'"
+        response.Headers["Content-Security-Policy"] = $"default-src 'none'; img-src 'self'; script-src 'nonce-{nonce}'; form-action 'self'; base-uri 'none'"
             + (mode == AppSignInMode.Silent ? "" : "; frame-ancestors 'none'");
         if (mode == AppSignInMode.Silent) response.Headers.Remove("X-Frame-Options");
         else response.Headers["X-Frame-Options"] = "DENY";

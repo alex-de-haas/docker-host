@@ -1,8 +1,8 @@
 ---
 created: 2026-10-21
-updated: 2026-10-30
+updated: 2026-11-03
 summary: Shared web tokens, local fonts and scoped SDK chrome, with Shell, Harness, Marketplace and Telemetry adoption and an in-place credential grid.
-components: [apps/core, apps/shell, apps/harness, apps/marketplace, apps/documents, apps/telemetry, apps/telemetry-ui, apps/whisper, apps/demo-app, packages/app-sdk, shared/web]
+components: [apps/core, apps/shell, apps/desktop, apps/harness, apps/marketplace, apps/documents, apps/telemetry, apps/telemetry-ui, apps/whisper, apps/demo-app, packages/app-sdk, shared/web]
 ---
 
 # Design System
@@ -60,14 +60,20 @@ The Core brand mark and each app's own empty-state artwork remain inline illustr
 
 The web brand library in `assets/hosty-brand` generates its seven-cell geometry from
 `packages/app-sdk/src/core-mark-geometry.ts`, the same source consumed by SDK chrome and the
-Shell inline mark. Light/dark marks, baked ink tiles, small favicon cuts and Shell public icons
-use that geometry. Horizontal wordmarks contain IBM Plex Sans 600 paths from the bundled font,
+Shell inline mark. Light/dark marks, baked ink tiles, small Core favicon cuts use that geometry. Horizontal wordmarks contain IBM Plex Sans 600 paths from the bundled font,
 with a recorded font hash and reproducible outline helper. Web-only generation leaves native
 AppIcon outputs untouched; the stable light/dark/brand tile names remain compatibility aliases.
-Shell renders one SVG favicon link. Before hydration its adaptive SVG follows the browser
-preference; after hydration the fixed light/dark SVG follows the resolved Shell theme, including
-a saved manual choice and system-theme changes. Six cells are white in dark mode or ink in
-light mode, with a lime center in both. The fixed ICO is not a competing head icon.
+Core browser pages use the transparent Hosty mark with a lime center, including login, setup,
+account pages and action/sign-in popups. The embedded SVG follows the browser color preference
+without requiring an installed app or a session; Core also serves an ICO fallback.
+Shell, Desktop, Documents, Harness, Marketplace and Telemetry each use their own manifest icon's
+cell layout and accent, enlarged to the same transparent favicon cut. Neutral cells are ink on
+light surfaces and white on dark surfaces. Each app renders one SVG favicon link: before hydration
+the adaptive SVG follows the browser preference, then a fixed light/dark SVG follows the resolved
+app theme, including saved preferences and host theme changes. ICO fallbacks remain direct URLs
+and do not compete in the document head. Desktop has no separate file-convention icon overriding
+this link. The brand generator derives app favicons from their tile artwork and preserves each
+app's identity; Shell's Apple touch icon uses its own tile as well.
 
 ## Harness Dialogs
 
@@ -656,8 +662,12 @@ tokens wrap inside a selectable monospace block. Error and success messages use 
   has one visible 2 px lime (`#A3E635`) indicator without a second ring, halo or ink edge on
   app-owned controls, including inside the SDK host. Check retained red invalid/error treatment
   and parent-only grouped-input focus separately from SDK-owned rail and chooser controls.
-- Verify the single Shell favicon through server rendering, system/manual theme changes and saved
-  preferences after reload, keeping six white/ink cells and the lime center in generated variants.
+- Verify a single favicon for Shell, Desktop, Documents, Harness, Marketplace and Telemetry through
+  server rendering, system/manual/host theme changes and saved preferences after reload. Generated
+  variants retain each manifest icon's cells and accent with no background tile.
+- Verify Core login/setup and approval pages link the Core favicon and serve embedded icons before
+  login with the expected content type, including when no runtime apps are installed. Restrictive
+  popup policies permit same-origin icons while retaining their existing script and frame rules.
 - Verify Harness error foregrounds in both themes, dialog/menu focus and retained fields, and
   live reduced-motion Jump to latest including cancellation, SSR hydration and listener cleanup.
 - Verify log/trace search-miss versus empty/loading/error priority, trace detail focus/return,
