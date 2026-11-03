@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-06-16
-updated: 2026-10-29
+updated: 2026-11-03
 summary: Expose notifications to non-browser clients and add delivery channels that reach users outside any client.
 components: [apps/core]
 ---
@@ -19,7 +19,7 @@ the existing service rather than a redesign.
 ## Composable Work Coordination (2026-10-26)
 
 D6 remains the shared durable-event owner for [tasks](../basic-tasks/feature.md),
-[decisions](../shared-decisions/plan.md) and [job execution](../durable-agent-jobs/plan.md).
+[decisions](../shared-decisions/feature.md) and [job execution](../durable-agent-jobs/plan.md).
 Their owners define domain transitions and consistency with their state; D6 defines authorized
 producer/consumer registration, versioned delivery, retention and cursor/gap recovery. Resolve
 app-produced facts without trusting an app's claimed user, executor option or resource access.
@@ -59,6 +59,19 @@ access remain shared; domain predicates and routine activation belong to their c
 its standalone browsing surface. Its ordinary reads/UI convergence do not require D6. A future live
 PR event producer must be explicitly scoped with that owner; no priority, subscription or event-bus
 implementation is selected by creating the inbox Draft.
+
+## Decisions-First Compatibility Boundary (2026-11-03)
+
+The [Shared Decisions implementation](../shared-decisions/feature.md#api-and-sdk) uses an
+atomic answer record and fixed-recipient command receipt for its first Harness continuation. Like
+Basic Tasks direct dispatch, this deliberately bounded handoff is not a second subscription bus.
+The decision remains queryable when notifications are lost; a banner or read acknowledgement is
+not an answer or proof of resumed work.
+
+D6 still owns arbitrary producer/consumer subscriptions, authorized retention/cursor/gap recovery
+and app-produced domain events. A later resolution event must preserve the original decision and
+command identity and must not independently resume work already delivered through the direct path.
+D7 channels and the other notification surfaces remain separate unfinished deliverables.
 
 ## Deliverables
 

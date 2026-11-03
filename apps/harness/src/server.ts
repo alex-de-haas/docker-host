@@ -1,3 +1,6 @@
+import { DecisionsService } from "./decisions/service.js";
+import { decisionsRoute } from "./decisions/routes.js";
+import { DecisionError } from "@hosty-sdk/app/decisions";
 import { AgentSessionService } from "./agent-sessions/service.js";
 import { agentSessionRoute } from "./agent-sessions/routes.js";
 import { HistoryService } from "./history/service.js";
@@ -76,6 +79,7 @@ export function createGatewayServer(
   connections: ConnectionService | null = null,
   internal?: (request: IncomingMessage, response: ServerResponse) => Promise<boolean>,
 ): Server & { stopTaskDispatch: () => Promise<void> } {
+  if (process.env.HOSTY_APP_SERVICE_TOKEN) manager.decisions ??= new DecisionsService(manager);
   const tasks = new TaskService(manager);
   const history = new HistoryService(manager.store, { appId: process.env.HOSTY_APP_ID ?? "hosty.harness", installationId: process.env.HOSTY_APP_INSTALLATION_ID ?? "standalone", key: "default" });
   const execution = new AgentSessionService(manager, history.provider);
@@ -98,7 +102,7 @@ export function createGatewayServer(
         sendJson(response, 409, { code: "session_busy", message: error.message });
         return;
       }
-      if (error instanceof AppContextError || error instanceof ConnectionError || error instanceof WorkerError || error instanceof WorkerApiError) {
+      if (error instanceof DecisionError || error instanceof AppContextError || error instanceof ConnectionError || error instanceof WorkerError || error instanceof WorkerApiError) {
         sendJson(response, error.status, { code: error.code, message: error.message });
         return;
       }
@@ -119,10 +123,10 @@ export function createGatewayServer(
     });
   });
   eventStreams.attach(server);
-  const taskServer = Object.assign(server, { stopTaskDispatch: async () => { await tasks.close(); await feedback.close(); } });
+  const taskServer = Object.assign(server, { stopTaskDispatch: async () => { await manager.decisions?.close(); await tasks.close(); await feedback.close(); } });
   const close = server.close.bind(server);
   server.close = ((callback?: (error?: Error) => void) => { void tasks.close(); eventStreams.close(); return close(callback); }) as typeof server.close;
-  server.on("close", () => { history.close(); clearInterval(timer); tasks.close(); void feedback.close(); });
+  server.on("close", () => { void manager.decisions?.close(); history.close(); clearInterval(timer); tasks.close(); void feedback.close(); });
   return taskServer;
 }
 
@@ -331,6 +335,13 @@ async function route(
       message: "A session cookie may only change state from the gateway's own pages.",
     });
     return;
+  }
+
+  if (url.pathname === "/api/decisions" || url.pathname.startsWith("/api/decisions/")) {
+    const token = actor.via === "app-session" ? readAppCredential(request) : null;
+    if (!token || !manager.decisions) throw new DecisionError("app_session_required", "Open Harness through Core to use Decisions.", 403);
+    manager.decisions.authorize(actor.userId, token);
+    if (await decisionsRoute(request, response, url, manager.decisions, actor.userId, () => readJson(request))) return;
   }
 
   if (url.pathname.startsWith("/api/feedback")) {

@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-29
-updated: 2026-10-29
+updated: 2026-11-03
 summary: Bind application activities and delegated results to assistant conversations with authorized events, observable continuation and recoverable context.
 components: [apps/core, apps/harness, apps/desktop, apps/shell, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -50,7 +50,7 @@ it does not require importing a child's entire transcript or implementing a full
 | [Action Summary D4](../assistant-action-summary/plan.md#deliverables) | Correlated native invocation evidence in the existing Harness journal. | Link external receipt/causation IDs to existing run evidence without a second transcript. |
 | [Agent Providers D2-D5](../agent-provider-interface/plan.md#deliverables) | Public engine invocation, native capability mapping and independent provider applications. | Assistant capability negotiation above that engine boundary; public engine extraction is not required for the first internal Harness adapter. |
 | [Harness Work Orchestration D4/D7](../harness-work-orchestration/plan.md#deliverables) | Task hierarchy/decomposition, routing policy and selected cross-session material access. | A minimal explicit child-result-to-parent-wait exchange, without delivering hierarchy or sharing private sessions. |
-| [Shared Decisions D2-D4](../shared-decisions/plan.md#deliverables) | Addressed question/response records and consistent publication of their resolution. | A resolved-decision event can satisfy its correlated wait; event delivery is not approval or proof of resumed execution. |
+| [Shared Decisions](../shared-decisions/feature.md#durable-native-waiting) | Addressed question/response records and consistent publication of their resolution. | A resolved-decision event can satisfy its correlated wait; event delivery is not approval or proof of resumed execution. |
 | [Panel System](../sdk-panel-system/feature.md) and [UI Composition](../sdk-ui-composition/feature.md) | Verified provider presentation, retained frames and navigation. | Connect a selected activity to its assistant presentation; browser view/presentation IDs are not domain identity. |
 | [Hosty Chess plan](https://github.com/alex-de-haas/hosty-chess/blob/main/docs/features/chess-v1/plan.md) | Game rules, storage, board, gameplay tools and application-side events in the independent repository. | Generic Hosty contract, assistant adapter and platform acceptance fixtures. |
 
@@ -242,7 +242,7 @@ updates and either recommend merge, request a human decision or merge within an 
 policy. [Harness Pull Request Inbox](../harness-pull-request-inbox/feature.md), developed from
 [I18](../../ideas.md#i18-active-pull-request-inbox-and-repository-observation), owns repository
 discovery and the independent view; [Durable Agent Jobs](../durable-agent-jobs/plan.md) owns routine
-activation/execution and [Shared Decisions](../shared-decisions/plan.md) owns addressed answers.
+activation/execution and [Shared Decisions](../shared-decisions/feature.md) owns addressed answers.
 This example does not create a live subscription, grant merge rights or add PR implementation to D6.
 
 Distinguish two authorized event consumers in D1: an existing activity/session binding and a configured
@@ -300,6 +300,19 @@ The PR plan also fixes a shared invalidation input so a later webhook receiver f
 can reuse the same cache and UI stream; that receiver is not implemented by the browsing feature.
 This choice does not restrict how unrelated applications produce events, and it does not implement
 durable event publication or routine execution as part of the PR browsing feature.
+
+## Decisions-First Compatibility Boundary (2026-11-03)
+
+[Shared Decisions](../shared-decisions/feature.md#harness-presentation) implements
+its addressed response path before general subscriptions: a fixed originating installation consumes
+an atomic response outbox, saves a receipt and reconciles one continuation command. That is a narrow
+owner-command handoff, not this plan's activity binding or arbitrary application-event ingress.
+
+D1-D3 here must reuse the same decision/resolution/wait IDs and source receipts when adding general
+event transport, with one selected delivery path per response. They retain general source/schema
+negotiation, routing, budget, busy-session and delegated-result semantics. Notifications D6 remains
+their durable-subscription prerequisite. This bounded delivery neither completes these deliverables nor
+changes the two initial runtime examples or grants event-triggered execution authority.
 
 ## Deliverables
 

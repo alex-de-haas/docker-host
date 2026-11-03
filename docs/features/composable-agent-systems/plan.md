@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-25
-updated: 2026-10-31
+updated: 2026-11-03
 summary: Compose app-owned task providers and executors through Core contracts, with Harness profiles, optional resources, decisions and artifact handoffs.
 components: [apps/core, apps/harness, apps/documents, packages/app-sdk]
 ---
@@ -69,7 +69,7 @@ This inventory is not evidence that a complete autonomous team or a common publi
 | Events and subscriptions | The [Core event bus](../core-event-bus/feature.md) and [workspace observation](../workspace-event-observation/feature.md) deliver refresh hints with state resynchronization. | Durable authorized delivery, cursors, duplicates, retention gaps and app-produced facts where required. Event reception and an authorized command are distinct. | [Notifications D6](../notifications/plan.md#deliverables) owns durable domain-event subscriptions; D7 owns its first delivery-channel consumer. Cross-feature orchestration use is investigated here without expanding those deliverables implicitly. |
 | Background jobs and coordination | Background sessions survive a closed tab; PR state has its own observer; explicit background grants exist. | General scheduling, accepted job ownership, retries, concurrency, time/cost budgets and escalation. Neither background sessions nor the Autonomous approval mode supplies a general runner. | [Durable Agent Jobs D1-D6](../durable-agent-jobs/plan.md#deliverables), transferred from Bridge D11 on 2026-10-26. The runner remains an app or authorized client; this plan does not create another scheduler. |
 | Authoritative materials and results | Plans reads repository/workspace Markdown; Harness has [session attachments](../assistant-attachments/feature.md); Core exposes source, publication and preview references. These do not form a durable shared artifact catalog. | A minimal described, versioned result and handoff contract, readable source references, authorized search and preservation beyond temporary resources. | [Plan Provider D1-D4](../plan-provider-interface/plan.md#deliverables) owns plan semantics; [Object Links](../object-links/plan.md) owns navigation. [Shared Artifacts I3](../../ideas.md#i3-shared-artifacts-external-references-and-configurable-storage) supplies related ideas. [Shared Artifacts](../shared-artifacts/plan.md) owns minimal result persistence and explicit handoffs; Durable Agent Jobs D7 retains same-session context recovery; conversations stay assistant-owned. |
-| Human decisions and shared participation | Core trusted confirmations and Harness question/approval waits exist; [background sessions](../agent-background-sessions/feature.md) notify the initiating operator. Some pending permissions are denied on restart. | Persistent addressed decision requests, an aggregated inbox and response-driven continuation after the native process ends. The existing session card is insufficient. | [Approval Rules](../assistant-approval-rules/plan.md) retains execution-permission semantics; Durable Agent Jobs D4/D7 and Agent Providers retain their runner/continuation/context scope. [Shared Decisions](../shared-decisions/plan.md) owns the record; Harness Work Orchestration owns its inbox and routing. |
+| Human decisions and shared participation | [Shared Decisions](../shared-decisions/feature.md) provides private addressed records, an aggregated queue and supported same-context continuation after confirmed parking/restart. Core trusted confirmations and native permissions retain separate authority. | Team/reviewer routing, selected shared materials and integration with general autonomous jobs. | [Approval Rules](../assistant-approval-rules/plan.md) retains execution-permission semantics; Durable Agent Jobs D4/D7 and Agent Providers retain their runner/continuation/context scope. [Shared Decisions](../shared-decisions/feature.md) owns the record and first inbox; Harness Work Orchestration owns richer composition and team routing. |
 | Source and test environments | [Workspaces](../assistant-session-workspaces/feature.md), [shared sessions](../workspace-sessions/feature.md), leases, [sandbox/child Core](../app-sandbox-runtimes/feature.md) and [PR lifecycle](../assistant-pr-lifecycle/feature.md) exist independently. | Make reuse the explicit normal path while permitting deliberate independent workspaces, such as an unrelated bugfix and PR. Prevent accidental duplicate allocation without imposing one workspace on every task tree. | [Sandbox remaining acceptance](../app-sandbox-runtimes/plan.md), [Development Sessions D1-D2](../assistant-development-sessions/plan.md#deliverables), [External Development](../external-development-workspaces/feature.md) and [Containment](../assistant-runtime-containment/plan.md) retain scope. [Task Workspace Coordination](../shared-tasks/plan.md) owns automatic allocation/reuse and reverse task observation; Basic Tasks only selects existing bindings, and Harness orchestration coordinates writers. |
 | Evidence and limits | Core audit, resource observations and app-specific operation/run records exist. Child environments have resource ceilings. | Correlate assignments, input/skill revisions, runs, decisions and outputs across owners; distinguish process/container limits from model usage and aggregate workflow budgets. | [Application Resource Policy](../app-resource-policy/plan.md) owns runtime caps; Agent Providers owns invocation limits; Durable Agent Jobs owns job/retry budgets. Cross-owner evidence requirements belong to D3/D4 below. |
 
@@ -273,7 +273,7 @@ Organization app and its name remain open. Shared APIs must remain consumable in
 | Later general runner | [Durable Agent Jobs](../durable-agent-jobs/plan.md) | Schedules, retry policy and parked decisions consume existing execution evidence; the basic task adapter reuses Worker journals. |
 | Deferred richer composition | [Harness Work Orchestration](../harness-work-orchestration/plan.md) | Hierarchy/decomposition and joined artifact/decision/parked-wait UI over Basic Tasks. |
 | Extended handoffs | [Shared Artifacts](../shared-artifacts/plan.md) | Described/versioned retained results and selected context. |
-| Extended human waits | [Shared Decisions](../shared-decisions/plan.md) | Addressed requests, resolution and durable continuation. |
+| Extended human waits | [Shared Decisions](../shared-decisions/feature.md) | Addressed requests, resolution and durable continuation. |
 | Independent extraction | [Agent Providers](../agent-provider-interface/plan.md) | Public model/agent invocation; not required before the internal Harness executor works. |
 
 These are priorities, not a strictly serial build order. Durable Agent Jobs D7 retains session recovery
@@ -373,6 +373,19 @@ uses no Git repository, development workspace or application sandbox.
 One user selects skills for one agent and invokes it directly. It can return an answer or an artifact
 without creating a team, organization chart, shared workspace or recurring job. Optional additional
 roles and automation must not make this basic composition depend on unused applications.
+
+## Decisions Before Routines (2026-11-03)
+
+The owner approved Decisions as the next step after Basic Tasks. [Shared Decisions](../shared-decisions/feature.md)
+implements its first page, Core-owned question records, Codex/Claude questions and durable response
+continuation through confirmed parking/restart. This delivers the bounded transfer of the first UI
+from Harness Orchestration D3 and session/task question waits from Durable Agent Jobs D4/D7.
+
+The remaining plans preserve their unchecked scope. Scheduled routines and general application
+events consume the same answer/continuation path; hierarchy and richer artifact handoffs remain
+later compositions. This bounded delivery does not implement the autonomous composition or
+create a competing scheduler. Real-provider and managed task acceptance verify continued work,
+not merely an inbox row or a saved answer.
 
 ## Deliverables
 

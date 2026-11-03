@@ -1,5 +1,6 @@
 "use client";
 
+import { DecisionQuestion } from "./decision-question";
 import { Fragment, useId, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, ChevronRight, Clock3, HelpCircle, Info, ShieldCheck, Wrench, X, FileCode2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -170,6 +171,7 @@ export function TranscriptEvent({
         />
       );
     case "question_request":
+      if (typeof event.decisionWaitId === "string") return <DecisionQuestion waitId={event.decisionWaitId} />;
       return (
         <QuestionCard
           questionId={String(event.questionId)}
@@ -361,7 +363,7 @@ function ToolRow({ toolName, input, appNames, mcp, output, command }: {
 // A deny may carry a reason. It goes to the model behind a fixed prefix, so a refusal stays a
 // refusal whatever was typed, and it is kept on the decision so a replayed transcript shows not only
 // that a card was refused but why — which is the half a later reader actually wants.
-function ApprovalCard({
+export function ApprovalCard({
   approvalId,
   toolName,
   input,
@@ -550,14 +552,14 @@ function QuestionCard({ questionId, questions, answers, cancelled, onAnswer }: {
   const collected = useMemo(() => {
     const result: Record<string, string> = {};
     for (const question of questions) {
-      const picks = [...(selected[question.question] ?? [])];
-      const free = (other[question.question] ?? "").trim();
+      const picks = [...(selected[question.id ?? question.question] ?? [])];
+      const free = (other[question.id ?? question.question] ?? "").trim();
       if (free) picks.push(free);
-      if (picks.length) result[question.question] = picks.join(", ");
+      if (picks.length) result[question.id ?? question.question] = picks.join(", ");
     }
     return result;
   }, [questions, selected, other]);
-  const complete = questions.length > 0 && questions.every(question => collected[question.question]);
+  const complete = questions.length > 0 && questions.every(question => collected[question.id ?? question.question]);
   const submit = async () => {
     if (locked.current || !complete || answers || cancelled) return;
     locked.current = true;
@@ -580,17 +582,17 @@ function QuestionCard({ questionId, questions, answers, cancelled, onAnswer }: {
       </div>
     </CardHeader>
     <CardContent className="min-w-0 px-3">
-      {answers || cancelled ? <dl className="flex flex-col gap-3">{questions.map(question => <div key={question.question} className="min-w-0">
+      {answers || cancelled ? <dl className="flex flex-col gap-3">{questions.map(question => <div key={question.id ?? question.question} className="min-w-0">
         <dt className="text-xs text-muted-foreground wrap-anywhere">{question.question}</dt>
-        <dd className="mt-1 text-sm whitespace-pre-wrap wrap-anywhere">{answers?.[question.question] ?? (cancelled ? "The session stopped before this question was answered." : "—")}</dd>
+        <dd className="mt-1 text-sm whitespace-pre-wrap wrap-anywhere">{answers?.[question.id ?? question.question] ?? (cancelled ? "The session stopped before this question was answered." : "—")}</dd>
       </div>)}</dl> : <FieldGroup className="gap-5">{questions.map((question, questionIndex) => {
-        const picks = selected[question.question] ?? [];
+        const picks = selected[question.id ?? question.question] ?? [];
         const baseId = `${questionId}-${questionIndex}`;
         const choose = (label: string, checked = true) => {
-          setSelected(current => ({ ...current, [question.question]: question.multiSelect
-            ? checked ? [...(current[question.question] ?? []), label] : (current[question.question] ?? []).filter(value => value !== label)
+          setSelected(current => ({ ...current, [question.id ?? question.question]: question.multiSelect
+            ? checked ? [...(current[question.id ?? question.question] ?? []), label] : (current[question.id ?? question.question] ?? []).filter(value => value !== label)
             : [label] }));
-          if (!question.multiSelect) setOther(current => ({ ...current, [question.question]: "" }));
+          if (!question.multiSelect) setOther(current => ({ ...current, [question.id ?? question.question]: "" }));
         };
         const options = question.options.map((option, index) => <Field key={option.label} orientation="horizontal"
           className="items-start rounded-md border p-2.5 has-data-[state=checked]:border-brand-strong has-data-[state=checked]:bg-brand-soft" data-disabled={disabled}>
@@ -602,21 +604,21 @@ function QuestionCard({ questionId, questions, answers, cancelled, onAnswer }: {
             {option.description && <FieldDescription className="text-xs wrap-anywhere">{option.description}</FieldDescription>}
           </FieldContent>
         </Field>);
-        return <FieldSet key={question.question} className="min-w-0 gap-2">
+        return <FieldSet key={question.id ?? question.question} className="min-w-0 gap-2">
           <FieldLegend id={`${baseId}-legend`} className="mb-0 text-sm font-semibold wrap-anywhere">{question.question}</FieldLegend>
           <FieldDescription className="text-xs">{question.multiSelect ? "Choose one or more, or add your own answer." : "Choose one, or write your own answer."}</FieldDescription>
           {question.multiSelect ? <div className="flex flex-col gap-2">{options}</div>
             : <RadioGroup aria-labelledby={`${baseId}-legend`} className="gap-2"
               value={picks.length ? String(question.options.findIndex(option => option.label === picks[0])) : ""}
               onValueChange={value => choose(question.options[Number(value)].label)}>{options}</RadioGroup>}
-          <Field className="gap-1.5" data-disabled={disabled}>
+          {question.allowText !== false && <Field className="gap-1.5" data-disabled={disabled}>
             <FieldLabel htmlFor={`${baseId}-other`} className="text-xs">Your own answer</FieldLabel>
-            <Input id={`${baseId}-other`} value={other[question.question] ?? ""} disabled={disabled} placeholder="Other…"
+            <Input id={`${baseId}-other`} value={other[question.id ?? question.question] ?? ""} disabled={disabled} placeholder="Other…"
               onChange={event => {
-                setOther(current => ({ ...current, [question.question]: event.target.value }));
-                if (!question.multiSelect) setSelected(current => ({ ...current, [question.question]: [] }));
+                setOther(current => ({ ...current, [question.id ?? question.question]: event.target.value }));
+                if (!question.multiSelect) setSelected(current => ({ ...current, [question.id ?? question.question]: [] }));
               }} />
-          </Field>
+          </Field>}
         </FieldSet>;
       })}</FieldGroup>}
       {error && !cancelled && <div className="mt-3" role="alert"><InlineError message={error} /></div>}

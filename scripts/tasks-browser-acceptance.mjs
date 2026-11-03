@@ -87,6 +87,8 @@ try {
   await page.getByLabel('Result · Markdown', { exact: true }).waitFor();
   await page.getByRole('button', { name: 'New task', exact: true }).click();
   assert.equal(await page.getByLabel('Title', { exact: true }).inputValue(), '');
+  const { checkDecisions } = await import('./decisions-browser-acceptance.mjs');
+  await checkDecisions({ page, context, config, csrf });
   assert.deepEqual(errors, []);
   console.log('PASS: Chromium password login, Core launch identity, UI create/start/review/result, SSE draft preservation/recovery and reload');
 } catch (error) {

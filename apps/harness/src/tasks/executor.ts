@@ -1,3 +1,4 @@
+import { taskReferenceKey } from "@hosty-sdk/app/tasks";
 import { mkdir, open, readFile, readdir, rename, rm } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
@@ -77,6 +78,7 @@ export class HarnessTaskExecutor {
         const session = await this.manager.createSession({ createdBy: authority.actor.userId, clientRequestId: key,
           title: input.title, profileId: value.executorOptionId, taskExecutionId: id });
         if (!session.agentProfile) return taskError("profile_required", "Select a Harness profile before starting a task.");
+        await this.manager.bindTaskDecisionReference(session.id, id, authority.actor.userId!, { kind: "task", id: taskReferenceKey(value.taskRef), revision: String(value.taskRevision) });
         record.sessionId = session.id;
         const conversation = this.conversationPath(session.id, authority);
         if (conversation) record.receipt.sessionRef = { id: session.id, path: conversation };
@@ -202,9 +204,14 @@ export class HarnessTaskExecutor {
         else if (session.taskRun?.exitConfirmed && !session.taskRun.started) {
           r.receipt.state = "failed"; r.receipt.stopConfirmed = true;
           r.receipt.error = { code: "admission_failed", message: "The task was rejected before native execution started." };
-        } else if (["awaiting_question", "awaiting_approval"].includes(session.status)) r.receipt.state = "awaiting_input";
+        } else if (["awaiting_question", "awaiting_approval"].includes(session.status)) {
+          r.receipt.state = "awaiting_input";
+          r.receipt.stopConfirmed = false;
+          r.receipt.nativeStopConfirmed = session.taskRun?.exitConfirmed === true;
+          delete r.receipt.error;
+        }
         else if (session.status === "running") {
-          r.receipt.state = "running";
+          r.receipt.state = "running"; r.receipt.nativeStopConfirmed = false;
           // A native process lost across a Harness restart has no safe replacement.
           if (!this.manager.worker && !this.manager.hasLiveTaskRun(r.sessionId)) {
             r.receipt.state = "interrupted"; r.receipt.error = { code: "exit_unconfirmed", message: "Harness restarted; the native execution's exit is unconfirmed." };

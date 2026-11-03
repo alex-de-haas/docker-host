@@ -19,6 +19,8 @@ internal static class CoreMcpCatalog
 
     private static readonly CoreMcpFeature Workflow = new("workflow", "Work lifecycle");
     private static readonly CoreMcpFeature History = new("history", "Conversation history");
+    private static readonly CoreMcpFeature Decisions = new("decisions", "Decisions");
+    private static readonly string[] DecisionScopes = [AccessTokenScopes.McpRead, AccessTokenScopes.McpDecisions];
     private static readonly CoreMcpFeature Tasks = new("tasks", "Tasks");
     private static readonly CoreMcpFeature Sessions = new("agent-sessions", "Agent sessions & runs");
     private static readonly CoreMcpFeature Environments = new("environments", "Test environments");
@@ -47,6 +49,15 @@ internal static class CoreMcpCatalog
     // Only implemented tools belong here. Keep existing public names and app admission unchanged.
     internal static readonly FrozenDictionary<string, CoreMcpToolDefinition> Tools = new CoreMcpToolDefinition[]
     {
+        new("decision_create", Decisions, DecisionScopes, CoreAppPermissions.DecisionsRequest),
+        new("decision_list", Decisions, DecisionScopes, CoreAppPermissions.DecisionsRead),
+        new("decision_get", Decisions, DecisionScopes, CoreAppPermissions.DecisionsRead),
+        new("decision_resolve", Decisions, DecisionScopes, CoreAppPermissions.DecisionsRespond),
+        new("decision_withdraw", Decisions, DecisionScopes, CoreAppPermissions.DecisionsRequest),
+        new("decision_invalidate", Decisions, DecisionScopes, CoreAppPermissions.DecisionsRequest),
+        new("decision_responses", Decisions, DecisionScopes, CoreAppPermissions.DecisionsRequest),
+        new("decision_acknowledge", Decisions, DecisionScopes, CoreAppPermissions.DecisionsRequest),
+        new("decision_continuation", Decisions, DecisionScopes, CoreAppPermissions.DecisionsRequest),
         ProviderTool("history_export_create", History, "conversation-history", "exports.create"),
         ProviderTool("history_export_get", History, "conversation-history", "exports.get"),
         ProviderTool("history_export_acknowledge", History, "conversation-history", "exports.acknowledge"),
