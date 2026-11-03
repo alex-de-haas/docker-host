@@ -1,6 +1,6 @@
 ---
 created: 2026-09-30
-updated: 2026-10-29
+updated: 2026-11-03
 summary: Per-app permission reviews and a host-wide Security overview of Core permissions, provider roles and their installed-app holders.
 components: [apps/shell, apps/core, packages/app-sdk]
 ---
@@ -49,7 +49,14 @@ update-review concern. Missing or invalid sources retain grants and last verifie
 report unknown/stale state. Reads never adopt manifest fields or change grants.
 
 Missing required access produces the actionable red "Required permissions need approval" problem,
-which opens Permissions and contributes to Dashboard's attention count. Unknown required and optional
+which opens Permissions and contributes to Dashboard's attention count. For administrators, the
+Dashboard row offers **Review Access** ahead of Start/Stop when known required permissions are missing.
+An available **Update** takes precedence; **Review Access** remains available in the row's action menu.
+Both access actions open Core's isolated permission review directly in a new window or tab.
+Existing lifecycle progress, cancel-start, restart, diagnostics and configuration actions retain their
+priority. Optional-only changes and unknown/stale observations do not promote the access action.
+Confirmed permission changes refresh through the existing app event stream.
+Unknown required and optional
 names produce an amber compatibility warning: update the app or Core; ungranted access may leave
 features unavailable. Ordinary Core review remains available for known permissions in the same manifest. Missing or unsupported required
 permissions never block start, restart, autostart, runtime switching, or retained workloads.

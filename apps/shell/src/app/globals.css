@@ -92,7 +92,7 @@
 .dashboard-sandbox-actions > div { min-width: 0; }
 .dashboard-sandbox-actions > div > button:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .dashboard-context-action { min-width: 0; }
-.dashboard-context-action > button { max-width: min(144px, 100%); overflow: hidden; text-overflow: ellipsis; }
+.dashboard-context-action > :is(button, a) { max-width: min(144px, 100%); overflow: hidden; text-overflow: ellipsis; }
 .dashboard-toolbar-filters { grid-column: 1 / 3; }
 .dashboard-toolbar-resources { grid-column: 3; }
 .dashboard-toolbar-actions { grid-column: 4; }
