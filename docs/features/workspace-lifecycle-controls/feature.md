@@ -1,6 +1,6 @@
 ---
 created: 2026-10-16
-updated: 2026-10-30
+updated: 2026-11-03
 summary: Core coordinates pause and verified completion independently from unconditional workspace deletion with one informational UI confirmation.
 components: [apps/core, apps/harness]
 ---
@@ -250,6 +250,13 @@ On Windows, physical cleanup removes directory links themselves without followin
 handles read-only generated files. Git worktree registration paths use filesystem path comparison,
 so a retry after partial file removal can still remove the allocation's registration and local branch.
 
+Deletion retains caller cancellation during authorization, preflight and lock acquisition. Before
+persisting the admission journal and fencing the workspace, Core takes ownership of execution:
+stopping the calling agent or disconnecting its HTTP/MCP request does not interrupt managed runtime
+Return, child cleanup or source removal. Recovery uses the same Core lifetime. An accepted batch
+continues its frozen target set after a client disconnect. Core shutdown still interrupts work and
+retains the original request for recovery; runtime or filesystem failures remain visible.
+
 A durable journal survives partial removal, lost responses and restart. Accepted child operation UUIDs
 and revisions are preserved. Batch deletion freezes original targets and allocation generations;
 retry does not include later workspaces or a recreated allocation. Results distinguish removed source,
@@ -267,6 +274,8 @@ conditions. None is a prerequisite for Delete.
 
 - Retain pause/completion, exact-head merge evidence and private provider credential checks.
 - Cover direct deletion of dirty source, active/unknown leases, partial preparation and missing paths.
+- Verify caller cancellation before admission preserves source, cancellation during managed shutdown
+  completes single/batch cleanup, and Core shutdown retains a recoverable original request.
 - Cover Windows read-only files, directory links with preserved external targets, and recovery after
   file removal leaves a Git worktree registration.
 - Verify immutable allocation identity, symlink refusal, accepted legacy recovery, real managed stop

@@ -80,7 +80,7 @@ it("keeps each PR's repository, head evidence, failed checks and review threads 
   expect(popover.textContent).toContain("Failure");
   expect(popover.textContent).not.toContain("Earlier change");
   expect(container.textContent).toContain("Changes requested"); expect(container.textContent).toContain("2 unresolved threads");
-  expect(container.textContent).toContain("Merged"); expect(container.textContent).toContain("Outdated");
+  expect(container.textContent).toContain("Merged · CI last observed");
   expect(container.textContent).toContain("CI unknown");
 });
 
