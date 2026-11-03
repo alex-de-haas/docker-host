@@ -1,6 +1,6 @@
 ---
 created: 2026-10-10
-updated: 2026-11-02
+updated: 2026-11-03
 summary: Shared SDK panels compose app-owned tools beside documents in Shell and standalone, with verified peers and pinned presentation targets.
 components: [packages/app-sdk, apps/core, apps/shell, apps/documents, apps/harness, apps/demo-app]
 ---
@@ -221,7 +221,8 @@ Legacy assistant-session notifications allocate an instance before sending their
 the outbound message names that presentation so it cannot retarget another retained draft.
 Shell chrome reads expansion from the host snapshot. Cookie or legacy localStorage preferences
 initialize the host once; an explicit session link defers default expansion until its placement.
-Top-strip launchers reflect visible panels and focus an existing view when reopened.
+Top-strip launchers and Tools menu entries highlight open panels. Selecting an open tool hides
+its most recently focused visible instance; reopening a hidden tool retains its view and drafts.
 The assistant keyboard shortcut waits for catalog metadata and selects its requested tool directly;
 it does not concurrently expand a default tool. Repeating it on the focused assistant hides only that instance, leaving other panels open.
 Shell retires obsolete or reinstallation-mismatched pending handoff records with an explicit error.

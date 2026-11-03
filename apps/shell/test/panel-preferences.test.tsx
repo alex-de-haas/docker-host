@@ -62,7 +62,7 @@ it("fits labels, falls back to icons, limits overflow, and restores labels after
   await act(async () => root.render(<PinnedToolButtons panels={panels} selectedKey={panelKey(panels[0].panel)} onSelect={select} />));
   expect(choices().map(button => button.textContent)).toEqual(["chat", "drafts"]);
   const resize = (width: number) => act(async () => { available = width; callbacks.forEach(callback => callback()); });
-  await resize(100); expect(choices()).toHaveLength(2); expect(choices()[0].textContent).toBe(""); expect(choices()[0].getAttribute("aria-label")).toBe("Open App — chat");
+  await resize(100); expect(choices()).toHaveLength(2); expect(choices()[0].textContent).toBe(""); expect(choices()[0].getAttribute("aria-label")).toBe("Hide App — chat");
   await act(async () => choices()[0].click()); expect(select).toHaveBeenCalledWith(panels[0]);
   await resize(32); expect(choices()).toHaveLength(1);
   await resize(20); expect(choices()).toHaveLength(0);

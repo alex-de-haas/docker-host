@@ -1,14 +1,18 @@
 ---
 created: 2026-11-02
-updated: 2026-11-02
+updated: 2026-11-03
 summary: Shell displays multiple retained app tools and Feedback with common chrome, independent visibility, resizing and compact tabs.
 components: [packages/app-sdk, apps/shell]
 ---
 
 # Concurrent Tool Panels
 
-Shell opens tools beside its current document. Opening another tool adds a panel; reopening one
-focuses its retained instance. Each panel has common header, border, spacing and resize controls.
+Shell opens tools beside its current document. Opening another tool adds a panel. Top-strip
+buttons and Tools menu entries highlight tools with open panels, including unpinned tools.
+Selecting an open tool hides its most recently focused visible instance; selecting a hidden tool
+reopens its retained instance. Other panels stay open. Collapsed workspaces show no active
+launchers. Compact tabs count as open panels even when another tab is selected.
+Each panel has common header, border, spacing and resize controls.
 Hide affects only that panel and keeps its iframe mounted. End this tool view releases its instance.
 Assistant handoff messages still name their verified presentation and never retarget a sibling draft.
 
@@ -64,7 +68,9 @@ source attribution and Desktop window/root isolation. Its manifest declaration i
 - SDK tests cover default single-panel compatibility, concurrent visibility, focus, hide, close,
   activity loss, stale operations and account replacement.
 - Shell tests cover independent panels, same-tool instances, retained document/iframe identity,
-  focus restoration, compact tabs and document width bounds.
+  focus restoration, compact tabs and document width bounds. Top-strip and unpinned menu tests
+  cover active highlights, repeat-click hiding, keyboard selection, independent siblings and
+  reopening after hide or workspace collapse.
 - Managed browser checks cover document + Pull requests + Assistant + Feedback, self-annotation,
   persistent draft scope, one hover highlight, cancellation, independent resize/hide and responsive
   layout with an unsent assistant message. No model message is submitted by this acceptance.
