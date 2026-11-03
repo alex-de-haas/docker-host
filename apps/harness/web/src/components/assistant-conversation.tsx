@@ -36,7 +36,6 @@ import {
 import { transcriptItems } from "@/lib/transcript-items";
 import { resolveTranscriptReview, type TranscriptReviewReference } from "@/lib/transcript-edits";
 import { InputGroup, InputGroupAddon } from "@/components/ui/input-group";
-import { WorkspaceSessionTabs } from "./workspace-session-tabs";
 import { useWorkspaceSessionActions } from "@/lib/use-workspace-session-actions";
 import { rememberWorkspaceSession, rememberedWorkspaceSession, workspaceSessionIds } from "@/lib/workspace-navigation";
 import { DevelopmentNavigation } from "@/components/development-navigation";
@@ -433,9 +432,7 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
     ui.reportSurfaceState({ route: `${route.pathname}${route.search}${route.hash}`, state: "ready" });
   }, [fullPage, ui]);
   const selectedRoute = useRef<string | null>(null);
-  const sessionTabFocus = useRef<string | null>(null);
-  const pickSession = (record: AssistantSession, keepTabFocus = false) => {
-    sessionTabFocus.current = keepTabFocus ? record.id : null;
+  const pickSession = (record: Pick<AssistantSession, "id">) => {
     setSelectedWorkspaceId(null); setWorkspaceToResolve(null);
     selectedRoute.current = fullPage ? record.id : null;
     requestedSessionRef.current = record.id;
@@ -685,9 +682,7 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
       setHistoryOpen(false);
       requestedSessionRef.current = null;
       setRequestedSessionId(null);
-      if (sessionTabFocus.current === record.id) {
-        document.getElementById(`workspace-tab-${record.id}`)?.focus(); sessionTabFocus.current = null;
-      } else composerRef.current?.focus();
+      composerRef.current?.focus();
     }).catch(cause => {
       if (!cancelled) { requestedSessionRef.current = null; setError(cause instanceof Error ? cause.message : String(cause)); setRequestedSessionId(null); }
     });
@@ -1006,7 +1001,6 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
       }}><Plus aria-hidden /></Button>
   ) : null;
 
-  const workspaceTabs = fullPage && navigation === "workspaces" && !!workspace;
   const navigationToggle = fullPage && <Button className="md:hidden shrink-0" size="icon-sm" variant="ghost"
     aria-label={`Show ${navigationTitle.toLowerCase()}`} title={`Show ${navigationTitle.toLowerCase()}`}
     onClick={() => { setMobileSessions(true); setMobileDetails(false); }}><PanelLeft aria-hidden /></Button>;
@@ -1022,8 +1016,7 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
         createAppAction={createAppAction} onClose={() => setMobileSessions(false)} onWorkspace={pickWorkspace} onNew={() => { setMobileSessions(false); void startNew(); }} onPick={pickSession} onDelete={remove} /></div>}
       <main ref={conversationRef} tabIndex={-1} inert={workspaceModal} className={`${review ? "hidden" : fullPage && mobileSessions ? "hidden md:flex" : "flex"} min-h-0 min-w-0 flex-1 flex-col`}>
 
-      {fullPage && navigation === "workspaces" && workspace && <WorkspaceSessionTabs workspace={workspace} sessions={listedSessions} activeId={chatVisible ? session?.id : undefined} onPick={record => pickSession(record, true)} actions={workspaceActions} leading={navigationToggle} trailing={workspaceToggle} />}
-      {fullPage && !workspaceTabs && (!chatVisible || !session) && <div className="flex shrink-0 items-center gap-2 border-b px-3 py-2 md:hidden">{navigationToggle}{workspaceToggle}</div>}
+      {fullPage && (!chatVisible || !session) && <div className={`shrink-0 items-center gap-2 border-b px-3 py-2 ${workspace ? "flex" : "flex md:hidden"}`}>{navigationToggle}<div className="ml-auto">{workspaceToggle}</div></div>}
       {fullPage && (!chatVisible || !session) ? <div className="min-h-0 flex-1" aria-label="Workspace center">
         {!workspace && <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-sm text-muted-foreground">
           <p>{navigation === "workspaces" ? "Choose a workspace, create an app or continue building." : "Choose a chat or start a new one."}</p>
@@ -1034,9 +1027,9 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
           <Button variant="outline" disabled={workspaceActions.busy || workspaceActions.retry || !workspace.participation || !workflowIsActive(workspace.workflow)} onClick={() => void workspaceActions.command("new")}>New session in workspace</Button>
         </div>}
         {error && <p role="alert" className="p-3 text-sm text-destructive-foreground">{error}</p>}
-      </div> : <div id="workspace-chat" role={fullPage && navigation === "workspaces" && workspace ? "tabpanel" : undefined} aria-labelledby={fullPage && navigation === "workspaces" && workspace && session ? `workspace-tab-${session.id}` : undefined} className="flex min-h-0 flex-1 flex-col">
+      </div> : <div id="workspace-chat" role="region" aria-label={session?.title || "Session conversation"} className="flex min-h-0 flex-1 flex-col">
       <header className="flex flex-wrap shrink-0 items-center gap-2 border-b px-3 py-2">
-        {!workspaceTabs && navigationToggle}
+        {navigationToggle}
         {showSessions ? (
           <>
             {session && <Button variant="ghost" size="icon-sm" aria-label="Back to conversation" title="Back to conversation" onClick={() => setHistoryOpen(false)}><ArrowLeft /></Button>}
@@ -1054,7 +1047,7 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
                 {sending || stopping ? <Loader2 className="motion-safe:animate-spin" /> : <Square className="fill-current" />}
               </Button>}
               {session && <SessionExecutionIndicator executionMode={session.executionMode} />}
-              {!workspaceTabs && workspaceToggle}
+              {workspaceToggle}
               {session && (
                 <AppContextPicker key={session.id} ref={contextPickerRef} opener={addButtonRef} compact side="bottom" session={session} busy={sending || mentionSaving || providerSaving} onBusyChange={setContextSaving} running={running}
                   onChange={onSessionChange} />
@@ -1323,7 +1316,7 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
       </div>}
       </main>
       {fullPage && workspace && <RetainedWorkspacePane open={mobileDetails} visible={workspaceVisible} reviewing={!!review} onClose={() => setMobileDetails(false)}>
-        <WorkspaceDetails sessionActions={workspaceActions} key={workspace.id} workspace={workspace} onSessionSelected={record => { setSessions(current => [record, ...current.filter(s => s.id !== record.id)]); pickSession(record); }} appMetadata={appIconMetadata} title={workspace.name || session?.title || "Workspace"} sessionId={session?.id} running={running} refresh={inventory.refresh} deleteConversation={session ? () => remove(session.id) : undefined} onReview={(tree, choice) => openReview(workspace.id, tree, session?.id, choice)} />
+        <WorkspaceDetails onSessionPicked={id => pickSession({ id })} onDeleteSession={remove} sessionActions={workspaceActions} key={workspace.id} workspace={workspace} onSessionSelected={record => { setSessions(current => [record, ...current.filter(s => s.id !== record.id)]); pickSession(record); }} appMetadata={appIconMetadata} title={workspace.name || session?.title || "Workspace"} sessionId={session?.id} running={running} refresh={inventory.refresh} deleteConversation={session ? () => remove(session.id) : undefined} onReview={(tree, choice) => openReview(workspace.id, tree, session?.id, choice)} />
       </RetainedWorkspacePane>}
       {review && <WorkspaceReview key={`${review.workspaceId}:${review.tree.id}`} workspaceId={review.workspaceId} tree={review.tree}
         choice={review.transcriptChoice ?? reviewChoices[review.tree.id] ?? { view: "session", path: "" }} onChoice={choice => {
