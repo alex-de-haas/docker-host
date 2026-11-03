@@ -1,6 +1,6 @@
 ---
 created: 2026-10-25
-updated: 2026-10-30
+updated: 2026-11-03
 summary: Core workspaces support concurrent private sessions, permission-based source access, attributable activity and independent conversation lifetimes.
 components: [apps/core, apps/harness]
 ---
@@ -70,10 +70,10 @@ and requires rereading files after another participant's edits. Permission revoc
 
 ## Navigation And Lifetimes
 
-Harness has one left-hand list of authorized workspaces and unattached chats. Attached conversations
-are grouped into their workspace row. External and sessionless workspaces remain in the same list. All workspace rows use the same hammer icon, with no external marker, secondary label or tooltip.
+Harness has separate Chats and Workspaces pages. Chats lists accessible conversations; Workspaces
+lists authorized workspaces, including external and sessionless ones. All workspace rows use the same hammer icon, with no external marker, secondary label or tooltip.
 Internal and externally allocated workspaces show only the current user's accessible Harness sessions
-as keyboard-navigable tabs, with a plus that creates one idle conversation. Empty workspaces offer
+as selectable rows in the Sessions sidebar, with a plus that creates one idle conversation. Empty workspaces offer
 explicit creation without creating a chat on selection. Other hosted participants' titles and activity
 appear in the right-hand details panel without private conversation links. Standalone chats have no
 workspace panel. External allocation remains provenance: its original record and source are retained,
@@ -86,18 +86,29 @@ Workspace rows display independent Working, Needs attention and Failed icon/coun
 zeros. Each attached participant contributes to one current category; approval/question waits do not
 also count as working. Unknown and stopping activity has a separate indicator. External leases do
 not become fictitious session counts. Search includes disclosed titles and app context; an own-chat
-match selects that tab. Filters retain any workspace with matching participant activity. Ordering
+match selects that chat. Filters retain any workspace with matching participant activity. Ordering
 uses source/workflow changes, own session changes and bounded participant changes, excluding heartbeats.
 
-Session links retain the containing workspace and tab. Workspace links represent external or empty
-selections; each workspace remembers the user's last accessible tab with a recent-chat fallback.
+Session links retain the containing workspace and chat. Workspace links represent external or empty
+selections; each workspace remembers the user's last accessible chat with a recent-chat fallback.
 In-place route updates report to Shell without reopening the page. Drafts and approval state remain
-independent; unsent local files survive tab switches in the current document, while uploaded references
-and text drafts survive reload. Tabs scroll horizontally; the plus stays reachable on narrow screens.
-Attachment controls and source lifecycle/review actions remain on the right; there is no sharing-permission menu.
-Attach session opens a modal with the current user's available chats, loading/empty/error states and
-Cancel/Attach actions. Successful attachment closes it; uncertain requests retain their exact retry
-inside the modal, or in the details panel after it is dismissed.
+independent; unsent local files survive session switches in the current document, while uploaded references
+and text drafts survive reload. Sessions stays reachable through the workspace details button beside
+conversation status and execution mode, including on narrow screens. There is no top session tab bar.
+The plus in Sessions creates a new session directly; the adjacent link icon opens **Attach session**.
+The attachment modal lists only the current user's unattached, inactive chats, with loading/empty/error
+states and Cancel/Attach actions. Successful attachment closes it and opens the selected chat; Cancel
+returns focus to the menu trigger. Uncertain requests retain their exact retry inside the modal or
+in the Sessions section after dismissal.
+The **Sessions** section on the right lists attached chats and their owners/activity, with No sessions
+when none are attached. Own chat rows select the conversation and highlight the current selection. It uses the same muted heading and divider as Changes, Pull requests and
+Used by, without an enclosing card. Its information tooltip explains shared files,
+private conversations and concurrent editing. It does not show the viewer's technical role or offer
+user invitations: session association does not manage access. Each accessible own session has a
+three-dot menu with Detach session and Delete session, disabled while activity is running, waiting
+or unconfirmed. Delete opens a confirmation and removes only the chosen conversation after detaching it;
+server refusal keeps the dialog open with its error and leaves shared source intact.
+Other participants expose metadata only. Source lifecycle/review actions remain on the right.
 Source views say Workspace changes because a diff is not attributable to one chat.
 
 Joining requires an idle session with reconciled source/resource operations. Detach preserves source
@@ -122,6 +133,11 @@ fresh consumer checks.
 
 ## Testing Expectations
 
+- Verify highlighted sidebar selection, retained drafts, no top session tabs, and narrow-screen access.
+  Confirm Delete targets the chosen own chat, preserves source, and retains errors in its dialog.
+- Verify direct creation from the plus and attachment from its adjacent icon, excluding bound/active chats;
+  preserve private chat boundaries, retry identity, dialog focus return and workspace-switch isolation.
+
 - Core tests cover immutable allocation identity, fresh credentials, cross-user source access,
   current user/app denial, attach/replay, private transcript boundaries and actor-bound remote credentials.
 - Harness tests cover session ownership, provider isolation, exact execution stop acknowledgements,
@@ -134,5 +150,5 @@ fresh consumer checks.
 - Browser acceptance uses Core app launch URLs and the same isolated fixture. Parent Finish removes
   the child and its services after verification. Test credentials remain in temporary fixture data.
   `HOSTY_ACCEPTANCE_HOLD_UI=1 npm run test:integration -- sessions` builds Shell locally and keeps
-  the fixture available for explicit first/second chat creation, keyboard tabs, independent drafts,
+  the fixture available for explicit first/second chat creation, keyboard session selection, independent drafts,
   reload and workspace-return restoration, and narrow-screen checks. No provider prompt is required.

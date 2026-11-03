@@ -4,9 +4,12 @@ import { prRequest } from "@/lib/pull-requests-api";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import type { WorkspaceSessionActions } from "@/lib/use-workspace-session-actions";
 import { FeedbackInbox } from "./feedback-inbox";
+import { WorkspaceSectionHeading } from "./workspace-section-heading";
 import { WorkspaceSessions } from "./workspace-sessions";
 import { WorkspaceReview, type ReviewChoice } from "./workspace-review";
-import { FileDiff, FolderGit2, GitBranch, MoreHorizontal, Pencil, RefreshCw } from "lucide-react";
+import { Cast, ChevronDown, FileDiff, FolderGit2, GitBranch, MoreHorizontal, Pencil, RefreshCw } from "lucide-react";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { useWorkspaceAppMetadata } from "@/lib/use-workspace-app-metadata";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { developmentRequest, DevelopmentRequestError, repositoryName, changeTotals, workflowIsActive, workflowLabel, type DevelopmentWorkspace, type Worktree, type Workflow } from "@/lib/development-api";
@@ -20,8 +23,8 @@ import { WorkspacePreviews } from "./workspace-previews";
 import { WorkspacePullRequest } from "./workspace-pull-request";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { HostyLoader } from "../../../../../shared/web/hosty-states";
-import { ContextAppIcon } from "@/components/context-app-icon";
 import type { AssistantSession, ContextApp } from "@/lib/assistant-api";
 
 type PendingAction = { kind: string; requestId: string; expectedRevision: number };
@@ -36,9 +39,10 @@ function readPendingAction(workspaceId: string): PendingAction | null {
     return value && ["complete", "resume", "pause", "defer", "delete", "close"].includes(value.kind) && typeof value.requestId === "string" && Number.isSafeInteger(value.expectedRevision) ? value : null;
   } catch { return null; }
 }
-export function WorkspaceDetails({ workspace, title, sessionId, running, refresh, deleteConversation, onReview, onSessionSelected, sessionActions, appMetadata = [] }: {
+export function WorkspaceDetails({ workspace, title, sessionId, running, refresh, deleteConversation, onReview, onSessionSelected, onSessionPicked, onDeleteSession, sessionActions, appMetadata = [] }: {
   workspace: DevelopmentWorkspace; title: string; sessionId?: string; running?: boolean; appMetadata?: readonly ContextApp[];
   sessionActions?: WorkspaceSessionActions;
+  onSessionPicked?: (sessionId: string) => void; onDeleteSession?: (sessionId: string) => Promise<void>;
   onSessionSelected?: (session: AssistantSession) => void;
   refresh: () => void; deleteConversation?: () => Promise<void>; onReview?: (tree: Worktree, choice?: ReviewChoice) => void;
 }) {
@@ -80,6 +84,7 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
     return () => clearInterval(timer);
   }, []);
   const [detailRefresh, setDetailRefresh] = useState(0);
+  const workspaceAppMetadata = useWorkspaceAppMetadata(workspace.id, trees, appMetadata, detailRefresh);
   // Inventory responses create new objects even when only a different workspace changed.
   // Retain details until this workspace's source, consumer, lease or PR facts change.
   const detailVersion = JSON.stringify([workspace.id, state.revision, state.closure, state.state,
@@ -143,7 +148,13 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
   return <aside aria-label="Workspace details" className="relative h-full overflow-y-auto">
     <div className="border-b p-4">
       <div className="mb-3 flex items-center justify-between gap-2"><p className="text-xs font-semibold text-muted-foreground">Workspace</p>
-        <Badge variant="outline" className="bg-muted text-xs font-medium">{workflowLabel(state)}</Badge></div>
+        <div className="flex items-center gap-1.5">
+          {workspace.owner.kind === "external" && <TooltipProvider delayDuration={250}><Tooltip>
+            <TooltipTrigger asChild><Button type="button" variant="ghost" size="icon-sm" className="size-6 text-muted-foreground" aria-label="Created from an external session"><Cast className="size-3.5" aria-hidden="true" /></Button></TooltipTrigger>
+            <TooltipContent className="max-w-xs">Created from an external session using {workspace.owner.label}. Its conversation and agent activity are not synchronized here. Harness sessions can also use this workspace.</TooltipContent>
+          </Tooltip></TooltipProvider>}
+          <Badge variant="outline" className="bg-muted text-xs font-medium">{workflowLabel(state)}</Badge>
+        </div></div>
       <div className="flex items-start gap-1.5">
       <div className="min-w-0 flex-1"><WorkspaceName key={workspace.id} workspace={workspace} fallback={title} refresh={refresh} />
         {state.completedAt && <p className="mt-1 text-xs text-muted-foreground">Completed {new Date(state.completedAt).toLocaleDateString()}</p>}</div>
@@ -159,9 +170,11 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
       </div>
       <WorkspaceObservation trees={trees} now={now} />
     </div>
-    <div className="space-y-4 p-4">
-      {workspace.participation && <WorkspaceSessions actions={sessionActions} workspace={workspace} sessionId={sessionId} running={running} refresh={refresh} onSelect={onSessionSelected} />}
-      {workspace.owner.kind === "external" && <p className="text-xs text-muted-foreground">External work: {workspace.owner.label}. The external conversation and its agent activity are not synchronized.</p>}
+    <div className="space-y-4 p-4 [&>[data-workspace-section]~[data-workspace-section]]:border-t [&>[data-workspace-section]~[data-workspace-section]]:pt-4">
+      <WorkspaceSessions actions={sessionActions} workspace={workspace} sessionId={sessionId} running={running} refresh={refresh} onSelect={onSessionSelected} onPick={onSessionPicked} onDelete={onDeleteSession} />
+      {trees.some(tree => tree.apps.length || tree.leases.length || tree.consumers?.length) && <div data-workspace-section className="space-y-3"><WorkspaceSectionHeading informationLabel="About using apps on this Core" information="Switch the bound applications using their ordinary data. Return keeps the existing package recovery.">Used by</WorkspaceSectionHeading>
+      <WorkspaceActivation key={workspace.id} workspaceId={workspace.id} appMetadata={workspaceAppMetadata} apps={[...new Map(trees.flatMap(tree => tree.apps).map(app => [app.appId, app])).values()]}
+        disabled={busy || recovering} canUse={workflowIsActive(state)} refresh={refresh} /><WorkspaceConsumers trees={trees} /></div>}
       {running && <p className="text-xs text-muted-foreground">An agent is running. Pause workspace fences all participants and waits for confirmed execution stops.</p>}
       {(state.closure || state.state === "deferred") && !["deleting", "deleted"].includes(state.state) && <p role="status" className="text-xs text-muted-foreground">{state.closure === "closing" ? "Pausing: new development work is blocked while execution stop is verified." : "Paused: source, previews and conversation are retained. Resume to continue development."}</p>}
       {(!externalClose || loadError) && (error || loadError || operation?.error) && <p role="alert" className="text-sm text-destructive-foreground">{error || loadError || operation?.error}</p>}
@@ -182,21 +195,29 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
           try { localStorage.removeItem(`hosty.workspace.action.${workspace.id}`); } catch { /* Core keeps the close receipt. */ }
           refresh();
         }} />}
+      {trees.length > 0 && <section aria-label="Workspace changes" data-workspace-section className="space-y-3"><h3 className="text-xs font-semibold text-muted-foreground">Changes</h3>
       {trees.map(tree => {
         const known = tree.sessionChanges !== undefined && tree.observation?.state === "ok" && !tree.detailError;
         const files = tree.sessionChanges ?? [];
         const totals = known ? changeTotals(files) : null;
-        return <section key={tree.id} aria-label={`${repositoryName(tree.repository)} repository`} className="min-w-0 space-y-3 rounded-xl border bg-card p-3">
-          <div className="flex min-w-0 items-center gap-2"><FolderGit2 className="size-4 shrink-0 text-muted-foreground" aria-hidden /><h3 className="truncate text-sm font-semibold" title={tree.repository}>{repositoryName(tree.repository)}</h3></div>
-          {tree.apps.length > 0 && <div aria-label="Bound applications" className="flex flex-wrap gap-1.5">{tree.apps.map(app => <span key={app.appId} className="inline-flex min-w-0 items-center gap-1.5 rounded-md border bg-muted/50 px-1.5 py-1 text-xs font-medium" title={app.appId}><ContextAppIcon app={appMetadata.find(metadata => metadata.id === app.appId)} className="size-4" /><span className="truncate">{app.name}</span></span>)}</div>}
+        return <Collapsible asChild key={tree.id}><section aria-label={`${repositoryName(tree.repository)} repository`} className="min-w-0 overflow-hidden rounded-xl border bg-card" data-slot="repository-card">
+          <CollapsibleTrigger asChild><Button type="button" variant="ghost" aria-label={`${repositoryName(tree.repository)} repository details`} className="group h-auto w-full min-w-0 justify-start gap-2 rounded-none px-3 py-3 text-left">
+            <span className="flex min-w-0 flex-1 flex-col gap-1.5">
+              <span className="flex min-w-0 items-center gap-2"><FolderGit2 className="size-4 shrink-0 text-muted-foreground" aria-hidden /><span className="min-w-0 flex-1 truncate text-sm font-semibold" title={tree.repository}>{repositoryName(tree.repository)}</span>
+              </span>
+              <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-normal tabular-nums">
+                {totals ? <><span className="font-mono text-success-foreground">+{totals.additions}</span><span className="font-mono text-destructive-foreground">−{totals.deletions}</span></> : <span className="text-muted-foreground">Statistics unavailable</span>}
+                {known && <span className="text-muted-foreground">({files.length} {files.length === 1 ? "file" : "files"})</span>}
+              </span>
+            </span><ChevronDown className="size-3.5 shrink-0 text-muted-foreground group-data-[state=open]:rotate-180" aria-hidden />
+          </Button></CollapsibleTrigger>
+          <CollapsibleContent className="space-y-3 border-t p-3">
           <p className="flex min-w-0 items-center gap-1.5 font-mono text-xs text-muted-foreground" title={`${tree.branch}${tree.targetBranch ? ` → ${tree.targetBranch}` : ""}`}><GitBranch className="size-3.5 shrink-0" aria-hidden /><span className="min-w-0 truncate" title={tree.branch}>{tree.branch}</span>{tree.targetBranch && <><span className="shrink-0" aria-hidden>→</span><span className="max-w-1/2 shrink-0 truncate" title={tree.targetBranch}>{tree.targetBranch}</span></>}</p>
-          {(tree.observation?.ahead !== undefined || tree.observation?.behind !== undefined) && <p className="text-xs tabular-nums text-muted-foreground">{tree.observation.ahead !== undefined ? `${tree.observation.ahead} ahead` : ""}{tree.observation.ahead !== undefined && tree.observation.behind !== undefined ? " · " : ""}{tree.observation.behind !== undefined ? `${tree.observation.behind} behind` : ""}</p>}
           <p className="text-xs text-muted-foreground">{tree.observation?.at && Number.isFinite(Date.parse(tree.observation.at))
             ? <>Observed <time dateTime={tree.observation.at}>{new Date(tree.observation.at).toLocaleString()}</time>{tree.observationHealth === "watching" ? " · Watching" : tree.observationHealth === "paused" ? " · Paused" : tree.observationHealth === "pending" ? " · Updating" : " · Observation recovering"}</>
             : "Observation unavailable"}</p>
-          <Button type="button" variant="ghost" disabled={tree.state !== "active"} onClick={event => { diffTrigger.current = event.currentTarget; if (onReview) onReview(tree); else setDiffTree(tree.id); }} className="h-auto w-full min-w-0 flex-wrap justify-start gap-2 rounded-lg border bg-muted/40 px-2.5 py-2.5 text-left text-xs">
-            <FileDiff className="size-3.5" />Workspace changes {totals ? <><span className="ml-auto font-mono font-normal tabular-nums text-success-foreground">+{totals.additions}</span><span className="font-mono font-normal tabular-nums text-destructive-foreground">−{totals.deletions}</span></> : <span className="ml-auto text-xs text-muted-foreground">Statistics unavailable</span>}
-            <span className="text-xs font-normal tabular-nums text-muted-foreground">{known ? `(${files.length} ${files.length === 1 ? "file" : "files"})` : ""}</span>
+          <Button type="button" variant="outline" size="sm" disabled={tree.state !== "active"} onClick={event => { diffTrigger.current = event.currentTarget; if (onReview) onReview(tree); else setDiffTree(tree.id); }}>
+            <FileDiff className="size-3.5" />View Changes
           </Button>
           {sessionId && tree.apps.filter(app => app.localGit).map(app => <div key={app.appId} className="flex flex-col gap-2">
             <LocalAppHandoff sessionId={sessionId} appId={app.appId} workspaceId={tree.id} observation={tree.observation?.at}
@@ -205,9 +226,11 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
               disabled={!!running || busy || tree.state !== "active"} refresh={refresh} />
           </div>)}
           {(tree.detailError || tree.observation?.error) && <p role="status" className="text-xs text-destructive-foreground">{tree.detailError || tree.observation?.error}</p>}
-        </section>;
+          </CollapsibleContent>
+        </section></Collapsible>;
       })}
-      {trees.some(t => t.pullRequests.length) && <section className="space-y-3 border-t pt-4"><h3 className="text-xs font-semibold text-muted-foreground">Pull requests</h3>
+      </section>}
+      {trees.some(t => t.pullRequests.length) && <section data-workspace-section className="space-y-3"><h3 className="text-xs font-semibold text-muted-foreground">Pull requests</h3>
         {trees.flatMap(tree => tree.pullRequests.map(pr => <WorkspacePullRequest key={`${tree.id}:${pr.url}`} tree={tree} pr={pr} now={now} onReview={button => {
           diffTrigger.current = button;
           const choice = { view: `pr:${pr.url}`, path: "" };
@@ -217,9 +240,6 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
       </section>}
       <FeedbackInbox key={"feedback:" + workspace.id} workspaceId={workspace.id} sessionId={sessionId} running={running} disabled={!canManage || busy || recovering || !workflowIsActive(state)} />
       <WorkspacePreviews key={`previews:${workspace.id}`} workspaceId={workspace.id} canStart={!state.closure && state.state === "in-progress"} disabled={busy || recovering} refresh={refresh} />
-      {trees.some(tree => tree.apps.length || tree.leases.length || tree.consumers?.length) && <div className="space-y-3 border-t pt-4"><h3 className="text-xs font-semibold text-muted-foreground">Used by</h3>
-      <WorkspaceActivation key={workspace.id} workspaceId={workspace.id} appMetadata={appMetadata} apps={[...new Map(trees.flatMap(tree => tree.apps).map(app => [app.appId, app])).values()]}
-        disabled={busy || recovering} canUse={workflowIsActive(state)} refresh={refresh} /><WorkspaceConsumers trees={trees} /></div>}
     </div>
     {currentDiff && <div className="fixed inset-0 z-40 flex bg-background"><WorkspaceReview workspaceId={workspace.id} tree={currentDiff}
       choice={diffChoices[currentDiff.id] ?? { view: "session", path: "" }}

@@ -67,9 +67,9 @@ export class AssistantApiError extends Error {
 export async function listContextApps(search = "", offset = 0): Promise<{ apps: ContextApp[]; nextOffset: number | null }> {
   return (await call(`/session-apps?search=${encodeURIComponent(search)}&offset=${offset}`)).json();
 }
-export async function selectedContextApps(ids: string[]): Promise<ContextApp[]> {
+export async function selectedContextApps(ids: string[], signal?: AbortSignal): Promise<ContextApp[]> {
   if (!ids.length) return [];
-  return ((await (await call(`/session-apps?ids=${encodeURIComponent(ids.join(","))}`)).json()) as { apps: ContextApp[] }).apps;
+  return ((await (await call(`/session-apps?ids=${encodeURIComponent(ids.join(","))}`, { signal })).json()) as { apps: ContextApp[] }).apps;
 }
 export async function setSessionApps(id: string, appIds: string[], expectedRevision: number): Promise<AssistantSession> {
   return (await call(`/sessions/${encodeURIComponent(id)}/apps`, { method: "PUT", body: JSON.stringify({ appIds, expectedRevision }) })).json();

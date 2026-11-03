@@ -36,7 +36,7 @@ export function WorkspacePreviews({ workspaceId, canStart = true, disabled = fal
   }, [workspaceId, revision]);
   const changed = () => { setRevision(n => n + 1); refresh?.(); };
   if (value && !value.environments.length) return null;
-  return <section className="space-y-3 border-t pt-4" aria-label="Sandbox previews"><h3 className="text-xs font-semibold text-muted-foreground">Previews</h3>
+  return <section data-workspace-section className="space-y-3" aria-label="Sandbox previews"><h3 className="text-xs font-semibold text-muted-foreground">Previews</h3>
     {!value && !error && <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><HostyLoader label={null} className="size-4" />Loading sandbox previews…</p>}
     {error && <Alert variant="destructive"><AlertTitle>Preview status unavailable</AlertTitle><AlertDescription>
       <p>{error}</p><Button variant="outline" size="sm" onClick={() => { setError(""); setRevision(n => n + 1); }}>Retry previews</Button>

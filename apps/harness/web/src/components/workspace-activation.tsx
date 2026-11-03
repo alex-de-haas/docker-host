@@ -1,12 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ArrowRightLeft, CircleAlert, GitBranch, Hammer, Info, LoaderCircle, TriangleAlert } from "lucide-react";
+import { ArrowRightLeft, CircleAlert, GitBranch, Hammer, LoaderCircle, TriangleAlert } from "lucide-react";
 import { ContextAppIcon } from "@/components/context-app-icon";
 import type { ContextApp } from "@/lib/assistant-api";
 import { HostyLoader } from "../../../../../shared/web/hosty-states";
 import { Button } from "@/components/ui/button";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { openInstallationConfirmation, showInstallationConfirmation } from "@hosty-sdk/app/install";
 import { approveWorkspaceAccess, type WorkspaceAccessReview } from "@/lib/workspace-access-review";
 import { developmentRequest, DevelopmentRequestError } from "@/lib/development-api";
@@ -134,14 +133,7 @@ export function WorkspaceActivation({ workspaceId, apps, disabled, canUse = true
   const known = !inventory.loading && !inventory.error && placements.every(value => value !== "unknown");
   const showWorkspace = !!pending || !known || !placements.every(value => value === "current");
   const showPackages = !!pending || !known || !placements.every(value => value === "elsewhere");
-  return <section aria-label="Workspace applications" className="flex min-w-0 flex-col gap-3 rounded-xl border bg-card p-3">
-    <div className="flex items-center gap-1">
-      <h4 className="text-xs font-semibold">Use on this Core</h4>
-      <TooltipProvider delayDuration={250}><Tooltip>
-        <TooltipTrigger asChild><Button type="button" variant="ghost" size="icon-sm" aria-label="About using apps on this Core"><Info aria-hidden="true" /></Button></TooltipTrigger>
-        <TooltipContent className="max-w-xs">Switch the bound applications using their ordinary data. Return keeps the existing package recovery.</TooltipContent>
-      </Tooltip></TooltipProvider>
-    </div>
+  return <section aria-label="Workspace applications" className="flex min-w-0 flex-col gap-3">
     <ul aria-label="Bound applications" className="flex min-w-0 flex-col gap-2">{apps.map(app => {
       const live = inventory.applications.find(item => item.appId === app.appId);
       const status = live ? workspaceApplicationStatus(live) : { label: inventory.loading ? "Loading…" : "Unknown", tone: "muted", busy: false };
@@ -153,7 +145,7 @@ export function WorkspaceActivation({ workspaceId, apps, disabled, canUse = true
       const TargetGlyph = target.kind === "workspace" ? Hammer : target.kind === "source" ? GitBranch : null;
       const label = target.label;
       return <li key={app.appId} className="flex min-w-0 items-center gap-2 text-xs" aria-label={app.name}>
-        <ContextAppIcon app={appMetadata.find(metadata => metadata.id === app.appId)} className="size-6" />
+        <ContextAppIcon app={appMetadata.find(metadata => metadata.id === app.appId)} className="size-10" />
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
           <div className="flex min-w-0 items-center gap-2"><span className="min-w-0 truncate font-medium" title={`${app.name} · ${app.appId}`}>{app.name}</span>
             <span className={cn("inline-flex shrink-0 items-center gap-1", status.tone === "success" ? "text-success-foreground" : status.tone === "destructive" ? "text-destructive-foreground" : status.tone === "warning" ? "text-warning-foreground" : status.tone === "info" ? "text-info-foreground" : "text-muted-foreground")}>
