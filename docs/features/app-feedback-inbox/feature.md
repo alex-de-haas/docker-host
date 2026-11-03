@@ -1,6 +1,6 @@
 ---
 created: 2026-10-30
-updated: 2026-11-02
+updated: 2026-11-03
 summary: Core-owned annotated feedback with app-owned local drafts, reviewed Harness chat delivery, exact-prompt outcomes and workspace-aware retention.
 components: [apps/core, apps/harness, apps/shell, apps/desktop, packages/app-sdk]
 ---
@@ -161,6 +161,12 @@ accepted feedback prompt and revalidate user/app authority. Images arrive as MCP
 without unmanaged copies. The agent explicitly reports a summary, handled flag and handled
 annotation IDs for every selected report.
 
+After interruption, an ordinary continuation message does not restore that prompt's feedback
+binding. All three tools return `feedback_prompt_unbound` with recovery guidance: open Feedback,
+choose Needs review (or All), open the original report and choose Send again, then review the
+destination workspace and chat. The tool descriptions include the same guidance. This starts a new
+attempt with the retained report and screenshots; the interrupted attempt remains in history.
+
 ## Processing And Workspace Retention
 
 A report is Processed only when its exact accepted prompt ends successfully and its structured
@@ -200,7 +206,8 @@ without a workspace remain in the global inbox. Retention is independent of PR m
   tests and browser acceptance cover hover handoff between the host and iframe documents, leaving
   capture controls, window blur and abandoning an unfinished region at a document boundary.
 - Harness tests cover exact-message admission, lost replies, busy/foreign-chat refusal, scoped agent
-  tools, unrelated terminal events, unprocessed-only bulk review and frozen UI retries.
+  tools, interruption followed by an ordinary continuation and explicit resend, recovery guidance,
+  user/app/installation changes, unrelated terminal events, unprocessed-only bulk review and frozen UI retries.
 - `npm run test:integration -- feedback` builds Core/CLI and uses the existing parent-managed child
   Core/native Harness and Shell acceptance path with separate password-authenticated accounts and synthetic
   agent credentials. It verifies batch handling, source preparation, screenshot tools, repeat partial

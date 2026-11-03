@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Protocol;
+using ModelContextProtocol.Server;
 
 namespace Haas.Hosty.Core;
 
@@ -186,12 +187,60 @@ internal static class CoreMcpCatalog
                     Content = [new TextContentBlock { Text = CoreJson.Text(new ErrorResponse(
                         "mcp_tool_unmapped", "This tool has no reviewed Core capability mapping.")) }],
                 };
+            // Validate only public schema facts before SDK argument binding. Binding exceptions are
+            // otherwise intentionally sanitized, as are unexpected exceptions from the tool body.
+            if (request.MatchedPrimitive is McpServerTool tool &&
+                ArgumentError(tool.ProtocolTool.InputSchema, request.Params.Arguments) is { } error)
+                return new CallToolResult
+                {
+                    IsError = true,
+                    Content = [new TextContentBlock { Text = CoreJson.Text(error) }],
+                };
             var previous = Invocation.Value;
             Invocation.Value = name;
             try { return await next(request, cancellationToken); }
             finally { Invocation.Value = previous; }
         });
     }
+
+    private static ErrorResponse? ArgumentError(JsonElement schema, IDictionary<string, JsonElement>? arguments)
+    {
+        if (schema.TryGetProperty("required", out var required))
+            foreach (var entry in required.EnumerateArray())
+            {
+                var name = entry.GetString()!;
+                if (arguments is null || !arguments.ContainsKey(name))
+                    return new("mcp_argument_required", $"Required argument '{name}' is missing.");
+            }
+
+        if (arguments is not null && schema.TryGetProperty("properties", out var properties))
+            foreach (var property in properties.EnumerateObject())
+            {
+                if (!arguments.TryGetValue(property.Name, out var value) ||
+                    !property.Value.TryGetProperty("type", out var type)) continue;
+                var types = type.ValueKind == JsonValueKind.Array
+                    ? type.EnumerateArray().Select(entry => entry.GetString()!).ToArray()
+                    : [type.GetString()!];
+                if (!types.Any(expected => MatchesType(value, expected)))
+                    return new("mcp_argument_invalid",
+                        $"Argument '{property.Name}' must have JSON type {string.Join(" or ", types)}.");
+            }
+        return null;
+    }
+
+    // This is a binding-shape check, not a replacement for each tool's domain validation.
+    // Unknown schema constraints remain with the SDK and the owning service.
+    private static bool MatchesType(JsonElement value, string expected) => expected switch
+    {
+        "string" => value.ValueKind == JsonValueKind.String,
+        "integer" => value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out _),
+        "number" => value.ValueKind == JsonValueKind.Number,
+        "boolean" => value.ValueKind is JsonValueKind.True or JsonValueKind.False,
+        "object" => value.ValueKind == JsonValueKind.Object,
+        "array" => value.ValueKind == JsonValueKind.Array,
+        "null" => value.ValueKind == JsonValueKind.Null,
+        _ => true,
+    };
 
     internal static Tool Describe(Tool tool)
     {

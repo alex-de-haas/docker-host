@@ -74,6 +74,43 @@ it("scopes tools to the exact prompt, records explicit results and observes term
   await vi.waitFor(() => expect(attempt.state).toBe("succeeded"));
   await expect(manager.feedbackAction!(session.id, "feedback-result", { outcomes: [] }, "grant")).rejects.toMatchObject({ code: "feedback_prompt_unbound" });
 });
+it("explains recovery after cancellation and continuation, then binds a deliberate resend to a new attempt", async () => {
+  const session = await manager.createSession({ createdBy: "owner" });
+  const original = await service.send(body(session.id), "grant", "owner");
+  await manager.cancelSession(session.id);
+  await vi.waitFor(() => expect(original.state).toBe("cancelled"));
+  await manager.postMessage(session.id, "Продолжай", "grant", [], { clientRequestId: randomUUID(), actorUserId: "owner", promptSuggestions: false });
+  const imageInput = { reportId: report.id, annotationId: report.annotations[0]!.id };
+  const outcomes = [{ reportId: report.id, summary: "Aligned", handledAnnotationIds: report.annotations.map(n => n.id), handled: true }];
+  for (const [action, input] of [["feedback-current", {}], ["feedback-image", imageInput], ["feedback-result", { outcomes }]] as const) {
+    await expect(manager.feedbackAction!(session.id, action, input, "grant")).rejects.toMatchObject({
+      code: "feedback_prompt_unbound", status: 409,
+      message: expect.stringMatching(/Feedback.*Needs review.*Send again.*destination workspace and chat.*new attempt.*Ordinary continuation/),
+    });
+  }
+  expect(client.image).not.toHaveBeenCalled(); expect(client.outcomes).not.toHaveBeenCalled();
+  await manager.cancelSession(session.id);
+  const repeated = await service.send(body(session.id), "grant", "owner");
+  expect(repeated.id).not.toBe(original.id); expect(repeated.messageSequence).toBeGreaterThan(original.messageSequence!);
+  expect(await manager.feedbackAction!(session.id, "feedback-current", {}, "grant")).toMatchObject({ attemptId: repeated.id, reports: [report] });
+  expect(await manager.feedbackAction!(session.id, "feedback-image", imageInput, "grant")).toEqual({ content: [{ type: "image", mimeType: "image/png", data: "AQID" }] });
+  await manager.feedbackAction!(session.id, "feedback-result", { outcomes }, "grant");
+  run.onEvent({ type: "result", status: "success" });
+  await vi.waitFor(() => expect(repeated.state).toBe("succeeded"));
+  expect(repeated.outcomes).toEqual(outcomes);
+  expect(original.state).toBe("cancelled"); expect(original.outcomes).toBeNull();
+  expect(client.outcomes).toHaveBeenCalledExactlyOnceWith(repeated.id, outcomes, "grant");
+});
+it.each(["userId", "appId", "installation"] as const)("refuses feedback tools when the current %s no longer owns the attempt", async field => {
+  const session = await manager.createSession({ createdBy: "owner" });
+  await service.send(body(session.id), "grant", "owner");
+  for (const action of ["feedback-current", "feedback-image", "feedback-result"]) {
+    client.capabilities.mockResolvedValueOnce({ appId: "harness", installation: "one", userId: "owner", [field]: "different" });
+    await expect(manager.feedbackAction!(session.id, action, { reportId: report.id, annotationId: report.annotations[0]!.id, outcomes: [] }, "grant"))
+      .rejects.toMatchObject({ code: "feedback_prompt_unbound", status: 409 });
+  }
+  expect(client.image).not.toHaveBeenCalled(); expect(client.outcomes).not.toHaveBeenCalled();
+});
 it("does not use an unrelated later turn, idle state, or failed result as success", () => {
   const events = (...items: Record<string, unknown>[]) => items.map((item, i) => ({ seq: i + 1, ts: "now", ...item })) as StoredEvent[];
   expect(feedbackTurn(events({ type: "user_message" }, { type: "session_status", status: "idle" }), 1)).toBeNull();
