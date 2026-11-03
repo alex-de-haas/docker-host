@@ -270,6 +270,13 @@ predicates, such as completed and merged, belong to that task and remain conditi
 Complete, Pause, Resume and abandoned-lease recovery remain separate actions with their existing
 conditions. None is a prerequisite for Delete.
 
+Branch ownership validation accepts both exact legacy `hosty/session/<full-id>` records
+and versioned task-named branches. It rejects inconsistent descriptors in retained deletion
+and discard journals. New allocations retain a private Git receipt until owned branch cleanup;
+missing or changed receipts refuse source removal, and interrupted cleanup removes the matching
+receipt before final metadata removal. Existing branches are never renamed by lifecycle recovery.
+See [workspace branch names](../assistant-session-workspaces/feature.md#workspace-branch-names).
+
 ## Testing Expectations
 
 - Retain pause/completion, exact-head merge evidence and private provider credential checks.

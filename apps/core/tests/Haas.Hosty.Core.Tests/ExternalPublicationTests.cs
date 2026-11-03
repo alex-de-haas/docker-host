@@ -24,9 +24,10 @@ public sealed partial class CoreLifecycleServiceTests
         var path = Path.Combine(Path.GetDirectoryName(w.Path)!, id);
         var branch = "hosty/session/" + id;
         await RunGitAsync(w.Path, ["branch", "-m", branch]);
+        await RunGitAsync(providerRepo, ["update-ref", "-d", DevelopmentWorkspaceService.BranchAllocationRef(w)]);
         await RunGitAsync(providerRepo, ["worktree", "move", w.Path, path]);
         File.Delete(Path.Combine(f.Paths.CoreRoot, "development/workspaces", w.Id + ".json"));
-        w = w with { Id = id, Path = path, Branch = branch, Repository = repository, RepositoryId = repositoryId,
+        w = w with { Id = id, Path = path, Branch = branch, BranchNaming = null, Repository = repository, RepositoryId = repositoryId,
             PullRequests = ["https://github.com/owner/repo/pull/42"] };
         await JsonStorage.WriteAsync(Path.Combine(f.Paths.CoreRoot, "development/workspaces", w.Id + ".json"), w);
         var users = new UserDirectoryStore(f.Paths);

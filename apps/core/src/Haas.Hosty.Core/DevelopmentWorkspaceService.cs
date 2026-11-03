@@ -104,7 +104,7 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
         w = w with { SandboxConsumers = w.SandboxConsumers ?? [] };
         if (owner is not null) await RequireSessionAccessAsync(w, owner, ct);
         if (w.Id != id || w.Id != Hash(OwnerIdentity(w.Owner) + "\n" + w.RepositoryId) ||
-            w.Path != WorkPath(id) || w.RepositoryId != Hash(w.Repository) || w.Branch != "hosty/session/" + id)
+            w.Path != WorkPath(id) || w.RepositoryId != Hash(w.Repository) || !ValidWorkspaceBranch(w))
             throw Error("ownership_invalid", "Workspace ownership metadata is inconsistent.");
         return await WithNameAsync(w, ct);
     }
@@ -291,8 +291,9 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
                     await Git(repo, ["cat-file", "-e", baseHead + ":" + core.ProjectPath], ct);
                 if (input.ExpectedLocalHead is not null && baseHead != input.ExpectedLocalHead)
                     throw Error("local_head_changed", "Accepted main changed during preparation. Refresh and review it again.");
+                var naming = await AllocateBranchNaming(id, repositoryId, owner, ct);
                 var w = new DevelopmentWorkspace { Id = id, Owner = owner, Repository = repository, RepositoryId = repositoryId,
-                    Path = WorkPath(id), Branch = "hosty/session/" + id, TargetBranch = target, OriginalBase = baseHead,
+                    Path = WorkPath(id), Branch = BranchFor(id, naming), BranchNaming = naming, TargetBranch = target, OriginalBase = baseHead,
                     IntegrationBase = baseHead, SessionPath = input.SessionPath, SourceGrant = grant,
                     Operations = [new(input.RequestId, "prepare", fingerprint, "pending", Actor: actor)] };
                 w = Bind(w);
@@ -315,14 +316,16 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
     {
         if (w.State != "preparing") { await ValidateTree(w, ct); return w; }
         Directory.CreateDirectory(System.IO.Path.GetDirectoryName(w.Path)!);
+        if (w.BranchNaming is not null) await EnsureAllocatedBranch(w, ct);
         if (!Directory.Exists(w.Path))
         {
             var branch = await Git(RepoPath(w.RepositoryId), ["show-ref", "--verify", "--quiet", "refs/heads/" + w.Branch], ct, true);
-            await Git(RepoPath(w.RepositoryId), branch.ExitCode == 0
+            await Git(RepoPath(w.RepositoryId), w.BranchNaming is not null || branch.ExitCode == 0
                 ? ["worktree", "add", w.Path, w.Branch]
                 : ["worktree", "add", "-b", w.Branch, w.Path, w.OriginalBase], ct);
         }
         await ValidateTree(w, ct);
+        if (w.BranchNaming is not null) await EnsureAllocatedBranch(w, ct);
         return w with { State = "active", Operations = w.Operations.Select(o => o.Kind == "prepare" ? o with { State = "succeeded", ResultHead = w.OriginalBase } : o).ToArray() };
     }
     internal async Task ValidateTree(DevelopmentWorkspace w, CancellationToken ct)
@@ -791,6 +794,7 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
         await CheckConsumers(w, ct);
         if (Directory.Exists(w.Path))
         {
+            await RequireBranchAllocation(w, ct);
             await ValidateTree(w, ct);
             w = await Observe(w, ct);
             if (w.Observation?.Head != op.BeforeHead) throw Error("stale_head", "Workspace HEAD changed during cleanup; source was preserved.");
@@ -802,6 +806,7 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
         var branch = await Git(RepoPath(w.RepositoryId), ["show-ref", "--verify", "refs/heads/" + w.Branch], ct, true);
         if (branch.ExitCode == 0)
         {
+            await RequireBranchAllocation(w, ct);
             var head = branch.StandardOutput.Split(' ')[0];
             if (head != op.BeforeHead) throw Error("stale_head", "The branch changed during cleanup; it was preserved.");
             if (!published)
@@ -813,8 +818,9 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
             var registrations = await Git(RepoPath(w.RepositoryId), ["worktree", "list", "--porcelain"], ct);
             if (registrations.StandardOutput.Split('\n').Contains("branch refs/heads/" + w.Branch, StringComparer.Ordinal))
                 throw Error("in_use", "The branch still has a registered worktree; recover its registration before retrying.");
-            await Git(RepoPath(w.RepositoryId), ["update-ref", "-d", "refs/heads/" + w.Branch, head], ct);
+            await Git(RepoPath(w.RepositoryId), ["update-ref", "--no-deref", "-d", "refs/heads/" + w.Branch, head], ct);
         }
+        await RemoveBranchAllocation(w, ct);
         w = Put(w with { State = "released", Observation = null }, op with { State = "succeeded" });
         await Save(w); return w;
     }, ct);
@@ -971,11 +977,11 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
         return (await Git(repo, ["rev-parse", reference], ct)).StandardOutput.Trim();
     }
     internal static async Task<ProcessRunResult> Git(string cwd, string[] args, CancellationToken ct, bool allowFailure = false,
-        string? index = null, WorkspaceCommand? author = null)
+        string? index = null, WorkspaceCommand? author = null, string? standardInput = null)
     {
         var start = GitStartInfo(cwd, args, index, author);
         ProcessRunResult result;
-        try { result = await ProcessRunner.RunAsync(start, TimeSpan.FromSeconds(90), ct, 4 * 1024 * 1024); }
+        try { result = await ProcessRunner.RunAsync(start, TimeSpan.FromSeconds(90), ct, 4 * 1024 * 1024, standardInput); }
         catch (System.ComponentModel.Win32Exception) { throw Error("git_unavailable", "Git is unavailable."); }
         if (result.TimedOut) throw Error("git_timeout", "Git timed out. Recover with the same request ID.");
         if (result.StandardOutput.Length > 4 * 1024 * 1024) throw Error("output_limit", "Git output exceeded the inspection limit.");
