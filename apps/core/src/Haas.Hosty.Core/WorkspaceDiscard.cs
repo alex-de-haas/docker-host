@@ -52,7 +52,7 @@ internal sealed partial class DevelopmentWorkspaceService
                     || value.Plan is null || value.Plan.WorkspaceId != workspaceId || value.Plan.Digest != value.Command.Digest || value.Snapshots is not { Length: > 0 }
                     || value.Snapshots.Any(w => w.Owner is null || !w.Owner.SameIdentity(value.Owner) || w.WorkspaceId != workspaceId
                         || w.Id != Hash(OwnerIdentity(value.Owner) + "\n" + w.RepositoryId) || w.RepositoryId != Hash(w.Repository)
-                        || w.Path != WorkPath(w.Id) || w.Branch != "hosty/session/" + w.Id)
+                        || w.Path != WorkPath(w.Id) || !ValidWorkspaceBranch(w))
                     || !value.Trees.Select(t => t.Id).Order(StringComparer.Ordinal).SequenceEqual(value.Snapshots.Select(t => t.Id).Order(StringComparer.Ordinal))))
                 throw Error("ownership_invalid", "The removal journal is inconsistent; source was preserved.");
             if (value.State != "removed")
@@ -405,6 +405,7 @@ internal sealed partial class DevelopmentWorkspaceService
                     var reviewed = plan.Trees.Single(t => t.Id == tree.Id);
                     if (Directory.Exists(tree.Path))
                     {
+                        await RequireBranchAllocation(tree, ct);
                         if (journal.Direct) await ValidateDeleteTreeAsync(tree, ct);
                         else await ValidateTree(tree, ct);
                         var fresh = journal.Direct ? null : await InspectDiscardTree(tree, ct);
@@ -448,6 +449,7 @@ internal sealed partial class DevelopmentWorkspaceService
                         var branch = await Git(RepoPath(tree.RepositoryId), ["show-ref", "--verify", reference], ct, true);
                         if (branch.ExitCode == 0)
                         {
+                            await RequireBranchAllocation(tree, ct);
                             var head = branch.StandardOutput.Split(' ')[0];
                             if (!journal.Direct && head != reviewed.Head) throw Error("stale_head", "The workspace branch changed and was preserved.");
                             var registrations = await Git(RepoPath(tree.RepositoryId), ["worktree", "list", "--porcelain", "-z"], ct);
@@ -456,6 +458,7 @@ internal sealed partial class DevelopmentWorkspaceService
                             await Git(RepoPath(tree.RepositoryId), ["update-ref", "--no-deref", "-d", reference, head], ct);
                         }
                         else if (branch.ExitCode != 1) throw Error("unavailable", "The workspace branch could not be inspected.");
+                        await RemoveBranchAllocation(tree, ct);
                         await Save(Put(tree with { State = "released", Observation = null, Leases = journal.Direct ? [] : tree.Leases,
                             LeaseClaims = journal.Direct ? [] : tree.LeaseClaims,
                             SandboxConsumers = journal.Direct ? [] : tree.SandboxConsumers }, operation with { State = "succeeded" }));
