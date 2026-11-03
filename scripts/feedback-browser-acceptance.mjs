@@ -176,8 +176,8 @@ try {
   await page.frames().find(f=>new URL(f.url()).pathname.replace(/\/$/,'')==='/feedback-panel').waitForFunction(()=>document.querySelector('select[aria-label="Feedback application"]')?.value!=='host');
   await form.getByLabel('Comment 1',{exact:true}).fill('Feedback form observation');await form.getByRole('button',{name:'Done',exact:true}).click();
   assert.notEqual(await form.getByLabel('Feedback application').inputValue(),'host','Feedback form belongs to its provider application');
-  await page.getByRole('button',{name:'Tools',exact:true}).click();await page.getByRole('menu').getByRole('menuitem').filter({hasText:'Pull requests'}).first().click();
-  await page.getByRole('button',{name:'Tools',exact:true}).click();await page.getByRole('menu').getByRole('menuitem').filter({hasText:'Assistant'}).first().click();
+  await page.getByRole('button',{name:'Tools',exact:true}).click();await page.getByRole('menu').getByRole('menuitemcheckbox').filter({hasText:'Pull requests'}).first().click();
+  await page.getByRole('button',{name:'Tools',exact:true}).click();await page.getByRole('menu').getByRole('menuitemcheckbox').filter({hasText:'Assistant'}).first().click();
   await page.setViewportSize({width:1920,height:900});await form.waitFor();
   assert.equal(await page.locator('iframe[title="Feedback"]').isVisible(),true);
   assert.equal(await page.locator('iframe[title="Pull requests"]').isVisible(),true);
