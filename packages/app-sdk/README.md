@@ -396,8 +396,10 @@ export const POST = handler;
 ```
 
 Non-Next servers use `createHostyUiResponse` from `@hosty-sdk/app/ui/server` with their
-revalidated own app-user session/token. `UiServerClient` provides only `bootstrap`,
-`listPanels`, `resolvePanel`, `navigation` and `resolveNavigation`; never expose a generic Core proxy or caller-supplied credentials.
+revalidated own app-user session/token. Forward the returned status, headers and body unchanged:
+UI routes include the binary `icon` response as well as JSON metadata. The same-origin icon route
+serves only the caller's declared icon using its service token and the revalidated user session.
+`UiServerClient` exposes fixed operations; never expose a generic Core proxy or caller-supplied credentials.
 Both server adapters return `no-store` metadata. The React root's `uiPath` defaults to
 `/api/hosty/ui` and must be a same-origin path.
 

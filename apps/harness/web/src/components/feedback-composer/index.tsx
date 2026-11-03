@@ -209,8 +209,15 @@ function DraftEditor({ source, available, incoming, request, setBlocked, capture
         capture.current = operation;
         setCapturing(true);
         setImageError('');
+        const note = current.current.annotations.find(n => n.id === id);
+        let outlined = false;
         try {
-            const blob = await captureScreen(operation.signal);
+            const blob = await captureScreen(operation.signal, async () => {
+                if (!note?.target?.bounds) return;
+                operation.signal.throwIfAborted();
+                outlined = true;
+                await request({ action: 'highlight', sourceId: source.id, target: note.target, requestId: note.id });
+            });
             if (live.current && !operation.signal.aborted) attachImage(id, blob);
         }
         catch (e) {
@@ -218,6 +225,7 @@ function DraftEditor({ source, available, incoming, request, setBlocked, capture
                 setImageError(message(e));
         }
         finally {
+            if (outlined) void request({ action: 'highlight', sourceId: source.id }).catch(() => {});
             capture.current = null;
             if (live.current)
                 setCapturing(false);

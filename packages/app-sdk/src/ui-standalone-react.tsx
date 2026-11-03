@@ -43,7 +43,7 @@ export function StandaloneHeader({ panels, selected, expanded, onSelect, onChoos
   const chrome = useHostyChrome(), navigation = useHostyNavigation(), prefs = useStandalonePreferences();
   const app = snapshot?.bootstrap?.app, [failedIcon, setFailedIcon] = useState<string | null>(null);
   const name = app?.displayName || app?.appId || "Application";
-  const icon = app?.iconUrl && /^https?:\/\//.test(app.iconUrl) ? app.iconUrl : null;
+  const icon = app?.iconUrl && /^(https?:\/\/|\/(?!\/))/.test(app.iconUrl) ? app.iconUrl : null;
   const showNavigation = canNavigate && chrome.navigation === "show" && (navigation.status !== "ready" || navigation.entries.length > 0);
   const toolsVisible = chrome.tools.enabled && chrome.tools.launcher !== "hide";
   return <header data-hosty-sdk className="hosty-standalone-header">

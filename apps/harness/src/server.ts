@@ -193,8 +193,9 @@ async function route(
     const body = method === "POST" ? JSON.stringify(await readJson(request, url.pathname.includes("/feedback") ? 12 * 1024 * 1024 : MAX_BODY_BYTES)) : undefined;
     const incoming = new Request(url, { method, headers, body });
     const result = await createHostyUiResponse(incoming, { session, token }, { administratorOnly: true, appId: process.env.HOSTY_APP_ID ?? "hosty.harness" });
-    response.setHeader("Cache-Control", "no-store");
-    sendJson(response, result.status, await result.json());
+    const bytes = Buffer.from(await result.arrayBuffer());
+    response.writeHead(result.status, Object.fromEntries(result.headers));
+    response.end(bytes);
     return;
   }
 

@@ -208,6 +208,10 @@ internal static class UiPanelEndpoints
             ProviderAccessService access, AppIdentityService identity, UiPanelService ui) =>
             await Handle(context, appId, access, identity, async (caller, userId) =>
                 CoreJson.Json(await ui.BootstrapAsync(caller, userId, parentOrigin, context.RequestAborted))));
+        app.MapGet(root + "/icon", async (string appId, HttpContext context,
+            ProviderAccessService access, AppIdentityService identity, CoreDataPaths paths, DevelopmentWorkspaceService workspaces) =>
+            await Handle(context, appId, access, identity, (caller, _) =>
+                AppAssetEndpoints.ServeOwnIconAsync(caller, context, paths, workspaces)));
         app.MapGet(root + "/panels", async (string appId, HttpContext context,
             ProviderAccessService access, AppIdentityService identity, UiPanelService ui) =>
             await Handle(context, appId, access, identity, async (caller, userId) =>

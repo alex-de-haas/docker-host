@@ -105,3 +105,35 @@ it.each([true, false])('suppresses only the selected element click (same target:
   await act(async () => { target.dispatchEvent(event); });
   expect(event.defaultPrevented).toBe(same); expect(action).toHaveBeenCalledTimes(same ? 0 : 1);
 });
+
+it('suppresses an ancestor-retargeted region click, then permits the next gesture', async () => {
+  const card = document.createElement('a'), left = document.createElement('span'), right = document.createElement('span');
+  card.href = '#unexpected'; card.append(left, right); document.body.append(card); hit = left;
+  const action = vi.fn(); card.addEventListener('click', action);
+  await click('Select region');
+  await act(async () => {
+    left.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, clientX: 10, clientY: 10 }));
+    right.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, clientX: 100, clientY: 100 }));
+    const completion = new MouseEvent('click', { bubbles: true, cancelable: true }); card.dispatchEvent(completion);
+    expect(completion.defaultPrevented).toBe(true);
+  });
+  expect(action).not.toHaveBeenCalled();
+  await pointer(card, 'pointerdown'); await pointer(card, 'click'); expect(action).toHaveBeenCalledOnce();
+});
+it('does not swallow a later gesture when the selected disabled control emitted no click', async () => {
+  const action = vi.fn(); surface.addEventListener('click', action);
+  await click('Select element'); await pointer(surface, 'pointerdown'); await pointer(surface, 'pointerup');
+  await pointer(surface, 'pointerdown'); await pointer(surface, 'click'); expect(action).toHaveBeenCalledOnce();
+});
+it('retains earlier annotation targets and rejects restored or navigated-away targets', async () => {
+  let result!: Promise<unknown>;
+  await act(async () => { result = invoke({ action: 'pick', mode: 'element' }); });
+  await pointer(surface, 'pointerdown'); const first = await result as DraftNote;
+  await click('Select element'); await pointer(surface, 'pointerdown');
+  await act(async () => { await invoke({ action: 'highlight', target: first.target, requestId: first.id }); });
+  expect(highlight()).not.toBeNull();
+  await expect(invoke({ action: 'highlight', target: first.target, requestId: 'unknown-restored-note' })).rejects.toThrow('Select it again');
+  history.pushState({}, '', '/another-page'); await act(async () => navigationChanged());
+  await expect(invoke({ action: 'highlight', target: first.target, requestId: first.id })).rejects.toThrow('Select it again');
+  history.replaceState({}, '', '/');
+});

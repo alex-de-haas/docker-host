@@ -1,6 +1,6 @@
 ---
 created: 2026-10-11
-updated: 2026-11-02
+updated: 2026-11-03
 summary: Explicit navigation and tool policy, manifest navigation, and retained tool instances shared by Shell, desktop hosts and standalone apps.
 components: [packages/app-sdk, apps/core, apps/shell, apps/documents, apps/demo-app, apps/harness, apps/marketplace, apps/telemetry-ui, apps/shell-swift]
 ---
@@ -51,6 +51,10 @@ DOM, retained iframe placement and public composition/authentication contracts; 
 the architecture left open by the style-isolation Draft.
 
 ## Standalone Application Header
+
+Declared local app icons load through the authenticated same-origin UI adapter. Core serves only
+the calling application’s declared icon after service and current-user authorization; the browser
+needs no cross-site Core session cookie. External icon URLs retain their declared origin.
 
 The automatic standalone layout has a 44-pixel top bar. Its left side contains a standard
 navigation visibility toggle, the declared application icon and its display name. Its right side

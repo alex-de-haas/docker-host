@@ -1013,6 +1013,30 @@ describe("gateway", () => {
     }
   });
 
+  it("forwards an authenticated UI icon as image bytes and retains its security headers", async () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0h8v8H0z"/></svg>';
+    const core = createServer((request, response) => {
+      request.resume();
+      if (request.url === "/api/internal/apps/hosty.harness/ui/icon") {
+        expect(request.headers.authorization).toBe("Bearer icon-service");
+        expect(request.headers["x-hosty-user-token"]).toBe("icon-session");
+        response.writeHead(200, { "content-type": "image/svg+xml" }); response.end(svg); return;
+      }
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ active: true, appId: "hosty.harness", userId: "user_admin", hostRole: "host.admin" }));
+    });
+    await new Promise<void>(resolve => core.listen(0, resolve));
+    process.env.HOSTY_CORE_ORIGIN = `http://127.0.0.1:${(core.address() as AddressInfo).port}`;
+    process.env.HOSTY_APP_SERVICE_TOKEN = "icon-service";
+    try {
+      const result = await fetch(`${origin}/api/hosty/ui/icon`, { headers: { cookie: "hosty_harness_identity=icon-session" } });
+      expect(result.status).toBe(200); expect(result.headers.get("content-type")).toBe("image/svg+xml");
+      expect(result.headers.get("cache-control")).toBe("no-store");
+      expect(result.headers.get("content-security-policy")).toBe("default-src 'none'; sandbox");
+      expect(await result.text()).toBe(svg);
+    } finally { await new Promise(resolve => core.close(resolve)); }
+  });
+
   it("forwards exact review scopes and replay IDs only with own app authority and same-origin mutations", async () => {
     const core = createServer((request, response) => { request.resume(); response.setHeader("content-type", "application/json"); response.end(JSON.stringify({ active: true, userId: "user_admin", hostRole: "host.admin" })); });
     await new Promise<void>(resolve => core.listen(0, resolve));

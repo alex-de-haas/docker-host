@@ -108,3 +108,20 @@ it('keeps both comment fields editable with independent inline microphone contro
   await act(async()=>{Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value')!.set!.call(overall,'Overall explanation');overall.dispatchEvent(new Event('input',{bubbles:true}));});
   expect(saved().comment).toBe('Overall explanation');expect(saved().annotations[0].text).toBe(annotation.text);
 });
+
+it.each(['element', 'region'] as const)('prepares and clears the saved %s outline when retaking a screenshot', async kind => {
+  const image = new Blob(['old'], { type: 'image/png' }), next = new Blob(['outlined'], { type: 'image/png' });
+  const target = { kind, bounds: { x: 5, y: 10, width: 100, height: 50 } };
+  state.drafts.set(key, { ...legacy, submitting: false, annotations: [{ ...annotation, target, image }] });
+  await render();
+  state.capture.mockImplementation(async (_signal: AbortSignal, before: () => Promise<void>) => {
+    await before(); expect(state.request).toHaveBeenLastCalledWith({ action: 'highlight', sourceId: source.id, target, requestId: annotation.id }); return next;
+  });
+  await act(async () => button('Retake screenshot').click());
+  expect(saved().annotations[0].image).toBe(next);
+  expect(state.request).toHaveBeenLastCalledWith({ action: 'highlight', sourceId: source.id });
+  state.request.mockImplementation(async (op: FeedbackOperation) => { if (op.target) throw new Error('Select it again'); return null; });
+  await act(async () => button('Retake screenshot').click());
+  expect(saved().annotations[0].image).toBe(next); expect(mount.textContent).toContain('Select it again');
+  expect(state.request).toHaveBeenLastCalledWith({ action: 'highlight', sourceId: source.id });
+});

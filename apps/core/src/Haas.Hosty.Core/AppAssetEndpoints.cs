@@ -70,6 +70,15 @@ internal static class AppAssetEndpoints
                 cancellationToken: cancellationToken));
     }
 
+    internal static Task<IResult> ServeOwnIconAsync(AppRecord app, HttpContext context,
+        CoreDataPaths paths, DevelopmentWorkspaceService workspaces)
+    {
+        var icon = CoreDataPaths.NormalizeRelativeAssetPath("", app.CatalogMetadata?.Icon);
+        return icon is null || !ContentTypes.TryGetValue(Path.GetExtension(icon), out var type) || !type.StartsWith("image/", StringComparison.Ordinal)
+            ? Task.FromResult<IResult>(Results.NotFound())
+            : ServeAsync(app, icon, context.Request, context.Response, paths, workspaces, context.RequestAborted);
+    }
+
     private static async Task<IResult> ServeAsync(
         AppRecord app,
         string assetPath,

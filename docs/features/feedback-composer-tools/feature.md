@@ -1,6 +1,6 @@
 ---
 created: 2026-11-02
-updated: 2026-11-02
+updated: 2026-11-03
 summary: App-provided feedback tools own forms and drafts while verified SDK source services supply selection, capture and scoped intake.
 components: [apps/core, packages/app-sdk, apps/harness, apps/shell, apps/desktop]
 ---
@@ -101,7 +101,9 @@ surface chosen in the browser dialog contains the annotated app. Page comments h
 After browser permission and capture, Harness attaches the complete, uncropped image directly to the
 local annotation draft. There is no second review/crop dialog. The attachment thumbnail and removal
 control let the user inspect or remove it before explicitly submitting the report. Retake screenshot
-replaces the image after a successful capture; a failed retake preserves the previous image. Declining
+replaces the image after a successful capture; a failed retake preserves the previous image. Retakes
+restore the source outline from the retained selection. A removed target, changed route or restored
+annotation without its live selection asks for a new selection instead of attaching an unmarked image. Declining
 capture, disabling Include screenshot, or using a browser without capture support leaves text comments
 available. Images above the per-image or report byte limits are rejected with a visible explanation;
 the comment and any previous images remain intact.

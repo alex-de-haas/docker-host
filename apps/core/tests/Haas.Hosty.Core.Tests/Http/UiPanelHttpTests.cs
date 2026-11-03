@@ -185,6 +185,28 @@ public sealed partial class UiPanelHttpTests
     }
 
     [Fact]
+    public async Task OwnIconRequiresServiceAndCurrentUserWithoutCoreBrowserCookie()
+    {
+        await using var host = await Setup();
+        var apps = host.Services.GetRequiredService<AppRegistryStore>();
+        var paths = host.Services.GetRequiredService<CoreDataPaths>();
+        await apps.UpdateAppAsync("target", a => a with { CatalogMetadata = new(null, null, [], "assets/icon.svg", [], null, null, null, null, null, null) });
+        var icon = Path.Combine(paths.AppsRoot, "target", "assets", "icon.svg");
+        Directory.CreateDirectory(Path.GetDirectoryName(icon)!);
+        await File.WriteAllTextAsync(icon, "<svg xmlns=\"http://www.w3.org/2000/svg\"/>");
+        using var client = await Client(host, "target");
+        using var response = await client.GetAsync("/api/internal/apps/target/ui/icon");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("image/svg+xml", response.Content.Headers.ContentType!.MediaType);
+        Assert.Contains("sandbox", response.Headers.GetValues("Content-Security-Policy").Single());
+        Assert.Equal(await File.ReadAllTextAsync(icon), await response.Content.ReadAsStringAsync());
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/apps/target/assets/assets/icon.svg")).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/internal/apps/consumer/ui/icon")).StatusCode);
+        await host.Services.GetRequiredService<UserDirectoryStore>().UpdateAsync(s => s with { Assignments = s.Assignments.Where(a => a.AppId != "target").ToArray() });
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync("/api/internal/apps/target/ui/icon")).StatusCode);
+    }
+
+    [Fact]
     public async Task UiRequiresOwnServiceAndUserGrant_AndHostGrantRevocationIsImmediate()
     {
         await using var host = await Setup();
