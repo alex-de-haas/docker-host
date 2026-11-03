@@ -1,6 +1,6 @@
 ---
 created: 2026-10-23
-updated: 2026-10-31
+updated: 2026-11-03
 ---
 
 # Ideas
@@ -1106,7 +1106,7 @@ when selected. This idea creates no receiver/relay/tunnel deliverable in the fir
 **General mechanism, separate consumer:** PR events are one example among arbitrary application
 events. [Assistant Events](features/assistant-events-and-continuation/plan.md),
 [Durable Agent Jobs](features/durable-agent-jobs/plan.md) and
-[Shared Decisions](features/shared-decisions/plan.md) retain the general contracts and behavior.
+[Shared Decisions](features/shared-decisions/feature.md) retain the general contracts and behavior.
 The PR view can work without them. A Dependabot routine could later analyze a revision and report,
 ask or merge under configured authority. PR browsing is selected first, while live automation and
 the first event producer remain separately scoped decisions. External PR mutations require their

@@ -1,7 +1,7 @@
 import { SUGGESTION_DEADLINE_MS, suggestionText, successfulResult } from "../harness/prompt-suggestion.js";
 import type { HarnessAdapter, HarnessEvent, HarnessRun } from "../harness/adapter.js";
 import { WorkerJournal } from "./journal.js";
-import { WorkerApiError, terminal, validateRun, validateMcpServers, type WorkerRunRequest, type WorkerControl, type WorkerReceipt } from "./contracts.js";
+import { WorkerApiError, terminal, validateRun, validateMcpServers, type WorkerRunRequest, type WorkerControl, type WorkerPark, type WorkerReceipt } from "./contracts.js";
 
 export interface WorkerExecution {
   adapter(request: WorkerRunRequest): Promise<HarnessAdapter>;
@@ -88,9 +88,10 @@ export class WorkerEngine {
           // Prediction output cannot become another transcript/tool/approval/turn.
           return;
         }
+        if (state === "parking" || state === "parked") return; // Native shutdown is not a task result or user cancellation.
         if (event.type === "prompt_suggestion" || event.type === "answer_complete") return;
         await this.journal.append(id, event);
-        if (event.type === "approval_request" || event.type === "question_request") await this.journal.update(id, "awaiting_input");
+        if (event.type === "approval_request" || event.type === "question_request" && event.blocking !== false) await this.journal.update(id, "awaiting_input");
         if (event.type === "result" && successfulResult(event.status) && active?.suggestions && state !== "cancelling") {
           active.collecting = setTimeout(() => { void this.finishSuggestion(id, true); }, SUGGESTION_DEADLINE_MS);
           active.collecting.unref();
@@ -146,7 +147,7 @@ export class WorkerEngine {
       const validate = () => {
         const frame = current.receipt.pending?.find(frame => frame.sequence === input.eventId);
         const event = frame?.event;
-        if (!this.active.has(id) || current.receipt.revision !== input.expectedRevision || current.receipt.state !== "awaiting_input"
+        if (!this.active.has(id) || current.receipt.revision !== input.expectedRevision || !["awaiting_input", "running"].includes(current.receipt.state)
           || !(input.kind === "approval" && event?.type === "approval_request" && event.approvalId === input.id
             || input.kind === "question" && event?.type === "question_request" && event.questionId === input.id))
           throw new WorkerApiError(409, "stale_control", "Decision does not match a pending request.");
@@ -157,8 +158,39 @@ export class WorkerEngine {
           : run.resolveQuestion(input.id, input.answers));
         if (!accepted) throw new WorkerApiError(409, "stale_control", "Native request is no longer pending.");
       }, validate);
-      return fresh ? this.journal.update(id, (await this.journal.load(id)).receipt.pending?.length ? "awaiting_input" : "running") : (await this.journal.load(id)).receipt;
+      return fresh ? this.journal.update(id, (await this.journal.load(id)).receipt.pending?.some(frame => frame.event.type === "approval_request" || frame.event.type === "question_request" && frame.event.blocking !== false) ? "awaiting_input" : "running") : (await this.journal.load(id)).receipt;
     });
+  }
+  async park(id: string, input: WorkerPark): Promise<WorkerReceipt> {
+    const receipt = await this.journal.exclusive(async () => {
+      const stored = await this.journal.load(id), current = stored.receipt;
+      if (Object.values(stored.controls).some(control => !control.applied)) throw new WorkerApiError(409, "control_uncertain", "Reconcile uncertain native delivery before parking.");
+      await this.journal.control(id, input.controlId, { kind: "park", ...input }, async () => {}, () => {
+        const pending = current.pending ?? [];
+        if (!this.active.has(id) || current.state !== "awaiting_input" || current.revision !== input.expectedRevision
+          || !pending.some(frame => frame.sequence === input.eventId && frame.event.type === "question_request" && frame.event.questionId === input.id && frame.event.blocking !== false)
+          || pending.some(frame => frame.event.type !== "question_request" || frame.event.blocking === false))
+          throw new WorkerApiError(409, "stale_parking", "Only execution blocked exclusively on these questions can be parked.");
+      });
+      return terminal(current.state) || current.state === "parking" ? current : this.journal.update(id, "parking");
+    });
+    if (terminal(receipt.state)) return receipt;
+    const active = this.active.get(id);
+    if (!active) throw new WorkerApiError(409, "exit_unconfirmed", "The original execution must be reconciled before parking.");
+    try {
+      if (!active.run.stopAndWait) throw new Error("Native exit confirmation is unsupported.");
+      await active.run.stopAndWait();
+      await this.journal.exclusive(async () => {
+        const state = (await this.journal.load(id)).receipt.state;
+        if (state === "parking") await this.journal.update(id, "parked");
+        else if (state === "cancelling") await this.journal.update(id, "cancelled");
+      });
+      if (this.active.get(id) === active) { active.release(); this.active.delete(id); this.admitted.delete(id); this.disabledSuggestions.delete(id); }
+    } catch {
+      // Keep both the consumer and command identity; an uncertain exit never authorizes a resume.
+      throw new WorkerApiError(503, "exit_unconfirmed", "Parking could not confirm native execution exit.");
+    }
+    return (await this.journal.load(id)).receipt;
   }
   async cancel(id: string, controlId: string): Promise<WorkerReceipt> {
     const receipt = await this.journal.exclusive(async () => {
@@ -179,7 +211,7 @@ export class WorkerEngine {
           const current = (await this.journal.load(id)).receipt;
           if (!terminal(current.state)) await this.journal.update(id, "cancelled");
         });
-        active.release(); this.active.delete(id); this.admitted.delete(id); this.disabledSuggestions.delete(id);
+        if (this.active.get(id) === active) { active.release(); this.active.delete(id); this.admitted.delete(id); this.disabledSuggestions.delete(id); }
       } catch { await this.fail(id, "Cancellation could not confirm native execution exit."); }
     }
     return (await this.journal.load(id)).receipt;

@@ -1,3 +1,4 @@
+import { readNativeQuestions, questionAnswers } from "./questions.js";
 import { UsageReader, absentUsage, codexUsage } from "./provider-usage.js";
 import { cleanAgentEnvironment } from "../connections/codex-login.js";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
@@ -19,6 +20,7 @@ import type {
   HarnessStartOptions,
 } from "./adapter.js";
 import {
+  REQUEST_USER_INPUT_METHOD,
   APPROVAL_METHODS,
   APPROVAL_POLICY,
   approvalDecision,
@@ -47,9 +49,8 @@ function spawnTarget(args: string[]): { command: string; args: string[] } {
 
 export class CodexHarnessAdapter implements HarnessAdapter {
   readonly name = "codex-app-server";
-  // No questions: the mechanism exists but is experimental, off by default, and its shape is only
-  // inferable from binary symbols — see REQUEST_USER_INPUT_METHOD in codex-protocol.ts. No live
-  // mid-turn reconfiguration either: the wrapper prepares a resumed process between turns.
+  // Pinned 0.162.1 supports structured questions in default mode with the explicit feature flag.
+  // No live mid-turn reconfiguration: the wrapper prepares a resumed process between turns.
   // autoAllow is false because nothing here consults the gateway's predicate: Codex raises approvals
   // by its own sandbox rules (below), and an app tool call never passes through this adapter's hands.
   // denyReason is false because the current `item/*` approval reply is a bare "decline" — only the
@@ -59,7 +60,7 @@ export class CodexHarnessAdapter implements HarnessAdapter {
     // Protocol integration exists; actual availability is learned from a native response.
     promptSuggestions: true,
     usage: { snapshots: true, events: true, kinds: ["quota", "credits"] },
-    questions: false,
+    questions: true,
     appMcp: true,
     liveReconfigure: false,
     autoAllow: false,
@@ -154,12 +155,12 @@ class ReconfigurableCodexRun implements HarnessRun {
   private stopped = false;
   private replacing = false;
   constructor(private readonly options: HarnessStartOptions, private readonly auth: CodexAuthConfig) {
-    this.active = new CodexRun(options, auth);
+    this.active = new CodexRun(options, auth, options.requireNativeResume === true);
   }
   readUsage() { return this.active.readUsage(); }
   send(text: string): void { this.active.send(text); }
   resolveApproval(id: string, decision: "allow" | "deny", message?: string): boolean { return this.active.resolveApproval(id, decision, message); }
-  resolveQuestion(): boolean { return false; }
+  resolveQuestion(questionId: string, answers: Record<string, string>): boolean { return this.active.resolveQuestion(questionId, answers); }
   interrupt(): Promise<void> { return this.active.interrupt(); }
   async disableSuggestions(): Promise<void> { this.options.promptSuggestions = false; await this.active.disableSuggestions(); }
   async stop(): Promise<void> { this.stopped = true; await this.active.stop(); }
@@ -201,6 +202,7 @@ class CodexRun implements HarnessRun {
   private readonly child: ChildProcessWithoutNullStreams;
   private readonly pendingRequests = new Map<number | string, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
   private readonly approvals = new Map<string, PendingApproval>();
+  private readonly questions = new Map<string, { requestId: number | string; questions: import("./adapter.js").HarnessQuestion[]; turnId: string }>();
   // Items whose approval the operator refused. Codex still emits item/completed for them, so
   // without this the transcript would claim a refused command ran.
   private readonly deniedItems = new Set<string>();
@@ -248,7 +250,7 @@ class CodexRun implements HarnessRun {
     // the environment. Nothing is written to the operator's ~/.codex — these servers belong to one
     // session of one gateway, not to the machine.
     const mcp = toCodexMcpConfig(options.mcpServers);
-    const providerArgs = ["app-server", ...(auth.managedHome ? ["-c", 'cli_auth_credentials_store="file"'] : []), ...mcp.args];
+    const providerArgs = ["app-server", "-c", "features.default_mode_request_user_input=true", ...(auth.managedHome ? ["-c", 'cli_auth_credentials_store="file"'] : []), ...mcp.args];
     const target = spawnTarget(providerArgs);
     const spawnOptions = {
       stdio: ["pipe", "pipe", "pipe"] as const,
@@ -340,8 +342,20 @@ class CodexRun implements HarnessRun {
 
   // Never any pending question: this adapter reports questions: false, so the manager will not route
   // one here. Present because the contract requires it, and returning false is the correct answer.
-  resolveQuestion(): boolean {
-    return false;
+  resolveQuestion(questionId: string, answers: Record<string, string>): boolean {
+    const pending = this.questions.get(questionId);
+    if (!pending || this.stopped || this.failed) return false;
+    const accepted = questionAnswers(pending.questions, answers);
+    if (!accepted) return false;
+    this.respond(pending.requestId, { answers: Object.fromEntries(Object.entries(accepted).map(([id, answer]) => [id, { answers: [answer] }])) });
+    this.questions.delete(questionId);
+    return true;
+  }
+  private cancelQuestions(turnId?: string): void {
+    for (const [id, pending] of this.questions) if (!turnId || pending.turnId === turnId) {
+      this.write({ jsonrpc: "2.0", id: pending.requestId, error: { code: -32800, message: "The question is no longer live. No answer was supplied." } });
+      this.questions.delete(id);
+    }
   }
 
   // The wrapper replaces idle processes and resumes their threads. A single process still takes
@@ -380,6 +394,7 @@ class CodexRun implements HarnessRun {
       });
     }
     this.approvals.clear();
+    this.cancelQuestions();
     this.clearFileChangeProposals();
     this.usageReader.close();
     this.child.kill("SIGTERM");
@@ -390,7 +405,7 @@ class CodexRun implements HarnessRun {
   private async handshake(): Promise<void> {
     const initialized = await this.request(CODEX_METHODS.initialize, {
       clientInfo: { name: "hosty-harness", version: "1" },
-      capabilities: this.options.promptSuggestions ? { experimentalApi: true } : null,
+      capabilities: { experimentalApi: true },
     });
     this.predictionRuntime = codexPredictionSupport.key(resolveCodexCommand(), (initialized as { userAgent?: unknown })?.userAgent);
     this.notify(CODEX_METHODS.initialized, {});
@@ -540,7 +555,23 @@ class CodexRun implements HarnessRun {
     // Server→client request. Approvals block until answered; anything else gets a minimal reply so
     // the harness never wedges on an unimplemented capability.
     if (message.id !== undefined && message.method) {
-      if (APPROVAL_METHODS.has(message.method)) {
+      if (message.method === REQUEST_USER_INPUT_METHOD) {
+        try {
+          const params = message.params ?? {};
+          if (typeof params.threadId !== "string" || params.threadId !== this.threadId || typeof params.turnId !== "string"
+            || typeof params.itemId !== "string" || typeof params.isBlocking !== "boolean"
+            || this.activityTurnId && params.turnId !== this.activityTurnId) throw new Error("The question does not belong to this live turn.");
+          const questions = readNativeQuestions(params, "codex");
+          const questionId = randomUUID();
+          this.questions.set(questionId, { requestId: message.id, questions, turnId: params.turnId });
+          this.emit({ type: "question_request", questionId, questions, blocking: params.isBlocking,
+            native: { threadId: params.threadId, turnId: params.turnId, itemId: params.itemId } });
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : "Unsupported question.";
+          this.write({ jsonrpc: "2.0", id: message.id, error: { code: -32602, message: reason } });
+          this.emit({ type: "notice", message: "Codex question rejected: " + reason });
+        }
+      } else if (APPROVAL_METHODS.has(message.method)) {
         const approvalId = randomUUID();
         const params = message.params ?? {};
         this.approvals.set(approvalId, {
@@ -770,6 +801,7 @@ class CodexRun implements HarnessRun {
       return;
     }
     if (message.method === "turn/completed") {
+      this.cancelQuestions(this.activityTurnId ?? undefined);
       const completedTurn = params.turn as { id?: string } | undefined;
       if (this.activityTurnId && completedTurn?.id && completedTurn.id !== this.activityTurnId) return;
       this.turnActive = false;

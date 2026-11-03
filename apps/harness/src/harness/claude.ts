@@ -1,3 +1,4 @@
+import { readNativeQuestions, questionAnswers } from "./questions.js";
 import { UsageReader, absentUsage, claudeUsage, claudeLimitEvent } from "./provider-usage.js";
 import { ContextUsageReader, claudeContextUsage } from "./context-usage.js";
 import { toolResult, toolDuration, shouldRetainToolOutput } from "./tool-result.js";
@@ -130,6 +131,7 @@ interface PendingApproval {
 }
 
 interface PendingQuestion {
+  questions: HarnessQuestion[];
   /** The tool input as the model sent it; the answers are merged back into a copy of it. */
   input: Record<string, unknown>;
   resolve: (response: unknown) => void;
@@ -222,8 +224,21 @@ class ClaudeRun implements HarnessRun {
       return false;
     }
 
+    const accepted = questionAnswers(pending.questions, answers);
+    if (!accepted) return false;
+    // Claude keys answers by question text. Qualify duplicate wording in the updated tool input
+    // so two distinct questions cannot overwrite each other at the native boundary.
+    const raw = pending.input.questions as Record<string, unknown>[];
+    const nativeAnswers: Record<string, string> = {};
+    const nativeQuestions = raw.map((question, index) => {
+      const normalized = pending.questions[index]!;
+      const duplicate = pending.questions.filter(q => q.question === normalized.question).length > 1;
+      const key = duplicate ? `${normalized.question} [${normalized.id}]` : normalized.question;
+      nativeAnswers[key] = accepted[normalized.id ?? normalized.question]!;
+      return duplicate ? { ...question, question: key } : question;
+    });
     this.pendingQuestions.delete(questionId);
-    pending.resolve({ behavior: "allow", updatedInput: { ...pending.input, answers } });
+    pending.resolve({ behavior: "allow", updatedInput: { ...pending.input, questions: nativeQuestions, answers: nativeAnswers } });
     return true;
   }
 
@@ -398,19 +413,15 @@ class ClaudeRun implements HarnessRun {
     context?: ApprovalContext,
   ): Promise<unknown> {
     if (toolName === ASK_USER_QUESTION) {
-      const questions = readQuestions(input);
-      // A malformed question set is answered rather than parked: parking it would hang the run on a
-      // card the UI cannot render, and the model can recover from being told the call was wrong.
-      return questions.length === 0
-        ? Promise.resolve({
-            behavior: "deny",
-            message: "AskUserQuestion was called with no usable questions; ask in plain text instead.",
-          })
-        : new Promise((resolve) => {
-            const questionId = randomUUID();
-            this.pendingQuestions.set(questionId, { input, resolve });
-            this.options.onEvent({ type: "question_request", questionId, questions });
-          });
+      let questions: HarnessQuestion[];
+      try { questions = readNativeQuestions(input, "claude"); }
+      catch (error) { return Promise.resolve({ behavior: "deny", message: error instanceof Error ? error.message : "Unsupported question." }); }
+      return new Promise((resolve) => {
+        const questionId = randomUUID();
+        this.pendingQuestions.set(questionId, { input, questions, resolve });
+        this.options.onEvent({ type: "question_request", questionId, questions, blocking: true,
+          ...(context?.toolUseID ? { native: { itemId: context.toolUseID } } : {}) });
+      });
     }
 
     // Two different grounds, kept apart on purpose. The set above is read-only because the gateway
@@ -610,42 +621,6 @@ class ClaudeRun implements HarnessRun {
 // Validated rather than cast: the input is model output, so a missing options array or a
 // non-string label is a live possibility, and a card built from it would break the panel for a
 // pause nobody could then resolve.
-function readQuestions(input: Record<string, unknown>): HarnessQuestion[] {
-  const raw = Array.isArray(input.questions) ? input.questions : [];
-  const questions: HarnessQuestion[] = [];
-  for (const entry of raw as Array<Record<string, unknown>>) {
-    if (typeof entry?.question !== "string" || !entry.question.trim()) {
-      continue;
-    }
-
-    const options: HarnessQuestion["options"] = [];
-    for (const option of (Array.isArray(entry.options) ? entry.options : []) as Array<Record<string, unknown>>) {
-      if (typeof option?.label === "string" && option.label.trim()) {
-        options.push({
-          label: option.label,
-          description: typeof option.description === "string" ? option.description : "",
-          preview: typeof option.preview === "string" ? option.preview : undefined,
-        });
-      }
-    }
-
-    // An option-less question cannot be rendered as a choice; dropping it is better than showing a
-    // card with nothing to click.
-    if (options.length === 0) {
-      continue;
-    }
-
-    questions.push({
-      question: entry.question,
-      header: typeof entry.header === "string" ? entry.header : "",
-      multiSelect: entry.multiSelect === true,
-      options,
-    });
-  }
-
-  return questions;
-}
-
 // Minimal pushable async iterable: query() consumes it as the streaming prompt, so the session
 // stays open across user turns until end() is called.
 class PushableStream<T> implements AsyncIterable<T> {

@@ -106,18 +106,35 @@ describe("claude adapter questions", () => {
     expect(run.resolveQuestion("not-a-question", { "Which media server?": "Plex" })).toBe(false);
   });
 
-  it("declines a malformed ask instead of parking the run on an unrenderable card", async () => {
-    // A question with no options cannot be shown as a choice. Parking it would block the turn on a
-    // card the panel cannot draw and nobody can resolve, so the model is told to ask in prose.
+  it("accepts free-text-only questions using their stable ID", async () => {
+    const { canUseTool, events, run } = await startRun();
+    const input = { questions: [{ question: "Anything?", header: "X", multiSelect: false, options: [] }] };
+    const pending = canUseTool("AskUserQuestion", input);
+    const asked = events.find(e => e.type === "question_request");
+    if (asked?.type !== "question_request") throw new Error("Expected question");
+    expect(run.resolveQuestion(asked.questionId, { q1: "Free text" })).toBe(true);
+    await expect(pending).resolves.toEqual({ behavior: "allow", updatedInput: { ...input, answers: { "Anything?": "Free text" } } });
+  });
+
+  it("preserves distinct answers when question wording is repeated", async () => {
+    const { canUseTool, events, run } = await startRun();
+    const question = QUESTION_INPUT.questions[0]!;
+    const pending = canUseTool("AskUserQuestion", { questions: [question, question] });
+    const asked = events.find(e => e.type === "question_request");
+    if (asked?.type !== "question_request") throw new Error("Expected question");
+    expect(run.resolveQuestion(asked.questionId, { [question.question]: "Ambiguous" })).toBe(false);
+    expect(run.resolveQuestion(asked.questionId, { q1: "Jellyfin", q2: "Plex" })).toBe(true);
+    await expect(pending).resolves.toMatchObject({ behavior: "allow", updatedInput: {
+      questions: [{ question: "Which media server? [q1]" }, { question: "Which media server? [q2]" }],
+      answers: { "Which media server? [q1]": "Jellyfin", "Which media server? [q2]": "Plex" },
+    } });
+  });
+
+  it("rejects secret or malformed questions without a pending card", async () => {
     const { canUseTool, events } = await startRun();
-
-    const response = (await canUseTool("AskUserQuestion", {
-      questions: [{ question: "Anything?", header: "X", multiSelect: false, options: [] }],
-    })) as { behavior: string; message?: string };
-
-    expect(response.behavior).toBe("deny");
-    expect(response.message).toContain("plain text");
-    expect(events.some((event) => event.type === "question_request")).toBe(false);
+    await expect(canUseTool("AskUserQuestion", { questions: [{ ...QUESTION_INPUT.questions[0], isSecret: true }] })).resolves.toMatchObject({ behavior: "deny" });
+    await expect(canUseTool("AskUserQuestion", { questions: [{ question: "" }] })).resolves.toMatchObject({ behavior: "deny" });
+    expect(events.some(e => e.type === "question_request")).toBe(false);
   });
 
   it("still pauses non-question writes on an approval", async () => {

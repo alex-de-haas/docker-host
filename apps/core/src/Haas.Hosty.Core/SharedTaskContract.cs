@@ -30,7 +30,8 @@ public record HostyTaskExecutionError(string Code, string Message);
 public record HostyTaskSessionRef(string Id, string Path);
 /// <summary>Durable execution observation. Terminal state alone does not establish stop confirmation.</summary>
 public record HostyTaskExecutionReceipt(string ExecutionId, long Revision, string State, bool StopConfirmed, string CreatedAt, string UpdatedAt,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] HostyTaskResult? Result = null, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] HostyTaskExecutionError? Error = null, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] HostyTaskSessionRef? SessionRef = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] HostyTaskResult? Result = null, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] HostyTaskExecutionError? Error = null, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] HostyTaskSessionRef? SessionRef = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? NativeStopConfirmed = null);
 /// <summary>One immutable attempt, retained across rework and reopening.</summary>
 public record HostyTaskAttempt(string ExecutionId, HostyTaskProviderRef Executor, HostyTaskExecutionInput Request, bool CancelRequested,
     string CreatedAt, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] HostyTaskExecutionReceipt? Receipt = null);

@@ -1,7 +1,7 @@
 ---
 status: In Progress
 created: 2026-10-29
-updated: 2026-10-30
+updated: 2026-11-03
 summary: A dedicated Harness page with detailed PR views and a compact list-only side panel for repositories of installed applications, including Dependabot.
 components: [apps/harness, apps/core, packages/app-sdk]
 ---
@@ -667,7 +667,7 @@ No common subscription requires a repository, PR number, Dependabot author or li
 | [Notifications D6](../notifications/plan.md#deliverables) | Owns shared durable delivery, authorization, retention and replay. This view does not depend on it for reads or UI freshness. |
 | [Assistant Events And Session Continuation](../assistant-events-and-continuation/plan.md) | Owns authorized event input, conversation binding and receipt interpretation. A PR source supplies facts, not arbitrary private conversation IDs or model instructions. |
 | [Durable Agent Jobs](../durable-agent-jobs/plan.md) | Owns configured routines, event-triggered job/session creation, budgets and recovery. A PR filter is one consumer policy, not a hard-coded Core wakeup rule. |
-| [Shared Decisions](../shared-decisions/plan.md) | Owns addressed questions, answers and material revisions. The panel can link to a relevant decision; it does not introduce a second approval store. |
+| [Shared Decisions](../shared-decisions/feature.md) | Owns addressed questions, answers and material revisions. The panel can link to a relevant decision; it does not introduce a second approval store. |
 | [Harness Work Orchestration](../harness-work-orchestration/plan.md) | Owns joined work/decision presentation and richer delegation; the inbox supplies an independent PR entry point. |
 | [Assistant PR Lifecycle](../assistant-pr-lifecycle/feature.md) | Owns existing workspace publication/merge operations and their evidence. Repository discovery and this aggregate view are the new scope here. |
 

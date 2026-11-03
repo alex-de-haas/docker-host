@@ -147,7 +147,7 @@ class RemoteRun implements HarnessRun {
     const request: WorkerRunRequest = { operation: this.options.operation ?? "chat", skillExportId: this.options.skillExportId, conversationId: this.options.sessionId, binding: this.binding!,
       selection: { model: this.options.model ?? null, reasoningEffort: this.options.reasoningEffort ?? null },
       resource: this.options.resource ?? { kind: "conversation", id: this.options.sessionId }, input,
-      options: { promptSuggestions: this.options.promptSuggestions, autonomy: this.options.autonomy, systemPrompt: this.options.systemPrompt, resumeHarnessSessionId: this.resume, mcpServers: this.options.mcpServers },
+      options: { requireNativeResume: this.options.requireNativeResume, promptSuggestions: this.options.promptSuggestions, autonomy: this.options.autonomy, systemPrompt: this.options.systemPrompt, resumeHarnessSessionId: this.resume, mcpServers: this.options.mcpServers },
       autoAllowedPrefixes: Object.keys(this.options.mcpServers ?? {}).map(name => `mcp__${name}__`).filter(prefix => this.options.isAutoAllowed?.(`${prefix}probe`)) };
     this.submitted = request; this.confirmed = false;
     this.observe(id, signal, request);
@@ -182,7 +182,7 @@ class RemoteRun implements HarnessRun {
         if (receipt.snapshot?.nativeSessionId) this.options.onEvent({ type: "harness_session", harnessSessionId: receipt.snapshot.nativeSessionId });
         this.confirmed = receipt.exitConfirmed ?? receipt.state !== "interrupted"; this.busy = false; this.pending.clear();
         if (!this.stopped) {
-          const event: HarnessEvent = final && (receipt.state === "completed" || receipt.state === "failed" && final.type === "error") ? final
+          const event: HarnessEvent = receipt.state === "parked" ? { type: "execution_parked", runId: id } : final && (receipt.state === "completed" || receipt.state === "failed" && final.type === "error") ? final
             : { type: "error", message: receipt.error ?? `Worker run ${receipt.state}.` };
           if (this.options.onWorkerEvent && this.confirmed) {
             // The terminal receipt revision is stable even after detailed event replay expires.

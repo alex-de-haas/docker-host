@@ -111,7 +111,7 @@ function connection(url: string) {
               return;
             }
             if (event === "stream.ready") { legacy = false; ready = true; delay = 1000; changed(true); }
-            else if (event === "workspace.changed" && ready) changed();
+            else if ((event === "workspace.changed" || event === "decisions.changed") && ready) changed();
           }
         }
       } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }

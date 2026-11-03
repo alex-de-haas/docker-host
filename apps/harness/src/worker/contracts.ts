@@ -17,10 +17,10 @@ export type WorkerRunRequest = {
   selection: ExecutionSelection;
   resource: ResourceReference;
   input: string;
-  options: Pick<HarnessStartOptions, "autonomy" | "systemPrompt" | "resumeHarnessSessionId" | "mcpServers" | "promptSuggestions">;
+  options: Pick<HarnessStartOptions, "autonomy" | "systemPrompt" | "resumeHarnessSessionId" | "mcpServers" | "promptSuggestions" | "requireNativeResume">;
   autoAllowedPrefixes: string[];
 };
-export type RunState = "accepted" | "running" | "awaiting_input" | "suggesting" | "cancelling" | "completed" | "failed" | "cancelled" | "interrupted";
+export type RunState = "accepted" | "running" | "awaiting_input" | "suggesting" | "parking" | "parked" | "cancelling" | "completed" | "failed" | "cancelled" | "interrupted";
 export type WorkerEvent = { runId: string; generation: string; sequence: number; event: HarnessEvent };
 export type WorkerReceipt = {
   runId: string; conversationId: string; generation: string; state: RunState; revision: number;
@@ -28,6 +28,7 @@ export type WorkerReceipt = {
   pending?: WorkerEvent[];
   selection: ExecutionSelection; snapshot?: { text?: string; nativeSessionId?: string; result?: HarnessEvent; contextUsage?: WorkerEvent }; createdAt: string; updatedAt: string; error?: string;
 };
+export type WorkerPark = { controlId: string; eventId: number; expectedRevision: number; id: string };
 export type WorkerControl = { controlId: string; eventId: number; expectedRevision: number } & (
   { kind: "approval"; id: string; decision: "allow" | "deny"; message?: string }
   | { kind: "question"; id: string; answers: Record<string, string> }
@@ -36,7 +37,7 @@ export class WorkerApiError extends Error {
   constructor(public readonly status: number, public readonly code: string, message: string) { super(message); }
 }
 export const safeIdentity = (value: unknown): value is string => typeof value === "string" && /^[A-Za-z0-9-]{1,100}$/.test(value);
-export const terminal = (state: RunState): boolean => ["completed", "failed", "cancelled", "interrupted"].includes(state);
+export const terminal = (state: RunState): boolean => ["completed", "failed", "cancelled", "interrupted", "parked"].includes(state);
 
 export function validateRun(value: unknown): asserts value is WorkerRunRequest {
   const r = value as WorkerRunRequest;
@@ -50,11 +51,13 @@ export function validateRun(value: unknown): asserts value is WorkerRunRequest {
     throw new WorkerApiError(400, "invalid_run", "Invalid worker run request.");
   if (r.skillExportId !== undefined && (typeof r.skillExportId !== "string" || !/^[a-f0-9]{64}$/.test(r.skillExportId)))
     throw new WorkerApiError(400, "invalid_skills", "Invalid skill export reference.");
-  if (Object.keys(r.options).some(key => !["autonomy", "systemPrompt", "resumeHarnessSessionId", "mcpServers", "promptSuggestions"].includes(key))
+  if (Object.keys(r.options).some(key => !["autonomy", "systemPrompt", "resumeHarnessSessionId", "mcpServers", "promptSuggestions", "requireNativeResume"].includes(key))
     || r.options.systemPrompt !== undefined && typeof r.options.systemPrompt !== "string"
     || r.options.resumeHarnessSessionId !== undefined && !safeIdentity(r.options.resumeHarnessSessionId)
     || r.options.mcpServers !== undefined && (!r.options.mcpServers || typeof r.options.mcpServers !== "object" || Array.isArray(r.options.mcpServers)))
     throw new WorkerApiError(400, "invalid_options", "Invalid provider options.");
+  if (r.options.requireNativeResume !== undefined && (typeof r.options.requireNativeResume !== "boolean" || r.options.requireNativeResume && !r.options.resumeHarnessSessionId))
+    throw new WorkerApiError(400, "invalid_resume", "Strict native resume requires its original thread identity.");
   if (r.options.promptSuggestions !== undefined && typeof r.options.promptSuggestions !== "boolean"
     || r.options.promptSuggestions === true && r.operation !== "chat")
     throw new WorkerApiError(400, "invalid_suggestions", "Predictions require an interactive chat operation.");

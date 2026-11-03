@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-26
-updated: 2026-10-31
+updated: 2026-11-03
 summary: Minimal described and versioned work artifacts with authorized save, discovery and reads, durable references and explicit agent handoffs.
 components: [apps/core, apps/harness, apps/documents, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -56,7 +56,7 @@ Finding a script does not authorize execution; record its prerequisites without 
 
 ## Dependencies And Boundaries
 
-[Basic Tasks](../basic-tasks/feature.md), [Decisions](../shared-decisions/plan.md) and
+[Basic Tasks](../basic-tasks/feature.md), [Decisions](../shared-decisions/feature.md) and
 [Harness Work Orchestration](../harness-work-orchestration/plan.md) consume references.
 [Plan Provider](../plan-provider-interface/plan.md) owns document/progress semantics;
 [Object Links](../object-links/plan.md) owns navigation;

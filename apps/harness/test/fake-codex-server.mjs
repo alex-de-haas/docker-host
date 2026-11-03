@@ -60,6 +60,7 @@ if (argv[0] === "login" && argv[1] === "--with-api-key") {
 function runAppServer() {
 let buffer = "";
 let pendingApprovalId = null;
+let pendingQuestion = false;
 let pendingApprovalScope = { itemId: "exec-1", turnId: "turn-1" };
 let currentTurnText = "";
 let activeThreadId = "thread-fake-1";
@@ -96,6 +97,17 @@ function handle(msg) {
   }
   if (msg.method === "account/read") {
     send({ jsonrpc: "2.0", id: msg.id, result: { account: null } });
+    return;
+  }
+  if (msg.id === "question-input" && pendingQuestion) {
+    pendingQuestion = false;
+    if (currentTurnText === "question-secret") {
+      if (msg.result || !msg.error) fail("secret question received an answer");
+    } else if (msg.error?.code !== -32800) {
+      if (!Array.isArray(msg.result?.answers?.first?.answers) || !Array.isArray(msg.result?.answers?.second?.answers)) fail("question answer does not use native IDs and arrays");
+      send({ method: "item/completed", params: { threadId: activeThreadId, item: { type: "agentMessage", id: "question-result", text: JSON.stringify(msg.result.answers) } } });
+    }
+    send({ method: "turn/completed", params: { threadId: activeThreadId, turn: { id: "question-turn", status: "completed" } } });
     return;
   }
   // Reply to an approval we raised.
@@ -202,6 +214,8 @@ function handle(msg) {
         turn: { id: "feedback-turn", status: "failed", error: { message: "Feedback acceptance fixture failed: " + error.message } } } }));
       return;
     }
+    if (currentTurnText.includes("DECISIONS_ACCEPTANCE:LIVE")) currentTurnText = "question-native";
+    if (currentTurnText.includes("TASK_ACCEPTANCE:QUESTION")) currentTurnText = "question-task";
     if (currentTurnText.includes("TASK_ACCEPTANCE:")) {
       send({ id: msg.id, result: {} });
       send({ method: "turn/started", params: { threadId: activeThreadId, turn: { id: "task-turn" } } });
@@ -215,6 +229,19 @@ function handle(msg) {
     if (currentTurnText.startsWith("[Hosty operator instructions]")) currentTurnText = currentTurnText.slice(currentTurnText.lastIndexOf("\n\n") + 2);
     send({ jsonrpc: "2.0", id: msg.id, result: {} });
 
+    if (currentTurnText.startsWith("question-")) {
+      if (!argv.includes("features.default_mode_request_user_input=true")) fail("missing ordinary-mode question feature");
+      if (msg.params.collaborationMode?.mode === "plan") fail("questions switched the session into plan mode");
+      send({ method: "turn/started", params: { threadId: activeThreadId, turn: { id: "question-turn" } } });
+      pendingQuestion = true;
+      send({ id: "question-input", method: "item/tool/requestUserInput", params: { threadId: activeThreadId, turnId: "question-turn", itemId: "native-question",
+        isBlocking: currentTurnText !== "question-nonblocking", questions: [
+          { id: "first", header: "First", question: "Same wording", options: [{ label: "Same label", description: "First option" }, { label: "Same label", description: "Second option" }], isOther: true, isSecret: currentTurnText === "question-secret" },
+          { id: "second", header: "Second", question: "Same wording", options: null, isOther: false, isSecret: false },
+        ] } });
+      if (currentTurnText === "question-nonblocking") send({ method: "item/completed", params: { threadId: activeThreadId, item: { type: "agentMessage", id: "independent", text: "Independent work continued." } } });
+      return;
+    }
     if (currentTurnText.startsWith("suggestion-")) {
       send({ method: "turn/started", params: { threadId: activeThreadId, turn: { id: "prediction-source" } } });
       send({ method: "item/completed", params: { item: { type: "agentMessage", id: "answer", text: "Primary answer" } } });

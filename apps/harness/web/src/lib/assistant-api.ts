@@ -16,10 +16,12 @@ export type AssistantEvent = {
 };
 
 export type AssistantQuestion = {
+  id?: string;
+  allowText?: boolean;
   question: string;
   header: string;
   multiSelect: boolean;
-  options: Array<{ label: string; description: string; preview?: string }>;
+  options: Array<{ id?: string; label: string; description: string; preview?: string }>;
 };
 
 export type AssistantSession = {
