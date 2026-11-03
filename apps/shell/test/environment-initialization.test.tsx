@@ -151,7 +151,7 @@ it("shows row installation progress and a single installed-app list in Environme
   expect(apps.textContent).toContain("Player"); expect(apps.textContent).toContain("running · healthy");
 });
 
-it("registers only the first administrator, then replaces setup with Stop and exposes Open Core in the menu", async () => {
+it("keeps Get access after registration while clearing the spent setup link", async () => {
   fixture();
   const link = { token: "one-time-test-token", setupUrl: "http://child.test/setup?setupToken=one-time-test-token", expiresAt: new Date(Date.now() + 60000).toISOString() };
   transport.send.mockResolvedValue(Response.json(link));
@@ -159,25 +159,26 @@ it("registers only the first administrator, then replaces setup with Stop and ex
   await renderSandboxes(); await menu();
   expect(document.querySelector('a[href="http://child.test/login"]')).toBeNull();
   await act(async () => document.querySelector('[role="menu"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
-  await click("Sign Up");
-  expect(transport.send).toHaveBeenCalledExactlyOnceWith(`${origin}/api/core-environments/${id}/setup-link`, {});
+  await click("Get access");
+  expect(transport.send).toHaveBeenCalledExactlyOnceWith(`${origin}/api/core-environments/${id}/access-link`, {});
   expect(open).toHaveBeenCalledWith(link.setupUrl, "_blank", "noopener,noreferrer");
   expect(document.querySelector('input[type="password"]')).toBeNull();
   expect(sessionStorage.length).toBe(0); expect(localStorage.length).toBe(0);
   expect(document.querySelector('a[href*="setupToken="]')).not.toBeNull();
   const writeText = vi.fn().mockResolvedValue(undefined);
   vi.stubGlobal("navigator", { clipboard: { writeText } });
-  await click("Copy setup token"); expect(writeText).toHaveBeenLastCalledWith(link.token);
+  await click("Copy access token"); expect(writeText).toHaveBeenLastCalledWith(link.token);
   status.hasAdministrator = true; await focus();
   expect(document.body.textContent).not.toContain(link.token);
-  expect(document.body.textContent).not.toContain("Sign Up");
-  expect(button("Stop")).toBeDefined();
+  expect(button("Get access").disabled).toBe(false);
+  expect(button("Get access")).toBeDefined();
   await menu(); expect(document.querySelector('a[href="http://child.test/login"]')).not.toBeNull();
+  expect([...document.querySelectorAll('[role="menuitem"]')].some(node => node.textContent === "Stop")).toBe(true);
 });
 
 it("reports setup-link failures without showing Open Core or claiming registration", async () => {
   fixture(); transport.send.mockRejectedValue(new Error("Setup token could not be created"));
-  await renderSandboxes(); await click("Sign Up");
+  await renderSandboxes(); await click("Get access");
   expect(container.textContent).not.toContain("Setup token could not be created");
   expect((await problemTooltip()).textContent).toContain("Setup token could not be created");
   expect(document.querySelector('[role="dialog"]')).toBeNull();
@@ -197,11 +198,11 @@ it("shows failed initialization beside the name in a focusable tooltip and resum
   expect(transport.send).toHaveBeenCalledExactlyOnceWith(`${origin}/api/core-environments/${id}/initialization/resume`, {});
 });
 
-it("does not expose setup or Open Core for unknown or recovery-required administrator state", async () => {
+it("offers access for a recovery-required directory without claiming an existing login", async () => {
   fixture(); status.recoveryRequired = true;
   await renderSandboxes();
   expect(container.textContent).toContain("Administrator recovery required");
-  expect(container.textContent).not.toContain("Sign Up");
+  expect(button("Get access").disabled).toBe(false);
   await menu(); expect(document.body.textContent).not.toContain("Open Core");
 });
 
@@ -213,7 +214,7 @@ it("observes registration while collapsed and stops timed checks after readiness
     expect(reads()).toBe(1);
     status.hasAdministrator = true;
     await act(async () => vi.advanceTimersByTimeAsync(5000));
-    expect(reads()).toBe(2); expect(button("Stop")).toBeDefined();
+    expect(reads()).toBe(2); expect(button("Get access")).toBeDefined();
     await act(async () => vi.advanceTimersByTimeAsync(60_000));
     expect(reads()).toBe(2);
     await focus(); expect(reads()).toBe(3);
@@ -245,7 +246,7 @@ it("ignores a late setup-link response after the sandbox stops", async () => {
   let complete!: (response: Response) => void;
   transport.send.mockImplementation(() => new Promise<Response>(resolve => { complete = resolve; }));
   const open = vi.spyOn(window, "open").mockReturnValue(null);
-  await renderSandboxes(); await click("Sign Up");
+  await renderSandboxes(); await click("Get access");
   item = { ...item, state: "stopped", revision: 3 };
   await act(async () => transport.refresh());
   expect(button("Start")).toBeDefined();
@@ -270,8 +271,46 @@ it("pauses setup observation while hidden and refreshes on return without stale 
     vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
     await act(async () => document.dispatchEvent(new Event("visibilitychange")));
     status.hasAdministrator = true; transport.read.mockImplementation(original);
-    await focus(); expect(button("Stop")).toBeDefined();
+    await focus(); expect(button("Get access")).toBeDefined();
     await act(async () => complete(Response.json({ ...status, hasAdministrator: false })));
-    expect(container.textContent).not.toContain("Sign Up");
+    expect(button("Get access").disabled).toBe(false);
+  } finally { vi.useRealTimers(); }
+});
+
+
+it.each([true, false])("offers recovery after an administrator exists (initialized: %s)", async initialized => {
+  fixture(); item.initializationRequested = initialized; status.hasAdministrator = true;
+  const link = { token: "recovery-secret", recoveryUrl: "http://child.test/recovery?recoveryToken=recovery-secret", expiresAt: new Date(Date.now() + 60000).toISOString() };
+  transport.send.mockResolvedValue(Response.json(link));
+  const open = vi.spyOn(window, "open").mockReturnValue(null);
+  await renderSandboxes(); await click("Get access"); await focus();
+  expect(open).toHaveBeenCalledWith(link.recoveryUrl, "_blank", "noopener,noreferrer");
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Use a new email to create another administrator");
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("signs out its existing sessions");
+  expect(document.querySelector('a[href*="recoveryToken="]')).not.toBeNull();
+  expect(sessionStorage.length).toBe(0); expect(localStorage.length).toBe(0);
+  if (!initialized) expect(transport.read.mock.calls.some(([url]) => url.endsWith("/initialization"))).toBe(false);
+});
+
+it("rejects an access link for a different Core", async () => {
+  fixture(); status.hasAdministrator = true;
+  transport.send.mockResolvedValue(Response.json({ token: "wrong-instance", recoveryUrl: "https://core.test/recovery?recoveryToken=wrong-instance", expiresAt: new Date(Date.now() + 60000).toISOString() }));
+  const open = vi.spyOn(window, "open").mockReturnValue(null);
+  await renderSandboxes(); await click("Get access");
+  expect(open).not.toHaveBeenCalled(); expect(document.body.textContent).not.toContain("wrong-instance");
+  expect((await problemTooltip()).textContent).toContain("invalid or expired access link");
+});
+
+it("removes an expired recovery token even when initialization polling has stopped", async () => {
+  vi.useFakeTimers();
+  try {
+    fixture(); status.hasAdministrator = true;
+    transport.send.mockResolvedValue(Response.json({ token: "expiring-secret", recoveryUrl: "http://child.test/recovery?recoveryToken=expiring-secret", expiresAt: new Date(Date.now() + 1000).toISOString() }));
+    vi.spyOn(window, "open").mockReturnValue(null);
+    await renderSandboxes(); await click("Get access");
+    expect(document.body.textContent).toContain("expiring-secret");
+    await act(async () => vi.advanceTimersByTimeAsync(1001));
+    expect(document.body.textContent).not.toContain("expiring-secret");
+    expect(document.body.textContent).toContain("This link expired");
   } finally { vi.useRealTimers(); }
 });

@@ -59,6 +59,9 @@ internal static class CoreEnvironmentEndpoints
         routes.MapPost(root + "/{id}/setup-link", async (string id, HttpRequest request,
             UserDirectoryStore users, IClock clock, CoreEnvironmentAccess access, CancellationToken ct) =>
             await Admin(request, users, clock, false, actor => access.InitializationAsync<AuthBootstrapTokenResponse>(actor, id, "setup-link", ct), ct));
+        routes.MapPost(root + "/{id}/access-link", async (string id, HttpRequest request,
+            UserDirectoryStore users, IClock clock, CoreEnvironmentAccess access, CancellationToken ct) =>
+            await Admin(request, users, clock, false, actor => access.AccessLinkAsync(actor, id, ct), ct));
         routes.MapGet(root + "/{id}/apps", async (string id, HttpRequest request,
             UserDirectoryStore users, IClock clock, CoreEnvironmentAccess access, CancellationToken ct) =>
             await Admin(request, users, clock, true, actor => access.ApplicationsAsync(actor, id, ct), ct));
@@ -189,6 +192,7 @@ internal static class CoreEnvironmentEndpoints
     private static bool FullApi(PathString path) => path.Value?.EndsWith("/api", StringComparison.Ordinal) == true
         || path.Value?.EndsWith("/setup", StringComparison.Ordinal) == true
         || path.Value?.EndsWith("/setup-link", StringComparison.Ordinal) == true
+        || path.Value?.EndsWith("/access-link", StringComparison.Ordinal) == true
         || path.Value?.EndsWith("/initialization/resume", StringComparison.Ordinal) == true;
     internal static async Task<IResult> Handle<T>(Func<Task<T>> action)
     {

@@ -29,6 +29,33 @@ internal sealed class CoreEnvironmentAccess(CoreEnvironmentStore store, CoreEnvi
         }
         return await CoreEnvironmentInitialization.SendAsync<T>(record, store.Root(id), path, operation != "status", body, ct);
     }
+    public async Task<AuthBootstrapTokenResponse> AccessLinkAsync(SandboxActor actor, string id, CancellationToken ct)
+    {
+        using var stopping = CancellationTokenSource.CreateLinkedTokenSource(ct, service.Stopping);
+        ct = stopping.Token;
+        var gate = service.Gate(id); await gate.WaitAsync(ct);
+        try
+        {
+            var record = await service.RequireAsync(actor, id, ct);
+            await service.RequireConsentAsync(actor, record, false, ct);
+            RequireRunning(record); store.VerifyRoot(record);
+            // This observation also works for agent-created children without initialization intent.
+            var status = await CoreEnvironmentInitialization.SendAsync<Haas.Hosty.Initialization.InitializationStatus>(
+                record, store.Root(id), "core/initialization", false, null, ct);
+            var recovery = status.HasAdministrator || status.RecoveryRequired;
+            var link = await CoreEnvironmentInitialization.SendAsync<AuthBootstrapTokenResponse>(record, store.Root(id),
+                recovery ? "auth/recovery-token" : "auth/setup-token", true, null, ct);
+            // The manager owns the destination. Never navigate to a child-supplied public origin.
+            var origin = service.View(record).PreviewUrl;
+            var token = Uri.EscapeDataString(link.Token);
+            return link with
+            {
+                SetupUrl = recovery ? null : origin + "/setup?setupToken=" + token,
+                RecoveryUrl = recovery ? origin + "/recovery?recoveryToken=" + token : null,
+            };
+        }
+        finally { gate.Release(); }
+    }
     public async Task<CoreEnvironmentApiResponse> SetupAsync(SandboxActor actor, string id, CoreEnvironmentSetup input, CancellationToken ct)
     {
         using var stopping = CancellationTokenSource.CreateLinkedTokenSource(ct, service.Stopping);
