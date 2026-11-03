@@ -122,9 +122,17 @@ internal sealed partial class WorkspaceCleanupService
             if (journal is null)
             {
                 var owner = await inspection.WorkflowOwnerAsync(workspaceId, userId, ct);
-                journal = await workspaces.AdmitDeleteAsync(owner, userId, input.RequestId,
-                    await DeleteResourcesAsync(workspaceId, owner, ct), ct, expectedAllocations);
+                var resources = await DeleteResourcesAsync(workspaceId, owner, ct);
+                // Fencing this workspace can stop the agent carrying this very request. Keep
+                // caller cancellation through preflight, then let Core own admission and cleanup.
+                // The journal write and fence must share that lifetime too.
+                ct.ThrowIfCancellationRequested();
+                ct = hostLifetime?.ApplicationStopping ?? CancellationToken.None;
+                journal = await workspaces.AdmitDeleteAsync(owner, userId, input.RequestId, resources, ct, expectedAllocations);
             }
+            // A retained request has already crossed admission; recovery must also survive
+            // disconnects. Core shutdown still preserves its journal for the same-ID retry.
+            ct = hostLifetime?.ApplicationStopping ?? CancellationToken.None;
             if (!journal.Direct)
             {
                 // Legacy accepted requests retain their target set and child request IDs. Delete
@@ -242,8 +250,12 @@ internal sealed partial class WorkspaceCleanupService
                 batch = new(userId, command, ids.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)
                     .Select(id => new WorkspaceDeleteTarget(id, Guid.NewGuid().ToString("D"), Allocations: trees.Where(t => t.WorkspaceId == id)
                         .Select(DeleteAllocation).Order(StringComparer.Ordinal).ToArray())).ToArray());
+                ct.ThrowIfCancellationRequested();
                 await JsonStorage.WriteAsync(path, batch, restrictToOwner: true);
             }
+            // The frozen target set is accepted as one operation. Stopping the calling agent
+            // while removing one target must not abandon the remaining accepted targets.
+            ct = hostLifetime?.ApplicationStopping ?? CancellationToken.None;
             foreach (var target in batch.Targets.Where(t => t.State != "removed").ToArray())
             {
                 WorkspaceDeleteTarget result;

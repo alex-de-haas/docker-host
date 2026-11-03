@@ -17,3 +17,10 @@ describe("PR check evidence", () => {
     expect(checkSummary({ items: [], total: 0, completeness: "complete" })).toBe("No checks reported");
   });
 });
+
+it.each(["merged", "closed"])("labels cached %s inbox checks as last observed while keeping stale evidence neutral", state => {
+  const pr = { state, checks: { items: [{ id: "ci", name: "CI", state: "passed" }], total: 1, completeness: "complete" }, receipt: { freshness: "stale" } } as PrSummary;
+  expect(compactCi(pr)).toEqual({ label: "CI last observed", stale: true, color: "text-muted-foreground" });
+  expect(compactCi({ ...pr, state: "open" }).label).toBe("CI outdated");
+  expect(compactCi({ ...pr, receipt: { ...pr.receipt, freshness: "fresh" } })).toMatchObject({ label: "CI 1/1", stale: false, color: "text-success-foreground" });
+});

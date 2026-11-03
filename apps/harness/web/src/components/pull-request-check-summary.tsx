@@ -1,13 +1,13 @@
 import { checkCounts, type PrChecks } from "@/lib/pull-requests-api";
 import { cn } from "@/lib/utils";
 
-export function PullRequestCheckSummary({ checks, stale = false, actionLabel = "Show checks" }: { checks: PrChecks; stale?: boolean; actionLabel?: string }) {
+export function PullRequestCheckSummary({ checks, stale = false, retained = false, actionLabel = "Show checks" }: { checks: PrChecks; stale?: boolean; retained?: boolean; actionLabel?: string }) {
   const c = checkCounts(checks), unknown = checks.completeness === "unknown";
   const summary = unknown ? "unknown" : `${c.completed}/${c.total ?? "?"}${c.partial ? "+ observed" : ""}`;
   const outcomes = unknown ? "Check results unavailable" : [
     `${c.passed} passed`, `${c.pending + c.running} in progress`, `${c.skipped} skipped`,
     c.failed && `${c.failed} failed`, c.neutral && `${c.neutral} neutral`, c.cancelled && `${c.cancelled} cancelled`,
-    c.unknown && `${c.unknown} unknown`, c.partial && "partial results", stale && "outdated",
+    c.unknown && `${c.unknown} unknown`, c.partial && "partial results", stale && (retained ? "last observed" : "outdated"),
   ].filter(Boolean).join(" · ");
   return <span className="flex min-w-0 flex-1 flex-col gap-2">
     <span className="flex items-center justify-between gap-2 text-xs"><span>CI {summary}</span><span className="text-muted-foreground">{actionLabel}</span></span>

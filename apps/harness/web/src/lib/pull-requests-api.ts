@@ -1,4 +1,5 @@
 "use client";
+import { isTerminalPullRequest } from "./pull-request-presentation";
 import { appFetch } from "@hosty-sdk/app/browser-auth";
 
 export type PrReceipt = { schemaVersion: 1; revision: string; observedAt?: string; lastSuccessAt?: string; nextAttemptAt?: string;
@@ -57,7 +58,7 @@ export type PrCommandResult = { requestId: string; action: PrAction; state: "pen
 export function compactCi(pr: PrSummary) {
   const c = checkCounts(pr.checks);
   const stale = pr.receipt.freshness !== "fresh";
-  const label = stale ? "CI outdated" : pr.checks.completeness === "unknown" ? "CI unknown" :
+  const label = stale ? isTerminalPullRequest(pr.state) ? "CI last observed" : "CI outdated" : pr.checks.completeness === "unknown" ? "CI unknown" :
     c.total === 0 && !c.partial ? "No CI checks" : `CI ${c.completed}/${c.total ?? "?"}${c.partial ? "+" : ""}${c.failed ? ` · ${c.failed} failed` : c.pending + c.running ? ` · ${c.pending + c.running} running` : c.cancelled ? ` · ${c.cancelled} cancelled` : ""}`;
   const color = stale || c.partial || c.unknown || !c.total ? "text-muted-foreground" : c.failed || c.cancelled ? "text-destructive-foreground" :
     c.pending + c.running ? "text-info-foreground" : c.passed ? "text-success-foreground" : "text-muted-foreground";

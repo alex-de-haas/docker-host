@@ -11,7 +11,7 @@ internal sealed record WorkspacePreviews(CoreEnvironmentView[] Environments, Dic
 internal sealed partial class WorkspaceCleanupService(CoreDataPaths paths, WorkspaceInspectionService inspection,
     DevelopmentWorkspaceService workspaces, PublicationService publications, AppRegistryStore apps,
     CoreEnvironmentStore environments, CoreEnvironmentService environmentService, CoreEnvironmentAccess access,
-    CoreLifecycleService? lifecycle = null)
+    CoreLifecycleService? lifecycle = null, IHostApplicationLifetime? hostLifetime = null)
 {
     private readonly ConcurrentDictionary<string, SemaphoreSlim> gates = new(StringComparer.Ordinal);
     internal static bool Belongs(SandboxActor actor, SandboxContext? context, WorkspaceOwner owner, string workspaceId)

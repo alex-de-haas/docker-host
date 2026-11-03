@@ -1,6 +1,6 @@
 ---
 created: 2026-10-29
-updated: 2026-11-02
+updated: 2026-11-03
 summary: Harness PR page, compact panel and manual actions backed by installed-app discovery, shared CI presentation and adaptive GitHub observation.
 components: [apps/core, apps/harness]
 ---
@@ -182,6 +182,11 @@ to push CI to the opposite edge. Long repository/identity text still truncates t
 App names are retained in inventory/filter context rather than repeated on each row. The detail
 view and expanded workspace card share the segmented CI bar; the inbox bar opens its Checks tab.
 CI text separates passed, failed, running, pending, skipped, neutral, cancelled and unknown states.
+Old check observations on merged or closed PRs are labelled **CI last observed**, including retained
+workspace cards, inbox rows and expanded check details. Their observation time and actual outcomes
+remain visible with neutral cached styling; age alone does not add an Outdated warning or request
+refresh for a finished PR. Open PRs retain the stale-data warning. Missing or unavailable evidence
+never implies passing CI.
 Completed counts do not imply all checks passed. Expanded detail pagination is retained during live
 revalidation, and the diff retains the selected file. An exact head/base diff is not fetched again
 for unrelated CI or review observation hints; changing either revision fetches the new comparison. Keyboard selection and the narrow-screen
