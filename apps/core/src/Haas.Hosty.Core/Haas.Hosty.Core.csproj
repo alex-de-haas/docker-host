@@ -22,6 +22,8 @@
   <ItemGroup>
     <Compile Include="../../../../shared/*.cs" Link="%(Filename)%(Extension)" />
     <EmbeddedResource Include="Browser/*" />
+    <EmbeddedResource Include="../../../../assets/hosty-brand/svg/hosty-favicon*.svg" LogicalName="Haas.Hosty.Core.Browser.%(Filename)%(Extension)" />
+    <EmbeddedResource Include="../../../../assets/hosty-brand/favicon.ico" LogicalName="Haas.Hosty.Core.Browser.favicon.ico" />
     <EmbeddedResource Include="../../../../skills/hosty-platform/**/*" LogicalName="Hosty.AgentSkills/hosty-platform/%(RecursiveDir)%(Filename)%(Extension)" />
     <EmbeddedResource Include="../../../../skills/hosty-app-skill/**/*" LogicalName="Hosty.AgentSkills/hosty-app-skill/%(RecursiveDir)%(Filename)%(Extension)" />
     <EmbeddedResource Include="AppBootstrap/*" LogicalName="Hosty.AppBootstrap.%(Filename)%(Extension)" />

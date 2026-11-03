@@ -32,7 +32,7 @@ internal static class CoreAccountEndpoints
         var request = context.Request;
         context.Response.Headers.CacheControl = "no-store";
         context.Response.Headers["Content-Security-Policy"] =
-            "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'none'";
+            "default-src 'none'; img-src 'self'; script-src 'self'; style-src 'unsafe-inline'; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'none'";
         context.Response.Headers["X-Frame-Options"] = "DENY";
         context.Response.Headers["X-Content-Type-Options"] = "nosniff";
         context.Response.Headers["Referrer-Policy"] = "same-origin";

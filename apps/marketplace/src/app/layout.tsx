@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { launchModeBootstrapScript, chromeBootstrapScript } from "@hosty-sdk/app";
 import { HostLaunchBridge, HostThemeBridge } from "@hosty-sdk/app/react";
 import { themeBootstrapScript } from "@hosty-sdk/app/theme";
+import { ThemeFavicon } from "../../../../shared/web/theme-favicon";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -22,6 +23,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <script dangerouslySetInnerHTML={{ __html: themeBootstrapScript }} />
       </head>
       <body>
+        <ThemeFavicon />
         <HostThemeBridge />
         <HostLaunchBridge />
         {children}

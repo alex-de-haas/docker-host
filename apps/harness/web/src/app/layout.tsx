@@ -3,6 +3,7 @@ import { launchModeBootstrapScript, chromeBootstrapScript } from "@hosty-sdk/app
 import { HostyNextOverlay as HostyOverlay } from "@hosty-sdk/app/next";
 import { HostLaunchBridge, HostThemeBridge } from "@hosty-sdk/app/react";
 import { themeBootstrapScript } from "@hosty-sdk/app/theme";
+import { ThemeFavicon } from "../../../../../shared/web/theme-favicon";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -37,6 +38,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <script dangerouslySetInnerHTML={{ __html: themeBootstrapScript }} />
       </head>
       <body className="bg-background text-foreground antialiased">
+        <ThemeFavicon />
         {/*
           The bridges own what a paint-blocking script must not do: persisting what a shell declared
           for the rest of the tab, and cleaning its parameters out of the URL — a `replaceState` is
