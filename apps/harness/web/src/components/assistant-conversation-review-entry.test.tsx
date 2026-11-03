@@ -10,7 +10,8 @@ const controls = vi.hoisted(() => ({ workspaces: [] as DevelopmentWorkspace[], l
 vi.mock("@hosty-sdk/app/ui/react", () => ({ useHostyUi: () => controls.ui }));
 vi.mock("@/lib/assistant-api", async original => ({ ...await original<object>(), getHealth: vi.fn(), listSessions: vi.fn(), getSession: vi.fn(), createSession: vi.fn(), listAppNames: vi.fn(), listAgentConnections: vi.fn(), streamEvents: vi.fn(), postMessage: vi.fn() }));
 vi.mock("@/lib/development-api", async original => ({ ...await original<object>(), useDevelopmentInventory: (enabled: boolean) => { controls.inventoryEnabled.push(enabled); return { workspaces: controls.workspaces, loading: controls.loading, error: controls.error, refresh: vi.fn() }; } }));
-vi.mock("./workspace-details", () => ({ WorkspaceDetails: ({ workspace, onReview }: { workspace: DevelopmentWorkspace; onReview: (tree: Worktree, choice?: ReviewChoice) => void }) => <div>
+vi.mock("./workspace-details", () => ({ WorkspaceDetails: ({ workspace, onReview, onSessionPicked }: { workspace: DevelopmentWorkspace; onSessionPicked: (id: string) => void; onReview: (tree: Worktree, choice?: ReviewChoice) => void }) => <div>
+  {workspace.participation?.sessions.filter(s => s.attached && s.canOpen).map(s => <button key={s.sessionId} data-workspace-session onClick={() => onSessionPicked(s.sessionId)}>{s.title}</button>)}
   <button onClick={() => onReview(workspace.worktrees[0], { view: `pr:${workspace.worktrees[0].pullRequests[0].url}`, path: "" })}>Review PR in {workspace.id}</button>
   <button onClick={() => onReview(workspace.worktrees[0])}>Resume review in {workspace.id}</button>
   <textarea aria-label={`Workspace draft ${workspace.id}`} defaultValue="workspace form" />
@@ -199,7 +200,7 @@ it("disables Ask from an already open review when its workspace closes", async (
   expect(messageField()?.value).toBe("Keep this draft");
 });
 
-it("switches workspace tabs with independent drafts and excludes other users' chats", async () => {
+it("switches sidebar sessions with independent drafts and excludes other users' chats", async () => {
   const records = [{ id: "session-one", title: "Implementation", status: "idle", createdAt: "2026-10-25" }, { id: "session-two", title: "Review", status: "idle", createdAt: "2026-10-25" }, { id: "solo", title: "Standalone", status: "idle", createdAt: "2026-10-25" }];
   vi.mocked(api.listSessions).mockResolvedValue(records);
   vi.mocked(api.getSession).mockImplementation(async id => records.find(r => r.id === id)!);
@@ -210,21 +211,23 @@ it("switches workspace tabs with independent drafts and excludes other users' ch
   ] };
   controls.workspaces = [shared, workspace("external", "external")];
   await act(async () => root.render(<AssistantConversation fullPage />));
-  const tabs = () => [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
-  expect(tabs().map(t => t.textContent)).toEqual(["Implementation", "Review"]);
+  const sessionRows = () => [...container.querySelectorAll<HTMLButtonElement>('[data-workspace-session]')];
+  expect(sessionRows().map(t => t.textContent)).toEqual(["Implementation", "Review"]);
+  expect(container.querySelector('[role="tablist"]')).toBeNull();
+  expect(container.querySelector('main header [aria-label="Workspace details"]')).not.toBeNull();
   expect(container.querySelectorAll('nav button[aria-current="page"]')).toHaveLength(1);
   const input = () => container.querySelector<HTMLTextAreaElement>('[aria-label="Message"]')!;
   const draft = async (text: string) => act(async () => { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(input(), text); input().dispatchEvent(new Event("input", { bubbles: true })); });
   await draft("Implementation draft");
-  await act(async () => tabs()[1].click()); await draft("Review draft");
+  await act(async () => sessionRows()[1].click()); await draft("Review draft");
   expect(window.location.search).toBe("?session=session-two");
-  await act(async () => tabs()[0].click()); expect(input().value).toBe("Implementation draft");
+  await act(async () => sessionRows()[0].click()); expect(input().value).toBe("Implementation draft");
   await act(async () => button("external").click());
-  expect(container.querySelector('[aria-label="Message composer"]')).toBeNull(); expect(tabs()).toHaveLength(0);
+  expect(container.querySelector('[aria-label="Message composer"]')).toBeNull(); expect(sessionRows()).toHaveLength(0);
   expect(window.location.search).toBe("?workspace=external");
   await act(async () => [...container.querySelectorAll<HTMLButtonElement>("nav button")].find(b => b.textContent?.startsWith("shared"))!.click());
   expect(input().value).toBe("Implementation draft");
-  await act(async () => tabs()[1].click()); expect(input().value).toBe("Review draft");
+  await act(async () => sessionRows()[1].click()); expect(input().value).toBe("Review draft");
   expect([...container.querySelectorAll('nav[aria-label="Workspaces"] button')].some(node => node.textContent === "Standalone")).toBe(false);
   expect(api.createSession).not.toHaveBeenCalled(); expect(api.postMessage).not.toHaveBeenCalled();
 });
@@ -240,12 +243,12 @@ it.each(["external", "empty"])("restores a %s workspace route without creating o
   expect(controls.ui.reportSurfaceState).toHaveBeenCalledWith(expect.objectContaining({ route: `/development?workspace=${kind}`, state: "ready" }));
 });
 
-it("opens workspace details from the center tabs on narrow layouts without an extra page header", async () => {
+it("keeps workspace details reachable without session tabs on narrow layouts", async () => {
   vi.stubGlobal("matchMedia", (query: string) => ({ matches: query.includes("max-width: 899px"), addEventListener() {}, removeEventListener() {} }));
   window.history.replaceState({}, "", "/development?workspace=external-workspace");
   await act(async () => root.render(<AssistantConversation fullPage />));
   expect(container.querySelector(".harness-conversation > header")).toBeNull();
-  const opener = container.querySelector<HTMLButtonElement>('[aria-label="Workspace navigation"] [aria-label="Workspace details"]')!;
+  const opener = container.querySelector<HTMLButtonElement>('main [aria-label="Workspace details"]')!;
   expect(opener).not.toBeNull();
   const field = container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Workspace draft external-workspace"]')!;
   field.value = "Keep workspace edits";

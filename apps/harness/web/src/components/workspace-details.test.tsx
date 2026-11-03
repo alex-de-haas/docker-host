@@ -2,12 +2,15 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { selectedContextApps } from "@/lib/assistant-api";
 import { WorkspaceDetails } from "./workspace-details";
 import { developmentRequest, DevelopmentRequestError, type DevelopmentWorkspace } from "@/lib/development-api";
+vi.mock("@/lib/assistant-api", async original => ({ ...await original<object>(), selectedContextApps: vi.fn() }));
 vi.mock("@/lib/development-api", async original => ({ ...await original<object>(), developmentRequest: vi.fn() }));
 vi.mock("@/lib/workspace-applications", async original => ({ ...await original<object>(), useWorkspaceApplications: () => ({ applications: [], loading: false, error: "", refresh: () => {} }) }));
 let root: Root, container: HTMLDivElement;
 beforeEach(() => {
+  vi.mocked(selectedContextApps).mockResolvedValue([]);
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   Element.prototype.scrollIntoView = vi.fn();
   Element.prototype.hasPointerCapture = vi.fn(() => false); localStorage.clear();
@@ -33,12 +36,17 @@ function replies(w: DevelopmentWorkspace) {
   });
 }
 async function expandCards() { for (const button of container.querySelectorAll<HTMLButtonElement>('[data-slot="pull-request-card"] > button')) if (button.getAttribute("aria-expanded") !== "true") await act(async () => button.click()); }
+async function expandRepositories() { for (const button of container.querySelectorAll<HTMLButtonElement>('[data-slot="repository-card"] > button')) if (button.getAttribute("aria-expanded") !== "true") await act(async () => button.click()); }
 it("shows each repository and honestly missing CI; opens a repository-specific diff with a confirmed empty preview inventory", async () => {
   const w = workspace(); replies(w);
   await act(async () => root.render(<WorkspaceDetails workspace={w} title="Multi-repo change" refresh={() => {}} />));
   expect(container.querySelector('[aria-label^="Expand one #1"]')).not.toBeNull(); expect(container.querySelector('[aria-label^="Expand two #1"]')).not.toBeNull(); expect(container.textContent).toContain("CI unknown");
+  expect(container.querySelector('[aria-label="Workspace changes"] h3')?.textContent).toBe("Changes");
+  expect(container.querySelectorAll('[aria-label="Workspace changes"] [data-slot="repository-card"]')).toHaveLength(2);
   expect(container.querySelector('[aria-label="Sandbox previews"]')).toBeNull();
-  const changes = [...container.querySelectorAll("button")].filter(b => b.textContent?.startsWith("Workspace changes"));
+  expect(container.querySelector('[aria-label="Created from an external session"]')).toBeNull();
+  await expandRepositories();
+  const changes = [...container.querySelectorAll("button")].filter(b => b.textContent === "View Changes");
   expect(changes).toHaveLength(2);
   await act(async () => changes[1].click());
   expect(developmentRequest).toHaveBeenCalledWith(expect.stringContaining("/workspace/worktrees/two/diff?"), undefined, expect.any(AbortSignal));
@@ -84,13 +92,23 @@ it("keeps each PR's repository, head evidence, failed checks and review threads 
   expect(container.textContent).toContain("CI unknown");
 });
 
-it("labels external ownership and per-repository observation age without implying agent activity", async () => {
+it("explains external session origin in a header tooltip without implying agent activity", async () => {
   const w = workspace(); w.owner = { kind: "external", label: "External QA", reference: "task" };
   w.worktrees[0].observation!.at = "2020-01-01T00:00:00Z";
   w.worktrees[1].observation = undefined; replies(w);
   await act(async () => root.render(<WorkspaceDetails workspace={w} title="External QA" refresh={() => {}} />));
-  expect(container.textContent).toContain("External work: External QA");
-  expect(container.textContent).toContain("The external conversation and its agent activity are not synchronized.");
+  expect(container.textContent).not.toContain("External work:");
+  expect(container.textContent).not.toContain("not synchronized");
+  const origin = container.querySelector<HTMLButtonElement>('[aria-label="Created from an external session"]')!;
+  expect(origin.parentElement?.textContent).toContain("in progress");
+  await act(async () => origin.focus());
+  const tooltip = document.querySelector('[role="tooltip"]');
+  expect(tooltip?.textContent).toContain("Created from an external session using External QA.");
+  expect(tooltip?.textContent).toContain("Its conversation and agent activity are not synchronized here.");
+  expect(tooltip?.textContent).toContain("Harness sessions can also use this workspace.");
+  expect(container.textContent).not.toContain("An agent is running.");
+  await act(async () => origin.blur());
+  await expandRepositories();
   expect(container.querySelector("time")?.dateTime).toBe("2020-01-01T00:00:00Z");
   await expandCards(); expect(container.textContent).toContain("Outdated");
   expect(container.textContent).toContain("Observation unavailable");
@@ -104,7 +122,8 @@ it("retains each repository's file and scope after closing its diff", async () =
   }
   replies(w);
   await act(async () => root.render(<WorkspaceDetails workspace={w} title="Remember diff" refresh={() => {}} />));
-  const changes = [...container.querySelectorAll("button")].filter(b => b.textContent?.startsWith("Workspace changes"));
+  await expandRepositories();
+  const changes = [...container.querySelectorAll("button")].filter(b => b.textContent === "View Changes");
   await act(async () => changes[0].click());
   await act(async () => [...document.querySelectorAll('[aria-label="Changed files"] button')].find(b => b.textContent?.startsWith("details.txt"))!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
   await act(async () => {
@@ -368,7 +387,7 @@ it("keeps bound app icons and collapsed consumer diagnostics without obsolete ma
   const render = (appMetadata = metadata) => act(async () => root.render(<WorkspaceDetails workspace={w} title="Manifest icons" appMetadata={appMetadata} refresh={vi.fn()} />));
   await render();
   const images = [...container.querySelectorAll<HTMLImageElement>("img")];
-  expect(images).toHaveLength(2);
+  expect(images).toHaveLength(1);
   expect(images.every(image => image.src === `http://${window.location.hostname}:7070/api/apps/hosty.shell/assets/assets/custom.svg?v=1`)).toBe(true);
   expect(container.querySelector('a[href="https://core.test/manage/shell"]')).toBeNull();
   expect(container.textContent).not.toContain("Manage application");
@@ -646,4 +665,45 @@ it.each(["clean", "dirty", "working", "paused", "completed", "failed"])("offers 
   expect(entries[0]!.textContent).toBe("Delete workspace…");
   expect(entries[0]!.getAttribute("aria-disabled")).not.toBe("true");
   expect(entries[0]!.getAttribute("data-variant")).toBe("destructive");
+});
+
+
+it("keeps a collapsed repository summary unchanged on expansion and independent of observation updates", async () => {
+  const w = workspace(); w.worktrees[0].apps = [{ appId: "media", name: "Media Server" }];
+  w.worktrees[0].branch = "hidden-branch"; w.worktrees[0].targetBranch = "hidden-target";
+  w.worktrees[0].observation = { ...w.worktrees[0].observation!, ahead: 4, behind: 7 };
+  replies(w);
+  const render = () => act(async () => root.render(<WorkspaceDetails workspace={{ ...w }} title="Summary" refresh={vi.fn()} />));
+  await render();
+  const buttons = [...container.querySelectorAll<HTMLButtonElement>('[data-slot="repository-card"] > button')];
+  expect(buttons.every(button => button.getAttribute("aria-expanded") === "false")).toBe(true);
+  expect(container.textContent).not.toContain("View Changes");
+  expect(buttons[0].textContent).toBe("one+3−2(1 file)");
+  expect(buttons[0].querySelector('[aria-label="Bound applications"]')).toBeNull();
+  expect(container.querySelector('[data-slot="repository-card"]')?.textContent).not.toMatch(/hidden-branch|hidden-target/);
+  const header = buttons[0].innerHTML;
+  await act(async () => buttons[0].click());
+  expect(buttons[0].innerHTML).toBe(header);
+  expect(container.querySelectorAll('[data-slot="repository-card"] button')).toHaveLength(3);
+  const repository = container.querySelector('[data-slot="repository-card"]')!;
+  expect(repository.textContent).toContain("hidden-branch→hidden-target");
+  expect(repository.querySelector('[title="hidden-branch"]')?.className).toContain("truncate");
+  expect(repository.textContent).not.toMatch(/4 ahead|7 behind|Media Server/);
+  w.worktrees[0] = { ...w.worktrees[0], sessionChanges: [] }; replies(w); await render();
+  expect(buttons[0].getAttribute("aria-expanded")).toBe("true");
+  expect(buttons[1].getAttribute("aria-expanded")).toBe("false");
+  expect(buttons[0].textContent).toBe("one+0−0(0 files)");
+});
+
+it("resolves icons for Used by without chats and omits them from repository cards", async () => {
+  const w = workspace(); w.owner = { kind: "external", label: "Codex", reference: "external" };
+  w.worktrees[0].apps = [{ appId: "media", name: "Media Server" }];
+  vi.mocked(selectedContextApps).mockResolvedValue([{ id: "media", displayName: "Media Server", available: true, iconUrl: "https://core.test/api/apps/media/assets/icon.svg" }]);
+  replies(w);
+  await act(async () => root.render(<WorkspaceDetails workspace={w} title="External" refresh={vi.fn()} />));
+  expect(selectedContextApps).toHaveBeenCalledWith(["media"], expect.any(AbortSignal));
+  expect(container.querySelector('[data-slot="repository-card"] img')).toBeNull();
+  expect(container.querySelector('[aria-label="Workspace applications"] img')?.getAttribute("src")).toBe("https://core.test/api/apps/media/assets/icon.svg");
+  await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Refresh workspace"]')!.click());
+  expect(selectedContextApps).toHaveBeenCalledTimes(2);
 });

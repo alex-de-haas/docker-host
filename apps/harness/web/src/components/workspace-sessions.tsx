@@ -1,90 +1,62 @@
 "use client";
-import { useId, useRef, useState } from "react";
+import { useRef, useState } from "react";
+import { MoreHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogBody, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
-import { listSessions, type AssistantSession } from "@/lib/assistant-api";
-import { workflowIsActive, type DevelopmentWorkspace } from "@/lib/development-api";
-
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { WorkspaceSessionControls } from "./workspace-session-controls";
+import { WorkspaceSectionHeading } from "./workspace-section-heading";
+import type { AssistantSession } from "@/lib/assistant-api";
+import type { DevelopmentWorkspace } from "@/lib/development-api";
 import { useWorkspaceSessionActions, type WorkspaceSessionActions } from "@/lib/use-workspace-session-actions";
-type Props = { actions?: WorkspaceSessionActions; workspace: DevelopmentWorkspace; sessionId?: string; running?: boolean; refresh: () => void; onSelect?: (session: AssistantSession) => void };
-export function WorkspaceSessions(props: Props) {
-  return <WorkspaceSessionsContent key={`${props.workspace.participation?.viewerUserId ?? "legacy"}:${props.workspace.id}`} {...props} />;
-}
-function WorkspaceSessionsContent({ workspace, sessionId, running, refresh, onSelect, actions }: Props) {
-  const participation = workspace.participation!;
-  const [error, setError] = useState("");
-  const [joining, setJoining] = useState(false);
-  const [sessions, setSessions] = useState<AssistantSession[]>([]);
-  const [selectedSession, setSelectedSession] = useState("");
-  const [loading, setLoading] = useState(false);
-  const loadRequest = useRef(0);
-  const selectId = useId();
+
+type Props = { actions?: WorkspaceSessionActions; workspace: DevelopmentWorkspace; sessionId?: string; running?: boolean; refresh: () => void; onSelect?: (session: AssistantSession) => void; onPick?: (sessionId: string) => void; onDelete?: (sessionId: string) => Promise<void> };
+export function WorkspaceSessions({ workspace, sessionId, running, refresh, onSelect, actions, onPick, onDelete }: Props) {
+  const participation = workspace.participation;
+  const [deleting, setDeleting] = useState<{ sessionId: string; title: string } | null>(null);
+  const [removing, setRemoving] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+  const removalPending = useRef(false);
+  const section = useRef<HTMLElement>(null);
   const localActions = useWorkspaceSessionActions(actions ? undefined : workspace, refresh, onSelect);
-  const { busy, retry, pending, run, command, error: actionError } = actions ?? localActions;
-  const active = workflowIsActive(workspace.workflow);
-  const mine = participation.sessions.some(s => s.attached && s.canOpen && s.sessionId === sessionId);
-  const candidates = sessions.filter(s => !["running", "awaiting_approval", "awaiting_question"].includes(s.status)
-    && !participation.sessions.some(b => b.attached && b.canOpen && b.sessionId === s.id));
-  const loadSessions = async () => {
-    const request = ++loadRequest.current;
-    setLoading(true); setError(""); setSessions([]); setSelectedSession("");
-    try {
-      const records = await listSessions();
-      if (request === loadRequest.current) setSessions(records);
-    } catch (cause) {
-      if (request === loadRequest.current) setError(cause instanceof Error ? cause.message : String(cause));
-    } finally { if (request === loadRequest.current) setLoading(false); }
-  };
-  const changeJoining = (open: boolean) => {
-    if (busy) return;
-    setJoining(open);
-    if (open) void loadSessions();
-    else { loadRequest.current++; setError(""); }
-  };
-  const attach = async () => {
-    const succeeded = retry && pending ? await run(pending) : await command("attach", {}, selectedSession);
-    if (succeeded) setJoining(false);
-  };
-  return <Dialog open={joining} onOpenChange={changeJoining}><section aria-label="Workspace sessions" className="space-y-3 rounded-md border p-3 text-xs">
-    <div className="flex items-center justify-between gap-2"><h3 className="font-semibold">Participants</h3><span className="text-muted-foreground">{participation.role}</span></div>
-    <p className="text-muted-foreground">Sessions share these files and can run in parallel. Applications and users with workspace permission can access this source; conversations and approvals stay private. Concurrent edits require coordination.</p>
-    <ul className="space-y-2">{participation.sessions.filter(s => s.attached).map(s => <li key={`${s.appId}:${s.userId}:${s.sessionId}`} className="flex items-start justify-between gap-2">
-      <div className="min-w-0"><div className="truncate">{s.title}{s.sessionId === sessionId && s.canOpen ? " · this session" : ""}</div>
-        <div className="text-muted-foreground">{participation.members.find(m => m.userId === s.userId)?.name ?? "Participant"} · {s.status.replaceAll("_", " ")}{s.status === "unknown" ? " (not confirmed)" : ""}</div></div>
-      {!s.canOpen && <span className="shrink-0 text-muted-foreground">Private chat</span>}
-    </li>)}</ul>
-    {!participation.sessions.some(s => s.attached) && <p className="text-muted-foreground">No sessions attached. Source is retained.</p>}
-    <div className="flex flex-wrap gap-2">
-      <DialogTrigger asChild><Button size="sm" variant="ghost" disabled={busy || retry || !active}>Attach session</Button></DialogTrigger>
-      {mine && <Button size="sm" variant="ghost" disabled={busy || retry || running} onClick={() => void command("detach", {}, sessionId)}>Detach this session</Button>}
-    </div>
-    <DialogContent showCloseButton={!busy}>
-      <DialogHeader>
-        <DialogTitle>Attach session</DialogTitle>
-        <DialogDescription>Choose an idle session to attach to this workspace. Its conversation is retained; the agent starts with a fresh context on its next message.</DialogDescription>
-      </DialogHeader>
-      <DialogBody>
-        <FieldGroup><Field data-disabled={loading || busy || retry || !candidates.length}>
-          <FieldLabel htmlFor={selectId}>Session</FieldLabel>
-          <Select value={selectedSession} onValueChange={setSelectedSession} disabled={loading || busy || retry || !candidates.length}>
-            <SelectTrigger id={selectId} className="w-full"><SelectValue placeholder="Choose your session" /></SelectTrigger>
-            <SelectContent><SelectGroup>{candidates.map(s => <SelectItem key={s.id} value={s.id}>{s.title || "Untitled session"}</SelectItem>)}</SelectGroup></SelectContent>
-          </Select>
-          {loading && <p role="status" className="text-sm text-muted-foreground">Loading sessions…</p>}
-          {!loading && !error && !candidates.length && <p className="text-sm text-muted-foreground">No available sessions. Create a new session or stop an active one before attaching it.</p>}
-          {(error || actionError) && <FieldError>{error || actionError}</FieldError>}
-          {error && <Button variant="outline" disabled={loading || busy} onClick={() => void loadSessions()}>Reload sessions</Button>}
-        </Field></FieldGroup>
-      </DialogBody>
-      <DialogFooter>
-        <Button variant="outline" disabled={busy} onClick={() => changeJoining(false)}>Cancel</Button>
-        {retry && pending ? <Button disabled={busy} onClick={() => void attach()}>{busy ? "Attaching…" : "Retry same request"}</Button>
-          : <Button disabled={loading || busy || !active || !candidates.some(s => s.id === selectedSession)} onClick={() => void attach()}>{busy ? "Attaching…" : "Attach session"}</Button>}
-      </DialogFooter>
-    </DialogContent>
-    {!joining && actionError && <p role="alert" className="text-destructive-foreground">{actionError}</p>}
-    {!joining && retry && !busy && pending && <Button size="sm" variant="outline" onClick={() => void run(pending!)}>Retry same request</Button>}
-  </section></Dialog>;
+  const sessionActions = actions ?? localActions;
+  const { busy, retry, pending, run, command, error } = sessionActions;
+  const sessions = participation?.sessions.filter(s => s.attached) ?? [];
+  return <section ref={section} aria-label="Workspace sessions" data-workspace-section className="space-y-3 text-xs">
+    <WorkspaceSectionHeading actions={participation && <WorkspaceSessionControls key={`${participation.viewerUserId}:${workspace.id}`} workspace={workspace} actions={sessionActions} disabled={removing} />} informationLabel="About workspace sessions" information="Attached chats share workspace files. Names identify their owners; conversations and approvals remain private. Agents can run in parallel, so coordinate edits.">Sessions</WorkspaceSectionHeading>
+    {sessions.length ? <ul className="space-y-1">{sessions.map(s => {
+      const selected = s.canOpen && s.sessionId === sessionId;
+      const inactive = ["idle", "failed"].includes(s.status) && !(selected && running);
+      const description = <><span className="block truncate">{s.title || "Untitled session"}</span>
+        <span className="block truncate text-muted-foreground">{participation?.members.find(m => m.userId === s.userId)?.name ?? "Participant"} · {s.status.replaceAll("_", " ")}{s.status === "unknown" ? " (not confirmed)" : ""}</span></>;
+      return <li key={`${s.appId}:${s.userId}:${s.sessionId}`} className={`flex items-center gap-1 rounded-md pr-1 ${selected ? "bg-accent" : ""}`}>
+        {s.canOpen ? <Button type="button" variant="ghost" className="h-auto min-w-0 flex-1 justify-start px-2 py-2 text-left text-xs font-normal" aria-label={`Open session ${s.title || "Untitled session"}`} aria-current={selected ? "page" : undefined} disabled={!onPick || removing} onClick={() => onPick?.(s.sessionId)}><span className="min-w-0 flex-1">{description}</span></Button>
+          : <div className="min-w-0 flex-1 px-2 py-2">{description}</div>}
+        {s.canOpen ? <DropdownMenu>
+          <DropdownMenuTrigger asChild><Button type="button" variant="ghost" size="icon-sm" className="size-6 shrink-0 text-muted-foreground" disabled={busy || retry || removing} aria-label={`Session actions for ${s.title}`}><MoreHorizontal className="size-3.5" aria-hidden /></Button></DropdownMenuTrigger>
+          <DropdownMenuContent align="end" onCloseAutoFocus={event => { if (deleting) event.preventDefault(); }}>
+            <DropdownMenuItem disabled={busy || retry || removing || !inactive} onSelect={() => void command("detach", {}, s.sessionId)}>Detach session</DropdownMenuItem>
+            {onDelete && <DropdownMenuItem variant="destructive" disabled={busy || retry || removing || !inactive} onSelect={() => { setDeleteError(""); setDeleting({ sessionId: s.sessionId, title: s.title || "Untitled session" }); }}>Delete session…</DropdownMenuItem>}
+          </DropdownMenuContent>
+        </DropdownMenu> : <span className="shrink-0 text-muted-foreground">Private chat</span>}
+      </li>;
+    })}</ul> : <p className="text-muted-foreground">No sessions.</p>}
+    <Dialog open={deleting !== null} onOpenChange={open => { if (!open && !removalPending.current) setDeleting(null); }}>
+      <DialogContent showCloseButton={!removing} onCloseAutoFocus={event => { event.preventDefault(); section.current?.querySelector<HTMLButtonElement>("button")?.focus(); }}>
+        <DialogHeader><DialogTitle>Delete session?</DialogTitle><DialogDescription>Delete “{deleting?.title}” and its conversation history? This cannot be undone. The session is detached; workspace files and other conversations are retained.</DialogDescription></DialogHeader>
+        {deleteError && <p role="alert" className="text-sm text-destructive-foreground">{deleteError}</p>}
+        <DialogFooter><Button variant="outline" disabled={removing} onClick={() => setDeleting(null)}>Keep session</Button>
+          <Button variant="destructive" disabled={removing || busy || retry} onClick={async () => {
+            if (!deleting || !onDelete || removalPending.current) return;
+            removalPending.current = true; setRemoving(true); setDeleteError("");
+            try { await onDelete(deleting.sessionId); setDeleting(null); }
+            catch (cause) { setDeleteError(cause instanceof Error ? cause.message : String(cause)); }
+            finally { removalPending.current = false; setRemoving(false); refresh(); }
+          }}>{removing ? "Deleting…" : "Delete session"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+    {error && <p role="alert" className="text-destructive-foreground">{error}</p>}
+    {retry && !busy && pending && <Button size="sm" variant="outline" onClick={() => void run(pending)}>Retry same request</Button>}
+  </section>;
 }

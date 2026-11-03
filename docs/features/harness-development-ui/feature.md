@@ -1,6 +1,6 @@
 ---
 created: 2026-10-16
-updated: 2026-11-02
+updated: 2026-11-03
 summary: Harness provides separate Chats and Workspaces pages, multi-repository details, environment previews and verified lifecycle actions.
 components: [apps/harness, apps/core, apps/shell, packages/app-sdk]
 ---
@@ -82,10 +82,15 @@ retained UUID in either case. Late results cannot clear another request's draft 
 
 ## Shared Workspace Sessions
 
-[Workspace participation](../workspace-sessions/feature.md) provides session tabs with a creation plus, idle-session
-attachment/detachment, activity and owner-only source sharing in workspace details. Other users'
-conversations have no private links. Creating or attaching a session sends no provider message.
-Source details label their diff Workspace changes. Existing drafts and approvals remain scoped to
+[Workspace participation](../workspace-sessions/feature.md) provides the Sessions navigator in
+workspace details, with plus and attachment icons for new or unattached idle chats. The section
+always appears, showing No sessions when empty. Own chats are selectable, with the current chat
+highlighted. Each row shows its title, owner and activity, with Detach session and Delete session in
+its three-dot menu. Deletion requires confirmation and uses the existing conversation deletion path,
+which detaches the chat while retaining shared source. An information tooltip explains shared files
+and private conversations. There is no user invitation control or viewer-role label.
+Workspace access follows Core's application and user permissions. Other users' conversations have no private links. Creating or attaching a session sends no provider message.
+Source details open their diff through View Changes. Existing drafts and approvals remain scoped to
 the selected conversation. Participation updates use the shared workspace observation transport.
 
 ## Navigation And Conversation
@@ -98,25 +103,25 @@ streaming, provider, question, approval, app-context and attachment APIs. Plans 
 remain available through Harness's development tools; its former operator creation form is removed.
 
 Each full page places its own list on the left. Chats lists every accessible conversation individually,
-including conversations attached to workspaces. Workspaces lists only workspaces. Internal workspaces show
-accessible conversation tabs above the center chat and details on the right; external workspaces
-leave the center empty. Attached chats appear as workspace tabs on Workspaces and as individual rows on Chats. Other users' disclosed
-activity contributes to independent Working, Needs attention and Failed counts, without exposing
-private chat tabs. Unknown/stopping metadata has a separate indication. The participant panel keeps
-sharing and attachment controls; its session names are informational rather than duplicate navigation.
+including conversations attached to workspaces. Workspaces lists only workspaces. The center shows
+the selected conversation; the Sessions section on the right selects accessible chats without a top
+tab bar. Workspaces without an accessible chat leave the center empty. Attached chats appear as
+individual rows on Chats. Other users' disclosed activity contributes to independent Working, Needs
+attention and Failed counts without exposing private conversation links. Unknown/stopping metadata
+has a separate indication.
 
 Create app and Continue building appear only on Workspaces. Create app is available before selecting
 a workspace or conversation; it creates an empty conversation and opens the existing form without
-sending a provider message. New session on Chats creates an unattached chat; the plus after workspace
-tabs creates a chat in that workspace. Both pages share search and All, Needs attention, Working and
+sending a provider message. New session on Chats creates an unattached chat; the plus in Sessions
+creates a chat in that workspace. Both pages share search and All, Needs attention, Working and
 Failed filters, scoped to their own rows. Workspace search also matches disclosed session titles and
 app context. Each page restores its own selected conversation; the assistant panel retains its
 existing history. Sessionless workspaces offer explicit creation; selecting a row never
 creates a conversation automatically. Rename remains in the conversation header. Desktop navigation
-and workspace columns measure 264/344 px; transcript and composer are capped at 760 px. Tabs scroll
-horizontally with a reachable plus, and arrow/Home/End keys select tabs. Workspace details use the
-existing mobile dialog. Its icon lives alongside workspace session tabs (including workspaces
-with no accessible chats), or in the conversation header on Chats. On wide surfaces the same
+and workspace columns measure 264/344 px; transcript and composer are capped at 760 px. Session
+rows support keyboard focus and activation. Workspace details use the existing mobile dialog. Its
+icon sits in the conversation header beside status and execution mode, or in the empty-center
+header when no chat is selected. On wide surfaces the same
 control toggles the retained details column; on narrow surfaces it opens the dialog. The narrow
 chat/workspace list controls live in their existing headers, without an additional page-wide
 title row when an embedded page becomes narrower. The manifest declares distinct navigation
@@ -293,8 +298,22 @@ is visible only in expanded details and uses the existing `ChatCodeBlock` copy a
 The existing authenticated event stream delivers and replays it without an additional Core endpoint
 or polling connection.
 
-Each repository displays its branch, app bindings, observation time and original-base change counts,
-including committed changes. Session changes and each PR's Review changes open a keyboard-dismissable
+Sessions, Used by, Changes and Pull requests share muted section headings and horizontal dividers.
+Used by follows Sessions and displays applications directly, without an enclosing card or background.
+Sessions remains visible when empty; other empty sections are hidden. Dividers appear only between visible sections, never before the first or
+after the last. Changes groups the repository cards. Used by has one heading with the same information
+icon and tooltip styling as Sessions; its application list does not repeat a heading. Each accessible
+own session exposes Detach session and Delete session in a three-dot menu beside that row.
+Each repository starts collapsed. Its stable two-line header shows the repository name and
+original-base additions/deletions with a file count, including committed changes. Expanding retains
+that header and reveals the source and target branches, observation details, local repository actions
+and View Changes without repeating the counts. Long branch names are truncated with full names in
+their tooltips. Ahead/behind metadata and app icons are omitted from repository cards; bound
+applications appear in Used by.
+Workspace-bound app icon metadata for Used by is resolved independently of chat context, including
+external workspaces without sessions. Missing or failed icon assets retain the
+named-icon or generic fallback. Named localhost assets retain Core's canonical hostname and its
+host-only login cookie rather than being rewritten to the app hostname. View Changes and each PR's Review changes open a keyboard-dismissable
 review page. Its source picker distinguishes original-base workspace changes, uncommitted changes,
 the configured target branch and each bound open/draft PR. A selected closed PR remains labelled.
 The target comparison uses the observed local target ref and merge base; it does not fetch implicitly.
@@ -406,12 +425,13 @@ terminal failures/cancellations as completed, distinguish skipped and unknown, a
 empty list into successful CI. Details refresh with the observation; stale and cached evidence stays
 visible. Every check and its link remains reachable without filling the collapsed workspace panel.
 
-The workspace header uses a neutral workflow state and an observation summary. Repository/PR cards
-come before Previews and Used by. Repository cards retain branch/base, ahead/behind, exact Session
-changes and Git actions. The sidebar branch line stays on one line with a shrinkable, visually
+The workspace header uses a neutral workflow state and an observation summary. Sessions and Used by
+come before repository/PR cards and Previews. Repository cards retain branch/base, original-base changes and Git actions in their expanded
+details; ahead/behind counts remain hidden. The sidebar branch line stays on one line with a shrinkable, visually
 ellipsized source branch; the arrow is separate and the target uses at most half the line. Its title
 retains the full source and target. Used by shows compact Bound applications rows for explicitly
-bound, currently installed apps. Each row puts the observed lifecycle state immediately after the app name, with
+bound, currently installed apps. A 40 px app icon aligns with the two-line text block.
+Each row puts the observed lifecycle state immediately after the app name, with
 health qualifying a running state. Its second line describes the current execution target:
 `Package · <version> · <runtime key>`, a hammer with the workspace display name, or a Git branch
 icon with the source branch. Workspace/source labels remain accessible to screen readers, with
@@ -489,9 +509,11 @@ selection fill. External workspaces have no distinct icon, secondary label or to
 workspace IDs. There is no
 fabricated Harness conversation or imported transcript. Its selection is independent of the
 conversation and draft. External agent execution is not inferred
-from a workspace or lease. The panel explicitly distinguishes external work from synchronized
-conversation/activity. Missing and stale observations are labelled. Core authorization still
-determines management authority.
+from a workspace or lease. A small Cast icon beside the workflow status identifies a workspace created
+from an external session. Its hover/focus tooltip names the external client, explains that its
+conversation and agent activity are not synchronized, and clarifies that Harness sessions can also
+use the workspace. The panel body has no external-work notice. Missing and stale observations are
+labelled. Core authorization still determines management authority.
 
 ## Lifecycle Actions
 
@@ -924,8 +946,9 @@ workspace content scrolls inside the pane without increasing the embedded docume
   file counts and confirmed totals, unknown/overflow fallbacks, per-activity boundaries, separate
   legacy entries and retained exact-source Review bindings. Verify repository grouping by the exact
   recorded source tuple, one short/full-title repository heading per group and no per-file branch
-  line or recorded caption. Long sidebar source/target branches stay single-line and visually
-  ellipsized with the complete title retained. Verify borderless command rows with single-line headers, right-aligned status, exit code
+  line or recorded caption. Repository cards start collapsed and retain independent expansion across observation updates;
+  their unchanged headers show honest known/unknown change counts without app icons; branches appear
+  only inside expanded details. Verify borderless command rows with single-line headers, right-aligned status, exit code
   and duration immediately before the far-right chevron, retained input/output code-block borders,
   no duplicate recorded command outcome in expanded output, and retained MCP/non-command error
   indicators.
@@ -939,6 +962,8 @@ workspace content scrolls inside the pane without increasing the embedded docume
 - Verify standalone review at wide and narrow widths, hidden conversation/navigation/workspace panes,
   Back with retained draft/scroll and originating external-workspace selection, and Ask returning
   to the owning visible composer without sending or appending to another session.
+- Verify bound-app icons load without chat metadata in Used by and stay absent from repository cards; cover
+  failed lookup, access restoration, stale responses, selection changes and explicit refresh.
 - Keep each repository's change scope and each PR's CI/review observation independent; test missing,
   binary, bounded, failed and stale evidence.
 - Test published scopes independently of local edits, thread placement and comments-only files;
@@ -957,3 +982,5 @@ workspace content scrolls inside the pane without increasing the embedded docume
 - Use normal Core/Shell identity for embedded acceptance; standalone UI alone is insufficient.
 - Exercise explicit complete/resume/delete and recovery with original IDs; never infer completion.
 - Preserve external-owner authorization and no-chat behavior; do not synthesize provider evidence.
+  Verify the header origin tooltip on keyboard focus and its absence for Harness-created workspaces;
+  external origin does not imply current agent activity or exclude Harness sessions.
