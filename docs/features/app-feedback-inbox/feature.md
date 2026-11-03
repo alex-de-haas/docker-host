@@ -210,7 +210,8 @@ without a workspace remain in the global inbox. Retention is independent of PR m
   user/app/installation changes, unrelated terminal events, unprocessed-only bulk review and frozen UI retries.
 - `npm run test:integration -- feedback` builds Core/CLI and uses the existing parent-managed child
   Core/native Harness and Shell acceptance path with separate password-authenticated accounts and synthetic
-  agent credentials. It verifies batch handling, source preparation, screenshot tools, repeat partial
+  agent credentials and explicit administrator review of assistant-to-Core MCP access in the child.
+  It verifies batch handling, source preparation, screenshot tools, repeat partial
   outcomes, deletion retention and owner Finish cleanup.
 - The browser journey uses Playwright Chromium (`HOSTY_FEEDBACK_BROWSER_CHANNEL` optionally selects
   installed Chrome; `HOSTY_FEEDBACK_PLAYWRIGHT_MODULE` can supply an absolute module path). It checks
