@@ -1,6 +1,6 @@
 ---
 created: 2026-10-29
-updated: 2026-10-29
+updated: 2026-11-03
 summary: One child Core per sandbox, retired relay contracts and unified Core-instance presentation with ordinary identity, independent builds and process resources.
 components: [apps/core, apps/cli, apps/harness, apps/shell, apps/demo-app, packages/app-sdk, scripts]
 ---
@@ -77,9 +77,10 @@ resource stream deliver bounded history; there is no per-row polling. Samples ar
 authorized owner and correlated with PID and process start identity. Stopped/finished children
 show no live readings, and child Core usage does not inflate the ordinary Apps total.
 
-The primary action is **Sign Up** before administrator setup, then Stop while running or Start
-while stopped. Other actions live in the overflow menu; Open Core appears after administrator
-setup. Clicking the child's name or choosing **Environment Details** opens a dedicated dialog
+The primary action is **Get access** while running or Start while stopped. Get access remains
+available after administrator setup and opens ordinary child setup or recovery; see
+[environment administrator access](../environment-administrator-access/feature.md). Stop and other
+actions live in the overflow menu; Open Core appears after administrator setup. Clicking the child's name or choosing **Environment Details** opens a dedicated dialog
 with installed applications, their runtime/health state, and resources/access information. The
 Dashboard row has no inline disclosure. Closing the dialog restores keyboard focus to its row.
 Initialization and operation errors appear as a compact error icon beside the environment name.
