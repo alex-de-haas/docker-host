@@ -20,6 +20,12 @@ import { PinnedToolButtons } from "./pinned-tool-buttons";
 const empty: UiHostSnapshot = { bootstrap: null, catalog: [], tools: [], selected: null, expanded: false, width: 360, error: null };
 const noop = () => () => {};
 
+function visibleTools(snapshot: UiHostSnapshot) {
+  const workspace = snapshot.workspaces?.find(item => item.workspaceId === "default");
+  const ids = workspace?.expanded ? workspace.visibleIds ?? (workspace.selectedId ? [workspace.selectedId] : []) : [];
+  return snapshot.tools.filter(item => item.workspaceId === "default" && ids.includes(item.presentationId));
+}
+
 // The strip aligns navigation and the page title with the workspace. Notifications, theme and
 // pinned tools stay at the opposite edge.
 //
@@ -50,12 +56,19 @@ export function ShellTopStrip({
   const host = useHostyUiHost();
   const snapshot = useSyncExternalStore(host?.subscribeSnapshot ?? noop, host?.getSnapshot ?? (() => empty), () => empty);
   const [toolError, setToolError] = useState<string | null>(null);
-  const workspace = snapshot.workspaces?.find(item => item.workspaceId === "default");
-  const selected = snapshot.tools.find(item => item.presentationId === workspace?.selectedId);
+  const visibleKeys = visibleTools(snapshot).map(item => item.key);
   const preferences = usePanelPreferences();
   const pinned = preferences.ready ? snapshot.catalog.filter(preferences.isPinned) : [];
-  function openTool(item: UiPanel) {
-    void host?.selectPanel(item.panel).then(result => setToolError(result.status === "opened" ? null : `${item.appName}: ${item.available ? "could not open tool" : item.state}.`));
+  function toggleTool(item: UiPanel) {
+    if (!host) return;
+    const visible = visibleTools(host.getSnapshot()).filter(tool => tool.key === panelKey(item.panel))
+      .sort((a, b) => b.focusedAt - a.focusedAt)[0];
+    if (visible) {
+      host.hidePresentation(visible.presentationId);
+      setToolError(null);
+      return;
+    }
+    void host.selectPanel(item.panel).then(result => setToolError(result.status === "opened" ? null : `${item.appName}: ${item.available ? "could not open tool" : item.state}.`));
   }
   const activity = useToolActivity();
 
@@ -97,14 +110,16 @@ export function ShellTopStrip({
       <div className={cn("flex min-w-0 items-center justify-end gap-1", showPanelToggle && rightRailExpanded !== null ? "min-[600px]:w-3/5" : "shrink-0")}>
 
         {showPanelToggle && rightRailExpanded !== null && <div className="hidden min-w-0 flex-1 items-center gap-1 min-[600px]:flex">
-          <PinnedToolButtons panels={pinned} selectedKey={workspace?.expanded ? selected?.key : undefined} selectedKeys={workspace?.expanded ? snapshot.tools.filter(item => workspace.visibleIds?.includes(item.presentationId)).map(item => item.key) : []} onSelect={item => openTool(item)} />
+          <PinnedToolButtons panels={pinned} selectedKeys={visibleKeys} onSelect={toggleTool} />
           <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="sm" className="shrink-0" aria-label="Tools"><PanelsTopLeft className="size-4" /><span className="hidden sm:inline">Tools</span><ToolsActivityBadge values={snapshot.catalog.map(activity.read)} /><ChevronDown className="size-3" /></Button></DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="max-h-[70dvh] w-64 overflow-y-auto">
               <p className="px-2 py-1.5 text-xs text-muted-foreground">Pin tools to the top bar</p>
               {preferences.error && <p role="status" className="px-2 py-1.5 text-xs text-warning-foreground">{preferences.error}</p>}
               {!snapshot.catalog.length && <p role="status" className="px-2 py-2 text-sm text-muted-foreground">{snapshot.error ? "Tools could not be loaded. Use All tools to retry." : snapshot.bootstrap ? "No tools are available for your account." : "Loading tools…"}</p>}
               {snapshot.catalog.map(item => <div key={panelKey(item.panel)} className="flex items-stretch gap-1">
-                <DropdownMenuItem className="min-w-0 flex-1" onSelect={() => openTool(item)}>
+                <DropdownMenuItem role="menuitemcheckbox" aria-checked={visibleKeys.includes(panelKey(item.panel))}
+                  className={cn("min-w-0 flex-1", visibleKeys.includes(panelKey(item.panel)) && "bg-brand-soft text-foreground focus:bg-brand-soft focus:text-foreground")}
+                  title={`${visibleKeys.includes(panelKey(item.panel)) ? "Hide" : "Open"} ${item.appName} — ${item.label}`} onSelect={() => toggleTool(item)}>
                   <AppIcon src={null} name={item.icon} fallback={PanelsTopLeft} className="size-4" /><span className="min-w-0 flex-1"><span className="block truncate">{item.label}</span><span className="block truncate text-xs text-muted-foreground">{item.appName}{!item.available && ` · ${item.state}`}</span></span>
                   <ToolActivityMark activity={activity.read(item)} />
                 </DropdownMenuItem>
