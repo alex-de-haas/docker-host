@@ -2,7 +2,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { FeedbackOperation } from "./feedback-channel";
+import type { DraftNote, FeedbackOperation } from "./feedback-channel";
 import type { EmbeddedUiClient } from "./ui-embedded";
 import { FeedbackCapture } from "./feedback-react";
 import { appFetch } from "./browser-auth";
@@ -32,7 +32,7 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   await act(async () => root.unmount()); document.body.replaceChildren();
-  vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.clearAllMocks();
+  vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.clearAllMocks(); vi.useRealTimers();
 });
 it("hands hover from the host into an iframe without leaving the host highlighted", async () => {
   await click("Select element"); await pointer(surface, "pointermove"); expect(highlight()).not.toBeNull();
@@ -64,4 +64,76 @@ it("abandons an unfinished region at the frame boundary instead of using a later
 it("keeps selection active when navigation metadata refreshes without changing the route",async()=>{
   await click("Select element");await act(async()=>navigationChanged());
   await pointer(surface,"pointermove");expect(highlight()).not.toBeNull();
+});
+
+it("holds the chosen outline across frame blur until capture clears it", async () => {
+  const target = { kind: 'element' as const, bounds: { x: 10, y: 20, width: 100, height: 40 } };
+  await act(async () => { await invoke({ action: 'highlight', target }); });
+  await pointer(surface, 'pointerout', { relatedTarget: frame });
+  await act(async () => window.dispatchEvent(new Event('blur')));
+  expect(highlight()).not.toBeNull();
+  await act(async () => { await invoke({ action: 'highlight' }); });
+  expect(highlight()).toBeNull();
+});
+it("expires abandoned capture outlines and removes them on cancellation", async () => {
+  vi.useFakeTimers();
+  const target = { kind: 'region' as const, bounds: { x: 10, y: 20, width: 100, height: 40 } };
+  await act(async () => { await invoke({ action: 'highlight', target }); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(10000); });
+  expect(highlight()).toBeNull();
+  await act(async () => { await invoke({ action: 'highlight', target }); await invoke({ action: 'cancel' }); });
+  expect(highlight()).toBeNull();
+});
+
+it("outlines the selected element at its new position after the composer reflows", async () => {
+  let result!: Promise<unknown>;
+  await act(async () => { result = invoke({ action: 'pick', mode: 'element' }); });
+  await pointer(surface, 'pointerdown'); const chosen = await result as DraftNote;
+  vi.mocked(surface.getBoundingClientRect).mockReturnValue(new DOMRect(10, 120, 100, 40));
+  await act(async () => { await invoke({ action: 'highlight', target: chosen.target, requestId: chosen.id }); });
+  expect((highlight() as HTMLElement).style.top).toBe('120px');
+  await act(async () => { await invoke({ action: 'highlight' }); });
+  surface.remove();
+  await expect(invoke({ action: 'highlight', target: chosen.target, requestId: chosen.id })).rejects.toThrow('no longer visible');
+});
+
+it.each([true, false])('suppresses only the selected element click (same target: %s)', async same => {
+  const next = document.createElement('button'), action = vi.fn(); document.body.append(next);
+  const target = same ? surface : next; target.addEventListener('click', action);
+  await click('Select element'); await pointer(surface, 'pointerdown');
+  const event = new MouseEvent('click', { bubbles: true, cancelable: true });
+  await act(async () => { target.dispatchEvent(event); });
+  expect(event.defaultPrevented).toBe(same); expect(action).toHaveBeenCalledTimes(same ? 0 : 1);
+});
+
+it('suppresses an ancestor-retargeted region click, then permits the next gesture', async () => {
+  const card = document.createElement('a'), left = document.createElement('span'), right = document.createElement('span');
+  card.href = '#unexpected'; card.append(left, right); document.body.append(card); hit = left;
+  const action = vi.fn(); card.addEventListener('click', action);
+  await click('Select region');
+  await act(async () => {
+    left.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, clientX: 10, clientY: 10 }));
+    right.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, clientX: 100, clientY: 100 }));
+    const completion = new MouseEvent('click', { bubbles: true, cancelable: true }); card.dispatchEvent(completion);
+    expect(completion.defaultPrevented).toBe(true);
+  });
+  expect(action).not.toHaveBeenCalled();
+  await pointer(card, 'pointerdown'); await pointer(card, 'click'); expect(action).toHaveBeenCalledOnce();
+});
+it('does not swallow a later gesture when the selected disabled control emitted no click', async () => {
+  const action = vi.fn(); surface.addEventListener('click', action);
+  await click('Select element'); await pointer(surface, 'pointerdown'); await pointer(surface, 'pointerup');
+  await pointer(surface, 'pointerdown'); await pointer(surface, 'click'); expect(action).toHaveBeenCalledOnce();
+});
+it('retains earlier annotation targets and rejects restored or navigated-away targets', async () => {
+  let result!: Promise<unknown>;
+  await act(async () => { result = invoke({ action: 'pick', mode: 'element' }); });
+  await pointer(surface, 'pointerdown'); const first = await result as DraftNote;
+  await click('Select element'); await pointer(surface, 'pointerdown');
+  await act(async () => { await invoke({ action: 'highlight', target: first.target, requestId: first.id }); });
+  expect(highlight()).not.toBeNull();
+  await expect(invoke({ action: 'highlight', target: first.target, requestId: 'unknown-restored-note' })).rejects.toThrow('Select it again');
+  history.pushState({}, '', '/another-page'); await act(async () => navigationChanged());
+  await expect(invoke({ action: 'highlight', target: first.target, requestId: first.id })).rejects.toThrow('Select it again');
+  history.replaceState({}, '', '/');
 });

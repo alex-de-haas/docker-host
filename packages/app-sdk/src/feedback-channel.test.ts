@@ -38,7 +38,7 @@ describe('composer broker',()=>{
     expect([...resolvers.keys()]).toEqual(['one','two']);
     const note={id:'note',text:'',route:'/page',capturedAt:new Date().toISOString(),target:{kind:'element',label:'button'}};
     resolvers.get('two')!(note);await Promise.resolve();resolvers.get('one')!(note);await Promise.resolve();
-    expect(receive.mock.calls.filter(([e])=>e.type==='selection')).toHaveLength(1);expect(cancels.sort()).toEqual(['one','two']);expect(h.getSnapshot().picking).toBe(false);
+    expect(receive.mock.calls.filter(([e])=>e.type==='selection')).toHaveLength(1);expect(receive.mock.calls.slice(-2).map(([e])=>e.type)).toEqual(['selection','picking']);expect(cancels.sort()).toEqual(['one','two']);expect(h.getSnapshot().picking).toBe(false);
   });
   it('refuses recovery data for a different account or target',async()=>{
     const h=new FeedbackHost();h.register({...source,visible:()=>true,invoke:async()=>({...draft,key:'another-scope'})});

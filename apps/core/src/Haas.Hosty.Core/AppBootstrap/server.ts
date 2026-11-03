@@ -54,7 +54,9 @@ createServer(async (request, response) => {
       const result = await createHostyUiResponse(new Request(url, { method: request.method, headers: Object.fromEntries(Object.entries(request.headers).filter((entry): entry is [string, string] => typeof entry[1] === "string")),
         body: request.method === "POST" ? JSON.stringify(await body(request, url.pathname.includes("/feedback") ? 12 * 1024 * 1024 : 65536)) : undefined }),
         { session, token });
-      return send(result.status, await result.json());
+      const bytes = Buffer.from(await result.arrayBuffer());
+      response.writeHead(result.status, Object.fromEntries(result.headers));
+      response.end(bytes); return;
     }
     if (session.status !== "active") return send(session.status === "forbidden" ? 403 : session.status === "unavailable" || session.status === "misconfigured" ? 503 : 401, { status: session.status });
     if (request.method === "GET" && url.pathname === "/api/app") {

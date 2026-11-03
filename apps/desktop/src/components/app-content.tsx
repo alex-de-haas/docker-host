@@ -36,7 +36,6 @@ export function AppContent({ app, windowId, destination, installationId, onSurfa
     </div>;
   return <div className="app-layout" data-navigation={navigationCompact ? "compact" : "expanded"}>
     {pages.length > 1 && <nav id={`pages-${windowId}`} className="window-sidebar" aria-label={`${app.displayName} pages`}>
-      <div className="sidebar-caption">{app.displayName}</div>
       {pages.map((item, index) => <button key={`${item.endpoint}:${item.path}`} className={index === selectedIndex ? "selected" : ""} aria-label={item.label} title={item.label} aria-current={index === selectedIndex ? "page" : undefined} onClick={() => onPage(index)}><PageIcon src={item.iconUrl} /><span>{item.label}</span></button>)}
     </nav>}
     <div className="app-document">{content}</div>

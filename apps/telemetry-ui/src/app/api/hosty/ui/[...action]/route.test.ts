@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { clearRevalidationCache } from "@hosty-sdk/app/server";
+import type { UiBootstrap } from "@hosty-sdk/app/ui/types";
 import { GET, POST } from "./route";
 
 const appId = "hosty.telemetry";
 const origin = "https://app.test";
+const bootstrap: UiBootstrap = { version: 1, coreOrigin: "https://core.test", userId: "user",
+  app: { appId, installationId: "installation", origins: [origin] }, canHost: false, pinnedOpen: false };
 function request(action: string, method = "GET", signedIn = true) {
   return new Request(`${origin}/api/hosty/ui/${action}`, {
     method,
@@ -21,6 +24,7 @@ beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn(async (input: URL | string) => {
     const path = new URL(input).pathname;
     if (!path.includes("/ui/")) return Response.json({ active: true, appId, userId: "user", hostRole: role });
+    if (path.endsWith("/bootstrap")) return Response.json(bootstrap);
     return Response.json(path.endsWith("/panels") ? { panels: [] } : { operation: path.split("/ui/")[1] });
   }));
 });
@@ -29,7 +33,7 @@ afterEach(() => { clearRevalidationCache(); vi.unstubAllGlobals(); vi.unstubAllE
 it.each(["bootstrap?parentOrigin=https%3A%2F%2Fshell.test", "navigation", "panels"])("serves authenticated SDK %s metadata through the app route", async action => {
   const response = await GET(request(action));
   expect(response.status).toBe(200);
-  expect(await response.json()).toEqual(action === "panels" ? { panels: [] } : { operation: action.split("?")[0] });
+  expect(await response.json()).toEqual(action.startsWith("bootstrap") ? bootstrap : action === "panels" ? { panels: [] } : { operation: action.split("?")[0] });
   const [url, init] = vi.mocked(fetch).mock.calls.at(-1)!;
   expect(String(url)).toBe(`https://core.test/api/internal/apps/${appId}/ui/${action}`);
   expect(new Headers(init?.headers).get("X-Hosty-User-Token")).toBe("identity-token");

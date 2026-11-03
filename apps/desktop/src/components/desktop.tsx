@@ -175,7 +175,7 @@ function WorkspaceDesktop({ user, apps, ownId, coreOrigin, refresh, connectionEr
       </div>
       <div className="menubar-right"><HostyFeedbackLauncher className="menubar-icon" /><button className="menubar-icon" title="Search applications (⌘K / Ctrl+K)" aria-label="Open Spotlight" onClick={() => setSearch("")}><Search size={17} /></button>
         <button className="menubar-icon theme-toggle" title={`Switch to ${theme === "light" ? "dark" : "light"} theme`} aria-label="Toggle theme" onClick={() => update({ theme: theme === "light" ? "dark" : "light" })}>{theme === "light" ? <Moon size={16} /> : <Sun size={16} />}</button>
-        <button className="account-button" aria-label="Account menu" aria-expanded={accountOpen} onClick={() => { setAccountOpen(!accountOpen); setMenu(null); }}><span className="avatar">{(user.displayName || user.email || "U").split(/\s/).map(value => value[0]).slice(0, 2).join("").toUpperCase()}</span><span>{admin ? "Administrator" : user.displayName}</span></button>
+        <button className="account-button" aria-label="Account menu" aria-expanded={accountOpen} onClick={() => { setAccountOpen(!accountOpen); setMenu(null); }}><span className="avatar">{(user.displayName || user.email || "U").split(/\s/).map(value => value[0]).slice(0, 2).join("").toUpperCase()}</span><span>{user.displayName || user.email || "User"}</span></button>
         <time className="desktop-clock" dateTime={clock.toISOString()}>{clock.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })}<span>{clock.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}</span></time>
       </div>
     </header>
@@ -186,6 +186,7 @@ function WorkspaceDesktop({ user, apps, ownId, coreOrigin, refresh, connectionEr
       const title = win.id === APPLICATIONS ? "Applications" : win.id === APPEARANCE ? "Appearance" : windowTitle(win, app);
       const navigationCompact = win.navigationMode ? win.navigationMode === "compact" : viewport.width < 700 || displayedBounds(win, viewport).width <= 620;
       return <WindowTools key={`${win.id}:${app?.installationId || ""}`} app={app} apps={apps} userId={user.id} windowId={win.id}>{(toolbar, wrap) => <DesktopWindow window={viewport.width < 700 ? { ...win, mode: "maximized" } : win} viewport={viewport} title={title}
+        icon={<AppIcon app={app} icon={win.id === APPLICATIONS ? Grid2X2 : win.id === APPEARANCE ? Settings2 : undefined} className="window-title-icon" />}
         index={workspace.windows.findIndex(item => item.id === win.id)} active={activeWindow?.id === win.id} onFocus={() => focus(win.id)}
         onChange={patch => patchWindow(win.id, patch)} onClose={() => close(win.id)} onSnapPreview={setSnap}
         navigation={app && appPages(app).length > 1 && <button className="window-tool window-navigation-toggle"

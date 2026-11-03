@@ -21,11 +21,12 @@ export function AppIcon({ app, icon: Icon, className = "", tone = 0 }: { app?: A
   const [failed, setFailed] = useState<string | null>(null);
   const name = app?.icon ? normalized.get(app.icon.replace(/[-_\s]/g, "").toLowerCase()) : null;
   const Fallback = Icon || AppWindow;
+  const hasAsset = !!src && failed !== src;
   const color = app ? [...app.id].reduce((sum, char) => sum + char.charCodeAt(0), 0) % 6 : tone;
-  return <span className={`app-icon tone-${color} ${className}`} aria-hidden="true">
+  return <span className={`app-icon ${hasAsset ? "app-icon-image" : `tone-${color}`} ${className}`} aria-hidden="true">
     {/* Authenticated per-installation assets must load through the browser session, not an image optimization server. */}
     {/* eslint-disable-next-line @next/next/no-img-element */}
-    {src && failed !== src ? <img src={src} alt="" draggable={false} onError={() => setFailed(src)} />
+    {hasAsset ? <img src={src!} alt="" draggable={false} onError={() => setFailed(src)} />
       : name ? <DynamicIcon name={name} fallback={() => <Fallback />} /> : <Fallback />}
   </span>;
 }

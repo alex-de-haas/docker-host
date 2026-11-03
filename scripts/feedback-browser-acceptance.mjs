@@ -10,6 +10,40 @@ const browser = await chromium.launch({ headless: true, args: ['--auto-select-ta
   ...(process.env.HOSTY_FEEDBACK_BROWSER_CHANNEL ? { channel: process.env.HOSTY_FEEDBACK_BROWSER_CHANNEL } : {}) });
 const context = await browser.newContext({ viewport: { width: 1360, height: 960 } });
 const page = await context.newPage(); const errors = []; page.on('pageerror', error => errors.push(error.message));
+// Inspect real captured pixels; the browser capture API is not replaced by a synthetic image.
+async function checkScreenshot(frame, bounds, annotationIndex = 0) {
+  const image=frame.getByRole('main',{name:'Feedback draft'}).locator('ol > li').nth(annotationIndex).getByRole('img',{name:'Preview of screenshot.png'});
+  await image.waitFor();
+  const input = image.locator('xpath=ancestor::*[@data-slot="input-group"]');
+  await input.getByRole('button', {name:'Retake screenshot',exact:true}).waitFor();
+  await input.getByRole('button', {name:'Dictate',exact:true}).waitFor();
+  await input.getByRole('button', {name:'Remove screenshot.png',exact:true}).waitFor();
+  assert.equal(await input.evaluate(node => node.scrollWidth <= node.clientWidth + 1),true,'Comment attachments and controls fit inside the field');
+  assert.equal(await frame.getByRole('dialog',{name:'Review screenshot'}).count(),0,'Full capture attaches without a second approval dialog');
+  const result=await image.evaluate(async(img,expected)=>{
+    await img.decode();
+    const canvas=document.createElement('canvas');canvas.width=img.naturalWidth;canvas.height=img.naturalHeight;
+    const ctx=canvas.getContext('2d');ctx.drawImage(img,0,0);let outline=0;
+    if(expected){
+      const {x,y,width}=expected;
+      const pixels=ctx.getImageData(Math.max(0,Math.floor(x)-2),Math.max(0,Math.floor(y)-2),Math.ceil(width)+4,7).data;
+      // Screen capture chroma subsampling changes a two-pixel border's exact RGB values.
+      for(let i=0;i<pixels.length;i+=4)if(pixels[i]<160&&pixels[i+1]>110&&pixels[i+1]<200&&pixels[i+2]<100&&pixels[i+1]>pixels[i]+20&&pixels[i+1]>pixels[i+2]+40)outline++;
+    }
+    return {width:img.naturalWidth,height:img.naturalHeight,outline};
+  },bounds);
+  assert.equal(result.width,page.viewportSize().width,'Capture includes the entire tab, not just the source iframe');
+  // Verify full initial geometry; after viewport emulation resizes, native Chrome capture may
+  // report a different visible height. Full host width plus the source outline verifies embedding.
+  if(!bounds)assert.equal(result.height,page.viewportSize().height);
+  else assert.ok(result.height>bounds.y,'The selected outline is visible in the captured frame');
+  if(bounds&&result.outline<=Math.min(20,bounds.width)){
+    console.log('Capture outline diagnostic',JSON.stringify({bounds,result}));
+    const data=await image.evaluate(async img=>Array.from(new Uint8Array(await (await fetch(img.src)).arrayBuffer())));
+    if(process.env.HOSTY_FEEDBACK_SCREENSHOT)await writeFile(process.env.HOSTY_FEEDBACK_SCREENSHOT+'.capture.png',Buffer.from(data));
+  }
+  if(bounds)assert.ok(result.outline>Math.min(20,bounds.width),'Selected outline is present in the captured pixels');
+}
 try {
   await page.goto(config.core+'/login?returnTo=%2Fapi%2Fauth%2Fsession'); config.core = new URL(page.url()).origin;
   await page.getByLabel('Email', { exact: true }).fill(config.email); await page.getByLabel('Password', { exact: true }).fill(config.password); config.password = '';
@@ -25,19 +59,56 @@ try {
     const code=await page.request.post(config.core+'/api/apps/'+appId+'/launch-code',{headers:{Origin:config.core,'X-Hosty-CSRF':csrf.token},data:{redirectUri,codeChallenge:createHash('sha256').update(verifier).digest('base64url'),codeChallengeMethod:'S256'}});
     assert.equal(code.status(),200);assert.equal((await page.request.post(origin+'/api/auth/app-code',{headers:{Origin:origin},data:{code:(await code.json()).code,codeVerifier:verifier}})).status(),200);
   };
+  await page.goto(config.harness+'/development/');
+  const standaloneHeader=page.locator('.hosty-standalone-header');
+  await standaloneHeader.getByText('Hosty Harness',{exact:true}).waitFor();
+  await page.waitForFunction(()=>{const image=document.querySelector('.hosty-standalone-identity img');return image?.complete&&image.naturalWidth>0;});
+  assert.equal(new URL(await page.locator('.hosty-standalone-identity img').getAttribute('src'), page.url()).pathname,'/api/hosty/ui/icon','Standalone icon uses the authenticated same-origin adapter');
+  assert.equal(await page.locator('.hosty-panel-rail').count(),0);
+  const standalonePages=page.getByRole('navigation',{name:'App pages',exact:true});
+  await standalonePages.getByRole('link',{name:'Workspaces',exact:true}).waitFor();
+  const documentHandle=await page.locator('.hosty-app-content').elementHandle();
+  await standaloneHeader.getByRole('button',{name:'Hide navigation',exact:true}).click();
+  assert.equal(await standalonePages.isVisible(),false);
+  assert.equal(await page.locator('.hosty-app-content').evaluate((node,previous)=>node===previous,documentHandle),true);
+  await standaloneHeader.getByRole('button',{name:'Tools',exact:true}).click();
+  const standaloneMenu=page.getByRole('dialog',{name:'Tools',exact:true});
+  await standaloneMenu.getByRole('button',{name:'Pin Hosty Harness — Pull requests to top bar',exact:true}).click();
+  assert.equal(await page.locator('iframe').count(),0,'Pinning does not open a tool');
+  await page.keyboard.press('Escape');
+  assert.equal(await standaloneHeader.getByRole('button',{name:'Tools',exact:true}).evaluate(button=>button===document.activeElement),true);
+  await page.reload();await standaloneHeader.getByRole('button',{name:'Show navigation',exact:true}).waitFor();
+  const pinnedPullRequests=standaloneHeader.getByRole('button',{name:'Open Hosty Harness — Pull requests',exact:true});
+  await pinnedPullRequests.click();
+  const standaloneFrame=page.locator('iframe[title="Pull requests"]');
+  await page.frameLocator('iframe[title="Pull requests"]').getByRole('heading',{name:'Pull requests',exact:true}).waitFor();
+  const retained=await standaloneFrame.elementHandle();
+  await standaloneHeader.getByRole('button',{name:'Show navigation',exact:true}).click();
+  assert.equal(await standaloneFrame.evaluate((frame,previous)=>frame===previous,retained),true);
+  const headerBounds=await standaloneHeader.boundingBox(), documentBounds=await page.locator('.hosty-panel-document').boundingBox();
+  assert.ok(documentBounds.y>=headerBounds.y+headerBounds.height-1,'Document starts below the header');
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollHeight<=innerHeight+1),true,'Header does not introduce global scrolling');
+  if(process.env.HOSTY_FEEDBACK_SCREENSHOT)await page.screenshot({path:process.env.HOSTY_FEEDBACK_SCREENSHOT+'.header.png'});
+  await page.setViewportSize({width:700,height:960});
+  assert.equal(await standaloneFrame.evaluate((frame,previous)=>frame===previous,retained),true);
+  await page.locator('.hosty-panel-body').getByRole('button',{name:'Minimize panel',exact:true}).click();
+  await standaloneHeader.getByRole('button',{name:'Show navigation',exact:true}).click();
+  await page.getByRole('dialog',{name:'Page navigation',exact:true}).waitFor();await page.keyboard.press('Escape');
+  assert.equal(await standaloneHeader.getByRole('button',{name:'Show navigation',exact:true}).evaluate(button=>button===document.activeElement),true);
+  await page.setViewportSize({width:1360,height:960});
+  console.log('PASS: standalone app identity, pinnable Tools, persisted visibility, retained frames, narrow navigation and keyboard focus');
   await page.goto(config.harness+'/feedback-panel/');
   let form=page.getByRole('main',{name:'Feedback draft'});
+  assert.equal(await form.getByRole('checkbox',{name:'Include screenshot',exact:true}).isChecked(),true);
   await form.getByRole('button',{name:'Page comment',exact:true}).click();
+  await checkScreenshot(page);
   await form.getByLabel('Comment 1',{exact:true}).fill('Standalone provider-owned comment');
   await form.getByRole('button',{name:'Done',exact:true}).click();
-  await form.getByLabel('Overall comment (optional)').fill(reportTitle);
+  await form.getByLabel('Overall comment (optional)',{exact:true}).fill(reportTitle);
   await form.getByText('Saved locally',{exact:true}).waitFor();
-  await form.getByRole('button',{name:'Add screenshot',exact:true}).click();
-  const preview=page.getByRole('dialog',{name:'Review screenshot'});await Promise.race([preview.waitFor(),form.getByRole('alert').filter({hasText:'did not produce a frame'}).waitFor()]);
-  if(!await preview.isVisible()) {console.log('Headless capture produced no frame; exercising explicit retry');await form.getByRole('button',{name:'Add screenshot',exact:true}).click();await preview.waitFor();}
-  await preview.getByRole('button',{name:'Include screenshot',exact:true}).click();await form.getByRole('img',{name:'Included screenshot'}).waitFor();
   await form.getByText('Saved locally',{exact:true}).waitFor();
-  await page.reload();await form.getByRole('img',{name:'Included screenshot'}).waitFor();assert.equal(await form.getByLabel('Overall comment (optional)').inputValue(),reportTitle);
+  if(process.env.HOSTY_FEEDBACK_SCREENSHOT)await page.screenshot({path:process.env.HOSTY_FEEDBACK_SCREENSHOT+'.comment-input.png'});
+  await page.reload();await form.getByRole('img',{name:'Preview of screenshot.png'}).waitFor();assert.equal(await form.getByLabel('Overall comment (optional)',{exact:true}).inputValue(),reportTitle);
   let fail=true,submitted;
   await page.route('**/api/hosty/ui/feedback',async route=>{
     if(route.request().method()==='POST'&&fail){fail=false;submitted=route.request().postDataJSON();await route.abort('failed');}else await route.continue();
@@ -46,10 +117,12 @@ try {
   await page.reload();await form.getByRole('button',{name:'Retry submission',exact:true}).click();await form.getByText('Feedback submitted.',{exact:true}).waitFor();
   const reports=await (await page.request.get(config.harness+'/api/feedback')).json();const report=reports.reports.find(r=>r.comment===reportTitle);
   assert.ok(report,'submitted report is in Core inbox');assert.equal(report.context.appId,'hosty.harness');assert.equal(submitted.scope.appId,'hosty.harness');
-  console.log('PASS: Harness owns drafts, screenshot review, persistence and frozen retry; source identity survives submission');
+  console.log('PASS: Harness owns drafts, automatic full screenshots, persistence and frozen retry; source identity survives submission');
   // Browser IndexedDB exercises real transactional conflicts, not a storage mock.
   const stale=await context.newPage();await stale.goto(config.harness+'/feedback-panel/');const staleForm=stale.getByRole('main',{name:'Feedback draft'});
   await staleForm.getByText('New report',{exact:true}).waitFor();
+  await form.getByRole('checkbox',{name:'Include screenshot',exact:true}).uncheck();
+  await staleForm.getByRole('checkbox',{name:'Include screenshot',exact:true}).uncheck();
   await form.getByRole('button',{name:'Page comment',exact:true}).click();await form.getByLabel('Comment 1',{exact:true}).fill('Newest draft');await form.getByText('Saved locally',{exact:true}).waitFor();
   await staleForm.getByRole('button',{name:'Page comment',exact:true}).click();await staleForm.getByRole('alert').filter({hasText:'another tab'}).waitFor();await stale.close();
   page.once('dialog',d=>d.accept());await form.getByRole('button',{name:'Discard draft',exact:true}).click();await form.getByText('New report',{exact:true}).waitFor();
@@ -66,25 +139,49 @@ try {
   await logo.hover();await page.locator('[data-hosty-feedback-highlight]').waitFor();
   await child.getByRole('heading',{name:'Feedback',exact:true}).hover();await child.locator('[data-hosty-feedback-highlight]').waitFor();await page.locator('[data-hosty-feedback-highlight]').waitFor({state:'detached'});
   await logo.hover();await child.locator('[data-hosty-feedback-highlight]').waitFor({state:'detached'});
-  await child.getByRole('heading',{name:'Feedback',exact:true}).click();await form.getByLabel('Comment 1',{exact:true}).fill('Embedded application comment');await form.getByRole('button',{name:'Done',exact:true}).click();
+  const selectedBounds=await child.getByRole('heading',{name:'Feedback',exact:true}).boundingBox();
+  await child.getByRole('heading',{name:'Feedback',exact:true}).click();
+  await checkScreenshot(feedbackFrame(),selectedBounds);
+  const elementImage=form.getByRole('img',{name:'Preview of screenshot.png'}),elementImageBefore=await elementImage.getAttribute('src');
+  await form.getByRole('button',{name:'Retake screenshot',exact:true}).click();
+  await elementImage.evaluate(async(image,previous)=>{const deadline=Date.now()+15000;while(image.getAttribute('src')===previous){if(Date.now()>deadline)throw new Error('Retake did not replace the screenshot');await new Promise(resolve=>setTimeout(resolve,50));}},elementImageBefore);
+  await checkScreenshot(feedbackFrame(),selectedBounds);
+  await form.getByLabel('Comment 1',{exact:true}).fill('Embedded application comment');await form.getByRole('button',{name:'Done',exact:true}).click();
   assert.equal(await form.isVisible(),true);
   await form.getByText('Saved locally',{exact:true}).waitFor();
-  await form.getByRole('button',{name:'Add screenshot',exact:true}).click();
-  const embeddedPreview=feedbackFrame().getByRole('dialog',{name:'Review screenshot'});await embeddedPreview.waitFor();
-  await embeddedPreview.getByRole('button',{name:'Include screenshot',exact:true}).click();await form.getByRole('img',{name:'Included screenshot'}).waitFor();
+  console.log('PASS: automatic and retaken full-tab screenshots contain the selected iframe element outline');
   await form.getByRole('button',{name:'Submit feedback',exact:true}).click();await form.getByText('Feedback submitted.',{exact:true}).waitFor();
+  await form.getByRole('button',{name:'Select region',exact:true}).click();
+  await child.locator('html[style*="crosshair"]').waitFor({state:'attached'});
+  const region={x:selectedBounds.x+10,y:selectedBounds.y+50,width:150,height:70};
+  await page.mouse.move(region.x,region.y);await page.mouse.down();await page.mouse.move(region.x+region.width,region.y+region.height);await page.mouse.up();
+  await checkScreenshot(feedbackFrame(),region);
+  const regionImage=form.getByRole('img',{name:'Preview of screenshot.png'}),regionImageBefore=await regionImage.getAttribute('src');
+  await form.getByRole('button',{name:'Retake screenshot',exact:true}).click();
+  await regionImage.evaluate(async(image,previous)=>{const deadline=Date.now()+15000;while(image.getAttribute('src')===previous){if(Date.now()>deadline)throw new Error('Retake did not replace the screenshot');await new Promise(resolve=>setTimeout(resolve,50));}},regionImageBefore);
+  await checkScreenshot(feedbackFrame(),region);
+  await form.getByLabel('Comment 1',{exact:true}).fill('Selected region screenshot');
+  await form.getByRole('button',{name:'Submit feedback',exact:true}).click();await form.getByText('Feedback submitted.',{exact:true}).waitFor();
+  await form.getByRole('checkbox',{name:'Include screenshot',exact:true}).uncheck();
+  console.log('PASS: automatic and retaken region screenshots capture the full surface with a visible rectangle');
   await form.getByRole('button',{name:'Select element',exact:true}).click();await logo.click();await form.getByLabel('Comment 1',{exact:true}).fill('Shell chrome comment');await form.getByRole('button',{name:'Done',exact:true}).click();
   assert.equal(await form.getByLabel('Feedback application').inputValue(),'host');
-  await page.getByRole('button',{name:'Tools',exact:true}).click();await page.getByRole('menu').getByRole('menuitem').filter({hasText:'Pull requests'}).first().click();
-  await page.getByRole('button',{name:'Tools',exact:true}).click();await page.getByRole('menu').getByRole('menuitem').filter({hasText:'Assistant'}).first().click();
-  await page.setViewportSize({width:1920,height:1080});await form.waitFor();
-  assert.equal(await page.locator('iframe[title="Feedback"]').isVisible(),true);
-  assert.equal(await page.locator('iframe[title="Pull requests"]').isVisible(),true);
-  await page.locator('iframe[title="Assistant"]').waitFor({state:'visible'});
-  await form.getByRole('button',{name:'Select element',exact:true}).click();await form.getByLabel('Overall comment (optional)').hover();await feedbackFrame().locator('[data-hosty-feedback-highlight]').waitFor();await form.getByLabel('Overall comment (optional)').click();
+  await form.getByRole('checkbox',{name:'Include screenshot',exact:true}).check();
+  await form.getByRole('button',{name:'Select element',exact:true}).click();await form.getByLabel('Overall comment (optional)',{exact:true}).hover();await feedbackFrame().locator('[data-hosty-feedback-highlight]').waitFor();
+  const selfBounds=await form.getByLabel('Overall comment (optional)',{exact:true}).boundingBox();
+  await page.mouse.click(selfBounds.x+selfBounds.width/2,selfBounds.y+selfBounds.height/2);
+  await checkScreenshot(feedbackFrame(),selfBounds);
+  await form.getByRole('checkbox',{name:'Include screenshot',exact:true}).uncheck();
+  console.log('PASS: form self-feedback captures the selected DOM before changing its draft');
   await page.frames().find(f=>new URL(f.url()).pathname.replace(/\/$/,'')==='/feedback-panel').waitForFunction(()=>document.querySelector('select[aria-label="Feedback application"]')?.value!=='host');
   await form.getByLabel('Comment 1',{exact:true}).fill('Feedback form observation');await form.getByRole('button',{name:'Done',exact:true}).click();
   assert.notEqual(await form.getByLabel('Feedback application').inputValue(),'host','Feedback form belongs to its provider application');
+  await page.getByRole('button',{name:'Tools',exact:true}).click();await page.getByRole('menu').getByRole('menuitem').filter({hasText:'Pull requests'}).first().click();
+  await page.getByRole('button',{name:'Tools',exact:true}).click();await page.getByRole('menu').getByRole('menuitem').filter({hasText:'Assistant'}).first().click();
+  await page.setViewportSize({width:1920,height:900});await form.waitFor();
+  assert.equal(await page.locator('iframe[title="Feedback"]').isVisible(),true);
+  assert.equal(await page.locator('iframe[title="Pull requests"]').isVisible(),true);
+  await page.locator('iframe[title="Assistant"]').waitFor({state:'visible'});
   if(process.env.HOSTY_FEEDBACK_SCREENSHOT)await page.screenshot({path:process.env.HOSTY_FEEDBACK_SCREENSHOT+'.panels.png'});
   console.log('PASS: ordinary concurrent tool panels, embedded/host selection, cleared frame hover and feedback on the provider form');
   await form.getByLabel('Comment 1',{exact:true}).focus();
@@ -133,10 +230,18 @@ try {
     console.log('PASS: manifest page icons, compact navigation restoration, retained app frame and inline narrow navigation controls');
     await windowTools.getByRole('button',{name:'Hosty Harness: Feedback',exact:true}).click();
     const windowForm=win.frameLocator('iframe[title="Feedback"]').getByRole('main',{name:'Feedback draft'});
+    await windowForm.getByRole('checkbox',{name:'Include screenshot',exact:true}).check();
+    await windowForm.getByText('Saved draft restored.',{exact:true}).waitFor();
+    const desktopAnnotationIndex=await windowForm.locator('ol > li').count();
     await windowForm.getByRole('button',{name:'Select element',exact:true}).click();
-    await win.frameLocator('iframe[title="Hosty Harness"]').getByRole('heading',{name:/^Chats/}).click();
+    await mainFrame.locator('html[style*="crosshair"]').waitFor({state:'attached'});
+    const desktopBounds=await mainFrame.getByRole('heading',{name:/^Chats/}).boundingBox();
+    await mainFrame.getByRole('heading',{name:/^Chats/}).click();
+    await checkScreenshot(win.frameLocator('iframe[title="Feedback"]'),desktopBounds,desktopAnnotationIndex);
+    await windowForm.getByRole('checkbox',{name:'Include screenshot',exact:true}).uncheck();
     await windowForm.getByRole('textbox',{name:/^Comment /}).last().fill('Desktop window element observation');
-    await windowForm.getByRole('button',{name:'Done',exact:true}).click();
+    await windowForm.getByRole('button',{name:'Done',exact:true}).last().click();
+    if(process.env.HOSTY_FEEDBACK_SCREENSHOT)await page.screenshot({path:process.env.HOSTY_FEEDBACK_SCREENSHOT+'.desktop-input.png'});
     await windowTools.getByRole('button',{name:'Hosty Harness: Pull requests',exact:true}).click();
     await windowTools.getByRole('button',{name:'Hosty Harness: Feedback',exact:true}).click();
     await windowForm.getByRole('button',{name:'Page comment',exact:true}).click();
@@ -190,6 +295,7 @@ try {
     const rootPresentation=await page.locator('.hosty-panel-viewport').getAttribute('aria-owns');assert.ok(rootPresentation);
     const rootFrame=page.frameLocator('#'+rootPresentation+' iframe[title="Feedback"]');const rootForm=rootFrame.getByRole('main',{name:'Feedback draft'});
     await rootForm.getByLabel('Feedback application').selectOption('host');
+    await rootForm.getByRole('checkbox',{name:'Include screenshot',exact:true}).uncheck();
     await page.locator('.hosty-panel-body').getByText('This tool has not confirmed that it loaded.',{exact:false}).waitFor({state:'hidden'});await rootForm.getByRole('button',{name:'Page comment',exact:true}).click();
     await rootForm.getByLabel('Comment 1',{exact:true}).fill('Desktop root observation');await rootForm.getByRole('button',{name:'Done',exact:true}).click();
     await page.waitForFunction(id=>{

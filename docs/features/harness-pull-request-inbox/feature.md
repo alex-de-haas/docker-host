@@ -1,6 +1,6 @@
 ---
 created: 2026-10-29
-updated: 2026-10-30
+updated: 2026-11-02
 summary: Harness PR page, compact panel and manual actions backed by installed-app discovery, shared CI presentation and adaptive GitHub observation.
 components: [apps/core, apps/harness]
 ---
@@ -177,6 +177,8 @@ separate tab. Images remain explicit links rather than automatic remote requests
 retain their existing escaped-HTML behavior.
 Both lists reuse the workspace card's two-line summary and status icon without a disclosure control:
 title/number, then repository, author for active PRs (Merged for merged PRs) and compact CI counts.
+Repository, identity and CI appear consecutively with dot separators; the identity does not expand
+to push CI to the opposite edge. Long repository/identity text still truncates to preserve CI.
 App names are retained in inventory/filter context rather than repeated on each row. The detail
 view and expanded workspace card share the segmented CI bar; the inbox bar opens its Checks tab.
 CI text separates passed, failed, running, pending, skipped, neutral, cancelled and unknown states.

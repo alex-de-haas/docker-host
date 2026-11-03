@@ -321,7 +321,7 @@ it("removes panel chrome for an older app adapter without remounting the protect
   vi.stubGlobal("fetch", vi.fn(async () => Response.json({}, { status: 404 })));
   await act(async () => host!.refresh());
   expect(element.querySelector("textarea")).toBe(documentDraft);
-  expect((element.querySelector(".hosty-panel-rail") as HTMLElement).style.display).toBe("none");
+  expect(element.querySelector(".hosty-panel-rail")).toBeNull();
   expect((element.querySelector(".hosty-panel-workspace") as HTMLElement).style.display).toBe("contents");
 });
 it("delivers commands only to the exact panel among retained frames from the same app", async () => {

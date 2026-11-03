@@ -155,7 +155,7 @@ export class FeedbackHost {
         return [...this.sources.values()].filter(s => s.visible() && (c.workspaceId === 'default' || c.workspaceId === s.workspaceId))
             .map(({ visible: _visible, invoke: _invoke, ...s }) => s);
     }
-    cancel() {
+    cancel(notify = true) {
         const pick = this.picking;
         this.picking = null;
         ++this.generation;
@@ -163,7 +163,7 @@ export class FeedbackHost {
         if (pick) {
             for (const id of pick.ids)
                 void this.sources.get(id)?.invoke({ action: 'cancel' }).catch(() => { });
-            this.composers.get(pick.owner)?.receive({ type: 'picking', mode: null });
+            if (notify) this.composers.get(pick.owner)?.receive({ type: 'picking', mode: null });
         }
         for (const l of this.listeners)
             l();
@@ -203,8 +203,11 @@ export class FeedbackHost {
                         this.cancel();
                         return;
                     }
-                    this.cancel();
-                    this.composers.get(id)?.receive({ type: 'selection', source: s, note: value as DraftNote });
+                    this.cancel(false);
+                    const composer = this.composers.get(id);
+                    // Deliver the result before ending selection so capture can distinguish completion from cancellation.
+                    composer?.receive({ type: 'selection', source: s, note: value as DraftNote });
+                    composer?.receive({ type: 'picking', mode: null });
                 }).catch(() => { if (this.picking?.generation === generation)
                     this.cancel(); });
             return null;

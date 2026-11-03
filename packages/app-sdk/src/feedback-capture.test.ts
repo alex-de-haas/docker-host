@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
-import { captureStill, cropCaptureToDocument } from "./feedback-capture";
+import { captureScreen, captureStill, cropCaptureToDocument } from "./feedback-capture";
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 it("denied capture leaves comments available and never hides the editor", async () => {
   vi.stubGlobal("navigator", { mediaDevices: { getDisplayMedia: vi.fn().mockRejectedValue(new DOMException("Denied", "NotAllowedError")) } });
@@ -41,4 +41,30 @@ it.each([false, true])("crops without a crop-status observer (custom crop: %s)",
   expect(custom ? crop : cropTo).toHaveBeenCalledTimes(1);
   if (custom) expect(crop).toHaveBeenCalledWith(track);
   expect(stop).toHaveBeenCalled();
+});
+
+it("requests a whole surface from the gesture and waits for selection before reading a frame", async () => {
+  const stop = vi.fn(), cropTo = vi.fn(), prepare = vi.fn(async () => {});
+  const getDisplayMedia = vi.fn().mockResolvedValue({ getTracks: () => [{ stop }], getVideoTracks: () => [{ cropTo }] });
+  vi.stubGlobal("navigator", { mediaDevices: { getDisplayMedia } });
+  vi.stubGlobal("CropTarget", { fromElement: vi.fn() });
+  const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockImplementation(async () => {
+    expect(prepare).toHaveBeenCalledOnce(); throw new Error("Frame unavailable");
+  });
+  const pending = captureScreen(new AbortController().signal, prepare);
+  expect(getDisplayMedia).toHaveBeenCalledOnce(); expect(prepare).not.toHaveBeenCalled();
+  await expect(pending).rejects.toThrow("Frame unavailable");
+  expect(play).toHaveBeenCalledOnce(); expect(cropTo).not.toHaveBeenCalled(); expect(stop).toHaveBeenCalled();
+});
+it.each(["cancel", "source ended"])("stops capture while waiting for selection: %s", async reason => {
+  const track = new EventTarget() as EventTarget & { stop: ReturnType<typeof vi.fn> };
+  track.stop = vi.fn(); const controller = new AbortController();
+  vi.stubGlobal("navigator", { mediaDevices: { getDisplayMedia: vi.fn().mockResolvedValue({ getTracks: () => [track] }) } });
+  const play = vi.spyOn(HTMLMediaElement.prototype, "play");
+  const prepared = vi.fn(() => new Promise<void>(() => {}));
+  const pending = captureScreen(controller.signal, prepared);
+  await vi.waitFor(() => expect(prepared).toHaveBeenCalledOnce());
+  if (reason === "cancel") controller.abort(); else track.dispatchEvent(new Event("ended"));
+  await expect(pending).rejects.toThrow();
+  expect(track.stop).toHaveBeenCalled(); expect(play).not.toHaveBeenCalled();
 });

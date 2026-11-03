@@ -35,7 +35,8 @@ The selected document determines application identity. Provider identity never s
 Each report belongs to one app; switching applications preserves their separate saved drafts.
 
 Select region records a viewport rectangle; Page comment records page context without a rectangle.
-Neither action automatically takes a screenshot. The provider form stays visible during selection.
+Harness includes an automatic screenshot by default for either action; the user can turn it off.
+The provider form stays visible during selection.
 Selection adds an editable comment to that form; Done completes editing after local persistence.
 Feedback's own form can be annotated, attributed to the provider app. Only the temporary Cancel
 selection control is excluded. Element context includes a bounded label, selector, rectangle and
@@ -43,15 +44,20 @@ viewport, never input values or a DOM dump. Each annotation records its route an
 Selectors are contextual hints when the original page changes. Reports support related annotations,
 removal, optional screenshots and an overall explanation. These actions never start an agent.
 
-Screen capture starts from the provider's button, preserving browser user activation and the
-`getDisplayMedia` chooser. The SDK captures one still and stops media tracks on success, failure or
-cancellation. The provider owns preview, explicit inclusion and manual percentage/drag cropping.
-When Region Capture is available, the source creates a browser `CropTarget` for its document and
-passes it through the verified channel. The capturing track asks the browser to crop to that source.
-Unsupported/rejected cropping retains the full selected capture with a manual-crop notice; image
-inclusion still requires approval. CropTarget covers visible geometry, including occlusion, and
-never promises DOM-subtree isolation. No viewport-coordinate guess or DOM rasterization substitutes
-for browser capture. Denied or unavailable capture leaves text feedback usable.
+Screen capture starts directly from the provider's selection button, preserving browser user
+activation and the `getDisplayMedia` chooser. After the user chooses a screen, window or tab, the
+SDK selects an element/region and holds its outline while Harness captures one complete frame.
+Page comments capture the chosen surface without an outline. Capture stops after that frame,
+on failure or cancellation, and after a two-minute selection timeout. Harness attaches the complete
+image to the local annotation draft immediately after capture, without a second review/crop dialog.
+An inline thumbnail and remove/retake controls remain available before explicit report submission.
+Image byte limits still apply; a rejected image does not discard its comment or an earlier screenshot.
+
+Harness uses whole-surface capture without automatic iframe cropping. The SDK also exposes the
+lower-level browser `CropTarget` operation for other providers. No viewport-coordinate guess or
+DOM rasterization substitutes for browser capture. Denied or unavailable capture leaves text
+feedback usable. See [Feedback composer tools](../feedback-composer-tools/feature.md) for the form
+and capture lifecycle.
 
 Dictation uses an already granted `providers.speech-to-text` capability and a discovered provider.
 Multiple providers require an explicit choice. Recording is limited to one minute, stops microphone
@@ -201,7 +207,7 @@ without a workspace remain in the global inbox. Retention is independent of PR m
   outcomes, deletion retention and owner Finish cleanup.
 - The browser journey uses Playwright Chromium (`HOSTY_FEEDBACK_BROWSER_CHANNEL` optionally selects
   installed Chrome; `HOSTY_FEEDBACK_PLAYWRIGHT_MODULE` can supply an absolute module path). It checks
-  anchored/sidebar editing, real browser-approved capture, preview, multi-annotation reload,
+  anchored/sidebar editing, real browser-approved capture, automatic full-image attachment, multi-annotation reload,
   IndexedDB quota/stale-tab faults, draft scope isolation and lost-response retry. Test-only chooser
   flags select the isolated test tab; production capture still requires the browser chooser.
   `HOSTY_FEEDBACK_BROWSER_ONLY=1` selects intake/browser verification without scripted-agent dispatch.

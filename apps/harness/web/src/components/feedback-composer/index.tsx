@@ -1,10 +1,11 @@
 "use client";
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useHostyUi } from '@hosty-sdk/app/ui/react';
-import { connectFeedback, feedbackScope, captureStill, type FeedbackSource, type FeedbackPort, type FeedbackOperation, type DraftNote, type FeedbackDraft } from '@hosty-sdk/app/feedback/client';
+import { connectFeedback, feedbackScope, captureScreen, type FeedbackSource, type FeedbackPort, type FeedbackOperation, type DraftNote, type FeedbackDraft } from '@hosty-sdk/app/feedback/client';
 import { blankDraft, readDraft, saveDraft, deleteDraft } from './draft';
-import { CropPreview, ImagePreview } from './screenshot';
-import { FeedbackSpeech } from './feedback-speech';
+import { FeedbackCommentInput } from './comment-input';
+import { useFeedbackSpeech } from './feedback-speech';
+import { useAutomaticScreenshot, type AutomaticScreenshot } from './automatic-screenshot';
 import './style.css';
 const message = (e: unknown) => e instanceof Error ? e.message : 'Feedback is unavailable.';
 export function FeedbackComposer() {
@@ -17,59 +18,72 @@ export function FeedbackComposer() {
     const [incoming, setIncoming] = useState<DraftNote | null>(null), [picking, setPicking] = useState<'element' | 'region' | null>(null), [error, setError] = useState('');
     const port = useRef<FeedbackPort | null>(null);
     const [blocked,setBlocked] = useState(true);
+    const request = useCallback((operation: FeedbackOperation) => port.current?.request(operation) ?? Promise.reject(new Error('Reconnect the workspace to continue.')), []);
+    const screenshot = useAutomaticScreenshot(request);
+    const receiveCapture = screenshot.receive;
     useEffect(() => {
         const connection = connectFeedback(event => {
+            const heldForCapture = receiveCapture(event);
             if (event.type === 'sources') {
                 setSources(event.sources);
                 setSelected(current => current && event.sources[0] && current.capabilities.userId !== event.sources[0].capabilities.userId ? event.sources[0] : current ? event.sources.find(s => s.id === current.id) ?? current : event.sources.find(s => s.id === 'host') ?? event.sources[0] ?? null);
             }
             if (event.type === 'picking')
                 setPicking(event.mode);
-            if (event.type === 'selection') {
+            if (event.type === 'selection' && !heldForCapture) {
                 setSelected(event.source);
                 setIncoming(event.note);
             }
         });
         port.current = connection;
         return () => { port.current = null; connection.close(); };
-    }, []);
-    const request = (operation: FeedbackOperation) => port.current?.request(operation) ?? Promise.reject(new Error('Reconnect the workspace to continue.'));
+    }, [receiveCapture]);
     const available = !!selected && sources.some(s => s.id === selected.id);
+    const capturing = screenshot.phase !== null;
+    const select = (mode: 'element' | 'region' | 'page') => { if (selected) void screenshot.start(mode, selected, event => { setSelected(event.source); setIncoming(event.note); }); };
     return <main className="feedback-composer" aria-label="Feedback draft">
-    <label>Application / page<select disabled={blocked} aria-label="Feedback application" value={selected?.id ?? ''} onChange={e => { setSelected(sources.find(s => s.id === e.target.value) ?? null); setIncoming(null); }}>
+    <label>Application / page<select disabled={blocked || capturing} aria-label="Feedback application" value={selected?.id ?? ''} onChange={e => { setSelected(sources.find(s => s.id === e.target.value) ?? null); setIncoming(null); }}>
       {!selected && <option value="">Choose a page</option>}{selected && !available && <option value={selected.id}>{selected.label} · unavailable</option>}
       {sources.map(s => <option key={s.id} value={s.id}>{s.label} · {s.id === 'host' ? 'host' : s.route}</option>)}
     </select></label>
     <div className="fc-actions">
-      <button aria-pressed={picking === 'element'} disabled={!available || blocked} onClick={() => void request({ action: 'pick', mode: 'element' }).catch(e => setError(message(e)))}>Select element</button>
-      <button aria-pressed={picking === 'region'} disabled={!available || blocked} onClick={() => void request({ action: 'pick', mode: 'region', sourceId: selected?.id }).catch(e => setError(message(e)))}>Select region</button>
-      <button disabled={!available || blocked} onClick={() => void request({ action: 'page', sourceId: selected?.id }).then(n => setIncoming(n as DraftNote)).catch(e => setError(message(e)))}>Page comment</button>
+      <button aria-pressed={picking === 'element'} disabled={!available || blocked || capturing} onClick={() => select('element')}>Select element</button>
+      <button aria-pressed={picking === 'region'} disabled={!available || blocked || capturing} onClick={() => select('region')}>Select region</button>
+      <button disabled={!available || blocked || capturing} onClick={() => select('page')}>Page comment</button>
     </div>
-    {picking && <div data-hosty-feedback-control role="status" className="fc-selection">{picking === 'region' ? 'Select a region in the chosen application.' : 'Select an element in a visible application.'}<button onClick={() => void request({ action: 'cancel' })}>Cancel selection</button></div>}
+    <label className="fc-screenshot-option"><input type="checkbox" checked={screenshot.enabled} disabled={blocked || capturing || !!picking} onChange={e => screenshot.setEnabled(e.target.checked)}/> Include screenshot</label>
+    {capturing && !picking && <p role="status">{screenshot.phase === 'permission' ? 'Choose the screen, window or tab to capture.' : 'Capturing the selected surface…'} <button onClick={screenshot.cancel}>Cancel capture</button></p>}
+    {screenshot.notice && <p role="status">{screenshot.notice}</p>}
+    {picking && <div data-hosty-feedback-control role="status" className="fc-selection">{picking === 'region' ? 'Select a region in the chosen application.' : 'Select an element in a visible application.'}<button onClick={() => { screenshot.cancel(); void request({ action: 'cancel' }).catch(e => setError(message(e))); }}>Cancel selection</button></div>}
     {error && <p role="alert">{error}</p>}
-    {selected ? <DraftEditor key={feedbackScope(selected.capabilities)} source={selected} available={available} incoming={incoming} request={request} setBlocked={setBlocked}/> : <p role="status">Open a supported application to collect feedback.</p>}
+    {selected ? <DraftEditor key={feedbackScope(selected.capabilities)} source={selected} available={available} incoming={incoming} request={request} setBlocked={setBlocked} captureBusy={capturing} automaticScreenshot={screenshot.result} onScreenshotConsumed={screenshot.clearResult}/> : <p role="status">Open a supported application to collect feedback.</p>}
   </main>;
 }
-function DraftEditor({ source, available, incoming, request, setBlocked }: {
+function DraftEditor({ source, available, incoming, request, setBlocked, captureBusy, automaticScreenshot, onScreenshotConsumed }: {
     source: FeedbackSource;
     available: boolean;
     incoming: DraftNote | null;
     request: (operation: FeedbackOperation) => Promise<unknown>;
     setBlocked: (blocked: boolean) => void;
+    captureBusy: boolean;
+    automaticScreenshot: AutomaticScreenshot | null;
+    onScreenshotConsumed: () => void;
 }) {
     const key = feedbackScope(source.capabilities);
-    const [draft, setDraft] = useState<FeedbackDraft>(() => blankDraft(key)), [ready, setReady] = useState(false), [saving, setSaving] = useState(false), [busy, setBusy] = useState(false), [dictating, setDictating] = useState(false);
+    const [draft, setDraft] = useState<FeedbackDraft>(() => blankDraft(key)), [ready, setReady] = useState(false), [saving, setSaving] = useState(false), [busy, setBusy] = useState(false);
     const [saveFailed, setSaveFailed] = useState(false);
-    const [error, setError] = useState(''), [notice, setNotice] = useState(''), [legacy, setLegacy] = useState(false), [editing, setEditing] = useState<string | null>(null);
+    const [error, setError] = useState(''), [notice, setNotice] = useState(''), [legacy, setLegacy] = useState(false);
     const [reviewTargets, setReviewTargets] = useState<{
         label: string;
         href: string;
     }[]>([]);
-    const [preview, setPreview] = useState<{
-        id: string;
-        blob: Blob;
-    } | null>(null), [capturing, setCapturing] = useState(false);
-    useEffect(() => { setBlocked(!ready || saving || saveFailed || busy); }, [ready, saving, saveFailed, busy, setBlocked]);
+    const [capturing, setCapturing] = useState(false), [imageError, setImageError] = useState('');
+    const pendingImage = !!automaticScreenshot && feedbackScope(automaticScreenshot.source.capabilities) === key;
+    const locked = !ready || draft.submitting || busy || capturing || captureBusy || pendingImage;
+    const speech = useFeedbackSpeech("/api/hosty/ui/feedback", locked);
+    const dictating = speech.phase !== "idle";
+    useEffect(() => { setBlocked(!ready || saving || saveFailed || busy || capturing || pendingImage || dictating); }, [ready, saving, saveFailed, busy, capturing, pendingImage, dictating, setBlocked]);
+    const consumedImage = useRef<AutomaticScreenshot | null>(null);
     const current = useRef(draft), revision = useRef(0), savedId = useRef<string | null>(null), queue = useRef(Promise.resolve()), saveFailure = useRef<Error | null>(null), live = useRef(true), capture = useRef<AbortController | null>(null), seen = useRef(new Set<string>());
     const call = useRef(request);
     const sourceId = useRef(source.id);
@@ -162,61 +176,60 @@ function DraftEditor({ source, available, incoming, request, setBlocked }: {
             return;
         }
         update({ annotations: [...current.current.annotations, incoming] });
-        setEditing(incoming.id);
         // The note event is consumed once after restoration; persistence uses the current draft ref.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [ready, incoming]);
+    function attachImage(id: string, blob: Blob) {
+        if (current.current.submitting || !current.current.annotations.some(n => n.id === id)) return;
+        if (blob.size > source.capabilities.maxImageBytes)
+            throw new Error('Screenshot not added: each image must fit within 2 MiB. You can retake it or continue without it.');
+        if (current.current.annotations.filter(n => n.id !== id).reduce((sum, n) => sum + (n.image?.size ?? 0), 0) + blob.size > source.capabilities.maxTotalImageBytes)
+            throw new Error('Screenshot not added: images may total at most 8 MiB. Remove another screenshot or continue without this one.');
+        noteChange(id, { image: blob });
+        setImageError('');
+    }
+    useEffect(() => {
+        if (!ready || !automaticScreenshot || !pendingImage || consumedImage.current === automaticScreenshot || !seen.current.has(automaticScreenshot.note.id)) return;
+        consumedImage.current = automaticScreenshot;
+        try {
+            attachImage(automaticScreenshot.note.id, automaticScreenshot.blob);
+        } catch (e) {
+            // Consume the external capture result once after asynchronous draft restoration.
+            // eslint-disable-next-line react-hooks/set-state-in-effect
+            setImageError(message(e));
+        }
+        onScreenshotConsumed();
+        // Consume each capture once, after its note is accepted or rejected against the restored draft.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [ready, incoming, automaticScreenshot, pendingImage, onScreenshotConsumed]);
     async function screenshot(id: string) {
         if (capture.current)
             return;
         const operation = new AbortController();
         capture.current = operation;
         setCapturing(true);
-        setError('');
+        setImageError('');
+        const note = current.current.annotations.find(n => n.id === id);
+        let outlined = false;
         try {
-            let cropped = false;
-            const blob = await captureStill(() => { }, operation.signal, c => { cropped = c; }, async (track) => {
-                const cropTrack = track as MediaStreamTrack & {
-                    cropTo?: (target: unknown) => Promise<void>;
-                };
-                if (!cropTrack?.cropTo)
-                    return false;
-                try {
-                    const target = await call.current({ action: 'crop-target', sourceId: sourceId.current });
-                    operation.signal.throwIfAborted();
-                    if (!target)
-                        return false;
-                    await cropTrack.cropTo(target);
-                    return true;
-                }
-                catch {
-                    return false;
-                }
+            const blob = await captureScreen(operation.signal, async () => {
+                if (!note?.target?.bounds) return;
+                operation.signal.throwIfAborted();
+                outlined = true;
+                await request({ action: 'highlight', sourceId: source.id, target: note.target, requestId: note.id });
             });
-            if (live.current && !operation.signal.aborted) {
-                setPreview({ id, blob });
-                setNotice(cropped ? 'Captured the selected application.' : 'Automatic application cropping was unavailable. Review and crop the screenshot before including it.');
-            }
+            if (live.current && !operation.signal.aborted) attachImage(id, blob);
         }
         catch (e) {
             if (live.current && !operation.signal.aborted)
-                setError(message(e));
+                setImageError(message(e));
         }
         finally {
+            if (outlined) void request({ action: 'highlight', sourceId: source.id }).catch(() => {});
             capture.current = null;
             if (live.current)
                 setCapturing(false);
         }
-    }
-    async function acceptImage(blob: Blob) {
-        if (!preview)
-            return;
-        if (blob.size > source.capabilities.maxImageBytes)
-            throw new Error('Crop a smaller area: each screenshot must fit within 2 MiB.');
-        if (current.current.annotations.filter(n => n.id !== preview.id).reduce((sum, n) => sum + (n.image?.size ?? 0), 0) + blob.size > source.capabilities.maxTotalImageBytes)
-            throw new Error('Screenshots may total at most 8 MiB.');
-        noteChange(preview.id, { image: blob });
-        setPreview(null);
     }
     async function send() {
         setBusy(true);
@@ -257,7 +270,7 @@ function DraftEditor({ source, available, incoming, request, setBlocked }: {
             setBusy(false);
         }
     }
-    function reset() { const fresh = blankDraft(key); current.current = fresh; revision.current = 0; savedId.current = null; saveFailure.current = null; setSaveFailed(false); setDraft(fresh); setEditing(null); }
+    function reset() { const fresh = blankDraft(key); current.current = fresh; revision.current = 0; savedId.current = null; saveFailure.current = null; setSaveFailed(false); setDraft(fresh); setImageError(''); }
     async function discard() {
         if (!window.confirm(draft.submitting ? 'This submission may already exist. Discard its local retry record?' : 'Discard this feedback draft and screenshots?'))
             return;
@@ -271,25 +284,28 @@ function DraftEditor({ source, available, incoming, request, setBlocked }: {
             setError(message(e));
         }
     }
-    const locked = !ready || draft.submitting || busy;
     return <>
     <p className="fc-muted">One application per report. Switching applications preserves each draft.</p>
     <small role="status">{!ready ? 'Loading draft…' : saving ? 'Saving…' : saveFailed ? 'Not saved locally' : draft.revision ? 'Saved locally' : 'New report'}</small>
     {!available && <p role="status">Reopen this application to select elements or submit its saved draft.</p>}
     {legacy && <p role="status">A previous draft is still saved in the source application. Finish this draft, then reopen the tool to recover it.</p>}
+    {speech.providers.length > 1 && <label>Speech provider<select value={speech.choice} disabled={locked || dictating} onChange={e => speech.setChoice(e.target.value)}>
+      <option value="">Choose provider</option>{speech.providers.map(p => <option key={JSON.stringify([p.appId, p.key])} value={JSON.stringify([p.appId, p.key])} disabled={!p.available}>{p.displayName}</option>)}
+    </select></label>}
     <ol>{draft.annotations.map((n, index) => <li key={n.id}>
-      <div className="fc-actions"><strong>{index + 1}. {n.target?.label ?? 'Page comment'}</strong><button disabled={locked} onClick={() => update({ annotations: current.current.annotations.filter(a => a.id !== n.id) })}>Remove</button></div>
+      <div className="fc-actions"><strong>{index + 1}. {n.target?.label ?? 'Page comment'}</strong><button disabled={locked || dictating} onClick={() => update({ annotations: current.current.annotations.filter(a => a.id !== n.id) })}>Remove</button></div>
       <p className="fc-muted">{n.route}</p>
-      <label>Comment<textarea aria-label={`Comment ${index + 1}`} maxLength={2000} disabled={locked} value={n.text} onFocus={() => setEditing(n.id)} onChange={e => noteChange(n.id, { text: e.target.value })}/></label>
-      {n.image && <><ImagePreview blob={n.image}/><button disabled={locked} onClick={() => noteChange(n.id, { image: undefined })}>Remove screenshot</button></>}
-      {editing === n.id && <FeedbackSpeech path="/api/hosty/ui/feedback" disabled={locked} onBusyChange={setDictating} onText={text => noteChange(n.id, { text: (current.current.annotations.find(a => a.id === n.id)?.text + ' ' + text).trim().slice(0, 2000) })}/>}
-      <div className="fc-actions"><button disabled={locked || capturing || !available} onClick={() => void screenshot(n.id)}>{capturing ? 'Capturing…' : 'Add screenshot'}</button>
-        <button disabled={locked || dictating} onClick={() => { setEditing(null); void flush().catch(e => setError(message(e))); }}>Done</button></div>
+      <FeedbackCommentInput label="Comment" ariaLabel={`Comment ${index + 1}`} target={`annotation:${n.id}`} value={n.text}
+        maxLength={2000} disabled={locked} speech={speech} onChange={text => noteChange(n.id, { text })}
+        onDictation={text => noteChange(n.id, { text: ((current.current.annotations.find(a => a.id === n.id)?.text ?? '') + ' ' + text).trim().slice(0, 2000) })}
+        screenshot={{ image: n.image, capturing, available, capture: () => void screenshot(n.id), remove: () => noteChange(n.id, { image: undefined }) }}
+        onDone={() => { void flush().catch(e => setError(message(e))); }} />
     </li>)}</ol>
-    <label>Overall comment (optional)<textarea maxLength={5000} disabled={locked} value={draft.comment} onChange={e => update({ comment: e.target.value })}/></label>
-    {error && <p role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}
+    <FeedbackCommentInput label="Overall comment (optional)" target="overall" value={draft.comment}
+      maxLength={5000} disabled={locked} speech={speech} onChange={comment => update({ comment })}
+      onDictation={text => update({ comment: (current.current.comment + ' ' + text).trim().slice(0, 5000) })} />
+    {error && <p role="alert">{error}</p>}{imageError && <p role="alert">{imageError}</p>}{notice && <p role="status">{notice}</p>}
     {reviewTargets.map(t => <p key={t.href}><a href={t.href} target="_blank" rel="noopener noreferrer">Review feedback in {t.label}</a></p>)}
-    <footer><button disabled={!ready || busy} onClick={() => void discard()}>Discard draft</button><button className="fc-submit" disabled={!ready || busy || dictating || !available || !draft.annotations.length || draft.annotations.some(n => !n.text.trim())} onClick={() => void send()}>{busy ? 'Sending…' : draft.submitting ? 'Retry submission' : 'Submit feedback'}</button></footer>
-    {preview && <CropPreview blob={preview.blob} onCancel={() => setPreview(null)} onAccept={acceptImage}/>}
+    <footer><button disabled={!ready || busy || captureBusy || capturing || pendingImage || dictating} onClick={() => void discard()}>Discard draft</button><button className="fc-submit" disabled={!ready || busy || captureBusy || capturing || pendingImage || dictating || !available || !draft.annotations.length || draft.annotations.some(n => !n.text.trim())} onClick={() => void send()}>{busy ? 'Sending…' : draft.submitting ? 'Retry submission' : 'Submit feedback'}</button></footer>
   </>;
 }

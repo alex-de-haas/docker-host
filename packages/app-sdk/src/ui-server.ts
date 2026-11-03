@@ -16,14 +16,17 @@ export class UiServerClient {
     this.service = options.serviceToken ?? process.env.HOSTY_APP_SERVICE_TOKEN ?? "";
     if (!this.appId || !this.service) throw new UiError("hosty_misconfigured", "Hosty app credentials are not configured.", 503);
   }
-  private async request<T>(path: string, token: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+  private async response(path: string, token: string, body?: unknown, signal?: AbortSignal): Promise<Response> {
     if (!token) throw new UiError("app_identity_required", "Sign in to use application panels.", 401);
-    const response = await fetch(new URL(`/api/internal/apps/${encodeURIComponent(this.appId)}/ui/${path}`, this.core), {
+    return fetch(new URL(`/api/internal/apps/${encodeURIComponent(this.appId)}/ui/${path}`, this.core), {
       method: body === undefined ? "GET" : "POST", redirect: "error", cache: "no-store",
       signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000),
       headers: { authorization: `Bearer ${this.service}`, "X-Hosty-User-Token": token, "content-type": "application/json" },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
+  }
+  private async request<T>(path: string, token: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+    const response = await this.response(path, token, body, signal);
     const value = await response.json().catch(() => null) as ({ code?: string; message?: string } & T) | null;
     if (response.status === 404) throw new UiError("unsupported_core", "Update Core to use application panels.", 409);
     if (!response.ok) throw new UiError(value?.code ?? "ui_unavailable", value?.message ?? "Application panels are unavailable.", response.status);
@@ -32,6 +35,16 @@ export class UiServerClient {
   }
   bootstrap(options: { parentOrigin?: string }, token: string, signal?: AbortSignal): Promise<UiBootstrap> {
     return this.request(`bootstrap${options.parentOrigin ? `?parentOrigin=${encodeURIComponent(options.parentOrigin)}` : ""}`, token, undefined, signal);
+  }
+  async icon(token: string, signal?: AbortSignal): Promise<Response> {
+    const response = await this.response("icon", token, undefined, signal);
+    if (!response.ok) { await response.body?.cancel(); return new Response(null, { status: response.status, headers: responseHeaders }); }
+    const type = response.headers.get("content-type")?.split(";", 1)[0] ?? "";
+    if (!["image/svg+xml", "image/png", "image/webp", "image/jpeg", "image/gif", "image/avif"].includes(type)) {
+      await response.body?.cancel(); throw new UiError("ui_response_invalid", "Core returned an invalid app icon.", 502);
+    }
+    return new Response(response.body, { headers: { ...responseHeaders, "Content-Type": type,
+      "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "default-src 'none'; sandbox" } });
   }
   async listPanels(token: string, signal?: AbortSignal): Promise<UiPanel[]> {
     return (await this.request<{ panels: UiPanel[] }>("panels", token, undefined, signal)).panels;
@@ -98,7 +111,13 @@ export async function createHostyUiResponse(request: Request, context: UiAuthent
     } else if (request.method === "GET" && route === "bootstrap") {
       if ([...url.searchParams.keys()].some(k => k !== "parentOrigin") || url.searchParams.getAll("parentOrigin").length > 1)
         throw new UiError("ui_request_invalid", "Invalid bootstrap request.", 400);
-      result = await client.bootstrap({ parentOrigin: url.searchParams.get("parentOrigin") ?? undefined }, context.token, request.signal);
+      const bootstrap = await client.bootstrap({ parentOrigin: url.searchParams.get("parentOrigin") ?? undefined }, context.token, request.signal);
+      const icon = bootstrap.app.iconUrl ? new URL(bootstrap.app.iconUrl, bootstrap.coreOrigin) : null;
+      const ownAsset = icon?.origin === bootstrap.coreOrigin && icon.pathname.startsWith(`/api/apps/${encodeURIComponent(bootstrap.app.appId)}/assets/`);
+      result = ownAsset ? { ...bootstrap, app: { ...bootstrap.app, iconUrl: prefix + "/icon" } } : bootstrap;
+    } else if (request.method === "GET" && route === "icon") {
+      if (url.search) throw new UiError("ui_request_invalid", "Unexpected icon parameters.", 400);
+      return await client.icon(context.token, request.signal);
     } else if (request.method === "GET" && route === "panels") {
       result = { panels: await client.listPanels(context.token, request.signal) };
     } else if (request.method === "GET" && route === "activity") {
