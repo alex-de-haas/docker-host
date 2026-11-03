@@ -45,7 +45,7 @@ function Shell({ initialOpen, link }: { initialOpen: boolean | null; link: boole
 async function render(initialOpen: boolean | null, link = false) {
   await act(async () => root.render(<HostyUiRoot panelLayout="slot"><Shell initialOpen={initialOpen} link={link} /></HostyUiRoot>));
 }
-const toggle = (open: boolean) => container.querySelector<HTMLButtonElement>(`button[aria-label="Open assistant — assistant"][aria-pressed="${open}"]`)!;
+const toggle = (open: boolean) => container.querySelector<HTMLButtonElement>(`button[aria-label="${open ? "Hide" : "Open"} assistant — assistant"][aria-pressed="${open}"]`)!;
 beforeEach(() => {
   catalog = panels; host = null; catalogGate = null; resolutionGate = null; refused = false; persisted.mockReset(); localStorage.clear();
   document.cookie = `${RIGHT_PANEL_OPEN_PREF_KEY}=; max-age=0; path=/`;
@@ -87,17 +87,70 @@ it("shows the real collapsed state during a delayed/refused session link and ope
   expect(toggle(true)?.getAttribute("aria-pressed")).toBe("true");
   expect(container.querySelector("aside")?.closest<HTMLElement>("[data-shell-tool-column]")?.hidden).toBe(false);
 });
-it("applies a legacy open preference and focuses an already visible tool without hiding it", async () => {
+it("applies a legacy open preference and toggles its pinned tool without replacing its frame", async () => {
   localStorage.setItem(RIGHT_PANEL_OPEN_PREF_KEY, "true");
   await render(null);
   expect(toggle(true)?.getAttribute("aria-pressed")).toBe("true");
   expect(container.querySelector("aside")?.closest<HTMLElement>("[data-shell-tool-column]")?.hidden).toBe(false);
   expect(document.cookie).toContain(`${RIGHT_PANEL_OPEN_PREF_KEY}=true`);
   const frame = container.querySelector("iframe");
+  const requests = vi.mocked(fetch).mock.calls.length;
+  expect(toggle(true).className).toContain("bg-brand-soft");
   await act(async () => toggle(true).click());
-  expect(host!.getSnapshot().expanded).toBe(true);
-  expect(toggle(true)).not.toBeNull();
+  expect(host!.getSnapshot().expanded).toBe(false);
+  expect(toggle(false).className).not.toContain("bg-brand-soft");
+  expect(vi.mocked(fetch).mock.calls).toHaveLength(requests);
   expect(container.querySelector("iframe")).toBe(frame);
+  await act(async () => toggle(false).click());
+  expect(toggle(true)).not.toBeNull();
+  expect(host!.getSnapshot().tools).toHaveLength(1);
+  expect(container.querySelector("iframe")).toBe(frame);
+});
+
+it("hides a visible pinned tool independently of the focused tool and reopens its retained view", async () => {
+  await render(false);
+  await act(async () => { await host!.selectPanel(panels[1].panel); await host!.selectPanel(panels[0].panel); });
+  const frames = [...container.querySelectorAll("iframe")];
+  const [assistant, notes] = host!.getSnapshot().tools;
+  expect(host!.getSnapshot().selectedPresentationId).toBe(notes.presentationId);
+  expect(toggle(true)).not.toBeNull();
+  await act(async () => toggle(true).click());
+  expect(host!.getSnapshot().workspaces?.[0].visibleIds).toEqual([notes.presentationId]);
+  expect(host!.getSnapshot().expanded).toBe(true);
+  expect(toggle(false)).not.toBeNull();
+  expect([...container.querySelectorAll("iframe")]).toEqual(frames);
+  await act(async () => toggle(false).click());
+  expect(host!.getSnapshot().workspaces?.[0].visibleIds).toEqual([notes.presentationId, assistant.presentationId]);
+  expect([...container.querySelectorAll("iframe")]).toEqual(frames);
+});
+
+it("opens a retained pinned tool after workspace collapse instead of hiding its remembered visibility", async () => {
+  await render(false);
+  await act(async () => { await host!.selectPanel(panels[1].panel); host!.collapseWorkspace("default"); });
+  const frame = container.querySelector("iframe");
+  expect(toggle(false)).not.toBeNull();
+  await act(async () => toggle(false).click());
+  expect(toggle(true)).not.toBeNull();
+  expect(host!.getSnapshot().expanded).toBe(true);
+  expect(container.querySelector("iframe")).toBe(frame);
+});
+
+it("hides the last focused visible instance of a tool while retaining its siblings", async () => {
+  await render(false);
+  await act(async () => {
+    await host!.selectPanel(panels[1].panel);
+    await host!.openSurface({ panel: panels[1].panel }, { placement: "side", reuse: "new", requestId: createPresentationRequestId() });
+  });
+  const [first, second] = host!.getSnapshot().tools;
+  const frames = [...container.querySelectorAll("iframe")];
+  await act(async () => host!.focusPresentation(first.presentationId));
+  await act(async () => toggle(true).click());
+  expect(host!.getSnapshot().workspaces?.[0].visibleIds).toEqual([second.presentationId]);
+  expect(toggle(true)).not.toBeNull();
+  await act(async () => toggle(true).click());
+  expect(host!.getSnapshot().workspaces?.[0].visibleIds).toEqual([]);
+  expect(toggle(false)).not.toBeNull();
+  expect([...container.querySelectorAll("iframe")]).toEqual(frames);
 });
 it("defers a legacy open preference to the explicit session link instead of selecting the first tool", async () => {
   localStorage.setItem(RIGHT_PANEL_OPEN_PREF_KEY, "true"); refused = true;
@@ -380,12 +433,39 @@ it("opens an unpinned target from Tools and a session link without silently pinn
   HTMLElement.prototype.scrollIntoView = vi.fn(); await render(true);
   expect(host!.getSnapshot().selected).toBeNull();
   await openTools();
-  const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(item => item.textContent?.startsWith("assistantassistant"))!;
+  const item = document.querySelector<HTMLElement>('[role="menuitemcheckbox"][title="Open assistant — assistant"]')!;
   await act(async () => item.click());
   expect(host!.getSnapshot().selected).toEqual(panels[1].panel); expect(container.querySelectorAll('[data-pinned-tools] button')).toHaveLength(0);
   await act(async () => host!.collapseWorkspace("default"));
   await render(false, true);
   expect(host!.getSnapshot().selected).toEqual(panels[1].panel); expect(host!.getSnapshot().expanded).toBe(true);
+  expect(container.querySelectorAll('[data-pinned-tools] button')).toHaveLength(0);
+});
+
+it("highlights and toggles an unpinned tool from Tools without hiding another tool or losing frames", async () => {
+  HTMLElement.prototype.scrollIntoView = vi.fn();
+  localStorage.setItem(panelPreferenceKey(bootstrap.coreOrigin, "alice"), JSON.stringify({ version: 1, pins: { [panelKey(panels[1].panel)]: false } }));
+  await render(false);
+  await act(async () => { await host!.selectPanel(panels[0].panel); });
+  const notes = host!.getSnapshot().tools[0];
+  await openTools();
+  const menuTool = (action: string) => document.querySelector<HTMLElement>(`[role="menuitemcheckbox"][title="${action} assistant — assistant"]`)!;
+  expect(menuTool("Open").getAttribute("aria-checked")).toBe("false");
+  await act(async () => menuTool("Open").click());
+  const frames = [...container.querySelectorAll("iframe")];
+  const assistant = host!.getSnapshot().tools[1];
+  await openTools();
+  expect(menuTool("Hide").getAttribute("aria-checked")).toBe("true");
+  expect(menuTool("Hide").className).toContain("bg-brand-soft");
+  await act(async () => menuTool("Hide").dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+  expect(host!.getSnapshot().workspaces?.[0].visibleIds).toEqual([notes.presentationId]);
+  expect([...container.querySelectorAll("iframe")]).toEqual(frames);
+  await openTools();
+  expect(menuTool("Open").getAttribute("aria-checked")).toBe("false");
+  expect(menuTool("Open").className).not.toContain("bg-brand-soft");
+  await act(async () => menuTool("Open").click());
+  expect(host!.getSnapshot().workspaces?.[0].visibleIds).toEqual([notes.presentationId, assistant.presentationId]);
+  expect([...container.querySelectorAll("iframe")]).toEqual(frames);
   expect(container.querySelectorAll('[data-pinned-tools] button')).toHaveLength(0);
 });
 it("removes inaccessible launchers, preserves an explicit panel pin through metadata updates and ignores old installations", async () => {
