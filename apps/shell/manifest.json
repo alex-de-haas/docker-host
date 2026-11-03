@@ -3,7 +3,7 @@
   "id": "hosty.shell",
   "name": "Hosty Shell",
   "description": "Hosty browser management shell.",
-  "version": "0.119.1",
+  "version": "0.120.0",
   "role": "system",
   "source": {
     "type": "git",
@@ -117,7 +117,8 @@
     "credentials.read",
     "credentials.revoke",
     "core.environments.inspect",
-    "core.environments.operate"
+    "core.environments.operate",
+    "core.environments.api"
   ],
   "optionalCorePermissions": [
     "providers.assistant",

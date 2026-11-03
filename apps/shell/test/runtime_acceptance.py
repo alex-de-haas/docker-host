@@ -10,6 +10,7 @@ import shutil
 import time
 import urllib.parse
 import urllib.request
+import urllib.error
 import uuid
 
 
@@ -95,6 +96,45 @@ def check(context):
                 stream_snapshot(stream, observed(state))
                 if state == 'running':
                     assert sandbox['coreVersion'] == request('/control/v1/core/status', control=True)['version']
+                    # Access remains available for an agent-created child before and after setup.
+                    access_path = '/api/core/api/core-environments/'+sandbox['id']+'/access-link'
+                    shell_csrf = call(app_origin, '/api/core/api/auth/csrf')['token']
+                    context['diagnostic_secrets'].add(shell_csrf)
+                    access = call(app_origin, access_path, {}, shell_csrf)
+                    context['diagnostic_secrets'].add(access['token'])
+                    child_origin = sandbox['previewUrl']
+                    assert access['setupUrl'].startswith(child_origin+'/setup?setupToken=') and not access['recoveryUrl']
+                    child_password = uuid.uuid4().hex+'aA1!'
+                    context['diagnostic_secrets'].add(child_password)
+                    first = call(child_origin, '/api/auth/bootstrap', {'setupToken':access['token'],
+                        'email':'agent-admin@example.test', 'displayName':'Agent admin', 'password':child_password})['user']
+                    access = call(app_origin, access_path, {}, shell_csrf)
+                    context['diagnostic_secrets'].add(access['token'])
+                    assert access['recoveryUrl'].startswith(child_origin+'/recovery?recoveryToken=') and not access['setupUrl']
+                    recovery = {'recoveryToken':access['token'], 'email':'owner-admin@example.test',
+                        'displayName':'Environment owner', 'password':child_password}
+                    try:
+                        call(origin, '/api/auth/recovery', recovery)
+                        raise AssertionError('A child recovery token authorized its parent')
+                    except urllib.error.HTTPError as error:
+                        assert error.code == 404
+                    second = call(child_origin, '/api/auth/recovery', recovery)['user']
+                    assert second['id'] != first['id'] and second['role'] == 'host.admin'
+                    try:
+                        call(child_origin, '/api/auth/recovery', recovery)
+                        raise AssertionError('Recovery token was reusable')
+                    except urllib.error.HTTPError as error:
+                        assert error.code == 404
+                    # Exercise real password login for both accounts; recovery must preserve the agent.
+                    for email, expected in [('agent-admin@example.test', first), ('owner-admin@example.test', second)]:
+                        form = urllib.parse.urlencode({'email':email, 'password':child_password, 'returnTo':'/api/auth/session'}).encode()
+                        with client.open(urllib.request.Request(child_origin+'/login', data=form,
+                            headers={'Content-Type':'application/x-www-form-urlencoded','Origin':child_origin}), timeout=30) as response:
+                            response.read()
+                        assert call(child_origin, '/api/auth/session')['user']['id'] == expected['id']
+                    assert call(origin, '/api/auth/session')['user']['email'] == 'activation-fixture@example.test'
+                    say('PASS: Shell owner access, ordinary setup and recovery, two password logins, one-use and cross-instance rejection')
+
                     def child_resource():
                         history = request('/api/core/resources')['history']
                         return next((sample for frame in history[-1:] for sample in frame['services']

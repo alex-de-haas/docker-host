@@ -10,11 +10,21 @@ import { readCoreErrorDetail } from "../core-api";
 
 export type InitializationStatus = { phase: string; hasAdministrator: boolean; recoveryRequired: boolean; shellUrl?: string; error?: string;
   apps: { id: string; title: string; state: string; error?: string }[] };
-type SetupLink = { token: string; setupUrl: string; expiresAt: string };
+type SetupLink = { token: string; setupUrl?: string | null; recoveryUrl?: string | null; expiresAt: string };
 type Request = <T>(path: string, body: unknown) => Promise<T>;
 function safeUrl(value?: string) {
   try { const url = new URL(value ?? ""); return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password ? url.href : undefined; }
   catch { return undefined; }
+}
+
+function accessUrl(link: SetupLink, previewUrl: string) {
+  const value = safeUrl(link.recoveryUrl ?? link.setupUrl ?? undefined);
+  try {
+    const url = new URL(value ?? ""), target = new URL(previewUrl);
+    const recovery = !!link.recoveryUrl;
+    return url.origin === target.origin && url.pathname === (recovery ? "/recovery" : "/setup")
+      && url.searchParams.get(recovery ? "recoveryToken" : "setupToken") === link.token ? url.href : undefined;
+  } catch { return undefined; }
 }
 
 export function initializationProblem(status: InitializationStatus | null) {
@@ -70,7 +80,7 @@ export function useEnvironmentInitialization({ item, origin, pollVersion, reques
         const status = await response.json() as InitializationStatus;
         if (disposed || abort.signal.aborted || current !== generation) return;
         setObservation({ scope, status, error: "" }); setCheckedAt(Date.now());
-        if (status.hasAdministrator) { setLink(null); setSetupOpen(false); setActionError(""); }
+
         keepChecking = !status.hasAdministrator || !["ready", "existing"].includes(status.phase);
       } catch (cause) {
         if (disposed || abort.signal.aborted || current !== generation) return;
@@ -91,9 +101,15 @@ export function useEnvironmentInitialization({ item, origin, pollVersion, reques
     };
   }, [enabled, scope, origin, item.id, pollVersion]);
   const status = enabled && observation?.scope === scope ? observation.status : null;
+  if (status?.hasAdministrator && link?.setupUrl) { setLink(null); setSetupOpen(false); }
+  useEffect(() => {
+    if (!link) return;
+    const timer = setTimeout(() => setLink(null), Math.max(0, Date.parse(link.expiresAt) - Date.now()));
+    return () => clearTimeout(timer);
+  }, [link]);
   const error = actionError || (observation?.scope === scope ? observation.error : "");
   const perform = async (resume: boolean) => {
-    if (actionPending.current || !enabled) return;
+    if (actionPending.current || item.state !== "running" || resume && !enabled) return;
     actionPending.current = true; setBusy(true); setActionError("");
     const epoch = actionEpoch.current.value;
     try {
@@ -102,10 +118,12 @@ export function useEnvironmentInitialization({ item, origin, pollVersion, reques
         if (epoch !== actionEpoch.current.value) return;
         setObservation({ scope, status: next, error: "" }); refreshRef.current();
       } else {
-        const next = await request<SetupLink>(`/${item.id}/setup-link`, {});
+        const next = await request<SetupLink>(`/${item.id}/access-link`, {});
         if (epoch !== actionEpoch.current.value) return;
+        const url = accessUrl(next, item.previewUrl);
+        if (!url || !Number.isFinite(Date.parse(next.expiresAt)) || Date.parse(next.expiresAt) <= Date.now())
+          throw new Error("The environment returned an invalid or expired access link.");
         setLink(next); setCheckedAt(Date.now()); setCopied(null); setSetupOpen(true);
-        const url = safeUrl(next.setupUrl);
         if (url) window.open(url, "_blank", "noopener,noreferrer");
       }
     } catch (cause) { if (epoch === actionEpoch.current.value) setActionError(cause instanceof Error ? cause.message : "The request failed."); }
@@ -113,10 +131,10 @@ export function useEnvironmentInitialization({ item, origin, pollVersion, reques
   };
   const copy = async (value: string, kind: "link" | "token") => {
     try { await navigator.clipboard.writeText(value); setCopied(kind); setActionError(""); }
-    catch { setActionError(kind === "link" ? "Clipboard unavailable. Copy the registration link from its Open registration action." : "Clipboard unavailable. Select and copy the token below."); }
+    catch { setActionError(kind === "link" ? "Clipboard unavailable. Copy the access link from its Open access page action." : "Clipboard unavailable. Select and copy the token below."); }
   };
   const refresh = useCallback(() => refreshRef.current(), []);
-  const setup = link && Date.parse(link.expiresAt) > checkedAt ? safeUrl(link.setupUrl) : undefined;
+  const setup = link && Date.parse(link.expiresAt) > checkedAt ? accessUrl(link, item.previewUrl) : undefined;
   return { status, error, busy, link, setup, setupOpen, setSetupOpen, copied, copy, refresh,
     canSetup: !!status && !observation?.error && ["ready", "existing"].includes(status.phase) && !status.hasAdministrator && !status.recoveryRequired,
     canResume: !!status && ["failed", "selection"].includes(status.phase),
@@ -124,23 +142,25 @@ export function useEnvironmentInitialization({ item, origin, pollVersion, reques
   };
 }
 
-export function EnvironmentSetupDialog({ initialization }: { initialization: ReturnType<typeof useEnvironmentInitialization> }) {
+export function EnvironmentAccessDialog({ initialization }: { initialization: ReturnType<typeof useEnvironmentInitialization> }) {
   const { link, setup, setupOpen, setSetupOpen, busy, error, copied, copy, setupAdministrator } = initialization;
   return <Dialog open={setupOpen} onOpenChange={setSetupOpen}>
     <DialogContent>
-      <DialogHeader><DialogTitle>Set up administrator</DialogTitle><DialogDescription>Create the first administrator in the sandbox’s browser window.</DialogDescription></DialogHeader>
+      <DialogHeader><DialogTitle>Get access</DialogTitle><DialogDescription>{link?.setupUrl
+        ? "Create the first administrator in this environment’s browser window."
+        : "Use a new email to create another administrator. Using an existing email changes that account’s password and signs out its existing sessions."}</DialogDescription></DialogHeader>
       <DialogBody className="flex flex-col gap-4">
         {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
         {setup && link ? <>
-          <Button asChild variant="outline"><a href={setup} target="_blank" rel="noreferrer">Open registration</a></Button>
+          <Button asChild variant="outline"><a href={setup} target="_blank" rel="noreferrer">Open access page</a></Button>
           <div className="flex flex-wrap gap-2">
-            <Button type="button" size="sm" variant="outline" onClick={() => void copy(setup, "link")}>{copied === "link" ? "Link copied" : "Copy setup link"}</Button>
-            <Button type="button" size="sm" variant="outline" onClick={() => void copy(link.token, "token")}>{copied === "token" ? "Token copied" : "Copy setup token"}</Button>
+            <Button type="button" size="sm" variant="outline" onClick={() => void copy(setup, "link")}>{copied === "link" ? "Link copied" : "Copy access link"}</Button>
+            <Button type="button" size="sm" variant="outline" onClick={() => void copy(link.token, "token")}>{copied === "token" ? "Token copied" : "Copy access token"}</Button>
           </div>
-          <p className="break-all text-sm text-muted-foreground">Setup token: <code>{link.token}</code></p>
-        </> : <p className="text-sm">This link expired. Request a new registration link.</p>}
+          <p className="break-all text-sm text-muted-foreground">Access token: <code>{link.token}</code></p>
+        </> : <p className="text-sm">This link expired. Request a new access link.</p>}
       </DialogBody>
-      <DialogFooter><Button type="button" variant="outline" disabled={busy} onClick={() => void setupAdministrator()}>New registration link</Button><Button type="button" onClick={() => setSetupOpen(false)}>Done</Button></DialogFooter>
+      <DialogFooter><Button type="button" variant="outline" disabled={busy} onClick={() => void setupAdministrator()}>New access link</Button><Button type="button" onClick={() => setSetupOpen(false)}>Done</Button></DialogFooter>
     </DialogContent>
   </Dialog>;
 }
