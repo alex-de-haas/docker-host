@@ -90,10 +90,6 @@ jobs:
             rid: osx-arm64
             artifact: hosty-darwin-arm64
             core_artifact: hosty-core-darwin-arm64
-          - os: macos-latest
-            rid: osx-x64
-            artifact: hosty-darwin-x64
-            core_artifact: hosty-core-darwin-x64
           - os: ubuntu-24.04-arm
             rid: linux-arm64
             artifact: hosty-linux-arm64
@@ -249,12 +245,10 @@ jobs:
           mkdir -p dist
           expected=(
             hosty-darwin-arm64
-            hosty-darwin-x64
             hosty-linux-arm64
             hosty-linux-x64
             hosty-windows-x64.exe
             hosty-core-darwin-arm64
-            hosty-core-darwin-x64
             hosty-core-linux-arm64
             hosty-core-linux-x64
             hosty-core-windows-x64.exe
@@ -334,6 +328,16 @@ jobs:
           EOF
 
           if gh release view cli-dev >/dev/null 2>&1; then
+            # Upload --clobber leaves omitted assets behind. Remove retired Intel binaries
+            # before publishing new checksums; failed cleanup must not advance the receipt.
+            published_assets=$(gh release view cli-dev --json assets --jq '.assets[].name')
+            while IFS= read -r asset; do
+              case "$asset" in
+                hosty-darwin-x64|hosty-core-darwin-x64)
+                  gh release delete-asset cli-dev "$asset" --yes
+                  ;;
+              esac
+            done <<< "$published_assets"
             gh release upload cli-dev dist/* --clobber
           else
             gh release create cli-dev dist/* \
@@ -342,7 +346,7 @@ jobs:
               --prerelease
           fi
 
-          # Record completion last. Failed uploads leave the previous receipt so a later
+          # Record completion last. Failed cleanup or uploads leave the previous receipt so a later
           # successful main CI run can recover even when its own push changes no native files.
           gh release edit cli-dev \
             --title "Hosty development build" \
