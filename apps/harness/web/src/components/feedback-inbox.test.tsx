@@ -49,3 +49,24 @@ it("server busy refusal preserves instruction and lost acceptance retries the fr
   expect(JSON.parse(writes[2]![1]!.body as string).instruction).toBe("Preserve this instruction");
   expect(document.querySelector('[role="dialog"]')).toBeNull();
 });
+it("finds cancelled feedback through Needs review and resends it to the reviewed existing chat", async () => {
+  const stopped = { ...report("Stopped", "cancelled"), revision: 7 };
+  vi.mocked(call).mockImplementation(async (_url, init) => Response.json(init?.method === "POST" ? { state: "accepted" } : { reports: [stopped], dispatches: [] }));
+  await act(async () => root.render(<FeedbackInbox />));
+  expect(element.textContent).toContain("No feedback matches this view.");
+  const select = async (label: string, value: string) => act(async () => {
+    const control = document.querySelector<HTMLSelectElement>('select[aria-label="' + label + '"]')!;
+    control.value = value; control.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await select("Feedback status", "needs-review");
+  await act(async () => [...element.querySelectorAll("button")].find(b => b.textContent?.startsWith("Stopped"))!.click());
+  expect(button("Send again").disabled).toBe(false);
+  await click("Send again");
+  expect(document.querySelector('[role="dialog"]')!.textContent).toContain("Send feedback again");
+  await select("Workspace", "workspace"); await select("Chat", "chat");
+  await click("Send to chat");
+  const writes = vi.mocked(call).mock.calls.filter(([, init]) => init?.method === "POST");
+  expect(writes).toHaveLength(1);
+  expect(JSON.parse(writes[0]![1]!.body as string)).toEqual({ requestId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+    reports: [{ id: "Stopped", revision: 7 }], workspaceId: "workspace", sessionId: "chat", instruction: "" });
+});

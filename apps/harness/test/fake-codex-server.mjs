@@ -198,7 +198,8 @@ function handle(msg) {
       void feedbackOutcome(currentTurnText).then(() => {
         send({ method: "item/completed", params: { threadId: activeThreadId, item: { type: "agentMessage", id: "feedback-result", text: "Scripted feedback acceptance completed." } } });
         send({ method: "turn/completed", params: { threadId: activeThreadId, turn: { id: "feedback-turn", status: "completed" } } });
-      }).catch(error => fail(error.message));
+      }).catch(error => send({ method: "turn/completed", params: { threadId: activeThreadId,
+        turn: { id: "feedback-turn", status: "failed", error: { message: "Feedback acceptance fixture failed: " + error.message } } } }));
       return;
     }
     if (currentTurnText.includes("TASK_ACCEPTANCE:")) {

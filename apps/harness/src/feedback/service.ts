@@ -5,6 +5,7 @@ import type { SessionManager } from "../sessions/manager.js";
 import type { SessionRecord, StoredEvent } from "../sessions/store.js";
 import { AppContextError, MAX_CONTEXT_APPS, readContextApps } from "../sessions/app-context.js";
 import type { ProviderDirectory } from "../settings/providers.js";
+import { feedbackRecoveryHint } from "./tools.js";
 
 const owned = (d: FeedbackDispatch, scope: FeedbackCapabilities) => d.actorId === scope.userId && d.callerAppId === scope.appId && d.callerInstallation === scope.installation;
 const active = (d: FeedbackDispatch) => ["reserved", "accepted", "unknown"].includes(d.state);
@@ -175,7 +176,7 @@ export class FeedbackService {
       const receipt = await this.manager.messageReceipt(sessionId, d.id, session!.createdBy).catch(() => null);
       if (receipt?.eventSeq && receipt.eventSeq === current?.seq && !feedbackTurn(events, receipt.eventSeq)) { dispatch = d; break; }
     }
-    if (!dispatch) fail("feedback_prompt_unbound", "This exact prompt has no active feedback batch.");
+    if (!dispatch) fail("feedback_prompt_unbound", "This exact prompt has no active feedback batch. " + feedbackRecoveryHint);
     const watch = this.watches.get(dispatch!.id); if (watch) watch.token = token!;
     if (action === "feedback-current") return { attemptId: dispatch!.id, reports: dispatch!.snapshot, instruction: dispatch!.input.instruction };
     if (action === "feedback-result") return client.outcomes(dispatch!.id, input.outcomes as FeedbackOutcome[], token!);
