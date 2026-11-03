@@ -115,6 +115,10 @@ def check(context):
     review = owner.harness('/pull-requests/'+repo['id']+'/12/review')
     assert review['items'][0]['state'] == 'unresolved'
     pr = detail['pullRequest']
+    assert pr['headBranch'] == 'hosty/fixture-pr-00000000000c', pr['headBranch']
+    legacy_pr = owner.harness('/pull-requests/'+repo['id']+'/13')['pullRequest']
+    assert legacy_pr['headBranch'] == 'hosty/session'+'/'+('d'*64), legacy_pr['headBranch']
+    say('PASS: PR observations retain exact readable and legacy branch names')
     diff = owner.harness('/pull-requests/'+repo['id']+'/12/diff?head='+pr['head']+'&base='+pr['base'])
     assert diff['head'] == pr['head'] and len(diff['files']) == 1
     owner.harness('/pull-requests/'+repo['id']+'/12/diff?head='+('c'*40)+'&base='+pr['base'], expected=409)

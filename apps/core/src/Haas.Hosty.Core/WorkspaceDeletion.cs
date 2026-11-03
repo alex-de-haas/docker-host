@@ -34,7 +34,7 @@ internal sealed partial class DevelopmentWorkspaceService
                 || !w.Owner.SameIdentity(journal.Owner)
                 || w.WorkspaceId != id || w.Path != WorkPath(w.Id) || w.RepositoryId != Hash(w.Repository)
                 || w.Id != Hash(OwnerIdentity(journal.Owner) + "\n" + w.RepositoryId)
-                || w.Branch != "hosty/session/" + w.Id || w.State != "released")
+                || !ValidWorkspaceBranch(w) || w.State != "released")
             || journal.Worktrees.Select(w => w.Id).Distinct().Count() != journal.Worktrees.Length)
             throw Error("ownership_invalid", "Workspace deletion journal is inconsistent; metadata was preserved.");
         foreach (var tree in journal.Worktrees) Id(tree.Id);
@@ -149,6 +149,7 @@ internal sealed partial class DevelopmentWorkspaceService
                 {
                     var branch = await Git(repo, ["show-ref", "--verify", "--quiet", "refs/heads/" + tree.Branch], ct, true);
                     if (branch.ExitCode != 1) throw Error("cleanup_pending", "Workspace branch is present or cannot be verified.");
+                    await RemoveBranchAllocation(tree, ct);
                     var registrations = await Git(repo, ["worktree", "list", "--porcelain", "-z"], ct);
                     if (GitWorktreeRegistrations.Contains(registrations.StandardOutput, tree.Path, "refs/heads/" + tree.Branch))
                         throw Error("cleanup_pending", "Workspace still has a Git registration.");

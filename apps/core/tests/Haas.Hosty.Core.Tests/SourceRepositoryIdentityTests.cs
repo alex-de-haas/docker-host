@@ -20,7 +20,7 @@ public sealed partial class CoreLifecycleServiceTests
         var repositoryId = DevelopmentWorkspaceService.Hash(repository);
         var id = DevelopmentWorkspaceService.Hash(DevelopmentWorkspaceService.OwnerIdentity(template.Owner) + "\n" + repositoryId);
         return template with { Id = id, Repository = repository, RepositoryId = repositoryId,
-            Path = Path.Combine(Path.GetDirectoryName(template.Path)!, id), Branch = "hosty/session/" + id };
+            Path = Path.Combine(Path.GetDirectoryName(template.Path)!, id), Branch = "hosty/session/" + id, BranchNaming = null };
     }
 
     [Theory]

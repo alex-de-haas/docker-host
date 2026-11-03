@@ -132,7 +132,32 @@ def check(context):
     harness_history(context, owner, member, first)
     def action(browser, session, kind, **payload):
         return browser.harness('/sessions/'+session['id']+'/workspaces', {'action': kind, **payload})
-    tree = action(owner, first, 'prepare', requestId=str(uuid.uuid4()), appId=stopped_app, targetBranch='main')
+    prepare_branch = {'requestId': str(uuid.uuid4()), 'appId': stopped_app, 'targetBranch': 'main', 'name': 'Readable workspace branches'}
+    tree = action(owner, first, 'prepare', **prepare_branch)
+    assert tree['branch'] == 'hosty/readable-workspace-branches-'+tree['id'][:12], tree['branch']
+    action(owner, first, 'rename', requestId=str(uuid.uuid4()), name='Renamed workspace purpose')
+    replay = action(owner, first, 'prepare', **prepare_branch)
+    assert replay['branch'] == tree['branch'] and replay['path'] == tree['path']
+    assert replay['name'] == 'Renamed workspace purpose'
+    # Manufacture a pre-upgrade record only inside this disposable child Core's test store.
+    legacy_session = owner.harness('/sessions', {'title': 'Legacy branch compatibility'})
+    legacy_tree = action(owner, legacy_session, 'prepare', requestId=str(uuid.uuid4()), appId=app, targetBranch='main')
+    legacy_path = pathlib.Path(legacy_tree['path'])
+    assert legacy_path.resolve().is_relative_to(root.resolve()), 'Legacy fixture must stay inside the isolated Core'
+    legacy_branch = 'hosty/session/'+legacy_tree['id']
+    run(['git', '-C', legacy_path, 'branch', '-m', legacy_branch])
+    run(['git', '-C', legacy_path, 'update-ref', '-d', 'refs/hosty/allocations/'+legacy_tree['id']])
+    legacy_record = root/'core/development/workspaces'/(legacy_tree['id']+'.json')
+    legacy_value = json.loads(legacy_record.read_text())
+    legacy_value['branch'] = legacy_branch
+    legacy_value.pop('branchNaming', None)
+    legacy_record.write_text(json.dumps(legacy_value))
+    observed_legacy = action(owner, legacy_session, 'status', workspaceId=legacy_tree['id'])
+    assert observed_legacy['branch'] == legacy_branch and observed_legacy['id'] == legacy_tree['id']
+    action(owner, legacy_session, 'rename', requestId=str(uuid.uuid4()), name='Legacy workspace retained')
+    assert action(owner, legacy_session, 'prepare', requestId=str(uuid.uuid4()), appId=app, targetBranch='main')['branch'] == legacy_branch
+    say('PASS: new task-based branch, frozen-name replay, and pre-upgrade branch preserved through Harness/Core')
+
     same_repository = action(owner, first, 'prepare', requestId=str(uuid.uuid4()), appId=app, targetBranch='main')
     assert same_repository['id'] == tree['id'] and same_repository['path'] == tree['path']
     for unavailable, expected_code in [(no_source_app, 'workspace_source_missing'), ('missing.context.app', 'workspace_app_missing')]:
@@ -312,7 +337,7 @@ def check(context):
         # Test-only credentials live in the owned fixture, never logs or repository artifacts.
         access = base/'browser-access.json'
         access.write_text(json.dumps({'core': origin, 'url': link, 'email': 'activation-fixture@example.test',
-            'password': password, 'sessionId': third['id'], 'workspaceId': workspace_id, 'shell': shell_link, 'retainedWorkspaceId': retained_tree['workspaceId'], 'externalWorkspaceId': external['workspaceId']}))
+            'password': password, 'sessionId': third['id'], 'workspaceId': workspace_id, 'shell': shell_link, 'retainedWorkspaceId': retained_tree['workspaceId'], 'externalWorkspaceId': external['workspaceId'], 'legacyWorkspaceId': legacy_tree['workspaceId'], 'legacyBranch': legacy_branch, 'branch': tree['branch']}))
         os.chmod(access, 0o600)
         say('UI READY: '+str(access)+'; create '+str(base/'finish-ui')+' after browser checks')
         deadline = time.time()+1200
