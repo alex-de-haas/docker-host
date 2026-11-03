@@ -1287,3 +1287,67 @@ it("does not attach a late configure failure to another app's Manage page", asyn
   await act(async () => response.resolve(Response.json({ message: "Old app failed" }, { status: 400 })));
   expect(container.textContent).not.toContain("Old app failed"); expect(container.querySelector("h1")?.textContent).toBe("Other app");
 });
+
+const missingRequiredAccess: NonNullable<CoreApp["permissionState"]> = {
+  status: "known", required: ["apps.read"], optional: [], acceptedRequired: [], acceptedOptional: [],
+  granted: [], missingRequired: ["apps.read"], reviewRequired: true, unconfirmedRoles: [],
+  error: null, checkedAt: "now", descriptions: { "apps.read": "Read applications" },
+};
+const accessLink = () => appRow().querySelector<HTMLAnchorElement>('.dashboard-context-action > a');
+function expectPermissionReviewLink(link: HTMLAnchorElement | null | undefined) {
+  expect(link?.textContent).toBe("Review Access");
+  expect(link?.href).toBe("https://core.test/install/permissions/routine.app");
+  expect(link?.target).toBe("_blank");
+  expect(link?.rel).toBe("noopener noreferrer");
+}
+
+it.each(["running", "stopped"])("offers direct required access review before the %s app lifecycle shortcut and clears it after approval", async runtimeState => {
+  apps = [{ ...target, runtimeState, updateCheck: null, permissionState: missingRequiredAccess }];
+  await mount(true);
+  expectPermissionReviewLink(accessLink());
+  expect(contextAction()).toBeNull();
+  await openAppMenu();
+  expectPermissionReviewLink([...document.querySelectorAll<HTMLAnchorElement>('a[role="menuitem"]')].find(item => item.textContent === "Review Access"));
+  expect([...document.querySelectorAll('[role="menuitem"]')].some(item => item.textContent === (runtimeState === "running" ? "Stop app" : "Start app"))).toBe(true);
+  await act(async () => document.querySelector('[role="menu"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+  apps = [{ ...apps[0], permissionState: { ...missingRequiredAccess, granted: ["apps.read"], missingRequired: [], reviewRequired: false } }];
+  await act(async () => actions.refresh());
+  expect(accessLink()).toBeNull();
+  expect(contextAction()?.textContent).toBe(runtimeState === "running" ? "Stop" : "Start");
+});
+
+it.each([false, true])("keeps Update primary and access review in the menu with requiresReview=%s", async requiresReview => {
+  apps = [{ ...target, updateCheck: { ...target.updateCheck!, requiresReview }, permissionState: missingRequiredAccess }];
+  await mount(true);
+  expect(contextAction()?.textContent).toBe("Update");
+  expect(accessLink()).toBeNull();
+  await openAppMenu();
+  expectPermissionReviewLink([...document.querySelectorAll<HTMLAnchorElement>('a[role="menuitem"]')].find(item => item.textContent === "Review Access"));
+  await act(async () => document.querySelector('[role="menu"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+  apps = [{ ...apps[0], updateCheck: { ...target.updateCheck!, updateAvailable: false } }];
+  await act(async () => actions.refresh());
+  expectPermissionReviewLink(accessLink());
+});
+
+it.each([
+  { name: "optional-only changes", state: { ...missingRequiredAccess, required: [], optional: ["apps.read"], missingRequired: [] } },
+  { name: "unsupported-only permissions", state: { ...missingRequiredAccess, missingRequired: [], unsupportedRequired: ["unknown.permission"] } },
+  { name: "unknown observation", state: { ...missingRequiredAccess, status: "unknown" as const } },
+  { name: "stale observation", state: { ...missingRequiredAccess, status: "stale" as const } },
+])("does not offer required access review for $name", async ({ state }) => {
+  apps = [{ ...target, updateCheck: null, permissionState: state }];
+  await mount(true);
+  expect(contextAction()?.textContent).toBe("Stop");
+  expect(accessLink()).toBeNull();
+  await openAppMenu();
+  expect([...document.querySelectorAll('[role="menuitem"]')].some(item => item.textContent === "Review Access")).toBe(false);
+});
+
+it("does not offer access review to ordinary users", async () => {
+  apps = [{ ...target, capabilities: ["logs"], updateCheck: null, permissionState: missingRequiredAccess }];
+  overrideRequests(path => path === "/api/auth/session" ? Response.json({ authenticated: true, user: { id: "reader", role: "host.user" } }) : undefined);
+  await mount(true);
+  expect(accessLink()).toBeNull();
+  await openAppMenu();
+  expect([...document.querySelectorAll('[role="menuitem"]')].some(item => item.textContent === "Review Access")).toBe(false);
+});
