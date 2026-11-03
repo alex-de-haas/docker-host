@@ -1,6 +1,6 @@
 ---
 created: 2026-08-09
-updated: 2026-10-31
+updated: 2026-11-03
 summary: Canonical Core tools group platform features and mediate provider-owned tasks, sessions and history with current authority and conservative Harness policy migration.
 components: [apps/core, apps/harness]
 ---
@@ -89,6 +89,12 @@ so a follow-up call needs no disambiguation.
 - **Failures come back as results, not transport errors.** An unknown app id answers with a message
   naming the id and pointing at `list_apps`; an unreadable log answers with the reason alongside the
   app id and budget. A model can act on an explanation but can only give up on a JSON-RPC error.
+- Missing required arguments return an `isError` result with `mcp_argument_required` and the declared
+  argument name. Incorrect top-level JSON types return `mcp_argument_invalid` with the expected type.
+  These checks use the tool's published schema before argument binding; `workspaceId` remains required
+  for workspace observations. Optional defaults and nullable types retain their declared behavior.
+  Tool-specific validation still owns value and nested-object constraints. Unexpected tool exceptions
+  remain sanitized; these diagnostics include no supplied values or exception details.
 - `tail_app_logs` is named for what Core has: an on-demand read of container or process output, not a
   searchable store. Structured, queryable logs live in the telemetry backend — an optional app whose
   query API carries no authentication and which Core deliberately stopped proxying. It should declare
@@ -346,6 +352,9 @@ conversation dependency for these canonical operations.
 - Core catalog metadata is verified over real MCP HTTP requests with an empty app registry. Cover
   unchanged public names, scoped read operations, independent descriptor copies, schema/annotation
   preservation and invocation denial before an unmapped registered tool body executes.
+- Argument diagnostics cover omitted argument bags and required workspace IDs, null and incorrect
+  JSON types, optional defaults and nullable arguments. Invalid calls do not execute the tool body;
+  unexpected body exceptions retain sanitized answers without supplied values or private details.
 
 - HTTP suite over the real pipeline: `initialize`, then `tools/list`, then `tools/call` for **every**
   tool. Listing alone is not enough — attribute-declared tools are discovered by reflection, so the

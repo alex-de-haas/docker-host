@@ -1,9 +1,9 @@
 import { CircleHelp, GitMerge, GitPullRequest, GitPullRequestClosed, GitPullRequestDraft } from "lucide-react";
 import type { PullRequest } from "@/lib/development-api";
-import { ciPresentation } from "@/lib/pull-request-presentation";
+import { ciPresentation, hasRetainedCi } from "@/lib/pull-request-presentation";
 export function PullRequestStatus({ pr, stale }: { pr: PullRequest; stale: boolean }) {
   const ci = ciPresentation(pr, stale);
-  return <PullRequestStateIcon state={!pr.unavailable ? pr.observation?.state : undefined} draft={pr.observation?.draft} ci={ci.label} ciColor={ci.color} stale={stale && !pr.historical} />;
+  return <PullRequestStateIcon state={!pr.unavailable ? pr.observation?.state : undefined} draft={pr.observation?.draft} ci={ci.label} ciColor={ci.color} stale={stale && !hasRetainedCi(pr, stale)} />;
 }
 export function PullRequestStateIcon({ state, draft, ci, ciColor, stale }: { state?: string; draft?: boolean; ci: string; ciColor: string; stale: boolean }) {
   let Icon = CircleHelp, color = "text-muted-foreground", label = "Pull request status unknown";

@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
+using ModelContextProtocol.Server;
 
 namespace Haas.Hosty.Core.Tests.Http;
 
@@ -122,6 +123,108 @@ public sealed class McpHttpTests
         // Metadata remains identical between requests and is not a per-user grant or provider registry.
         var repeated = await CallAsync(client, admin, "tools/list", new { });
         Assert.Equal(result.GetRawText(), repeated.GetRawText());
+    }
+
+    [Theory]
+    [InlineData("get_workspace")]
+    [InlineData("get_workspace_participants")]
+    public async Task MissingRequiredWorkspaceArgumentsNameTheArgumentAndKeepTheSchemaRequired(string name)
+    {
+        await using var harness = await CoreHttpHarness.StartAsync();
+        var admin = await SeedSessionAsync(harness, "host.admin");
+        using var client = harness.CreateClient();
+        await InitializeAsync(client, admin);
+
+        var catalog = await CallAsync(client, admin, "tools/list", new { });
+        var schema = catalog.GetProperty("tools").EnumerateArray().Single(tool =>
+            tool.GetProperty("name").GetString() == name).GetProperty("inputSchema");
+        Assert.Contains(schema.GetProperty("required").EnumerateArray(), argument => argument.GetString() == "workspaceId");
+
+        foreach (var parameters in new object[] { new { name }, new { name, arguments = new { } } })
+        {
+            var error = ReadToolError(await CallAsync(client, admin, "tools/call", parameters));
+            Assert.Equal("mcp_argument_required", error.GetProperty("code").GetString());
+            Assert.Equal("Required argument 'workspaceId' is missing.", error.GetProperty("message").GetString());
+        }
+
+        foreach (var json in new[] { "null", "25", "true", "[]", "{\"private\":\"input-canary\"}" })
+        {
+            var arguments = JsonSerializer.Deserialize<JsonElement>($$"""{"workspaceId":{{json}}}""");
+            var error = ReadToolError(await CallAsync(client, admin, "tools/call", new { name, arguments }));
+            Assert.Equal("mcp_argument_invalid", error.GetProperty("code").GetString());
+            Assert.Equal("Argument 'workspaceId' must have JSON type string.", error.GetProperty("message").GetString());
+            Assert.DoesNotContain("input-canary", error.GetRawText());
+        }
+    }
+
+    [Fact]
+    public async Task InvalidOptionalArgumentTypesAreAnsweredWhileDefaultsAndNullableArgumentsStillWork()
+    {
+        await using var harness = await CoreHttpHarness.StartAsync();
+        var admin = await SeedSessionAsync(harness, "host.admin");
+        using var client = harness.CreateClient();
+        await InitializeAsync(client, admin);
+
+        var defaultGuide = await CallToolAsync(client, admin, "get_app_development_guide", new { });
+        var nullableGuide = await CallToolAsync(client, admin, "get_app_development_guide", new { topic = (string?)null });
+        Assert.Equal(defaultGuide.GetRawText(), nullableGuide.GetRawText());
+        var defaultAudit = await CallToolAsync(client, admin, "search_audit", new { });
+        Assert.Equal(50, defaultAudit.GetProperty("window").GetProperty("limit").GetInt32());
+
+        foreach (var limit in new object[] { "input-canary", 1.5 })
+        {
+            var error = ReadToolError(await CallAsync(client, admin, "tools/call",
+                new { name = "search_audit", arguments = new { limit } }));
+            Assert.Equal("mcp_argument_invalid", error.GetProperty("code").GetString());
+            Assert.Equal("Argument 'limit' must have JSON type integer.", error.GetProperty("message").GetString());
+            Assert.DoesNotContain("input-canary", error.GetRawText());
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ArgumentValidationDoesNotExecuteInvalidCallsOrExposeUnexpectedToolExceptions(bool argumentException)
+    {
+        var calls = 0;
+        await using var harness = await CoreHttpHarness.StartAsync(configure: services =>
+        {
+            // Use a reviewed catalog name, with a body that would reveal the exception if the
+            // diagnostic fix simply enabled exception detail or exposed all ArgumentExceptions.
+            services.PostConfigure<McpServerOptions>(options =>
+            {
+                var tools = options.ToolCollection!;
+                tools.Remove(tools["get_app"]);
+                tools.Add(McpServerTool.Create((Func<string, string>)(appId =>
+                {
+                    Interlocked.Increment(ref calls);
+                    if (argumentException) throw new ArgumentException("private-failure-canary");
+                    throw new InvalidOperationException("private-failure-canary");
+                }), new() { Name = "get_app" }));
+            });
+        });
+        var admin = await SeedSessionAsync(harness, "host.admin");
+        using var client = harness.CreateClient();
+        await InitializeAsync(client, admin);
+
+        var invalid = ReadToolError(await CallAsync(client, admin, "tools/call",
+            new { name = "get_app", arguments = new { appId = new { value = "input-canary" } } }));
+        Assert.Equal("mcp_argument_invalid", invalid.GetProperty("code").GetString());
+        Assert.Equal(0, calls);
+
+        var result = await CallAsync(client, admin, "tools/call",
+            new { name = "get_app", arguments = new { appId = "input-canary" } });
+        Assert.True(result.GetProperty("isError").GetBoolean());
+        Assert.Equal("An error occurred invoking 'get_app'.", result.GetProperty("content")[0].GetProperty("text").GetString());
+        Assert.DoesNotContain("private-failure-canary", result.GetRawText());
+        Assert.DoesNotContain("input-canary", result.GetRawText());
+        Assert.Equal(1, calls);
+    }
+
+    private static JsonElement ReadToolError(JsonElement result)
+    {
+        Assert.True(result.GetProperty("isError").GetBoolean());
+        return JsonDocument.Parse(result.GetProperty("content")[0].GetProperty("text").GetString()!).RootElement.Clone();
     }
 
     [Fact]

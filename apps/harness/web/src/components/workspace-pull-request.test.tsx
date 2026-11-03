@@ -35,3 +35,27 @@ it("retains GitHub links after release and does not invent an unpushed-head note
   await render(pr(), { ...tree, state: "released", observation: undefined }); await act(async () => trigger().click());
   expect(container.querySelector<HTMLButtonElement>('[aria-label="Review changes for repo #7"]')?.disabled).toBe(true); expect(container.querySelector('a[href="https://github.com/example/repo/pull/7"]')).not.toBeNull(); expect(container.textContent).not.toContain("not all in this published PR head");
 });
+
+it.each(["merged", "closed"])("keeps an old %s PR and its check details as last-observed evidence", async state => {
+  const value = { ...pr(), observation: { ...pr().observation!, state, at: "2026-10-01T10:00:00Z", checks: [{ name: "Tests", state: "FAILURE" }] } };
+  await render(value);
+  expect(container.textContent).toContain("CI last observed");
+  expect(container.textContent).not.toContain("CI outdated");
+  await act(async () => trigger().click());
+  expect(container.textContent).toContain("1 failed");
+  expect(container.textContent).toContain("Cached check results describe this observation.");
+  expect(container.textContent?.toLowerCase()).not.toContain("outdated");
+  expect(container.textContent).not.toContain("Refresh to observe current");
+  await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="repo #7: CI 1/1, show checks"]')!.click());
+  const checks = document.querySelector('[aria-label="repo #7: CI checks"]')!;
+  expect(checks.textContent).toContain("last observed check results");
+  expect(checks.textContent).toContain("Failure");
+  expect(checks.textContent).not.toContain("outdated");
+});
+
+it("still warns about outdated open PR evidence", async () => {
+  await render({ ...pr(), observation: { ...pr().observation!, at: "2026-10-01T10:00:00Z" } });
+  expect(container.textContent).toContain("CI outdated");
+  await act(async () => trigger().click());
+  expect(container.textContent).toContain("Refresh to observe current PR and CI state.");
+});

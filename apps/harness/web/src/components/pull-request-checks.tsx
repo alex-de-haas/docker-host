@@ -2,6 +2,7 @@
 import { useState, useSyncExternalStore } from "react";
 import { CheckCircle2, CircleHelp, Clock3, XCircle, X, MinusCircle } from "lucide-react";
 import type { PullRequest } from "@/lib/development-api";
+import { hasRetainedCi } from "@/lib/pull-request-presentation";
 import { checkResult } from "@/lib/pull-request-checks";
 import { PullRequestCheckSummary } from "./pull-request-check-summary";
 import type { PrCheck } from "@/lib/pull-requests-api";
@@ -29,14 +30,14 @@ export function PullRequestChecks({ pr, stale, label, segmented = false }: { pr:
   const checks = pr.unavailable ? undefined : pr.observation?.checks;
   const completed = checks?.filter(check => checkResult(check.state).completed).length ?? 0;
   const summary = checks ? `${completed}/${checks.length}` : "unknown";
-  const cached = stale || !!pr.historical;
+  const cached = stale || !!pr.historical, retainedCi = hasRetainedCi(pr, stale);
   const normalized: PrCheck[] = (checks ?? []).map((check, index) => ({ id: String(index), name: check.name,
     state: check.state.toUpperCase() === "NEUTRAL" ? "neutral" : check.state.toUpperCase() === "SKIPPED" ? "skipped" :
       check.state.toUpperCase() === "CANCELLED" ? "cancelled" : checkResult(check.state).kind }));
-  const triggerContent = segmented ? <PullRequestCheckSummary checks={{ items: normalized, total: checks?.length ?? null, completeness: checks ? "complete" : "unknown" }} stale={cached} /> : <>CI {summary}</>;
+  const triggerContent = segmented ? <PullRequestCheckSummary checks={{ items: normalized, total: checks?.length ?? null, completeness: checks ? "complete" : "unknown" }} stale={cached} retained={retainedCi} /> : <>CI {summary}</>;
   const triggerClass = segmented ? "h-auto w-full justify-start p-0 hover:bg-transparent" : "h-auto p-0";
   const content = <>
-      {stale && <p className="text-xs text-muted-foreground">These results are outdated or have not been observed yet.</p>}
+      {retainedCi ? <p className="text-xs text-muted-foreground">These are the last observed check results.</p> : stale && <p className="text-xs text-muted-foreground">These results are outdated or have not been observed yet.</p>}
       {(pr.unavailable || pr.observation?.error) && <p className="text-xs text-destructive-foreground">{pr.unavailable || pr.observation?.error}</p>}
       {!checks ? <p className="text-sm text-muted-foreground">Check results are unavailable.</p> : checks.length === 0
         ? <p className="text-sm text-muted-foreground">No CI checks reported.</p>

@@ -5,6 +5,7 @@ import http.cookiejar
 import json
 import os
 import pathlib
+import re
 import subprocess
 import shutil
 import urllib.error
@@ -59,6 +60,27 @@ def check(context, app_origin, link):
     say('PASS: authenticated intake, immutable context, no agent dispatch, exact replay and account scope')
 
     if not os.environ.get('HOSTY_FEEDBACK_BROWSER_ONLY'):
+        # Previewing the Core catalog does not grant tool execution. Review the installed
+        # assistant's access on this disposable child's normal administrator confirmation page.
+        review_path = '/install/agents/'+urllib.parse.quote(caps['appId'], safe='')+'/hosty:core'
+        with client.open(origin+review_path, timeout=30) as response:
+            review_url, review_html = response.geturl(), response.read().decode()
+        assert review_url.startswith(origin+'/install/confirm/'), 'Core MCP review did not open its confirmation page'
+        nonce = re.search(r'name=nonce value="([^"]+)"', review_html)
+        assert nonce, 'Core MCP review has no decision nonce'
+        context['diagnostic_secrets'].add(nonce.group(1))
+        decision = urllib.parse.urlencode({'nonce':nonce.group(1), 'decision':'approve', 'agentEnabled':'true'}).encode()
+        with client.open(urllib.request.Request(review_url, data=decision,
+                headers={'Origin':origin, 'Content-Type':'application/x-www-form-urlencoded'}), timeout=30) as response: response.read()
+        approval_id = urllib.parse.urlparse(review_url).path.rsplit('/', 1)[1]
+        def approved():
+            result = call(origin, '/api/installations/'+approval_id)
+            assert result['status'] not in ('failed', 'denied', 'expired'), ('Core MCP review failed', result['status'])
+            return result['status'] == 'succeeded'
+        wait_for(approved, 30)
+        core_target = next(target for target in call(origin, '/api/core/agents')['targets'] if target['id'] == 'hosty:core')
+        assert caps['appId'] in core_target['assistantIds'], 'The reviewed assistant has no current Core MCP grant'
+        say('PASS: normal child administrator review grants this installed assistant Core MCP access')
         connection = h('/connections', {'name':'Feedback acceptance', 'kind':'codex', 'auth':'api-key', 'secret':'synthetic-feedback-fixture-only'}, expected=201)
         h('/connections/'+connection['id']+'/test', {})
         profiles = h('/profiles')
