@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-26
-updated: 2026-10-31
+updated: 2026-11-03
 summary: Durable jobs and recoverable Harness sessions with scheduling, bounded context, same-provider continuation, budgets and decision waits.
 components: [apps/harness, apps/core, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -166,7 +166,7 @@ retry attempts and deliberate reanalysis separate. Filter and wait for required 
 model invocations. Define initial/backfill behavior, concurrency and invalidation after a new head.
 
 Policy can report only, request a decision, or perform a bounded action under previously configured
-authority. Ask-first uses [Shared Decisions](../shared-decisions/plan.md); its persisted answer resumes
+authority. Ask-first uses [Shared Decisions](../shared-decisions/feature.md); its persisted answer resumes
 the same work. Automatic mode does not ask again within its authorized scope, but still rechecks
 current rights, exact reviewed revision and repository merge conditions. A routine recommendation
 is not a grant. Unattended operation consumes existing background grants and survives a closed UI.
@@ -178,6 +178,25 @@ read-only view works without this runner. Existing workspace publication APIs mu
 external PRs without a supported contract. No live routine, GitHub mutation or implementation is
 authorized by this example.
 
+## Decisions-First Delivery Refinement (2026-11-03)
+
+[Shared Decisions](../shared-decisions/feature.md#durable-native-waiting) implements the bounded
+consumer transferred from D4/D7: ordinary-session and existing-task question waits, confirmed
+resource parking and durable response continuation. Codex/Claude adapters and the Decisions UI
+use verified same-provider/account native resume. Unsupported reconstruction stays explicit;
+the broader recovery policy above is not fully implemented by this bounded consumer.
+
+Under this approved transfer, D4 here retains general job/attempt wait policy and integration with
+those common question primitives. D7 retains common non-decision session commands, broader bounded
+context and recovery integration for chats/jobs. Reuse the same stores/receipts and do not implement
+a second continuation engine. Existing task execution remains awaiting input while only its native
+segment is parked; cancellation, result completion and starting another task attempt stay separate.
+
+The narrow answer-delivery outbox in Shared Decisions is not a scheduler or general event bus.
+Notifications D6 and Assistant Events retain application-event activation and delivery. D1-D3/D5-D6
+here still own schedules, missed-run/overlap/retry policy, budgets, background authority and routine
+verification. The Decisions delivery authorizes none of those broader deliverables and marks none done.
+
 ## Dependencies And Ownership
 
 - [Agent Providers](../agent-provider-interface/plan.md) owns invocation, results, cancellation and
@@ -185,7 +204,7 @@ authorized by this example.
   path can use its internal runtime; extraction is not a prerequisite. D7 here owns Harness session
   commands, context and continuation cursors;
   [Action Summary D4](../assistant-action-summary/plan.md#deliverables) owns the shared journal/event foundation.
-- [Shared Decisions](../shared-decisions/plan.md) owns question/response records;
+- [Shared Decisions](../shared-decisions/feature.md) owns question/response records;
   [Notifications D6](../notifications/plan.md#deliverables) owns durable subscriptions. The runner
   owns consumption, scheduling, deduplication and reconciliation, not a new event bus.
 - [Basic Tasks](../basic-tasks/feature.md) owns task state, explicit resources and the task executor
@@ -206,10 +225,10 @@ authorized by this example.
 - [ ] D1. Define durable job/attempt/wait identity, accepted-command ownership, scheduling and cancellation states, persisted observations, audit correlation and boundaries with tasks, sessions and provider runs; include versioned event-triggered routine configuration and recoverable creation of work before a conversation exists.
 - [ ] D2. Define current-grant dispatch, revocation/assignment/executor-option/contract-change behavior and recovery from uncertain effects; specify schedule/missed-run policy, concurrency, retry/backoff, time and cost budgets, including event filters, initial/backfill policy, trigger deduplication and input-revision invalidation for configured routines.
 - [ ] D3. After explicit Ready approval, implement persistence, claims, scheduling and retry/recovery over provider and resource APIs, including notification delivery bookkeeping and observable stopped/failed outcomes.
-- [ ] D4. Implement recoverable live/parked decision waits and response-triggered continuation with Shared Decisions and the D7 session recovery contract, preserving pending inputs, stopped-consumer lease discipline and cancellation.
+- [ ] D4. Integrate general job/attempt wait policy with Shared Decisions D7's ordinary-session/task question primitives and this plan's broader recovery contract, preserving pending inputs, confirmed-consumer lease discipline and cancellation; do not duplicate the proposed decision-specific wait/continuation implementation.
 - [ ] D5. Verify recurring monitoring and one authorized source job, restart/duplicate claims, lost provider responses, expired/revoked grants, budget exhaustion and failed notification delivery; cover overnight and response/parking races without duplicate effects.
 - [ ] D6. Document shipped behavior and compatibility in feature.md, reconcile consumers and remove this plan when all deliverables pass; preserve the historical Bridge D11 and session-recovery transfers without claiming they shipped earlier.
-- [ ] D7. Define, implement after Ready approval, and verify common idempotent Harness session commands, provider/account-bound continuation cursors and bounded recoverable context over the existing journal; cover ordinary chats and parked jobs, multi-client send/approval races, restart, unsupported resume, summary coverage, changed source and retention/revocation without duplicate tool effects.
+- [ ] D7. Define, implement after Ready approval, and verify common non-decision Harness session commands, provider/account-bound continuation cursors and broader bounded recoverable context over the existing journal, consuming decision-specific controls/waits from Shared Decisions D7; cover ordinary chats and parked jobs, multi-client send/approval races, restart, unsupported resume, summary coverage, changed source and retention/revocation without duplicate tool effects.
 
 ## Proposed Sequence
 

@@ -146,6 +146,13 @@ internal sealed class CoreEventHub
         foreach (var target in targets) target.TryWrite(new(ToolActivityChanged, "{}"));
     }
 
+    public void PublishDecision(string userId)
+    {
+        CoreEventSubscription[] targets;
+        lock (gate) targets = subscriptions.Where(s => s.IsActive && s.UserId == userId).ToArray();
+        foreach (var target in targets) target.TryWrite(new("decisions.changed", "{}"));
+    }
+
     public void PublishNotification(NotificationRecord record)
     {
         CoreEventSubscription[] targets;

@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-26
-updated: 2026-10-31
+updated: 2026-11-03
 summary: Deferred Harness task decomposition, hierarchy, artifact and decision integration, parked continuation and selected cross-session context access.
 components: [apps/harness]
 ---
@@ -109,7 +109,7 @@ orchestration and event-triggered automation remain separate and retain this pla
 - [Task Workspace Coordination](../shared-tasks/plan.md) owns automatic allocation/reuse and reverse
   task observations. This plan D4 consumes those bindings without duplicating their implementation.
 - [Shared Artifacts](../shared-artifacts/plan.md) owns retained content and selected handoffs;
-  [Shared Decisions](../shared-decisions/plan.md) owns addressed request/response records;
+  [Shared Decisions](../shared-decisions/feature.md) owns addressed request/response records;
   [Durable Agent Jobs](../durable-agent-jobs/plan.md) owns general scheduling/retries and parked waits.
 - [Notifications D6](../notifications/plan.md#deliverables) owns durable domain subscriptions for
   transition-driven integrations; Basic Tasks needs only direct requests and HTTP/SSE recovery.
@@ -135,9 +135,20 @@ and task result visibility do not automatically share private conversations or c
 D1-D2 are retired by transfer and must not be reused. No deliverable is checked merely because its
 scope moved. D3-D7 retain their original IDs; none is required to finish Basic Tasks.
 
+## Decisions-First Delivery Refinement (2026-11-03)
+
+The owner approved the Decisions-first boundary on 2026-11-03. [Shared Decisions](../shared-decisions/feature.md)
+implements the decision-only part transferred from D3: one queue, shared chat/inbox responses and
+projections of existing permissions, task review and recovery. It does not require artifact storage,
+hierarchy or the rest of this composition.
+
+D3 here consumes that page for richer task/artifact presentation and team/reviewer routing. D4-D7
+retain their remaining scope. Completing the transferred behavior does not complete these broader
+deliverables or authorize implementation of this Draft.
+
 ## Deliverables
 
-- [ ] D3. Implement the joined task/decision/artifact presentation and artifact/question/parked-continuation flow over the basic task UI and shared contracts, reusing profile/session/workspace views with accessible materials and current authorization.
+- [ ] D3. Implement richer joined task/artifact presentation and reviewer routing over the basic task UI and Shared Decisions page/continuation contract, reusing profile/session/workspace views with accessible materials and current authorization.
 - [ ] D4. Implement task relationship extensions, optional decomposition and hierarchy-driven delegation among app-owned profile choices and humans, with visible assignments, explicit handoffs, bounded fan-out, writer/integration policy and workspace coordination through its owning APIs.
 - [ ] D5. Verify the richer artifact/overnight-decision, human QA, hierarchy and independent bugfix/PR journeys with an independent API consumer; cover child cancellation/acceptance, stale materials and revoked access without private-store coupling or first-party-ID privilege.
 - [ ] D6. Record shipped orchestration behavior and limits in feature.md, retain the transfer history, reconcile the umbrella and underlying owners without marking unfinished deliverables complete, and regenerate the index.

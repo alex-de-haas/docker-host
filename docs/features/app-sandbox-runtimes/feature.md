@@ -1,6 +1,6 @@
 ---
 created: 2026-10-14
-updated: 2026-10-31
+updated: 2026-11-03
 summary: Parent-managed child Core environments with ordinary applications and accounts, private copied or workspace builds, lifecycle recovery and unified Dashboard controls.
 components: [apps/core, apps/harness, apps/shell, apps/demo-app, packages/app-sdk]
 ---
@@ -89,6 +89,8 @@ uses that child account, supports bounded relative `/api/` requests, and rejects
 Normal Core authorization and installation review remain in effect: an administrator API request
 does not bypass an app-install confirmation. API writes retain the called endpoint's replay rules.
 An operator signs into the child Core normally; Harness lists Core and running app preview links.
+Dashboard also exposes [Get access](../environment-administrator-access/feature.md) for ordinary
+setup or recovery, including after an agent has registered an administrator.
 Explicitly initialized children expose bounded initialization status, resume and setup-link operations.
 The parent reads these and app inventory through fixed local control operations; it needs no child
 password or parent-session file. Registration remains the child's ordinary browser setup flow.

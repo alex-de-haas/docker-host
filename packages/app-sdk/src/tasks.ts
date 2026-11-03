@@ -22,6 +22,8 @@ export type TaskExecutionInput = {
 };
 export type TaskExecutionReceipt = {
   executionId: string; revision: number; state: TaskExecutionState; stopConfirmed: boolean;
+  /** Native segment exit while the same attempt remains awaiting_input; does not release the attempt. */
+  nativeStopConfirmed?: boolean;
   createdAt: string; updatedAt: string; result?: TaskResult;
   error?: { code: string; message: string }; /** An absolute HTTP(S) UI URL for cross-app readers; same-app readers can resolve a local path. */
   sessionRef?: { id: string; path: string };
@@ -51,3 +53,6 @@ export type TaskExecutorOption = { id: string; name: string; capabilities: strin
 export type TaskExecutorOptions = { options: TaskExecutorOption[]; defaultId: string | null };
 export const taskStatuses: TaskStatus[] = ["Draft", "Ready", "InProgress", "Blocked", "Done", "Cancelled"];
 export const taskExecutionTerminal = (state: TaskExecutionState) => ["completed", "failed", "cancelled", "interrupted"].includes(state);
+
+/** Collision-free opaque reference for cross-provider links and filters; grants no task access. */
+export const taskReferenceKey = (ref: TaskRef): string => JSON.stringify([ref.appId, ref.installationId, ref.key, ref.id]);

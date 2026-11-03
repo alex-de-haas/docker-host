@@ -20,7 +20,7 @@ import { CoreRequestError, readCoreErrorDetail } from "../core-api";
 import { useShellActions } from "../shell-context";
 import { ResourceUsage } from "../resources/resource-usage";
 import { HostyMark } from "../../../../../../shared/web/hosty-mark";
-import { EnvironmentSetupDialog, initializationProblem, initializationSummary, useEnvironmentInitialization } from "./environment-initialization";
+import { EnvironmentAccessDialog, initializationProblem, initializationSummary, useEnvironmentInitialization } from "./environment-initialization";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { HostyLoader } from "../../../../../../shared/web/hosty-states";
 import { CreateEnvironmentDialog } from "./create-environment-dialog";
@@ -282,17 +282,15 @@ function CoreSandboxRow({ item, origin, pollVersion, disabled, request, workspac
   const running = item.state === "running";
   const transitional = ["building", "starting", "stopping", "finishing"].includes(item.state);
   const canStart = ["stopped", "failed", "quota-exceeded"].includes(item.state);
-  const needsSetup = initialization.canSetup || running && !item.initializationRequested && legacyState === "setup-required";
   const hasAdministrator = item.initializationRequested ? initialization.status?.hasAdministrator && !initialization.error : ["ready", "sign-in-required"].includes(legacyState || "");
   const login = running && hasAdministrator ? safeUrl(item.previewUrl) : undefined;
   const blocked = disabled || initialization.busy;
   const problem = error || initialization.error || initializationProblem(initialization.status);
   const summary = !problem && running && item.initializationRequested ? initializationSummary(initialization.status) : undefined;
-  const setup = () => { if (item.initializationRequested) void initialization.setupAdministrator(); else setOpen(true); };
+  const setup = () => { void initialization.setupAdministrator(); };
   const actions = <div className="flex shrink-0 items-center gap-1">
-    {needsSetup ? <Button type="button" size="sm" disabled={blocked} onClick={setup}>Sign Up</Button>
-      : running ? <Button type="button" variant="outline" size="sm" disabled={blocked} onClick={() => onCommand("stop")}>Stop</Button>
-      : canStart ? <Button type="button" variant="outline" size="sm" disabled={blocked} onClick={() => onCommand("start")}>Start</Button>
+    {running && <Button type="button" size="sm" disabled={blocked} onClick={setup}>Get access</Button>}
+    {canStart ? <Button type="button" variant="outline" size="sm" disabled={blocked} onClick={() => onCommand("start")}>Start</Button>
       : item.state === "cleanup-failed" ? <Button type="button" variant="outline" size="sm" disabled={blocked} onClick={onFinish}>Retry deletion</Button> : null}
     <DropdownMenu>
       <DropdownMenuTrigger asChild><Button type="button" size="icon-sm" variant="ghost" aria-label={`More actions for ${item.label || "Core sandbox"}`}><Ellipsis /></Button></DropdownMenuTrigger>
@@ -300,7 +298,7 @@ function CoreSandboxRow({ item, origin, pollVersion, disabled, request, workspac
         <DropdownMenuGroup>
           <DropdownMenuItem onSelect={() => setOpen(true)}>Environment Details</DropdownMenuItem>
           {login && <DropdownMenuItem asChild><a href={new URL("/login", login).href} target="_blank" rel="noreferrer"><ExternalLink />Open Core</a></DropdownMenuItem>}
-          {running && needsSetup && <DropdownMenuItem disabled={blocked} onSelect={() => onCommand("stop")}>Stop</DropdownMenuItem>}
+          {running && <DropdownMenuItem disabled={blocked} onSelect={() => onCommand("stop")}>Stop</DropdownMenuItem>}
           {running && <DropdownMenuItem disabled={blocked} onSelect={() => onCommand("restart")}>Restart</DropdownMenuItem>}
           {initialization.canResume && <DropdownMenuItem disabled={blocked} onSelect={() => void initialization.resume()}>Resume initialization</DropdownMenuItem>}
           {running && item.initializationRequested && <DropdownMenuItem onSelect={initialization.refresh}>Refresh setup status</DropdownMenuItem>}
@@ -318,7 +316,7 @@ function CoreSandboxRow({ item, origin, pollVersion, disabled, request, workspac
       <CoreSandboxDetails item={item} origin={origin} pollVersion={pollVersion} disabled={blocked} request={request}
         onRefresh={onRefresh} onRevoke={onRevoke} onInventory={setLegacyState} />
     </SandboxRow>
-    <EnvironmentSetupDialog initialization={initialization} />
+    <EnvironmentAccessDialog initialization={initialization} />
   </>;
 }
 

@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-10
-updated: 2026-10-31
+updated: 2026-11-03
 summary: Explore a shared app-facing interface for independently provided agents and models, including multi-model providers and structured results.
 components: [apps/core, apps/harness, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -235,7 +235,7 @@ There is no shared agent-principal prerequisite or portable Harness-profile cont
 define bounded context/skill references, provider-qualified task/resource correlation and declared
 resume/reconstruction capabilities without assuming shared host paths or private Harness storage.
 [Artifacts](../shared-artifacts/plan.md) owns retained result references and
-[Decisions](../shared-decisions/plan.md) owns addressed questions; neither reference grants access.
+[Decisions](../shared-decisions/feature.md) owns addressed questions; neither reference grants access.
 
 [Durable Agent Jobs](../durable-agent-jobs/plan.md) consumes invocation/results and owns repeated
 execution and parked continuation. [Basic Tasks](../basic-tasks/feature.md)

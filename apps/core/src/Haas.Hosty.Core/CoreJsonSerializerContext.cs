@@ -1,3 +1,4 @@
+using HostySdk.App;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
@@ -92,6 +93,15 @@ internal static class CoreJson
 [JsonSerializable(typeof(ModelContextProtocol.Protocol.CallToolResult))]
 [JsonSerializable(typeof(CoreEnvironmentConsentPlan))]
 [JsonSerializable(typeof(CoreEnvironmentCommand))]
+[JsonSerializable(typeof(CoreDecisionState))]
+[JsonSerializable(typeof(HostyDecisionCreate))]
+[JsonSerializable(typeof(HostyDecisionResolve))]
+[JsonSerializable(typeof(HostyDecisionWithdraw))]
+[JsonSerializable(typeof(HostyDecisionAck))]
+[JsonSerializable(typeof(HostyDecisionContinue))]
+[JsonSerializable(typeof(HostyDecisionQuery))]
+[JsonSerializable(typeof(HostyDecisionRecord))]
+[JsonSerializable(typeof(HostyDecisionPage))]
 [JsonSerializable(typeof(CoreTaskOptions))]
 [JsonSerializable(typeof(CoreTaskOptionsView))]
 [JsonSerializable(typeof(CoreTaskQuery))]

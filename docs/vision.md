@@ -1,6 +1,6 @@
 ---
 created: 2026-08-19
-updated: 2026-10-31
+updated: 2026-11-03
 ---
 
 # Hosty Platform Vision
@@ -915,7 +915,7 @@ Decisions 1–5: 2026-08-19.
     shared task work (split by decision 64 into [Basic Tasks](features/basic-tasks/feature.md) and
     [Task Workspace Coordination](features/shared-tasks/plan.md)),
     [artifacts](features/shared-artifacts/plan.md) and
-    [decisions](features/shared-decisions/plan.md). The
+    [decisions](features/shared-decisions/feature.md). The
     [composable-work umbrella](features/composable-agent-systems/plan.md) retains priorities and
     integration boundaries rather than duplicating those deliverables.
 
@@ -1152,7 +1152,7 @@ Decisions 1–5: 2026-08-19.
     and its surviving D3/D5 IDs. [Harness Work Orchestration](features/harness-work-orchestration/plan.md)
     retains D3-D7's artifact/decision integration, parked waits, task decomposition, hierarchy and
     cross-session material access. [Shared Artifacts](features/shared-artifacts/plan.md),
-    [Shared Decisions](features/shared-decisions/plan.md) and [Durable Agent Jobs](features/durable-agent-jobs/plan.md)
+    [Shared Decisions](features/shared-decisions/feature.md) and [Durable Agent Jobs](features/durable-agent-jobs/plan.md)
     keep their unfinished content, addressed-response, scheduling and continuation contracts.
 
     Transfer Shared Tasks D1-D2/D4 and the basic parts of D3/D5, plus Harness Orchestration D1-D2
@@ -1464,7 +1464,7 @@ the manifest contract. Two standing consequences:
 [basic-tasks](features/basic-tasks/feature.md) ·
 [shared-tasks](features/shared-tasks/plan.md) ·
 [shared-artifacts](features/shared-artifacts/plan.md) ·
-[shared-decisions](features/shared-decisions/plan.md) ·
+[shared-decisions](features/shared-decisions/feature.md) ·
 [durable-agent-jobs](features/durable-agent-jobs/plan.md) ·
 [harness-work-orchestration](features/harness-work-orchestration/plan.md) ·
 [harness-development-ui](features/harness-development-ui/feature.md) ·

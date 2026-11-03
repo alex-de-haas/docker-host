@@ -42,6 +42,9 @@ internal static class CoreAppPermissions
     public const string AssistantProviders = "providers.assistant";
     public const string CoreEnvironmentsApi = "core.environments.api";
     public const string PublicationWrite = "core.publications.write";
+    public const string DecisionsRequest = "decisions.request";
+    public const string DecisionsRead = "decisions.read";
+    public const string DecisionsRespond = "decisions.respond";
     public const string TasksRead = "core.tasks.read";
     public const string TasksWrite = "core.tasks.write";
     public const string TasksExecute = "core.tasks.execute";
@@ -52,7 +55,7 @@ internal static class CoreAppPermissions
     public const string AgentSessionProviders = "providers.agent-sessions";
     public const string AgentSessionsRead = "core.agent-sessions.read";
     public const string AgentSessionsControl = "core.agent-sessions.control";
-    public static readonly string[] Known = [CoreEnvironmentsApi, PublicationWrite, TasksRead, TasksWrite, TasksExecute, HistoryProviders, HistoryRead, HistoryShare, HistoryExport, AgentSessionProviders, AgentSessionsRead, AgentSessionsControl, FeedbackManage, ReadCredentials, RevokeCredentials, RequestMcpAccess, WorkspaceCore, Install, ReadApps, ReadPanels, AppLogs, Notifications, AppLifecycle, ConfigureApps, ReadCore, UpdateCore, CoreLifecycle, ConfigureCore, CoreLogs, ReadUsers, ManageUsers, Sources, SourcesRead, WorkspacesRead, WorkspacesCleanup, CoreEnvironmentsRead, CoreEnvironmentsManage, CoreEnvironmentsInspect, CoreEnvironmentsOperate, SourceConnections, ReadSkills, ManageSkills, SpeechProviders, TranslationProviders, AssistantProviders, TaskProviders, TaskExecutors];
+    public static readonly string[] Known = [DecisionsRequest, DecisionsRead, DecisionsRespond, CoreEnvironmentsApi, PublicationWrite, TasksRead, TasksWrite, TasksExecute, HistoryProviders, HistoryRead, HistoryShare, HistoryExport, AgentSessionProviders, AgentSessionsRead, AgentSessionsControl, FeedbackManage, ReadCredentials, RevokeCredentials, RequestMcpAccess, WorkspaceCore, Install, ReadApps, ReadPanels, AppLogs, Notifications, AppLifecycle, ConfigureApps, ReadCore, UpdateCore, CoreLifecycle, ConfigureCore, CoreLogs, ReadUsers, ManageUsers, Sources, SourcesRead, WorkspacesRead, WorkspacesCleanup, CoreEnvironmentsRead, CoreEnvironmentsManage, CoreEnvironmentsInspect, CoreEnvironmentsOperate, SourceConnections, ReadSkills, ManageSkills, SpeechProviders, TranslationProviders, AssistantProviders, TaskProviders, TaskExecutors];
 
     // The old name grants exactly the same authority. Other retired permissions remain unsupported.
     public static string Normalize(string permission) => permission == LegacySources ? Sources : permission;
@@ -80,6 +83,9 @@ internal static class CoreAppPermissions
     {
         CoreEnvironmentsApi => "Set up test identity and access the full JSON API of an authorized child Core",
         PublicationWrite => "Push source and create or change pull requests with the acting user’s reviewed repository access",
+        DecisionsRequest => "Create and manage your own addressed questions and receive their responses",
+        DecisionsRead => "Read decisions currently addressed to you",
+        DecisionsRespond => "Submit answers to decisions currently addressed to you; no security permissions are granted",
         TasksRead => "Read provider-owned tasks as the acting user",
         TasksWrite => "Create and modify provider-owned tasks as the acting user",
         TasksExecute => "Dispatch or cancel authorized task execution",

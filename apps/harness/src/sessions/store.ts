@@ -31,6 +31,7 @@ export interface SessionRecord {
   /** Provider-owned execution attempt identity; distinct from chat and native session IDs. */
   agentRunId?: string;
   taskExecutionId?: string;
+  taskDecisionReference?: import("@hosty-sdk/app/decisions").DecisionReference;
   taskRun?: { started: boolean; exitConfirmed: boolean; error?: string };
   agentProfile?: import("../profiles/types.js").AgentProfile | null;
   profileLocked?: boolean;
@@ -65,6 +66,10 @@ export interface SessionRecord {
   handoffDispatch?: { id: string; state: "queued" | "running" | "completed" | "failed" | "unknown"; error?: string };
 
   id: string;
+  decisionGeneration?: number;
+  decisionRunIds?: Record<string, string>;
+  decisionWaitIds?: string[];
+  parkedQuestionRun?: { id: string; confirmedAt: string };
   mcpPendingApprovals?: { id: string; tool: string }[];
   publicationReferences?: { workspaceId: string; repository: string; url: string; head?: string }[];
   connectionId?: string;
