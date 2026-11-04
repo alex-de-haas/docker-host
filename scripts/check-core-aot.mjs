@@ -90,6 +90,14 @@ try {
 
   console.log(`\nCore published Native AOT for ${runtime} with no new trim/AOT warnings.`);
   await smoke(output);
+  if (process.env.HOSTY_VERIFY_PLATFORM_UPDATE === "1") {
+    const pair = spawnSync(process.platform === "win32" ? "python" : "python3", [
+      "scripts/check-platform-native-update.py", "--rid", runtime, "--core",
+      join(output, process.platform === "win32" ? "hosty-core.exe" : "hosty-core"),
+    ], { stdio: "inherit" });
+    if (pair.error) throw pair.error;
+    if (pair.status !== 0) throw new Error("Native CLI/Core replacement acceptance failed.");
+  }
 } finally {
   // Windows can retain transient image/scanner handles after the child has closed.
   rmSync(output, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });

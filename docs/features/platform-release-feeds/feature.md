@@ -84,6 +84,13 @@ journal and report failure. Once the new Core may have migrated data, no automat
 rollback occurs. Recovery uses the original operation ID. App-data rollback belongs to the separate
 [recovery plan](../runtime-app-update-recovery/plan.md).
 
+The Core NativeAOT matrix also runs `scripts/check-platform-native-update.py` on each supported
+RID. It uses the checked native Core, a freshly published native CLI and lower-version managed
+apphost fixtures in an isolated root. The fixture completes normal setup/password login, verifies
+corrupt-counterpart preservation, replaces both distinct executables through frozen recovery,
+checks native process readiness and listener continuity, and preserves stopped state after feed
+selection. Temporary users, executables and data are removed after verified process shutdown.
+
 ## Testing Expectations
 
 - Exercise arbitrary feed IDs/counts/defaults, saved selection, removed/default-changed feeds,

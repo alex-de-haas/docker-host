@@ -676,7 +676,15 @@ the native OS/runtime matrix and public mixed-artifact publication verification.
 sandboxes are finished: their processes, owned containers and temporary data roots are removed;
 external browser/CLI consumers and the fixture server have stopped. The authorized source workspace
 is retained for the pull request and CI fixes.
-No public release, metadata branch, version alias or bridge was published by this session.
+PR #734 merged as a regular merge commit `a4464e70655420a7cede3e85e9750497488a2010` after
+all reported checks passed on `617fb298b31b8654b3e9bc43b3badd1e64debb87`. Public publication
+is now authorized and follows successful main validation. D9 adds repeatable paired native update
+acceptance to the existing four-target Core NativeAOT matrix. The macOS ARM64 native run passes
+corrupt-counterpart preservation, replacement of both distinct binaries, frozen recovery without
+discovery metadata, a new ready process with the same listener, saved custom feeds and stopped-state
+preservation. Its temporary processes/data are removed. Other native targets remain pending CI. The separate catalog checkout prepares eight existing first-party entry URLs;
+its cutover waits for seeded stable feeds.
+No public release, metadata branch, version alias or bridge has been published by this rollout yet.
 Local fixtures and mocked publisher tests do not count as public rollout.
 
 ## Delivery Sequence
