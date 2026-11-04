@@ -69,7 +69,17 @@ An explicit `fork` also selects this path. Core first reconciles user-owned fork
 forks), verifies the upstream network and push rights, and repeats reconciliation after an uncertain
 creation response. Provider restrictions, fork creation delay, missing PAT
 permissions and unavailable identities produce actionable errors rather than assumed success.
-Configuration includes dependencies and completion requirements and is locked after publication.
+Configuration includes dependencies and completion requirements. Ordinary configuration is locked
+after publication. An unfinished merged publication supports an explicit `pr_configure` correction:
+supply `policy`, its exact prior value as `policyAmendment.previousPolicy`, a nonempty
+`policyAmendment.reason` (at most 2000 characters), and the clean published `expectedHead`.
+Core revalidates the caller, connection, PR identity and merge before saving. Connection, destination,
+dependencies, cleanup and outcome are preserved; no fork, push or source reopening occurs. The
+operation journal retains the old and new requirements, reason and actor. Stale policies/heads,
+unavailable merge facts, final outcomes and paused/deleting workspaces refuse the correction.
+Repeating the same UUID and input recovers the same operation. Missing optional amendment fields
+preserve legacy request fingerprints. A correction reobserves release evidence; `pr_complete`
+remains a separate request and never follows automatically.
 
 `pr_commit` uses the user's explicit Git profile, otherwise the connected GitHub account's verified
 primary email and name. OAuth device authorization requests email-read access; an older connection
@@ -144,10 +154,22 @@ Core authorized them. No automatic merge or cleanup follows an observation alone
 
 Each observation separates PR state, head, draft state, mergeability, CI/review results and completion.
 Merged PRs retain their merged state when release verification is unavailable. Completion policy
-explicitly chooses exact check names, workflow IDs and artifact selectors; an empty policy means
+explicitly chooses exact merge-commit check names, workflow IDs and artifact selectors; PR-head
+checks do not satisfy these post-merge requirements. An empty policy means
 merge itself supplies the post-merge evidence. Workflow observations select the actual merge SHA and
 target branch, rather than a moving latest-main badge. Unknown, missing or failed evidence blocks
-merged completion. Supported artifact selectors are:
+merged completion. The observation includes a bounded `completionIssue` naming the first unmet
+requirement, its kind, merge commit and state (`missing`, `pending`, `failed`, `unverified` or
+`unavailable`), plus an actionable error. Provider failures retain the merged PR state without
+exposing response bodies or credentials. Checks with duplicate names must all succeed; incomplete
+pages and unknown states remain unavailable. The latest matching workflow must be completed and
+successful; an older success cannot cover a later failed or pending run. PR-triggered workflows do
+not establish release completion.
+
+For publishers that verify and reuse existing image digests, select the exact merge-bound ready-release
+workflow as completion evidence. The original image revision can legitimately precede the release;
+this does not relax the separate GHCR artifact selector's exact merge-revision requirement.
+Supported artifact selectors are:
 
 - `release`: exact Git tag resolving to the merge commit and an uploaded asset on its published release.
 - `npm`: public npm package name and exact semantic version, with matching `gitHead` and integrity metadata.
@@ -201,6 +223,10 @@ cleanup continue through the full policy verifier. The read-only inbox adds no p
 ## Testing Expectations
 
 - Verify ownership, installation/permission revocation, connection ownership and credential exclusion.
+- Exercise explicit policy correction after source-workspace completion, stale prior-policy/head
+  rejection, authority revocation, native-edit and pause races, retained bindings and separate
+  completion. Verify identical replay and unchanged legacy fingerprints. Test PR-only check
+  diagnostics, latest-workflow failures, incomplete provider data and merge-bound release evidence.
 - Verify immutable PR/target comparisons, exact revision guards, full side/range coordinates and
   incomplete patches without index/ref mutations or dropped threads.
 - Exercise reply/resolve recovery with moved heads, closed PRs, lost/unknown replies, unchanged UUIDs,

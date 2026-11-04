@@ -218,6 +218,12 @@ export class DevelopmentClient {
   }
 }
 
+const publicationPolicySchema = { type: "object", properties: {
+    requiredChecks: { type: "array", items: { type: "string" } },
+    requiredWorkflows: { type: "array", items: { type: "integer" } },
+    artifacts: { type: "array", items: { type: "object", properties: { kind: { type: "string", enum: ["release", "npm", "ghcr"] }, tag: { type: "string" }, asset: { type: "string" }, package: { type: "string" }, version: { type: "string" } } } },
+  }, required: ["requiredChecks", "requiredWorkflows", "artifacts"] };
+
 const toolProperties = {
 
   ...Object.fromEntries(["expectedRemoteHead", "repository", "name", "description", "workspaceId", "appId", "requestId", "targetBranch", "expectedTargetHead", "expectedHead", "message", "authorName", "authorEmail", "path", "view", "connectionId", "title", "body", "mergeMethod", "outcome", "threadId"].map(k => [k, { type: "string" }])),
@@ -230,11 +236,8 @@ const toolProperties = {
   expectedRevision: { type: "integer" },
   draft: { type: "boolean" }, fork: { type: "boolean" }, cleanup: { type: "boolean" }, number: { type: "integer" },
   dependencies: { type: "array", items: { type: "string" } },
-  policy: { type: "object", properties: {
-    requiredChecks: { type: "array", items: { type: "string" } },
-    requiredWorkflows: { type: "array", items: { type: "integer" } },
-    artifacts: { type: "array", items: { type: "object", properties: { kind: { type: "string", enum: ["release", "npm", "ghcr"] }, tag: { type: "string" }, asset: { type: "string" }, package: { type: "string" }, version: { type: "string" } } } },
-  }, required: ["requiredChecks", "requiredWorkflows", "artifacts"] },
+  policy: publicationPolicySchema,
+  policyAmendment: { type: "object", properties: { previousPolicy: publicationPolicySchema, reason: { type: "string", minLength: 1, maxLength: 2000 } }, required: ["previousPolicy", "reason"] },
   paths: { type: "array", items: { type: "string" } },
   pullRequests: { type: "array", items: { type: "string" } },
 };
@@ -282,7 +285,7 @@ const descriptions: Partial<Record<(typeof actions)[number], string>> = {
   "pr-list": "List Core publication facts, including completed contributions and release status.",
   "pr-connections": "List the current user's available GitHub connections, without credentials.",
   "pr-status": "Refresh PR head, CI, review, merge and configured post-merge evidence from GitHub.",
-  "pr-configure": "Before publication, bind a workspace to a user connectionId. Supply requestId, explicit policy (requiredChecks, requiredWorkflows, artifacts: release tag/asset or public npm/ghcr package/version with merge commit metadata), dependencies (workspace IDs), and fork if needed. Empty policy means merge itself completes publication.",
+  "pr-configure": "Before publication, bind a workspace to a user connectionId with explicit policy and dependencies. requiredChecks run on the merge commit, not the PR head; requiredWorkflows verify release publication on that merge and support reused artifacts. Empty policy requires only merge. To repair an unfinished merged publication, supply the published expectedHead, replacement policy and policyAmendment { previousPolicy, reason }; retain the original requestId when retrying. This preserves connection, destination and dependencies and never completes or cleans up.",
   "pr-publish": "Push the exact clean expectedHead and create/update a PR. Supply UUID requestId, title, body, draft. Recover uncertain operations with identical arguments and the same requestId; never create duplicate PRs.",
   "pr-link": "Attach an existing GitHub PR by number. Core verifies its repository, branch, target and head.",
   "pr-ready": "Mark an existing draft PR ready for review. Supply requestId and expectedHead.",
