@@ -1,6 +1,6 @@
 ---
 created: 2026-11-03
-updated: 2026-11-03
+updated: 2026-11-04
 summary: Ollama context detail shows local MCP definition estimates by server and tool, distinguishing sent definitions from the available catalog.
 components: [apps/harness]
 ---
@@ -63,14 +63,17 @@ behavior from this feature.
 
 ## Verification Evidence
 
-Verified on 2026-11-03 on macOS arm64 with Docker Desktop:
+Verified on 2026-11-03 on macOS arm64 with Docker Desktop. Tests, build/lint and managed
+Ollama integration also pass on 2026-11-04 after integrating main `206a3289`:
 
 - The affected adapter/context/session/receipt/UI run passes 103 tests across eight files.
   The final full `npm run harness:test` run passes 2,110 tests across 199 files.
 - `npm run harness:build-web` and `npm run harness:lint` pass after the last product-code edit.
   Lint retains one pre-existing `tasks.tsx` hook-cleanup warning.
 - `npm run test:integration -- worker` passes, including the pinned real Claude SDK summary
-  diagnostic, preserving provider-estimate compatibility without a model prompt.
+  diagnostic, preserving provider-estimate compatibility without a model prompt. The 2026-11-04
+  repeat requires tmpfs for its temporary directories because the Docker disk is full; the
+  same native control test passes without networking or credentials.
 - `HOSTY_OLLAMA_ACCEPTANCE=1 npm run test:integration -- harness-local` passes with the real
   adapter, an HTTP Ollama fixture and a Core-managed child. The test now answers through the
   current shared Decisions API and calls the authorized Harness MCP `context_list` tool; it does
@@ -83,7 +86,9 @@ Verified on 2026-11-03 on macOS arm64 with Docker Desktop:
 - The managed local runtime reports a 25.445-second cold start, 1.947-second warm restart and
   23.266-second missing-output recovery. After the browser closes, Finish confirms child resource
   removal; the parent fixture confirms its processes, port, temporary source, credentials and
-  snapshots are removed. Production data and runtime selection are unchanged.
+  snapshots are removed. The 2026-11-04 repeat reports 30.402 seconds cold, 2.070 seconds warm
+  and 23.919 seconds for missing-output recovery, and confirms the same cleanup. Production data
+  and runtime selection are unchanged.
 - Documentation/index/link, version consistency and whitespace checks pass. Windows and real-model
   tokenizer accuracy are not exercised; exact tokenization remains in the main Draft.
 

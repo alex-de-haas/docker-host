@@ -1,6 +1,6 @@
 ---
 created: 2026-11-03
-updated: 2026-11-03
+updated: 2026-11-04
 summary: Claude context diagnostics expose estimated MCP definition tokens by server and tool, with loaded, deferred and unknown inclusion states.
 components: [apps/harness]
 ---
@@ -54,18 +54,20 @@ versioning. The completed plan is retired under the repository workflow. The rem
 [Context Token Accounting Draft](../harness-context-usage/plan.md) retains other source categories,
 per-call tokens/time/cache, result attribution, instruction previews and Ollama/Codex accounting.
 [Agent Providers](../agent-provider-interface/plan.md) retains public contract and extraction work.
-Harness advances from **0.86.1 to 0.87.0**, including its Worker package; Core and SDK versions do not change.
+Harness advances from **0.86.2 to 0.87.0**, including its Worker package; Core and SDK versions do not change.
 
 Verification on macOS with Docker Desktop Linux arm64:
 
-- `npm run harness:test`: 198 files, 2,100 tests passed before the final strict enum validation.
-  The final affected adapter/session/worker/UI run passes 65 tests across six files, including the
-  added non-string inclusion regression. No unrelated implementation changes follow those checks.
+- `npm run harness:test` passes 2,110 tests across 199 files after integrating main
+  `206a3289` on 2026-11-04. This includes both providers and strict inclusion validation.
 - `npm run harness:build-web` and `npm run harness:lint` pass after the final code edit. Lint retains
   one pre-existing `tasks.tsx` hook-cleanup warning.
 - `npm run test:integration -- worker` passes after the final edit/version synchronization. The
   real pinned Claude SDK 0.3.296 connects to an in-process MCP fixture and exposes its server/tool
   estimates through summary diagnostics with networking disabled and no model prompt or credentials.
+  On 2026-11-04 the rebuilt Worker passes native lifecycle tests, but the control test encounters
+  Docker disk exhaustion (ENOSPC). The same control test passes with `/tmp` and
+  `/run/hosty-execution` mounted as tmpfs; no unrelated Docker resources are deleted.
 - An isolated Core-managed child (Core 0.169.3) runs the built Docker app. Normal password login
   and app authorization work. A synthetic context observation seeded only into its idle test chat
   verifies production UI replay after reload, server/tool sorting, zero/unknown/deferred values,
