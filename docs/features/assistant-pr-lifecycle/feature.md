@@ -220,6 +220,20 @@ Visible workspace PR scopes select the adaptive cadence. Compact reads preserve 
 branch correlation but carry no completion evidence; merged publications, explicit actions and
 cleanup continue through the full policy verifier. The read-only inbox adds no publication commands.
 
+## Recovery Verification
+
+The recovery contract ships in Core/CLI 0.173.0 and Harness 0.90.0. Upgrade Core before using
+policy amendment from a client. Verification on macOS ARM64 includes the 226-test publication
+selection, 54 final provider/authority/origin regressions after main integration, Harness transport
+and type checks, and production client builds. The local `pull-requests` integration suite exercises
+normal password identity, independent users, PR actions and recovery in an isolated managed child;
+its owner verifies Finish cleanup. Provider fixture coverage is separate from real release evidence.
+
+For a retained merged publication, read its current policy and exact published head, explicitly
+correct mistaken PR-only requirements to the repository's actual merge-bound validation/publication
+workflows, then reobserve and request `merged` completion with cleanup disabled. The installation's
+selected app runtimes and source-workspace completion remain independent.
+
 ## Testing Expectations
 
 - Verify ownership, installation/permission revocation, connection ownership and credential exclusion.
