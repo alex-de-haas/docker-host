@@ -308,7 +308,8 @@ remain generic. Source selection does not itself update or downgrade an installe
 A completed development Return retains its journal for recovery but no longer blocks an explicit
 feed source review. An old folder-install path is historical when the installation now has a URL
 update source. Active development, local overrides, folder-only installations and private source
-grants remain protected; missing or inconsistent development journals fail closed.
+grants remain protected; missing or inconsistent development journals fail closed for that app.
+Suggestion collection skips an unavailable journal without hiding other installations or batch recovery.
 
 Managed sandbox acceptance uses separate accounts, normal password login and Core-assigned app
 origins. An unavailable image yields pending-publication with no actionable offer while the installed

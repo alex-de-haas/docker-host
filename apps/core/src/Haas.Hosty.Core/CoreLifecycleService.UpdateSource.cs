@@ -64,9 +64,17 @@ internal sealed partial class CoreLifecycleService
         var suggestions = new List<AppUpdateSourceSuggestion>();
         foreach (var app in await apps.ListAppRecordsAsync(ct))
         {
-            if (await SourceMigrationExcludedAsync(app, ct)) continue;
             var matches = declarations.Migrations.Where(m => m.AppId == app.Id && BindingMatches(app, m.From)).ToArray();
             if (matches.Length == 0) continue;
+            try
+            {
+                if (await SourceMigrationExcludedAsync(app, ct)) continue;
+            }
+            catch (AppLifecycleException error) when (error.Code == "dev_state_unavailable")
+            {
+                logger.LogWarning(error, "Skipping source migration suggestions for {AppId}: development history is unavailable.", app.Id);
+                continue;
+            }
             // An authored explicit commit pin is different from the run lock of a branch-based install.
             var installed = await LoadSelectionForAppAsync(app, ct);
             if (installed.Manifest.Source?.Commit is not null || installed.Manifest.Source?.Tag is not null) continue;

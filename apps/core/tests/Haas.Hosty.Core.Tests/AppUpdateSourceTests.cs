@@ -192,6 +192,38 @@ public sealed partial class AppFeedLifecycleTests
             fixture.Lifecycle.PlanUpdateSourceAsync(NotesId, new(MigrationFeed, "publisher-candidate")))).Code);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SuggestionsIsolateUnavailableHistoryAndKeepHealthyMappings(bool malformed)
+    {
+        using var fixture = await MigrationFixture();
+        // These identities exercise the explicit distribution migration data, not app privileges.
+        foreach (var (id, path) in new[] { ("hosty.shell", "shell"), ("hosty.desktop", "desktop") })
+        {
+            var url = $"https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/{path}/manifest.json";
+            fixture.Set(url, Manifest("1.0.0").Replace(NotesId, id));
+            await fixture.Lifecycle.InstallAsync(new(url, StartOnInstall: false, Autostart: false));
+        }
+        var missing = Guid.NewGuid().ToString("D");
+        await fixture.Apps.UpdateAppAsync("hosty.shell", app => app with { DevModeId = missing });
+        await fixture.Apps.UpdateAppAsync(NotesId, app => app with { DevModeId = Guid.NewGuid().ToString("D") });
+        if (malformed)
+        {
+            var path = AppDevStore.Record(fixture.Paths, "hosty.shell", missing);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            await File.WriteAllTextAsync(path, "{not-json");
+        }
+
+        var suggestions = await fixture.Lifecycle.GetUpdateSourceSuggestionsAsync();
+
+        Assert.Equal("hosty.desktop", Assert.Single(suggestions.Suggestions).Migration.AppId);
+        Assert.Equal("dev_state_unavailable", (await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Lifecycle.PlanUpdateSourceAsync("hosty.shell", new(MigrationFeed, "publisher-candidate")))).Code);
+        Assert.Equal("dev_state_unavailable", (await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Lifecycle.PlanUpdateSourceAsync(NotesId, new(MigrationFeed, "publisher-candidate")))).Code);
+    }
+
     private static async Task<AppDevOperation> RetainDevelopmentHistory(Fixture fixture, string phase)
     {
         var app = (await fixture.Apps.GetAppAsync(NotesId))!;
