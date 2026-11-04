@@ -267,7 +267,9 @@ Notices expand independently and retain their disclosure state as later events a
 
 Each activity block with recorded edits has a separate collapsible **Changes** section beside
 Tool calls. Its header stays visible while Tool calls is collapsed, with the source-bound file
-count and confirmed aggregate additions/deletions; unknown or overflowing totals are unavailable.
+count and confirmed aggregate additions/deletions. When only some edit operations provide counts,
+the header retains their known subtotals as explicit lower bounds. A later edit without counts does
+not erase earlier counts for the same file. Entirely unknown or overflowing totals are unavailable.
 The two sections expand independently. Changes contains the file summary and existing Review
 links rather than nesting that summary inside Tool calls. Its scope is the activity block bounded
 by prose, approvals, questions and turns.
@@ -1068,7 +1070,8 @@ The managed local suite verifies warm restart, missing-output recovery and owner
   conflicting outcomes. Verify retained disclosure/focus as calls arrive, immediately visible
   approval cards, and each command's own recorded result and input/output. Verify independent
   Changes/Tool calls collapse state, a visible Changes header while tools are collapsed, source-bound
-  file counts and confirmed totals, unknown/overflow fallbacks, per-activity boundaries, separate
+  file counts and confirmed totals, partial lower bounds across files and repeated edits, independent
+  addition/deletion completeness, genuine zero and unknown/overflow fallbacks, per-activity boundaries, separate
   legacy entries and retained exact-source Review bindings. Verify repository grouping by the exact
   recorded source tuple, one short/full-title repository heading per group and no per-file branch
   line or recorded caption. Repository cards start collapsed and retain independent expansion across observation updates;

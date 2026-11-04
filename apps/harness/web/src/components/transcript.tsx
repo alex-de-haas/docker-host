@@ -28,7 +28,7 @@ import type { AssistantEvent, AssistantQuestion } from "@/lib/assistant-api";
 import type { AttachmentIndex } from "@/lib/attachments";
 import { repositoryName, type DevelopmentWorkspace } from "@/lib/development-api";
 import { resolveTranscriptReview, type TranscriptReviewReference } from "@/lib/transcript-edits";
-import { commandDuration, commandOutcome, isCommandTool, recordedEditGroups, recordedEditTotals, recordedFileEdits, type CommandOutcome, type RecordedFileEdit } from "@/lib/transcript-activity";
+import { commandDuration, commandOutcome, isCommandTool, recordedEditGroups, recordedFileEdits, recordedLineTotals, type CommandOutcome, type RecordedFileEdit, type RecordedLineTotals } from "@/lib/transcript-activity";
 import type { ToolOutput } from "@/lib/tool-output";
 export type TranscriptReviewContext = {
   sessionId: string; workspaces: readonly DevelopmentWorkspace[]; onOpen: (reference: TranscriptReviewReference) => void;
@@ -248,16 +248,15 @@ function TranscriptChanges({ events, reviewContext }: { events: AssistantEvent[]
   const [open, setOpen] = useState(false);
   const edits = recordedFileEdits(events);
   if (!edits.length) return null;
-  const totals = recordedEditTotals(edits);
+  const totals = recordedLineTotals(edits);
   const entries = edits.some(edit => !edit.review);
   return <Collapsible open={open} onOpenChange={setOpen} className="min-w-0" data-slot="transcript-changes">
     <CollapsibleTrigger asChild><Button type="button" variant="ghost" size="sm" className="h-auto min-h-8 w-full min-w-0 justify-start gap-2 px-2 text-left text-xs text-muted-foreground">
       <FileCode2 className="size-3.5 shrink-0" aria-hidden />
       <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
         <span className="font-medium tabular-nums">Changes · {edits.length} {entries ? edits.length === 1 ? "file entry" : "file entries" : edits.length === 1 ? "file" : "files"}</span>
-        {totals.additions !== undefined && <span className="font-mono font-normal tabular-nums text-success-foreground" aria-label={`${totals.additions} recorded additions`}>+{totals.additions}</span>}
-        {totals.deletions !== undefined && <span className="font-mono font-normal tabular-nums text-destructive-foreground" aria-label={`${totals.deletions} recorded deletions`}>−{totals.deletions}</span>}
-        {(totals.additions === undefined || totals.deletions === undefined) && <span className="text-muted-foreground">Line totals unavailable</span>}
+        <RecordedLineValues counts={totals} />
+        {(!totals.additions.complete || !totals.deletions.complete) && <span className="text-muted-foreground">{lineTotalsStatus(totals)}</span>}
       </span>
       <ChevronDown className={cn("ml-auto size-3.5 shrink-0", open && "rotate-180")} aria-hidden />
     </Button></CollapsibleTrigger>
@@ -265,6 +264,20 @@ function TranscriptChanges({ events, reviewContext }: { events: AssistantEvent[]
       <TranscriptEditFiles edits={edits} reviewContext={reviewContext} />
     </CollapsibleContent>
   </Collapsible>;
+}
+function lineTotalsStatus(counts: RecordedLineTotals): string {
+  return counts.additions.known !== undefined || counts.deletions.known !== undefined ? "Partial line totals" : "Line totals unavailable";
+}
+function RecordedLineValues({ counts }: { counts: RecordedLineTotals }) {
+  return <>{(["additions", "deletions"] as const).map(direction => {
+    const count = counts[direction];
+    if (count.known === undefined) return null;
+    const label = `${count.complete ? "" : "At least "}${count.known} recorded ${direction}`;
+    return <span key={direction} className={cn("shrink-0 font-mono font-normal tabular-nums", direction === "additions" ? "text-success-foreground" : "text-destructive-foreground")}
+      aria-label={label} title={`${label} across edit operations. ${count.complete ? "" : `Some edit operations did not report ${direction}. `}Repeated edits are counted; open Review for the current file diff.`}>
+      {count.complete ? `${direction === "additions" ? "+" : "−"}${count.known}` : `≥${count.known} ${direction === "additions" ? "added" : "removed"}`}
+    </span>;
+  })}</>;
 }
 function InvocationResult({ outcome, legacy = false, compact = false }: { outcome?: CommandOutcome; legacy?: boolean; compact?: boolean }) {
   const Tag = compact ? "span" : "div";
@@ -297,10 +310,9 @@ function TranscriptEditFiles({ edits, reviewContext }: { edits: RecordedFileEdit
             aria-label={`Review ${edit.path}`} aria-describedby={unavailable ? hintId : undefined}
             onClick={() => edit.review && target && reviewContext?.onOpen(edit.review)}>
             <FileCode2 className="size-3.5 shrink-0" aria-hidden /><span className="min-w-0 flex-1 break-all whitespace-normal text-left font-mono font-normal">{edit.path}</span>
-            {edit.additions !== undefined && <span className="shrink-0 font-mono font-normal tabular-nums text-success-foreground" aria-label={`${edit.additions} recorded additions`}>+{edit.additions}</span>}
-            {edit.deletions !== undefined && <span className="shrink-0 font-mono font-normal tabular-nums text-destructive-foreground" aria-label={`${edit.deletions} recorded deletions`}>−{edit.deletions}</span>}
+            <RecordedLineValues counts={edit.counts} />
           </Button>
-          {(edit.additions === undefined || edit.deletions === undefined) && <p className="px-2 text-xs text-muted-foreground">Recorded line totals unavailable.</p>}
+          {(!edit.counts.additions.complete || !edit.counts.deletions.complete) && <p className="px-2 text-xs text-muted-foreground">{lineTotalsStatus(edit.counts) === "Partial line totals" ? "Partial line totals." : "Recorded line totals unavailable."}</p>}
           {unavailable && <p id={hintId} className="px-2 pb-1 text-xs text-muted-foreground">{unavailable}</p>}
         </div>;
       })}
