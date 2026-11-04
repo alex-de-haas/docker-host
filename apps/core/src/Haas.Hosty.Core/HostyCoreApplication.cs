@@ -1188,7 +1188,10 @@ internal sealed record HostyCoreRuntimeConfig(
 
     private static bool IsLoopbackHost(string host)
     {
-        if (string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase))
+        // Named localhost browser origins are local too, including a DNS root dot.
+        host = host.TrimEnd('.');
+        if (string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase) ||
+            host.EndsWith(".localhost", StringComparison.OrdinalIgnoreCase))
         {
             return true;
         }

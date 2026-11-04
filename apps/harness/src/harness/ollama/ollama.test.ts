@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import {
   mkdtemp,
   mkdir,
@@ -232,6 +233,8 @@ it("streams Unicode text and retains context across turns and durable resume", a
       .map((e) => e.text)
       .join(""),
   ).toBe("Привет 👋Second");
+  expect(s.events.filter(e => e.type === "assistant_text").map(e => e.text)).toEqual(["Привет 👋", "Second"]);
+  expect(resumed.events.filter(e => e.type === "assistant_text").map(e => e.text)).toEqual(["Resumed"]);
 });
 
 it("never dispatches a tool from an incomplete generation", async () => {
@@ -948,4 +951,68 @@ it.each([undefined, 0, -1, 1.5])("does not keep stale detail when prompt count i
   expect(observations[0]!.usage).toMatchObject({ usedTokens: 25, mcp: { method: "local-estimate", tools: [] } });
   if (count === 0) expect(observations[1]!.usage).toMatchObject({ usedTokens: 0, estimated: false, mcp: { tools: [] } });
   else expect(observations[1]!.usage).toBeNull();
+});
+
+
+it("discovers and calls a tool past 128 without exposing the full catalog to the model", async () => {
+  vi.spyOn(Client.prototype, "connect").mockResolvedValue();
+  vi.spyOn(Client.prototype, "close").mockResolvedValue();
+  const definitions = Array.from({ length: 160 }, (_, i) => ({
+    name: `catalog_item_${i}`,
+    description: "Catalog fixture item",
+    inputSchema: { type: "object" as const, properties: {} },
+  }));
+  vi.spyOn(Client.prototype, "listTools")
+    .mockResolvedValueOnce({ tools: definitions, nextCursor: "last" })
+    .mockResolvedValueOnce({ tools: [{
+      name: "list_running_apps", description: "List running applications",
+      inputSchema: { type: "object", properties: {} },
+    }] });
+  const called = vi.spyOn(Client.prototype, "callTool").mockResolvedValue({
+    content: [{ type: "text", text: "Running fixture app" }],
+  });
+  const f = fixture((body, index) => {
+    const remote = body.tools.filter((t: any) => t.function.name.startsWith("mcp_"));
+    expect(remote.length).toBeLessThanOrEqual(8);
+    if (index === 0) {
+      expect(remote).toHaveLength(0);
+      return tool("discover_tools", { query: "catalog_item" });
+    }
+    if (index === 1) {
+      expect(remote).toHaveLength(8);
+      return tool("discover_tools", { query: "list_running_apps" });
+    }
+    expect(remote).toHaveLength(1);
+    expect(remote[0].function.description).toContain("mcp__fixture__list_running_apps");
+    if (index === 2) return tool(remote[0].function.name, {});
+    expect(body.messages.at(-1).content).toContain("Running fixture app");
+    return answer();
+  });
+  const s = await start(f, {
+    mcpServers: { fixture: { url: "http://fixture/mcp" } },
+    isAutoAllowed: () => true,
+  });
+  s.run.send("Which applications are running?");
+  await wait(s.events, "result");
+  expect(s.events.filter(e => e.type === "error")).toEqual([]);
+  expect(called).toHaveBeenCalledTimes(1);
+  expect(called.mock.calls[0]![0]).toEqual({ name: "list_running_apps", arguments: {} });
+  expect(f.chats).toHaveLength(4);
+});
+
+
+it("publishes complete assistant text before tool dispatch and turn completion", async () => {
+  const discover = tool("discover_tools", { query: "apps" });
+  (discover.message as { content: string }).content = "Searching for app tools.";
+  const f = fixture([discover, answer("No apps found.")]);
+  const s = await start(f);
+  s.run.send("Which applications are running?");
+  await wait(s.events, "result");
+  expect(s.events.filter(e => e.type === "assistant_text").map(e => e.text)).toEqual([
+    "Searching for app tools.", "No apps found.",
+  ]);
+  const firstText = s.events.findIndex(e => e.type === "assistant_text");
+  const lastText = s.events.findLastIndex(e => e.type === "assistant_text");
+  expect(firstText).toBeLessThan(s.events.findIndex(e => e.type === "tool_use"));
+  expect(lastText).toBeLessThan(s.events.findIndex(e => e.type === "result"));
 });

@@ -400,6 +400,9 @@ class OllamaRun implements HarnessRun {
         );
         this.state.messages.push(response.message);
         await this.save();
+        // Deltas are live-only; completed text is the durable conversation record.
+        if (response.message.content)
+          this.emit({ type: "assistant_text", text: response.message.content });
         this.emit({
           type: "context_usage",
           usage: response.inputTokensReported ? {
