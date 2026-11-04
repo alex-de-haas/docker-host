@@ -60,3 +60,82 @@ it("renders unknown, estimated, missing-limit and over-limit usage without misle
     expect(document.querySelector('[role="tooltip"]')?.textContent).toContain("Disconnected; showing the last measurement");
   } finally { await act(async () => root.unmount()); container.remove(); }
 });
+
+it("opens server/tool detail, separates inclusion, preserves replay and clears detail on reset", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  const mcp = { version: 1, method: "provider-estimate", omittedTools: 2, tools: [
+    { server: "Small", name: "same_name", tokens: 0, inclusion: "loaded" },
+    { server: "Large", name: "same_name", tokens: 500, inclusion: "deferred" },
+    { server: "Large", name: "read", tokens: 40, inclusion: "loaded" },
+    { server: "Large", name: "unknown", tokens: 30, inclusion: "unknown" },
+  ] };
+  const state = applyContextUsage(emptyContextUsage("one"), "one", frame(4, { ...usage, mcp }));
+  expect(state.usage?.mcp).toEqual(mcp);
+  const container = document.createElement("div"); document.body.append(container);
+  const root = createRoot(container);
+  try {
+    await act(async () => root.render(<ContextUsageIndicator usage={state.usage} connected={false} />));
+    const trigger = container.querySelector<HTMLButtonElement>('[data-slot="context-usage"]')!;
+    expect(trigger.type).toBe("button");
+    await act(async () => trigger.click());
+    const dialog = document.querySelector('[role="dialog"]')!;
+    expect(dialog).not.toBeNull();
+    expect(dialog.textContent).toContain("Disconnected · last measured");
+    expect(dialog.textContent).toContain("Partial detail: 2");
+    expect(dialog.textContent).toContain("billed usage are not included");
+    expect([...dialog.querySelectorAll("summary")].map(item => item.textContent)).toEqual(["Large · 3 tools", "Small · 1 tool"]);
+    const server = dialog.querySelector("details")!;
+    expect(server.querySelector("dl")?.textContent).toBe("Loaded≈ 40 tokensDeferred≈ 500 tokensUnknown inclusion≈ 30 tokens");
+    expect([...server.querySelectorAll("li")].map(item => item.textContent)).toEqual([
+      "same_nameDeferred≈ 500 tokens", "readLoaded≈ 40 tokens", "unknownUnknown inclusion≈ 30 tokens",
+    ]);
+    await act(async () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
+    expect(document.activeElement).toBe(trigger);
+    await act(async () => trigger.click());
+    await act(async () => root.render(<ContextUsageIndicator usage={null} />));
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    await act(async () => root.render(<ContextUsageIndicator usage={state.usage} />));
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  } finally { await act(async () => root.unmount()); container.remove(); }
+});
+
+it("drops malformed detail without losing a valid meter, and distinguishes empty from unavailable", () => {
+  const valid = { ...usage, mcp: { version: 1, method: "provider-estimate", omittedTools: 0, tools: [] } };
+  expect(applyContextUsage(emptyContextUsage("one"), "one", frame(1, valid)).usage?.mcp?.tools).toEqual([]);
+  const state = applyContextUsage(emptyContextUsage("one"), "one", frame(1, { ...usage, mcp: { version: 99 } }));
+  expect(state.usage).toEqual(usage);
+  expect(applyContextUsage(state, "one", frame(2, usage)).usage?.mcp).toBeUndefined();
+});
+
+
+it("labels replayed Ollama estimates separately from native totals and available definitions", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  const mcp = { version: 1, method: "local-estimate", estimator: "utf8-json-div4-v1", omittedTools: 0,
+    tools: [{ server: "Fixture", name: "sent", tokens: 30, inclusion: "loaded" },
+      { server: "Fixture", name: "catalog_only", tokens: 500, inclusion: "available" }] };
+  const state = applyContextUsage(emptyContextUsage("one"), "one", frame(1, { ...usage, estimated: false, mcp }));
+  expect(state.usage?.mcp).toEqual(mcp);
+  const container = document.createElement("div"); document.body.append(container);
+  const root = createRoot(container);
+  try {
+    await act(async () => root.render(<ContextUsageIndicator usage={state.usage} />));
+    const button = container.querySelector<HTMLButtonElement>("button")!;
+    expect(button.getAttribute("aria-label")).not.toContain("≈");
+    await act(async () => button.click());
+    const dialog = document.querySelector('[role="dialog"]')!;
+    expect(dialog.textContent).toContain("Local estimate · UTF-8 JSON bytes ÷ 4, rounded up");
+    expect(dialog.textContent).toContain("does not use the model tokenizer or prompt template");
+    expect(dialog.querySelector("dl")?.textContent).toBe("Sent in request≈ 30 tokensAvailable, not sent≈ 500 tokens");
+    expect(dialog.textContent).not.toContain("Deferred");
+    expect(dialog.textContent).not.toContain("Claude");
+    expect([...dialog.querySelectorAll("li")].map(t => t.textContent)).toEqual([
+      "catalog_onlyAvailable, not sent≈ 500 tokens", "sentSent in request≈ 30 tokens",
+    ]);
+    await act(async () => root.render(<ContextUsageIndicator usage={null} />));
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  } finally { await act(async () => root.unmount()); container.remove(); }
+});

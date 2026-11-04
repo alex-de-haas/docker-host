@@ -1,3 +1,4 @@
+import { readMcpContextDetail } from "../../../src/harness/context-mcp";
 import type { ContextUsage } from "../../../src/harness/context-usage";
 import type { AssistantEvent } from "./assistant-api";
 
@@ -12,5 +13,7 @@ export function applyContextUsage(current: ContextUsageState, sessionId: string,
   const valid = value && Number.isSafeInteger(value.usedTokens) && value.usedTokens >= 0
     && (value.maxTokens === null || Number.isSafeInteger(value.maxTokens) && value.maxTokens > 0)
     && typeof value.estimated === "boolean" && typeof value.observedAt === "string" && Number.isFinite(Date.parse(value.observedAt));
-  return { sessionId, sequence: event.seq, usage: valid ? value : null };
+  const mcp = valid ? readMcpContextDetail(value.mcp) : undefined;
+  return { sessionId, sequence: event.seq, usage: valid ? { usedTokens: value.usedTokens, maxTokens: value.maxTokens,
+    estimated: value.estimated, observedAt: value.observedAt, ...(mcp ? { mcp } : {}) } : null };
 }

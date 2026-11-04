@@ -20,6 +20,7 @@ import {
 import { OllamaExecutor } from "./executor.js";
 import { OllamaStore, type OllamaState, type Effect } from "./state.js";
 import { OllamaContext } from "./context.js";
+import { ollamaMcpContextDetail } from "./context-mcp.js";
 import { LOCAL_TOOLS, OllamaMcp, schemaValidator } from "./tools.js";
 
 export const OLLAMA_CAPABILITIES: HarnessCapabilities = {
@@ -384,6 +385,7 @@ class OllamaRun implements HarnessRun {
             this.exposedTools.has(tool.function.name),
           ),
         ];
+        const mcp = ollamaMcpContextDetail(this.mcp.tools, tools, this.mcp.bindings);
         const messages = await this.messages(tools);
         const response = await this.client.chat(
           messages,
@@ -398,16 +400,16 @@ class OllamaRun implements HarnessRun {
         );
         this.state.messages.push(response.message);
         await this.save();
-        if (response.inputTokens > 0)
-          this.emit({
-            type: "context_usage",
-            usage: {
-              usedTokens: response.inputTokens,
-              maxTokens: this.details.context,
-              estimated: false,
-              observedAt: new Date().toISOString(),
-            },
-          });
+        this.emit({
+          type: "context_usage",
+          usage: response.inputTokensReported ? {
+            usedTokens: response.inputTokens,
+            maxTokens: this.details.context,
+            estimated: false,
+            observedAt: new Date().toISOString(),
+            mcp,
+          } : null,
+        });
         const calls = response.message.tool_calls ?? [];
         if (!calls.length) {
           if (!response.message.content.trim())
