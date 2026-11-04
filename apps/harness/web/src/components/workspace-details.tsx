@@ -16,7 +16,7 @@ import { developmentRequest, DevelopmentRequestError, repositoryName, changeTota
 import { LocalRepositoryActions } from "./local-repository-actions";
 import { LocalAppHandoff } from "./local-app-handoff";
 import { WorkspaceActivation } from "./workspace-activation";
-import { WorkspaceConsumers } from "./workspace-consumers";
+import { WorkspaceActivity, WorkspaceConsumers } from "./workspace-consumers";
 import { WorkspaceDelete } from "./workspace-delete";
 import { WorkspaceLeaseRecovery } from "./workspace-lease-recovery";
 import { WorkspacePreviews } from "./workspace-previews";
@@ -145,10 +145,11 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
   };
   const externalClose = canManage && !!pending && ["pause", "close", "defer"].includes(pending.kind) && state.closure === "closing" && trees.some(t => t.leases.length > 0);
   const currentDiff = trees.find(t => t.id === diffTree);
-  return <aside aria-label="Workspace details" className="relative h-full overflow-y-auto">
+  return <aside aria-label="Workspace details" className="relative h-full overflow-y-auto overscroll-contain">
     <div className="border-b p-4">
       <div className="mb-3 flex items-center justify-between gap-2"><p className="text-xs font-semibold text-muted-foreground">Workspace</p>
         <div className="flex items-center gap-1.5">
+          <WorkspaceActivity trees={trees} />
           {workspace.owner.kind === "external" && <TooltipProvider delayDuration={250}><Tooltip>
             <TooltipTrigger asChild><Button type="button" variant="ghost" size="icon-sm" className="size-6 text-muted-foreground" aria-label="Created from an external session"><Cast className="size-3.5" aria-hidden="true" /></Button></TooltipTrigger>
             <TooltipContent className="max-w-xs">Created from an external session using {workspace.owner.label}. Its conversation and agent activity are not synchronized here. Harness sessions can also use this workspace.</TooltipContent>
@@ -172,9 +173,9 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
     </div>
     <div className="space-y-4 p-4 [&>[data-workspace-section]~[data-workspace-section]]:border-t [&>[data-workspace-section]~[data-workspace-section]]:pt-4">
       <WorkspaceSessions actions={sessionActions} workspace={workspace} sessionId={sessionId} running={running} refresh={refresh} onSelect={onSessionSelected} onPick={onSessionPicked} onDelete={onDeleteSession} />
-      {trees.some(tree => tree.apps.length || tree.leases.length || tree.consumers?.length) && <div data-workspace-section className="space-y-3"><WorkspaceSectionHeading informationLabel="About using apps on this Core" information="Switch the bound applications using their ordinary data. Return keeps the existing package recovery.">Used by</WorkspaceSectionHeading>
+      {trees.some(tree => tree.apps.length || tree.consumers?.length) && <div data-workspace-section className="space-y-3"><WorkspaceSectionHeading informationLabel="About using apps on this Core" information={<WorkspaceConsumers trees={trees} />}>Used by</WorkspaceSectionHeading>
       <WorkspaceActivation key={workspace.id} workspaceId={workspace.id} appMetadata={workspaceAppMetadata} apps={[...new Map(trees.flatMap(tree => tree.apps).map(app => [app.appId, app])).values()]}
-        disabled={busy || recovering} canUse={workflowIsActive(state)} refresh={refresh} /><WorkspaceConsumers trees={trees} /></div>}
+        disabled={busy || recovering} canUse={workflowIsActive(state)} refresh={refresh} /></div>}
       {running && <p className="text-xs text-muted-foreground">An agent is running. Pause workspace fences all participants and waits for confirmed execution stops.</p>}
       {(state.closure || state.state === "deferred") && !["deleting", "deleted"].includes(state.state) && <p role="status" className="text-xs text-muted-foreground">{state.closure === "closing" ? "Pausing: new development work is blocked while execution stop is verified." : "Paused: source, previews and conversation are retained. Resume to continue development."}</p>}
       {(!externalClose || loadError) && (error || loadError || operation?.error) && <p role="alert" className="text-sm text-destructive-foreground">{error || loadError || operation?.error}</p>}

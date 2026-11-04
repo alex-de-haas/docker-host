@@ -49,10 +49,10 @@ it("does not substitute another account when the default is unavailable", async 
   await render(chat({ connectionId: undefined }));
   expect(api.setSessionProvider).not.toHaveBeenCalled();
 });
-it("keeps a started chat's provider visible and disabled", async () => {
+it("shows a started chat's provider as read-only information", async () => {
   await render(chat({ providerLocked: true }));
-  expect(trigger().disabled).toBe(true);
-  expect(trigger().textContent).toContain("Codex");
+  expect(trigger()).toBeNull();
+  expect(container.querySelector('[aria-label="Current provider"]')?.textContent).toBe("Codex");
   expect(api.setSessionProvider).not.toHaveBeenCalled();
 });
 it("restores the confirmed selection and exposes a failed save", async () => {

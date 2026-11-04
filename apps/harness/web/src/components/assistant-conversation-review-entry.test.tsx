@@ -30,6 +30,7 @@ vi.mock("./ui/message-scroller", () => {
   return { ...Object.fromEntries(["MessageScroller", "MessageScrollerProvider", "MessageScrollerViewport", "MessageScrollerContent", "MessageScrollerItem"].map(name => [name, Wrap])), MessageScrollerButton: () => null };
 });
 let root: Root, container: HTMLDivElement;
+const workspaceButton = (name: string) => [...container.querySelectorAll<HTMLButtonElement>('nav[aria-label="Workspaces"] button')].find(button => [...button.querySelectorAll("span")].some(span => span.textContent === name))!;
 const button = (text: string) => [...container.querySelectorAll("button")].find(button => button.textContent === text)!;
 function workspace(id: string, kind: "assistant" | "external"): DevelopmentWorkspace {
   return { id, name: id, state: "active", owner: { kind, appId: kind === "assistant" ? "hosty.harness" : undefined, reference: kind === "assistant" ? "session-one" : "external-task", label: kind }, workflow: { state: "in-progress", revision: 0 },
@@ -69,7 +70,7 @@ it.each([true, false])("retains drafts and returns Ask to the conversation from 
 });
 it("opens an external PR in its own workspace without enabling Ask in an unrelated session", async () => {
   await act(async () => root.render(<AssistantConversation fullPage />));
-  await act(async () => button("external-workspace").click()); await act(async () => button("Review PR in external-workspace").click());
+  await act(async () => workspaceButton("external-workspace").click()); await act(async () => button("Review PR in external-workspace").click());
   expect(container.querySelector('[aria-label="Mock workspace review"]')?.textContent).toContain("external-workspace / external-workspace-tree / pr:https://github.com/example/external-workspace/pull/7");
   expect(button("Ask from review").disabled).toBe(true); expect(api.postMessage).not.toHaveBeenCalled();
   await act(async () => button("Back to session").click());
@@ -222,7 +223,7 @@ it("switches sidebar sessions with independent drafts and excludes other users' 
   await act(async () => sessionRows()[1].click()); await draft("Review draft");
   expect(window.location.search).toBe("?session=session-two");
   await act(async () => sessionRows()[0].click()); expect(input().value).toBe("Implementation draft");
-  await act(async () => button("external").click());
+  await act(async () => workspaceButton("external").click());
   expect(container.querySelector('[aria-label="Message composer"]')).toBeNull(); expect(sessionRows()).toHaveLength(0);
   expect(window.location.search).toBe("?workspace=external");
   await act(async () => [...container.querySelectorAll<HTMLButtonElement>("nav button")].find(b => b.textContent?.startsWith("shared"))!.click());

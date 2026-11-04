@@ -40,11 +40,11 @@ it("disables both selectors during execution without fetching repeatedly", async
 });
 it("preserves the current selection and reports a stale-update error", async () => {
   vi.mocked(api.setSessionModel).mockRejectedValue(new Error("Model selection changed. Refresh this chat before retrying."));
-  await render(); await choose("Reasoning effort", "Default");
+  await render(); await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Use default effort"]')!.click());
   expect(api.setSessionModel).toHaveBeenCalledWith("chat", {model: "first", reasoningEffort: null}, 7);
   expect(container.querySelector('[role="alert"]')?.textContent).toContain("Model selection changed");
   expect(changed).not.toHaveBeenCalled();
-  expect(container.querySelector('button[aria-label="Reasoning effort"]')?.textContent).toBe("High");
+  expect(container.querySelector('[aria-label="Selected reasoning effort"]')?.textContent).toBe("High");
 });
 
 it("recovers an unavailable model catalog explicitly without changing the selected model or effort", async () => {
@@ -56,7 +56,7 @@ it("recovers an unavailable model catalog explicitly without changing the select
   expect(api.getSessionModels).toHaveBeenCalledTimes(2);
   expect(container.querySelector('[role="alert"]')).toBeNull();
   expect(container.querySelector('[aria-label="Model"]')?.textContent).toBe("First");
-  expect(container.querySelector('[aria-label="Reasoning effort"]')?.textContent).toBe("High");
+  expect(container.querySelector('[aria-label="Selected reasoning effort"]')?.textContent).toBe("High");
   expect(api.setSessionModel).not.toHaveBeenCalled();
   expect(changed).not.toHaveBeenCalled();
 });
@@ -82,6 +82,6 @@ it("scopes catalog labels and errors to the current session and connection, incl
 it("keeps an accepted task's model and effort selectors locked while its chat is idle", async () => {
   await act(async () => root.render(<SessionModel session={{ ...record, taskExecutionId: "task-attempt" }} busy={false} onChange={changed} onSavingChange={saving} />));
   expect(container.querySelector<HTMLButtonElement>('[aria-label="Model"]')!.disabled).toBe(true);
-  expect(container.querySelector<HTMLButtonElement>('[aria-label="Reasoning effort"]')!.disabled).toBe(true);
+  expect([...container.querySelectorAll("button")].every(button => button.disabled)).toBe(true);
   expect(api.setSessionModel).not.toHaveBeenCalled();
 });

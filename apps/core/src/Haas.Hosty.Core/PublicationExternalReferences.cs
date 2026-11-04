@@ -12,17 +12,17 @@ internal sealed partial class PublicationService
     private string ExternalPath(string id) => Path.Combine(Root, "external", id + ".json");
 
     private async Task<(ISourceProvider Source, string Repository, UserProviderConnection Connection)> ExternalConnection(
-        DevelopmentWorkspace tree, CancellationToken ct, UserProviderConnection? heldConnection = null)
+        DevelopmentWorkspace tree, CancellationToken ct, UserProviderConnection? heldConnection = null, bool localOnly = false)
     {
         if (!tree.Owner.IsExternal) throw new PublicationException("forbidden", "External workspace required.");
-        await workspaces.RequireExternalSourceAsync(tree, ct, heldConnection);
+        await workspaces.RequireExternalSourceAsync(tree, ct, heldConnection, localOnly);
         var state = await users.ReadAsync(ct);
         if (!state.Users.Any(u => u.Id == tree.Owner.UserId && !u.Disabled && AppAccessPolicy.IsAdmin(u)))
             throw new PublicationException("forbidden", "PR tracking requires the workspace owner's active administrator account.");
         var source = connections.Providers.ForUrl(tree.Repository);
         var provider = source.Publication ?? throw new PublicationException("unsupported", "This source provider does not support PR tracking.");
         var repository = provider.NormalizeRepository(tree.Repository);
-        var grant = await workspaces.WorkspaceGrantAsync(tree, ct, heldConnection);
+        var grant = await workspaces.WorkspaceGrantAsync(tree, ct, heldConnection, localOnly);
         if (grant is null)
         {
             foreach (var binding in tree.Apps)
@@ -52,8 +52,8 @@ internal sealed partial class PublicationService
         if (tree.Owner.UserId != userId) return Unavailable("PR tracking is available to the workspace owner.");
         try
         {
-            var binding = await ExternalConnection(tree, ct);
-            var snapshot = await JsonStorage.ReadAsync<ExternalPublicationSnapshot>(ExternalPath(tree.Id), ct);
+            var binding = await ExternalConnection(tree, ct, localOnly: true);
+            var snapshot = await inspectionRecords.ReadAsync<ExternalPublicationSnapshot>(ExternalPath(tree.Id), ct);
             if (snapshot is null || snapshot.WorkspaceId != tree.Id || !snapshot.Owner.SameIdentity(tree.Owner) ||
                 snapshot.Repository != binding.Repository || snapshot.ConnectionId != binding.Connection.Id)
                 return Unavailable("PR tracking is connected; waiting for the next provider observation.");

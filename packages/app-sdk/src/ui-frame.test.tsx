@@ -30,6 +30,16 @@ it("uses target frame policy and exact peer review routing, retaining a link whe
     await act(async () => send({ type: "hosty:request-permission-review", appId: "victim", url: "https://evil.test" }));
     expect(open).toHaveBeenLastCalledWith("https://core.test/install/permissions/tool", "_blank", "noopener,noreferrer");
     expect(element.querySelector("a")!.href).toBe("https://core.test/install/permissions/tool");
+    open.mockClear();
+    await act(async () => {
+      send({ type: "hosty:request-installation-confirmation", requestId: "a".repeat(48) }, "https://foreign.test");
+      send({ type: "hosty:request-installation-confirmation", requestId: "a".repeat(48) }, surface.origin, window);
+      send({ type: "hosty:request-installation-confirmation", requestId: "../permissions/victim" });
+    });
+    expect(open).not.toHaveBeenCalled();
+    await act(async () => send({ type: "hosty:request-installation-confirmation", requestId: "a".repeat(48), url: "https://evil.test", appId: "victim" }));
+    expect(open).toHaveBeenCalledExactlyOnceWith("https://core.test/install/confirm/" + "a".repeat(48), "_blank", "noopener,noreferrer");
+    expect(frame.getAttribute("sandbox")).not.toContain("allow-popups-to-escape-sandbox");
     const post = vi.spyOn(frame.contentWindow!, "postMessage");
     await act(async () => send({ type: "hosty:request-token", audience: "hosty:core" }));
     expect(post).not.toHaveBeenCalled();

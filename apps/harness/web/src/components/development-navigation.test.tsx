@@ -162,3 +162,18 @@ it("shows every accessible chat separately and reserves development actions for 
   expect(container.querySelector('[aria-label="Continue building"]')).not.toBeNull();
   expect(container.querySelector('[aria-label="New session"]')).toBeNull();
 });
+
+it("adds workspace-only lifecycle and source/PR summaries without per-row fetches", async () => {
+  const fetch = vi.fn(); vi.stubGlobal("fetch", fetch);
+  const onWorkspace = vi.fn();
+  const workspaces: DevelopmentWorkspace[] = [{ id: "completed", name: "Finished feature", state: "active", owner: { kind: "external", reference: "task", label: "Agent" },
+    workflow: { state: "completed", revision: 1 }, worktrees: [], pullRequestSummary: { count: 2, state: "merged", checks: "none", observedAt: "2026-11-01T10:00:00Z", partial: false } }];
+  await act(async () => root.render(<DevelopmentNavigation view="workspaces" sessions={[]} workspaces={workspaces} onPick={vi.fn()} onWorkspace={onWorkspace} onNew={vi.fn()} onDelete={vi.fn()} />));
+  expect(container.textContent).toContain("Completed"); expect(container.textContent).toContain("Merged");
+  const row = [...container.querySelectorAll("button")].find(b => b.textContent?.includes("Finished feature"))!;
+  expect(row.querySelector("[title*='Workspace: Completed']")).not.toBeNull();
+  await act(async () => row.click()); expect(onWorkspace).toHaveBeenCalledWith(workspaces[0], undefined);
+  expect(fetch).not.toHaveBeenCalled();
+  await act(async () => root.render(<DevelopmentNavigation view="chats" sessions={[disposable]} workspaces={workspaces} onPick={vi.fn()} onNew={vi.fn()} onDelete={vi.fn()} />));
+  expect(container.textContent).not.toContain("Completed"); expect(container.textContent).not.toContain("Merged");
+});

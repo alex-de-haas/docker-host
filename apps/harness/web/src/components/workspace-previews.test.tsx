@@ -67,13 +67,13 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-it("shows loading, hides empty previews and retains later inventory observations", async () => {
+it("keeps previews absent during the first read and reveals only nonempty or failed observations", async () => {
   vi.useFakeTimers();
   const read = deferred<unknown>();
   vi.mocked(developmentRequest).mockReturnValue(read.promise);
   await act(async () => root.render(<WorkspacePreviews workspaceId="work" />));
-  expect(container.querySelector('[role="status"]')?.textContent).toBe("Loading sandbox previews…");
-  expect(container.querySelector(".hosty-grid-loader")).not.toBeNull();
+  expect(container.querySelector('[aria-label="Sandbox previews"]')).toBeNull();
+  expect(container.textContent).toBe("");
   expect(container.textContent).not.toContain("No sandbox previews");
   await act(async () => read.resolve({ environments: [], applications: {} }));
   expect(container.querySelector('[aria-label="Sandbox previews"]')).toBeNull();
@@ -157,4 +157,25 @@ it.each(["ready", "running", "stopped", "unknown"])("keeps %s as a steady labell
   expect(badge.textContent).toBe(state);
   expect(badge.querySelector("svg")).toBeNull();
   expect(badge.querySelector('[class*="animate-spin"]')).toBeNull();
+});
+
+
+it("keeps confirmed preview cards mounted during refresh and excludes late reads after a workspace switch", async () => {
+  vi.useFakeTimers();
+  vi.mocked(developmentRequest).mockResolvedValue(reply({}));
+  await act(async () => root.render(<WorkspacePreviews key="first" workspaceId="first" />));
+  const section = container.querySelector('[aria-label="Sandbox previews"]');
+  const refresh = deferred<unknown>();
+  vi.mocked(developmentRequest).mockReturnValue(refresh.promise);
+  await act(async () => { await vi.advanceTimersByTimeAsync(10000); });
+  expect(container.querySelector('[aria-label="Sandbox previews"]')).toBe(section);
+  expect(container.textContent).toContain("Retained preview");
+  const next = deferred<unknown>();
+  vi.mocked(developmentRequest).mockReturnValue(next.promise);
+  await act(async () => root.render(<WorkspacePreviews key="second" workspaceId="second" />));
+  expect(container.textContent).toBe("");
+  await act(async () => refresh.resolve(reply({})));
+  expect(container.textContent).toBe("");
+  await act(async () => next.resolve({ environments: [], applications: {} }));
+  expect(container.textContent).toBe("");
 });

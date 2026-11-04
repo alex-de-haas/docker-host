@@ -60,7 +60,11 @@ internal sealed partial class WorkspaceInspectionService(DevelopmentWorkspaceSer
                 workflow = workflow with { State = "deleting", Closure = "closed", Operations = [.. (workflow.Operations ?? []).Where(o => o.Id != discard.Command.RequestId),
                     new(discard.Command.RequestId, "discard", discard.Command.ExpectedRevision, "pending", discard.Error)] };
             var metadata = await workspaces.MetadataAsync(owner, ct);
-            result.Add(new(group.Key, state, projection, children) { Name = first.Name ?? "Workspace", Workflow = workflow, Participation = participants, Permissions = permission,
+            // Retained, authorized observations only. Inventory reads never fetch Git or providers.
+            var references = new List<InspectionPullRequest>();
+            foreach (var tree in group) references.AddRange(await PullRequestsAsync(tree, userId, ct));
+            var pullRequests = WorkspacePullRequestSummary.From(references);
+            result.Add(new(group.Key, state, projection, children) { Name = first.Name ?? "Workspace", Workflow = workflow, Participation = participants, Permissions = permission, PullRequestSummary = pullRequests,
                 UpdatedAt = group.Select(w => w.UpdatedAt ?? w.Observation?.At).Append(workflow.UpdatedAt ?? workflow.CompletedAt).Append(metadata.UpdatedAt).Max() });
         }
         return new(result.ToArray(), clock.UtcNow, permission);
@@ -240,8 +244,8 @@ internal sealed partial class WorkspaceInspectionService(DevelopmentWorkspaceSer
         var result = tree.PullRequests.Where(SafeUrl).Distinct(StringComparer.Ordinal).ToDictionary(url => url,
             url => new InspectionPullRequest(url, null, null, "No verified provider observation."), StringComparer.Ordinal);
         if (publications is null || users is null || connections is null) return result.Values.ToArray();
-        var record = (await publications.ListAsync(null, ct)).Publications.FirstOrDefault(p => p.WorkspaceId == tree.Id && p.Owner.SameIdentity(tree.Owner));
-        if (record is null || record.Owner.UserId != userId) return result.Values.ToArray();
+        var record = await publications.ReadInspectionRecordAsync(tree.Id, ct);
+        if (record is null || record.WorkspaceId != tree.Id || !record.Owner.SameIdentity(tree.Owner) || record.Owner.UserId != userId) return result.Values.ToArray();
         foreach (var previous in record.History.Where(p => SafeUrl(p.Url)))
             result[previous.Url] = new(previous.Url, previous.Head, null, "Historical reference; no authorized retained observation.", Historical: true);
         if (record.Url is { } recordedUrl && SafeUrl(recordedUrl))
@@ -253,7 +257,7 @@ internal sealed partial class WorkspaceInspectionService(DevelopmentWorkspaceSer
         if (provider is null) return result.Values.ToArray();
         try
         {
-            var remote = await workspaces.PublicationRemoteAsync(tree, ct);
+            var remote = await workspaces.PublicationRemoteAsync(tree, ct, localOnly: true);
             if (provider.NormalizeRepository(remote?.Repository ?? tree.Repository) != record.Repository ||
                 (remote is not null && (remote.TargetBranch != record.TargetBranch || remote.Grant.ConnectionId != record.ConnectionId)))
                 return result.Values.ToArray();
