@@ -3,6 +3,7 @@
 import { Progress as ProgressPrimitive } from "radix-ui";
 import type { ContextUsage } from "../../../src/harness/context-usage";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { ContextMcpDetail } from "./context-mcp-detail";
 import { cn } from "@/lib/utils";
 
 const tokens = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });
@@ -32,29 +33,26 @@ export function ContextUsageIndicator({ usage, connected = true }: { usage: Cont
     </>
   );
 
-  return (
-    <TooltipProvider delayDuration={250}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <div tabIndex={0} role="group" aria-label={`Context usage: ${summary}`}
-            data-slot="context-usage" className="flex h-9 min-w-9 shrink-0 cursor-help items-center justify-center gap-1 rounded-md px-1 text-muted-foreground outline-none focus-visible:outline-2 focus-visible:outline-brand"
-            onClick={event => event.preventDefault()}>
-            {visualPercentage === null ? <div className="relative size-6 shrink-0">{ring}</div> :
-              <ProgressPrimitive.Root value={visualPercentage} role="meter" aria-label="Context window used"
-                aria-valuetext={`${percent.format(percentage!)}% · ${summary}`}
-                className={cn("relative size-6 shrink-0", percentage! >= 100 ? "text-destructive-foreground" : percentage! >= 80 ? "text-warning-foreground" : "text-muted-foreground")}>
-                {ring}
-              </ProgressPrimitive.Root>}
-            <span aria-hidden="true" className="font-mono text-xs tabular-nums">
-              {percentage === null ? "?" : `${percent.format(percentage)}%`}
-            </span>
-          </div>
-        </TooltipTrigger>
-        <TooltipContent className="max-w-xs">
-          <p className="font-medium">Context · {summary}</p>
-          <p>{description}</p>
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
-  );
+  const button = <button type="button" aria-label={`Context usage: ${summary}${usage?.mcp ? ". View MCP detail" : ""}`}
+    data-slot="context-usage" className="flex h-9 min-w-9 shrink-0 cursor-pointer items-center justify-center gap-1 rounded-md px-1 text-muted-foreground outline-none focus-visible:outline-2 focus-visible:outline-brand">
+    {visualPercentage === null ? <div className="relative size-6 shrink-0">{ring}</div> :
+      <ProgressPrimitive.Root value={visualPercentage} role="meter" aria-label="Context window used"
+        aria-valuetext={`${percent.format(percentage!)}% · ${summary}`}
+        className={cn("relative size-6 shrink-0", percentage! >= 100 ? "text-destructive-foreground" : percentage! >= 80 ? "text-warning-foreground" : "text-muted-foreground")}>
+        {ring}
+      </ProgressPrimitive.Root>}
+    <span aria-hidden="true" className="font-mono text-xs tabular-nums">{percentage === null ? "?" : `${percent.format(percentage)}%`}</span>
+  </button>;
+  return <TooltipProvider delayDuration={250}>
+    <Tooltip>
+      {usage?.mcp ? <ContextMcpDetail detail={usage.mcp} observedAt={usage.observedAt} connected={connected}>
+        <TooltipTrigger asChild>{button}</TooltipTrigger>
+      </ContextMcpDetail> : <TooltipTrigger asChild>{button}</TooltipTrigger>}
+      <TooltipContent className="max-w-xs">
+        <p className="font-medium">Context · {summary}</p>
+        <p>{description}</p>
+        {usage?.mcp && <p>Open for MCP server and tool detail.</p>}
+      </TooltipContent>
+    </Tooltip>
+  </TooltipProvider>;
 }

@@ -312,6 +312,24 @@ it, preserving local not-applicable quota and adding cloud balance observations 
 Reuse the observation semantics and verified provider contracts; this coordination neither selects
 an invocation standard nor makes billing access mandatory. Existing D1-D6 remain unchecked and Draft.
 
+## Context And Invocation Accounting Coordination (2026-11-03)
+
+[Context Token Accounting](../harness-context-usage/plan.md) owns source measurements and
+per-observable-LLM-call token, timing and cache records, with links to emitted tools and consumed
+results. Its first diagnostic can use the existing adapters; extraction is not a prerequisite.
+D2 here owns the public capability/projection and D3-D4 move adapter producers with their providers.
+Use consumer-neutral data types, opaque qualified identities and explicit observation coverage.
+An independent consumer must not import Harness event DTOs, require its conversation database or
+assume a workspace. Core retains generic discovery/authority and does not count vendor tokens or
+store private prompts. Reuse the shipped history extension contract for authorized projections.
+
+Keep current context, cumulative invocation usage and optional account quotas separate. Native
+turn/session aggregates are not fabricated per-call measurements; unavailable cache/timing/source
+fields are not zero. Preserve retry/attempt identity, aggregate inclusion and auxiliary model calls
+so replay and subagents cannot inflate totals. Tool execution has no automatic LLM-token charge.
+Detailed visualization remains owned by [Timeline Analysis](../assistant-timeline-analysis/plan.md).
+This coordination adds requirements to existing D2-D5, not a second collector or extraction plan.
+
 ## Assistant Events Above Engine Invocation (2026-10-29)
 
 [Assistant Events And Session Continuation](../assistant-events-and-continuation/plan.md) owns
