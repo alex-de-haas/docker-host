@@ -17,6 +17,7 @@ internal sealed partial class CoreCommand(CommandContext context, bool initializ
     [JsonSerializable(typeof(CoreStatusDocument))]
     internal partial class CoreJsonContext : JsonSerializerContext;
 
+    private Haas.Hosty.Releases.PlatformCoreObservation? updateLaunch;
     private string? preparationError;
     private string? activeOperationId;
     private FileStream? launchLease;
@@ -95,6 +96,7 @@ internal sealed partial class CoreCommand(CommandContext context, bool initializ
             "status" => await StatusAsync(args[1..]),
             "logs" => await LogsAsync(args[1..]),
             "settings" => await new CoreSettingsCommand(context).ExecuteAsync(args[1..]),
+            "feed" => await new UpdateCommand(context).FeedAsync(args[1..]),
             _ => throw new CommandUsageException($"Unknown core command '{args[0]}'.", Usage),
         };
     }
@@ -463,6 +465,11 @@ internal sealed partial class CoreCommand(CommandContext context, bool initializ
             environment["ASPNETCORE_URLS"] = url;
         }
 
+        // Preserve the reviewed listener and advertised origins across update/recovery. These are
+        // non-secret effective launch settings; arbitrary process environment is never copied.
+        if (updateLaunch?.CorePublicOrigin is { } origin) environment["HOSTY_CORE_PUBLIC_ORIGIN"] = origin;
+        if (updateLaunch?.RuntimePublicHost is { } host) environment["HOSTY_RUNTIME_PUBLIC_HOST"] = host;
+
         // Hand Core the path to this managed CLI so its admin restart endpoint (used by the Shell platform
         // panel) can spawn `hosty core restart --keep-apps` to light-restart Core without an external
         // supervisor. Only when we are the installed `hosty` binary — a source/dev CLI (dotnet host) has
@@ -668,7 +675,11 @@ internal sealed partial class CoreCommand(CommandContext context, bool initializ
 
     // Starts the installed Core (no start options) after an update replaced its executable. The new
     // process re-adopts the still-running app containers left by StopForUpdateAsync.
-    internal Task<int> StartInstalledAsync() => StartAsync([]);
+    internal Task<int> StartInstalledAsync(Haas.Hosty.Releases.PlatformCoreObservation? previous = null)
+    {
+        updateLaunch = previous;
+        return StartAsync(previous?.ListenUrl is { } url ? ["--url", url] : []);
+    }
 
     private static bool ParseKeepAppsOnly(string[] args)
     {
@@ -1003,6 +1014,7 @@ internal sealed partial class CoreCommand(CommandContext context, bool initializ
           hosty [--data-root <path>] core <command> [options]
 
         Commands:
+          feed [<id>] [--index <reference>]  Inspect or select the platform update feed
           start [--port <port>] [--project <csproj-path>] [--url <url>] [--foreground]
           status
           activate-workspace <prepared-activation-id> [--resume]

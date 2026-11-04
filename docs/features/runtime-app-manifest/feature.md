@@ -1,15 +1,25 @@
 ---
 created: 2026-06-04
-updated: 2026-10-29
-summary: The app.0.1 manifest contract for installing and running runtime apps.
+updated: 2026-11-03
+summary: The app.0.1 authoring and app.0.2 immutable release contracts for installing and running runtime apps.
 components: [apps/core]
 ---
 
 # Runtime App Manifest
 
+## Immutable release format
+
+`app.0.2` keeps the runtime manifest shape and replaces Docker tag references with
+`{"repository":"registry.example/team/app","digest":"sha256:<64 lowercase hex>"}`.
+Tags, ambiguous repositories and malformed digests are rejected in that schema. Production local
+source releases also carry a full `source.commit`; the publisher retains their original qualified
+source. Ordinary app version bumps do not change schemaVersion. Core continues reading app.0.1
+tag/string image references for existing installations and local authoring. See
+[release publication](../repository-release-model/feature.md) for generated release metadata.
+
 ## Description
 
-Hosty installs user workloads from an app manifest with `schemaVersion: "app.0.1"`. The manifest is the only supported install contract for new local development, tests, and runtime app lifecycle work. Legacy Docker metadata files are not part of the current workflow.
+Hosty installs user workloads from an app manifest with `schemaVersion: "app.0.1"` or `"app.0.2"`. The manifest is the only supported install contract for new local development, tests, and runtime app lifecycle work. Legacy Docker metadata files are not part of the current workflow.
 
 ## Manifest Location
 
@@ -45,7 +55,7 @@ apps own any tabs or other navigation inside that surface. See
 
 ## Required Fields
 
-- `schemaVersion` - must be `app.0.1`.
+- `schemaVersion` - `app.0.1` for compatible authored manifests, or `app.0.2` for digest-pinned release manifests.
 - `id` - stable reverse-DNS app id.
 - `name` - display name shown by Shell and CLI.
 - `version` - app version.

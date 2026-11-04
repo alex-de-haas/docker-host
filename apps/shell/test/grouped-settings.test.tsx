@@ -133,10 +133,11 @@ const factualStatus: CoreStatus = {
 };
 const coreInformation = () => container.querySelector<HTMLElement>('[aria-labelledby="core-host-information"]');
 
-it("preserves factual Core host information and address copy controls on General without network or configuration writes", async () => {
+it("preserves factual Core host information and address copy controls on General without extra requests or configuration writes", async () => {
   const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);
   props.coreStatus = factualStatus;
   await render("general");
+  fetcher.mockClear(); // Feed metadata loads once on entry; copying host facts performs no requests.
   const information = coreInformation()!;
   for (const value of [factualStatus.listenUrl, factualStatus.corePublicOrigin, factualStatus.dataRoot, factualStatus.runtimePublicHost, "Cloudflare"])
     expect(information.textContent).toContain(value);

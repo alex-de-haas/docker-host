@@ -11,6 +11,10 @@ internal sealed partial class AppsCommand(CommandContext context)
         PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
         PropertyNameCaseInsensitive = true,
         NumberHandling = JsonNumberHandling.AllowReadingFromString)]
+    [JsonSerializable(typeof(AppUpdateSourcePlanRequest))]
+[JsonSerializable(typeof(AppUpdateSourceApplyRequest))]
+[JsonSerializable(typeof(AppUpdateSourceBatchItem))]
+[JsonSerializable(typeof(AppUpdateSourceBatchRequest))]
     [JsonSerializable(typeof(AppDevelopmentGuideResponse))]
     [JsonSerializable(typeof(AppDevRequest))]
     [JsonSerializable(typeof(AppExecutionTargetRequest))]
@@ -61,6 +65,7 @@ internal sealed partial class AppsCommand(CommandContext context)
         return args[0] switch
         {
             "guide" => await GuideAsync(args[1..]),
+            "update-source" => await UpdateSourceAsync(args[1..]),
             "execution-targets" => await ExecutionTargetAsync(args[1..], "list"),
             "select-target" => await ExecutionTargetAsync(args[1..], "select"),
             "execution-selection" => await ExecutionTargetAsync(args[1..], "status"),
@@ -207,7 +212,7 @@ internal sealed partial class AppsCommand(CommandContext context)
         }
 
         RenderUpdatePlan(response);
-        return 0;
+        return response.Error is null ? 0 : 1;
     }
 
     private async Task<int> UpdateAsync(string[] args)
@@ -591,6 +596,11 @@ internal sealed partial class AppsCommand(CommandContext context)
             return;
         }
 
+        if (plan.Error is not null)
+        {
+            context.Error.MarkupLine($"[red]Update unavailable ({Markup.Escape(plan.ErrorCode ?? "update_not_ready")}):[/] {Markup.Escape(plan.Error)}");
+            return;
+        }
         var table = ConsoleUi.CreateDetail()
             .Field("App", Markup.Escape(plan.AppId))
             .Field("Version", Markup.Escape($"{plan.CurrentVersion} -> {plan.TargetVersion}"))
@@ -1648,7 +1658,7 @@ internal sealed partial class AppsCommand(CommandContext context)
         // Nullable so a response from an older Core that omits the property deserializes to null
         // (treated as "configured"/no warning) rather than false. STJ does not apply the C# default
         // value of a constructor parameter for a missing JSON property.
-        bool? SourceConfigured = null);
+        bool? SourceConfigured = null, string? Error = null, string? ErrorCode = null, string? Readiness = null);
 
     internal sealed record AppRuntimeSwitchPlan(
         string AppId,

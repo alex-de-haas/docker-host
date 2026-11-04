@@ -41,7 +41,7 @@ internal sealed record DistributionAppEntry(
     string Id,
     string Title,
     string? Description,
-    string ManifestRef,
+    string? ManifestRef,
     string? FeedsUrl,
     bool DefaultEnabled);
 
@@ -66,50 +66,17 @@ internal sealed class DistributionAppsProvider(
     string? explicitPathOverride = null,
     IReadOnlyList<string>? walkRoots = null)
 {
-    // Official distribution for standalone binary installs. Refs are remote because the installed
-    // artifact has no repo layout on disk; a source tree wins via the walked file with local refs.
-    // Every entry carries a feedsUrl, so a seeded app is feed-bound from its first install and gets
-    // the ordinary reviewed update affordance — and can be reinstalled from the same feed after an
-    // uninstall. manifestRef stays as the direct fallback when the feed cannot be resolved.
-    internal const string EmbeddedDefaultJson = /*lang=json,strict*/ """
+    // Release defaults are distribution data. Missing feeds never fall through to source manifests.
+    internal static string EmbeddedDefaultJson
+    {
+        get
         {
-          "schemaVersion": "distribution-apps.0.1",
-          "apps": [
-            {
-              "id": "hosty.shell",
-              "title": "Hosty Shell",
-              "description": "Web UI client for this host.",
-              "manifestRef": "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/shell/manifest.json",
-              "feedsUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/shell/feeds.json",
-              "defaultEnabled": true
-            },
-            {
-              "id": "hosty.telemetry",
-              "title": "Telemetry",
-              "description": "OpenTelemetry collector and observability backend.",
-              "manifestRef": "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/telemetry/manifest.json",
-              "feedsUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/telemetry/feeds.json",
-              "defaultEnabled": false
-            },
-            {
-              "id": "hosty.marketplace",
-              "title": "Marketplace",
-              "description": "App discovery storefront.",
-              "manifestRef": "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/marketplace/manifest.json",
-              "feedsUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/marketplace/feeds.json",
-              "defaultEnabled": true
-            },
-            {
-              "id": "hosty.harness",
-              "title": "Hosty Harness",
-              "description": "Admin-only Hosty assistant: operator chat sessions on a host-resident agent harness.",
-              "manifestRef": "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/harness/manifest.json",
-              "feedsUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/harness/feeds.json",
-              "defaultEnabled": false
-            }
-          ]
+            using var stream = System.Reflection.Assembly.GetExecutingAssembly().GetManifestResourceStream("Hosty.DistributionApps.json")
+                ?? throw new InvalidOperationException("The distribution app list is missing.");
+            using var reader = new StreamReader(stream);
+            return reader.ReadToEnd();
         }
-        """;
+    }
 
     private static readonly Regex AppIdPattern = new("^[a-z0-9][a-z0-9._-]{0,62}$", RegexOptions.Compiled);
 
@@ -242,17 +209,19 @@ internal sealed class DistributionAppsProvider(
                 continue;
             }
 
-            var manifestRef = ResolveManifestRef(entry.ManifestRef, baseDirectory, sourceDescription, id, problems);
-            if (manifestRef is null)
-            {
-                continue;
-            }
-
             var feedsUrl = NormalizeOptional(entry.FeedsUrl);
             if (feedsUrl is not null && !IsHttpUrl(feedsUrl))
             {
                 problems.Add($"Distribution list ({sourceDescription}) entry '{id}' has a non-http(s) feedsUrl '{feedsUrl}'; the feed reference was ignored.");
                 feedsUrl = null;
+            }
+
+            var manifestRef = NormalizeOptional(entry.ManifestRef) is not null
+                ? ResolveManifestRef(entry.ManifestRef, baseDirectory, sourceDescription, id, problems) : null;
+            if (manifestRef is null && feedsUrl is null)
+            {
+                problems.Add($"Distribution list ({sourceDescription}) entry '{id}' needs a valid feed or manifest reference; the entry was skipped.");
+                continue;
             }
 
             entries.Add(new DistributionAppEntry(

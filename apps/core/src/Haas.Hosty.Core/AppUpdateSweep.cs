@@ -22,13 +22,17 @@ internal sealed record AppUpdateAvailability(
     string? TargetVersion = null,
     string? TargetSourceCommit = null,
     IReadOnlyDictionary<string, string>? TargetArtifactDigests = null,
-    DateTimeOffset? LastSuccessfulCheckAt = null)
+    DateTimeOffset? LastSuccessfulCheckAt = null, string? ErrorCode = null, string? Readiness = null)
 {
     public static AppUpdateAvailability Failed(AppUpdateAvailability? previous, DateTimeOffset attemptedAt, string message)
         => previous is null
-            ? new(false, false, null, attemptedAt, message)
+            ? new(false, false, null, attemptedAt, message, ErrorCode: "update_check_failed", Readiness: "unavailable")
             : previous with
             {
+                UpdateAvailable = false,
+                PlanDigest = null,
+                Readiness = "unavailable",
+                ErrorCode = "update_check_failed",
                 CheckedAt = attemptedAt,
                 Error = message,
                 LastSuccessfulCheckAt = previous.LastSuccessfulCheckAt ?? (previous.Error is null ? previous.CheckedAt : null),

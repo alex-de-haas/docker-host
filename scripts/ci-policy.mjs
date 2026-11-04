@@ -20,6 +20,8 @@ const COMPONENT_PATHS = [
 ];
 const BUILD_CONFIG = /(?:^|\/)(?:[^/]+\.csproj|global\.json|[Nn]u[Gg]et\.[Cc]onfig|appsettings[^/]*\.json)$/;
 const WORKFLOW_COMPONENTS = {
+  "ready-releases.yml": ["core", "cli", "shell", "desktop", "documents", "marketplace", "demo-app", "harness", "telemetry-backend", "telemetry-ui", "whisper", "opus"],
+  "promote-release.yml": [], "platform-bridge.yml": ["core", "cli"],
   "shell-image.yml": ["shell"], "desktop-image.yml": ["desktop"], "demo-app-image.yml": ["demo-app"], "marketplace-image.yml": ["marketplace"],
   "documents-image.yml": ["documents"], "telemetry-ui-image.yml": ["telemetry-ui"],
   "telemetry-backend-image.yml": ["telemetry-backend"], "publish-app-sdk.yml": ["app-sdk"],
@@ -71,7 +73,10 @@ export function classifyPaths(paths, { versionOnlyPaths = [] } = {}) {
       const name = path.slice(".github/workflows/".length);
       if (!(name in WORKFLOW_COMPONENTS) && !["ci.yml", "claude-code-review.yml"].includes(name)) all(reason("unrecognized workflow; validate all jobs"));
       add(WORKFLOW_COMPONENTS[name] ?? [], reason("artifact workflow"));
-      if (name === "cli-release.yml") add("core-aot", reason("platform publication workflow"));
+      if (["cli-release.yml", "ready-releases.yml", "platform-bridge.yml"].includes(name)) add("core-aot", reason("platform publication workflow"));
+    } else if (path.startsWith("scripts/releases/") || path === "distribution/release-publisher.json") {
+      // Publisher protocol changes run its complete fixture suite, not unrelated runtime checks.
+      add("ci-policy", reason("release publisher contract"));
     } else if (path.startsWith(".github/actions/")) {
       add("actionlint", reason("composite action"));
     } else if (path.startsWith("docs/") || /^scripts\/docs-index(?:\.test)?\.mjs$/.test(path)) {

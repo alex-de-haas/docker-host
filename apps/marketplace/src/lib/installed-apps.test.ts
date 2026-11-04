@@ -33,11 +33,12 @@ describe("extractUpdateStatus", () => {
     expect(extractUpdateStatus({ installed: false, updateAvailable: false })).toEqual({ installed: false, updateAvailable: false });
   });
 
-  it("treats non-boolean / missing / malformed payloads as not-installed, no-update", () => {
-    expect(extractUpdateStatus({ installed: "yes", updateAvailable: 1 })).toEqual({ installed: false, updateAvailable: false });
-    expect(extractUpdateStatus({})).toEqual({ installed: false, updateAvailable: false });
-    expect(extractUpdateStatus(null)).toEqual({ installed: false, updateAvailable: false });
-    expect(extractUpdateStatus("nope")).toEqual({ installed: false, updateAvailable: false });
+  it.each([{ installed: "yes", updateAvailable: 1 }, {}, null, "nope"])("keeps malformed update checks unavailable: %j", value => {
+    expect(extractUpdateStatus(value)).toMatchObject({ updateAvailable: false, errorCode: "update_check_failed", readiness: "unavailable" });
+  });
+  it("does not turn stale positive evidence into an actionable update", () => {
+    expect(extractUpdateStatus({ installed: true, updateAvailable: true, errorCode: "image_missing", error: "Pending publication", readiness: "pending-publication" }))
+      .toEqual({ installed: true, updateAvailable: false, errorCode: "image_missing", error: "Pending publication", readiness: "pending-publication" });
   });
 });
 

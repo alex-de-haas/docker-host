@@ -25,7 +25,7 @@ import { useConfirmation } from "@/components/reui/confirmation";
 import { Toaster } from "@/components/ui/sonner";
 import { cn } from "@/lib/utils";
 import { appSupportsReviewedUpdate, findAppPageLink, getAppPageLinks } from "./shell/app-helpers";
-import { CoreRequestError, isAuthRequiredRedirectError, readCoreError, readCoreErrorDetail, redirectToCoreLogin, redirectToCoreLoginIfAuthRequired } from "./shell/core-api";
+import { coreErrorCode, CoreRequestError, isAuthRequiredRedirectError, readCoreError, readCoreErrorDetail, redirectToCoreLogin, redirectToCoreLoginIfAuthRequired } from "./shell/core-api";
 import { appendThemeLaunchParams, createReissueRateLimiter } from "@hosty-sdk/app/embedder";
 import { CoreEventNames, subscribeToCoreEvents } from "./shell/events/core-event-stream";
 import { resolveLaunchGate } from "./shell/surfaces/app-surface-tabs";
@@ -574,7 +574,7 @@ export function ShellClient({
 
   const activeUserId = activeUser?.id ?? null;
 
-  // Keep the last successful availability through transient HTTP/network failures.
+  // Failed checks retain timestamps for history; they cannot retain an actionable offer.
   const loadCoreUpdateStatus = useCallback(async (force = false, signal?: AbortSignal) => {
     try {
       const live = await readCoreStatus(coreOrigin, signal);
@@ -583,14 +583,11 @@ export function ShellClient({
       const response = await fetchCore(url, { credentials: "include", cache: "no-store", signal });
       if (!response.ok) throw new Error(`Core answered HTTP ${response.status}.`);
       const update = await response.json() as CoreUpdateStatus;
-      if (!signal?.aborted) setCoreUpdate(previous => update.error && previous && previous.currentVersion === update.currentVersion && previous.releaseTag === update.releaseTag ? {
-        ...previous, error: update.error, checkedAt: update.checkedAt,
-        lastSuccessfulCheckAt: previous.lastSuccessfulCheckAt ?? (!previous.error ? previous.checkedAt : null),
-      } : { ...update, clientPhase: previous?.clientPhase });
+      if (!signal?.aborted) setCoreUpdate(previous => ({ ...update, clientPhase: previous?.clientPhase }));
     } catch (error) {
       if (signal?.aborted) return;
       setCoreUpdate(previous => previous ? {
-        ...previous,
+        ...previous, updateAvailable: false, offerId: null, readiness: "unavailable",
         lastSuccessfulCheckAt: previous.lastSuccessfulCheckAt ?? (!previous.error ? previous.checkedAt : null),
         checkedAt: new Date().toISOString(),
         error: error instanceof Error ? error.message : "Could not check Core updates.",
@@ -624,7 +621,28 @@ export function ShellClient({
     }));
     setPhase("installing");
     try {
-      await sendCsrfJson(`${coreOrigin}/api/core/update`, {});
+      const operationKey = `hosty:platform-update:${coreOrigin}`;
+      const retained = sessionStorage.getItem(operationKey);
+      let accepted: { offerId?: string | null; requestId: string } | null = null;
+      if (retained) {
+        try {
+          const parsed = JSON.parse(retained) as { offerId?: unknown; requestId?: unknown };
+          if (typeof parsed.offerId === "string" && /^[a-f0-9]{32}$/.test(parsed.offerId)
+            && typeof parsed.requestId === "string" && /^[a-f0-9]{32}$/.test(parsed.requestId))
+            accepted = { offerId: parsed.offerId, requestId: parsed.requestId };
+          else sessionStorage.removeItem(operationKey);
+        } catch { sessionStorage.removeItem(operationKey); }
+      }
+      accepted ??= { offerId: coreUpdate?.offerId, requestId: coreUpdate?.operationId ?? crypto.randomUUID().replaceAll("-", "") };
+      const acceptedRequest = accepted;
+      if (!accepted.offerId) throw new Error("Refresh update availability before updating Core.");
+      sessionStorage.setItem(operationKey, JSON.stringify(accepted));
+      try { await sendCsrfJson(`${coreOrigin}/api/core/update`, accepted); }
+      catch (failure) {
+        if (["platform_offer_not_found", "platform_offer_expired", "platform_offer_stale"].includes(coreErrorCode(failure) ?? ""))
+          sessionStorage.removeItem(operationKey);
+        throw failure;
+      }
       const probe = async () => {
         coreUpdateProbeTimer.current = null;
         if (coreUpdateProbeGeneration.current !== generation) return;
@@ -642,7 +660,14 @@ export function ShellClient({
             if (response.ok) {
               const update = await response.json() as CoreUpdateStatus;
               if (coreUpdateProbeGeneration.current !== generation) return;
-              completed = status.status === "running" && !update.error && !update.updateAvailable;
+              const operationResponse = await fetchCore(`${coreOrigin}/api/core/updates/${acceptedRequest.requestId}`, { credentials: "include", cache: "no-store", signal: controller.signal });
+              const operation = operationResponse.ok ? await operationResponse.json() as { status: string; error?: string } : null;
+              completed = status.status === "running" && operation?.status === "completed";
+              if (operation?.error) {
+                setCoreUpdating(false); setPhase("unconfirmed");
+                toast.warning("Core update needs attention", { description: operation.error });
+                return;
+              }
               setCoreUpdate({ ...update, clientPhase: completed ? "completed" : status.version !== initialVersion ? "verifying" : "installing" });
             }
           }
@@ -650,6 +675,7 @@ export function ShellClient({
         finally { clearTimeout(timeout); }
         if (coreUpdateProbeGeneration.current !== generation) return;
         if (completed) {
+          sessionStorage.removeItem(operationKey);
           setCoreUpdating(false);
           coreUpdateProbeTimer.current = setTimeout(() => {
             coreUpdateProbeTimer.current = null;
@@ -673,7 +699,7 @@ export function ShellClient({
       setCoreUpdating(false);
       setPhase(undefined);
     }
-  }, [confirm, coreOrigin, coreUpdating, state.status?.version, sendCsrfJson]);
+  }, [confirm, coreOrigin, coreUpdating, coreUpdate?.offerId, coreUpdate?.operationId, state.status?.version, sendCsrfJson]);
 
   const appEndpoint = useCallback(
     (app: CoreApp, suffix: string) => `${coreOrigin}/api/apps/${encodeURIComponent(app.id)}${suffix}`,

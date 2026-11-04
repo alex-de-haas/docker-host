@@ -1,6 +1,6 @@
 ---
 created: 2026-07-29
-updated: 2026-10-08
+updated: 2026-11-04
 summary: A native SwiftUI client for iOS, iPadOS and macOS that manages a host's installed apps.
 components: [apps/shell-swift]
 ---
@@ -288,15 +288,13 @@ plus Core itself as one more.
 
 ## Core updates
 
-`GET /api/core/update-status` reports whether a newer Core binary is available; a check that could not
-run is not "up to date" and does not offer the action. `POST /api/core/update` answers **202** and
-Core then spawns the CLI and restarts itself, so the reply means *started*, not finished — the
-connection loss that follows is the update working. The client polls until the host answers again,
-then re-reads the version, the verdict and the app list; the once-per-session version check is cleared
-first, because a Core update is the one thing that changes a version while the app is running. It
-gives up after a bounded wait rather than claiming progress indefinitely. The two ways Core refuses
-before any work begins, `503` when the CLI cannot be located and `500` when the spawn fails, read as
-ordinary errors.
+`GET /api/core/update-status` supplies a ready offer or a retained recovery operation. An older
+verdict without an offer is read-only. Apply sends the exact `offerId` and a 32-hex `requestId`;
+transport failures retain that pair, and recovery uses Core's reported `operationId`. A 202 response
+means accepted. The client observes `/api/core/updates/{id}` until the operation completes before
+refreshing its version and application list. A reachable old Core during artifact preparation does
+not count as completion. The bounded wait reports an incomplete operation and preserves its request
+for explicit retry. Errors remain visible; no connection loss is reported as successful completion.
 
 A check that could not run leaves no verdict behind: keeping the previous one would offer the update
 action, and count toward the Dashboard badge, on the strength of an answer a failure has just
@@ -575,7 +573,7 @@ Distribution is by local Xcode build; nothing packages or publishes this app.
   covered without a live host. Account confirmation rejects another, disabled or anonymous user;
   temporary primary credentials remain independent from the device client, and workspace cleanup
   drains/logout only its own retained primary sessions once.
-- The Core update apply maps 202 (started), 503 and 500 (nothing started) apart.
+- Core update tests cover exact offer/request payloads, uncertain retries, retained recovery IDs, legacy verdict refusal and operation status reads.
 - The loopback predicate covers `localhost`, `127.0.0.1`, another `127.0.0.0/8` address and `[::1]`;
   an operator-configured public origin is never flagged, a loopback URL read *on* the host is never
   flagged, and an unparseable URL is not reported as unreachable — guessing there would replace a

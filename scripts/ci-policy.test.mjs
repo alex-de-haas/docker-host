@@ -322,3 +322,10 @@ test("runtime acceptance cannot be selected even for unknown or shared toolchain
   }
   assertSelection(["scripts/test-integration.mjs", "scripts/test-integration.test.mjs"], []);
 });
+
+test("release publisher protocol changes run their fixture suite independently of app checks", () => {
+  assertSelection(["scripts/releases/prepare.mjs"], [], [], []);
+  assertSelection(["distribution/release-publisher.json"], [], [], []);
+  assertSelection([".github/workflows/promote-release.yml"], [], [], ["actionlint"]);
+  assertSelection([".github/workflows/platform-bridge.yml"], ["core", "cli"], ["core-aot"], ["actionlint"]);
+});

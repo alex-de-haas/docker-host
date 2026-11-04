@@ -2,23 +2,28 @@
 # Hosty telemetry backend image. Framework-dependent (IL) multi-stage build: publish with the SDK,
 # run on the aspnet runtime. Portable output + the SQLitePCLRaw bundle's per-RID native libs make one
 # image work on linux/amd64 and linux/arm64. See docs/features/observability/feature.md.
-FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0 AS builder
+ARG SDK_IMAGE=mcr.microsoft.com/dotnet/sdk:10.0
+ARG RUNTIME_IMAGE=mcr.microsoft.com/dotnet/aspnet:10.0
+FROM --platform=$BUILDPLATFORM ${SDK_IMAGE} AS builder
 WORKDIR /repo
 
 # Restore against just the project + shared build props for a cacheable layer.
 COPY global.json Directory.Build.props ./
+COPY apps/telemetry-backend/src/Haas.Hosty.TelemetryBackend/packages.lock.json apps/telemetry-backend/src/Haas.Hosty.TelemetryBackend/
 COPY apps/telemetry-backend/src/Haas.Hosty.TelemetryBackend/Haas.Hosty.TelemetryBackend.csproj apps/telemetry-backend/src/Haas.Hosty.TelemetryBackend/
-COPY packages/app-sdk-dotnet/HostySdk.App/HostySdk.App.csproj packages/app-sdk-dotnet/HostySdk.App/
-RUN dotnet restore apps/telemetry-backend/src/Haas.Hosty.TelemetryBackend/Haas.Hosty.TelemetryBackend.csproj
+COPY packages/app-sdk-dotnet/HostySdk.App/HostySdk.App.csproj packages/app-sdk-dotnet/HostySdk.App/packages.lock.json packages/app-sdk-dotnet/HostySdk.App/
+RUN dotnet restore --locked-mode -p:RestorePackagesWithLockFile=true apps/telemetry-backend/src/Haas.Hosty.TelemetryBackend/Haas.Hosty.TelemetryBackend.csproj
 
 COPY apps/telemetry-backend apps/telemetry-backend
 COPY packages/app-sdk-dotnet/HostySdk.App packages/app-sdk-dotnet/HostySdk.App
-# The SDK links Core contracts; keep the complete contract family in the build context.
-COPY apps/core/src/Haas.Hosty.Core/Shared*Contract.cs apps/core/src/Haas.Hosty.Core/
-RUN dotnet publish apps/telemetry-backend/src/Haas.Hosty.TelemetryBackend/Haas.Hosty.TelemetryBackend.csproj \
+COPY apps/core/src/Haas.Hosty.Core/SharedTaskContract.cs apps/core/src/Haas.Hosty.Core/SharedTaskContract.cs
+COPY apps/core/src/Haas.Hosty.Core/SharedDecisionContract.cs apps/core/src/Haas.Hosty.Core/SharedDecisionContract.cs
+COPY apps/core/src/Haas.Hosty.Core/SharedAgentSessionContract.cs apps/core/src/Haas.Hosty.Core/SharedAgentSessionContract.cs
+COPY apps/core/src/Haas.Hosty.Core/SharedConversationHistoryContract.cs apps/core/src/Haas.Hosty.Core/SharedConversationHistoryContract.cs
+RUN --network=none dotnet publish apps/telemetry-backend/src/Haas.Hosty.TelemetryBackend/Haas.Hosty.TelemetryBackend.csproj \
     -c Release -o /app --no-restore
 
-FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runner
+FROM ${RUNTIME_IMAGE} AS runner
 WORKDIR /app
 ENV HOSTY_TELEMETRY_QUERY_PORT=8080
 COPY --from=builder /app ./

@@ -48,6 +48,7 @@ private:
         PendingAction action = PendingAction::None;
         hosty::FixedString<96> app_id;
         hosty::FixedString<96> digest;
+        hosty::FixedString<32> operation_id;
         bool boolean_value = false;
         std::uint8_t presses_remaining = 0;
     };
