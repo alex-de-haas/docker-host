@@ -93,8 +93,11 @@ internal static class PullRequestAcceptance
             ["mergeable"] = true, ["mergeable_state"] = Head(n) == new string('c', 40) ? "clean" : "behind",
             ["updated_at"] = DateTimeOffset.UtcNow.ToString("O"), ["comments"] = 2,
             ["user"] = new JsonObject { ["login"] = n == 12 ? "dependabot[bot]" : "fixture-alice", ["type"] = n == 12 ? "Bot" : "User" },
-            ["head"] = new JsonObject { ["sha"] = Head(n), ["ref"] = "feature/" + n, ["repo"] = new JsonObject { ["full_name"] = "hosty-fixture/shared" } },
+            ["head"] = new JsonObject { ["sha"] = Head(n), ["ref"] = Branch(n), ["repo"] = new JsonObject { ["full_name"] = "hosty-fixture/shared" } },
             ["base"] = new JsonObject { ["sha"] = new string('b', 40), ["ref"] = "main" } };
+        private static string Branch(int n)
+            => n == 13 ? "hosty/session/" + new string('d', 64) : "hosty/fixture-pr-" + n.ToString("x12");
+
         private JsonObject Graph(int n)
         {
             var rest = Rest(n);
@@ -105,7 +108,7 @@ internal static class PullRequestAcceptance
                 check["status"] = "COMPLETED"; check["conclusion"] = "SUCCESS";
             }
             return new() { ["id"] = "PR_" + n, ["number"] = n, ["title"] = rest["title"]!.ToString(), ["state"] = merged.GetValueOrDefault(n) ? "MERGED" : "OPEN", ["isDraft"] = n == 11,
-                ["updatedAt"] = DateTimeOffset.UtcNow.ToString("O"), ["headRefOid"] = Head(n), ["baseRefOid"] = new string('b', 40), ["headRefName"] = "feature/" + n, ["baseRefName"] = "main",
+                ["updatedAt"] = DateTimeOffset.UtcNow.ToString("O"), ["headRefOid"] = Head(n), ["baseRefOid"] = new string('b', 40), ["headRefName"] = Branch(n), ["baseRefName"] = "main",
                 ["headRepository"] = new JsonObject { ["nameWithOwner"] = "hosty-fixture/shared" },
                 ["author"] = new JsonObject { ["login"] = rest["user"]!["login"]!.ToString(), ["__typename"] = n == 12 ? "Bot" : "User" },
                 ["mergeStateStatus"] = Head(n) == new string('c', 40) ? "CLEAN" : "BEHIND", ["reviewDecision"] = Head(n) == new string('c', 40) ? "APPROVED" : "REVIEW_REQUIRED", ["comments"] = new JsonObject { ["totalCount"] = 2 },

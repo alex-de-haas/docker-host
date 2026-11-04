@@ -90,8 +90,8 @@ test('signed provenance must match the original artifact, source, inputs and pla
   const predicate = { schemaVersion: 'hosty-artifact-provenance.0.1', repository: 'example/repo', artifactId: 'api', sourceCommit: commit,
     inputFingerprint: hash, platforms: receipt.platforms, validation: { workflow: '.github/workflows/ci.yml', runId: '42' } };
   const run = () => JSON.stringify([{ verificationResult: { statement: { predicate } } }]);
-  assert.equal(verifyProvenance('file', receipt, 'example/repo', { run }).sourceCommit, commit);
-  predicate.artifactId = 'other'; assert.throws(() => verifyProvenance('file', receipt, 'example/repo', { run }), /does not match/);
+  assert.equal(verifyProvenance('oci://example.test/api@sha256:' + hash, receipt, 'example/repo', { run }).sourceCommit, commit);
+  predicate.artifactId = 'other'; assert.throws(() => verifyProvenance('oci://example.test/api@sha256:' + hash, receipt, 'example/repo', { run }), /does not match/);
 });
 
 test('one missing image cannot hold an independently complete source app release', async () => {

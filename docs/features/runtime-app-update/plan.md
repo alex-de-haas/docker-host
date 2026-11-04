@@ -635,10 +635,11 @@ Verified on macOS ARM64 through 2026-11-04:
 - All nine Docker images build for linux/arm64; generated manifests for all ten production profiles
   pass the real Core manifest consumer. The final Shell image includes UI recovery/error fixes.
 - `node --test scripts/releases/*.test.mjs scripts/ci-policy.test.mjs .github/actions/ci-validation-gate/*.test.mjs`
-  passes 198 publisher/registry/selection/metadata/workflow tests. Workflow lint is checked separately.
+  passes 202 publisher/registry/selection/metadata/workflow tests. Workflow lint is checked separately.
 - The full Core test run has 4,591 passes, 13 failures and five explicitly skipped runtime scenarios.
   All 13 failures were corrected (catalog expectations and unchanged-artifact fixture identities);
-  the final affected run passes all 60 tests. Other new readiness, migration and authorization tests
+  the final affected run passes all 60 tests. The subsequent main integration builds Core and
+  passes 24 focused feed, registry and workspace/process regressions. Other new readiness, migration and authorization tests
   passed their targeted runs. The five opt-in Harness/Telemetry/Docker-development/VPN scenarios
   were not run by the unit suite; this is not evidence of their runtime acceptance.
 - CLI's full suite passes 381 tests; subsequent listener/recovery changes pass the affected 42 tests.

@@ -1,6 +1,6 @@
 ---
 created: 2026-10-20
-updated: 2026-11-02
+updated: 2026-11-04
 summary: Affected component CI, explicit local integration checks and publication of verified main revisions.
 components: [.github, scripts]
 ---
@@ -116,7 +116,19 @@ integration uses isolated data, normal setup/login and the supported Core-manage
 
 ## Publication
 
-Image and native-release workflows react to completed main push CI and validate its exact source identity before selecting an affected artifact from that CI run's saved selection manifest. Retained format-1 manifests from before local integration separation remain readable: only the five known retired profiles are accepted, with consistent required membership and no duplicates; current CI still rejects those profiles. Publication does not recompute a smaller last-commit diff that could omit earlier changes in a multi-commit push. Failed, cancelled and non-push runs cannot authorize automatic publication. Unrelated image publication runs are short no-ops, avoiding idle publication runners during ordinary CI. The two SDK workflows retain their path-filtered push triggers and wait for the exact main result: their trusted-publisher execution and automatic provenance stay tied to the package source revision.
+`ready-releases.yml` qualifies the exact successful trusted main CI revision, then selects image
+and Core/CLI artifact builds independently of the validation component selection. Input fingerprints
+and verified original provenance allow unchanged artifacts to be reused by digest. Complete release
+metadata is appended before a feed pointer advances. Automatic publication advances daily; the
+manual promotion workflow selects an exact retained release for stable without rebuilding it.
+The metadata branch serves every configured feed. See the
+[release model](../repository-release-model/feature.md) and
+[platform release feeds](../platform-release-feeds/feature.md).
+
+PR, failed and cancelled CI runs cannot authorize publication. The two SDK workflows retain their
+path-filtered push triggers and wait for the exact main result: their trusted-publisher execution and
+automatic provenance stay tied to the package source revision. Cardputer keeps its separate
+validated firmware publication workflow.
 
 The publication gate allows up to two minutes, within its existing overall deadline, for a
 successful run's exact-attempt `ci-required` job to appear or finish in GitHub's jobs API.
@@ -125,26 +137,23 @@ Duplicate required jobs, terminal non-success results, malformed responses and A
 immediately. Automatic publication also rejects a concurrent CI rerun instead of waiting for a
 different attempt. Pending and timeout messages include the observed job count/status/conclusion.
 
-Core/CLI publication also checks for native changes since the last completed `cli-dev` release when
-the successful push's own manifest selects no native component. It compares the validated source
-against the release notes' `Published commit:` receipt using the shared CI path policy. Failed or
-stale publication therefore remains pending and the next successful main CI can recover it, including
-a push that only changes another app. Recovery still runs all Core/CLI tests, all five production RID
-builds, provenance and the independent main-tip guard.
-
-The receipt advances only after every release asset uploads successfully; the mutable tag and
-`target_commitish` are not completion evidence. A missing or older release without a receipt triggers
-one conservative recovery build. API errors, malformed receipts and diverged comparisons fail
-visibly. A comparison at GitHub's 300-file cap selects a build because omitted files may affect native
-artifacts; an older source cannot move a newer release backwards.
-
-Manual recovery remains restricted to main and requires successful push CI for that exact SHA. Artifact-specific production builds and tests remain where CI output is not a complete reusable artifact. A host Next.js build is not a multi-platform OCI image, and a managed Core build is not a five-RID production release.
+Core/CLI publication builds complete paired bundles for macOS ARM64, Linux ARM64, Linux x64 and
+Windows x64. Retained input records and immutable completion metadata drive reuse and recovery;
+a mutable release tag or a component check selection does not establish publication completion.
+The one-time `platform-bridge.yml` workflow freezes the legacy cli-dev bridge after the new
+reader-capable platform is qualified. Normal publication no longer replaces rolling cli-dev assets.
 
 Cardputer CI uploads all four firmware/recovery binaries, exact checksums and source metadata. Normal publication downloads from the validated CI run, verifies source, completeness, regular files, checksums and OTA size, then publishes those bytes. Manual recovery builds and verifies the same source when recovering a release. Missing or corrupt normal artifacts fail publication.
 
-Image metadata reads the validated Git checkout. Publishers attach an ephemeral local branch to that exact commit because Docker metadata cannot infer a ref from an unnamed detached SHA checkout. Image revision labels and SHA tags therefore describe the validated source; mutable tags still require the independent main-tip guard.
+Ready release artifacts use the `https://hosty.dev/attestations/release-artifact/v1` predicate.
+It binds the original build source, canonical input fingerprint, artifact identity, supported
+platforms and successful validation run. Reuse verifies the signing repository/workflow/main ref
+and those claims. OCI verification reads bundles from the registry. Native verification downloads
+bundles without a predicate query, then applies the custom predicate during signature verification;
+temporary bundles are removed after either success or failure. This follows the
+[GitHub CLI bundle verification contract](https://cli.github.com/manual/gh_attestation_verify).
 
-Signed image/native provenance records the validated code revision separately from the publishing workflow's execution revision. GitHub's automatic provenance uses the [OIDC workflow SHA](https://github.com/actions/toolkit/blob/main/packages/attest/src/provenance.ts), so a completion-triggered build uses an explicit source-bound predicate rather than attributing old source bytes to newer main. SDK trusted publishing keeps its [automatic npm provenance](https://docs.npmjs.com/trusted-publishers/).
+The following older provenance format remains applicable to the separate Cardputer publisher.
 
 ### Publication Provenance v1
 
@@ -160,20 +169,11 @@ gh attestation verify ./hosty-cardputer.bin --bundle BUNDLE_PATH \
   --signer-workflow alex-de-haas/docker-host/.github/workflows/cardputer-release.yml
 ```
 
-For an image, the `oci://` prefix and `--bundle-from-oci` fetch the signature from the registry and apply the custom-type filter locally. The command uses the registry's existing authentication:
-
-```bash
-gh attestation verify oci://ghcr.io/alex-de-haas/hosty-telemetry-backend:latest \
-  --bundle-from-oci --repo alex-de-haas/docker-host \
-  --predicate-type https://github.com/alex-de-haas/docker-host/blob/main/docs/features/ci-feedback-loop/feature.md#publication-provenance-v1 \
-  --signer-workflow alex-de-haas/docker-host/.github/workflows/telemetry-backend-image.yml
-```
-
 The required external parameters are `workflow` (repository URL, main ref and workflow path), `source` (repository URL and validated full commit), `validation` (CI workflow path and successful run ID), and `operation` (`build-image`, `build-native-release`, `publish-verified-ci-firmware` or `build-firmware-for-manual-publication`). The operation distinguishes a firmware artifact consumed from CI from a manual rebuild. The actual trigger remains `workflow_run` or `workflow_dispatch`.
 
 The internal GitHub parameters record the actual trigger, stable numeric repository and owner IDs, runner environment and execution SHA. Missing or invalid identities stop publication before signing. Resolved dependencies bind the publishing repository's main ref to the workflow SHA, the separate source commit to the validated code SHA, and the successful CI run to validation or firmware production. The builder is the signing workflow URL; the invocation identifies the publishing run and attempt. Consumers verify the signed workflow identity and source dependency separately rather than assuming the workflow revision is the artifact's code revision.
 
-The [existing release model](../repository-release-model/feature.md) still governs immutable versions, per-artifact concurrency, mutable-tag freshness and SDK trusted publication. A completed old main CI run cannot move a rolling tag over newer main. PR merge artifacts never qualify a different main SHA.
+The [release model](../repository-release-model/feature.md) governs immutable versions, conflict-safe feed promotion and SDK trusted publication. PR merge artifacts never qualify a different main SHA.
 
 ## Feature Readiness And Review
 

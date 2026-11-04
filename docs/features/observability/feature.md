@@ -1,6 +1,6 @@
 ---
 created: 2026-06-28
-updated: 2026-10-27
+updated: 2026-11-03
 summary: OpenTelemetry from apps flows to a collector, an SQLite-backed telemetry backend and the telemetry UI app.
 components: [apps/telemetry, apps/telemetry-backend, apps/telemetry-ui, apps/core]
 ---
@@ -89,6 +89,10 @@ files for logs and traces (separate files, so the two signals rotate and tail in
 the upstream collector image is distroless and runs as a non-root UID, Core provisions the sink dirs
 — and the backend's `store/` dir — world-writable on Unix at start
 (`EnsureSystemAppDataSubdirectory`); the contents are non-secret telemetry.
+
+The backend image builds from the repository root and includes the Core `Shared*Contract.cs`
+files linked by the .NET app SDK. The Docker build therefore has the same shared contract sources
+as a repository build; adding an SDK contract does not require another individual `COPY` entry.
 
 ## Enabling it
 
@@ -448,6 +452,9 @@ administrator session gate. It supplies host verification, navigation metadata a
 so Shell policy hides app navigation after reloads and standalone navigation finishes loading.
 
 ## Testing Expectations
+
+- Build the backend Docker image from the repository root for both `linux/amd64` and
+  `linux/arm64`; SDK-linked Core contracts must be available during `dotnet publish`.
 
 - Verify red request failures remain distinct from amber WARN records. Preserve cached data and its
   actual resource/query/range provenance through new filter debounce, delayed reads and errors;

@@ -1,6 +1,6 @@
 ---
 created: 2026-10-07
-updated: 2026-10-31
+updated: 2026-11-03
 summary: Authorized external clients use registered Core worktrees, independent test environments, canonical publication and native Git/provider reconciliation.
 components: [apps/core, apps/harness, apps/documents]
 ---
@@ -38,7 +38,11 @@ The `rename_workspace` tool changes that aggregate name with an exact UUID repla
 propagate through workspace observation without changing source, ownership or active runtimes.
 
 Preparation selects an installed app's declared repository and optional target branch. It returns
-a Core-owned absolute directory, registered branch, target branch and original base. External
+a Core-owned absolute directory, registered branch, target branch and original base.
+New branches use the [workspace task-name policy](../assistant-session-workspaces/feature.md#workspace-branch-names):
+a bounded readable slug and a short unique suffix. Existing branches retain their original names;
+workspace renaming changes display metadata only. Clients use the returned exact branch and full
+worktree ID independently. External
 preparation requires an explicit activity lease and accepts no assistant session path. Native file
 edits and commits in that directory appear through the existing observer. Remote source operations revalidate the acting user's provider authority. Retained local source does
 not require the creator's provider connection and never transfers its credentials.
