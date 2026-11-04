@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-11-03
-updated: 2026-11-03
+updated: 2026-11-04
 summary: Decide app-data rollback, declare Core compatibility ranges and report app compatibility after Core updates.
 components: [apps/core, apps/shell]
 ---
@@ -11,12 +11,12 @@ components: [apps/core, apps/shell]
 ## Scope And Ownership
 
 On 2026-11-03 the owner accepted separating the unresolved hardening from
-[ready app releases and update sources](../runtime-app-update/plan.md). This plan owns the transferred
+[ready app releases and update sources](../runtime-app-update/feature.md). This plan owns the transferred
 D2, D4 and D5 with their original IDs. They remain unimplemented and are not removed from tracked work.
-New work here allocates above D5; D1/D3 remain owned by the ready-release plan and are not reused.
+New work here allocates above D5; D1/D3 are delivered by the ready-release implementation and are not reused.
 
 The implemented reviewed update flow is described in [Runtime App Update](../runtime-app-update/feature.md).
-The ready-release plan owns artifact readiness, pre-stop preparation, publication and source migration.
+The ready-release implementation provides artifact readiness, pre-stop preparation, publication and source migration.
 This plan adds behavior after startup or across Core/app compatibility and needs separate approval
 once the questions below are resolved. It grants no implementation or live recovery authority.
 
@@ -27,7 +27,7 @@ once the questions below are resolved. It grants no implementation or live recov
   policy. A binary rollback must not silently restore or discard user data after migration.
 - **Core compatibility:** a generic manifest contract can declare supported Core versions. Update
   planning distinguishes unsupported Core from artifact publication/access failure and refuses an
-  incompatible candidate. The new digest manifest schema in the ready-release plan does not decide
+  incompatible candidate. The implemented digest manifest schema does not decide
   this general version-range contract. Existing app.0.1 installations need an explicit default policy.
 - **Skew notice:** after a Core update, report relevant app compatibility/update information without
   treating independently versioned app/Core numbers as a compatibility matrix. Core stays usable
