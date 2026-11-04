@@ -38,3 +38,16 @@ it("rejects symlink escape before claiming a writer reservation", async () => {
   await expect(writers.reserve("root", "task", "attempt", "workspace", sources)).rejects.toMatchObject({ code: "write_scope_escape" });
   expect(await store.journalEntries("writer:")).toHaveLength(0);
 });
+
+it.each([
+  ["src/.", "src", "src/file.ts"],
+  ["./src/.", "src", "src/file.ts"],
+  ["src/./nested/.", "src/nested", "src/nested/file.ts"],
+])("normalizes %s before storing and comparing writer claims", async (declared, normalized, conflicting) => {
+  await mkdir(path.join(sources[0]!.path, normalized), { recursive: true });
+  await store.writeJournal("write-scope:first", { mode: "write", paths: [declared] });
+  await store.writeJournal("write-scope:second", { mode: "write", paths: [conflicting] });
+  expect(await writers.reserve("root-one", "first", "one", "shared", sources)).toBe(true);
+  expect(await store.readJournal("writer:one")).toMatchObject({ scope: { mode: "write", paths: [normalized] } });
+  expect(await writers.reserve("root-two", "second", "two", "shared", sources)).toBe(false);
+});

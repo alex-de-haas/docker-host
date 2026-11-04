@@ -73,7 +73,7 @@ Unknown stops retain source leases. A replacement coordinator observes the retai
 before continuing it. Missing original boundaries appear as recovery items in Decisions.
 
 Cooperative read/write claims cover normalized repository-relative prefixes in the selected
-workspace. Claims are shared across roots. Overlapping writes, broad changes, Git operations and
+workspace. Dot segments are normalized before claims are stored and compared. Claims are shared across roots. Overlapping writes, broad changes, Git operations and
 lockfiles serialize; disjoint claims can run concurrently. Claims are acquired with execution
 capacity and released only after confirmed native stop. They coordinate agents and do not sandbox
 arbitrary filesystem access.

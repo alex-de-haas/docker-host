@@ -14,7 +14,7 @@ export function writeScope(value: unknown): WriteScope {
   const paths = [...new Set(input.paths.map(item => {
     if (typeof item !== "string" || !item || item.length > 2000 || /[\\\x00-\x1f\x7f]/.test(item) || path.posix.isAbsolute(item)
       || item.split("/").some(part => part === ".." || !part) || /^[a-z]:/i.test(item)) return taskError("write_scope_invalid", "Use normalized repository-relative paths without traversal.", 400);
-    return item.replace(/^(\.\/)+/, "").replace(/\/$/, "");
+    return path.posix.normalize(item);
   }))].sort();
   const broad = !paths.length || paths.includes(".") || input.mode !== "read" && paths.some(item => /(^|\/)(\.git|[^/]*\.lock|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|go\.sum)(\/|$)/.test(item));
   return { mode: broad ? "exclusive" : input.mode, paths: broad ? [] : paths };
