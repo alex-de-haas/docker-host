@@ -51,3 +51,31 @@ it.each([
   expect(await store.readJournal("writer:one")).toMatchObject({ scope: { mode: "write", paths: [normalized] } });
   expect(await writers.reserve("root-two", "second", "two", "shared", sources)).toBe(false);
 });
+
+it.each(["alias", "alias/not-created/file.ts"])("makes an internal symlink scope exclusive: %s", async prefix => {
+  await mkdir(path.join(sources[0]!.path, "src"));
+  await symlink("src", path.join(sources[0]!.path, "alias"));
+  await store.writeJournal("write-scope:first", { mode: "write", paths: [prefix] });
+  await store.writeJournal("write-scope:second", { mode: "write", paths: ["src/not-created/file.ts"] });
+  expect(await writers.reserve("root-one", "first", "one", "shared", sources)).toBe(true);
+  expect(await writers.reserve("root-two", "second", "two", "shared", sources)).toBe(false);
+  expect(await store.readJournal("writer:one")).toMatchObject({ scope: { mode: "exclusive", paths: [] } });
+});
+
+it("still rejects an escaping prefix after encountering an internal symlink", async () => {
+  await mkdir(path.join(sources[0]!.path, "src"));
+  await mkdir(path.join(dir, "outside"));
+  await symlink("src", path.join(sources[0]!.path, "alias"));
+  await symlink(path.join(dir, "outside"), path.join(sources[0]!.path, "escape"));
+  await store.writeJournal("write-scope:task", { mode: "write", paths: ["alias", "escape/new-file"] });
+  await expect(writers.reserve("root", "task", "attempt", "shared", sources)).rejects.toMatchObject({ code: "write_scope_escape" });
+  expect(await store.journalEntries("writer:")).toHaveLength(0);
+});
+
+it("makes a dangling symlink ancestor exclusive before its target is created", async () => {
+  await symlink("future-src", path.join(sources[0]!.path, "alias"));
+  await store.writeJournal("write-scope:first", { mode: "write", paths: ["alias/new-file.ts"] });
+  await store.writeJournal("write-scope:second", { mode: "write", paths: ["future-src/new-file.ts"] });
+  expect(await writers.reserve("root-one", "first", "one", "shared", sources)).toBe(true);
+  expect(await writers.reserve("root-two", "second", "two", "shared", sources)).toBe(false);
+});

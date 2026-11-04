@@ -1,5 +1,5 @@
 import path from "node:path";
-import { realpath } from "node:fs/promises";
+import { lstat, realpath } from "node:fs/promises";
 import type { TaskExecutionReceipt } from "@hosty-sdk/app/tasks";
 import type { DevelopmentWorkspace } from "../sessions/development.js";
 import { TaskStore, taskError, type TaskState } from "./store.js";
@@ -28,6 +28,7 @@ export class TaskWriters {
   constructor(private readonly store: TaskStore) {}
   private async checkedScope(scope: WriteScope, sources: DevelopmentWorkspace[]): Promise<WriteScope> {
     if (scope.mode === "exclusive") return scope;
+    let aliased = false;
     for (const source of sources) {
       let root: string;
       try { root = await realpath(source.path); } catch { return { mode: "exclusive", paths: [] }; }
@@ -37,15 +38,22 @@ export class TaskWriters {
           try {
             const resolved = await realpath(candidate);
             if (resolved !== root && !resolved.startsWith(root + path.sep)) return taskError("write_scope_escape", "A declared prefix resolves outside its repository.", 400);
+            if (resolved !== candidate) aliased = true;
             break;
           } catch (error) {
             if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+            // A dangling symlink still aliases a future path even though realpath cannot resolve it.
+            const entry = await lstat(candidate).catch(cause => {
+              if ((cause as NodeJS.ErrnoException).code === "ENOENT") return null;
+              throw cause;
+            });
+            if (entry?.isSymbolicLink()) aliased = true;
             candidate = path.dirname(candidate);
           }
         }
       }
     }
-    return scope;
+    return aliased ? { mode: "exclusive", paths: [] } : scope;
   }
   async reserve(rootId: string, taskId: string, executionId: string, workspaceId: string, sources: DevelopmentWorkspace[], admit?: (state: TaskState) => boolean): Promise<boolean> {
     const declared = await this.store.readJournal<WriteScope>("write-scope:" + taskId);
