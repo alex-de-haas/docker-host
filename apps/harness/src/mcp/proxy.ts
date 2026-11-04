@@ -229,6 +229,7 @@ export class McpProxy {
             token = await this.mint(sessionId, appId);
             if (!token) throw new Error("Session delegation expired before dispatch.");
             if (!this.sessions.has(sessionId) || abort.signal.aborted) throw new Error("Session ended before dispatch.");
+            if ((await this.deniedTools?.(appId) ?? []).includes(rpc.params.name)) throw new Error("Core has disabled this tool.");
             await this.beforeDispatch?.(sessionId);
             await dispatchGuard();
             const coordinated = appId === "hosty:core" ? await this.platformCall?.(sessionId, rpc.params.name, rpc.params.arguments ?? {}, dispatchGuard) : null;
