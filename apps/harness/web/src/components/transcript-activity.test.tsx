@@ -164,7 +164,48 @@ it("keeps Changes independent and stable as edits arrive between other calls", a
   expect(container.querySelector('[data-slot="transcript-changes"]')?.parentElement).toBe(container.querySelector('[data-slot="tool-activity"]')?.parentElement);
   await click(button("4 tool calls")); expect(changes.getAttribute("aria-expanded")).toBe("true");
   await render([command, edit(2, 3), mcp, edit(4, 2), edit(5)]);
-  expect(changes.textContent).toContain("Line totals unavailable"); expect(changes.textContent).not.toContain("+5"); expect(changes.textContent).not.toContain("+0");
+  expect(changes.textContent).toContain("Partial line totals"); expect(changes.textContent).toContain("≥5 added"); expect(changes.textContent).not.toContain("+0");
+  expect(changes.querySelector('[aria-label="5 recorded additions"]')).toBeNull();
+  expect(changes.querySelector('[aria-label="At least 5 recorded additions"]')?.getAttribute("title")).toContain("Repeated edits are counted");
+  expect(container.querySelector('button[aria-label="Review README.md"] [aria-label="At least 5 recorded additions"]')).not.toBeNull();
+});
+
+it("shows late reported counts as lower bounds while keeping the independently complete direction exact", async () => {
+  const ref = { sessionId: "session", workspaceId: "workspace", worktreeId: "tree", repository: "repo", path: "file.ts" };
+  const edits = [event(1, "tool_use", { toolName: "Edit", fileEdits: [{ path: ref.path, deletions: 1, review: ref }] }),
+    event(2, "tool_use", { toolName: "Edit", fileEdits: [{ path: ref.path, additions: 8, deletions: 2, review: ref }] })];
+  await act(async () => root.render(<ToolActivity events={edits} />));
+  const changes = button("Changes · 1 file");
+  expect(changes.querySelector('[aria-label="At least 8 recorded additions"]')?.textContent).toBe("≥8 added");
+  expect(changes.querySelector('[aria-label="3 recorded deletions"]')?.textContent).toBe("−3");
+  expect(changes.textContent).toContain("Partial line totals");
+  await click(changes);
+  const row = container.querySelector('button[aria-label="Review file.ts"]')!;
+  expect(row.textContent).toContain("≥8 added"); expect(row.textContent).toContain("−3");
+  expect(row.querySelector('[aria-label="At least 8 recorded additions"]')?.getAttribute("title")).toContain("Some edit operations did not report additions");
+});
+
+it("retains known file evidence in a partial summary and keeps an unreported file unavailable", async () => {
+  const base = { sessionId: "session", workspaceId: "workspace", worktreeId: "tree", repository: "repo" };
+  const edits = [event(1, "tool_use", { toolName: "Edit", fileEdits: [{ path: "known.ts", additions: 3, deletions: 2, review: { ...base, path: "known.ts" } }] }),
+    event(2, "tool_use", { toolName: "Edit", fileEdits: [{ path: "unknown.ts", review: { ...base, path: "unknown.ts" } }] })];
+  await act(async () => root.render(<ToolActivity events={edits} />));
+  const changes = button("Changes · 2 files");
+  expect(changes.textContent).toContain("≥3 added"); expect(changes.textContent).toContain("≥2 removed");
+  await click(changes);
+  const known = container.querySelector('button[aria-label="Review known.ts"]')!, unknown = container.querySelector('button[aria-label="Review unknown.ts"]')!;
+  expect(known.textContent).toContain("+3"); expect(known.textContent).not.toContain("≥");
+  expect(unknown.textContent).not.toMatch(/[+−≥]/); expect(unknown.parentElement?.textContent).toContain("Recorded line totals unavailable");
+});
+
+it("does not show a wrapped or revived subtotal after safe-integer overflow", async () => {
+  const ref = { sessionId: "session", workspaceId: "workspace", worktreeId: "tree", repository: "repo", path: "file.ts" };
+  const edits = [Number.MAX_SAFE_INTEGER, 1, 2].map((additions, index) => event(index + 1, "tool_use", { toolName: "Edit", fileEdits: [{ path: ref.path, additions, review: ref }] }));
+  await act(async () => root.render(<ToolActivity events={edits} />));
+  const changes = button("Changes · 1 file");
+  expect(changes.textContent).toContain("Line totals unavailable"); expect(changes.textContent).not.toMatch(/[+−≥]/);
+  await click(changes);
+  expect(container.querySelector('button[aria-label="Review file.ts"]')?.textContent).not.toMatch(/[+−≥]/);
 });
 it("keeps unbound legacy file entries separate and makes unavailable Review explanations accessible", async () => {
   const edit = (seq: number) => event(seq, "tool_use", { toolName: "Edit", input: { file_path: "README.md", old_string: "a", new_string: "b" } });

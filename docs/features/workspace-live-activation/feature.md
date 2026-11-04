@@ -1,6 +1,6 @@
 ---
 created: 2026-10-19
-updated: 2026-11-03
+updated: 2026-11-04
 summary: Select named app workspaces or installed package runtimes with scoped access review, retained package choices and recoverable Core-owned transitions.
 components: [apps/core, apps/cli, apps/shell, apps/harness, shared]
 ---
@@ -268,9 +268,18 @@ Harness exposes typed `activation_plan`, `activation_apply`, `activation_status`
 unprompted and Disabled policy applies. An agent's mutation is queued until its successful turn ends,
 native process exit (or Docker worker termination) is confirmed and source leases are released. The
 original reviewed payload and IDs are retained; policy and Core authority are rechecked at dispatch.
-A completed Docker turn revokes worker transport access while preserving that reviewed policy guard
-through worker shutdown and lease release. Cancellation, permission changes and revocation still
-invalidate the queued request.
+The primary-answer boundary and completed native and Docker turns close the agent's MCP proxy
+routes and cancel pending calls. Optional prompt-suggestion collection preserves the exact deferred
+review until confirmed exit and lease release; it grants no agent tool access during collection.
+Only the already-issued review for the exact deferred request survives confirmed shutdown and
+lease release; other reviews from the native turn remain canceled. A canceled, aborted or
+different-session review cannot be transferred. The retained review still checks current tool
+definitions, invocation policy and provider identity before Core admission, and final cleanup revokes
+it after dispatch or failure. Cancellation, permission changes and revocation still invalidate the
+queued request.
+An armed or parked task boundary also blocks queued activation and completion immediately before
+dispatch, including a boundary armed after the request was reviewed. Canonical Core tools and retained
+workspace aliases use the same fence. A resuming task continuation retains its normal tool access.
 A restarted Harness cannot reconstruct an in-memory approval: it marks the queue blocked for explicit
 review/retry. The detached helper owns an accepted transition even when Harness replaces itself.
 
@@ -639,6 +648,14 @@ activation records or snapshots. Finish removes the child, its processes and tes
 - Exercise Docker deferred apply, Return and resume with real policy generations, including Ask
   approval and policy disable/revocation while shutdown waits. Worker shutdown alone must not cancel
   an approved request; actual cancellation and revocation must still prevent dispatch.
+- Exercise native deferred Return, execution selection and workflow completion with a registered
+  canonical Core MCP proxy and real policy reviews. Verify native routes close before dispatch,
+  unrelated reviews are canceled, revoked or different-session reviews cannot survive handoff,
+  and final cleanup revokes the retained review on both successful and refused dispatch. Include
+  the primary-answer-to-suggesting-to-result sequence before native exit.
+- Arm a task boundary after activation or completion is queued and let the ordinary terminal result
+  arrive before parking. Canonical and retained alias transports refuse dispatch with the original
+  request retained; resuming task continuations remain allowed.
 - Replace a Core project file or ancestor with an escaping link after source Save or activation
   preparation. Preparation, participant planning and pre-build revalidation must refuse it without
   touching external files, compiling the substituted project or stopping participants.

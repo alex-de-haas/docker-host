@@ -1,6 +1,6 @@
 ---
 created: 2026-11-02
-updated: 2026-11-03
+updated: 2026-11-04
 summary: App-provided feedback tools own forms and drafts while verified SDK source services supply selection, capture and scoped intake.
 components: [apps/core, packages/app-sdk, apps/harness, apps/shell, apps/desktop]
 ---
@@ -62,7 +62,7 @@ The form supplier and feedback target are independent identities.
 
 ## Form And Storage
 
-Harness owns comment editing, Done, local saving, screenshot attachment/removal, dictation, discard and frozen
+Harness owns comment editing, explicit local saving, screenshot attachment/removal, dictation, discard and frozen
 submission retry. Its IndexedDB database is `hosty-feedback-composer-v1`; keys identify the target
 Core/app/installation/account. Writes check saved revision and request identity in one transaction.
 Target changes wait for local writes and cannot silently abandon a storage failure. Different
@@ -70,8 +70,10 @@ providers have separate origin-local drafts. One report never combines multiple 
 
 Annotation comments and the optional overall comment use the same input-group components as the
 Harness chat composer. A microphone icon sits inside each field. Annotation fields also have a
-screenshot icon on the left, an inline Done control, and the shared chat attachment card with a
+screenshot icon on the left, a Save comment control with a local-save confirmation, and the shared chat attachment card with a
 thumbnail, size and removal action. Screenshots remain attached to their individual annotations.
+Local-save confirmation applies only to the same draft identity and revision that initiated Save;
+editing during a pending write prevents an older save from acknowledging the newer text.
 The form loads one speech-provider roster and permits one dictation operation at a time. A transcript
 belongs to the field that started recording, even if another field receives focus or its callback
 changes. Target switching, screenshot actions, removal and submission wait for dictation to finish

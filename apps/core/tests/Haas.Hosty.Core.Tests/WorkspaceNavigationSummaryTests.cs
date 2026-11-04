@@ -1,5 +1,6 @@
 using Haas.Hosty.Core;
 using Microsoft.Extensions.Configuration;
+using System.Text.Json;
 
 namespace Haas.Hosty.Core.Tests;
 
@@ -16,9 +17,49 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.Null(WorkspacePullRequestSummary.From([]));
         var summary = WorkspacePullRequestSummary.From([merged, merged])!;
         Assert.Equal(1, summary.Count); Assert.Equal("merged", summary.State); Assert.False(summary.Partial);
+        Assert.Equal(0, summary.OpenCount); Assert.Equal(0, summary.DraftCount);
         Assert.Equal("closed", WorkspacePullRequestSummary.From([merged, NavigationPr("https://example.test/2", "closed")])!.State);
         Assert.Equal("unknown", WorkspacePullRequestSummary.From([merged, new("https://example.test/2", null, null, "Unavailable")])!.State);
         Assert.Equal("unknown", WorkspacePullRequestSummary.From([merged, merged with { Unavailable = "Revoked" }])!.State);
+    }
+
+    [Fact]
+    public void WorkspaceNavigationSummary_CountsOpenAndDraftReferencesIndependentlyOfHistory()
+    {
+        var open = NavigationPr("https://example.test/1", "open", ["SUCCESS"]);
+        var draft = NavigationPr("https://example.test/2", "open", draft: true);
+        var result = WorkspacePullRequestSummary.From([open, draft, NavigationPr("https://example.test/3", "merged"),
+            NavigationPr("https://example.test/4", "closed"), open with { Url = open.Url.ToUpperInvariant() }])!;
+
+        Assert.Equal(4, result.Count);
+        Assert.Equal(2, result.OpenCount);
+        Assert.Equal(1, result.DraftCount);
+        Assert.Equal("open", result.State);
+        Assert.False(result.Partial);
+        var draftsOnly = WorkspacePullRequestSummary.From([draft])!;
+        Assert.Equal(1, draftsOnly.OpenCount);
+        Assert.Equal(1, draftsOnly.DraftCount);
+    }
+
+    [Fact]
+    public void WorkspaceNavigationSummary_UnavailableReferencesKeepOpenCountsConservative()
+    {
+        var open = NavigationPr("https://example.test/1", "open", ["SUCCESS"]);
+        var draft = NavigationPr("https://example.test/2", "open", draft: true);
+        var unknown = new InspectionPullRequest("https://example.test/3", null, null, "Unavailable");
+        var partial = WorkspacePullRequestSummary.From([open, draft, unknown])!;
+        Assert.Equal(3, partial.Count);
+        Assert.Equal(2, partial.OpenCount);
+        Assert.Equal(1, partial.DraftCount);
+        Assert.True(partial.Partial);
+
+        var duplicateUnavailable = WorkspacePullRequestSummary.From([open, draft, unknown,
+            open with { Url = open.Url.ToUpperInvariant(), Unavailable = "Revoked" }])!;
+        Assert.Equal(3, duplicateUnavailable.Count);
+        Assert.Equal(1, duplicateUnavailable.OpenCount);
+        Assert.Equal(1, duplicateUnavailable.DraftCount);
+        Assert.Equal("draft", duplicateUnavailable.State);
+        Assert.True(duplicateUnavailable.Partial);
     }
 
     [Theory]
@@ -59,6 +100,14 @@ public sealed partial class CoreLifecycleServiceTests
         var before = (await f.Workspaces.Read(f.W.Id, null, default)).Observation;
         var row = Assert.Single((await inspection.ListAsync("admin", default)).Workspaces);
         Assert.Equal("open", row.PullRequestSummary!.State); Assert.Equal("passed", row.PullRequestSummary.Checks);
+        Assert.Equal(1, row.PullRequestSummary.OpenCount); Assert.Equal(0, row.PullRequestSummary.DraftCount);
+        using (var json = JsonDocument.Parse(CoreJson.Text(row)))
+        {
+            var summary = json.RootElement.GetProperty("pullRequestSummary");
+            Assert.Equal(1, summary.GetProperty("openCount").GetInt32());
+            Assert.Equal(0, summary.GetProperty("draftCount").GetInt32());
+            Assert.False(summary.GetProperty("partial").GetBoolean());
+        }
         Assert.Equal(CoreJson.Text(before), CoreJson.Text(row.Worktrees[0].Observation));
         Assert.Equal(observed, f.Provider.Observed);
         Assert.DoesNotContain("fixture-secret", CoreJson.Text(row));
@@ -66,9 +115,19 @@ public sealed partial class CoreLifecycleServiceTests
         f.Provider.State = "merged";
         await f.Service.RefreshExternalReferencesAsync(default);
         observed = f.Provider.Observed;
-        Assert.Equal("merged", Assert.Single((await inspection.ListAsync("admin", default)).Workspaces).PullRequestSummary!.State);
+        var merged = Assert.Single((await inspection.ListAsync("admin", default)).Workspaces).PullRequestSummary!;
+        Assert.Equal("merged", merged.State); Assert.Equal(0, merged.OpenCount); Assert.Equal(0, merged.DraftCount);
         await f.Users.UpdateAsync(s => s with { ProviderConnections = [] });
-        Assert.Equal("unknown", Assert.Single((await inspection.ListAsync("admin", default)).Workspaces).PullRequestSummary!.State);
+        var unavailable = Assert.Single((await inspection.ListAsync("admin", default)).Workspaces);
+        Assert.Equal("unknown", unavailable.PullRequestSummary!.State);
+        Assert.True(unavailable.PullRequestSummary.Partial);
+        using (var json = JsonDocument.Parse(CoreJson.Text(unavailable)))
+        {
+            var summary = json.RootElement.GetProperty("pullRequestSummary");
+            Assert.Equal(0, summary.GetProperty("openCount").GetInt32());
+            Assert.Equal(0, summary.GetProperty("draftCount").GetInt32());
+            Assert.True(summary.GetProperty("partial").GetBoolean());
+        }
         Assert.Equal(observed, f.Provider.Observed);
         Assert.Equal(0, f.Provider.Created); Assert.Equal(0, f.Provider.Merged);
     }

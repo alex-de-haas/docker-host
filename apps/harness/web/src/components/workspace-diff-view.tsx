@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore, type CSSProperties } from "react";
-import { preloadHighlighter } from "@pierre/diffs";
+import { getHighlighterIfLoaded, preloadHighlighter } from "@pierre/diffs";
 import { FileDiff, type DiffLineAnnotation, type FileDiffOptions, type SelectedLineRange } from "@pierre/diffs/react";
 import { Button } from "@/components/ui/button";
 import { HostyLoader } from "../../../../../shared/web/hosty-states";
@@ -12,6 +12,7 @@ import type { PublishedEvidence } from "@/lib/workspace-review-api";
 import { placeReviewThreads, type ReviewThread } from "@/lib/review-threads";
 
 const noThreads: ReviewThread[] = [];
+const highlighterReady = () => !!getHighlighterIfLoaded({ theme: { light: "pierre-light", dark: "pierre-dark" }, lang: "text" });
 const style = { "--diffs-font-family": "var(--font-mono)", "--diffs-font-size": "13px", "--diffs-line-height": "20px", "--diffs-selection-base": "var(--brand-strong)", "--diffs-bg-selection-number-override": "var(--brand-strong)", "--diffs-selection-number-fg": "#0f1b2d" } as CSSProperties;
 const readTheme = () => document.documentElement.classList.contains("dark") ? "dark" : "light";
 const serverTheme = () => "light" as const;
@@ -34,15 +35,16 @@ export default function WorkspaceDiffView({ diff, layout, wrap, onAsk, threads =
 } & ReviewThreadActions) {
   const [selection, setSelection] = useState<SelectedLineRange | null>(null);
   const theme = useSyncExternalStore(subscribeTheme, readTheme, serverTheme);
-  const [highlighter, setHighlighter] = useState<"loading" | "ready" | "failed">("loading");
+  const [highlighter, setHighlighter] = useState<"loading" | "ready" | "failed">(() => highlighterReady() ? "ready" : "loading");
   useEffect(() => {
+    if (highlighter !== "loading") return;
     let active = true;
     void preloadHighlighter({ themes: ["pierre-light", "pierre-dark"], langs: ["text"] }).then(
       () => { if (active) setHighlighter("ready"); },
       () => { if (active) setHighlighter("failed"); },
     );
     return () => { active = false; };
-  }, []);
+  }, [highlighter]);
   const preview = useMemo(() => prepareWorkspaceDiff(diff), [diff]);
   const placement = useMemo(() => placeReviewThreads(threads, preview.kind === "diff" && highlighter === "ready" ? preview.file : undefined), [threads, preview, highlighter]);
   const annotations = useMemo(() => {

@@ -38,7 +38,7 @@ it('keeps a different provider draft and leaves conflicting source evidence reco
 });
 it('stores a selected note in the source app draft and keeps the form visible',async()=>{
   await render();await act(async()=>state.receive?.({type:'selection',source,note:annotation}));
-  expect(state.drafts.get(key)?.annotations).toEqual([annotation]);expect(mount.querySelector('[aria-label="Feedback draft"]')).not.toBeNull();expect(button('Done')).toBeDefined();
+  expect(state.drafts.get(key)?.annotations).toEqual([annotation]);expect(mount.querySelector('[aria-label="Feedback draft"]')).not.toBeNull();expect(button('Save comment')).toBeDefined();
 });
 
 const saved=()=>state.save.mock.calls.at(-1)?.[0] as FeedbackDraft;
@@ -124,4 +124,47 @@ it.each(['element', 'region'] as const)('prepares and clears the saved %s outlin
   await act(async () => button('Retake screenshot').click());
   expect(saved().annotations[0].image).toBe(next); expect(mount.textContent).toContain('Select it again');
   expect(state.request).toHaveBeenLastCalledWith({ action: 'highlight', sourceId: source.id });
+});
+
+it('confirms saving a comment without submitting the report',async()=>{
+  await render();await act(async()=>state.receive?.({type:'selection',source,note:annotation}));
+  await act(async()=>button('Save comment').click());
+  expect(mount.textContent).toContain('Comment saved locally. Submit feedback to send the report.');
+  expect(state.request.mock.calls.some(([o])=>o.action==='submit')).toBe(false);
+});
+
+it('does not acknowledge an older save after another edit and can confirm the latest comment',async()=>{
+  state.drafts.set(key,{...legacy,submitting:false});await render();
+  let saveFirst!:()=>void,saveLatest!:()=>void;
+  const deferSave=(assign:(resolve:()=>void)=>void)=>(draft:FeedbackDraft)=>new Promise<void>(resolve=>assign(()=>{
+    state.drafts.set(draft.key,structuredClone(draft));resolve();
+  }));
+  state.save.mockImplementationOnce(deferSave(resolve=>{saveFirst=resolve;})).mockImplementationOnce(deferSave(resolve=>{saveLatest=resolve;}));
+  const comment=mount.querySelector<HTMLTextAreaElement>('textarea[aria-label="Comment 1"]')!;
+  const edit=async(text:string)=>act(async()=>{
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value')!.set!.call(comment,text);
+    comment.dispatchEvent(new Event('input',{bubbles:true}));
+  });
+  await edit('First comment');await act(async()=>button('Save comment').click());
+  await edit('Latest comment');
+  expect(comment.disabled).toBe(false);expect(comment.value).toBe('Latest comment');
+  await act(async()=>saveFirst());
+  expect(state.save).toHaveBeenCalledTimes(2);
+  expect(state.drafts.get(key)?.annotations[0].text).toBe('First comment');
+  expect(mount.textContent).toContain('Saving…');
+  expect(mount.textContent).not.toContain('Comment saved locally.');
+  await act(async()=>saveLatest());
+  expect(state.drafts.get(key)?.annotations[0].text).toBe('Latest comment');
+  expect(mount.textContent).not.toContain('Comment saved locally.');
+  await act(async()=>button('Save comment').click());
+  expect(mount.textContent).toContain('Comment saved locally. Submit feedback to send the report.');
+  expect(state.request.mock.calls.some(([o])=>o.action==='submit')).toBe(false);
+});
+
+it('does not confirm a comment whose local save failed',async()=>{
+  await render();state.save.mockRejectedValue(new Error('Storage full'));
+  await act(async()=>state.receive?.({type:'selection',source,note:annotation}));
+  await act(async()=>button('Save comment').click());
+  expect(mount.textContent).toContain('Storage full');
+  expect(mount.textContent).not.toContain('Comment saved locally.');
 });

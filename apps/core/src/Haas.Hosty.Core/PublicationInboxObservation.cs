@@ -112,14 +112,7 @@ internal sealed partial class PublicationService
                 Repository = binding.Repository, HeadRepository = binding.Repository, ConnectionId = connection.Id,
                 Provider = binding.Source.Descriptor.Id, Branch = tree.Branch, TargetBranch = tree.TargetBranch, Number = number, Url = url }, ct);
         }, ct);
-        var current = await workspaces.Read(tree.Id, tree.Owner, ct);
-        if (!await workspaces.CanObserveInBackgroundAsync(tree.Id, ct) || (await ExternalConnection(current, ct)).Connection.Id != binding.Connection.Id) return;
-        var previous = await JsonStorage.ReadAsync<ExternalPublicationSnapshot>(ExternalPath(tree.Id), ct);
-        var retained = previous?.ConnectionId == binding.Connection.Id && previous.Owner.SameIdentity(tree.Owner) && previous.Repository == binding.Repository ? previous.PullRequests : [];
-        var items = current.PullRequests.Where(SafeReference).Distinct(StringComparer.Ordinal).Select(reference => reference == url
-            ? new InspectionPullRequest(url, observation.Head, observation with { Complete = false, Reviews = null }, null)
-            : retained.FirstOrDefault(p => p.Url == reference) ?? new(reference, null, null, "Waiting for provider observation.")).ToArray();
-        await workspaces.WritePublicationAsync(tree.Id, () => JsonStorage.WriteAsync(ExternalPath(tree.Id),
-            new ExternalPublicationSnapshot(tree.Id, tree.Owner, binding.Repository, binding.Connection.Id, items), restrictToOwner: true), ct);
+        await RetainExternalReferenceAsync(tree, binding.Repository, binding.Connection.Id, binding.Source.Descriptor.Id,
+            url, number, new(url, observation.Head, observation, null), ct, background: true);
     }
 }

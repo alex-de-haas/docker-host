@@ -161,6 +161,14 @@ Core records managed operations, lease/consumer changes, workflow changes and ob
 source metadata changes; ignored build output does not affect order. Legacy workspace records use
 their last saved observation as a baseline until new activity is recorded. A Core predating this
 field leaves activity unknown, sorted deterministically after dated records.
+Opening a chat shows a loading state until its existing event stream finishes the initial historical
+replay and reports the current session status. The message scroller then mounts with the complete
+history and positions at the end before showing it, without animating through earlier messages.
+Subsequent stream reconnects retain the mounted transcript and reading position. New messages follow
+the bottom while the reader remains there; scrolling up suspends following until Jump to latest.
+An initial terminal disconnection exposes the stream error and any received history instead of
+keeping the loading state indefinitely. The composer and its draft remain mounted while history loads.
+
 The selected chat uses its existing event stream. While another chat is running or waiting, the
 visible full-page navigation reconciles session inventory every five seconds, or every thirty
 seconds when other sessions are idle so activity started in another window is discovered. Hidden pages pause
@@ -259,7 +267,9 @@ Notices expand independently and retain their disclosure state as later events a
 
 Each activity block with recorded edits has a separate collapsible **Changes** section beside
 Tool calls. Its header stays visible while Tool calls is collapsed, with the source-bound file
-count and confirmed aggregate additions/deletions; unknown or overflowing totals are unavailable.
+count and confirmed aggregate additions/deletions. When only some edit operations provide counts,
+the header retains their known subtotals as explicit lower bounds. A later edit without counts does
+not erase earlier counts for the same file. Entirely unknown or overflowing totals are unavailable.
 The two sections expand independently. Changes contains the file summary and existing Review
 links rather than nesting that summary inside Tool calls. Its scope is the activity block bounded
 by prose, approvals, questions and turns.
@@ -318,6 +328,8 @@ Used by follows Sessions and displays applications directly, without an enclosin
 Sessions remains visible when empty; other empty sections are hidden. Optional Feedback and
 Previews sections stay absent during their first read, then appear only when data or a read error
 needs to be shown. Existing content remains mounted while background reads are pending.
+Feedback uses the same muted heading and compact two-line list density as neighboring sections;
+report versions and dates remain available in its tooltip and full details.
 Workspace-keyed sections reject late results from the previous selection. Dividers appear only between visible sections, never before the first or
 after the last. Changes groups the repository cards. Used by has one heading with the same information
 icon and tooltip styling as Sessions; its application list does not repeat a heading. Each accessible
@@ -347,6 +359,14 @@ its draft and scroll. Back restores the originating session or external-workspac
 Ask Harness is available when the owning workspace admits new turns; it returns to the owning
 conversation at every width, appends the reference and focuses the composer without sending a message. File/scope selection persists per repository while
 the panel remains mounted. Viewed belongs to the source revision; changed revisions invalidate it.
+The mounted review retains successfully loaded file diffs in memory, so returning to a loaded file
+renders it immediately without another request. The cache is bounded to 24 diffs and 12 MiB of
+serialized UTF-16 data. Viewer, workspace, worktree, source observation, review scope and published
+comparison boundaries isolate entries. Refresh files, retries and a changed source observation
+invalidate retained results. Errors and superseded requests are not cached; oversized diffs remain
+viewable but are loaded again when revisited. Closing the review releases its cache.
+An already loaded syntax highlighter is reused across file changes without another loading frame;
+line selections remain scoped to the selected file and revision.
 Read errors offer explicit retry. Phones start with the file list and open one file at a time.
 Selected lines and Ask Harness on a thread add structured source/revision/side or thread references
 to the conversation draft without sending a message.
@@ -911,8 +931,9 @@ workspace content scrolls inside the pane without increasing the embedded docume
 
 ## Workspace Navigation Summary
 
-Workspace rows show a second line with lifecycle status, observed uncommitted files and one aggregate
-PR/CI result. Lifecycle is independent of attached-session activity, whose counts remain beside the
+Workspace rows show a second line with lifecycle status, observed uncommitted files, confirmed
+added/deleted line totals, an open PR count and aggregate CI status. Added lines use green and deleted lines
+use red. The file count remains visible alongside the line totals. Lifecycle is independent of attached-session activity, whose counts remain beside the
 title. Chat rows retain their existing presentation. Completed workspaces remain visible; there is no
 archive behavior in this UI enhancement.
 
@@ -922,12 +943,26 @@ and excludes private review content. It does not fetch Git or call a provider. R
 per-row requests, subscriptions or polling. The existing workspace event stream refreshes inventory. Active PR summaries become outdated after six
 minutes, allowing the shared five-minute background cadence without promoting every list row to
 visible provider demand. Private-source checks use local grant validation without refreshing credentials.
+Open PR counts include drafts and exclude merged or closed history. Fresh counts remain visible
+alongside Clean and successful, running or failed CI; all-draft open sets are labelled as drafts.
+Incomplete fresh observations show a lower bound with `+`. Outdated or undated nonterminal
+observations show only `PR outdated`; their tooltip retains last-known counts and timestamps.
+They do not present a stale open/draft count or CI result as current activity.
+Older Core summaries without separate open counts show an open/draft label without guessing a
+count from the total number of linked PRs. Unpublished commits without a linked PR are not counted.
 
 Merged requires every distinct linked PR to have an available merged observation. Closed-unmerged,
 draft, open, failing/running/passing checks, unknown observations and outdated active PR status remain
 distinct. Old merged history does not make a fresh corrective PR's checks stale. Source cleanliness
-requires a complete current observation; partial counts are marked as lower bounds. Inactive
+requires a complete successful observation; partial counts are marked as lower bounds. During an
+ordinary queued Git refresh (`pending`), rows retain that observation's clean, conflict, file and line
+facts, with a compact updating indicator and an explanation in the tooltip and accessible text.
+Missing observations and watcher recovery still show unavailable source facts. Inactive
 workspaces show lifecycle and retained PR information without claiming current local cleanliness.
+Line totals aggregate the current local observations across all repositories. They appear only when
+every source observation is readable and complete and every changed text file has observed line
+counts, or the observation supplies confirmed aggregate totals. Missing, stale, recovering or
+truncated observations omit line totals rather than substituting zero or an incomplete sum.
 Narrow rows truncate the second line, with full details in its native tooltip and accessible text.
 Older Core inventories retain lifecycle/source status and show PR unknown when only links are available.
 An incomplete lifecycle observation renders Unavailable and does not claim clean source.
@@ -947,9 +982,14 @@ The managed local suite verifies warm restart, missing-output recovery and owner
 
 ## Testing Expectations
 
+- Open a long chat with historical events delivered in separate chunks: the transcript stays behind
+  its loading state until the current-status boundary, then appears at the end without smooth
+  scrolling. Verify live following, manual reading above the bottom, Jump to latest, reconnects,
+  terminal initial errors, session switching and rejected late stream callbacks without losing drafts.
+
 - Verify both column resize boundaries with pointer and keyboard, cancellation, reload persistence, unavailable storage and reset. Check container resizing in standalone and Shell, chat minimum width, mobile dialog focus/state retention and independent scrolling.
 
-- Verify workspace second-line aggregation for multiple repositories, duplicate PR links, closed-unmerged and corrective PRs, stale/missing source and CI observations, and owner/account revocation. Inventory reads must not trigger Git/provider observation or leak review bodies. Verify no per-row browser fetches and two-line narrow navigation in standalone and Shell layouts.
+- Verify workspace second-line aggregation for multiple repositories, confirmed added/deleted line counts alongside file counts, missing/truncated line totals, duplicate PR links, closed-unmerged and corrective PRs, stale/missing source and CI observations, and owner/account revocation. Inventory reads must not trigger Git/provider observation or leak review bodies. Verify no per-row browser fetches and two-line narrow navigation in standalone and Shell layouts.
 
 - Delay optional workspace section reads while switching workspaces: Feedback and Previews must
   not flash before empty results. Verify populated results, visible read errors/retries, retained
@@ -1030,7 +1070,8 @@ The managed local suite verifies warm restart, missing-output recovery and owner
   conflicting outcomes. Verify retained disclosure/focus as calls arrive, immediately visible
   approval cards, and each command's own recorded result and input/output. Verify independent
   Changes/Tool calls collapse state, a visible Changes header while tools are collapsed, source-bound
-  file counts and confirmed totals, unknown/overflow fallbacks, per-activity boundaries, separate
+  file counts and confirmed totals, partial lower bounds across files and repeated edits, independent
+  addition/deletion completeness, genuine zero and unknown/overflow fallbacks, per-activity boundaries, separate
   legacy entries and retained exact-source Review bindings. Verify repository grouping by the exact
   recorded source tuple, one short/full-title repository heading per group and no per-file branch
   line or recorded caption. Repository cards start collapsed and retain independent expansion across observation updates;

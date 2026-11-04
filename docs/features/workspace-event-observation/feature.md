@@ -1,6 +1,6 @@
 ---
 created: 2026-10-19
-updated: 2026-10-29
+updated: 2026-11-04
 summary: Core observes workspace changes through filesystem and mutation events, while Harness consumes authorized SSE updates.
 components: [apps/core, apps/harness]
 ---
@@ -20,6 +20,14 @@ subtree. Git ignore rules suppress generated-file noise only after checking that
 directory contains no tracked files. Index/ref and ignore-rule changes invalidate that filter.
 Objects, reflogs and transient lock-file writes do not themselves invalidate source. Git inspection
 disables optional index writes, preventing an observation from triggering its own next scan.
+
+Each successful source observation retains per-file and aggregate additions/deletions alongside the
+changed-file list. Counts compare HEAD to the working tree, including staged changes once. The
+shared bounded source-statistics reader uses one Git numstat result for tracked files and bounded
+reads for untracked text; binary files contribute no text lines. Unsupported or oversized files keep
+their line counts unknown and omit the aggregate rather than hiding the file list or reporting zero.
+The workspace inventory and existing event stream deliver these cached totals without per-row
+requests, full diff previews or additional timer-driven scans.
 
 Generations retain changes arriving during a scan or owner-lock contention. Watcher errors and
 missing/replaced roots expose `recovering`; reattachment triggers fresh reconciliation. A 15-second
@@ -121,6 +129,9 @@ cancellation failure does not suppress stream recovery or older-Core compatibili
 ## Testing Expectations
 
 - Quiet observation and repeated detail reads perform no scan or record rewrite.
+- Tracked, staged, untracked and binary changes retain accurate cached line totals in workspace
+  inventory; event-driven edits refresh those totals, while oversized files keep unknown totals
+  without changing the Git index or hiding known per-file observations.
 - Workspace record reuse remains bounded and detects rename, replacement, deletion, corruption,
   ownership/membership changes and same-size edits with restored mtime.
 - Repeated settled Documents inventories share their Git/document scan; local edits, target advances

@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { fetchCore } from "../core-transport";
 import { CoreRequestError, readCoreError, readCoreErrorDetail } from "../core-api";
 import type { CoreApp } from "../types";
@@ -20,9 +19,6 @@ export function AppSourceMigrations({ coreOrigin, apps, sendCsrfJson, onChanged 
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [plans, setPlans] = useState<Plan[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
-  const [appId, setAppId] = useState("");
-  const [index, setIndex] = useState("");
-  const [feed, setFeed] = useState("");
   const [pending, setPending] = useState<Batch | null>(null);
   const [results, setResults] = useState<Result[]>([]);
   const [busy, setBusy] = useState(false);
@@ -77,14 +73,6 @@ export function AppSourceMigrations({ coreOrigin, apps, sendCsrfJson, onChanged 
     } catch (failure) { setError(message(failure)); }
     finally { setBusy(false); }
   }
-  async function reviewCustom() {
-    setBusy(true); setError(null); setResults([]);
-    try {
-      const plan = await post<Plan>(`/api/apps/${encodeURIComponent(appId)}/update-source/plan`, { feedsUrl: index, feedId: feed });
-      setPlans([plan]); setSelected([plan.appId]);
-    } catch (failure) { setError(message(failure)); }
-    finally { setBusy(false); }
-  }
   async function apply() {
     const batch = pending ?? { requestId: crypto.randomUUID().replaceAll("-", ""), items: plans.filter(plan => selected.includes(plan.appId)).map(plan => ({ appId: plan.appId, planDigest: plan.planDigest })) };
     if (!batch.items.length) return;
@@ -110,18 +98,9 @@ export function AppSourceMigrations({ coreOrigin, apps, sendCsrfJson, onChanged 
   return <section className="rounded-xl border bg-card">
     <header className="border-b px-4 py-3"><h2 className="text-sm font-medium">Application update sources</h2></header>
     <div className="space-y-4 p-4">
-      <p className="text-sm text-muted-foreground">Review where applications receive future releases. Switching a source keeps the installed version and data; applying an update remains a separate action.</p>
+      <p className="text-sm text-muted-foreground">Choose an application’s update channel in its Updates tab. Its publisher provides the update source. Suggested publisher migrations can be reviewed here; applying an update remains a separate action.</p>
       {suggestions.length > 0 && <div className="space-y-2"><p className="text-sm">{suggestions.length} existing sources have a migration available. Review the destination feed and publisher before applying.</p>
         <Button variant="outline" onClick={() => void reviewSuggested()} disabled={busy || !!pending}>Review suggested migrations</Button></div>}
-      <details><summary className="cursor-pointer text-sm font-medium">Choose a different publisher or feed</summary>
-        <div className="mt-3 grid gap-3">
-          <label className="text-sm">Application<select aria-label="Application to switch" className="mt-1 h-9 w-full rounded-md border bg-background px-3" value={appId} onChange={event => setAppId(event.target.value)} disabled={busy || !!pending}>
-            <option value="">Select an application</option>{apps.map(app => <option key={app.id} value={app.id}>{app.displayName}</option>)}</select></label>
-          <label className="text-sm">Feed index URL<Input value={index} onChange={event => setIndex(event.target.value)} disabled={busy || !!pending} /></label>
-          <label className="text-sm">Feed ID<Input value={feed} onChange={event => setFeed(event.target.value)} disabled={busy || !!pending} /></label>
-          <Button variant="outline" onClick={() => void reviewCustom()} disabled={busy || !!pending || !appId || !index || !feed}>Review source switch</Button>
-        </div>
-      </details>
       {plans.map(plan => <div key={plan.appId} className="space-y-2 rounded-lg border p-3 text-sm">
         <label className="flex items-center gap-2 font-medium"><input type="checkbox" checked={selected.includes(plan.appId)} disabled={busy || !!pending} onChange={event => setSelected(previous => event.target.checked ? [...previous, plan.appId] : previous.filter(id => id !== plan.appId))} />{name(plan.appId)}</label>
         <p className="break-all text-muted-foreground">Current: {plan.from.feedsUrl ?? plan.from.manifestUrl}{plan.from.feedId ? ` — ${plan.from.feedId}` : ""}</p>

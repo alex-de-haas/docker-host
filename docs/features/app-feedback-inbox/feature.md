@@ -1,6 +1,6 @@
 ---
 created: 2026-10-30
-updated: 2026-11-03
+updated: 2026-11-04
 summary: Core-owned annotated feedback with app-owned local drafts, reviewed Harness chat delivery, exact-prompt outcomes and workspace-aware retention.
 components: [apps/core, apps/harness, apps/shell, apps/desktop, packages/app-sdk]
 ---
@@ -37,7 +37,7 @@ Each report belongs to one app; switching applications preserves their separate 
 Select region records a viewport rectangle; Page comment records page context without a rectangle.
 Harness includes an automatic screenshot by default for either action; the user can turn it off.
 The provider form stays visible during selection.
-Selection adds an editable comment to that form; Done completes editing after local persistence.
+Selection adds an editable comment to that form; Save comment confirms local persistence without submitting the report.
 Feedback's own form can be annotated, attributed to the provider app. Only the temporary Cancel
 selection control is excluded. Element context includes a bounded label, selector, rectangle and
 viewport, never input values or a DOM dump. Each annotation records its route and capture time.
@@ -132,10 +132,24 @@ reconciles or subscribes to its own attempts. Lists refresh on entry, explicit
 Refresh, focus/visibility return and workspace chat activity changes. An open send review retains its
 selected snapshots and instruction; explicit refresh actions re-review reports and chat availability.
 
+Workspace details use a muted section heading with a report count, an icon Refresh action and
+compact send controls. Reports form a borderless two-line list: observation text, then application,
+annotation count and disposition/status. The surrounding workspace is not repeated in each row.
+Version and observation time remain in the row tooltip and full report details. Missing/busy chat
+guidance is compact in the heading, with the full explanation available to assistive technology and
+in its tooltip. Read errors, delivery notices and uncertain-delivery recovery remain visible.
+The global Feedback page retains its filters and expanded report metadata.
+
 Address all selects at most 50 unprocessed reports in the current workspace/global scope, excluding
 pending, processed, partial, failed, cancelled, uncertain and dismissed/duplicate reports. Selected
-reports are reviewed together with the exact count, destination and optional instruction. Workspace
-review defaults to the displayed chat. Global review defaults to a new chat using the default agent;
+reports in workspace details go directly to the currently selected chat, without a destination
+review dialog or chat inventory lookup. Send selected and individual Send again use the same direct
+route. A missing or busy selected chat disables sending with an inline explanation; it never creates
+a different chat. An uncertain delivery exposes an inline retry retaining the original destination
+and exact request even if the selected chat changes. Successful HTTP responses with a reserved or
+unknown delivery state retain that recovery path and do not announce a confirmed send.
+The global inbox reviews selected reports
+together with their count, destination and optional instruction, defaulting to a new chat using the default agent;
 normal source preparation establishes its development workspace. Existing workspace/chat selection
 and a new chat in an existing workspace are supported. Cancellation starts no agent work.
 
@@ -216,8 +230,14 @@ without a workspace remain in the global inbox. Retention is independent of PR m
 - The browser journey uses Playwright Chromium (`HOSTY_FEEDBACK_BROWSER_CHANNEL` optionally selects
   installed Chrome; `HOSTY_FEEDBACK_PLAYWRIGHT_MODULE` can supply an absolute module path). It checks
   anchored/sidebar editing, real browser-approved capture, automatic full-image attachment, multi-annotation reload,
-  IndexedDB quota/stale-tab faults, draft scope isolation and lost-response retry. Test-only chooser
+  current-comment save acknowledgement, IndexedDB quota/stale-tab faults, draft scope isolation and lost-response retry.
+  Responsive navigation checks use a separate browser context so initial full-tab capture retains
+  strict width and height verification before the capture page is resized. Test-only chooser
   flags select the isolated test tab; production capture still requires the browser chooser.
+  `HOSTY_FEEDBACK_CAPTURE_WINDOW_HEIGHT` optionally sets the fixture's native Chromium window height
+  before its first capture (960–4096 pixels). Headless installed Chrome can capture a different
+  height from its emulated CSS viewport; calibrate this test-only value for the selected browser
+  while retaining exact 1360×960 capture assertions. The macOS installed-Chrome probe uses 1103.
   `HOSTY_FEEDBACK_BROWSER_ONLY=1` selects intake/browser verification without scripted-agent dispatch.
   `HOSTY_FEEDBACK_DESKTOP=1` includes a separately installed Desktop. For script iteration,
   `HOSTY_FEEDBACK_RETRY_BROWSER=1` retains the same child after a browser failure until the printed

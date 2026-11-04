@@ -44,7 +44,7 @@ beforeEach(() => {
   vi.mocked(api.getHealth).mockResolvedValue({ name: "fake", available: true }); vi.mocked(api.listSessions).mockResolvedValue([record]);
   vi.mocked(api.getSession).mockResolvedValue(record); vi.mocked(api.createSession).mockResolvedValue(record); vi.mocked(api.listAppNames).mockResolvedValue({}); vi.mocked(api.listAgentConnections).mockResolvedValue({ connections: [], defaultId: null });
   controls.events = []; controls.loading = false; controls.error = ""; controls.inventoryEnabled = []; controls.capturedReviewAsk = undefined;
-  vi.mocked(api.streamEvents).mockImplementation(async (_id, onEvent) => { controls.events.forEach(onEvent); });
+  vi.mocked(api.streamEvents).mockImplementation(async (_id, onEvent, _signal, onConnection) => { controls.events.forEach(onEvent); onConnection?.("connected"); });
   controls.workspaces = [workspace("session-workspace", "assistant"), workspace("external-workspace", "external")];
   localStorage.setItem("hosty.assistant.session", record.id); window.history.replaceState({}, "", "/development?session=session-one");
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);

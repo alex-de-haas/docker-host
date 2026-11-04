@@ -13,6 +13,7 @@ import { ReviewCommentComposer } from "./review-comment-composer";
 import type { ReviewCommentLocation } from "@/lib/review-selection";
 import { submitReviewAction, submitReviewComment } from "@/lib/workspace-review-actions";
 import { reviewThreadLocation } from "@/lib/review-threads";
+import { retainReviewDiff, type CachedReviewDiff } from "@/lib/review-diff-cache";
 import { HostyLoader, HostyEmptySlots } from "../../../../../shared/web/hosty-states";
 import { cn } from "@/lib/utils";
 const WorkspaceDiffView = dynamic(() => import("./workspace-diff-view"), { ssr: false, loading: () => <ReviewLoading>Loading diff viewer…</ReviewLoading> });
@@ -37,8 +38,9 @@ function saveViewed(key: string, revision: string) {
 export function WorkspaceReview({ workspaceId, tree: initialTree, choice, onChoice, onBack, onAsk }: {
   workspaceId: string; tree: Worktree; choice: ReviewChoice; onChoice: (choice: ReviewChoice) => void; onBack: () => void; onAsk?: (reference: string) => void;
 }) {
-  const [refreshed, setRefreshed] = useState<Worktree | null>(null);
-  const tree = refreshed ?? initialTree;
+  const initialTreeKey = JSON.stringify([workspaceId, initialTree.id, initialTree.observationRevision, initialTree.observation?.at]);
+  const [refreshed, setRefreshed] = useState<{ key: string; tree: Worktree } | null>(null);
+  const tree = refreshed?.key === initialTreeKey ? refreshed.tree : initialTree;
   const { view, path, comparePr } = choice;
   const [commentOpen, setCommentOpen] = useState(false);
   const commentTrigger = useRef<HTMLButtonElement>(null);
@@ -51,6 +53,7 @@ export function WorkspaceReview({ workspaceId, tree: initialTree, choice, onChoi
   const [viewed, setViewed] = useState<Record<string, string>>(readViewed);
   const [inventoryResult, setInventoryResult] = useState<{ key: string; value?: ReviewInventory; error?: string } | null>(null);
   const [result, setResult] = useState<{ key: string; value?: ReviewDiff; error?: string } | null>(null);
+  const [diffCache, setDiffCache] = useState<{ scope: string; entries: CachedReviewDiff[] }>({ scope: "", entries: [] });
   const inventoryKey = JSON.stringify([workspaceId, tree.id, tree.observationRevision, tree.observation?.at, view, comparePr, retry]);
   const inventory = inventoryResult?.key === inventoryKey ? inventoryResult.value : undefined;
   const inventoryError = inventoryResult?.key === inventoryKey ? inventoryResult.error : undefined;
@@ -59,10 +62,12 @@ export function WorkspaceReview({ workspaceId, tree: initialTree, choice, onChoi
   const selectedFile = files.find(file => file.path === selected);
   const index = files.findIndex(file => file.path === selected);
   const revision = inventory?.source.revision ?? "";
-  const key = JSON.stringify([inventoryKey, revision, selected, diffRetry]);
-  const diffResult = result?.key === key ? result.value : undefined;
+  const diffScope = JSON.stringify([inventoryKey, inventory?.viewerId ?? null, revision, diffRetry]);
+  const key = JSON.stringify([diffScope, selected]);
+  const cachedDiff = diffCache.scope === diffScope ? diffCache.entries.find(entry => entry.key === key)?.value : undefined;
+  const diffResult = cachedDiff ?? (result?.key === key ? result.value : undefined);
   const diff = diffResult?.diff;
-  const error = result?.key === key ? result.error : undefined;
+  const error = !cachedDiff && result?.key === key ? result.error : undefined;
   const back = useRef<HTMLButtonElement>(null);
   const fileKey = (name: string) => JSON.stringify([inventory?.viewerId ?? null, workspaceId, tree.id, view, comparePr ?? null, name]);
   const markViewed = (checked: boolean) => {
@@ -83,12 +88,13 @@ export function WorkspaceReview({ workspaceId, tree: initialTree, choice, onChoi
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inventoryKey]);
   useEffect(() => {
-    if (!inventory || !selected || !selectedFile || selectedFile.reviewOnly) return;
+    if (!inventory || !selected || !selectedFile || selectedFile.reviewOnly || cachedDiff) return;
     const controller = new AbortController();
     void readReviewDiff(workspaceId, tree, view, selected, inventory, controller.signal).then(value => {
       if (!controller.signal.aborted) {
         if (value.source.revision !== inventory.source.revision) throw new Error("The review source changed. Refresh files before reviewing it.");
         setResult({ key, value });
+        setDiffCache(previous => ({ scope: diffScope, entries: retainReviewDiff(previous.scope === diffScope ? previous.entries : [], key, value) }));
       }
     }).catch(cause => { if (!controller.signal.aborted) setResult({ key, error: cause instanceof Error ? cause.message : String(cause) }); });
     return () => controller.abort();
@@ -98,7 +104,7 @@ export function WorkspaceReview({ workspaceId, tree: initialTree, choice, onChoi
     refreshAbort.current?.abort(); const controller = new AbortController(); refreshAbort.current = controller;
     setRefreshing(true); setRefreshError("");
     void developmentRequest<Worktree>(`/${workspaceId}/worktrees/${tree.id}?refresh=true`, undefined, controller.signal)
-      .then(value => { if (!controller.signal.aborted) { setRefreshed(value); setRetry(n => n + 1); } })
+      .then(value => { if (!controller.signal.aborted) { setRefreshed({ key: initialTreeKey, tree: value }); setRetry(n => n + 1); } })
       .catch(cause => { if (!controller.signal.aborted) setRefreshError(cause instanceof Error ? cause.message : String(cause)); })
       .finally(() => { if (!controller.signal.aborted) setRefreshing(false); });
   };

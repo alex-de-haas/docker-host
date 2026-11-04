@@ -205,7 +205,7 @@ export class SessionManager {
   }
 
   private readonly queuedDevelopment = new Map<string, () => Promise<unknown>>();
-  private readonly activationGuards = new Map<string, () => Promise<void>>();
+  private readonly deferredGuards = new Map<string, () => Promise<void>>();
   private readonly live = new Map<string, LiveSession>();
   private readonly suggestionEpoch = randomUUID();
   private readonly suggestionPreferenceGenerations = new Map<string, number>();
@@ -748,10 +748,11 @@ export class SessionManager {
         if (queued?.state === "queued" && (queued.action !== action || JSON.stringify(queued.input) !== JSON.stringify(input)))
           throw new AppContextError(409, "activation_pending", "Preserve the already queued selection. Finish this turn before another activation.");
         session.record.workspaceActivation = { action: action as "execution-select" | "activation-apply" | "activation-return" | "activation-resume", input: structuredClone(input), state: "queued" };
-        this.activationGuards.set(id, dispatchGuard);
+        this.deferredGuards.set(id, dispatchGuard);
         this.queuedDevelopment.set(`${id}:activation`, this.development.captureCall(id, token, action, structuredClone(input)));
         await this.store.saveRecord(session.record);
-        return { state: "queued", requestId: input.requestId ?? input.activationId, message: "Finish this turn. Harness dispatches the reviewed request only after native execution stops and workspace leases release. Observe the original ID after reconnect." };
+        return { state: "queued", requestId: input.requestId ?? (action === "activation-return" ? (input.return as { requestId?: unknown } | null)?.requestId : undefined) ?? input.activationId,
+          message: "Finish this turn. Harness dispatches the reviewed request only after native execution stops and workspace leases release. Observe the original ID after reconnect." };
       }
       if (action === "app-dev-apply" && userId && ["running", "awaiting_approval", "awaiting_question"].includes(session.record.status))
         throw new SessionBusyError();
@@ -767,6 +768,7 @@ export class SessionManager {
         if (current?.state === "queued" && (current.requestId !== input.requestId || current.expectedRevision !== input.expectedRevision))
           throw new AppContextError(409, "workflow_request_pending", "Keep the existing completion request until the turn finishes.");
         this.queuedDevelopment.set(`${id}:completion`, this.development.captureCall(id, token, action, structuredClone(input)));
+        if (dispatchGuard) this.deferredGuards.set(id, dispatchGuard);
         session.record.workflowCompletion = { requestId: input.requestId, expectedRevision: input.expectedRevision as number, state: "queued" };
         await this.store.saveRecord(session.record);
         return { state: "queued", message: "Completion will be verified after this turn exits and releases its source leases. This is not a completion result." };
@@ -1925,6 +1927,18 @@ export class SessionManager {
     throw new WorkerError("runtime_selected_by_core", "Select Docker or Local through Core's application runtime controls.", 409);
   }
 
+  private disconnectNativeMcp(id: string, retainDeferredReview: boolean): void {
+    if (retainDeferredReview) {
+      const guard = this.deferredGuards.get(id);
+      if (this.proxy) this.proxy.disconnect(id, guard);
+      else this.mcpPolicy.disconnect(id, guard);
+      this.developmentMcp.disconnect(id);
+    } else {
+      this.proxy?.unregister(id);
+      this.developmentMcp.unregister(id);
+    }
+  }
+
   private async finishExecution(session: LiveSession, retainActivationReview = false, preserveWorkerRun = false, outcome = session.record.status): Promise<void> {
     if (!this.worker && !session.record.developmentLease && !session.record.taskExecutionId) return;
     if (!session.run && !this.worker && session.record.developmentLease && session.record.developmentLeaseState !== "stopped") {
@@ -1957,9 +1971,7 @@ export class SessionManager {
       await this.store.saveRecord(session.record);
     }
     this.clearRefresh(session);
-    this.proxy?.unregister(session.record.id);
-    if (retainActivationReview) this.developmentMcp.disconnect(session.record.id);
-    else this.developmentMcp.unregister(session.record.id);
+    this.disconnectNativeMcp(session.record.id, retainActivationReview);
     await this.leaseWorkspaces(session, false, outcome);
     if (session.record.taskRun?.error) {
       delete session.record.taskRun.error;
@@ -2679,6 +2691,7 @@ export class SessionManager {
   async cancelSession(id: string): Promise<void> {
     const session = this.live.get(id);
     if (session?.record.status === "suggesting") {
+      if (session.record.workspaceActivation?.state === "queued" || session.record.workflowCompletion?.state === "queued") this.mcpPolicy.cancel(id);
       this.clearSuggestion(session); await this.endSuggestions(id); return;
     }
     await this.serialize(id, () => this.cancelSessionLocked(id));
@@ -2996,7 +3009,9 @@ export class SessionManager {
     switch (event.type) {
       case "answer_complete":
         this.clearRefresh(session);
-        this.proxy?.unregister(id); this.developmentMcp.unregister(id); this.mcpPolicy.cancel(id);
+        // Prediction collection closes native tools before the terminal result. Keep only the
+        // reviewed post-exit operation; idle still verifies exit, releases leases and revalidates it.
+        this.disconnectNativeMcp(id, session.record.workspaceActivation?.state === "queued" || session.record.workflowCompletion?.state === "queued");
         await this.setStatus(id, "suggesting", true);
         if (session.suggestionAllowed) {
           session.suggestion = { revision: (session.suggestion?.revision ?? 0) + 1, state: "collecting", attemptId: event.workerRunId };
@@ -3338,11 +3353,13 @@ export class SessionManager {
       const queued = session.record.workspaceActivation;
       try {
         const credential = session.workspaceCredential ?? session.credential;
-        const guard = this.activationGuards.get(id);
+        const guard = this.deferredGuards.get(id);
         if (status !== "idle" || !credential || !guard || !this.development) throw new Error("Execution did not finish with a retained review. Retry explicitly after inspection.");
         await guard();
         const dispatch = this.queuedDevelopment.get(`${id}:activation`);
         if (!dispatch) throw new Error("The original reviewed transport is unavailable. Retry explicitly.");
+        if (session.record.taskBarrier && session.record.taskBarrier.state !== "resuming")
+          throw new AppContextError(409, "barrier_pending", "Yield at the retained task boundary before more tool dispatch.");
         await dispatch();
         session.record.workspaceActivation = { ...queued, state: "dispatched" };
         await this.append(id, { type: "notice", message: "Execution selection dispatched to Core. Observe the original request ID for progress." });
@@ -3350,7 +3367,7 @@ export class SessionManager {
         session.record.workspaceActivation = { ...queued, state: "blocked", error: error instanceof Error ? error.message : String(error) };
         await this.append(id, { type: "notice", message: `Workspace activation was not confirmed: ${session.record.workspaceActivation.error}` });
       } finally {
-        this.activationGuards.delete(id);
+        this.deferredGuards.delete(id);
         this.queuedDevelopment.delete(`${id}:activation`);
         this.developmentMcp.unregister(id);
         await this.store.saveRecord(session.record);
@@ -3363,16 +3380,20 @@ export class SessionManager {
         if (status !== "idle" || !credential || !this.development) throw new Error("Execution did not finish successfully. Review and request completion again.");
         const dispatch = this.queuedDevelopment.get(`${id}:completion`);
         if (!dispatch) throw new Error("The original reviewed transport is unavailable. Retry explicitly.");
+        if (session.record.taskBarrier && session.record.taskBarrier.state !== "resuming")
+          throw new AppContextError(409, "barrier_pending", "Yield at the retained task boundary before more tool dispatch.");
         await dispatch();
         delete session.record.workflowCompletion;
         await this.append(id, { type: "notice", message: "Core verified workspace completion. Source and previews are retained for operator review." });
       } catch (error) {
         session.record.workflowCompletion = { ...request, state: "blocked", error: error instanceof Error ? error.message : String(error) };
         await this.append(id, { type: "notice", message: `Workspace completion was not confirmed: ${session.record.workflowCompletion.error}` });
+      } finally {
+        this.deferredGuards.delete(id);
+        this.queuedDevelopment.delete(`${id}:completion`);
+        this.developmentMcp.unregister(id);
+        await this.store.saveRecord(session.record);
       }
-      this.queuedDevelopment.delete(`${id}:completion`);
-      this.developmentMcp.unregister(id);
-      await this.store.saveRecord(session.record);
     }
     // Announced on *entering* the state, which this method already guarantees: it returns early when
     // the status has not changed, so a session that is asked about repeatedly does not re-announce.

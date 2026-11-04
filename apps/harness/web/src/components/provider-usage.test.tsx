@@ -70,14 +70,68 @@ it("hides unsupported/local limits in every surface but retains unknown, unavail
   try {
     for (const state of ["unsupported", "not_applicable"] as const) {
       await render({ state, rows: [], observedAt: null, connectionRevision: 1 });
-      expect(element.querySelector('button[aria-label="Provider limits"]')).toBeNull();
+      expect(element.querySelector('[data-slot="provider-usage"]')).toBeNull();
     }
     for (const usage of [null, { state: "unavailable", rows: [], observedAt: null, connectionRevision: 1 },
       { state: "available", rows: [row], observedAt: row.observedAt, stale: true, connectionRevision: 1 }] as (ProviderUsage | null)[]) {
       await render(usage);
-      expect(element.querySelector('button[aria-label="Provider limits"]')).not.toBeNull();
+      expect(element.querySelector('[data-slot="provider-usage"]')).not.toBeNull();
+      expect(element.querySelector('[role="meter"]')).toBeNull();
+      expect(element.querySelector('circle[stroke-dasharray="2 3"]')).not.toBeNull();
     }
     await render({ state: "unsupported", rows: [], observedAt: null, connectionRevision: 1 }, 2);
-    expect(element.querySelector('button[aria-label="Provider limits"]')).not.toBeNull();
+    expect(element.querySelector('[data-slot="provider-usage"]')).not.toBeNull();
   } finally { await act(async () => root.unmount()); element.remove(); }
+});
+
+it("shows remaining quota with its limiting window and keeps all windows and refresh in the popover", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  vi.useFakeTimers(); vi.setSystemTime(new Date("2026-11-04T19:00:00Z"));
+  const observedAt = new Date().toISOString();
+  const rows = [
+    { ...row, id: "codex:main:primary", group: "codex:main", label: "Main · 5 hours", used: 10, remaining: 90, observedAt, resetsAt: "2026-11-04T23:00:00Z" },
+    { ...row, id: "codex:main:secondary", group: "codex:main", label: "Main · 7 days", used: 58, remaining: 42, observedAt, resetsAt: "2026-11-09T19:00:00Z" },
+  ];
+  const refresh = vi.fn().mockResolvedValue(undefined);
+  vi.mocked(useProviderUsage).mockReturnValue({ usage: { state: "available", rows, observedAt, connectionRevision: 1 }, refreshing: false, refresh });
+  const element = document.createElement("div"); document.body.append(element); const root = createRoot(element);
+  try {
+    await act(async () => root.render(<ProviderUsageIndicator connectionId="test" revision={1} />));
+    const button = element.querySelector<HTMLButtonElement>('[data-slot="provider-usage"]')!;
+    expect(button.textContent).toBe("42% left");
+    expect(button.getAttribute("aria-label")).toContain("42% left · Main · 7 days");
+    expect(button.querySelector('[role="meter"]')?.getAttribute("aria-valuenow")).toBe("42");
+    expect(button.querySelector('circle[pathLength="100"]')?.getAttribute("stroke-dashoffset")).toBe("58");
+    expect(button.querySelector('[data-slot="usage-ring-icon"] .lucide-hourglass')).not.toBeNull();
+    await act(async () => { button.focus(); await vi.advanceTimersByTimeAsync(300); });
+    expect(document.querySelector('[role="tooltip"]')?.textContent).toContain("Main · 7 days");
+    expect(document.querySelector('[role="tooltip"] time')?.getAttribute("datetime")).toBe(rows[1].resetsAt);
+    await act(async () => button.click());
+    const dialog = document.querySelector('[role="dialog"]')!;
+    expect(dialog.textContent).toContain("90% remaining");
+    expect(dialog.textContent).toContain("42% remaining");
+    await act(async () => [...dialog.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Refresh limits")!.click());
+    expect(refresh).toHaveBeenCalledTimes(1);
+  } finally { await act(async () => root.unmount()); element.remove(); }
+  await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("expires the remaining meter without restoring quota or requesting more provider data", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.useFakeTimers(); vi.setSystemTime(new Date("2026-11-04T19:00:00Z"));
+  const observedAt = new Date().toISOString();
+  const refresh = vi.fn().mockResolvedValue(undefined);
+  vi.mocked(useProviderUsage).mockReturnValue({ usage: { state: "available", rows: [{ ...row, active: true, observedAt, resetsAt: "2026-11-04T19:01:00Z" }], observedAt }, refreshing: false, refresh });
+  const element = document.createElement("div"); document.body.append(element); const root = createRoot(element);
+  try {
+    await act(async () => root.render(<ProviderUsageIndicator connectionId="test" />));
+    expect(element.querySelector('[role="meter"]')?.getAttribute("aria-valuenow")).toBe("0");
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    expect(element.querySelector('[role="meter"]')).toBeNull();
+    expect(element.querySelector('[data-slot="provider-usage"]')?.textContent).toBe("? left");
+    expect(refresh).not.toHaveBeenCalled();
+  } finally { await act(async () => root.unmount()); element.remove(); }
+  expect(vi.getTimerCount()).toBe(0);
 });

@@ -11,14 +11,16 @@ import { ProviderDirectory } from "../settings/providers.js";
 import { AuditReporter } from "../audit.js";
 import { AppContextError } from "./app-context.js";
 import { retentionBusy } from "./retention.js";
-import type { HarnessAdapter, HarnessStartOptions } from "../harness/adapter.js";
+import { McpProxy } from "../mcp/proxy.js";
+import { WorkerClient } from "../worker/client.js";
+import type { HarnessAdapter, HarnessEvent, HarnessStartOptions } from "../harness/adapter.js";
 let dir: string, manager: SessionManager, store: SessionStore, client: DevelopmentClient;
 let starts: HarnessStartOptions[], sent: string[];
 const tree = { id: "a".repeat(64), path: "/owned/worktree", state: "active", apps: [{ appId: "notes" }], operations: [], leases: [] };
 const adapter: HarnessAdapter = { name: "recording", capabilities: { questions: false, appMcp: true, liveReconfigure: true, autoAllow: false, denyReason: false },
-  probe: async () => ({ available: true }), start: options => { starts.push(options); return { send: text => sent.push(text), stop: async () => {}, stopAndWait: async () => {}, interrupt: async () => {}, setMcpServers: async () => true, resolveApproval: () => false, resolveQuestion: () => false }; } };
+  probe: async () => ({ available: true }), start: options => { starts.push(options); return { send: text => sent.push(text), stop: async () => {}, stopAndWait: async () => {}, finishSuggestions: async () => {}, interrupt: async () => {}, setMcpServers: async () => true, resolveApproval: () => false, resolveQuestion: () => false }; } };
 let directory: ProviderDirectory;
-const build = () => new SessionManager(store, adapter, new AuditReporter(null, null, "hosty.harness"), dir, null, directory, null, null, "http://127.0.0.1:3400", null, null, client);
+const build = (proxy: McpProxy | null = null, worker: WorkerClient | null = null, harness = adapter) => new SessionManager(store, harness, new AuditReporter(null, null, "hosty.harness"), dir, null, directory, null, proxy, "http://127.0.0.1:3400", null, null, client, worker, worker ? "native" : undefined);
 beforeEach(async () => {
   dir = await mkdtemp(path.join(os.tmpdir(), "hosty-development-test-")); store = new SessionStore(dir, path.join(dir, "cache"));
   directory = new ProviderDirectory(null, null, "hosty.harness"); vi.spyOn(directory, "readApps").mockResolvedValue([{ id: "notes", displayName: "Notes", runtimeState: "stopped" }]);
@@ -1033,4 +1035,168 @@ it("retains a real policy review until queued canonical completion has passed na
   await finish(record.id);
   await vi.waitFor(async () => expect((await store.readRecord(record.id))!.workflowCompletion).toBeUndefined());
   expect(invoke).toHaveBeenCalledWith(record.id, "workflow_complete", input, guard);
+});
+
+describe("deferred canonical review with a registered Core proxy", () => {
+  async function queued(kind: "return" | "selection" | "completion", revoke?: "provider" | "catalog" | "abort" | "authority", answer?: { suggestions: boolean; stop?: boolean }) {
+    await manager.shutdown();
+    const proxy = new McpProxy(async () => ({ token: "fixture-only", expiresAtMs: Date.now() + 60_000 }));
+    const worker = answer ? new WorkerClient("http://127.0.0.1:1", { version: 1, installation: "fixture", secret: "fixture" }) : null;
+    if (worker) vi.spyOn(worker, "capabilities").mockResolvedValue({ protocol: 2, capacity: 32 });
+    manager = build(proxy, worker);
+    const bound = { ...tree, workspaceId: "b".repeat(64) };
+    const original = DevelopmentClient.prototype.call.bind(client);
+    vi.mocked(client.call).mockImplementation(async (id, token, action, input) =>
+      ["activation-return", "execution-select", "workflow-complete"].includes(action) ? original(id, token, action, input)
+        : action === "list" ? { workspaces: [bound] } : bound);
+    const record = await manager.createSession({ createdBy: "admin", appIds: ["notes"] });
+    await manager.setAutonomy(record.id, "autonomous", "admin");
+    await manager.workspaceAction(record.id, "prepare", { appId: "notes" }, "token", "admin");
+    await manager.postMessage(record.id, "work", "token", [], { promptSuggestions: answer?.suggestions });
+    if (answer) expect(starts.at(-1)?.promptSuggestions).toBe(answer.suggestions);
+    const routeKey = proxy.register(record.id, [{ appId: "hosty:core", url: "http://core.test/api/mcp" }]);
+    const name = kind === "return" ? "workspace_activation" : kind === "selection" ? "select_app_execution_target" : "workflow_complete";
+    const requestId = randomUUID();
+    const input = kind === "return" ? { workspaceId: bound.workspaceId, kind: "return", input: {
+      activationId: randomUUID(), return: { requestId, apps: [], core: true, acceptDataChanges: true },
+    } } : kind === "selection" ? { appId: "notes", input: { requestId, kind: "package" } }
+      : { input: { workspaceId: bound.workspaceId, input: { requestId, expectedRevision: 0 } } };
+    const tools = [{ name, inputSchema: { type: "object" } }, { name: "unrelated_read", inputSchema: { type: "object" } }];
+    await manager.mcpPolicy.catalog("hosty:core", "core-installation", tools);
+    const unrelated = await manager.mcpPolicy.authorize(record.id, "hosty:core", "core-installation", "other-request", "unrelated_read", {}, new AbortController().signal);
+    const abort = new AbortController();
+    const guard = await manager.mcpPolicy.authorize(record.id, "hosty:core", "core-installation", "reviewed-request", name, input, abort.signal);
+    const admitted = vi.fn();
+    const invoke = vi.spyOn(manager, "invokeCoreTool").mockImplementation(async (_id, _name, _input, dispatchGuard) => {
+      await dispatchGuard?.();
+      await expect(unrelated()).rejects.toThrow("canceled before dispatch");
+      const response = { writeHead: vi.fn(), end: vi.fn() };
+      await proxy.handle({ method: "POST", socket: { remoteAddress: "127.0.0.1" }, headers: { authorization: `Bearer ${routeKey}` } } as never, response as never,
+        `/internal/mcp/${record.id}/hosty%3Acore`);
+      expect(response.writeHead.mock.calls[0]?.[0]).toBe(401);
+      if (revoke === "authority") throw new AppContextError(403, "mcp_access_denied", "Current Core authority was revoked");
+      admitted();
+      return { state: kind === "completion" ? "completed" : "accepted" };
+    });
+    await expect(manager.coordinateCoreTool(record.id, name, input, guard)).resolves.toMatchObject({ result: {
+      state: "queued", ...(kind === "completion" ? {} : { requestId }),
+    } });
+    expect(invoke).not.toHaveBeenCalled();
+    if (revoke === "provider") manager.mcpPolicy.cancel(record.id, "hosty:core");
+    if (revoke === "catalog") await manager.mcpPolicy.catalog("hosty:core", "replacement-installation", tools);
+    if (revoke === "abort") abort.abort();
+    if (answer) {
+      let sequence = 0;
+      const emit = (event: HarnessEvent) => starts.at(-1)!.onWorkerEvent!({ runId: starts.at(-1)!.workerRunId!, generation: "fixture-generation", sequence: ++sequence, event });
+      await emit({ type: "answer_complete" });
+      expect((await store.readRecord(record.id))!.status).toBe("suggesting");
+      expect((await store.readRecord(record.id))!.developmentLease).toBeTruthy();
+      expect(invoke).not.toHaveBeenCalled();
+      await expect(unrelated()).rejects.toThrow("canceled before dispatch");
+      const response = { writeHead: vi.fn(), end: vi.fn() };
+      await proxy.handle({ method: "POST", socket: { remoteAddress: "127.0.0.1" }, headers: { authorization: `Bearer ${routeKey}` } } as never, response as never,
+        `/internal/mcp/${record.id}/hosty%3Acore`);
+      expect(response.writeHead.mock.calls[0]?.[0]).toBe(401);
+      if (answer.stop) await manager.cancelSession(record.id);
+      else if (answer.suggestions) await emit({ type: "prompt_suggestion", text: "Continue?" });
+      await emit({ type: "result", status: "success" });
+      expect((await store.readRecord(record.id))!.status).toBe("idle");
+    } else await finish(record.id);
+    await vi.waitFor(async () => {
+      const saved = (await store.readRecord(record.id))!;
+      expect(kind === "completion" ? saved.workflowCompletion?.state : saved.workspaceActivation?.state).not.toBe("queued");
+    });
+    const saved = (await store.readRecord(record.id))!;
+    if (revoke || answer?.stop) {
+      expect(kind === "completion" ? saved.workflowCompletion?.state : saved.workspaceActivation?.state).toBe("blocked");
+      if (revoke === "authority") {
+        expect(invoke).toHaveBeenCalledOnce();
+        expect(saved.workspaceActivation?.error).toBe("Current Core authority was revoked");
+      } else if (kind === "completion") expect(invoke).toHaveBeenCalledOnce(); // Its captured transport rechecks the guard before admission.
+      else expect(invoke).not.toHaveBeenCalled();
+      expect(admitted).not.toHaveBeenCalled();
+    } else {
+      if (kind === "completion") expect(saved.workflowCompletion).toBeUndefined();
+      else expect(saved.workspaceActivation?.state).toBe("dispatched");
+      expect(invoke).toHaveBeenCalledExactlyOnceWith(record.id, name, input, guard);
+      expect(admitted).toHaveBeenCalledOnce();
+    }
+    await expect(guard()).rejects.toThrow("canceled before dispatch");
+    await expect(unrelated()).rejects.toThrow("canceled before dispatch");
+  }
+
+  it.each(["return", "selection", "completion"] as const)("hands off only the reviewed %s after native exit and revokes routes and reviews afterward", kind => queued(kind));
+  it.each(["provider", "catalog", "abort", "authority"] as const)("keeps %s revocation effective for a deferred Return", revoke => queued("return", revoke));
+  it.each(["return", "selection", "completion"] as const)("retains the reviewed %s through answer completion and suggestion collection", kind => queued(kind, undefined, { suggestions: true }));
+  it("retains reviewed Return when suggestions are disabled before answer completion", () => queued("return", undefined, { suggestions: false }));
+  it("does not restore a revoked Return at answer completion", () => queued("return", "provider", { suggestions: true }));
+  it.each(["return", "completion"] as const)("cancels reviewed %s when the operator stops suggestion collection", kind => queued(kind, undefined, { suggestions: true, stop: true }));
+});
+
+describe("deferred operations at task boundaries", () => {
+  const cases = (["return", "completion"] as const).flatMap(kind => (["canonical", "alias"] as const)
+    .flatMap(transport => (["armed", "resuming"] as const).map(state => ({ kind, transport, state }))));
+  it.each(cases)("rechecks the $state boundary before a queued $transport $kind dispatch", async ({ kind, transport, state }) => {
+    await manager.shutdown();
+    const proxy = new McpProxy(async () => ({ token: "fixture-only", expiresAtMs: Date.now() + 60_000 }));
+    const worker = new WorkerClient("http://127.0.0.1:1", { version: 1, installation: "fixture", secret: "fixture" });
+    vi.spyOn(worker, "capabilities").mockResolvedValue({ protocol: 2, capacity: 32 });
+    manager = build(proxy, worker, { ...adapter, name: "codex" });
+    const bound = { ...tree, workspaceId: "b".repeat(64) };
+    vi.mocked(client.call).mockImplementation(async (_id, _token, action) => action === "list" ? { workspaces: [bound] } : bound);
+    const record = await manager.createSession({ createdBy: "admin", appIds: ["notes"] });
+    await manager.setAutonomy(record.id, "autonomous", "admin");
+    await manager.workspaceAction(record.id, "prepare", { appId: "notes" }, "token", "admin");
+    await manager.postMessage(record.id, "work", "token", [], { promptSuggestions: true });
+    proxy.register(record.id, [{ appId: "hosty:core", url: "http://core.test/api/mcp" }]);
+    const name = kind === "return" ? "workspace_activation" : "workflow_complete";
+    const action = kind === "return" ? "activation-return" : "workflow-complete";
+    const requestId = randomUUID();
+    const command = kind === "return" ? { workspaceId: bound.workspaceId, activationId: randomUUID(),
+      return: { requestId, apps: [], core: true, acceptDataChanges: true } } : { requestId, expectedRevision: 0 };
+    const input = kind === "return" ? { workspaceId: bound.workspaceId, kind: "return", input: {
+      activationId: command.activationId, return: command.return,
+    } } : { input: { workspaceId: bound.workspaceId, input: command } };
+    await manager.mcpPolicy.catalog("hosty:core", "core-installation", [{ name, inputSchema: { type: "object" } }]);
+    const guard = await manager.mcpPolicy.authorize(record.id, "hosty:core", "core-installation", "reviewed-request", name, input, new AbortController().signal);
+    const dispatch = vi.fn(async () => { await guard(); return { state: "accepted" }; });
+    const original = DevelopmentClient.prototype.call.bind(client);
+    vi.mocked(client.call).mockImplementation(async (id, token, operation, args) => operation === action
+      ? transport === "canonical" ? original(id, token, operation, args) : dispatch()
+      : operation === "list" ? { workspaces: [bound] } : bound);
+    const invoke = vi.spyOn(manager, "invokeCoreTool").mockImplementation(dispatch);
+    if (transport === "canonical")
+      await expect(manager.coordinateCoreTool(record.id, name, input, guard)).resolves.toMatchObject({ result: { state: "queued" } });
+    else await expect(manager.workspaceAction(record.id, action, command, undefined, undefined, guard)).resolves.toMatchObject({ state: "queued" });
+    expect(dispatch).not.toHaveBeenCalled();
+
+    // Arm the boundary after review/queueing, before an ordinary result wins the parking race.
+    await manager.armTaskBarrier(record.id, "admin", randomUUID(), "child_wait", 1, "coordinator");
+    if (state === "resuming") {
+      // Seed the retained continuation state in this isolated fixture; its tools remain allowed.
+      const resumed = (await manager.getSession(record.id))!;
+      resumed.taskBarrier!.state = "resuming";
+      await store.saveRecord(resumed);
+    }
+    let sequence = 0;
+    const emit = (event: HarnessEvent) => starts.at(-1)!.onWorkerEvent!({ runId: starts.at(-1)!.workerRunId!, generation: "fixture-generation", sequence: ++sequence, event });
+    await emit({ type: "answer_complete" });
+    expect((await store.readRecord(record.id))!.status).toBe("suggesting");
+    expect(dispatch).not.toHaveBeenCalled();
+    await emit({ type: "result", status: "success" });
+    const saved = (await store.readRecord(record.id))!;
+    expect(saved.status).toBe("idle");
+    expect(saved.taskBarrier?.state).toBe(state);
+    const queued = kind === "return" ? saved.workspaceActivation : saved.workflowCompletion;
+    if (state === "armed") {
+      expect(queued).toMatchObject({ state: "blocked", error: "Yield at the retained task boundary before more tool dispatch." });
+      expect(dispatch).not.toHaveBeenCalled();
+      expect(invoke).not.toHaveBeenCalled();
+    } else {
+      expect(dispatch).toHaveBeenCalledOnce();
+      if (kind === "return") expect(queued?.state).toBe("dispatched");
+      else expect(queued).toBeUndefined();
+    }
+    await expect(guard()).rejects.toThrow("canceled before dispatch");
+  });
 });
