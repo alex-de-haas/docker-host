@@ -19,7 +19,8 @@ export function WorkspaceActivation({ workspaceId, apps, disabled, canUse = true
   const { busy, phase, pending } = execution;
   const rows = apps.map(app => inventory.applications.find(item => item.appId === app.appId));
   const known = !inventory.loading && !inventory.error && rows.every(app => app?.current &&
-    (app.current.kind === "package" || app.current.kind === "workspace" && app.current.workspaceId && app.current.worktreeId));
+    (app.current.kind === "package" || app.current.kind === "legacy" ||
+      app.current.kind === "workspace" && app.current.workspaceId && app.current.worktreeId));
   const hasCurrent = rows.some(app => app?.current?.kind === "workspace" && app.current.workspaceId === workspaceId);
   const allCurrent = known && rows.every(app => app && workspaceApplicationIsCurrent(app));
   const kind = allCurrent ? "package" : "workspace";

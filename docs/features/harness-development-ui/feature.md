@@ -460,7 +460,8 @@ workspaces and is omitted for a single app, which already has the group action. 
 targets and other app transitions disable switching with an explanation.
 
 Used by has one primary transition. Fresh observations show Use workspace when any bound app is
-outside the exact target and Return to packages when all targets match. A mixed selection exposes
+outside the exact target, including an observed legacy development runtime, and Return to packages
+when all targets match. A mixed selection exposes
 Return to packages in a compact alternative-actions menu, only when at least one app is observed
 using this workspace. Missing or disconnected observations offer refresh rather than guessing a
 target. Background reads preserve the last verified rows and focus. An operation receipt never

@@ -95,7 +95,8 @@ it("clears a superseded request and creates a new intent only after a new user a
   expect(button("Try again")).toBeUndefined(); await click("Use workspace");
   expect(vi.mocked(developmentRequest).mock.calls[1][1]!.requestId).not.toBe(first.requestId);
 });
-it("uses an exact per-app worktree and retains it through remount and changed inventory", async () => {
+it("switches from a legacy runtime to an exact per-app worktree and retains it through recovery", async () => {
+  applicationRows = [row("notes", { current: { kind: "legacy", runtime: "dev" } }), row("shell")];
   vi.mocked(developmentRequest).mockRejectedValueOnce(new Error("Connection lost")); await render(); await act(async () => appButton().click());
   const [path, original] = vi.mocked(developmentRequest).mock.calls[0];
   expect(path).toBe("/workspace/applications/notes/execution-target");
@@ -181,9 +182,9 @@ it.each([
   { name: "mixed", rows: [currentRow(), row("shell")], primary: "Use workspace", alternative: true },
   { name: "other tree here", rows: [row("notes", { current: { ...row().target!, worktreeId: "b".repeat(64) } }), row("shell")], primary: "Use workspace", alternative: true },
   { name: "missing app", rows: [row()], primary: "Refresh applications", alternative: false },
-  { name: "legacy", rows: [row("notes", { current: { kind: "legacy" } }), row("shell")], primary: "Refresh applications", alternative: false },
+  { name: "legacy", rows: [row("notes", { current: { kind: "legacy" } }), row("shell")], primary: "Use workspace", alternative: false },
 ])("uses one observed primary action for $name", async ({ rows, primary, alternative }) => {
-  applicationRows = rows; await render(); expect(button(primary)).toBeDefined();
+  applicationRows = rows; await render(); expect(button(primary).disabled).toBe(false);
   expect(button(primary === "Use workspace" ? "Return to packages" : "Use workspace")).toBeUndefined();
   expect(!!container.querySelector('[aria-label="Other application actions"]')).toBe(alternative);
 });
