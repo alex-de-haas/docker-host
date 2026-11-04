@@ -8,6 +8,8 @@ components: [apps/harness, apps/core, packages/app-sdk, packages/app-sdk-dotnet]
 # Profile-Based Task Delegation
 
 Harness coordinates a tree of ordinary tasks through the existing version-one task interfaces.
+The previously unused task schema is replaced in place, as explicitly approved in
+[vision decision 70](../../vision.md); legacy task-store migration is outside this release.
 Profiles supply reusable instructions, skills and model selections. A manager is a profile, without
 a separate agent identity, team registry or permission role.
 
@@ -51,7 +53,8 @@ and arms a new attempt on the same task. Retry and reassignment retain prior att
 root accounting. A result is explicit `task_result` evidence followed by confirmed native exit;
 an ordinary final chat response alone does not complete a task.
 
-`task_wait` records observed child versions and an any/all wait. Durable child outbox and parent
+`task_wait` records monotonic child task revisions and an any/all wait. These observations and
+outbox identities distinguish separate attempts even when native receipt counters restart. Durable child outbox and parent
 inbox records preserve early, duplicate and late results. Worker parking confirms native stop,
 releases capacity and resumes the original checkpoint under the same task attempt. Recovery retains
 the original native command and does not invent a replacement manager. Missing checkpoints and
@@ -120,6 +123,9 @@ plan. The task and executor interface versions and HTTP routes remain at v1.
   Normal approval persists Autonomous; decline retains an unstarted root. Claude also completes
   the empty-directory one-off case without creating a saved profile. The final Claude restart
   case uses a unique request namespace and explicit tool rediscovery after waiting.
+- Review regression checks reproduce and fix retry selection-revision mismatches, external-provider
+  execution admission and child failure delivery across attempts: 91 affected Harness tests and
+  37 affected Core tests pass.
 - Core-backed browser checks cover root-task navigation, profile attribution after rename,
   history reload, task/Decisions review and preserved drafts under stream updates. Unit tests
   additionally cover all history pages, revoked access, completed analysis association and

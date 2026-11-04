@@ -19,7 +19,7 @@ export type ChildEvent = { id: string; parentTaskRef: TaskRef; taskRef: TaskRef;
   resultRevision: number; receiptRevision: number; resultRef?: TaskRecord["resultRef"]; status: string; summary: string; delivered: boolean };
 type Wait = {
   id: string; hash: string; context: Bound; generation: number; mode: "any" | "all"; children: TaskRef[];
-  observed: Array<{ taskRef: TaskRef; resultRevision: number; receiptRevision: number }>;
+  observed: Array<{ taskRef: TaskRef; taskRevision: number }>;
   state: "registered" | "parked" | "resuming" | "resumed" | "ready" | "cancelled"; events: ChildEvent[]; prompt?: string; error?: string;
 };
 type Plan = { revision: number; markdown: string; updatedAt: string; executionId: string };
@@ -135,7 +135,7 @@ export class TaskOrchestrator {
   private relevant(wait: Wait, events: ChildEvent[]) {
     const current = new Map<string, ChildEvent>();
     for (const event of events) if (wait.children.some(c => fingerprint(c) === fingerprint(event.taskRef)) && event.rootGeneration === wait.context.binding.rootGeneration
-      && !wait.observed.some(o => o.taskRef.id === event.taskRef.id && o.resultRevision >= event.resultRevision && o.receiptRevision >= event.receiptRevision)) {
+      && !wait.observed.some(o => fingerprint(o.taskRef) === fingerprint(event.taskRef) && o.taskRevision >= event.taskRevision)) {
       const prior = current.get(event.taskRef.id);
       if (!prior || event.taskRevision >= prior.taskRevision) current.set(event.taskRef.id, event);
     }
@@ -150,9 +150,10 @@ export class TaskOrchestrator {
     await this.send(context, "observe", id, {});
     if (!Array.isArray(input.children) || !input.children.length || input.children.length > 100 || !["any", "all"].includes(String(input.mode)))
       return taskError("invalid_input", "Wait for one or more direct children in any/all mode.", 400);
-    const children = input.children.map(taskRef), observed = (input.observed ?? []) as Wait["observed"];
-    if (!Array.isArray(observed) || observed.some(o => !Number.isSafeInteger(o.resultRevision) || o.resultRevision < 0 || !Number.isSafeInteger(o.receiptRevision) || o.receiptRevision < 0))
-      return taskError("invalid_input", "Supply the child result and receipt revisions already observed.", 400);
+    const children = input.children.map(taskRef);
+    if (!Array.isArray(input.observed ?? []) || (input.observed as unknown[] | undefined)?.some(o => !o || !Number.isSafeInteger((o as Wait["observed"][number]).taskRevision) || (o as Wait["observed"][number]).taskRevision < 0))
+      return taskError("invalid_input", "Supply the monotonic child task revisions already observed.", 400);
+    const observed = ((input.observed ?? []) as Wait["observed"]).map(o => ({ taskRef: taskRef(o.taskRef), taskRevision: o.taskRevision }));
     await this.deliverEvents();
     const wait = await this.store.transaction(s => {
       const existing = s.journal?.["wait:" + id] as Wait | undefined;

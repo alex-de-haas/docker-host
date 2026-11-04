@@ -60,9 +60,11 @@ export class TaskService {
     this.store.beforeAttempt = (state, task) => this.policies.attempt(state, task);
     this.executor.beforeResult = async (input, id) => this.own(input.taskRef) ? this.store.validateResult(input.taskRef.id, id) : [];
     this.executor.beforeLaunch = async (input, id, sessionId, authority) => {
-      await this.orchestration.bindNative(input.taskRef.id, id, sessionId, authority.taskDispatch);
       const session = await manager.getSession(sessionId);
       if (!session || session.autonomy !== "autonomous") return false;
+      // External providers own their task lifecycle; the executor has no local task graph.
+      if (!this.own(input.taskRef)) return true;
+      await this.orchestration.bindNative(input.taskRef.id, id, sessionId, authority.taskDispatch);
       await this.policies.setMode(input.taskRef.id, id, session.autonomy);
       return this.sources.beforeLaunch(input, id, sessionId, authority);
     };

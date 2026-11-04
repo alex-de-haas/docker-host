@@ -331,7 +331,7 @@ export class TaskStore {
     const root = s.journal?.["root:" + t.rootTaskRef.id] as { generation: number } | undefined;
     if (!root) return;
     const generation = t.coordination?.rootGeneration ?? root.generation;
-    const id = fingerprint({ task: t.ref, generation, result, status: t.status, blocked: t.blocked?.reason, receipt: attempt?.receipt?.revision });
+    const id = fingerprint({ task: t.ref, generation, executionId: attempt?.executionId, result, status: t.status, blocked: t.blocked?.reason, receipt: attempt?.receipt?.revision });
     const key = "child-outbox:" + id;
     if (s.journal?.[key]) return;
     (s.journal ??= {})[key] = { id, parentTaskRef: t.parentTaskRef, taskRef: t.ref, rootGeneration: generation, taskRevision: t.revision,

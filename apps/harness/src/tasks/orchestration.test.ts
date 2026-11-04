@@ -157,3 +157,37 @@ it("delivers an existing child's late result to a replacement manager without di
   expect((await store.get(child.ref.id, owner)).attempts).toHaveLength(1);
   expect(await store.all()).toHaveLength(2);
 });
+
+it("wakes for a reworked child's failure even when its receipt revisions restart", async () => {
+  let child = await (await delegate()).invoke();
+  const first = child.attempts[0]!.executionId;
+  child = await store.observe(child.ref.id, first, { executionId: first, revision: 5, state: "completed", stopConfirmed: true,
+    createdAt: "now", updatedAt: "now", result: { markdown: "Needs improvement", resources: [] } });
+  const observed = [{ taskRef: child.ref, taskRevision: child.revision }];
+  child = await store.action(child.ref.id, owner, { requestId: randomUUID(), expectedRevision: child.revision,
+    action: "request_changes", resultRef: child.resultRef, feedback: "Add evidence" });
+  const wait = await orchestration.wait(session.id, { requestId: randomUUID(), children: [child.ref], mode: "all", observed });
+  expect(wait.state).toBe("pending");
+  const second = child.attempts.at(-1)!.executionId;
+  await store.observe(child.ref.id, second, { executionId: second, revision: 3, state: "failed", stopConfirmed: true,
+    createdAt: "now", updatedAt: "now", error: { code: "native_exit", message: "Worker stopped" } });
+  await orchestration.reconcile(); await orchestration.reconcile();
+  expect(resume).toHaveBeenCalledTimes(1);
+  expect(resume.mock.calls[0]![2]).toContain("execution_failed");
+});
+
+it("publishes identical failure receipts separately for distinct child attempts", async () => {
+  let child = await (await delegate()).invoke();
+  const fail = async (task: TaskRecord) => {
+    const executionId = task.attempts.at(-1)!.executionId;
+    return store.observe(task.ref.id, executionId, { executionId, revision: 3, state: "failed", stopConfirmed: true,
+      createdAt: "now", updatedAt: "now", error: { code: "native_exit", message: "Worker stopped" } });
+  };
+  child = await fail(child);
+  const observed = [{ taskRef: child.ref, taskRevision: child.revision }];
+  child = await store.action(child.ref.id, owner, { requestId: randomUUID(), expectedRevision: child.revision, action: "retry" });
+  expect((await orchestration.wait(session.id, { requestId: randomUUID(), children: [child.ref], mode: "any", observed })).state).toBe("pending");
+  await fail(child); await orchestration.reconcile();
+  expect(await store.journalEntries("child-outbox:")).toHaveLength(2);
+  expect(resume).toHaveBeenCalledTimes(1);
+});

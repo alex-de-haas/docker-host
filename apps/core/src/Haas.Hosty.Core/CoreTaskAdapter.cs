@@ -109,7 +109,7 @@ internal sealed class CoreTaskAdapter(CoreProviderMediation providers, CoreProvi
                     content = content with { Markdown = content.Markdown + "\n\n## Requested changes\n" + input.Input.Feedback };
                     selectedRevision++;
                 }
-                else if (input.Input.Action == "retry" && input.Input.Selection is not null) selectedRevision++;
+                else if (input.Input.Action == "retry" && selection is not null) selectedRevision++;
                 var snapshot = active?.Request ?? new HostyTaskExecutionInput(1, task.Ref, selectedRevision, content,
                     new(task.RootTaskRef, task.ParentTaskRef, task.RelationRevision), [], selection);
                 scope = new(input.TaskRef, executor, snapshot.InputRevision, CoreTaskExecutionScope.TemplateDigest(snapshot),

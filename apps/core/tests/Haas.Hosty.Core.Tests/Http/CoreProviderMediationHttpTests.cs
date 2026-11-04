@@ -216,6 +216,45 @@ public sealed class CoreProviderMediationHttpTests
         Assert.Contains("options", transport.Operations);
     }
 
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    public async Task Retry_UsesTheForwardedSelectionRevisionForDispatch(bool savedSelection, bool explicitSelection)
+    {
+        using var transport = new ProviderTransport(); await using var host = await Start(transport);
+        var provider = (await AddProvider(host, "independent.task.store", "tasks", [])) with { GrantedCorePermissions = [CoreAppPermissions.TaskExecutors] };
+        await host.Services.GetRequiredService<AppRegistryStore>().UpsertAppAsync(provider);
+        var executor = await AddProvider(host, "independent.native.runner", "task-executor", ["options"]);
+        var executorRef = new HostyTaskProviderRef(executor.Id, PanelIdentity.Installation(executor), "custom");
+        var choice = new HostyTaskSelection("option", "opaque-default", 7);
+        transport.Provider = provider; transport.Executor = executor; transport.Services = host.Services;
+        transport.ActionOperation = "execute"; transport.PublicOptions = true;
+        var task = Task(new(provider.Id, PanelIdentity.Installation(provider), "custom")) with
+        { Status = "Blocked", Assignee = new("app", Executor: executorRef, Selection: savedSelection ? choice : null) };
+        transport.Reply = JsonSerializer.SerializeToElement(task, JsonSerializerOptions.Web);
+        using var client = host.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new("Bearer", await Issue(host,
+            [AccessTokenScopes.McpRead, AccessTokenScopes.McpTasksRead, AccessTokenScopes.McpTasksWrite, AccessTokenScopes.McpTasksExecute]));
+        var action = new CoreTaskAction(task.Ref, new(Guid.NewGuid().ToString(), task.Revision, "retry", Selection: explicitSelection ? choice : null));
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/tasks/v1/action", action)).StatusCode);
+        var dispatch = transport.Invocation!.TaskDispatch!;
+        Assert.Equal(choice.Id, transport.LastAction!.Value.GetProperty("selection").GetProperty("id").GetString());
+        var executionId = Guid.NewGuid().ToString();
+        var input = new HostyTaskExecutionInput(1, task.Ref, task.InputRevision + 1, new(task.Title, task.Markdown, [], new("none")),
+            new(task.RootTaskRef, null, 1), [], choice);
+        task = task with { Revision = task.Revision + 1, InputRevision = input.InputRevision, Status = "Ready",
+            Attempts = [new(executionId, executorRef, input, false, "now")] };
+        transport.Reply = JsonSerializer.SerializeToElement(task, JsonSerializerOptions.Web);
+        var mediation = host.Services.GetRequiredService<CoreProviderMediation>();
+        var call = new CoreTaskDispatchRequest(dispatch, executorRef, "accept", executionId, input);
+        await mediation.DispatchTaskAsync(provider, call, default);
+        Assert.Equal(input.InputRevision, (await mediation.TaskDispatchAuthorityAsync(executor, dispatch, default)).Scope.InputRevision);
+        await mediation.DispatchTaskAsync(provider, call with { Operation = "get", Input = null }, default);
+        await mediation.DispatchTaskAsync(provider, call with { Operation = "cancel", Input = null, RequestId = Guid.NewGuid().ToString() }, default);
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/tasks/v1/action", action)).StatusCode);
+    }
+
     [Fact]
     public async Task Dispatch_RequiresOriginalLiveAuthorityAndPinsSourceExecutorInputAndAttempt()
     {

@@ -1,3 +1,4 @@
+import { TaskService } from "./service.js";
 import { TaskStore } from "./store.js";
 import { DevelopmentClient } from "../sessions/development.js";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
@@ -431,4 +432,25 @@ it("starts distinct tasks concurrently from one saved profile without reusing th
   expect(sessions.map(s => s!.taskContext!.executor)).toEqual([expect.objectContaining({ id: profile.id, name: profile.name }), expect.objectContaining({ id: profile.id, name: profile.name })]);
   expect(sessions[0]!.taskContext!.taskRef.id).not.toBe(sessions[1]!.taskContext!.taskRef.id);
   expect((await profiles.read()).profiles).toHaveLength(1);
+});
+
+it.each([false, true])("executes an externally owned task through the full service (mediated=%s)", async mediated => {
+  const service = new TaskService(manager);
+  const bind = vi.spyOn(service.orchestration, "bindNative");
+  const source = vi.spyOn(service.sources, "beforeLaunch");
+  try {
+    const id = randomUUID();
+    const authority = mediated ? { ...actor, taskDispatch: { userId: "owner", principalId: "external-client", requestId: randomUUID() } } : actor;
+    const accepted = await service.executor.accept(id, input, authority);
+    await service.executor.tick();
+    expect(await service.executor.get(id, authority)).toMatchObject({ state: "running" });
+    expect(sent).toHaveBeenCalledOnce();
+    expect(bind).not.toHaveBeenCalled(); expect(source).not.toHaveBeenCalled();
+    await service.executor.report(accepted.sessionRef!.id, randomUUID(), { markdown: "External provider result", resources: [] });
+    runOptions!.onEvent({ type: "result", status: "success" });
+    await vi.waitFor(async () => expect((await manager.getSession(accepted.sessionRef!.id))?.status).toBe("idle"));
+    await service.executor.tick();
+    expect(await service.executor.get(id, authority)).toMatchObject({ state: "completed", stopConfirmed: true });
+    expect(await service.store.all()).toEqual([]);
+  } finally { await service.close(); }
 });
