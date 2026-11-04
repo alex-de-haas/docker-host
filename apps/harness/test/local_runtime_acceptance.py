@@ -99,6 +99,13 @@ def check(context):
         spec.loader.exec_module(module)
         module.check(context, app_origin, client, call, timed)
 
+    if os.environ.get('HOSTY_CONTEXT_BROWSER'):
+        import subprocess
+        result = subprocess.run(['node', str(workspace/'apps/harness/test/context-browser.mjs')],
+            input=json.dumps({'core':origin, 'harness':app_origin, 'email':'activation-fixture@example.test', 'password':password, 'link':link}),
+            text=True, cwd=workspace)
+        assert result.returncode == 0, 'Context browser acceptance failed'
+
     if os.environ.get('HOSTY_SUGGESTIONS_BROWSER'):
         import subprocess
         result = subprocess.run(['node', str(workspace/'apps/harness/test/suggestions-browser.mjs')],

@@ -139,3 +139,23 @@ it("labels replayed Ollama estimates separately from native totals and available
     expect(document.querySelector('[role="dialog"]')).toBeNull();
   } finally { await act(async () => root.unmount()); container.remove(); }
 });
+
+
+it("shows instruction-only Codex estimates when the catalog is unavailable, preserving the native meter", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  const sources = { version: 1, method: "local-estimate", estimator: "o200k-base-chunks-1024-v1", instructions: [{ source: "operator", tokens: 999 }], omittedInstructions: 1, catalog: { state: "unavailable", observedAt: usage.observedAt } };
+  const state = applyContextUsage(emptyContextUsage("one"), "one", frame(1, { ...usage, sources }));
+  expect(state.usage?.sources).toEqual(sources);
+  expect(applyContextUsage(state, "one", frame(2, { ...usage, sources: { ...sources, version: 2 } })).usage).toEqual(usage);
+  const container = document.createElement("div"); document.body.append(container); const root = createRoot(container);
+  try {
+    await act(async () => root.render(<ContextUsageIndicator usage={state.usage} />));
+    expect(container.textContent).toBe("5.8%");
+    await act(async () => container.querySelector<HTMLButtonElement>("button")!.click());
+    const dialog = document.querySelector('[role="dialog"]')!;
+    for (const text of ["o200k_base BPE", "provided by Hosty", "retention after compaction is unknown", "Operator instructions", "≈ 999 tokens", "Catalog unavailable", "Partial instructions: 1"]) expect(dialog.textContent).toContain(text);
+    expect(dialog.textContent).not.toContain("Loaded");
+    await act(async () => root.render(<ContextUsageIndicator usage={null} />)); expect(document.querySelector('[role="dialog"]')).toBeNull();
+  } finally { await act(async () => root.unmount()); container.remove(); }
+});

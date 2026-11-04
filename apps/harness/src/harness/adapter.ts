@@ -130,6 +130,7 @@ export interface HarnessStartOptions {
   cwd: string;
   /** Operator-authored instructions, appended to the harness's own sources — never replacing them. */
   systemPrompt?: string;
+  instructionSources?: import("./context-sources.js").InstructionText[];
   /** Enabled app MCP providers, already carrying a token scoped to each app. */
   mcpServers?: Record<string, unknown>;
   /**

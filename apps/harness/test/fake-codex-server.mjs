@@ -167,6 +167,17 @@ function handle(msg) {
     { model: "fixture-other", displayName: "Other model", isDefault: false, defaultReasoningEffort: "low", supportedReasoningEfforts: [{ reasoningEffort: "low" }, { reasoningEffort: "xhigh" }] },
   ], nextCursor: null } }); return; }
 
+  if (msg.method === "mcpServerStatus/list") {
+    if (!msg.params.threadId || msg.params.detail !== "toolsAndAuthOnly") fail("catalog must be thread scoped");
+    const mode = process.env.HOSTY_TEST_CONTEXT_CATALOG;
+    if (mode === "timeout") return;
+    if (mode === "failed") { send({ id: msg.id, error: { code: -32601, message: "unsupported" } }); return; }
+    const tool = { name: "inspect", description: "private definition", inputSchema: { type: "object" } };
+    const respond = () => send({ id: msg.id, result: { data: [{ name: msg.params.cursor ? "second" : "first", tools: { native_alias: tool }, runtimeStatus: "connected" }], nextCursor: msg.params.cursor ? null : "page2" } });
+    if (mode === "delayed") setTimeout(respond, 120); else respond();
+    return;
+  }
+
   if (msg.method === "thread/start") {
     if (typeof msg.params?.sandbox !== "string") {
       fail("thread/start sandbox must be a plain string");
@@ -254,6 +265,17 @@ function handle(msg) {
     }
     if (currentTurnText === "provider-usage") {
       send({ method: "account/rateLimits/updated", params: { rateLimits: { limitId: "codex", primary: { usedPercent: 40, windowDurationMins: 300 } } } });
+    }
+    if (currentTurnText.endsWith("local-context")) {
+      send({ method: "turn/started", params: { threadId: activeThreadId, turn: { id: "context" } } });
+      send({ method: "thread/tokenUsage/updated", params: { threadId: activeThreadId, tokenUsage: { last: { totalTokens: 123 }, modelContextWindow: 1000 } } });
+      send({ method: "turn/completed", params: { threadId: activeThreadId, turn: { id: "old-context", status: "completed" } } });
+      send({ method: "turn/completed", params: { threadId: activeThreadId, turn: { id: "context", status: "completed" } } }); return;
+    }
+    if (currentTurnText.endsWith("compact-context")) {
+      send({ method: "thread/tokenUsage/updated", params: { threadId: activeThreadId, tokenUsage: { last: { totalTokens: 123 }, modelContextWindow: 1000 } } });
+      send({ method: "thread/compacted", params: { threadId: activeThreadId } });
+      send({ method: "turn/completed", params: { threadId: activeThreadId, turn: { id: "context", status: "completed" } } }); return;
     }
     if (currentTurnText === "context-usage") {
       send({ method: "turn/started", params: { threadId: activeThreadId, turn: { id: "current" } } });

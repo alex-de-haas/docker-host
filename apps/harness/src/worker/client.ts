@@ -147,7 +147,7 @@ class RemoteRun implements HarnessRun {
     const request: WorkerRunRequest = { operation: this.options.operation ?? "chat", skillExportId: this.options.skillExportId, conversationId: this.options.sessionId, binding: this.binding!,
       selection: { model: this.options.model ?? null, reasoningEffort: this.options.reasoningEffort ?? null },
       resource: this.options.resource ?? { kind: "conversation", id: this.options.sessionId }, input,
-      options: { requireNativeResume: this.options.requireNativeResume, promptSuggestions: this.options.promptSuggestions, autonomy: this.options.autonomy, systemPrompt: this.options.systemPrompt, resumeHarnessSessionId: this.resume, mcpServers: this.options.mcpServers },
+      options: { requireNativeResume: this.options.requireNativeResume, promptSuggestions: this.options.promptSuggestions, autonomy: this.options.autonomy, systemPrompt: this.options.systemPrompt, instructionSources: this.options.instructionSources, resumeHarnessSessionId: this.resume, mcpServers: this.options.mcpServers },
       autoAllowedPrefixes: Object.keys(this.options.mcpServers ?? {}).map(name => `mcp__${name}__`).filter(prefix => this.options.isAutoAllowed?.(`${prefix}probe`)) };
     this.submitted = request; this.confirmed = false;
     this.observe(id, signal, request);

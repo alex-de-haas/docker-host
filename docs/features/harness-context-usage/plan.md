@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-23
-updated: 2026-11-03
+updated: 2026-11-04
 summary: Context estimates by source, MCP server and tool, with correlated LLM-call tokens, timing and cache observations.
 components: [apps/harness]
 ---
@@ -35,6 +35,16 @@ categories, result attribution, per-call tokens/time/cache, compaction accountin
 verification remain here, Draft and unchecked. The local estimate must never be presented as a
 provider-reported count or as model-exact tokenization.
 
+## Codex Scope Split (2026-11-04)
+
+The owner approved and completed the separately scoped [Codex Local Context Detail](../codex-local-context-detail/feature.md).
+Only local estimates of Hosty-supplied instruction blocks and MCP definitions by server/tool,
+with the unchanged native total and explicit unknown inclusion, transfer from D1/D2/D3/D5/D7/D8.
+All remaining deliverables stay Draft and unchecked: repository instructions, skill content,
+arguments/results, server instructions, full history, exact model/template tokenization,
+live catalog refresh within a run, editor preview and per-call tokens/time/cache. Provider
+extraction and timeline ownership are unchanged.
+
 ## Refreshed Baseline
 
 Reviewed main at `cc8831fbac0c3b2dc6887ae050f31fadc0a311d2` on 2026-11-03. The previous planning
@@ -44,7 +54,7 @@ Earlier unpublished D1-D8 identities are retained. Current main changes the impl
 - Ollama is already implemented in [Provider Connections](../ai-gateway-providers/feature.md).
   Independent provider applications remain Draft in [Agent Providers](../agent-provider-interface/plan.md).
   Implementing another Ollama engine is not work in this plan.
-- Claude currently calls `getContextUsage({ detail: "summary" })`, but normalization keeps only
+- Claude calls `getContextUsage({ detail: "summary" })` and now preserves bounded MCP detail alongside
   total/window/time. The SDK exposes MCP tool counts and optional message-type breakdowns; preserve
   supported fields before adding a separate tokenizer. The repository pins SDK 0.3.296; locally
   available 0.3.288 declarations already contain these fields. Verify actual 0.3.296 responses in
@@ -176,18 +186,18 @@ events; opening details must not create a polling loop or a second execution pip
 
 ## Deliverables
 
-- [ ] D1. Define and validate portable source, snapshot, measurement, invocation, timing/cache and tool-link types, with capability/coverage semantics and the provider-plan handoff.
-- [ ] D2. Capture provenance at controlled assembly boundaries for instructions, skills, MCP server/tool definitions, messages/results, attachments and summaries, preserving revisions, inclusion and truncation without duplicate attribution.
-- [ ] D3. Extend Claude diagnostics beyond the separately owned MCP-definition detail and normalize Codex observations, with model-aware local estimation fallback and explicit unavailable/unknown detail; retain current meter behavior and diagnostic limits.
+- [ ] D1. Extend the shipped portable source metadata into common snapshot, measurement, invocation, timing/cache and tool-link types, with capability/coverage semantics and the provider-plan handoff.
+- [ ] D2. Extend provenance beyond the shipped Hosty instruction blocks and MCP definitions to remaining instructions, skills, server instructions, messages/results, attachments and summaries, preserving revisions, inclusion and truncation without duplicate attribution.
+- [ ] D3. Extend Claude diagnostics beyond the separately owned MCP-definition detail and extend Codex coverage beyond the separately owned Hosty/MCP proxy estimates, with verified model-aware tokenization and explicit unavailable/unknown detail; retain current meter behavior and diagnostic limits.
 - [ ] D4. Collect tokens, timing and cache per observable LLM request/attempt from the outset, correlate tools/results, normalize native aggregates and auxiliary calls, and persist/replay bounded records without duplicate usage.
-- [ ] D5. Extend the separately owned MCP panel with other source categories, broader cross-provider server/tool attribution and catalog views beyond the separate Claude/Ollama definition slices, largest contributors, measurement quality and instruction-draft estimates; keep accumulated invocation usage separate from current context.
+- [ ] D5. Extend the shipped source/MCP panel with other source categories, broader cross-provider server/tool attribution and catalog views beyond the separate Claude/Ollama definition slices, largest contributors, measurement quality and instruction-draft estimates; keep accumulated invocation usage separate from current context.
 - [ ] D6. Extend the shipped Ollama adapter beyond the separately owned local MCP-definition estimates: integrate final request assembly, intermediate steps and compaction with the common measurements; validate cache/duration mapping and missing data using pinned fixtures and an authorized real-server smoke check, without implementing another engine.
 - [ ] D7. Verify accounting invariants, adapter coverage, access/privacy, bounded overhead and reconnect/receipt compatibility; document actual provider evidence and unresolved capability gaps.
 - [ ] D8. Update feature.md with verified behavior, reconcile consuming plans, remove this completed plan, regenerate the index and apply the required implementation version change.
 
 ## Order And Scope Recommendation
 
-The separately approved Claude and Ollama MCP definition details are implemented. It does not complete any remaining
+The separately approved Claude/Ollama MCP definition details and Codex Hosty/MCP local estimates are implemented. These slices do not complete any remaining
 D1-D8 here. Design D1 around that observation and extend source assembly for D2/D3/D6;
 collect D4 invocation metadata as each producer is extended. Complete D5's broader views and D7
 verification before D8. Codex exposes its coverage limits throughout. Each feature uses one
@@ -202,10 +212,10 @@ mandatory shared profile or in-conversation provider switching is introduced her
 
 ## Readiness And Verification
 
-The owner approved only the separate Claude and Ollama MCP definition slices. This broader scope still requires
+The owner approved only the separate Claude/Ollama MCP definition slices and Codex Hosty/MCP local estimates. This broader scope still requires
 explicit approval before Ready. Native runtime field coverage is an acceptance check with explicit fallback,
-not permission to invent unavailable attribution. A small Claude-first increment is worthwhile now;
-full cross-provider accounting is a larger feature and should not be presented as a few-hour change.
+not permission to invent unavailable attribution. The completed source estimates provide the baseline;
+full cross-provider accounting remains a larger feature.
 
 - Verify loaded/deferred/unknown definitions, identical names on two servers, alias mapping, tool
   schema changes, server instructions and unavailable catalogs. Excluded tools add no occupied

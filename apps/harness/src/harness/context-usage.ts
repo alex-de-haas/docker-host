@@ -7,6 +7,7 @@ export interface ContextUsage {
   estimated: boolean;
   observedAt: string;
   mcp?: McpContextDetail;
+  sources?: import("./context-sources.js").LocalContextSources;
 }
 
 const tokenCount = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;

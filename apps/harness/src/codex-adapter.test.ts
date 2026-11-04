@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import os from "node:os";
@@ -46,6 +46,7 @@ describe("codex harness adapter", () => {
     delete process.env.HOSTY_TEST_AUTONOMY;
     delete process.env.HOSTY_TEST_PREDICTION_VERSION;
     delete process.env.HOSTY_TEST_EXTERNAL_SANDBOX;
+    delete process.env.HOSTY_TEST_CONTEXT_CATALOG;
   });
 
   function start(resumeHarnessSessionId?: string): HarnessRun {
@@ -58,6 +59,54 @@ describe("codex harness adapter", () => {
     });
     return run;
   }
+
+  it("attaches local instruction/catalog estimates without changing native totals and refreshes on MCP replacement", async () => {
+    run = new CodexHarnessAdapter({ dataDir: authDir }).start({ sessionId: "s1", cwd: process.cwd(),
+      systemPrompt: "hello world", instructionSources: [{ source: "runtime", text: "hello world" }], onEvent: e => events.push(e) });
+    run.send("local-context");
+    const snapshot = () => events.filter(e => e.type === "context_usage").findLast(e => e.usage?.sources?.catalog.state === "complete");
+    const first = await waitFor(snapshot, "local context");
+    if (first.type !== "context_usage" || !first.usage) throw Error("Missing context");
+    expect(first.usage).toMatchObject({ usedTokens: 123, maxTokens: 1000, sources: { instructions: [{ source: "runtime", tokens: 2 }] } });
+    expect(first.usage.mcp?.tools.map(t => [t.server, t.name, t.inclusion])).toEqual([["first", "inspect", "unknown"], ["second", "inspect", "unknown"]]);
+    expect(JSON.stringify(first)).not.toContain("private definition");
+    expect(await run.setMcpServers({})).toBe(true);
+    events = []; run.send("local-context");
+    const second = await waitFor(snapshot, "reconfigured context");
+    expect(second).toMatchObject({ usage: { usedTokens: 123, sources: { instructions: [{ source: "runtime", tokens: 2 }] } } });
+  });
+
+  it.each(["failed", "timeout"])("keeps native usage when MCP diagnostics are %s", async mode => {
+    process.env.HOSTY_TEST_CONTEXT_CATALOG = mode;
+    start().send("local-context");
+    await waitFor(() => events.some(e => e.type === "context_usage" && e.usage?.usedTokens === 123), "native total");
+    await vi.waitFor(() => expect(events.some(e => e.type === "context_usage" && e.usage?.sources?.catalog.state === "unavailable")).toBe(true), { timeout: 6500 });
+    expect(events.some(e => e.type === "error")).toBe(false);
+    await run!.stopAndWait!(); const length = events.length;
+    await new Promise(resolve => setTimeout(resolve, 30)); expect(events).toHaveLength(length);
+  }, 10000);
+
+  it("finishes the bounded catalog before worker-style teardown on the terminal result", async () => {
+    process.env.HOSTY_TEST_CONTEXT_CATALOG = "delayed";
+    run = new CodexHarnessAdapter({ dataDir: authDir }).start({ sessionId: "s1", cwd: process.cwd(), onEvent: e => {
+      events.push(e); if (e.type === "result") void run?.stop();
+    } });
+    run.send("local-context");
+    await waitFor(() => events.some(e => e.type === "result"), "terminal result");
+    const context = events.findLast(e => e.type === "context_usage");
+    expect(context).toMatchObject({ usage: { usedTokens: 123, sources: { catalog: { state: "complete" } }, mcp: { tools: expect.arrayContaining([expect.objectContaining({ name: "inspect" })]) } } });
+    expect(events.indexOf(context!)).toBeLessThan(events.findIndex(e => e.type === "result"));
+    const totals = events.filter(e => e.type === "context_usage").map(e => e.usage?.observedAt);
+    expect(new Set(totals).size).toBe(1);
+  });
+
+  it("does not resurrect a compacted observation when delayed catalog collection completes", async () => {
+    process.env.HOSTY_TEST_CONTEXT_CATALOG = "delayed";
+    start().send("compact-context");
+    await waitFor(() => events.some(e => e.type === "result"), "compaction");
+    await new Promise(resolve => setTimeout(resolve, 350));
+    expect(events.filter(e => e.type === "context_usage").at(-1)).toEqual({ type: "context_usage", usage: null });
+  });
 
   it.each(["question-blocking", "question-nonblocking"])("delivers stable native question IDs and text answers (%s)", async prompt => {
     const active = start(); active.send(prompt);
@@ -461,6 +510,7 @@ describe("codex binary resolution", () => {
     delete process.env.HOSTY_TEST_AUTONOMY;
     delete process.env.HOSTY_TEST_PREDICTION_VERSION;
     delete process.env.HOSTY_TEST_EXTERNAL_SANDBOX;
+    delete process.env.HOSTY_TEST_CONTEXT_CATALOG;
   });
 
   it("prefers the operator override over the pinned dependency", async () => {
@@ -493,6 +543,7 @@ describe("codex auth modes", () => {
     delete process.env.HOSTY_TEST_AUTONOMY;
     delete process.env.HOSTY_TEST_PREDICTION_VERSION;
     delete process.env.HOSTY_TEST_EXTERNAL_SANDBOX;
+    delete process.env.HOSTY_TEST_CONTEXT_CATALOG;
     rmSync(dir, { recursive: true, force: true });
   });
 
