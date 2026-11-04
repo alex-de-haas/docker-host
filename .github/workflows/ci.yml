@@ -350,7 +350,7 @@ jobs:
   core-aot:
     name: Core NativeAOT (${{ matrix.rid }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 45
     needs: changes
     if: needs.changes.outputs.core_aot == 'true'
     strategy:
@@ -377,7 +377,9 @@ jobs:
             sudo apt-get update
             sudo apt-get install -y clang zlib1g-dev
           fi
-      - name: Publish Core and reject new trim/AOT warnings
+      - name: Publish Core and verify native paired updates
+        env:
+          HOSTY_VERIFY_PLATFORM_UPDATE: '1'
         run: npm run core:aot -- ${{ matrix.rid }}
 
   cli:
