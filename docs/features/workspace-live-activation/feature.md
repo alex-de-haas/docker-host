@@ -1,6 +1,6 @@
 ---
 created: 2026-10-19
-updated: 2026-11-03
+updated: 2026-11-04
 summary: Select named app workspaces or installed package runtimes with scoped access review, retained package choices and recoverable Core-owned transitions.
 components: [apps/core, apps/cli, apps/shell, apps/harness, shared]
 ---
@@ -277,6 +277,9 @@ different-session review cannot be transferred. The retained review still checks
 definitions, invocation policy and provider identity before Core admission, and final cleanup revokes
 it after dispatch or failure. Cancellation, permission changes and revocation still invalidate the
 queued request.
+An armed or parked task boundary also blocks queued activation and completion immediately before
+dispatch, including a boundary armed after the request was reviewed. Canonical Core tools and retained
+workspace aliases use the same fence. A resuming task continuation retains its normal tool access.
 A restarted Harness cannot reconstruct an in-memory approval: it marks the queue blocked for explicit
 review/retry. The detached helper owns an accepted transition even when Harness replaces itself.
 
@@ -650,6 +653,9 @@ activation records or snapshots. Finish removes the child, its processes and tes
   unrelated reviews are canceled, revoked or different-session reviews cannot survive handoff,
   and final cleanup revokes the retained review on both successful and refused dispatch. Include
   the primary-answer-to-suggesting-to-result sequence before native exit.
+- Arm a task boundary after activation or completion is queued and let the ordinary terminal result
+  arrive before parking. Canonical and retained alias transports refuse dispatch with the original
+  request retained; resuming task continuations remain allowed.
 - Replace a Core project file or ancestor with an escaping link after source Save or activation
   preparation. Preparation, participant planning and pre-build revalidation must refuse it without
   touching external files, compiling the substituted project or stopping participants.

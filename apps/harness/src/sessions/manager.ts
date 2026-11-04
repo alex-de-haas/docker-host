@@ -3358,6 +3358,8 @@ export class SessionManager {
         await guard();
         const dispatch = this.queuedDevelopment.get(`${id}:activation`);
         if (!dispatch) throw new Error("The original reviewed transport is unavailable. Retry explicitly.");
+        if (session.record.taskBarrier && session.record.taskBarrier.state !== "resuming")
+          throw new AppContextError(409, "barrier_pending", "Yield at the retained task boundary before more tool dispatch.");
         await dispatch();
         session.record.workspaceActivation = { ...queued, state: "dispatched" };
         await this.append(id, { type: "notice", message: "Execution selection dispatched to Core. Observe the original request ID for progress." });
@@ -3378,6 +3380,8 @@ export class SessionManager {
         if (status !== "idle" || !credential || !this.development) throw new Error("Execution did not finish successfully. Review and request completion again.");
         const dispatch = this.queuedDevelopment.get(`${id}:completion`);
         if (!dispatch) throw new Error("The original reviewed transport is unavailable. Retry explicitly.");
+        if (session.record.taskBarrier && session.record.taskBarrier.state !== "resuming")
+          throw new AppContextError(409, "barrier_pending", "Yield at the retained task boundary before more tool dispatch.");
         await dispatch();
         delete session.record.workflowCompletion;
         await this.append(id, { type: "notice", message: "Core verified workspace completion. Source and previews are retained for operator review." });
