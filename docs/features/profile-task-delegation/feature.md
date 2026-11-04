@@ -104,12 +104,13 @@ No browser bearer credential is persisted for background work.
 The 2026-11-04 macOS arm64 verification covers deliverables D1-D8 of the completed implementation
 plan. The task and executor interface versions and HTTP routes remain at v1.
 
-- `npm run harness:test`: 2,220 tests in 211 files pass.
+- `npm run harness:test`: 2,229 tests in 212 files pass.
 - `npm run harness:lint` and `npm run harness:build-web`: pass; lint retains one existing task-list
   effect-cleanup warning.
 - `npm run sdk:test` and `npm run sdk:dotnet:test`: 781 TypeScript and 75 .NET tests pass.
 - The exact Core project builds; the affected mediation, catalog, Decisions and direct-environment
-  tests pass (34 tests). Existing compiler/package warnings remain.
+  tests pass (34 tests). After integrating current main, the expanded selection including public-origin
+  regressions passes (95 tests). Existing compiler/package warnings remain.
 - `npm run test:integration -- tasks`, with `HOSTY_TASKS_BROWSER=1`, passes the five-minute parked
   restart, native protocol, optional workspace, single-Worker delegation, unrelated-ID SDK
   executor and Chromium journeys. `sessions` and `worker` suites also pass. Task acceptance uses
@@ -130,7 +131,7 @@ Windows and other operating systems are not part of this local verification. Par
 cleanup of scripted test children and the separate configured-model sandbox. Ordinary app data and
 the registered source worktree are retained.
 
-Artifact versions are Platform 0.173.0, Harness 0.90.0, TypeScript SDK 0.44.0 and .NET SDK 0.14.0.
+Artifact versions are Platform 0.174.0, Harness 0.91.0, TypeScript SDK 0.44.0 and .NET SDK 0.14.0.
 
 ## Testing Expectations
 
