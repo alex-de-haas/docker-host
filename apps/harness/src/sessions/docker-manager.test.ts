@@ -265,7 +265,7 @@ it.each([
   await first.postMessage(record.id, "work"); await expect.poll(f.starts).toBe(1);
   const runId = (await store.readRecord(record.id))!.workerRun!.id;
   await first.shutdown();
-  const usage = { usedTokens: 4200, maxTokens: 10000, estimated: true, observedAt: new Date().toISOString() , mcp: { version: 1 as const, method: "provider-estimate" as const, omittedTools: 0, tools: [{ server: "fixture", name: "read", tokens: 20, inclusion: "loaded" as const }] }};
+  const usage = { usedTokens: 4200, maxTokens: 10000, sources: { version: 1 as const, method: "local-estimate" as const, estimator: "o200k-base-chunks-1024-v1" as const, instructions: [{ source: "operator" as const, tokens: 12 }], omittedInstructions: 0, catalog: { state: "unavailable" as const, observedAt: "2026-11-04T12:00:00Z" } }, estimated: true, observedAt: new Date().toISOString() , mcp: { version: 1 as const, method: "provider-estimate" as const, omittedTools: 0, tools: [{ server: "fixture", name: "read", tokens: 20, inclusion: "loaded" as const }] }};
   f.options()!.onEvent({ type: "context_usage", usage });
   if (text) f.options()!.onEvent({ type: "assistant_text", text: "Retained final answer" });
   f.options()!.onEvent(type === "result" ? { type, status: "success" } : { type, message: "Retained provider error" });

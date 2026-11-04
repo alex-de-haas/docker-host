@@ -103,6 +103,7 @@ Plans: 14 In Progress · 1 Blocked · 43 Draft · 7 On Hold.
 - [Claude MCP Context Detail](features/claude-mcp-context-detail/feature.md) — Claude context diagnostics expose estimated MCP definition tokens by server and tool, with loaded, deferred and unknown inclusion states.
 - [CLI Bootstrap](features/cli-bootstrap/feature.md) — The hosty CLI installs itself and Core, discovers the Core control API and manages runtime apps.
 - [Feature: Cloudflare Ingress](features/cloudflare-ingress/feature.md) — An opt-in Cloudflare Tunnel provider that publishes app endpoints and derives their public origins.
+- [Codex Local Context Detail](features/codex-local-context-detail/feature.md) — Local Codex estimates for Hosty instructions and MCP definitions by server and tool, separate from the native context total.
 - [Composable Human And Agent Work](features/composable-agent-systems/plan.md) — Compose app-owned task providers and executors through Core contracts, with Harness profiles, optional resources, decisions and artifact handoffs. · Draft, 0/5, updated 2026-11-03
 - [Concurrent Tool Panels](features/concurrent-tool-panels/feature.md) — Shell displays multiple retained app tools and Feedback with common chrome, independent visibility, resizing and compact tabs.
 - [Container Capabilities And Devices](features/container-capabilities/feature.md) — A docker service can add named Linux capabilities and device nodes under /dev, opt-in per service and never as --privileged.
@@ -146,7 +147,7 @@ Plans: 14 In Progress · 1 Blocked · 43 Draft · 7 On Hold.
 - [Workspace Permissions And Deletion](features/external-workspace-access-continuity/feature.md) — Existing app and initiating-user permissions cover all Core workspaces, with stable allocation identity and one UI/MCP Delete operation.
 - [Feedback Composer Tools](features/feedback-composer-tools/feature.md) — App-provided feedback tools own forms and drafts while verified SDK source services supply selection, capture and scoped intake.
 - [Global (Shared) Host-Path Mounts](features/global-mounts/feature.md) — A host-level library of shared host folders that apps attach by reference.
-- [Harness Context Usage](features/harness-context-usage/feature.md) — Current context usage for Claude, Codex and Ollama, with MCP definition detail, durable replay and a compact composer indicator. · [plan](features/harness-context-usage/plan.md): Draft, 0/8, updated 2026-11-03
+- [Harness Context Usage](features/harness-context-usage/feature.md) — Current context usage for Claude, Codex and Ollama, with MCP definition detail, durable replay and a compact composer indicator. · [plan](features/harness-context-usage/plan.md): Draft, 0/8, updated 2026-11-04
 - [Harness Development UI](features/harness-development-ui/feature.md) — Harness provides separate Chats and Workspaces pages, multi-repository details, environment previews and verified lifecycle actions.
 - [Harness Dialog Layout](features/harness-dialog-layout/feature.md) — Harness modal forms and choosers keep their headers and actions visible while only their central content scrolls.
 - [Harness Local Production Runtime](features/harness-local-runtime/feature.md) — Harness local production starts reuse isolated compiled API and worker bundles with a static UI and locked runtime dependencies.

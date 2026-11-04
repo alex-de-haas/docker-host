@@ -1982,8 +1982,12 @@ export class SessionManager {
           session.mcpSignature = JSON.stringify([mcpServers ?? {}, session.mcpTargetSignature]);
           // Standing instructions are prompt text; selected skill packages use native discovery.
           const skillExport = this.settings && this.providers ? await prepareSkills(id, this.settings, session.record.skillIds) : undefined;
-          const systemPrompt = [skillExport?.platformIntroduction?.text.trim(),
-            docker ? DOCKER_SYSTEM_PROMPT : HOST_SYSTEM_PROMPT, operatorPrompt?.trim()].filter(Boolean).join("\n\n");
+          const instructionSources: import("../harness/context-sources.js").InstructionText[] = [
+            { source: "platform" as const, text: skillExport?.platformIntroduction?.text.trim() ?? "" },
+            { source: "runtime" as const, text: docker ? DOCKER_SYSTEM_PROMPT : HOST_SYSTEM_PROMPT },
+            { source: "operator" as const, text: operatorPrompt?.trim() ?? "" },
+          ].filter(block => Boolean(block.text));
+          const systemPrompt = instructionSources.map(block => block.text).join("\n\n");
           if (skillExport) {
             session.record.skillExportId = skillExport.id;
             session.record.skillIds ??= (await this.settings!.read()).skillIds ?? [];
@@ -2033,6 +2037,7 @@ export class SessionManager {
             autonomy: session.record.autonomy ?? "normal",
             cwd: workspace ?? this.workDir,
             systemPrompt,
+            instructionSources,
             ...(mcpServers ? { mcpServers } : {}),
             // Read live rather than captured: a provider toggled off mid-session must stop being
             // auto-allowed at once, not at the next run.

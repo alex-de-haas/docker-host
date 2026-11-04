@@ -1,6 +1,6 @@
 ---
 created: 2026-10-22
-updated: 2026-11-03
+updated: 2026-11-04
 summary: Current context usage for Claude, Codex and Ollama, with MCP definition detail, durable replay and a compact composer indicator.
 components: [apps/harness]
 ---
@@ -14,7 +14,8 @@ The shared tooltip exposes used tokens, the provider-reported window, percentage
 and measurement time, and remains available on keyboard focus. Claude observations with MCP metadata
 open a [server/tool detail dialog](../claude-mcp-context-detail/feature.md). Ollama uses the same dialog
 with explicitly labeled [local estimates and sent/catalog inclusion](../ollama-mcp-context-detail/feature.md).
-Other context categories have no drill-down.
+Codex adds [local estimates of Hosty instructions and MCP definitions](../codex-local-context-detail/feature.md)
+with explicit unknown inclusion, alongside its unchanged native total. Other context categories have no drill-down.
 
 ## Provider Measurements
 
@@ -55,7 +56,8 @@ stops at 100%.
 The common `context_usage` event carries either an unavailable value or a snapshot containing
 `usedTokens`, nullable `maxTokens`, `estimated` and `observedAt`, plus optional bounded MCP definition
 metadata described in [Claude MCP Context Detail](../claude-mcp-context-detail/feature.md) and
-[Ollama MCP Context Detail](../ollama-mcp-context-detail/feature.md). Native sessions persist these
+[Ollama MCP Context Detail](../ollama-mcp-context-detail/feature.md), and optional local source metadata
+described in [Codex Local Context Detail](../codex-local-context-detail/feature.md). Native sessions persist these
 events in the existing session journal. The existing authenticated SSE stream delivers live
 changes and replays them on reload or reconnect; no polling endpoint or additional connection
 is used.

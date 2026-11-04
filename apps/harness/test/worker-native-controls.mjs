@@ -1,3 +1,4 @@
+import { checkContextProtocol } from './codex-context-native.mjs';
 import { checkPredictionProtocol } from './codex-prediction-native.mjs';
 import { query, createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -31,4 +32,5 @@ try {
   console.log('Codex missing-account limits are unavailable without creating a model turn.');
   console.log('Codex native model/effort catalog acknowledged without submitting a prompt.');
   await checkPredictionProtocol(home);
+  await checkContextProtocol(home);
 } finally {finish?.();claude?.close();await codex?.closeAndWait();await profile?.close();await rm(home,{recursive:true,force:true});}
