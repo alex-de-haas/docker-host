@@ -108,6 +108,7 @@ def check(context, app_origin, client, call, timed):
         assert tree.get('path') and tree.get('id'), 'Expected a registered Core worktree'
         post('/sessions/'+chat['id']+'/messages', {'text':'Create the fixture file, read it and run the check.','clientRequestId':str(uuid.uuid4())})
         sequence, events = complete(chat['id'], expected_approvals=4)
+        assert any(e.get('type') == 'assistant_text' and e.get('text') == 'Verified completion' for e in events), 'Completed answer must enter the durable transcript'
         assert any(e.get('type') == 'command_result' and e.get('exitCode') == 0 for e in events)
         assert any(e.get('type') == 'tool_result' and 'verified adapter' in e.get('output','') for e in events)
         assert any(e.get('type') == 'question_request' for e in events)
@@ -133,6 +134,7 @@ def check(context, app_origin, client, call, timed):
         timed('restart')
         post('/sessions/'+chat['id']+'/messages', {'text':'Continue without repeating any action.','clientRequestId':str(uuid.uuid4())})
         _, resumed = complete(chat['id'], sequence)
+        assert any(e.get('type') == 'assistant_text' and e.get('text') == 'Verified continuation' for e in resumed), 'Resumed answer must enter the durable transcript'
         assert not any(e.get('type') == 'tool_use' for e in resumed)
         assert any(m.get('role') == 'tool' for m in requests[-1]['messages'])
         restored = next(e['usage'] for e in resumed if e.get('type') == 'context_usage' and e.get('usage'))
