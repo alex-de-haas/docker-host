@@ -40,20 +40,50 @@ public struct CoreUpdateStatus: Hashable, Sendable, Codable {
     public let checkedAt: Date
     public let error: String?
 
-    /// Whether to offer the update action. A failed check is not an invitation to apply one.
-    public var canApply: Bool { updateAvailable && (error ?? "").isEmpty }
+    public let offerId: String?
+    public let operationId: String?
+    public let readiness: String?
+
+    /// A ready offer or an explicitly resumable operation is required; legacy verdicts stay read-only.
+    public var canApply: Bool {
+        guard let offerId, Self.validID(offerId) else { return false }
+        return (updateAvailable && (error ?? "").isEmpty)
+            || (readiness == "recovery-required" && operationId.map(Self.validID) == true)
+    }
+
+    public static func validID(_ value: String) -> Bool {
+        value.utf8.count == 32 && value.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
+    }
 }
 
 /// `POST /api/core/update` — accepted, not finished.
 ///
-/// Core answers `202` and then spawns the CLI, which replaces the binary and restarts Core. Everything
-/// after that reads as a connection failure to a client that is still waiting, so the reply has to be
-/// treated as "the work has started": the disconnect that follows is the update working, not an error.
-/// The two ways it refuses before any work starts — `503` when the CLI cannot be located and `500`
-/// when the spawn itself fails — are ordinary errors and must read differently.
+/// Core durably accepts the exact offer and request before spawning the updater. A 202 response is
+/// not completion; read the operation until Core reports completed. A dropped response or preparation
+/// error preserves the request identity for explicit recovery.
 public struct CoreUpdateAcknowledgement: Hashable, Sendable, Codable {
+    public let id: String?
     public let status: String
+    public let releaseId: String?
+    public let error: String?
     public let logFile: String?
+}
+
+/// Retain this exact request across uncertain transport outcomes and explicit retries.
+public struct CoreUpdateAttempt: Hashable, Sendable, Encodable {
+    public let offerId: String
+    public let requestId: String
+
+    public init(status: CoreUpdateStatus, requestID: UUID = UUID()) throws {
+        guard status.canApply, let offerId = status.offerId else {
+            throw CoreError.invalidResponse("Refresh Core update availability before applying an update.")
+        }
+        self.offerId = offerId
+        self.requestId = status.operationId ?? requestID.uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+        guard CoreUpdateStatus.validID(self.requestId) else {
+            throw CoreError.invalidResponse("Core returned an invalid update operation ID.")
+        }
+    }
 }
 
 /// `GET /api/auth/session`.

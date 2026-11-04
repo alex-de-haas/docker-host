@@ -249,8 +249,18 @@ public actor CoreClient {
     /// Starts the Core self-update. Returns as soon as Core has spawned the CLI; Core then restarts
     /// itself, so the caller must expect its next requests to fail while that happens. See
     /// `CoreUpdateAcknowledgement`.
-    public func applyCoreUpdate() async throws -> CoreUpdateAcknowledgement {
-        try decode(await send(makeRequest(.post, "/api/core/update")))
+    public func applyCoreUpdate(_ attempt: CoreUpdateAttempt) async throws -> CoreUpdateAcknowledgement {
+        var request = makeRequest(.post, "/api/core/update")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(attempt)
+        return try decode(await send(request))
+    }
+
+    public func coreUpdateOperation(requestID: String) async throws -> CoreUpdateAcknowledgement {
+        guard CoreUpdateStatus.validID(requestID) else {
+            throw CoreError.invalidResponse("Invalid Core update operation ID.")
+        }
+        return try await get("/api/core/updates/\(requestID)")
     }
 
     // MARK: - Opening an app

@@ -22,7 +22,8 @@ term; retain existing channel spellings as compatibility aliases. The owner also
 daily/stable are this distribution's policy, while publishers can configure any valid feed names
 and one, two, three, ten or more feeds without changing Core. The owner authorized full implementation on 2026-11-03. Implementation is In Progress. On 2026-11-04 the owner authorized the test-only Shell source
 permission, completion of verification, commits, one pull request and fixes until its full CI passes.
-This does not authorize production migration, stable promotion or merge.
+On 2026-11-04 the owner additionally authorized a regular merge of PR #734 and completion of
+the app/platform feed rollout, including initial stable seeding and the compatibility bridge.
 
 This plan retains D1, D3 and D6-D9 from runtime app update hardening and adds D10-D15. D2, D4 and D5
 move, with their IDs intact, to [update recovery and compatibility](../runtime-app-update-recovery/plan.md).
@@ -662,6 +663,9 @@ Verified on macOS ARM64 through 2026-11-04:
   Shell-to-Core confirmation flow switches reviewed to frequent and returns to reviewed. The
   installed 1.1.0 remains stopped even though reviewed offers 1.0.0. Cancelling another confirmation
   preserves the reviewed binding and returns the editable draft without reporting success.
+- Native client compatibility passes 185 HostyKit tests, the macOS Swift app build, Cardputer
+  host/HTTP adapter tests and the ESP-IDF firmware build. Both clients send reviewed offers with
+  retained operation IDs; Swift waits for the exact update operation to complete.
 - Version consistency, documentation/index/link validation against `ci-publication/main` and
   `git diff --check` pass. The original checkout and ordinary installed applications remain unchanged.
 
