@@ -1,6 +1,6 @@
 ---
 created: 2026-09-17
-updated: 2026-10-28
+updated: 2026-11-04
 summary: Named Claude, Codex and external Ollama agent connections with provider selection, scoped tools and durable conversation state.
 components: [apps/harness]
 ---
@@ -210,11 +210,17 @@ legacy Claude/Codex sessions.
 ### Tools, Context And Decisions
 
 The adapter streams `/api/chat`, validates complete responses and dispatches complete tool calls
-serially. Partial/truncated responses never dispatch actions. Available local tools read/list/search
+serially. Streaming deltas update the live view; each fully received assistant message also emits
+completed text for the durable transcript before tool dispatch or turn completion. Partial/truncated
+responses never dispatch actions. Available local tools read/list/search
 text, apply an exact unique replacement or create a file, run a command, ask a question, read an
 exported skill and discover authorized MCP tools. Tool search exposes up to eight matching MCP
 schemas on the next step; it changes model context, not access. The existing scoped MCP proxy and
-Ask / Run unprompted / Disabled rules remain authoritative.
+Ask / Run unprompted / Disabled rules remain authoritative. The discovery catalog holds up to
+4,096 tools across authorized servers, independently of the eight-schema model selection. Its
+serialized tool definitions have a combined 16 MiB UTF-8 budget; the per-schema limit and repeated
+pagination-cursor checks remain in place. Exceeding a catalog budget fails explicitly without
+silently omitting tools.
 
 Normal mode requires approval for patches and commands. Approvals/questions bind to their stored
 identity; stale or duplicate answers do not authorize another action. Patches verify the original
@@ -309,5 +315,8 @@ boundaries, account invalidation and the Providers settings control.
   requires the account owner to complete the browser step; never insert test credentials into a real
   account or expose credentials in test output.
 
+- Cover catalogs larger than 128 tools across pages and servers, discovery and dispatch of a tool
+  beyond that boundary, the eight-schema model limit, aggregate byte/count budgets and catalog reloads. Verify completed
+  assistant text before tool dispatch and final completion, including after durable resume.
 - Keep Ollama contract fixtures deterministic and separate from real model smoke checks. Cover native/Docker execution identity, tool schema and resource guards, pending decision revocation, literal patch replacement, cancellation, unknown receipts, continuation, context limits and UTF-8 attachment refusal.
 - Run `HOSTY_OLLAMA_ACCEPTANCE=1 npm run test:integration -- harness-local` for the managed adapter journey. Add `HOSTY_OLLAMA_BROWSER=1` with an installed Playwright module (or `HOSTY_OLLAMA_PLAYWRIGHT_MODULE`) for browser administration. Set `HOSTY_OLLAMA_URL` only for an authorized existing server smoke check; no models are downloaded.
