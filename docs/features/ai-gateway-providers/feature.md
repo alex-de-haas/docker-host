@@ -67,11 +67,11 @@ discovery cannot return their provider. On narrow screens the list sits above th
 ## Chats and capabilities
 
 A new chat takes the configured default unless its creation request names a connection. An empty
-chat applies a dropdown selection immediately, without a separate Select button. The compact provider
-control sits in the message composer actions beside attachments and app context. Its menu opens
-upward and marks the default connection. An unbound empty
-chat adopts the available default when its provider list refreshes. The first accepted message locks
-its choice, and the dropdown remains visible but disabled. Saving a selection disables sending; a
+chat applies a dropdown selection immediately, without a separate Select button. The provider field
+lives inside the shared [Agent settings panel](../harness-composer-controls/feature.md), alongside
+profile, model and reasoning controls, and marks the default connection. An unbound empty chat
+adopts the available default on its initial provider read; recovery reads do not select an account.
+The first accepted message locks its choice, shown as a read-only row in the panel. Saving a selection disables sending; a
 failed save keeps the previous provider and displays the error. Before the first message, reselecting
 the current provider refreshes its binding when its credential revision has changed. A
 started chat persists connection id, credential revision, adapter kind and native session id.

@@ -401,7 +401,7 @@ export async function dispatchAppCreation(sessionId: string, requestId: string, 
   })).json() as Promise<AssistantSession>;
 }
 
-export type ModelCatalog = { revision: string; defaultModel?: string; models: { id: string; label: string; unavailableReason?: string; efforts: { id: string; label: string }[] }[] };
+export type ModelCatalog = { revision: string; defaultModel?: string; models: { id: string; label: string; unavailableReason?: string; defaultEffort?: string; efforts: { id: string; label: string }[] }[] };
 export async function getSessionModels(id: string): Promise<ModelCatalog> {
   return (await call(`/sessions/${encodeURIComponent(id)}/models`)).json() as Promise<ModelCatalog>;
 }

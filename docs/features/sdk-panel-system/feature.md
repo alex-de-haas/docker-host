@@ -163,7 +163,11 @@ chooses a provider nor performs I/O.
 
 The shared `HostyAppFrame` applies sandbox and clipboard/microphone policy, theme messages,
 attention, app-owned authentication and permission/MCP review. Reviews use the registered app
-identity and canonical Core URL, ignoring child-supplied identity/URLs; a visible link remains when
+identity and canonical Core URL, ignoring child-supplied identity/URLs. Prepared installation confirmations
+use `presentInstallationConfirmation`: a verified active frame sends only a 48-hex receipt ID, and
+the host opens its own Core confirmation URL outside the iframe sandbox. The requesting app owns
+receipt polling and the temporary retry link, so the host retains no operation state. Core retains ownership,
+authentication and explicit consent; the bridge never submits or approves a request. A visible link remains when
 popups are blocked. Shell uses explicit Core frame policy when present; with older Core metadata it
 derives microphone and popup-escape policy from the target app’s persisted speech/install grants.
 Missing or unrelated grants enable neither capability. No delegated-token responder is installed. HTTPS hosts refuse HTTP frames with
@@ -363,6 +367,9 @@ queued-open timeouts, channel renewal and status/open ordering. Selection tests 
   Exercise Plans beside its finalized discussion in both modes, no implicit popup/nested rail,
   a non-assistant tool before discussion, retained drafts/document state, Shell-owned pages,
   keyboard/width/theme behavior, own-frame access recovery and explicit same-session opening.
+- Verify installation-confirmation presentation rejects foreign frames/origins and malformed receipts,
+  derives the Core URL locally, preserves sandbox policy and leaves consent/receipt recovery with Core
+  and the caller. Exercise a COOP-isolated confirmation from Shell without popup-escape permission.
 - Exercise actual CSP refusal, permission/MCP review and microphone policy with browser fixtures;
   fake media is sufficient for capture/delegation checks. Never claim that a protocol fixture proves
   a real speech provider transcribed audio or a model executed a prompt.

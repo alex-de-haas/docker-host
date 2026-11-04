@@ -13,7 +13,7 @@ internal sealed partial class DevelopmentWorkspaceService
 {
     private ISourceGitAccess RemoteGit => privateSources ?? throw PrivateSourceService.Denied();
 
-    private async Task<AppRecord> RequireLocalRemoteApp(DevelopmentWorkspace w, string appId, CancellationToken ct, bool validateGrant = true)
+    private async Task<AppRecord> RequireLocalRemoteApp(DevelopmentWorkspace w, string appId, CancellationToken ct, bool validateGrant = true, bool localOnly = false)
     {
         var app = await apps.GetAppAsync(appId, ct);
         if (app is null || !w.Apps.Any(a => a.AppId == appId && a.Installation == app.InstalledAt) ||
@@ -26,7 +26,7 @@ internal sealed partial class DevelopmentWorkspaceService
         if (source.Remote is { } remote)
         {
             if (remote.Grant.OwnerId != w.Owner.UserId) throw Error("forbidden", "This source connection belongs to another user.");
-            if (validateGrant) await RemoteGit.ValidateAsync(new(Git: remote.Grant), ct);
+            if (validateGrant) await ValidateSourceGrantAsync(remote.Grant, ct, heldConnection: null, localOnly: localOnly);
         }
         return app;
     }
@@ -205,13 +205,13 @@ internal sealed partial class DevelopmentWorkspaceService
         return observed.Head;
     }
 
-    internal async Task<LocalSourceRemote?> PublicationRemoteAsync(DevelopmentWorkspace w, CancellationToken ct, bool validateGrant = true)
+    internal async Task<LocalSourceRemote?> PublicationRemoteAsync(DevelopmentWorkspace w, CancellationToken ct, bool validateGrant = true, bool localOnly = false)
     {
         foreach (var attached in w.Apps)
         {
             var app = await apps.GetAppAsync(attached.AppId, ct);
             if (app?.SourceState?.Type != "local-git" && w.Repository != Path.Combine(paths.ResolveManagedCheckoutPath(attached.AppId), ".git")) continue;
-            app = await RequireLocalRemoteApp(w, attached.AppId, ct, validateGrant);
+            app = await RequireLocalRemoteApp(w, attached.AppId, ct, validateGrant, localOnly);
             return app.SourceState!.Remote ?? throw Error("remote_required", "Connect an existing repository before configuring publication.");
         }
         return null;

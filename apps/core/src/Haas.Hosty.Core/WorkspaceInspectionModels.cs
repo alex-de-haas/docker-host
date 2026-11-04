@@ -9,6 +9,7 @@ internal sealed record InspectedWorkspace(string Id, string State, InspectionOwn
     public WorkspaceParticipationView? Participation { get; init; }
     public string Name { get; init; } = "Workspace";
     public WorkspaceWorkflow Workflow { get; init; } = new();
+    public WorkspacePullRequestSummary? PullRequestSummary { get; init; }
     public DateTimeOffset? UpdatedAt { get; init; }
 }
 internal sealed record InspectionOwner(string Kind, string Label, string Reference, string? AppId, string? SessionUrl, string? SessionUnavailable);

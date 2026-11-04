@@ -1,6 +1,6 @@
 ---
 created: 2026-10-19
-updated: 2026-10-29
+updated: 2026-11-03
 summary: Select named app workspaces or installed package runtimes with scoped access review, retained package choices and recoverable Core-owned transitions.
 components: [apps/core, apps/cli, apps/shell, apps/harness, shared]
 ---
@@ -90,7 +90,7 @@ become package rights, and later revocations remain effective.
 
 A `review-required` result carries `review`, an `InstallationPrepare` with `workspaceManifest`.
 Shell/Harness prepare and submit it through the existing Core confirmation API and display the
-resulting approval request. They then retry the original execution choice. A local CLI selection
+resulting approval request. Harness opens the confirmation automatically and continues the original execution choice after approval; its compact controls and reload recovery are described in [Harness Development](../harness-development-ui/feature.md). Shell also retains the original execution choice through confirmation. A local CLI selection
 requiring additional rights directs the operator to select the workspace in Dashboard under their
 signed-in identity. It cannot manufacture approval for a synthetic operator.
 

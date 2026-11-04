@@ -21,7 +21,7 @@ export function WorkspacePreviews({ workspaceId, canStart = true, disabled = fal
   workspaceId: string; canStart?: boolean; disabled?: boolean; refresh?: () => void;
 }) {
   const [value, setValue] = useState<Previews | null>(null), [error, setError] = useState("");
-  const [revision, setRevision] = useState(0);
+  const [revision, setRevision] = useState(0), [loaded, setLoaded] = useState(false);
   useEffect(() => {
     const abort = new AbortController(); let loading = false;
     const load = async () => {
@@ -29,13 +29,13 @@ export function WorkspacePreviews({ workspaceId, canStart = true, disabled = fal
       try { const next = await developmentRequest<Previews>(`/${workspaceId}/previews`, undefined, abort.signal);
         if (!abort.signal.aborted) { setValue(next); setError(""); } }
       catch (e) { if (!abort.signal.aborted) { setValue(null); setError(e instanceof Error ? e.message : String(e)); } }
-      finally { loading = false; }
+      finally { loading = false; if (!abort.signal.aborted) setLoaded(true); }
     };
     void load(); const timer = setInterval(() => { if (document.visibilityState === "visible") void load(); },10000);
     return () => { abort.abort(); clearInterval(timer); };
   }, [workspaceId, revision]);
   const changed = () => { setRevision(n => n + 1); refresh?.(); };
-  if (value && !value.environments.length) return null;
+  if (!loaded || value && !value.environments.length) return null;
   return <section data-workspace-section className="space-y-3" aria-label="Sandbox previews"><h3 className="text-xs font-semibold text-muted-foreground">Previews</h3>
     {!value && !error && <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><HostyLoader label={null} className="size-4" />Loading sandbox previews…</p>}
     {error && <Alert variant="destructive"><AlertTitle>Preview status unavailable</AlertTitle><AlertDescription>

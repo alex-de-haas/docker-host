@@ -16,7 +16,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   // server-rendered markup is deliberately theme-less, and the class the bootstrap writes would
   // otherwise read as a hydration mismatch.
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" className="h-full" suppressHydrationWarning>
       {/*
         Both bootstraps run ahead of any body markup, which is where the rest of the fleet puts them
         and what makes "before the first paint" true rather than merely likely: a script at the top
@@ -37,7 +37,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         */}
         <script dangerouslySetInnerHTML={{ __html: themeBootstrapScript }} />
       </head>
-      <body className="bg-background text-foreground antialiased">
+      <body className="h-full bg-background text-foreground antialiased">
         <ThemeFavicon />
         {/*
           The bridges own what a paint-blocking script must not do: persisting what a shell declared
