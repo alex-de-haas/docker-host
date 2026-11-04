@@ -5,6 +5,7 @@ import { HostyNextOverlay as HostyOverlay } from "@hosty-sdk/app/next";
 import { HostLaunchBridge, HostThemeBridge } from "@hosty-sdk/app/react";
 import { themeBootstrapScript } from "@hosty-sdk/app/theme";
 import { AppShell } from "@/components/app-shell";
+import { ThemeFavicon } from "../../../../shared/web/theme-favicon";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -27,6 +28,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <script dangerouslySetInnerHTML={{ __html: themeBootstrapScript }} />
       </head>
       <body>
+        <ThemeFavicon />
         <HostThemeBridge />
         <HostLaunchBridge />
         <HostyOverlay navigation={{ renderer: "custom" }}><AppShell>{children}</AppShell></HostyOverlay>

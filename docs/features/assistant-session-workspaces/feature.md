@@ -1,6 +1,6 @@
 ---
 created: 2026-09-27
-updated: 2026-10-26
+updated: 2026-11-03
 summary: Logical workspaces group repository worktrees with explicit session membership, compatible Git operations and an authorized inspection API.
 components: [apps/core, apps/harness]
 ---
@@ -65,6 +65,42 @@ preserve the original name arguments and never roll back a later rename. Renamin
 files, branch, source stamp, active consumer, lease, permission or runtime admission. The existing
 workspace observation stream invalidates readers after a rename; inventory exposes the latest name
 and metadata time across all of its repository bindings.
+
+## Workspace Branch Names
+
+New worktree allocations use `hosty/<task-slug>-<suffix>`, for example
+`hosty/shared-agent-skills-876c1c82d556`. Core derives the slug from the persisted
+logical workspace name at allocation. Unnamed compatible callers use a meaningful
+legacy task label or `workspace`. The slug uses NFC-normalized invariant lowercase
+letters, decimal digits and attached combining marks, with other runs replaced by
+hyphens. It preserves non-Latin text and fits within 32 UTF-8 bytes without splitting
+a scalar or retaining a trailing separator. Core performs no translation or model call.
+
+The suffix normally contains the first 12 hexadecimal characters of the full worktree
+ID, giving a maximum ordinary branch length of 51 UTF-8 bytes. Existing refs and pending
+reservations in the same managed repository extend the suffix by four characters at a
+time, up to the full ID. Ref namespace conflicts are included. Exhaustion refuses
+allocation without modifying an occupied ref.
+
+A versioned naming descriptor freezes the slug and suffix length in the worktree
+record before Git mutation. Git creates the branch and a private
+`refs/hosty/allocations/<worktree-id>` receipt in one ref transaction. That receipt
+binds the full allocation ID, branch and original base. Interrupted preparation only
+attaches a branch with matching receipt and base; an unrelated matching name or HEAD
+is insufficient. Cleanup removes the receipt using its expected object ID after
+removing the owned branch.
+
+Workspace and conversation renames leave the registered branch unchanged. A new
+repository added later uses the purpose name current at its own allocation; repositories
+already in the group keep their branches. Clients, inspection and publication use the
+exact registered branch instead of reconstructing it from an ID.
+
+Existing records without a naming descriptor retain
+`hosty/session/<64-character-worktree-id>` exactly. Preparation replay, restart,
+cleanup, Delete and Discard accept that legacy format without a branch or path migration.
+Unknown or inconsistent naming descriptors are refused. Full allocation identity,
+repository/path validation, actual Git HEAD checks and existing authority remain in force.
+Short branch names do not shorten internal IDs or change directory ownership.
 
 ## Authorization And APIs
 
@@ -242,6 +278,15 @@ Harness service, while specific consumers still prevent cleanup. The shared admi
 does not isolate one exposed worktree from another.
 
 ## Testing Expectations
+
+- Verify normalized, byte-bounded readable branches, non-Latin names and fallback labels;
+  exercise occupied refs, namespace conflicts and concurrent owners with the same purpose.
+- Recover preparation before and after the atomic ref transaction and worktree materialization.
+  Refuse missing, changed or symbolic allocation evidence without adopting or removing foreign refs.
+- Preserve legacy branch names through replay, rename, restart and partial Delete/Discard recovery;
+  validate both naming formats and remove new allocation receipts during authorized cleanup.
+- Verify exact registered branch values through Harness, external/Core-source preparation,
+  observation, publication and provider PR reads.
 
 - Harness preparation freezes a derived name before Core admission, then preserves it across lost
   responses, conversation renames and process restart without accepting changed explicit arguments.

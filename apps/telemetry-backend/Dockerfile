@@ -13,7 +13,8 @@ RUN dotnet restore apps/telemetry-backend/src/Haas.Hosty.TelemetryBackend/Haas.H
 
 COPY apps/telemetry-backend apps/telemetry-backend
 COPY packages/app-sdk-dotnet/HostySdk.App packages/app-sdk-dotnet/HostySdk.App
-COPY apps/core/src/Haas.Hosty.Core/SharedTaskContract.cs apps/core/src/Haas.Hosty.Core/SharedTaskContract.cs
+# The SDK links Core contracts; keep the complete contract family in the build context.
+COPY apps/core/src/Haas.Hosty.Core/Shared*Contract.cs apps/core/src/Haas.Hosty.Core/
 RUN dotnet publish apps/telemetry-backend/src/Haas.Hosty.TelemetryBackend/Haas.Hosty.TelemetryBackend.csproj \
     -c Release -o /app --no-restore
 

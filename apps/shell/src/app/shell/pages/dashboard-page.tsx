@@ -40,6 +40,7 @@ import {
   RefreshCw,
   RotateCcw,
   Settings,
+  ShieldCheck,
   Square,
   Terminal,
   Trash2,
@@ -575,6 +576,8 @@ function InstalledAppRow({
   // A missing cached digest makes the click rebuild the plan and classify the fresh candidate.
   // Only its review-required verdict opens Core confirmation; routine updates queue directly.
   const needsReview = verdict?.requiresReview === true;
+  const permissionReviewUrl = canManageApps && app.permissionState?.status === "known" && app.permissionState.missingRequired.length > 0
+    ? `${coreOrigin}/install/permissions/${encodeURIComponent(app.id)}` : undefined;
   const configurationRequired = app.configurationReadiness?.required === true;
   const showRestartRequired = Boolean(app.restartRequired && !lifecycleLabel);
   // Removal, like start/stop/restart/update, is an inherent Core operation: the endpoint authorizes on
@@ -656,6 +659,7 @@ function InstalledAppRow({
                 aria-label={needsReview ? "Review update in Core" : undefined}
                 title={needsReview ? "Core confirmation required" : undefined}
                 onClick={() => needsReview ? onOpenPanel(app, "update") : onUpdateApp(app)}>Update</Button>
+              : permissionReviewUrl ? <Button asChild variant="outline" size="sm"><a href={permissionReviewUrl} target="_blank" rel="noopener noreferrer">Review Access</a></Button>
               : !running && canControl ? <Button variant="outline" size="sm" disabled={lifecycleDisabled || isBusy("start")} onClick={() => onAction(app, "start")}>Start</Button>
               : canViewLogs && !canControl ? <Button variant="outline" size="sm" onClick={() => onOpenPanel(app, "logs")}>Logs</Button>
               : running && canControl ? <Button variant="outline" size="sm" disabled={lifecycleDisabled || isBusy("stop")} onClick={() => onAction(app, "stop")}>Stop</Button> : null}
@@ -676,6 +680,7 @@ function InstalledAppRow({
             canRemove={canRemove}
             canCheckUpdate={canUpdate}
             canReviewUpdate={updateVisible}
+            permissionReviewUrl={permissionReviewUrl}
             checkingUpdate={checkingUpdate}
             onLifecycleAction={(action) => onAction(app, action)}
             onCheckUpdate={() => onCheckUpdate(app)}
@@ -932,6 +937,7 @@ function InstalledAppActionsMenu({
   canRemove,
   canCheckUpdate,
   canReviewUpdate,
+  permissionReviewUrl,
   checkingUpdate,
   onLifecycleAction,
   onCheckUpdate,
@@ -958,6 +964,7 @@ function InstalledAppActionsMenu({
   // True exactly when the row shows its update icon, so the plan is reachable from the menu as well
   // — the only way in for a routine update, whose icon applies straight away.
   canReviewUpdate: boolean;
+  permissionReviewUrl?: string;
   checkingUpdate: boolean;
   onCheckUpdate: () => void;
   onReviewUpdate: () => void;
@@ -967,6 +974,7 @@ function InstalledAppActionsMenu({
     canControl ||
     canCheckUpdate ||
     canReviewUpdate ||
+    permissionReviewUrl ||
     canViewLogs ||
     canBackup ||
     canConfigure ||
@@ -1014,6 +1022,14 @@ function InstalledAppActionsMenu({
             Update app
           </DropdownMenuItem>
         )}
+        {permissionReviewUrl && (
+          <DropdownMenuItem asChild>
+            <a href={permissionReviewUrl} target="_blank" rel="noopener noreferrer">
+              <ShieldCheck className="h-4 w-4" />
+              Review Access
+            </a>
+          </DropdownMenuItem>
+        )}
         {canCheckUpdate && (
           <DropdownMenuItem
             disabled={checkingUpdate}
@@ -1027,7 +1043,7 @@ function InstalledAppActionsMenu({
             Check for updates
           </DropdownMenuItem>
         )}
-        {(canCheckUpdate || canReviewUpdate) &&
+        {(canCheckUpdate || canReviewUpdate || permissionReviewUrl) &&
           (canViewLogs || canBackup || canConfigure || canRemove) && <DropdownMenuSeparator />}
         {canViewLogs && (
           <DropdownMenuItem onClick={() => onOpenPanel(app, "logs")}>

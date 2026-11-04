@@ -56,6 +56,8 @@ internal sealed record DevelopmentWorkspace
     public required string RepositoryId { get; init; }
     public required string Path { get; init; }
     public required string Branch { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public WorkspaceBranchNaming? BranchNaming { get; init; }
     public required string TargetBranch { get; init; }
     public required string OriginalBase { get; init; }
     public required string IntegrationBase { get; init; }

@@ -577,7 +577,7 @@ internal static class InstallationApprovalEndpoints
     internal static void ProtectPage(HttpResponse response, bool closeWindow = false)
     {
         response.Headers.CacheControl = "no-store";
-        response.Headers["Content-Security-Policy"] = "default-src 'none'; font-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'none'; form-action 'self'; base-uri 'none'";
+        response.Headers["Content-Security-Policy"] = "default-src 'none'; img-src 'self'; font-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'none'; form-action 'self'; base-uri 'none'";
         if (closeWindow)
             response.Headers["Content-Security-Policy"] += $"; script-src 'sha256-{CloseWindowScriptHash}'";
         response.Headers["X-Frame-Options"] = "DENY";

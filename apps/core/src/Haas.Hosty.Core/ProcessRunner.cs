@@ -21,19 +21,14 @@ internal static class ProcessRunner
         ProcessStartInfo startInfo,
         TimeSpan? timeout = null,
         CancellationToken cancellationToken = default,
-        int? outputLimit = null)
+        int? outputLimit = null,
+        string? standardInput = null)
     {
         startInfo.RedirectStandardOutput = true;
         startInfo.RedirectStandardError = true;
-        // Own stdin too, even though nothing here writes to it. Redirecting any stream makes .NET set
-        // STARTF_USESTDHANDLES, and Windows then requires every handle in STARTUPINFO to be inheritable —
-        // an unredirected stdin hands the child Core's own handle, whatever state it is in (Core runs
-        // detached under `cmd /c "core.exe > core.log 2>&1"`, and WindowsProcessControl used to clear its
-        // inherit flag outright). A child holding a broken stdin dies the moment it re-spawns: docker
-        // exec'ing a cli-plugin failed with "The request is not supported". An owned pipe, closed
-        // immediately below, gives every child a valid stdin at EOF regardless of how Core was launched.
-        // Both callers are non-interactive captures, and EOF is the better answer for them anyway — it
-        // stops git blocking forever on a credential prompt nobody can type into.
+        // Own stdin even when there is no input: Windows requires an inheritable handle
+        // when any standard stream is redirected. All callers remain non-interactive.
+        startInfo.StandardInputEncoding = new System.Text.UTF8Encoding(false);
         startInfo.RedirectStandardInput = true;
         startInfo.UseShellExecute = false;
 
@@ -42,19 +37,6 @@ internal static class ProcessRunner
         // Start exceptions (missing binary, etc.) propagate to the caller, which wraps them in its own
         // domain exception (DockerUnavailableException / AppLifecycleException).
         process.Start();
-
-        // Best-effort: a child that exits before this runs may already have torn down its read end, and
-        // the close then faults on the broken pipe. Swallow it — the child is on its way out, and its
-        // output and exit code are still ours to collect below. It especially must not escape here, in
-        // the gap between Start() and the try: `using` would dispose the Process without killing it,
-        // leaking exactly the child (and wedged docker) that point 2 above exists to prevent.
-        try
-        {
-            process.StandardInput.Close();
-        }
-        catch (Exception ex) when (ex is IOException or ObjectDisposedException)
-        {
-        }
 
         using var deadlineCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         if (timeout is { } limit)
@@ -72,6 +54,7 @@ internal static class ProcessRunner
             // naturally with whatever was captured; only WaitForExit observes the deadline/cancellation.
             var stdoutTask = ReadOutputAsync(stdoutReader, outputLimit);
             var stderrTask = ReadOutputAsync(stderrReader, outputLimit);
+            var inputTask = WriteInputAsync(process.StandardInput, standardInput, deadlineCts.Token);
 
             try
             {
@@ -80,6 +63,7 @@ internal static class ProcessRunner
             catch (OperationCanceledException)
             {
                 KillProcessTree(process);
+                await inputTask;
                 var stdoutPartial = await ReadSafelyAsync(stdoutTask);
                 var stderrPartial = await ReadSafelyAsync(stderrTask);
 
@@ -94,7 +78,7 @@ internal static class ProcessRunner
 
             // WhenAll first so both reads are awaited (and observed) even if one faults — awaiting them in
             // sequence would leave the second unawaited on the first's exception, racing its disposal below.
-            await Task.WhenAll(stdoutTask, stderrTask);
+            await Task.WhenAll(stdoutTask, stderrTask, inputTask);
             var stdout = await stdoutTask;
             var stderr = await stderrTask;
             return new ProcessRunResult(process.ExitCode, stdout, stderr, TimedOut: false);
@@ -105,6 +89,24 @@ internal static class ProcessRunner
             // race an in-flight read.
             stdoutReader.Dispose();
             stderrReader.Dispose();
+        }
+    }
+
+    private static async Task WriteInputAsync(StreamWriter writer, string? input, CancellationToken ct)
+    {
+        try
+        {
+            if (input is not null) await writer.BaseStream.WriteAsync(System.Text.Encoding.UTF8.GetBytes(input), ct);
+        }
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException or OperationCanceledException)
+        {
+            // The child may exit early; its exit status is authoritative. The shared deadline
+            // is observed by WaitForExitAsync, which also kills blocked writers' process trees.
+        }
+        finally
+        {
+            try { writer.Dispose(); }
+            catch (Exception ex) when (ex is IOException or ObjectDisposedException) { }
         }
     }
 

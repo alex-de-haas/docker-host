@@ -590,6 +590,7 @@ internal static class HostyCoreApplication
           <!doctype html>
           <html lang="en">
           <head>
+            {{CoreBrowserPages.Favicon}}
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1">
             <title>{{encodedTitle}}</title>
@@ -644,6 +645,7 @@ internal static class HostyCoreApplication
           <!doctype html>
           <html lang="en">
           <head>
+            {{CoreBrowserPages.Favicon}}
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1">
             <title>Hosty Login</title>
@@ -706,6 +708,7 @@ internal static class HostyCoreApplication
           <!doctype html>
           <html lang="en">
           <head>
+            {{CoreBrowserPages.Favicon}}
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1">
             <title>Hosty Core Setup</title>
@@ -796,6 +799,7 @@ internal static class HostyCoreApplication
           <!doctype html>
           <html lang="en">
           <head>
+            {{CoreBrowserPages.Favicon}}
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1">
             <title>Hosty Core Recovery</title>
@@ -882,6 +886,7 @@ internal static class HostyCoreApplication
           <!doctype html>
           <html lang="en">
           <head>
+            {{CoreBrowserPages.Favicon}}
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1">
             <title>Hosty Core Invitation</title>

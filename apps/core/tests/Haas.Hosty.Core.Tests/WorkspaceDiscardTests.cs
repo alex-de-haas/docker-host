@@ -16,7 +16,7 @@ public sealed partial class CoreLifecycleServiceTests
         }
     }
 
-    private static async Task<DiscardFixture> DiscardFixtureAsync(bool external = false, LocalCommandProcessRegistry? processes = null)
+    private static async Task<DiscardFixture> DiscardFixtureAsync(bool external = false, LocalCommandProcessRegistry? processes = null, bool legacy = false)
     {
         // Linked-worktree Git metadata also includes the allocation ID; Windows fixtures
         // need the existing short-root option before they can exercise physical cleanup.
@@ -26,6 +26,7 @@ public sealed partial class CoreLifecycleServiceTests
         var input = (external ? ExternalPrepare() : WorkspaceRequest()) with { Name = "Unwanted test work" };
         var tree = await service.PrepareAsync(owner, input, default);
         if (external) tree = await service.CommandAsync(tree.Id, owner, "release-lease", new(Guid.NewGuid().ToString(), LeaseId: input.LeaseId), default);
+        if (legacy) tree = await LegacyBranchFixture(f, service, tree);
         return new(f, origin, service, owner, tree);
     }
 
@@ -43,6 +44,7 @@ public sealed partial class CoreLifecycleServiceTests
         var input = (fixture.Owner.IsExternal ? ExternalPrepare() : WorkspaceRequest()) with { AppId = "example.discard-other" };
         var tree = await fixture.Service.PrepareAsync(fixture.Owner, input, default);
         if (fixture.Owner.IsExternal) tree = await fixture.Service.CommandAsync(tree.Id, fixture.Owner, "release-lease", new(Guid.NewGuid().ToString(), LeaseId: input.LeaseId), default);
+        if (fixture.Tree.BranchNaming is null) tree = await LegacyBranchFixture(fixture.F, fixture.Service, tree);
         return tree;
     }
 
@@ -111,6 +113,7 @@ public sealed partial class CoreLifecycleServiceTests
             Assert.False(Directory.Exists(tree.Path));
             var repo = DiscardRepo(f, tree);
             Assert.DoesNotContain("refs/heads/" + tree.Branch, await RunGitAsync(repo, ["show-ref"]));
+            Assert.Equal("", await RunGitAsync(repo, ["for-each-ref", "--format=%(refname)", DevelopmentWorkspaceService.BranchAllocationRef(tree)]));
             var registration = await RunGitAsync(repo, ["worktree", "list", "--porcelain"]);
             Assert.DoesNotContain("worktree " + tree.Path, registration);
             Assert.DoesNotContain("branch refs/heads/" + tree.Branch, registration);
@@ -327,10 +330,12 @@ public sealed partial class CoreLifecycleServiceTests
         }
     }
 
-    [Fact]
-    public async Task WorkspaceDiscard_RecoversAfterSomeFinalMetadataRecordsHaveAlreadyBeenRemoved()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WorkspaceDiscard_RecoversAfterSomeFinalMetadataRecordsHaveAlreadyBeenRemoved(bool legacy)
     {
-        using var f = await DiscardFixtureAsync();
+        using var f = await DiscardFixtureAsync(legacy: legacy);
         var second = await AdditionalDiscardTree(f);
         foreach (var tree in new[] { f.Tree, second }) await AddDiscardableSource(tree);
         var records = (await f.Service.ListAsync(f.Owner, true, default)).Workspaces;

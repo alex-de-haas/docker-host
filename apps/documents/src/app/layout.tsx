@@ -4,8 +4,9 @@ import { launchModeBootstrapScript, chromeBootstrapScript } from "@hosty-sdk/app
 import { themeBootstrapScript } from "@hosty-sdk/app/theme";
 import { HostLaunchBridge, HostThemeBridge } from "@hosty-sdk/app/react";
 import { DocumentsSession } from "@/components/plans-session";
+import { ThemeFavicon } from "../../../../shared/web/theme-favicon";
 import "./globals.css";
 export const metadata: Metadata = { title: "Hosty Documents", description: "Current application documentation and workspace progress." };
 export default function Layout({ children }: { children: ReactNode }) {
-  return <html lang="en" suppressHydrationWarning><head><script dangerouslySetInnerHTML={{ __html: chromeBootstrapScript() }} /><script dangerouslySetInnerHTML={{ __html: launchModeBootstrapScript }} /><script dangerouslySetInnerHTML={{ __html: themeBootstrapScript }} /></head><body><HostThemeBridge /><HostLaunchBridge /><DocumentsSession>{children}</DocumentsSession></body></html>;
+  return <html lang="en" suppressHydrationWarning><head><script dangerouslySetInnerHTML={{ __html: chromeBootstrapScript() }} /><script dangerouslySetInnerHTML={{ __html: launchModeBootstrapScript }} /><script dangerouslySetInnerHTML={{ __html: themeBootstrapScript }} /></head><body><ThemeFavicon /><HostThemeBridge /><HostLaunchBridge /><DocumentsSession>{children}</DocumentsSession></body></html>;
 }
