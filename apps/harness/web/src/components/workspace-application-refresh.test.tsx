@@ -35,7 +35,7 @@ it.each([false, true])("keeps group and per-app controls stable through SSE refr
   const group = button(shown)!;
   const perApp = container.querySelector<HTMLButtonElement>('[aria-label="Use this workspace for Notes"]');
   group.focus(); expect(button(hidden)).toBeUndefined();
-  if (!current) expect(perApp?.disabled).toBe(false);
+  expect(perApp).toBeNull();
   for (let index = 0; index < 3; index++) {
     const next = deferred<{ apps: WorkspaceApplication[] }>();
     vi.mocked(developmentRequest).mockReturnValueOnce(next.promise);

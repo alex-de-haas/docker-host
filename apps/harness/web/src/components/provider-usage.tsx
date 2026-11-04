@@ -76,7 +76,7 @@ export function ProviderUsageIndicator({ connectionId, revision }: { connectionI
   if (usage?.state === "not_applicable" || usage?.state === "unsupported") return null;
   const active = usage?.state === "available" && !usage.stale ? usage.rows.find(row => row.active) : undefined;
   return <Popover>
-    <PopoverTrigger asChild><Button type="button" variant="ghost" size="sm" aria-label="Provider limits"><Gauge data-icon="inline-start" />{active ? usageAmount(active) : "Limits"}</Button></PopoverTrigger>
+    <PopoverTrigger asChild><Button type="button" variant="ghost" size="icon-sm" aria-label="Provider limits" title={active ? `Provider limits: ${usageAmount(active)}` : "Provider limits"}><Gauge aria-hidden="true" /></Button></PopoverTrigger>
     <PopoverContent align="end" aria-labelledby={titleId} className="max-h-96 w-80 max-w-[calc(100vw-2rem)] overflow-y-auto">
       <div className="flex flex-col gap-3">
         <PopoverHeader><PopoverTitle id={titleId}>Provider limits</PopoverTitle><PopoverDescription>Quota, credits and request limits reported by this connection.</PopoverDescription></PopoverHeader>

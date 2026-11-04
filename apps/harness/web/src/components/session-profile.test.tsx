@@ -22,5 +22,5 @@ it("selects the reviewed profile revision and holds the send interlock until sav
 });
 it("shows the retained profile after deletion and disables changes once started", async () => {
   await act(async () => root.render(<SessionProfile session={{ ...session, agentProfile: profile, profileLocked: true }} busy={false} onChange={changed} onSavingChange={saving} />));
-  expect(container.textContent).toContain("Planner"); expect(container.querySelector("button")!.disabled).toBe(true); expect(api.listProfiles).not.toHaveBeenCalled();
+  expect(container.textContent).toContain("Planner"); expect(container.querySelector("button")).toBeNull(); expect(container.querySelector('[aria-label="Current agent profile"]')?.textContent).toBe("Planner"); expect(api.listProfiles).not.toHaveBeenCalled();
 });

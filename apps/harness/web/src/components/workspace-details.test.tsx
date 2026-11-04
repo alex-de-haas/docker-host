@@ -315,13 +315,14 @@ it("does not accept a stale pending result when inventory returns to its previou
   expect(pending.slice(0, 2).every(signal => signal.aborted)).toBe(true);
 });
 
-it("keeps one lease recovery panel across inventory refreshes", async () => {
+it("keeps one activity icon across inventory refreshes without an empty Used by section", async () => {
   const w = workspace(); w.owner.kind = "external"; w.worktrees[0].leases = ["lease"];
   replies(w);
   for (let i = 0; i < 4; i++) {
     await act(async () => root.render(<WorkspaceDetails workspace={{ ...w }} title="External" refresh={() => {}} />));
-    expect(container.querySelectorAll('details summary')).toHaveLength(1);
-    expect(container.querySelector('details')?.open).toBe(false);
+    expect(container.querySelectorAll('[aria-label="Workspace activity registered"]')).toHaveLength(1);
+    expect(container.querySelector('details')).toBeNull();
+    expect(container.textContent).not.toContain('Used by');
     expect(container.textContent).not.toContain('External activity leases');
   }
 });
@@ -370,11 +371,13 @@ it("opens a PR-specific review without a parent callback and keeps released PR l
   expect(container.querySelector('[aria-label="Diff scope"]')?.textContent).toContain("PR: https://example.test/two/pull/1");
 });
 
-it("keeps bound app icons and collapsed consumer diagnostics without obsolete management links", async () => {
+it("keeps app icons and explains grouped source usage on demand, with activity in the header", async () => {
   const w = workspace();
   w.worktrees[0].leases = ["diagnostic-lease"];
   w.worktrees[0].apps = [{ appId: "hosty.shell", name: "Shell" }];
   w.worktrees[0].consumers = [
+    { kind: "source-selection", reference: "hosty.shell", name: "Shell" },
+    { kind: "local-service", reference: "hosty.shell/api", name: "Shell" },
     { kind: "local-service", reference: "hosty.shell/web", name: "Shell", managementUrl: "https://core.test/manage/shell" },
     { kind: "core-runtime", reference: "hosty:core", name: "Core" },
     { kind: "dev-runtime", reference: "outside.worker/service", name: "Unbound worker" },
@@ -392,18 +395,28 @@ it("keeps bound app icons and collapsed consumer diagnostics without obsolete ma
   expect(container.querySelector('a[href="https://core.test/manage/shell"]')).toBeNull();
   expect(container.textContent).not.toContain("Manage application");
   expect(container.querySelector('[aria-label="Applications using source"]')).toBeNull();
-  const diagnostics = container.querySelector<HTMLDetailsElement>('[aria-label="Workspace activity diagnostics"]')!;
-  expect(diagnostics.open).toBe(false);
-  expect(diagnostics.textContent).toContain("Core · core-runtime · hosty:core");
-  expect(diagnostics.textContent).toContain("Unbound worker · dev-runtime · outside.worker/service");
-  expect(diagnostics.textContent).toContain("Lease: diagnostic-lease");
-  expect(diagnostics.textContent).toContain("Stop or return active runtimes");
+  expect(container.querySelector('[aria-label="Workspace activity diagnostics"]')).toBeNull();
+  expect(container.textContent).not.toContain("diagnostic-lease");
+  const activity = container.querySelector<HTMLButtonElement>('[aria-label="Workspace activity registered"]')!;
+  expect(activity.parentElement?.textContent).toContain("in progress");
+  await act(async () => activity.focus());
+  expect(document.querySelector('[role="tooltip"]')?.textContent).toContain("Other sessions can still use it");
+  expect(document.querySelector('[role="tooltip"]')?.textContent).not.toContain("diagnostic-lease");
+  await act(async () => activity.blur());
+  const usage = container.querySelector<HTMLButtonElement>('[aria-label="About using apps on this Core"]')!;
+  await act(async () => usage.focus());
+  const tooltip = document.querySelector('[role="tooltip"]')!;
+  expect(tooltip.textContent).toContain("Core: Running from these source files.");
+  expect(tooltip.textContent).toContain("Unbound worker: Running from these source files.");
+  expect([...tooltip.querySelectorAll("li")].filter(item => item.textContent?.startsWith("Shell:"))).toHaveLength(1);
+  expect(tooltip.textContent).not.toMatch(/local-service|dev-runtime|source-selection|hosty:core/);
+  await act(async () => usage.blur());
   const reads = vi.mocked(developmentRequest).mock.calls.length;
   await render(metadata.map(app => ({ ...app, iconUrl: app.iconUrl.replace("v=1", "v=2") })));
   expect([...container.querySelectorAll<HTMLImageElement>("img")].every(image => image.src.includes("custom.svg?v=2"))).toBe(true);
   await render([]);
   expect(container.querySelector("img")).toBeNull();
-  expect(container.querySelector('[aria-label="Workspace activity diagnostics"]')?.textContent).toContain("Shell · local-service · hosty.shell/web");
+  expect(container.querySelector('[aria-label="Workspace activity registered"]')).not.toBeNull();
   expect(container.querySelector('[aria-label="Workspace applications"]')?.textContent).toContain("Shell");
   expect(vi.mocked(developmentRequest).mock.calls).toHaveLength(reads);
 });

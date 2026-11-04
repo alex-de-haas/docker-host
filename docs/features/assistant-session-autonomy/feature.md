@@ -1,15 +1,18 @@
 ---
 created: 2026-10-05
-updated: 2026-10-29
+updated: 2026-11-03
 summary: A per-chat Normal or Autonomous mode that controls whether native commands and file changes ask for approval.
 components: [apps/core, apps/harness]
 ---
 
 # Assistant Session Autonomy
 
-Harness exposes **Normal** and **Autonomous** beneath the message composer, beside the provider
-selector. The choice belongs to the chat and survives reopening and Harness restarts. Missing values
-in older records mean Normal. Selecting a mode does not send a message or start a model.
+Harness exposes **Normal** and **Autonomous** through an icon-only button beneath the message
+composer, beside the provider selector. Normal uses a shield; Autonomous uses a shield with an
+exclamation mark. The menu repeats each icon before its mode name. The button retains the current
+mode in its accessible label and tooltip. The choice belongs to the chat and survives reopening and
+Harness restarts. Missing values in older records mean Normal. Selecting a mode does not send a
+message or start a model.
 
 Normal retains the existing native provider approval behavior and per-tool MCP rules. Autonomous
 runs native commands and file changes without approval and treats default Ask as unprompted for enabled,

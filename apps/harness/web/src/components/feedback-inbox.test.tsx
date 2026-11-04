@@ -70,3 +70,61 @@ it("finds cancelled feedback through Needs review and resends it to the reviewed
   expect(JSON.parse(writes[0]![1]!.body as string)).toEqual({ requestId: expect.stringMatching(/^[0-9a-f-]{36}$/),
     reports: [{ id: "Stopped", revision: 7 }], workspaceId: "workspace", sessionId: "chat", instruction: "" });
 });
+
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>(done => { resolve = done; });
+  return { promise, resolve };
+}
+
+it("omits a workspace feedback section until it has reports, without flashing empty controls", async () => {
+  const first = deferred<Response>();
+  vi.mocked(call).mockReturnValue(first.promise);
+  await mount();
+  expect(element.textContent).toBe("");
+  await act(async () => first.resolve(Response.json({ reports: [], dispatches: [] })));
+  expect(element.textContent).toBe("");
+  vi.mocked(call).mockResolvedValue(Response.json({ reports: [report("New report")], dispatches: [] }));
+  await act(async () => window.dispatchEvent(new Event("focus")));
+  expect(element.querySelector('[aria-label="Feedback"]')).not.toBeNull();
+  expect(element.textContent).toContain("New report");
+});
+
+it("retains confirmed feedback while refreshing and ignores a previous workspace's late response", async () => {
+  await act(async () => root.render(<FeedbackInbox key="first" workspaceId="workspace" />));
+  const section = element.querySelector('[aria-label="Feedback"]');
+  const oldRead = deferred<Response>();
+  vi.mocked(call).mockReturnValue(oldRead.promise);
+  await act(async () => window.dispatchEvent(new Event("focus")));
+  expect(element.querySelector('[aria-label="Feedback"]')).toBe(section);
+  const nextRead = deferred<Response>();
+  vi.mocked(call).mockReturnValue(nextRead.promise);
+  await act(async () => root.render(<FeedbackInbox key="second" workspaceId="other" />));
+  expect(element.textContent).toBe("");
+  await act(async () => oldRead.resolve(Response.json({ reports: [report("Old report")], dispatches: [] })));
+  expect(element.textContent).toBe("");
+  await act(async () => nextRead.resolve(Response.json({ reports: [], dispatches: [] })));
+  expect(element.textContent).toBe("");
+});
+
+it("shows workspace feedback read errors and keeps retry available", async () => {
+  vi.mocked(call).mockRejectedValueOnce(new Error("Feedback unavailable"));
+  await mount();
+  expect(element.querySelector('[role="alert"]')?.textContent).toBe("Feedback unavailable");
+  const retry = deferred<Response>();
+  vi.mocked(call).mockReturnValue(retry.promise);
+  await click("Refresh");
+  expect(element.querySelector('[aria-label="Feedback"]')).not.toBeNull();
+  await act(async () => retry.resolve(Response.json({ reports: [], dispatches: [] })));
+  expect(element.querySelector('[aria-label="Feedback"]')).toBeNull();
+});
+
+it("retains loading and empty states on the full feedback page", async () => {
+  const read = deferred<Response>();
+  vi.mocked(call).mockReturnValue(read.promise);
+  await act(async () => root.render(<FeedbackInbox />));
+  expect(element.textContent).toContain("Loading feedback…");
+  await act(async () => read.resolve(Response.json({ reports: [], dispatches: [] })));
+  expect(element.textContent).toContain("No feedback matches this view.");
+});

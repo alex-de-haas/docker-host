@@ -1,6 +1,6 @@
 ---
 created: 2026-09-29
-updated: 2026-10-27
+updated: 2026-11-03
 summary: Apps discover and call confirmed speech, translation, assistant, task and execution providers with short-lived Core credentials.
 components: [apps/core, packages/app-sdk, packages/app-sdk-dotnet, apps/whisper, apps/harness]
 ---
@@ -165,7 +165,8 @@ changing that grant remounts the frame to release the prior document's microphon
 Recognized text is appended to the current editable draft, preserving text and attachments and never
 sending a message automatically. Cancellation, sending, unmount and switching conversations invalidate
 late results and stop microphone tracks. Permission/provider errors retain the draft. An absent grant
-leaves dictation disabled. When Core advertises permission review, the tooltip
+leaves dictation disabled. The composer opens provider selection, capture controls and status from one
+[Dictation settings button](../harness-composer-controls/feature.md#dictation). When Core advertises permission review, the tooltip
 points to Dashboard → Harness → Settings → Permissions → Review changes, including legacy declarations.
 Older Core versions retain guidance based on their stored optional declarations. Source observation
 alone never grants access.

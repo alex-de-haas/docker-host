@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Loader2, Mic, Square, X } from "lucide-react";
 import { Tooltip } from "radix-ui";
 import type { ProviderDescriptor, SpeechResult } from "@hosty-sdk/app/providers";
+import { Popover, PopoverTrigger, PopoverContent, PopoverTitle } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { call } from "@/lib/api";
@@ -14,6 +15,8 @@ type Recording = { controller: AbortController; stream?: MediaStream; recorder?:
 
 /** Remount per conversation; cleanup invalidates every pending microphone/recognition operation. */
 export function SpeechInput({ disabled, onText, onStart }: { disabled: boolean; onText: (text: string) => void; onStart?: () => void }) {
+  const [open, setOpen] = useState(false);
+  const titleId = useId();
   const [roster, setRoster] = useState<Roster | null>(null);
   const [selected, setSelected] = useState("");
   const [phase, setPhase] = useState<"idle" | "starting" | "recording" | "transcribing">("idle");
@@ -95,7 +98,14 @@ export function SpeechInput({ disabled, onText, onStart }: { disabled: boolean; 
     : !provider ? "Choose a speech provider to enable dictation."
     : !provider.available ? `${provider.displayName} is unavailable. Check the app's status in Dashboard.`
     : "Dictate into your draft";
-  return <div className="flex flex-wrap items-center gap-1">
+  return <Popover open={open} onOpenChange={setOpen}>
+    <PopoverTrigger asChild><Button type="button" size="icon" variant="ghost" aria-label="Dictation settings" aria-haspopup="dialog" aria-expanded={open}
+      title={busy ? "Dictation in progress" : hint}>
+      {busy ? <Loader2 className="motion-safe:animate-spin" /> : <Mic />}
+    </Button></PopoverTrigger>
+    <PopoverContent side="top" align="end" aria-labelledby={titleId} className="flex max-w-[calc(100vw-1.5rem)] flex-col gap-3">
+      <PopoverTitle id={titleId}>Dictation</PopoverTitle>
+      <div className="flex flex-wrap items-center gap-1">
     {roster?.granted && roster.providers.length > 1 && <Select value={JSON.stringify(choice)} disabled={busy || disabled} onValueChange={value => setSelected(JSON.parse(value) as string)}>
       <SelectTrigger size="sm" aria-label="Speech provider" className="max-w-40"><SelectValue /></SelectTrigger>
       <SelectContent><SelectGroup>
@@ -119,7 +129,9 @@ export function SpeechInput({ disabled, onText, onStart }: { disabled: boolean; 
     </Tooltip.Root></Tooltip.Provider>}
     {rosterError && <p role="alert" className="w-full text-xs text-destructive-foreground">Could not check speech providers: {rosterError}</p>}
     {error && <p role="alert" className="w-full text-xs text-destructive-foreground">{error}</p>}
-  </div>;
+  </div>
+    </PopoverContent>
+  </Popover>;
 }
 function identity(provider: ProviderDescriptor) { return JSON.stringify([provider.appId, provider.key]); }
 function dispose(operation: Recording | null) {

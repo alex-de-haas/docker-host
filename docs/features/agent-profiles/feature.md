@@ -1,6 +1,6 @@
 ---
 created: 2026-10-26
-updated: 2026-10-30
+updated: 2026-11-03
 summary: Shared Harness agent configurations with connection, model, reasoning, role instructions and explicit skills, selectable before a conversation starts.
 components: [apps/harness]
 ---
@@ -63,7 +63,8 @@ action or explicit Refresh, without periodic requests that overwrite edits.
 
 A new chat starts with No profile unless the operator explicitly configured a default or supplied a
 profile choice. No profile leaves provider selection available before the first message. Before its
-first message the composer can switch profile, applying connection/model/effort, role and skill
+first message the composer’s [Agent settings panel](../harness-composer-controls/feature.md) can
+switch profile, applying connection/model/effort, role and skill
 selection as one persisted change. Profile selection and message dispatch share the session queue
 and selection revision, so a send cannot race a partially applied profile. Creating or switching
 conversations retains one set of profile, model, reasoning and provider controls for the selected
