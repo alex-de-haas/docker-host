@@ -125,6 +125,9 @@ public sealed partial class AppManagementHttpTests
     [InlineData("GET", "/api/core/agents", "core.configure")]
     [InlineData("GET", "/api/core/public-origin", "core.configure")]
     [InlineData("GET", "/api/core/development", "core.read")]
+    [InlineData("GET", "/api/apps/update-source/suggestions", "apps.read")]
+    [InlineData("GET", "/api/core/updates/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "core.read")]
+    [InlineData("PUT", "/api/core/update-feed", "core.configure")]
     [InlineData("GET", "/api/auth/invitations", "users.read")]
     [InlineData("PATCH", "/api/auth/users/missing", "users.manage")]
     public async Task OperationMapping_DeniesMissingGrant_AndRoutesAuthorizedRequests(string method, string route, string permission)

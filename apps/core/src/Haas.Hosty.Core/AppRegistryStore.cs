@@ -480,7 +480,8 @@ internal sealed record AppRecord(
     string? DevModeId = null,
     DependencyStartIntent? DependencyStart = null,
     string? DependencyStopVersion = null,
-    bool DependencyBorrowedStart = false)
+    bool DependencyBorrowedStart = false,
+    string? UpdateSourceRevision = null)
 {
     [System.Text.Json.Serialization.JsonIgnore]
     public string BrowserOriginScope { get; init; } = "";

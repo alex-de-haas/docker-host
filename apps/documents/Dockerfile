@@ -5,12 +5,16 @@ FROM base AS deps
 COPY package.json package-lock.json ./
 COPY apps/documents/package.json apps/documents/package.json
 COPY packages/app-sdk/package.json packages/app-sdk/package.json
-RUN npm ci --workspace @haas/hosty-documents
+RUN npm ci --ignore-scripts --workspace @haas/hosty-documents
 FROM base AS builder
+COPY package.json package-lock.json ./
 ENV NODE_ENV=production
 COPY --from=deps /repo/node_modules ./node_modules
-COPY . .
-RUN npm run documents:build
+COPY apps/documents apps/documents
+COPY shared/web shared/web
+COPY scripts/docs-format.mjs scripts/docs-format.mjs
+COPY packages/app-sdk packages/app-sdk
+RUN --network=none npm rebuild && npm run build --workspace @haas/hosty-documents
 FROM base AS runner
 WORKDIR /app
 ENV NODE_ENV=production PORT=3000 HOSTNAME=0.0.0.0 HOSTY_APP_CACHE_DIR=/var/cache/hosty-documents

@@ -170,3 +170,17 @@ describe("installation flow", () => {
     expect(flow.snapshot().request).toBeNull();
   });
 });
+
+it("never submits an unresolved update candidate and permits a fresh readiness review", async () => {
+  const api = client();
+  vi.mocked(api.prepare).mockResolvedValueOnce({ ...draft, updatePlan: {
+    appId: "third.party", targetVersion: "2.0.0", targetRuntime: "docker", changes: ["version:1->2"],
+    error: "Required image is not published", errorCode: "image_missing", readiness: "pending-publication",
+  } });
+  const flow = new InstallationFlow(api);
+  await flow.review({ updateAppId: "third.party" });
+  expect(await flow.submit()).toBeNull(); expect(api.submit).not.toHaveBeenCalled();
+  expect(flow.snapshot().error).toBe("Required image is not published");
+  flow.clearReview(); await flow.review({ updateAppId: "third.party" });
+  await flow.submit(); expect(api.submit).toHaveBeenCalledTimes(1);
+});

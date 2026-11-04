@@ -1,0 +1,33 @@
+name: Freeze platform compatibility bridge
+on:
+  workflow_dispatch:
+    inputs:
+      release-id:
+        description: Verified reader-capable platform release ID; this becomes the permanent cli-dev cutoff
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: permanent-platform-compatibility-bridge
+  cancel-in-progress: false
+jobs:
+  freeze:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write
+      attestations: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Verify exact retained bytes and freeze the one-time bridge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ inputs.release-id }}
+        run: node scripts/releases/bridge.mjs

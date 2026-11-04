@@ -54,7 +54,7 @@ versioning. The completed plan is retired under the repository workflow. The rem
 [Context Token Accounting Draft](../harness-context-usage/plan.md) retains other source categories,
 per-call tokens/time/cache, result attribution, instruction previews and Ollama/Codex accounting.
 [Agent Providers](../agent-provider-interface/plan.md) retains public contract and extraction work.
-Harness advances from **0.86.2 to 0.87.0**, including its Worker package; Core and SDK versions do not change.
+Harness advances from **0.87.0 to 0.88.0**, including its Worker package; Core and SDK versions do not change.
 
 Verification on macOS with Docker Desktop Linux arm64:
 

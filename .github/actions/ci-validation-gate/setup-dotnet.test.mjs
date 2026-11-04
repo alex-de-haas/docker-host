@@ -29,7 +29,7 @@ test('SDK output comes from the selected checkout, not the action source or ambi
 });
 
 test('CI and .NET publication share exact repository SDK setup', () => {
-  for (const file of ['ci.yml', 'publish-app-sdk-dotnet.yml', 'cli-release.yml', 'telemetry-backend-image.yml']) {
+  for (const file of ['ci.yml', 'publish-app-sdk-dotnet.yml', 'ready-releases.yml']) {
     const workflow = readFileSync(new URL(`../../workflows/${file}`, import.meta.url), 'utf8');
     assert.match(workflow, /uses: \.\/\.github\/actions\/setup-dotnet/);
     assert.doesNotMatch(workflow, /uses: actions\/setup-dotnet@|dotnet-version: 10\.0\.x|global-json-file:/);

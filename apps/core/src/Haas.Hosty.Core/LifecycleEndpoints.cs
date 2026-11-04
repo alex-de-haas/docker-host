@@ -4,6 +4,7 @@ internal static class LifecycleEndpoints
 {
     public static void Map(WebApplication app)
     {
+        AppUpdateSourceEndpoints.Map(app);
         var audited = app.MapGroup("").WithMetadata(new LifecycleAuditMarker()).AddEndpointFilter<LifecycleAuditFilter>();
         app.MapGet("/api/apps/{appId}/preview-checks", async (string appId, HttpRequest request,
             UserDirectoryStore users, IClock clock, CoreLifecycleService lifecycle, CancellationToken ct) =>

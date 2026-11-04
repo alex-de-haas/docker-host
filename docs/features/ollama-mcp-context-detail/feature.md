@@ -54,7 +54,7 @@ the dialog performs no fetch or polling.
 The owner approved the small Ready plan and implementation on 2026-11-03. All three deliverables
 (metadata, presentation and verification/documentation) are complete; the completed plan is retired
 under the repository workflow. This feature shares the
-pending Harness 0.87.0 release with Claude MCP detail; Core and SDK versions are unchanged.
+Harness 0.88.0 release with Claude MCP detail; Core and SDK versions are unchanged.
 The [main accounting Draft](../harness-context-usage/plan.md) retains exact model/template
 tokenization, other source categories and local tools, argument/result attribution, per-call
 tokens/time/cache and full compaction accounting. [Agent Providers](../agent-provider-interface/plan.md)

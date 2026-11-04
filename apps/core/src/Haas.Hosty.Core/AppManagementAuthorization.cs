@@ -166,6 +166,12 @@ internal static class AppManagementAuthorization
             "GET /api/apps/{appId}/preview-checks",
             "GET /api/apps", "GET /api/apps/permissions", "GET /api/apps/{appId}/health", "GET /api/apps/{appId}/update-status",
             "GET /api/apps/{appId}/assets/{**assetPath}", "GET /api/apps/{id}/permissions");
+        Add(CoreAppPermissions.ReadApps, "GET /api/apps/update-source/suggestions");
+        foreach (var route in new[] { "POST /api/apps/{appId}/update-source/plan", "POST /api/apps/{appId}/update-source/apply",
+            "POST /api/apps/update-source/apply", "GET /api/apps/{appId}/update-source/operations/{requestId}" })
+            result[route] = [CoreAppPermissions.Sources, CoreAppPermissions.Install];
+        Add(CoreAppPermissions.ReadCore, "GET /api/core/update-feed", "GET /api/core/updates/{id}");
+        Add(CoreAppPermissions.ConfigureCore, "PUT /api/core/update-feed");
         Add(CoreAppPermissions.AppLogs, "GET /api/apps/{appId}/logs");
         Add(CoreAppPermissions.Notifications, "GET /api/notifications", "POST /api/notifications/read");
         Add(CoreAppPermissions.AppLifecycle,

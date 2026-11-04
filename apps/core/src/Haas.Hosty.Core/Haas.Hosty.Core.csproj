@@ -21,6 +21,9 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="../../../../shared/*.cs" Link="%(Filename)%(Extension)" />
+    <EmbeddedResource Include="../../../../distribution-apps.json" LogicalName="Hosty.DistributionApps.json" />
+    <EmbeddedResource Include="../../../../distribution/platform-release.json" LogicalName="Hosty.PlatformDistribution.json" />
+    <EmbeddedResource Include="../../../../distribution/app-source-migrations.json" LogicalName="Hosty.AppSourceMigrations.json" />
     <EmbeddedResource Include="Browser/*" />
     <EmbeddedResource Include="../../../../assets/hosty-brand/svg/hosty-favicon*.svg" LogicalName="Haas.Hosty.Core.Browser.%(Filename)%(Extension)" />
     <EmbeddedResource Include="../../../../assets/hosty-brand/favicon.ico" LogicalName="Haas.Hosty.Core.Browser.favicon.ico" />

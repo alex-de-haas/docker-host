@@ -5,12 +5,12 @@ WORKDIR /repo
 COPY package.json package-lock.json ./
 COPY apps/shell/package.json apps/shell/package.json
 COPY packages/app-sdk/package.json packages/app-sdk/package.json
-RUN npm ci --no-audit --no-fund --workspace @haas/hosty-shell
+RUN npm ci --ignore-scripts --no-audit --no-fund --workspace @haas/hosty-shell
 COPY apps/shell apps/shell
 COPY shared/web shared/web
 COPY packages/app-sdk packages/app-sdk
 ENV NODE_ENV=production
-RUN npm run shell:build \
+RUN --network=none npm rebuild && npm run build --workspace @haas/hosty-shell \
   && npm cache clean --force
 
 FROM node:24-bookworm-slim@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5 AS runner

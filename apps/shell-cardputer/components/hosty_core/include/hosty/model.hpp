@@ -85,6 +85,39 @@ struct CoreUpdateState {
     bool available = false;
     FixedString<40> checked_at;
     FixedString<96> error;
+    FixedString<32> offer_id;
+    FixedString<32> operation_id;
+    FixedString<32> readiness;
+
+    [[nodiscard]] static bool valid_id(std::string_view value) {
+        if (value.size() != 32) return false;
+        for (const char c : value) if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
+        return true;
+    }
+    [[nodiscard]] bool can_apply() const {
+        return valid_id(offer_id.view()) && ((available && error.empty()) ||
+            (readiness == "recovery-required" && valid_id(operation_id.view())));
+    }
+};
+
+struct CoreUpdateAttempt {
+    FixedString<32> offer_id;
+    FixedString<32> request_id;
+
+    bool bind(std::string_view offer, std::string_view operation, std::string_view generated_id) {
+        if (!CoreUpdateState::valid_id(offer) || (!operation.empty() && !CoreUpdateState::valid_id(operation))) return false;
+        // An uncertain retry of the same offer keeps its identity; Core's retained operation wins.
+        if (offer_id == offer && operation.empty() && !request_id.empty()) return true;
+        const auto selected = operation.empty() ? generated_id : operation;
+        if (!CoreUpdateState::valid_id(selected)) return false;
+        return offer_id.assign(offer) && request_id.assign(selected);
+    }
+    bool body(FixedString<256>& output) const {
+        output.clear();
+        if (!CoreUpdateState::valid_id(offer_id.view()) || !CoreUpdateState::valid_id(request_id.view())) return false;
+        return output.append("{\"offerId\":\"") && output.append(offer_id.view()) &&
+            output.append("\",\"requestId\":\"") && output.append(request_id.view()) && output.append("\"}");
+    }
 };
 
 struct CoreSnapshot {

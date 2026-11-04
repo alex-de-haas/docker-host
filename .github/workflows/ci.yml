@@ -87,7 +87,7 @@ jobs:
         with:
           node-version: 24
       - name: Test selection, required gate and publication denial
-        run: node --test scripts/ci*.test.mjs scripts/test-integration.test.mjs .github/actions/ci-validation-gate/*.test.mjs
+        run: node --test scripts/ci*.test.mjs scripts/releases/*.test.mjs scripts/test-integration.test.mjs .github/actions/ci-validation-gate/*.test.mjs
 
   # Ungated on purpose: it reads version fields out of every manifest and package.json in the repo, so
   # any filter narrow enough to be useful would also be wrong. It needs no `npm ci` and finishes in

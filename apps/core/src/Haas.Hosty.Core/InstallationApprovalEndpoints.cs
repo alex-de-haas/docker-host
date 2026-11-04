@@ -236,6 +236,8 @@ internal sealed class InstallationApprovalService(
 
     public async Task SubmitAsync(InstallationApproval entry, InstallationSubmit input, CancellationToken ct)
     {
+        if (entry.UpdatePlan?.Error is { } error)
+            throw new AppLifecycleException(entry.UpdatePlan.ErrorCode ?? "update_not_ready", error);
         var reviewed = entry.InstallPlan is { } plan
             ? await lifecycle.GetReviewedInstallReadinessAsync(plan, input.Settings, ct) : null;
         approvals.Submit(entry, input, reviewed);
@@ -668,7 +670,7 @@ internal static class InstallationApprovalEndpoints
         var action = entry.AssistantAccessBatch is not null ? "Save MCP access" : entry.WorkspaceManifest is not null ? "Allow workspace access" : entry.EnvironmentPlan is not null ? "Allow launch" : entry.AssistantAccessPlan is not null ? "Save MCP access" : entry.HostPathPlan is not null ? "Approve change" : entry.RemovalPlan is not null ? "Remove app" : entry.PermissionPlan is not null ? "Save permissions" : installing ? "Install app" : "Apply update";
         var buttonClass = entry.RemovalPlan is null ? "primary" : "danger";
         var body = entry.Status == "pending"
-            ? $"{(notice is null ? "" : $"<p role=status>{E(notice)}</p>")}{review}<form method=post>{installChoices}{removalChoices}{optionalReview}<div class=actions><input type=hidden name=nonce value=\"{E(nonce)}\"><button name=decision value=deny>Cancel</button><button class={buttonClass} name=decision value=approve{(unavailableRuntime || unavailableRemoval ? " disabled" : "")}>{action}</button></div></form>"
+            ? $"{(notice is null ? "" : $"<p role=status>{E(notice)}</p>")}{review}<form method=post>{installChoices}{removalChoices}{optionalReview}<div class=actions><input type=hidden name=nonce value=\"{E(nonce)}\"><button name=decision value=deny>Cancel</button><button class={buttonClass} name=decision value=approve{(unavailableRuntime || unavailableRemoval || entry.UpdatePlan?.Error is not null ? " disabled" : "")}>{action}</button></div></form>"
             : RenderOutcome(entry);
         if (closeWindow) body += $"<script>{CloseWindowScript}</script>";
         return CoreBrowserPages.Approval(title, name, version, entry.CallerName, body);
