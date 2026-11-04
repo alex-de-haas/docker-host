@@ -1,7 +1,7 @@
 ---
 created: 2026-10-22
-updated: 2026-10-28
-summary: Current context-window usage for Claude and Codex conversations, with durable replay and a compact composer indicator.
+updated: 2026-11-03
+summary: Current context usage for Claude, Codex and Ollama, with MCP definition detail, durable replay and a compact composer indicator.
 components: [apps/harness]
 ---
 
@@ -11,8 +11,10 @@ Harness shows the latest context observation as a compact circular indicator imm
 the provider selector in the composer, in both the full-page chat and the embedded assistant.
 The percentage sits beside the ring for readability.
 The shared tooltip exposes used tokens, the provider-reported window, percentage, estimate status
-and measurement time, and remains available on keyboard focus. The indicator has no category
-breakdown.
+and measurement time, and remains available on keyboard focus. Claude observations with MCP metadata
+open a [server/tool detail dialog](../claude-mcp-context-detail/feature.md). Ollama uses the same dialog
+with explicitly labeled [local estimates and sent/catalog inclusion](../ollama-mcp-context-detail/feature.md).
+Other context categories have no drill-down.
 
 ## Provider Measurements
 
@@ -24,7 +26,11 @@ breakdown.
   `totalTokens` and `maxTokens`; the latter may be the provider's compaction limit. Reads follow
   initialization, distinct main-session assistant messages, compaction and turn completion.
   Subagent messages do not trigger readings for the main session.
-- Both readings are marked as estimates of current context. They describe the latest observation,
+- Ollama reads the reported `prompt_eval_count` for the latest ordinary chat request and the
+  configured `num_ctx` window. The total is provider-reported; its optional MCP definition detail
+  is a separate local estimate. Missing or invalid prompt counts clear the observation, while zero
+  remains valid. Auxiliary compaction calls do not replace the ordinary-request snapshot.
+- Claude and Codex readings are marked as estimates of current context. They describe the latest observation,
   rather than an exact prediction of the next request or cumulative billed tokens.
 
 Claude reads run alongside message processing, coalesce concurrent requests and discard readings
@@ -47,7 +53,9 @@ stops at 100%.
 ## Persistence And Delivery
 
 The common `context_usage` event carries either an unavailable value or a snapshot containing
-`usedTokens`, nullable `maxTokens`, `estimated` and `observedAt`. Native sessions persist these
+`usedTokens`, nullable `maxTokens`, `estimated` and `observedAt`, plus optional bounded MCP definition
+metadata described in [Claude MCP Context Detail](../claude-mcp-context-detail/feature.md) and
+[Ollama MCP Context Detail](../ollama-mcp-context-detail/feature.md). Native sessions persist these
 events in the existing session journal. The existing authenticated SSE stream delivers live
 changes and replays them on reload or reconnect; no polling endpoint or additional connection
 is used.
@@ -93,6 +101,5 @@ and credits. It does not change this context meter or use billed tokens as accou
   `node scripts/docs-index.mjs --check` and `git diff --check`.
   Build the web export before the full test suite; gateway tests serve its static pages.
 - Browser verification of Hosty login and embedding requires a supported Core-managed sandbox.
-  The external workspace MCP client used for this implementation exposes no sandbox lifecycle
-  adapter, so that runtime/browser check is not claimed. Isolated worker Docker tests use no
-  provider credentials and do not establish real-provider context accuracy.
+  Isolated Worker and Ollama HTTP fixtures use no provider credentials and do not establish
+  real-provider context accuracy. Keep native totals distinct from local source estimates.

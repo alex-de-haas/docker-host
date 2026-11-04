@@ -1,9 +1,12 @@
+import { claudeMcpContextDetail, type McpContextDetail } from "./context-mcp.js";
+
 /** Latest context observation, never cumulative billed token usage. */
 export interface ContextUsage {
   usedTokens: number;
   maxTokens: number | null;
   estimated: boolean;
   observedAt: string;
+  mcp?: McpContextDetail;
 }
 
 const tokenCount = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
@@ -22,7 +25,9 @@ export function codexContextUsage(value: unknown): ContextUsage | null {
 
 export function claudeContextUsage(value: unknown): ContextUsage | null {
   const usage = value as { totalTokens?: unknown; maxTokens?: unknown } | null;
-  return contextUsage(usage?.totalTokens, usage?.maxTokens, true);
+  const snapshot = contextUsage(usage?.totalTokens, usage?.maxTokens, true);
+  const mcp = claudeMcpContextDetail(value);
+  return snapshot && mcp ? { ...snapshot, mcp } : snapshot;
 }
 
 /** One bounded diagnostic at a time; intermediate requests collapse into one fresh read. */

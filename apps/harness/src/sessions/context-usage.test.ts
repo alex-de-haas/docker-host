@@ -20,7 +20,7 @@ class ManualAdapter extends FakeHarnessAdapter {
   }
 }
 let dir: string, store: SessionStore, manager: SessionManager, adapter: ManualAdapter, id: string;
-const usage = { usedTokens: 200, maxTokens: 1000, estimated: true, observedAt: "2026-10-22T12:00:00Z" };
+const usage = { usedTokens: 200, maxTokens: 1000, estimated: true, observedAt: "2026-10-22T12:00:00Z" , mcp: { version: 1 as const, method: "provider-estimate" as const, omittedTools: 0, tools: [{ server: "fixture", name: "read", tokens: 20, inclusion: "loaded" as const }] }};
 const make = () => new SessionManager(store, adapter, new AuditReporter(null, null, "hosty.harness"), dir);
 beforeEach(async () => {
   dir = mkdtempSync(path.join(os.tmpdir(), "hosty-context-"));

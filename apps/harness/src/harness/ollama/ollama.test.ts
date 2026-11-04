@@ -507,6 +507,8 @@ it("preserves old history completely during bounded compaction", async () => {
     "A".repeat(6000),
   );
   expect(s.events.some((e) => e.type === "notice")).toBe(true);
+  // Auxiliary summary calls must not replace the ordinary request's context observation.
+  expect(s.events.filter(e => e.type === "context_usage")).toHaveLength(2);
 });
 
 it("stores endpoint revisions without credentials and cannot rebind a reserved connection", async () => {
@@ -901,4 +903,49 @@ it("enters the first authorized worktree on the next turn with fresh instruction
     ),
   ).toBe(true);
   expect(resumed.events.some((e) => e.type === "notice")).toBe(true);
+});
+
+
+it("binds MCP detail to each measured request, including discovery replacement and equal tool names", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body ?? "{}"));
+    if (body.method.startsWith("notifications/")) return new Response(null, { status: 202 });
+    const result = body.method === "initialize"
+      ? { protocolVersion: "2025-03-26", serverInfo: { name: "fixture", version: "1" }, capabilities: { tools: {} } }
+      : { tools: [{ name: "read", description: "Read 文档", inputSchema: { type: "object", properties: {} } }] };
+    return Response.json({ jsonrpc: "2.0", id: body.id, result });
+  }));
+  cleanup.push(async () => { vi.unstubAllGlobals(); });
+  const f = fixture((_body, index) => ({
+    ...(index < 2 ? tool("discover_tools", { query: index === 0 ? "alpha" : "beta" }) : answer()),
+    prompt_eval_count: 100 + index,
+  }));
+  const s = await start(f, { mcpServers: { alpha: { url: "http://alpha.invalid/mcp" }, beta: { url: "http://beta.invalid/mcp" } } });
+  s.run.send("Discover both services");
+  await wait(s.events, "result");
+  const snapshots = s.events.filter(e => e.type === "context_usage").map(e => e.usage);
+  expect(snapshots).toHaveLength(3);
+  expect(snapshots.map(s => s?.usedTokens)).toEqual([100, 101, 102]);
+  expect(snapshots.map(s => s?.estimated)).toEqual([false, false, false]);
+  expect(snapshots[0]?.mcp?.tools.every(t => t.inclusion === "available")).toBe(true);
+  expect(snapshots[1]?.mcp?.tools.find(t => t.server === "alpha")).toMatchObject({ name: "read", inclusion: "loaded" });
+  expect(snapshots[1]?.mcp?.tools.find(t => t.server === "beta")).toMatchObject({ name: "read", inclusion: "available" });
+  expect(snapshots[2]?.mcp?.tools.find(t => t.server === "alpha")).toMatchObject({ inclusion: "available" });
+  expect(snapshots[2]?.mcp?.tools.find(t => t.server === "beta")).toMatchObject({ inclusion: "loaded" });
+  const wire = f.chats[2].tools.find((t: any) => t.function.name.startsWith("mcp_"));
+  expect(snapshots[2]?.mcp?.tools.find(t => t.server === "beta")?.tokens).toBe(Math.ceil(Buffer.byteLength(JSON.stringify(wire)) / 4));
+  expect(f.chats).toHaveLength(3); // Accounting never requests inference.
+  expect(JSON.stringify(snapshots)).not.toContain("properties");
+});
+
+it.each([undefined, 0, -1, 1.5])("does not keep stale detail when prompt count is %s; zero is valid", async count => {
+  const f = fixture([answer(), { ...answer(), prompt_eval_count: count }]);
+  const s = await start(f);
+  s.run.send("First"); await wait(s.events, "result");
+  s.run.send("Second"); await wait(s.events, "result", 2);
+  const observations = s.events.filter(e => e.type === "context_usage");
+  expect(observations).toHaveLength(2);
+  expect(observations[0]!.usage).toMatchObject({ usedTokens: 25, mcp: { method: "local-estimate", tools: [] } });
+  if (count === 0) expect(observations[1]!.usage).toMatchObject({ usedTokens: 0, estimated: false, mcp: { tools: [] } });
+  else expect(observations[1]!.usage).toBeNull();
 });

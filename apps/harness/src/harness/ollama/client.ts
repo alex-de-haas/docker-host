@@ -32,6 +32,7 @@ export type ModelDetails = {
 export type ChatResult = {
   message: OllamaMessage;
   inputTokens: number;
+  inputTokensReported: boolean;
   outputTokens: number;
 };
 export const modelId = (s: unknown): s is string =>
@@ -278,6 +279,7 @@ export class OllamaClient {
       bytes = 0,
       ended = false,
       inputTokens = 0,
+      inputTokensReported = false,
       outputTokens = 0;
     const calls: OllamaCall[] = [];
     const frame = (line: string) => {
@@ -328,9 +330,8 @@ export class OllamaClient {
           throw new Error(
             "Ollama reached its output limit. Continue with a smaller request.",
           );
-        inputTokens = Number.isSafeInteger(value.prompt_eval_count)
-          ? value.prompt_eval_count
-          : 0;
+        inputTokensReported = Number.isSafeInteger(value.prompt_eval_count) && value.prompt_eval_count >= 0;
+        inputTokens = inputTokensReported ? value.prompt_eval_count : 0;
         outputTokens = Number.isSafeInteger(value.eval_count)
           ? value.eval_count
           : 0;
@@ -365,6 +366,7 @@ export class OllamaClient {
           ...(calls.length ? { tool_calls: calls } : {}),
         },
         inputTokens,
+        inputTokensReported,
         outputTokens,
       };
     } finally {

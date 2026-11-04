@@ -1,5 +1,5 @@
 import { checkPredictionProtocol } from './codex-prediction-native.mjs';
-import { query } from '@anthropic-ai/claude-agent-sdk';
+import { query, createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { prepareNativeProfile } from '../src/worker/native.ts';
 import { CodexLogin } from '../src/connections/codex-login.ts';
@@ -11,12 +11,14 @@ let profile, claude, codex, finish;
 try {
   profile = await prepareNativeProfile(home, 'claude', 1000);
   const prompt = (async function*(){ await new Promise(resolve=>{finish=resolve;}); })();
-  claude = query({prompt, options:{cwd:profile.root, env:{}, settingSources:[], persistSession:false, promptSuggestions:true, tools:[], mcpServers:{}, strictMcpConfig:true,
+  claude = query({prompt, options:{cwd:profile.root, env:{}, settingSources:[], persistSession:false, promptSuggestions:true, tools:[], mcpServers:{'context-fixture':createSdkMcpServer({name:'context-fixture',tools:[tool('inspect', 'Read a fixture status without side effects', {}, async()=>({content:[{type:'text',text:'ok'}]}))]})}, strictMcpConfig:true,
     pathToClaudeCodeExecutable:'/opt/hosty-worker/claude', spawnClaudeCodeProcess:args=>profile.transport.spawn('claude',args.args,{cwd:args.cwd ?? profile.root,env:args.env})}});
   const models = await claude.supportedModels(); assert.ok(Array.isArray(models));
   await claude.applyFlagSettings({model:null,effortLevel:null});
   const context = claudeContextUsage(await claude.getContextUsage({detail:'summary'}));
   assert.ok(context && context.usedTokens >= 0 && context.maxTokens > 0);
+  assert.ok(context.mcp?.tools.some(tool => tool.server === 'context-fixture' && tool.name.includes('inspect') && tool.tokens >= 0), 'native summary must expose individual MCP definition estimates');
+  console.log('Claude native summary retains MCP server/tool estimates without a model request.');
   const usageReader = new UsageReader(async () => claudeUsage(await claude.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({skipBehaviors:true})));
   const usage = await usageReader.refresh(); usageReader.close();
   assert.equal(usage.state, 'unavailable'); assert.deepEqual(usage.rows, []);
