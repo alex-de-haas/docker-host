@@ -208,10 +208,15 @@ internal sealed partial class GitHubPublicationProvider(HttpClient http, IClock 
         var checks = contexts?["nodes"]?.AsArray().Select(n => new PublicationCheck(Text(n, "name") is { Length: > 0 } name ? name : Text(n, "context"),
             Text(n, "status") is { Length: > 0 } status ? status == "COMPLETED" ? Text(n, "conclusion") : status : Text(n, "state"))).ToArray() ?? [];
         var state = Text(pr, "state").ToLowerInvariant(); var merge = Text(pr["mergeCommit"], "oid");
-        var complete = false; string? completionError = null;
+        var complete = false; string? completionError = null; PublicationCompletionIssue? completionIssue = null;
         if (state == "merged" && requireWorkspaceBranch)
         {
-            try { complete = await Completion(c, r, merge, ct); }
+            try
+            {
+                completionIssue = await Completion(c, r, merge, ct);
+                complete = completionIssue is null;
+                if (completionIssue is not null) completionError = $"PR merged; {completionIssue.Kind} '{completionIssue.Requirement}' is {completionIssue.State} for merge commit {merge}. Required checks must run on the merge commit; PR-head checks do not satisfy release policy.";
+            }
             catch (Exception ex) when (ex is PublicationException or HttpRequestException or JsonException)
             { completionError = "PR merged; configured release evidence is unavailable or not yet published."; }
         }
@@ -227,43 +232,12 @@ internal sealed partial class GitHubPublicationProvider(HttpClient http, IClock 
         return new(clock.UtcNow, state, Text(pr, "headRefOid"), Text(pr, "baseRefName"), merge,
             pr["isDraft"]?.GetValue<bool>() ?? false, Text(pr, "mergeStateStatus"), Text(pr, "reviewDecision"),
             threads["nodes"]!.AsArray().Count(t => t?["isResolved"]?.GetValue<bool>() != true), complete, checks, completionError, reviews, Text(pr, "title"), pr["comments"]?["totalCount"]?.GetValue<int>(), Text(pr, "baseRefOid"),
-            state == "merged" && DateTimeOffset.TryParse(Text(pr, "mergedAt"), out var mergedAt) ? mergedAt : null);
+            state == "merged" && DateTimeOffset.TryParse(Text(pr, "mergedAt"), out var mergedAt) ? mergedAt : null, completionIssue);
     }
     private static PublicationReviewComment ReviewComment(JsonNode? node) => new(Text(node, "id"), VisibleReviewBody(Text(node, "body")),
         Text(node?["author"], "login"), Text(node?["author"], "__typename"),
         DateTimeOffset.TryParse(Text(node, "createdAt"), out var created) ? created : null,
         Text(node, "url"), node?["databaseId"]?.GetValue<long>());
-    private async Task<bool> Completion(UserProviderConnection c, PublicationRecord r, string commit, CancellationToken ct)
-    {
-        if (string.IsNullOrEmpty(commit)) return false;
-        if (r.Policy.RequiredChecks.Length > 0)
-        {
-            var checks = await Request(c, HttpMethod.Get, $"/repos/{r.Repository}/commits/{commit}/check-runs?per_page=100&filter=latest", null, ct);
-            if (checks["total_count"]!.GetValue<int>() > 100) return false;
-            var runs = checks["check_runs"]!.AsArray();
-            if (r.Policy.RequiredChecks.Any(name => !runs.Any(n => Text(n, "name") == name && Text(n, "head_sha") == commit && Text(n, "conclusion") == "success" && Text(n, "status") == "completed"))) return false;
-        }
-        foreach (var workflow in r.Policy.RequiredWorkflows)
-        {
-            var runs = await Request(c, HttpMethod.Get, $"/repos/{r.Repository}/actions/workflows/{workflow}/runs?head_sha={commit}&per_page=100", null, ct);
-            if (runs["total_count"]!.GetValue<int>() > 100) return false;
-            var latest = runs["workflow_runs"]!.AsArray().Where(n => Text(n, "head_sha") == commit && Text(n, "head_branch") == r.TargetBranch && Text(n, "event") != "pull_request").OrderByDescending(n => n?["run_number"]?.GetValue<long>() ?? 0).FirstOrDefault();
-            if (latest is null || Text(latest, "conclusion") != "success") return false;
-        }
-        foreach (var artifact in r.Policy.Artifacts)
-        {
-            if (artifact.Kind != "release")
-            {
-                if (!await new PublicationArtifacts(http).Verify(artifact, r.Repository, commit, ct)) return false;
-                continue;
-            }
-            var tag = await Request(c, HttpMethod.Get, $"/repos/{r.Repository}/commits/{Escape(artifact.Tag!)}", null, ct);
-            if (Text(tag, "sha") != commit) return false;
-            var release = await Request(c, HttpMethod.Get, $"/repos/{r.Repository}/releases/tags/{Escape(artifact.Tag!)}", null, ct);
-            if (release["draft"]?.GetValue<bool>() != false || !release["assets"]!.AsArray().Any(a => Text(a, "name") == artifact.Asset && Text(a, "state") == "uploaded")) return false;
-        }
-        return true;
-    }
     public async Task MergeAsync(UserProviderConnection c, PublicationRecord r, string head, string method, CancellationToken ct)
     {
         if (method is not ("merge" or "squash" or "rebase")) throw new PublicationException("method_invalid", "Choose a repository-permitted merge method.");
