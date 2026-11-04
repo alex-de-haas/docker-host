@@ -257,8 +257,7 @@ internal sealed partial class WorkspaceInspectionService(DevelopmentWorkspaceSer
         if (provider is null) return result.Values.ToArray();
         try
         {
-            var remote = await workspaces.PublicationRemoteAsync(tree, ct, validateGrant: false);
-            if (remote is not null) workspaces.ValidateHeldSourceGrant(remote.Grant, connection);
+            var remote = await workspaces.PublicationRemoteAsync(tree, ct, localOnly: true);
             if (provider.NormalizeRepository(remote?.Repository ?? tree.Repository) != record.Repository ||
                 (remote is not null && (remote.TargetBranch != record.TargetBranch || remote.Grant.ConnectionId != record.ConnectionId)))
                 return result.Values.ToArray();

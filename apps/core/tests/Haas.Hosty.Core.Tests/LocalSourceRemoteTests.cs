@@ -27,6 +27,11 @@ public sealed partial class CoreLifecycleServiceTests
             if (BeforeValidate is not null) await BeforeValidate();
             if (Revoked) throw PrivateSourceService.Denied();
         }
+        public Task ValidateLocalAsync(PrivateSourceAccess? access, CancellationToken ct)
+        {
+            if (Revoked) throw PrivateSourceService.Denied();
+            return Task.CompletedTask;
+        }
         public async Task<string> GitWithConnectionAsync(SourceReadGrant grant, string repository, string? directory, IReadOnlyList<string> args, UserProviderConnection connection, CancellationToken ct)
         {
             Assert.Equal(grant.OwnerId, connection.UserId); Assert.Equal(grant.ConnectionId, connection.Id);
@@ -182,6 +187,7 @@ public sealed partial class CoreLifecycleServiceTests
             f.Service.RemoteStatusAsync(w.Id, w.Owner, "test.created", deadline.Token));
         Assert.Equal(1, provider.Created); Assert.Equal(42, result.Number);
         Assert.Equal("SUCCESS", Assert.Single(result.Observation!.Checks!).State); Assert.NotEmpty(result.Observation.Reviews!);
+        f.Git.BeforeValidate = () => throw new InvalidOperationException("Inspection must use local grant validation.");
         var inspection = new WorkspaceInspectionService(f.Service, f.F.Apps, f.F.Clock, publications, users, connections);
         var detail = await inspection.ReadAsync(w.WorkspaceId, w.Id, w.Owner.UserId, default);
         var shown = Assert.Single(detail.PullRequests);
@@ -190,6 +196,7 @@ public sealed partial class CoreLifecycleServiceTests
         f.Git.Revoked = true;
         Assert.Null(Assert.Single((await inspection.ReadAsync(w.WorkspaceId, w.Id, w.Owner.UserId, default)).PullRequests).Observation);
         f.Git.Revoked = false;
+        f.Git.BeforeValidate = null;
         Assert.Equal("main", (await f.Service.Read(w.Id, w.Owner, default)).TargetBranch);
         Assert.Equal(w.OriginalBase, (await f.Service.ObserveAsync(w.Id, w.Owner, default)).Observation!.TargetHead);
         Assert.True(File.Exists(Path.Combine(w.Path, "feature.txt")));
