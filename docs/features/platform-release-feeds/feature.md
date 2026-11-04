@@ -1,6 +1,6 @@
 ---
 created: 2026-11-03
-updated: 2026-11-03
+updated: 2026-11-04
 summary: Shared Core and CLI release feeds, paired bootstrap, reviewed source selection and recoverable native updates.
 components: [apps/core, apps/cli, apps/shell]
 ---
@@ -58,9 +58,14 @@ The official distribution's legacy main/cli-dev selection migrates to daily only
 bridge provenance. The importer preserves a backup and durable receipt and does not leave competing
 active selection files. Unknown/custom repositories, tags, indexes and malformed legacy records
 require an explicit operator choice. Fresh bootstrap receipts distinguish a new default installation
-from a legacy no-config installation. The frozen bridge procedure and initial public seeding are
-tracked in the [release plan](../runtime-app-update/plan.md) and described by the
-[publisher workflow](../repository-release-model/feature.md#first-publication-and-existing-installations).
+from a legacy no-config installation. The official 0.172.0 bridge is frozen to release
+`34349ded0196466e0579f4ed5c0414fa41b63dd73fcee1ceee5ecd9ec476c725`; its
+[retained receipt](https://raw.githubusercontent.com/alex-de-haas/docker-host/app-releases/platform/bridge.json)
+records the cutoff and verified descriptor. An old client first installs this pair through cli-dev;
+the new reader imports daily when it next resolves an implicit update source. The initial daily
+and stable platform entries both reference this complete release. The
+[publisher workflow](../repository-release-model/feature.md#first-publication-and-existing-installations)
+describes promotion and retention.
 
 ## Preparation and recovery
 

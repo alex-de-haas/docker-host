@@ -8,8 +8,9 @@ summary: The repository layout, release artifacts and versioning rules for every
 
 This document records the current repository layout and release artifact boundaries after the Core/Shell split and retirement of the legacy combined Host package.
 
-The [ready releases and update feeds plan](../runtime-app-update/plan.md) owns the scoped app and
-Core/CLI publication, feed selection and migration work; this document describes the implemented contracts. Initial public seeding and bridge rollout remain tracked in that plan.
+The release publisher separates validation, artifact builds and announcement. Runtime application
+updates follow the [reviewed update contract](../runtime-app-update/feature.md); Core and CLI use
+[paired platform feeds](../platform-release-feeds/feature.md).
 
 ## Decision
 
@@ -204,6 +205,34 @@ The rollout sequence is explicit; code availability does not establish public re
 The nine repository apps are Shell, Desktop, Documents, Marketplace, Demo App, Harness, Telemetry,
 Whisper and OPUS. Docker and supported local production profiles are declared in the configuration;
 native source apps retain full commit pins and their existing execution capabilities.
+
+The official app and platform feeds are seeded. The [initial publisher](https://github.com/alex-de-haas/docker-host/actions/runs/41800939028)
+retains all nine complete app releases and the four native Core/CLI pairs. Explicit initial stable
+promotions publish both entries with stable as the fresh-install default; every promotion revalidates
+the retained bytes without building. The [catalog cutover](https://github.com/alex-de-haas/hosty-catalog/pull/21)
+changes its eight existing first-party entries and is deployed on GitHub Pages. Marketplace remains
+part of distribution installation data and has no separate catalog entry.
+
+The [recovery publication](https://github.com/alex-de-haas/docker-host/actions/runs/41805032955)
+uses retained candidates after an overlapping cold-start run was cancelled before publication.
+For the Harness-only source change, seven app images and all native platform artifacts are unchanged;
+only the two Harness images build. Harness and OPUS source/setup inputs qualify their app releases
+separately. Their daily advancement preserves the previously approved stable pointers. Unpinned
+build inputs still require the documented conservative rebuild; a skipped unchanged app does not
+claim that its recipe is generally reusable.
+
+Two metadata publication attempts receive GitHub's Internal Server Error. The authorized local
+publisher connection revalidates signed CI receipts and retains the two immutable alias claims
+through the same guarded fast-forward writer. The publish-only retry uses the original build plan
+and artifacts, rechecks remote metadata and completes without another image or native build.
+
+Public readback verifies nine app indexes, stable defaults, commit-pinned manifest hashes and
+artifact digests, plus all eight platform role/RID entries. The [frozen bridge publication](https://github.com/alex-de-haas/docker-host/actions/runs/41804114629)
+retains platform 0.172.0 for old clients. A managed macOS trial upgrades public 0.171.2 through that
+bridge and verifies the exact pair and implicit daily migration. A fresh isolated Unix bootstrap
+selects public stable and retains the complete paired receipt. These publisher operations do not
+change the sources or runtime of ordinary existing installations; app source migration remains an
+explicit reviewed operation.
 
 The local installation and source metadata inventory observed on 2026-11-04 contains these external
 applications. Repository owners remain responsible for their separate adoption and public rollout:
