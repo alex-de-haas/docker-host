@@ -1719,6 +1719,18 @@ export class SessionManager {
     throw new WorkerError("runtime_selected_by_core", "Select Docker or Local through Core's application runtime controls.", 409);
   }
 
+  private disconnectNativeMcp(id: string, retainDeferredReview: boolean): void {
+    if (retainDeferredReview) {
+      const guard = this.deferredGuards.get(id);
+      if (this.proxy) this.proxy.disconnect(id, guard);
+      else this.mcpPolicy.disconnect(id, guard);
+      this.developmentMcp.disconnect(id);
+    } else {
+      this.proxy?.unregister(id);
+      this.developmentMcp.unregister(id);
+    }
+  }
+
   private async finishExecution(session: LiveSession, retainActivationReview = false, preserveWorkerRun = false, outcome = session.record.status): Promise<void> {
     if (!this.worker && !session.record.developmentLease && !session.record.taskExecutionId) return;
     if (!session.run && !this.worker && session.record.developmentLease && session.record.developmentLeaseState !== "stopped") {
@@ -1751,15 +1763,7 @@ export class SessionManager {
       await this.store.saveRecord(session.record);
     }
     this.clearRefresh(session);
-    if (retainActivationReview) {
-      const guard = this.deferredGuards.get(session.record.id);
-      if (this.proxy) this.proxy.disconnect(session.record.id, guard);
-      else this.mcpPolicy.disconnect(session.record.id, guard);
-      this.developmentMcp.disconnect(session.record.id);
-    } else {
-      this.proxy?.unregister(session.record.id);
-      this.developmentMcp.unregister(session.record.id);
-    }
+    this.disconnectNativeMcp(session.record.id, retainActivationReview);
     await this.leaseWorkspaces(session, false, outcome);
     if (session.record.taskRun?.error) {
       delete session.record.taskRun.error;
@@ -2475,6 +2479,7 @@ export class SessionManager {
   async cancelSession(id: string): Promise<void> {
     const session = this.live.get(id);
     if (session?.record.status === "suggesting") {
+      if (session.record.workspaceActivation?.state === "queued" || session.record.workflowCompletion?.state === "queued") this.mcpPolicy.cancel(id);
       this.clearSuggestion(session); await this.endSuggestions(id); return;
     }
     await this.serialize(id, () => this.cancelSessionLocked(id));
@@ -2787,7 +2792,9 @@ export class SessionManager {
     switch (event.type) {
       case "answer_complete":
         this.clearRefresh(session);
-        this.proxy?.unregister(id); this.developmentMcp.unregister(id); this.mcpPolicy.cancel(id);
+        // Prediction collection closes native tools before the terminal result. Keep only the
+        // reviewed post-exit operation; idle still verifies exit, releases leases and revalidates it.
+        this.disconnectNativeMcp(id, session.record.workspaceActivation?.state === "queued" || session.record.workflowCompletion?.state === "queued");
         await this.setStatus(id, "suggesting", true);
         if (session.suggestionAllowed) {
           session.suggestion = { revision: (session.suggestion?.revision ?? 0) + 1, state: "collecting", attemptId: event.workerRunId };

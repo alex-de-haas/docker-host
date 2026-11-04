@@ -1,6 +1,6 @@
 ---
 created: 2026-10-28
-updated: 2026-10-28
+updated: 2026-11-04
 summary: Native next-message suggestions in the Harness composer with explicit draft acceptance, bounded collection and automatic Codex capability detection.
 components: [apps/harness]
 ---
@@ -65,7 +65,9 @@ at most one suggestion for thirty seconds. Input is trimmed, bounded to 2,000 Un
 checked for malformed or control content. Duplicate, unrelated and late output is discarded.
 
 The coordinator ends answering activity and unregisters the turn's MCP proxy and development tools
-at the answer boundary. Prediction output cannot enter the transcript as assistant text, a tool
+at the answer boundary. Only an exact already-reviewed deferred runtime or workflow request survives
+that boundary until confirmed native exit and lease release; current policy, cancellation and Core
+authority still apply before dispatch. Prediction output cannot enter the transcript as assistant text, a tool
 request, an approval or a second conversational turn. The native process, connection claim and source
 lease remain owned until exit is confirmed. API and worker versions must match; they are deployed
 together.

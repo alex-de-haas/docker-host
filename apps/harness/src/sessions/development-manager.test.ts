@@ -12,14 +12,15 @@ import { AuditReporter } from "../audit.js";
 import { AppContextError } from "./app-context.js";
 import { retentionBusy } from "./retention.js";
 import { McpProxy } from "../mcp/proxy.js";
-import type { HarnessAdapter, HarnessStartOptions } from "../harness/adapter.js";
+import { WorkerClient } from "../worker/client.js";
+import type { HarnessAdapter, HarnessEvent, HarnessStartOptions } from "../harness/adapter.js";
 let dir: string, manager: SessionManager, store: SessionStore, client: DevelopmentClient;
 let starts: HarnessStartOptions[], sent: string[];
 const tree = { id: "a".repeat(64), path: "/owned/worktree", state: "active", apps: [{ appId: "notes" }], operations: [], leases: [] };
 const adapter: HarnessAdapter = { name: "recording", capabilities: { questions: false, appMcp: true, liveReconfigure: true, autoAllow: false, denyReason: false },
-  probe: async () => ({ available: true }), start: options => { starts.push(options); return { send: text => sent.push(text), stop: async () => {}, stopAndWait: async () => {}, interrupt: async () => {}, setMcpServers: async () => true, resolveApproval: () => false, resolveQuestion: () => false }; } };
+  probe: async () => ({ available: true }), start: options => { starts.push(options); return { send: text => sent.push(text), stop: async () => {}, stopAndWait: async () => {}, finishSuggestions: async () => {}, interrupt: async () => {}, setMcpServers: async () => true, resolveApproval: () => false, resolveQuestion: () => false }; } };
 let directory: ProviderDirectory;
-const build = (proxy: McpProxy | null = null) => new SessionManager(store, adapter, new AuditReporter(null, null, "hosty.harness"), dir, null, directory, null, proxy, "http://127.0.0.1:3400", null, null, client);
+const build = (proxy: McpProxy | null = null, worker: WorkerClient | null = null) => new SessionManager(store, adapter, new AuditReporter(null, null, "hosty.harness"), dir, null, directory, null, proxy, "http://127.0.0.1:3400", null, null, client, worker, worker ? "native" : undefined);
 beforeEach(async () => {
   dir = await mkdtemp(path.join(os.tmpdir(), "hosty-development-test-")); store = new SessionStore(dir, path.join(dir, "cache"));
   directory = new ProviderDirectory(null, null, "hosty.harness"); vi.spyOn(directory, "readApps").mockResolvedValue([{ id: "notes", displayName: "Notes", runtimeState: "stopped" }]);
@@ -1037,10 +1038,12 @@ it("retains a real policy review until queued canonical completion has passed na
 });
 
 describe("deferred canonical review with a registered Core proxy", () => {
-  async function queued(kind: "return" | "selection" | "completion", revoke?: "provider" | "catalog" | "abort" | "authority") {
+  async function queued(kind: "return" | "selection" | "completion", revoke?: "provider" | "catalog" | "abort" | "authority", answer?: { suggestions: boolean; stop?: boolean }) {
     await manager.shutdown();
     const proxy = new McpProxy(async () => ({ token: "fixture-only", expiresAtMs: Date.now() + 60_000 }));
-    manager = build(proxy);
+    const worker = answer ? new WorkerClient("http://127.0.0.1:1", { version: 1, installation: "fixture", secret: "fixture" }) : null;
+    if (worker) vi.spyOn(worker, "capabilities").mockResolvedValue({ protocol: 2, capacity: 32 });
+    manager = build(proxy, worker);
     const bound = { ...tree, workspaceId: "b".repeat(64) };
     const original = DevelopmentClient.prototype.call.bind(client);
     vi.mocked(client.call).mockImplementation(async (id, token, action, input) =>
@@ -1049,7 +1052,8 @@ describe("deferred canonical review with a registered Core proxy", () => {
     const record = await manager.createSession({ createdBy: "admin", appIds: ["notes"] });
     await manager.setAutonomy(record.id, "autonomous", "admin");
     await manager.workspaceAction(record.id, "prepare", { appId: "notes" }, "token", "admin");
-    await manager.postMessage(record.id, "work", "token");
+    await manager.postMessage(record.id, "work", "token", [], { promptSuggestions: answer?.suggestions });
+    if (answer) expect(starts.at(-1)?.promptSuggestions).toBe(answer.suggestions);
     const routeKey = proxy.register(record.id, [{ appId: "hosty:core", url: "http://core.test/api/mcp" }]);
     const name = kind === "return" ? "workspace_activation" : kind === "selection" ? "select_app_execution_target" : "workflow_complete";
     const requestId = randomUUID();
@@ -1062,6 +1066,7 @@ describe("deferred canonical review with a registered Core proxy", () => {
     const unrelated = await manager.mcpPolicy.authorize(record.id, "hosty:core", "core-installation", "other-request", "unrelated_read", {}, new AbortController().signal);
     const abort = new AbortController();
     const guard = await manager.mcpPolicy.authorize(record.id, "hosty:core", "core-installation", "reviewed-request", name, input, abort.signal);
+    const admitted = vi.fn();
     const invoke = vi.spyOn(manager, "invokeCoreTool").mockImplementation(async (_id, _name, _input, dispatchGuard) => {
       await dispatchGuard?.();
       await expect(unrelated()).rejects.toThrow("canceled before dispatch");
@@ -1070,6 +1075,7 @@ describe("deferred canonical review with a registered Core proxy", () => {
         `/internal/mcp/${record.id}/hosty%3Acore`);
       expect(response.writeHead.mock.calls[0]?.[0]).toBe(401);
       if (revoke === "authority") throw new AppContextError(403, "mcp_access_denied", "Current Core authority was revoked");
+      admitted();
       return { state: kind === "completion" ? "completed" : "accepted" };
     });
     await expect(manager.coordinateCoreTool(record.id, name, input, guard)).resolves.toMatchObject({ result: {
@@ -1079,22 +1085,41 @@ describe("deferred canonical review with a registered Core proxy", () => {
     if (revoke === "provider") manager.mcpPolicy.cancel(record.id, "hosty:core");
     if (revoke === "catalog") await manager.mcpPolicy.catalog("hosty:core", "replacement-installation", tools);
     if (revoke === "abort") abort.abort();
-    await finish(record.id);
+    if (answer) {
+      let sequence = 0;
+      const emit = (event: HarnessEvent) => starts.at(-1)!.onWorkerEvent!({ runId: starts.at(-1)!.workerRunId!, generation: "fixture-generation", sequence: ++sequence, event });
+      await emit({ type: "answer_complete" });
+      expect((await store.readRecord(record.id))!.status).toBe("suggesting");
+      expect((await store.readRecord(record.id))!.developmentLease).toBeTruthy();
+      expect(invoke).not.toHaveBeenCalled();
+      await expect(unrelated()).rejects.toThrow("canceled before dispatch");
+      const response = { writeHead: vi.fn(), end: vi.fn() };
+      await proxy.handle({ method: "POST", socket: { remoteAddress: "127.0.0.1" }, headers: { authorization: `Bearer ${routeKey}` } } as never, response as never,
+        `/internal/mcp/${record.id}/hosty%3Acore`);
+      expect(response.writeHead.mock.calls[0]?.[0]).toBe(401);
+      if (answer.stop) await manager.cancelSession(record.id);
+      else if (answer.suggestions) await emit({ type: "prompt_suggestion", text: "Continue?" });
+      await emit({ type: "result", status: "success" });
+      expect((await store.readRecord(record.id))!.status).toBe("idle");
+    } else await finish(record.id);
     await vi.waitFor(async () => {
       const saved = (await store.readRecord(record.id))!;
       expect(kind === "completion" ? saved.workflowCompletion?.state : saved.workspaceActivation?.state).not.toBe("queued");
     });
     const saved = (await store.readRecord(record.id))!;
-    if (revoke) {
+    if (revoke || answer?.stop) {
       expect(kind === "completion" ? saved.workflowCompletion?.state : saved.workspaceActivation?.state).toBe("blocked");
       if (revoke === "authority") {
         expect(invoke).toHaveBeenCalledOnce();
         expect(saved.workspaceActivation?.error).toBe("Current Core authority was revoked");
-      } else expect(invoke).not.toHaveBeenCalled();
+      } else if (kind === "completion") expect(invoke).toHaveBeenCalledOnce(); // Its captured transport rechecks the guard before admission.
+      else expect(invoke).not.toHaveBeenCalled();
+      expect(admitted).not.toHaveBeenCalled();
     } else {
       if (kind === "completion") expect(saved.workflowCompletion).toBeUndefined();
       else expect(saved.workspaceActivation?.state).toBe("dispatched");
       expect(invoke).toHaveBeenCalledExactlyOnceWith(record.id, name, input, guard);
+      expect(admitted).toHaveBeenCalledOnce();
     }
     await expect(guard()).rejects.toThrow("canceled before dispatch");
     await expect(unrelated()).rejects.toThrow("canceled before dispatch");
@@ -1102,4 +1127,8 @@ describe("deferred canonical review with a registered Core proxy", () => {
 
   it.each(["return", "selection", "completion"] as const)("hands off only the reviewed %s after native exit and revokes routes and reviews afterward", kind => queued(kind));
   it.each(["provider", "catalog", "abort", "authority"] as const)("keeps %s revocation effective for a deferred Return", revoke => queued("return", revoke));
+  it.each(["return", "selection", "completion"] as const)("retains the reviewed %s through answer completion and suggestion collection", kind => queued(kind, undefined, { suggestions: true }));
+  it("retains reviewed Return when suggestions are disabled before answer completion", () => queued("return", undefined, { suggestions: false }));
+  it("does not restore a revoked Return at answer completion", () => queued("return", "provider", { suggestions: true }));
+  it.each(["return", "completion"] as const)("cancels reviewed %s when the operator stops suggestion collection", kind => queued(kind, undefined, { suggestions: true, stop: true }));
 });

@@ -268,7 +268,9 @@ Harness exposes typed `activation_plan`, `activation_apply`, `activation_status`
 unprompted and Disabled policy applies. An agent's mutation is queued until its successful turn ends,
 native process exit (or Docker worker termination) is confirmed and source leases are released. The
 original reviewed payload and IDs are retained; policy and Core authority are rechecked at dispatch.
-Completed native and Docker turns close the agent's MCP proxy routes and cancel pending calls.
+The primary-answer boundary and completed native and Docker turns close the agent's MCP proxy
+routes and cancel pending calls. Optional prompt-suggestion collection preserves the exact deferred
+review until confirmed exit and lease release; it grants no agent tool access during collection.
 Only the already-issued review for the exact deferred request survives confirmed shutdown and
 lease release; other reviews from the native turn remain canceled. A canceled, aborted or
 different-session review cannot be transferred. The retained review still checks current tool
@@ -646,7 +648,8 @@ activation records or snapshots. Finish removes the child, its processes and tes
 - Exercise native deferred Return, execution selection and workflow completion with a registered
   canonical Core MCP proxy and real policy reviews. Verify native routes close before dispatch,
   unrelated reviews are canceled, revoked or different-session reviews cannot survive handoff,
-  and final cleanup revokes the retained review on both successful and refused dispatch.
+  and final cleanup revokes the retained review on both successful and refused dispatch. Include
+  the primary-answer-to-suggesting-to-result sequence before native exit.
 - Replace a Core project file or ancestor with an escaping link after source Save or activation
   preparation. Preparation, participant planning and pre-build revalidation must refuse it without
   touching external files, compiling the substituted project or stopping participants.
