@@ -1,6 +1,6 @@
 ---
 created: 2026-10-27
-updated: 2026-11-03
+updated: 2026-11-04
 summary: Provider-owned tasks with qualified numbers, human or app assignment, durable execution, Harness profile options, review and a live Tasks UI.
 components: [apps/core, apps/harness, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -25,7 +25,8 @@ expose private transcripts; only the owner receives a linked execution conversat
 checks its own access. Human assignment does not grant operator-chat access to ordinary users.
 
 Question waits and parked continuation use [Shared Decisions](../shared-decisions/feature.md).
-Automatic workspace allocation, task trees, general orchestration and artifact storage remain in
+Harness root/child delegation and optional source binding are described in
+[Profile-Based Task Delegation](../profile-task-delegation/feature.md). Broader coordination and artifact storage remain in
 [workspace coordination](../shared-tasks/plan.md), [orchestration](../harness-work-orchestration/plan.md),
 [durable jobs](../durable-agent-jobs/plan.md) and [artifacts](../shared-artifacts/plan.md).
 
@@ -38,17 +39,17 @@ fsynced atomic write. Concurrent creation cannot reuse numbers. Request replay r
 number; provider-local prefixes may collide. Core never parses numbers or reserves prefixes.
 
 Inputs contain `title` (200 characters), `markdown` (32000), `assignee` (human/app/null),
-`requiresReview` (false when omitted), up to 32 `resources`, and optional `workspaceId`. HTTP requests also have the Harness-wide
+`review` (`none`, `owner` or `delegator`), up to 32 `resources`, optional `parentTaskRef` and `dependsOn`. HTTP requests also have the Harness-wide
 64 KiB encoded-body limit; individual field limits do not override it.
 Human assignment supplies a current user ID. Application assignment supplies a qualified executor
-and optional opaque `optionId`. Ready resolves an executor default once; it does not silently change
+and optional revisioned `selection` (`option` or executor-scoped `configuration`). Ready resolves an executor default once; it does not silently change
 an unavailable selection. Creator/owner attribution comes from authenticated callers.
 
 A resource is `{kind, owner, id, label?, version}`. Kinds are `app`, `workspace` and `external`;
 version is `{mode: "live"}` or `{mode: "pinned", revision}`. References are contextual information,
 not copied content or grants. The immutable execution snapshot preserves their owner/version. This
 adapter forwards references without resolving external content or replacing a pinned revision.
-`workspaceId` separately selects an existing execution binding; an attachment alone does not do so.
+Execution source belongs to the executor and Core broker; a resource reference alone does not select it.
 
 Records include optimistic `revision`, admitted `inputRevision`, timestamps, status, optional blocked
 reason, cancellation intent, explicit Markdown result and retained attempts/outcomes. Each app attempt
@@ -67,9 +68,8 @@ rework and reopening in `outcomes`.
 Cancellation remains a flag and is displayed as Cancelling until stop confirmation. Failed execution
 is attempt evidence and maps to Blocked, not a seventh task status. Ordinary successful model output
 is insufficient: an agent must report `task_result`, then its native run must stop. Review-required
-success becomes `Blocked/needs_review`; only the owner can accept it or request changes against its
-current input/result revision. Feedback returns stopped work to Draft. Ready again creates a new
-attempt. Reopening Done/Cancelled preserves history and does not launch work.
+success becomes `Blocked/needs_review`; the owner or current direct delegator accepts its exact result reference. Requesting changes
+records feedback and arms a fresh attempt on the same task. Reopening Done/Cancelled preserves history and does not launch work.
 
 Inputs cannot change during admitted or uncertain execution. Duplicate Ready never starts another
 attempt. At most one attempt is active or has an unconfirmed stop. Late outcomes cannot revive a
@@ -96,16 +96,16 @@ Harness task base: `/api/tasks/v1`. Executor base: `/api/task-executor/v1`.
 | `GET /tasks?cursor=&limit=&status=` | Authorized tasks, opaque next cursor, maximum 100 per page. |
 | `POST /tasks` | `{requestId, input}` creates Draft. |
 | `GET /tasks/{id}` | Current authorized task. |
-| `PATCH /tasks/{id}` | `{requestId, expectedRevision, input}` replaces Draft input. |
+| `PATCH /tasks/{id}` | `{requestId, expectedRevision, expectedGraphRevision, input}` replaces Draft input. |
 | `POST /tasks/{id}/actions` | Replayable lifecycle command. |
 | `GET /options` (executor) | Opaque choices and optional default ID. |
 | `PUT /executions/{executionId}` | Durable immutable acceptance; returns 202. |
 | `GET /executions/{executionId}` | Retained authoritative receipt. |
 | `POST /executions/{executionId}/cancel` | Idempotent `{requestId}` stop intent. |
 
-Lifecycle commands are `ready`, `draft`, `start`, `complete`, `cancel`, `accept`, `request_changes`.
+Lifecycle commands are `ready`, `draft`, `start`, `complete`, `cancel`, `accept`, `request_changes`, `retry` and `disposition`.
 Each carries `requestId`, `expectedRevision` and `action`. `complete` includes a Markdown/resources
-result. Review includes `resultInputRevision`; request_changes also includes feedback (4000 characters).
+result. Review includes an exact `resultRef`; request_changes also includes feedback (4000 characters).
 The same request ID/input recovers the original response before stale-revision checks; changed input
 conflicts. Read current state afterwards to observe subsequent progress.
 
@@ -143,9 +143,9 @@ evidence can restore that projection, without duplicating attempts or outcomes. 
 late PUT, including cancellation before acceptance. A persisted local cancellation continues after
 restart without requiring a fresh credential to stop already-authorized work.
 
-User credentials remain in memory. Restart observes existing Worker/session evidence; an accepted
-but unsent attempt waits for its owner to authenticate again, then resumes with the original ID.
-Remote observation/dispatch similarly needs fresh authority. Recovery never stores an operator
+User credentials remain in memory. Restart observes existing Worker/session evidence and retains
+Core task dispatch references. Mediated background execution revalidates those references against
+current grants; older credential-only executions need fresh owner authentication. Recovery never stores an operator
 credential or invents a replacement native run. Unknown termination stays visible and prevents
 another attempt. A proven rejection before native admission permits explicit retry. Caught Local
 startup failures persist non-admission before the rejected receipt; recovery honors this proof even

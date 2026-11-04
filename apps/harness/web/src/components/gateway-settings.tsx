@@ -1,4 +1,5 @@
 "use client";
+import { TaskLimits } from "@/components/task-limits";
 import { AgentProfiles } from "@/components/agent-profiles";
 
 import { useCallback, useEffect, useState } from "react";
@@ -30,7 +31,7 @@ import {
 export function GatewaySettings({
   section = "providers",
 }: {
-  section?: "profiles" | "providers" | "translation" | "sources" | "skills" | "prompt" | "access";
+  section?: "tasks" | "profiles" | "providers" | "translation" | "sources" | "skills" | "prompt" | "access";
 }) {
   const [data, setData] = useState<SettingsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -119,6 +120,7 @@ export function GatewaySettings({
             {(
               [
                 ["profiles", "Agent profiles"],
+                ["tasks", "Tasks"],
                 ["providers", "Agent providers"],
                 ["translation", "Translation providers"],
                 ["prompt", "Instructions and retention"],
@@ -140,6 +142,7 @@ export function GatewaySettings({
           <AgentRuntime />
           {data.agentConnections && <AgentProviders />}
         </TabsContent>
+        <TabsContent value="tasks"><TaskLimits /></TabsContent>
         <TabsContent value="profiles"><AgentProfiles /></TabsContent>
         <TabsContent value="skills"><SkillLibrary /></TabsContent>
         <TabsContent value="translation">

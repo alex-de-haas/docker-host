@@ -5,26 +5,34 @@ namespace Haas.Hosty.Core;
 
 internal sealed record CoreTaskWorkspaceRequest(CoreTaskDispatchRef Dispatch, string ExecutionId, string SessionId,
     string LeaseId, string Kind, string? RequestId = null, long? ExpectedRevision = null,
-    string? Title = null, string? NavigationPath = null, WorkspaceActivityRequest? Activity = null);
+    string? Title = null, string? NavigationPath = null, WorkspaceActivityRequest? Activity = null,
+    CoreTaskSourceReference? Source = null, HostyTaskRef? TaskRef = null);
 internal sealed record CoreTaskWorkspaceView(WorkspaceAssociationView Association, WorkspaceList Sources);
 
 // A service credential can recover only its own already-authorized task attempt and exact source
 // allocation. This is not a user credential, general source bridge or authority to create source.
 internal sealed class CoreTaskWorkspace(CoreCapabilityAuthorization authorization, CoreProviderOperationStore operations,
-    CoreProviderMediation mediation, DevelopmentWorkspaceService workspaces, UserDirectoryStore users, AppRegistryStore apps)
+    CoreProviderMediation mediation, DevelopmentWorkspaceService workspaces, UserDirectoryStore users, AppRegistryStore apps, CoreTaskSources taskSources)
 {
     internal async Task<object> Run(AppRecord executor, CoreTaskWorkspaceRequest input, CancellationToken ct)
     {
+        if (input.Kind is "associate_history" or "history_observe")
+        {
+            var historical = await taskSources.AssociateHistory(executor, input, ct);
+            return new CoreTaskWorkspaceView(new(await WorkspaceParticipationEndpoints.Project(historical, input.Source!.RootDispatch.UserId, executor.Id, users, apps, ct)),
+                new WorkspaceList([], new(true, true, input.Source.RootDispatch.UserId, executor.Id)));
+        }
         if (input.Kind is not ("observe" or "attach" or "lease" or "activity") || !Guid.TryParse(input.ExecutionId, out _)
             || !Guid.TryParse(input.LeaseId, out _) || string.IsNullOrWhiteSpace(input.SessionId) || input.SessionId.Length > 200
             || input.SessionId.Any(char.IsControl))
             throw new CoreProviderException("invalid_input", "Use the bound execution, session and lease with a supported workspace operation.", 400);
+        var release = input.Kind == "activity" && input.Activity is { Stopped: true, Status: "idle" or "failed" };
+        if (input.Source is not null && !release) await taskSources.BindExecution(executor, input, ct);
         var receipt = await operations.TaskDispatchAsync(input.Dispatch, ct);
         var scope = receipt.TaskAuthorization?.Scope;
         if (scope?.WorkspaceId is null || scope.ExecutionId != input.ExecutionId
             || scope.Executor.AppId != executor.Id || scope.Executor.InstallationId != PanelIdentity.Installation(executor))
             throw new AppIdentityException("permission_denied", "This executor is not bound to the selected task workspace.");
-        var release = input.Kind == "activity" && input.Activity is { Stopped: true, Status: "idle" or "failed" };
         if (release)
         {
             // Stop confirmation remains available after origin/user grants are revoked, but only
@@ -54,6 +62,8 @@ internal sealed class CoreTaskWorkspace(CoreCapabilityAuthorization authorizatio
         var participation = await workspaces.ParticipationAsync(scope.WorkspaceId, actor.UserId, ct);
         if (input.Kind == "attach")
         {
+            if (participation.Sessions.Any(s => s.Session.SameIdentity(actor) && s.DetachedAt is not null))
+                throw new CoreProviderException("session_detached", "The owner detached this execution; automatic attachment cannot undo that choice.", 409);
             if (input.RequestId != input.ExecutionId || input.ExpectedRevision is null)
                 throw new CoreProviderException("invalid_input", "Attach using the execution UUID and reviewed participation revision.", 400);
             await workspaces.ChangeSessionAsync(scope.WorkspaceId, actor, "attach",
@@ -95,7 +105,7 @@ internal sealed partial class CoreProviderMediation
         if (task?.Ref != scope.TaskRef || task.Status is not ("Ready" or "InProgress" or "Blocked") || task.CancelRequested || attempt is null || attempt.CancelRequested
             || attempt.Receipt is { StopConfirmed: true }
             || attempt.Executor != scope.Executor || attempt.Request.TaskRef != scope.TaskRef
-            || attempt.Request.TaskRevision != scope.InputRevision || CoreTaskExecutionScope.Digest(attempt.Request.Input) != scope.InputHash)
+            || attempt.Request.InputRevision != scope.InputRevision || CoreTaskExecutionScope.Digest(attempt.Request) != scope.ExecutionHash)
             throw new AppIdentityException("permission_denied", "The current task attempt changed or requested cancellation.");
     }
 }

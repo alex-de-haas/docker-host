@@ -80,6 +80,9 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<CoreDecisionService>();
         builder.Services.AddHostedService<CoreDecisionRetention>();
         builder.Services.AddSingleton<CoreTaskAdapter>();
+        builder.Services.AddSingleton<CoreTaskWorkflow>();
+        builder.Services.AddSingleton<CoreTaskSources>();
+        builder.Services.AddSingleton<CoreTaskMcp>();
         builder.Services.AddSingleton<CoreTaskWorkspace>();
         builder.Services.AddSingleton<CoreHistoryAdapter>();
         builder.Services.AddSingleton<CoreHistorySubscriptions>();

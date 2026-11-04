@@ -11,10 +11,11 @@ internal sealed class AssistantSessionAuthority(AppRegistryStore apps, AppIdenti
             throw new AppIdentityException("assistant_session_invalid", "A valid assistant session ID is required.");
     }
 
-    internal async Task<AppSessionValidationResult> RequireAsync(string appId, string sessionId, string grantHash, CancellationToken ct)
+    internal async Task<AppSessionValidationResult> RequireAsync(string appId, string sessionId, string grantHash, CancellationToken ct, bool retainedOperation = false)
     {
         ValidateSessionId(sessionId);
-        var actor = await identity.RequireActivityHashAsync(grantHash, appId, ct);
+        var actor = retainedOperation ? await identity.RevalidateHashAsync(grantHash, appId, ct)
+            : await identity.RequireActivityHashAsync(grantHash, appId, ct);
         var app = await apps.GetAppAsync(appId, ct);
         if (app is null || !AgentMcpDirectory.IsAssistant(app))
             throw new AppIdentityException("mcp_assistant_required", "A confirmed assistant is required.");

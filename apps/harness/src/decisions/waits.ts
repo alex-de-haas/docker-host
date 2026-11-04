@@ -19,7 +19,7 @@ export type DecisionWait = {
 export function decisionSnapshot(record: SessionRecord): string {
   return hash([record.createdBy, record.harnessKind, record.connectionId, record.connectionRevision, record.connectionIdentity,
     record.harnessSessionId, record.instructionSnapshot, record.skillIds, record.executionSelection, record.selectionRevision ?? 0,
-    record.autonomy, record.appIds, record.appContextRevision ?? 0, record.taskExecutionId, record.taskDecisionReference, record.taskWorkspace?.dispatch]);
+    record.autonomy, record.appIds, record.appContextRevision ?? 0, record.taskExecutionId, record.taskDecisionReference, record.taskWorkspace]);
 }
 export const waitId = (sessionId: string, questionId: string): string => hash([sessionId, questionId]);
 function hash(value: unknown): string { return createHash("sha256").update(JSON.stringify(value)).digest("hex"); }

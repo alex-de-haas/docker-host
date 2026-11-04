@@ -23,7 +23,9 @@ it("preserves caller-chosen execution and cancellation IDs across lost replies",
     .mockResolvedValueOnce(Response.json({ token: "scoped", provider: descriptor("task-executor") }))
     .mockResolvedValueOnce(Response.json({ executionId: "execution-id", state: "accepted" }));
   vi.stubGlobal("fetch", fetch); const client = new TaskExecutorClient(providers(), ref);
-  const input = { taskRef: { ...ref, id: "task-id" }, taskRevision: 1, input: { title: "work", markdown: "do work", requiresReview: false, resources: [] } };
+  const input: import("./tasks.js").TaskExecutionInput = { version: 1, taskRef: { ...ref, id: "task-id" }, inputRevision: 1,
+    content: { title: "work", markdown: "do work", review: { mode: "none" }, resources: [] },
+    relations: { rootTaskRef: { ...ref, id: "task-id" }, parentTaskRef: null, relationRevision: 1 }, prerequisiteOutcomes: [] };
   await expect(client.accept("execution-id", input)).rejects.toThrow("reply lost");
   expect(fetch).toHaveBeenCalledTimes(2);
   await client.accept("execution-id", input);

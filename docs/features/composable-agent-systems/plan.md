@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-25
-updated: 2026-11-03
+updated: 2026-11-04
 summary: Compose app-owned task providers and executors through Core contracts, with Harness profiles, optional resources, decisions and artifact handoffs.
 components: [apps/core, apps/harness, apps/documents, packages/app-sdk]
 ---
@@ -47,10 +47,48 @@ a workspace, a prose plan or an organization hierarchy for every request.
 
 Core defines the common task shape and provider/executor contracts. Applications own task storage,
 execution and orchestration; Harness is the first provider and executor. Tasks can be assigned to
-existing humans or apps with optional opaque executor choices. Task trees and app-owned coordination
-hierarchies are independent. No per-profile rights or hard role restrictions are selected. Existing
+existing humans or apps with optional opaque executor choices. Task trees describe work relationships;
+the 2026-11-04 selected scope uses a flat executor pool without an agent reporting hierarchy.
+No per-profile rights or hard role restrictions are selected. Existing
 app/user/MCP authority applies. Basic artifacts and explicit context handoffs are in scope; learned
 long-term memory is excluded and remains an [idea](../../ideas.md#i1-memory-as-a-replaceable-provider).
+
+## Profile-First Delegation Direction (2026-11-04)
+
+[Vision decision 70](../../vision.md) selects the concrete
+[Profile-Based Task Delegation](../profile-task-delegation/feature.md) as the implemented first bounded
+composition. Existing profiles are the executor pool; no additional agent identity, saved team or
+reporting hierarchy is selected. Task ancestry/dependencies and coordinator instructions supply
+the workflow. Saved descriptions guide selection, with an explicit one-off instruction/installed-
+skill configuration only when profiles do not fit. Agents do not mutate the profile catalog.
+Manual agent-task assignment retains saved-profile selection; an empty directory is supported by
+starting from a no-profile chat. Chat task execution persists its root before any children, while
+task-first execution reuses its existing root. Delegation remains optional. Task-list regrouping is
+deferred to Harness Work Orchestration D3; durable relationships do not depend on that presentation.
+The same-day task/source clarification connects tasks through execution attempts to sessions with
+optional workspace associations. Harness retains durable source context for queued/restarted work;
+Core does not own task records, and source-free tasks remain valid. The owner confirms tasks are
+unused and authorizes revising the task schema without legacy compatibility. The revised common
+interface includes generic parent/child relationships and keeps source in execution context while
+preserving broker authorization; profiles and sessions are not mandatory generic task fields.
+Once a development root selects a workspace, all its execution sessions join it, including earlier
+analysis, review and QA. Workspace details show the root task and authorized sessions with admitted
+profile names as executor attribution. That scoped sidebar work belongs to the delegation plan;
+global task-list regrouping remains deferred. The owner requests documentation only for now.
+
+New agent task sessions use Autonomous by default, retaining current grants and explicit MCP
+policy. A Normal chat requires user approval through Decisions before switching; that choice stays
+with the session after completion. Already-Autonomous chats do not repeat the request. Separate tasks
+receive separate fresh sessions, even when they reuse the same profile; concurrent instances are
+allowed within limits. The owner accepts editable defaults of four active executions, three levels,
+fifty descendants and two retries per task, with optional time and supported cost budgets.
+The plan owns local delegation, shared root source binding, parent-result continuation,
+aggregate limits and observable task/session history through explicit transfers recorded by the
+existing owners. Shared artifact storage, independent engine extraction, general event transport
+and scheduling are not prerequisites of this local slice. Their remaining deliverables stay open;
+the owner subsequently requests completing the technical contracts and making the delegation
+plan ready, without starting development. That plan is Ready with D1 documentation complete and
+C1-C9 specified; D2-D8 remain unimplemented. This umbrella and the other broader plans remain Draft.
 
 ## Capability And Ownership Map
 
@@ -63,14 +101,14 @@ This inventory is not evidence that a complete autonomous team or a common publi
 | --- | --- | --- | --- |
 | Identity and delegated authority | Core [human accounts](../user-management/feature.md), app identities, reviewed permissions and [background delegation](../continuous-app-access/feature.md); existing workspace membership. | Reuse app/user authority for task execution and attribution. Opaque executor options are not principals; role instructions are not enforced isolation. | [Basic Tasks](../basic-tasks/feature.md) owns assignment references. Existing [Execution Authorization](../assistant-execution-authorization/plan.md) and [ordinary-user sessions](../user-agent-sessions/plan.md) keep their scope/status; no separate agent-identity plan remains. |
 | Shared tasks and assignments | Basic Tasks supplies a common Core/SDK contract, Harness task store, executor and UI independent of documents. | Core-defined identity/number, Markdown, human/app assignment, controlled lifecycle and optional resource links, with app-owned storage and execution. | [Basic Tasks](../basic-tasks/feature.md) owns the contracts, routing, task storage and Harness execution/UI adapter. [Harness Work Orchestration](../harness-work-orchestration/plan.md) owns the later joined composition. Documents is an optional producer. |
-| Skills and standing instructions | The [Core library](../agent-skills/feature.md) delivers current Git/app packages; Harness profiles select skills and role instructions. | Reuse profiles as Harness executor options without a second identity/editor or sharing their configuration across apps. | [Shared Agent Profiles](../agent-profiles/feature.md) owns existing configuration; Harness Work Orchestration owns task integration. No skill-provider refactor is required by this task decision. |
+| Skills and standing instructions | The [Core library](../agent-skills/feature.md) delivers current Git/app packages; Harness profiles select skills and role instructions. | Reuse profiles as Harness executor options without a second identity/editor or sharing their configuration across apps. | [Shared Agent Profiles](../agent-profiles/feature.md) owns existing configuration; [Profile-Based Task Delegation](../profile-task-delegation/feature.md) owns the selected task integration. No skill-provider refactor is required by this task decision. |
 | Discoverable execution providers | Confirmed assistant/speech interfaces and [MCP discovery](../agent-mcp-directory/feature.md); the Harness Worker has a concrete private application API. | A public app-facing model/agent contract with capability/model selection, bounded input/output, caller authority and independently provided execution. Assistant handoff is not that contract. | [Agent Providers D1-D6](../agent-provider-interface/plan.md#deliverables); [Worker acceptance](../assistant-shared-docker-runtime/plan.md) retains its separate scope. |
 | Durable invocations | [Worker journals](../assistant-shared-docker-runtime/feature.md), run identities, result/event reads, cancellation and interrupted-run recovery; Core resource operations have replay receipts. | A consuming app must distinguish accepted work, waiting, failure, interruption and completion, reconcile uncertain outcomes and retrieve results without replaying effects. A finished run need not mean its business result was accepted. | Agent Providers D2 owns invocation semantics; [Action Summary D4](../assistant-action-summary/plan.md#deliverables) owns the Harness journal foundation and [Durable Agent Jobs D7](../durable-agent-jobs/plan.md#deliverables) owns common session recovery/context, not a cross-app task registry. |
 | Events and subscriptions | The [Core event bus](../core-event-bus/feature.md) and [workspace observation](../workspace-event-observation/feature.md) deliver refresh hints with state resynchronization. | Durable authorized delivery, cursors, duplicates, retention gaps and app-produced facts where required. Event reception and an authorized command are distinct. | [Notifications D6](../notifications/plan.md#deliverables) owns durable domain-event subscriptions; D7 owns its first delivery-channel consumer. Cross-feature orchestration use is investigated here without expanding those deliverables implicitly. |
 | Background jobs and coordination | Background sessions survive a closed tab; PR state has its own observer; explicit background grants exist. | General scheduling, accepted job ownership, retries, concurrency, time/cost budgets and escalation. Neither background sessions nor the Autonomous approval mode supplies a general runner. | [Durable Agent Jobs D1-D6](../durable-agent-jobs/plan.md#deliverables), transferred from Bridge D11 on 2026-10-26. The runner remains an app or authorized client; this plan does not create another scheduler. |
-| Authoritative materials and results | Plans reads repository/workspace Markdown; Harness has [session attachments](../assistant-attachments/feature.md); Core exposes source, publication and preview references. These do not form a durable shared artifact catalog. | A minimal described, versioned result and handoff contract, readable source references, authorized search and preservation beyond temporary resources. | [Plan Provider D1-D4](../plan-provider-interface/plan.md#deliverables) owns plan semantics; [Object Links](../object-links/plan.md) owns navigation. [Shared Artifacts I3](../../ideas.md#i3-shared-artifacts-external-references-and-configurable-storage) supplies related ideas. [Shared Artifacts](../shared-artifacts/plan.md) owns minimal result persistence and explicit handoffs; Durable Agent Jobs D7 retains same-session context recovery; conversations stay assistant-owned. |
+| Authoritative materials and results | Plans reads repository/workspace Markdown; Harness has [session attachments](../assistant-attachments/feature.md); Core exposes source, publication and preview references. These do not form a durable shared artifact catalog. | A minimal described, versioned result and handoff contract, readable source references, authorized search and preservation beyond temporary resources. | [Plan Provider D1-D4](../plan-provider-interface/plan.md#deliverables) owns plan semantics; [Object Links](../object-links/plan.md) owns navigation. [Shared Artifacts I3](../../ideas.md#i3-shared-artifacts-external-references-and-configurable-storage) supplies related ideas. [Shared Artifacts](../shared-artifacts/plan.md) owns minimal result persistence and explicit handoffs; Durable Agent Jobs D7 retains broader same-session context recovery; the local child wait is transferred to [Profile-Based Task Delegation](../profile-task-delegation/feature.md). Conversations stay assistant-owned. |
 | Human decisions and shared participation | [Shared Decisions](../shared-decisions/feature.md) provides private addressed records, an aggregated queue and supported same-context continuation after confirmed parking/restart. Core trusted confirmations and native permissions retain separate authority. | Team/reviewer routing, selected shared materials and integration with general autonomous jobs. | [Approval Rules](../assistant-approval-rules/plan.md) retains execution-permission semantics; Durable Agent Jobs D4/D7 and Agent Providers retain their runner/continuation/context scope. [Shared Decisions](../shared-decisions/feature.md) owns the record and first inbox; Harness Work Orchestration owns richer composition and team routing. |
-| Source and test environments | [Workspaces](../assistant-session-workspaces/feature.md), [shared sessions](../workspace-sessions/feature.md), leases, [sandbox/child Core](../app-sandbox-runtimes/feature.md) and [PR lifecycle](../assistant-pr-lifecycle/feature.md) exist independently. | Make reuse the explicit normal path while permitting deliberate independent workspaces, such as an unrelated bugfix and PR. Prevent accidental duplicate allocation without imposing one workspace on every task tree. | [Sandbox remaining acceptance](../app-sandbox-runtimes/plan.md), [Development Sessions D1-D2](../assistant-development-sessions/plan.md#deliverables), [External Development](../external-development-workspaces/feature.md) and [Containment](../assistant-runtime-containment/plan.md) retain scope. [Task Workspace Coordination](../shared-tasks/plan.md) owns automatic allocation/reuse and reverse task observation; Basic Tasks only selects existing bindings, and Harness orchestration coordinates writers. |
+| Source and test environments | [Workspaces](../assistant-session-workspaces/feature.md), [shared sessions](../workspace-sessions/feature.md), leases, [sandbox/child Core](../app-sandbox-runtimes/feature.md) and [PR lifecycle](../assistant-pr-lifecycle/feature.md) exist independently. | Make reuse the explicit normal path while permitting deliberate independent workspaces, such as an unrelated bugfix and PR. Prevent accidental duplicate allocation without imposing one workspace on every task tree. | [Sandbox remaining acceptance](../app-sandbox-runtimes/plan.md), [Development Sessions D1-D2](../assistant-development-sessions/plan.md#deliverables), [External Development](../external-development-workspaces/feature.md) and [Containment](../assistant-runtime-containment/plan.md) retain scope. [Task Workspace Coordination](../shared-tasks/plan.md) owns general execution-source allocation/reuse and derived task observation. Basic Tasks documents the generic task contract; [Profile-Based Task Delegation](../profile-task-delegation/feature.md) implements the optional Harness context/session binding, authorization and writer coordination. |
 | Evidence and limits | Core audit, resource observations and app-specific operation/run records exist. Child environments have resource ceilings. | Correlate assignments, input/skill revisions, runs, decisions and outputs across owners; distinguish process/container limits from model usage and aggregate workflow budgets. | [Application Resource Policy](../app-resource-policy/plan.md) owns runtime caps; Agent Providers owns invocation limits; Durable Agent Jobs owns job/retry budgets. Cross-owner evidence requirements belong to D3/D4 below. |
 
 ## Composition Boundaries To Resolve
@@ -128,8 +166,9 @@ on updates. Harness Work Orchestration composes execution and coordination over 
 [Shared Agent Profiles](../agent-profiles/feature.md) implements profile
 configuration/editor and manual chat use, transferred from Harness Work Orchestration D1/D3.
 Profiles select explicit skills and have no project/app/workspace binding or per-profile access
-settings. Profiles stay internal to Harness and serve as its named configured executors; hierarchy
-and routing remain app-owned orchestration work. Reuse the same editor without a second agent record.
+settings. Profiles stay internal to Harness and serve as its named configured executors; the
+selected flat routing and task decomposition now belong to Profile-Based Task Delegation. Reuse the
+same editor without a second agent record.
 The task-provider decision leaves the shipped skill library intact; an independent skill-provider
 extension would be a separate design decision.
 
@@ -296,7 +335,8 @@ is not a gate for Basic Tasks implementation.
 scoped owner for app-activity bindings, authorized event admission and result-triggered continuation
 of an existing assistant conversation. Its examples are chess and one delegated task result. It
 consumes Notifications D6 and Durable Agent Jobs D7, preserves direct provider messaging and private
-session boundaries, and leaves hierarchy/coordination with Harness Work Orchestration.
+session boundaries. The later selected flat coordination belongs to Profile-Based Task Delegation;
+richer material/human composition remains with Harness Work Orchestration.
 
 An interactive activity needs no task per move, and one parent wait needs no organization tree.
 This is an additional bounded composition linked from I6/I10/I11, not approval of this umbrella or

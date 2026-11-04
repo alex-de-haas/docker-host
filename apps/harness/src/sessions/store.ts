@@ -31,6 +31,21 @@ export interface SessionRecord {
   /** Provider-owned execution attempt identity; distinct from chat and native session IDs. */
   agentRunId?: string;
   taskExecutionId?: string;
+  taskDispatch?: import("@hosty-sdk/app/providers").TaskDispatchRef;
+  autonomyRevision?: number;
+  taskAdoptionApplied?: { id: string; executionId: string; before: string; after: string };
+  taskBarrier?: {
+    id: string; kind: import("../worker/contracts.js").WorkerBarrier["kind"]; generation: number; owner: string;
+    snapshot: string; runId: string; state: "armed" | "parked" | "resuming"; commandId: string;
+    origin?: "coordinator"; acknowledgedSequence?: number; nativeSessionId?: string; sourceBefore?: SessionRecord["taskWorkspace"]; control?: import("../worker/contracts.js").WorkerBarrier;
+  };
+  taskContext?: {
+    taskRef: import("@hosty-sdk/app/tasks").TaskRef;
+    rootTaskRef: import("@hosty-sdk/app/tasks").TaskRef;
+    parentTaskRef: import("@hosty-sdk/app/tasks").TaskRef | null;
+    executor: { kind: "option" | "configuration"; id: string; revision: number; name: string; rationale?: string };
+  };
+  taskConfiguration?: { id: string; revision: number; rationale: string };
   taskDecisionReference?: import("@hosty-sdk/app/decisions").DecisionReference;
   taskRun?: { started: boolean; exitConfirmed: boolean; error?: string };
   agentProfile?: import("../profiles/types.js").AgentProfile | null;
@@ -50,8 +65,9 @@ export interface SessionRecord {
   autonomy?: SessionAutonomy;
   developmentWorkspaces?: import("./development.js").DevelopmentWorkspace[];
   developmentLease?: string;
-  taskWorkspace?: { dispatch: import("@hosty-sdk/app/providers").TaskDispatchRef; executionId: string; workspaceId: string; leaseId: string };
+  taskWorkspace?: { source?: import("@hosty-sdk/app/providers").TaskSourceReference; dispatch: import("@hosty-sdk/app/providers").TaskDispatchRef; executionId: string; workspaceId: string; leaseId: string };
   developmentLeaseState?: "admitting" | "stopped";
+  taskHistoryAssociation?: { workspaceId: string; associatedAt: string };
   workspaceAssociation?: { id: string; revision: number } | null;
   associationRequests?: { id: string; action: "attach" | "detach"; input: Record<string, unknown>; state: "pending" | "succeeded" | "rejected" }[];
   /** Freeze omitted prepare names before dispatch so a mutable conversation title cannot change replay. */

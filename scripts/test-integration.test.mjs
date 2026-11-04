@@ -120,7 +120,11 @@ test('Harness local acceptance uses managed Core and the native runtime without 
 test('tasks builds both local-only Harness images and runs inside a managed child Core', () => {
   const plan = suitePlan('tasks', { readManifest: manifest });
   assert.deepEqual(plan.steps.slice(0, 2).map(step => step.args[0]), ['build', 'build']);
-  assert.deepEqual(plan.steps.slice(2, 4).map(step => step.args[4]), ['hosty-harness-api-acceptance:local', 'hosty-harness-worker-acceptance:local']);
+  const images = plan.steps.slice(2, 4).map(step => step.args[4]);
+  assert.match(images[0], /^hosty-harness-api-acceptance:[a-f0-9-]{36}$/);
+  assert.equal(images[1], images[0].replace('-api-', '-worker-'));
+  assert.deepEqual(plan.steps.at(-1).env, { HOSTY_TASKS_API_IMAGE: images[0], HOSTY_TASKS_WORKER_IMAGE: images[1] });
+  assert.notEqual(suitePlan('tasks').steps[2].args[4], images[0]);
   assert.deepEqual(plan.steps.at(-1).args, ['scripts/check-workspace-activation.py', '.', 'tasks', '--managed']);
 });
 

@@ -39,6 +39,9 @@ export class ProviderClient {
   taskWorkspace<T>(input: import("./providers.js").TaskWorkspaceRequest, signal?: AbortSignal): Promise<T> {
     return this.coreRequest("/task-workspace", input, signal);
   }
+  taskWorkflow<T>(input: import("./providers.js").TaskWorkflowRequest, signal?: AbortSignal): Promise<T> {
+    return this.coreRequest("/task-workflow", input, signal);
+  }
   taskDispatchAuthority(dispatch: import("./providers.js").TaskDispatchRef, signal?: AbortSignal): Promise<{ dispatch: import("./providers.js").TaskDispatchRef; scope: import("./providers.js").TaskDispatchScope }> {
     return this.coreRequest("/task-dispatch-authority", { dispatch }, signal);
   }
@@ -104,7 +107,7 @@ export class ProviderClient {
   async taskRequest<T>(provider: import("./tasks.js").TaskProviderRef, kind: "tasks" | "task-executor",
     route: string, method: string, input?: unknown, userToken?: () => Promise<string>, signal?: AbortSignal): Promise<T> {
     const allowed = kind === "tasks"
-      ? /^(?:\/capabilities|\/tasks(?:\?[a-zA-Z0-9%=&_-]*|\/[a-zA-Z0-9-]+(?:\/actions)?)?)$/
+      ? /^(?:\/capabilities|\/requests\/[a-zA-Z0-9-]+|\/tasks(?:\?[a-zA-Z0-9%=&_-]*|\/[a-zA-Z0-9-]+(?:\/actions)?)?)$/
       : /^(?:\/options|\/executions\/[a-zA-Z0-9-]+(?:\/cancel)?)$/;
     if (!allowed.test(route) || !["GET", "POST", "PATCH", "PUT"].includes(method))
       throw new ProviderError("task_route_invalid", "Use a version-one task operation.", 400);

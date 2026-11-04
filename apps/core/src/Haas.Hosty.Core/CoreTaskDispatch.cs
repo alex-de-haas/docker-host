@@ -7,9 +7,31 @@ namespace Haas.Hosty.Core;
 // Durable authorization contains identities and input digests, never task content or bearer tokens.
 internal sealed record CoreTaskDispatchRef(string UserId, string PrincipalId, string RequestId);
 internal sealed record CoreTaskExecutionScope(HostyTaskRef TaskRef, HostyTaskProviderRef Executor, long InputRevision,
-    string InputHash, string? OptionId, string? ExecutionId, string? WorkspaceId = null, string? SessionId = null, string? LeaseId = null)
+    string InputHash, HostyTaskSelection? Selection, string? ExecutionId, string? WorkspaceId = null, string? SessionId = null, string? LeaseId = null,
+    string? ExecutionHash = null, HostyTaskRef[]? PrerequisiteRefs = null, long? RootGeneration = null)
 {
-    internal static string Digest(HostyTaskExecutionContent content) => CoreProviderMediation.Hash(Encoding.UTF8.GetBytes(CoreJson.Text(content)));
+    internal static string Digest(HostyTaskExecutionInput input)
+    {
+        using var stream = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(stream, new() { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping }))
+            Canonical(writer, JsonSerializer.SerializeToElement(input, CoreJson.TypeInfo<HostyTaskExecutionInput>()));
+        return CoreProviderMediation.Hash(stream.ToArray());
+    }
+    // Arming may precede prerequisite acceptance. Bind the complete immutable digest on first dispatch.
+    internal static string TemplateDigest(HostyTaskExecutionInput input) => Digest(input with { PrerequisiteOutcomes = [] });
+    private static void Canonical(Utf8JsonWriter writer, JsonElement value)
+    {
+        if (value.ValueKind == JsonValueKind.Object)
+        {
+            writer.WriteStartObject();
+            foreach (var property in value.EnumerateObject().OrderBy(p => p.Name, StringComparer.Ordinal))
+            { writer.WritePropertyName(property.Name); Canonical(writer, property.Value); }
+            writer.WriteEndObject();
+        }
+        else if (value.ValueKind == JsonValueKind.Array)
+        { writer.WriteStartArray(); foreach (var item in value.EnumerateArray()) Canonical(writer, item); writer.WriteEndArray(); }
+        else value.WriteTo(writer);
+    }
 }
 internal sealed record CoreTaskDispatchAuthorization(CoreCallerAuthority Origin, CoreTaskExecutionScope Scope);
 internal sealed record CoreTaskExecutorDelegation(CoreTaskDispatchRef Dispatch, HostyTaskRef TaskRef, string? ExecutionId);
@@ -84,15 +106,32 @@ internal sealed partial class CoreProviderMediation
         var task = taskJson.Deserialize(CoreJson.TypeInfo<HostyTaskRecord>());
         var attempt = task?.Attempts?.SingleOrDefault(a => a.ExecutionId == input.ExecutionId);
         if (task?.Ref != scope.TaskRef || attempt is null || attempt.Executor != scope.Executor
-            || attempt.Request.TaskRef != scope.TaskRef || attempt.Request.TaskRevision != scope.InputRevision
-            || CoreTaskExecutionScope.Digest(attempt.Request.Input) != scope.InputHash
+            || attempt.Request.TaskRef != scope.TaskRef || attempt.Request.InputRevision != scope.InputRevision
+            || CoreTaskExecutionScope.TemplateDigest(attempt.Request) != scope.InputHash
+            || scope.ExecutionHash is not null && CoreTaskExecutionScope.Digest(attempt.Request) != scope.ExecutionHash
             || scope.ExecutionId is not null && scope.ExecutionId != attempt.ExecutionId
-            || scope.OptionId is not null && scope.OptionId != attempt.Request.ExecutorOptionId)
+            || scope.Selection != attempt.Request.Selection)
             throw new CoreProviderException("permission_denied", "The current source attempt differs from the authorized execution.", 403);
         if (input.Operation == "accept" && (input.Input is null || CoreJson.Text(input.Input) != CoreJson.Text(attempt.Request)
             || attempt.CancelRequested || task!.CancelRequested))
             throw new CoreProviderException("permission_denied", "Only the exact, uncancelled immutable attempt may be accepted.", 403);
-        await operations.BindTaskExecutionAsync(input.Dispatch, input.ExecutionId!, ct);
+        if (scope.ExecutionHash is null)
+        {
+            var references = scope.PrerequisiteRefs ?? [];
+            if (attempt.Request.PrerequisiteOutcomes.Length != references.Length
+                || references.Any(r => attempt.Request.PrerequisiteOutcomes.Count(o => o.TaskRef == r) != 1))
+                throw new CoreProviderException("permission_denied", "The attempt must use exactly the authorized prerequisites.", 403);
+            foreach (var outcome in attempt.Request.PrerequisiteOutcomes)
+            {
+                var prerequisiteJson = await SendAsync<JsonElement?>(sourceCaller, receipt.Provider!, CoreProviderPolicy.For("tasks", "get"), "GET",
+                    "/tasks/" + Uri.EscapeDataString(outcome.TaskRef.Id), null, [outcome.TaskRef.Id], null, ct);
+                var prerequisite = prerequisiteJson.Deserialize(CoreJson.TypeInfo<HostyTaskRecord>());
+                if (prerequisite?.Ref != outcome.TaskRef || prerequisite.Status != "Done" || prerequisite.AcceptedResultRef != outcome
+                    || prerequisite.RootTaskRef != task!.RootTaskRef || prerequisite.Owner != task.Owner)
+                    throw new CoreProviderException("permission_denied", "Prerequisite results changed before admission.", 403);
+            }
+        }
+        await operations.BindTaskExecutionAsync(input.Dispatch, input.ExecutionId!, CoreTaskExecutionScope.Digest(attempt.Request), ct, task!.Coordination?.RootGeneration);
         var route = "/executions/" + Uri.EscapeDataString(input.ExecutionId!);
         var delegation = new CoreTaskExecutorDelegation(input.Dispatch, scope.TaskRef, input.ExecutionId);
         return input.Operation switch

@@ -8,6 +8,27 @@ namespace HostySdk.App.Tests;
 public sealed class HostyTaskClientTests
 {
     [Fact]
+    public async Task ExecutorDirectoryRetainsVersionedDescriptionsAndAvailability()
+    {
+        var handler = new Handler { ProviderBody = """
+            {"version":1,"revision":7,"options":[{"id":"analyst","revision":3,"name":"Analyst",
+             "description":"Analyze requirements","capabilities":["markdown"],
+             "availability":{"state":"unavailable","reason":"Connection removed"}}],"defaultId":null}
+            """ };
+        using var http = new HttpClient(handler);
+        var providers = new HostyProviderClient(http, new() { AppId = "producer", CoreOrigin = "http://core.test", ServiceToken = "private-service" });
+        var client = new HostyTaskExecutorClient(providers, new("independent.executor", "one", "default"));
+        var directory = await client.OptionsAsync();
+        Assert.Equal(1, directory.Version);
+        Assert.Equal(7, directory.Revision);
+        var option = Assert.Single(directory.Options);
+        Assert.Equal(3, option.Revision);
+        Assert.Equal("Analyze requirements", option.Description);
+        Assert.Equal("unavailable", option.Availability.State);
+        Assert.EndsWith("/v1/options", handler.Calls[1].Url);
+    }
+
+    [Fact]
     public async Task ExecutionUsesQualifiedSelectionAndOnlyScopedCredentialAtProvider()
     {
         var handler = new Handler();
@@ -15,8 +36,8 @@ public sealed class HostyTaskClientTests
         var providers = new HostyProviderClient(http, new() { AppId = "producer", CoreOrigin = "http://core.test", ServiceToken = "private-service" });
         var client = new HostyTaskExecutorClient(providers, new("independent.executor", "one", "default"), () => Task.FromResult("private-user"));
         var id = Guid.NewGuid().ToString();
-        var input = new HostyTaskExecutionInput(new("producer", "original", "tasks", Guid.NewGuid().ToString()), 3,
-            new("Work", "Markdown", []));
+        var taskRef = new HostyTaskRef("producer", "original", "tasks", Guid.NewGuid().ToString());
+        var input = new HostyTaskExecutionInput(1, taskRef, 3, new("Work", "Markdown", [], new("none")), new(taskRef, null, 1), []);
         var receipt = await client.AcceptAsync(id, input);
         Assert.Equal("accepted", receipt.State);
         Assert.Equal(2, handler.Calls.Count);
@@ -25,7 +46,7 @@ public sealed class HostyTaskClientTests
         Assert.Null(handler.Calls[1].User);
         Assert.Equal("Bearer scoped", handler.Calls[1].Bearer);
         Assert.EndsWith("/executions/" + id, handler.Calls[1].Url);
-        Assert.Contains("\"taskRevision\":3", handler.Calls[1].Body);
+        Assert.Contains("\"inputRevision\":3", handler.Calls[1].Body);
     }
     [Fact]
     public async Task ReplacedInstallationAndUnrelatedTaskReferencesNeverReachProvider()
@@ -48,7 +69,7 @@ public sealed class HostyTaskClientTests
         var handler = new Handler { Kind = "tasks", ProviderBody = """
             {"ref":{"appId":"independent.executor","installationId":"one","key":"default","id":"task"},
              "number":"HRN-1","revision":2,"inputRevision":2,"status":"Draft","title":"Work","markdown":"Description",
-             "assignee":null,"requiresReview":false,"resources":[],"createdBy":{},"owner":{},
+             "assignee":null,"review":{"mode":"none"},"resources":[],"createdBy":{},"owner":{},
              "createdAt":"now","updatedAt":"now","cancelRequested":false,"attempts":[]}
             """ };
         using var http = new HttpClient(handler);
@@ -56,7 +77,7 @@ public sealed class HostyTaskClientTests
         var client = new HostyTaskClient(providers, new("independent.executor", "one", "default"));
         var input = new HostyTaskInput("Work", "Description", null, []);
 
-        if (edit) await client.EditAsync(new("independent.executor", "one", "default", "task"), new("edit-request", 1, input));
+        if (edit) await client.EditAsync(new("independent.executor", "one", "default", "task"), new("edit-request", 1, input, 1));
         else await client.CreateAsync(new("create-request", input));
 
         using var body = JsonDocument.Parse(handler.Calls[1].Body);
