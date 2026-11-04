@@ -104,6 +104,106 @@ public sealed partial class AppFeedLifecycleTests
         Assert.Null((await fixture.Apps.GetAppAsync(NotesId))!.FeedsUrl);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SourceSwitchAfterReturnPreservesHistoryAndAllowsPublishedSource(bool historicalFolder)
+    {
+        using var fixture = await MigrationFixture();
+        var operation = await RetainDevelopmentHistory(fixture, "returned");
+        var historicalPath = historicalFolder ? Path.Combine(fixture.Paths.CoreRoot, "old-checkout", "manifest.json") : null;
+        await fixture.Apps.UpdateAppAsync(NotesId, app => app with { InstallManifestPath = historicalPath });
+        var before = (await fixture.Apps.GetAppAsync(NotesId))!;
+
+        var plan = await fixture.Lifecycle.PlanUpdateSourceAsync(NotesId, new(MigrationFeed, "publisher-candidate"));
+        var result = await fixture.Lifecycle.ApplyUpdateSourceAsync(NotesId, new(plan.PlanDigest, Guid.NewGuid().ToString("N")));
+
+        Assert.Equal("completed", result.Status);
+        var after = (await fixture.Apps.GetAppAsync(NotesId))!;
+        Assert.Equal(MigrationFeed, after.FeedsUrl);
+        Assert.Equal("publisher-candidate", after.FollowedFeedId);
+        Assert.Equal(operation.Id, after.DevModeId);
+        Assert.Equal(historicalPath, after.InstallManifestPath);
+        Assert.Equal(before.Version, after.Version);
+        Assert.Equal(before.RuntimeState, after.RuntimeState);
+        Assert.Equal(before.ArtifactLocks, after.ArtifactLocks);
+        Assert.Equal(operation, await AppDevStore.ReadAsync(fixture.Paths, after, default));
+    }
+
+    [Fact]
+    public async Task HistoricalFolderWithCurrentUrlDoesNotBlockSourceReview()
+    {
+        using var fixture = await MigrationFixture();
+        await fixture.Apps.UpdateAppAsync(NotesId, app => app with {
+            InstallManifestPath = Path.Combine(fixture.Paths.CoreRoot, "old-checkout", "manifest.json") });
+        var plan = await fixture.Lifecycle.PlanUpdateSourceAsync(NotesId, new(MigrationFeed, "publisher-candidate"));
+        Assert.Equal(MainManifestUrl, plan.From.ManifestUrl);
+    }
+
+    [Theory]
+    [InlineData("active")]
+    [InlineData("return-bound")]
+    public async Task SourceSwitchStillRejectsUnfinishedDevelopment(string phase)
+    {
+        using var fixture = await MigrationFixture();
+        await RetainDevelopmentHistory(fixture, phase);
+        Assert.Equal("dev_mode_active", (await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Lifecycle.PlanUpdateSourceAsync(NotesId, new(MigrationFeed, "publisher-candidate")))).Code);
+        Assert.Null((await fixture.Apps.GetAppAsync(NotesId))!.FeedsUrl);
+    }
+
+    [Fact]
+    public async Task SourceApplyRechecksDevelopmentAfterPlanning()
+    {
+        using var fixture = await MigrationFixture();
+        var plan = await fixture.Lifecycle.PlanUpdateSourceAsync(NotesId, new(MigrationFeed, "publisher-candidate"));
+        await RetainDevelopmentHistory(fixture, "active");
+        Assert.Equal("dev_mode_active", (await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Lifecycle.ApplyUpdateSourceAsync(NotesId, new(plan.PlanDigest, Guid.NewGuid().ToString("N"))))).Code);
+        Assert.Null((await fixture.Apps.GetAppAsync(NotesId))!.FeedsUrl);
+    }
+
+    [Fact]
+    public async Task MissingDevelopmentJournalStillFailsClosed()
+    {
+        using var fixture = await MigrationFixture();
+        await fixture.Apps.UpdateAppAsync(NotesId, app => app with { DevModeId = Guid.NewGuid().ToString("D") });
+        Assert.Equal("dev_state_unavailable", (await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Lifecycle.PlanUpdateSourceAsync(NotesId, new(MigrationFeed, "publisher-candidate")))).Code);
+    }
+
+    [Fact]
+    public async Task ReturnedJournalCannotAuthorizeAnotherInstallation()
+    {
+        using var fixture = await MigrationFixture();
+        var operation = await RetainDevelopmentHistory(fixture, "returned");
+        await AppDevStore.SaveAsync(fixture.Paths, operation with { Installation = operation.Installation.AddDays(-1) }, default);
+        Assert.Equal("update_source_protected", (await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Lifecycle.PlanUpdateSourceAsync(NotesId, new(MigrationFeed, "publisher-candidate")))).Code);
+    }
+
+    [Fact]
+    public async Task FolderOnlyInstallStillRequiresSourceReview()
+    {
+        using var fixture = await MigrationFixture();
+        await fixture.Apps.UpdateAppAsync(NotesId, app => app with {
+            ManifestUrl = null, InstallManifestPath = Path.Combine(fixture.Paths.CoreRoot, "local", "manifest.json") });
+        Assert.Equal("update_source_protected", (await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Lifecycle.PlanUpdateSourceAsync(NotesId, new(MigrationFeed, "publisher-candidate")))).Code);
+    }
+
+    private static async Task<AppDevOperation> RetainDevelopmentHistory(Fixture fixture, string phase)
+    {
+        var app = (await fixture.Apps.GetAppAsync(NotesId))!;
+        var operation = new AppDevOperation(Guid.NewGuid().ToString("D"), NotesId, app.InstalledAt,
+            new AppDevActor("operator", "test"), "dev", Path.Combine(fixture.Paths.CoreRoot, "checkout"),
+            null, new string('a', 64), "{}", app.SelectedRuntime, app.SourceState, app.ArtifactLocks,
+            false, "configuration", phase);
+        await AppDevStore.SaveAsync(fixture.Paths, operation, default);
+        await fixture.Apps.UpdateAppAsync(NotesId, current => current with { DevModeId = operation.Id });
+        return operation;
+    }
+
     private sealed class ReadyAdapter : IAppRuntimeAdapter, IImageDigestResolver
     {
         public string Type => "docker";

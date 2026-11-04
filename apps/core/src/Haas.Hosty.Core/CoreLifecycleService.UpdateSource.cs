@@ -44,10 +44,19 @@ internal sealed partial class CoreLifecycleService
         => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(
             await UpdateBaseAsync(app, ct) + "\n" + app.UpdateSourceRevision + "\n" + app.DevModeId)));
 
-    private static bool SourceMigrationExcluded(AppRecord app)
-        => app.PrivateSources is not null || app.DevModeId is not null || app.SourceState?.LocalOverridePath is not null
-           || app.InstallManifestPath is not null || string.IsNullOrWhiteSpace(app.ManifestUrl)
-           || app.RuntimeProfiles?.Any(p => p.Key == app.SelectedRuntime && p.Development) == true;
+    private async Task<bool> SourceMigrationExcludedAsync(AppRecord app, CancellationToken ct)
+    {
+        if (app.PrivateSources is not null || app.SourceState?.LocalOverridePath is not null
+            || string.IsNullOrWhiteSpace(app.ManifestUrl)
+            || app.RuntimeProfiles?.Any(p => p.Key == app.SelectedRuntime && p.Development) == true)
+            return true;
+
+        // InstallManifestPath is historical once an explicit URL becomes the update source.
+        // Return keeps its journal ID for recovery; only an active or mismatched journal blocks
+        // a new source review. An unreadable journal still fails closed through AppDevStore.
+        var development = await AppDevStore.ReadAsync(paths, app, ct);
+        return development is not null && (development.Active || development.Installation != app.InstalledAt);
+    }
 
     public async Task<AppUpdateSourceSuggestions> GetUpdateSourceSuggestionsAsync(CancellationToken ct = default)
     {
@@ -55,7 +64,7 @@ internal sealed partial class CoreLifecycleService
         var suggestions = new List<AppUpdateSourceSuggestion>();
         foreach (var app in await apps.ListAppRecordsAsync(ct))
         {
-            if (SourceMigrationExcluded(app)) continue;
+            if (await SourceMigrationExcludedAsync(app, ct)) continue;
             var matches = declarations.Migrations.Where(m => m.AppId == app.Id && BindingMatches(app, m.From)).ToArray();
             if (matches.Length == 0) continue;
             // An authored explicit commit pin is different from the run lock of a branch-based install.
@@ -71,7 +80,7 @@ internal sealed partial class CoreLifecycleService
         => WithAppLockAsync(appId, async () =>
         {
             var app = await RequireAppAsync(appId, ct);
-            if (SourceMigrationExcluded(app)) throw new AppLifecycleException("update_source_protected", "This installation uses a private, local or active development source. Return or review that source through its supported source controls first.");
+            if (await SourceMigrationExcludedAsync(app, ct)) throw new AppLifecycleException("update_source_protected", "This installation uses a private, local or active development source. Return or review that source through its supported source controls first.");
             var revision = await UpdateSourceRevisionAsync(app, ct);
             if (request.ExpectedRevision is not null && request.ExpectedRevision != revision) throw SourcePlanStale();
             if (request.MigrationId is not null)
@@ -146,7 +155,7 @@ internal sealed partial class CoreLifecycleService
                 var recovered = retained with { Status = "completed", Revision = await UpdateSourceRevisionAsync(app, ct) };
                 CoreLaunchFiles.Write(operationPath, recovered, CoreJsonSerializerContext.Default.AppUpdateSourceOperation); return recovered;
             }
-            if (clock.UtcNow - plan.CreatedAt > TimeSpan.FromHours(1) || SourceMigrationExcluded(app)
+            if (clock.UtcNow - plan.CreatedAt > TimeSpan.FromHours(1) || await SourceMigrationExcludedAsync(app, ct)
                 || await UpdateSourceRevisionAsync(app, ct) != plan.ExpectedRevision) throw SourcePlanStale();
             var (binding, feedDigest, selection) = await ValidateUpdateSourceDestinationAsync(app, plan.To.FeedsUrl, plan.To.FeedId, plan.To.FeedsUrl is null ? plan.To.ManifestUrl : null, plan.MigrationId is not null, ct);
             if (feedDigest != plan.FeedDigest || selection.ManifestDigest != plan.ManifestDigest || binding != plan.To) throw SourcePlanStale();
