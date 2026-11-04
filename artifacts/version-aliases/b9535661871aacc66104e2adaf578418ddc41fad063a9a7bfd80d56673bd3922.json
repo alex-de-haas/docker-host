@@ -1,0 +1,1 @@
+{"appId":"hosty.telemetry","digest":"sha256:6ee190eeaebf8d9c9c82c2a29988515547b8408dc18d092c225e2179bfb26090","platforms":["linux/amd64","linux/arm64"],"repository":"ghcr.io/alex-de-haas/hosty-telemetry-backend","version":"0.18.0"}
