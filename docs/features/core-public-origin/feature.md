@@ -1,6 +1,6 @@
 ---
 created: 2026-09-01
-updated: 2026-09-30
+updated: 2026-11-04
 summary: Core's public origin is a live setting, editable in Shell and publishable through the Cloudflare provider.
 components: [apps/core, apps/shell]
 ---
@@ -39,6 +39,12 @@ state and the right answer for a single-machine host. Reachability is never a re
 pre-save probe — that judgment is advisory and belongs to the ingress diagnostics, the same stance the
 connector-locality check records. A stored value is canonicalized to its authority, and a hand-edited
 `settings.json` entry that does not parse is skipped per-entry rather than taken or fatal.
+
+The insecure-HTTP advisory in `/api/core/status` excludes loopback IPs, `localhost`, and names
+ending in `.localhost`, including case variants and a trailing DNS root dot. Named local browser
+origins such as `core.hosty.localhost` therefore do not produce Shell's "Host needs attention"
+notification. Other HTTP hosts, including LAN addresses and names such as `core.localhost.example`,
+still produce the advisory.
 
 ## Two Stages
 
@@ -130,6 +136,9 @@ the providers that cannot publish it.
 - Validation accepts loopback, LAN and public origins and refuses a bare host, a non-http(s) scheme, a
   path, a query, a fragment, userinfo, and the unspecified addresses — refusing before anything is
   written, so a bad submission never displaces a working value.
+- The insecure-HTTP advisory accepts loopback IPs and canonical localhost names, including named
+  local origins, case variants and a trailing root dot; LAN and lookalike external hosts still warn.
+  The authenticated status response reflects a saved origin without a restart.
 - The shared `Server` group: writing either key leaves the other intact, and a hand-edited invalid origin
   is skipped without disturbing the stored port or crashing startup.
 - Readers follow the live value: setup and invitation links, the OAuth AS metadata and protected-resource

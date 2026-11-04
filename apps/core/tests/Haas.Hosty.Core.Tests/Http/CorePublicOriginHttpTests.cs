@@ -56,6 +56,34 @@ public sealed class CorePublicOriginHttpTests
         Assert.Equal(locality, document.RootElement.GetProperty("locality").GetString());
     }
 
+    [Theory]
+    [InlineData("http://core.hosty.localhost:7070", false)]
+    [InlineData("http://CUSTOM.LOCALHOST.:7070", false)]
+    [InlineData("http://core.localhost.example:7070", true)]
+    [InlineData("http://192.168.1.10:7070", true)]
+    public async Task PublicOrigin_StatusWarnsOnlyForNonLocalHttp(string origin, bool shouldWarn)
+    {
+        await using var harness = await CoreHttpHarness.StartAsync();
+        using var client = harness.CreateClient();
+        var secret = harness.Services.GetRequiredService<ControlSecret>().Value;
+        await SeedAdminWithPasswordAsync(harness);
+        using var signIn = await PostLoginAsync(client);
+        Assert.Equal(HttpStatusCode.OK, signIn.StatusCode);
+        var session = ReadSessionCookie(signIn);
+
+        using var saved = await PutSettingAsync(client, secret, origin);
+        Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/api/core/status");
+        request.Headers.Add("Cookie", $"{CoreSessionAuthorization.SessionCookieName}={session}");
+        using var response = await client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal(new Uri(origin).GetLeftPart(UriPartial.Authority),
+            document.RootElement.GetProperty("corePublicOrigin").GetString());
+        Assert.Equal(shouldWarn, document.RootElement.GetProperty("warnings").EnumerateArray()
+            .Any(warning => warning.GetString()!.StartsWith("Core public origin uses insecure HTTP", StringComparison.Ordinal)));
+    }
+
     [Fact]
     public async Task PublicOrigin_IsListedAndEditableOverTheControlPlane()
     {
