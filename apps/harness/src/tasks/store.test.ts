@@ -8,8 +8,8 @@ import type { TaskActor, TaskInput, TaskRecord, TaskExecutionReceipt, TaskAction
 let directory: string, store: TaskStore;
 const provider = { appId: "example.tasks", installationId: "installation-one", key: "default" };
 const actor: TaskActor = { userId: "owner", appId: null };
-const human: TaskInput = { title: "Check a result", markdown: "Describe the outcome.", requiresReview: false, resources: [], assignee: { kind: "human", userId: "worker" } };
-const app: TaskInput = { ...human, assignee: { kind: "app", executor: { appId: "unrelated.executor", installationId: "two", key: "plain" }, optionId: "default" } };
+const human: TaskInput = { title: "Check a result", markdown: "Describe the outcome.", review: { mode: "none" }, parentTaskRef: null, dependsOn: [], resources: [], assignee: { kind: "human", userId: "worker" } };
+const app: TaskInput = { ...human, assignee: { kind: "app", executor: { appId: "unrelated.executor", installationId: "two", key: "plain" }, selection: { kind: "option", id: "default", revision: 1 } } };
 beforeEach(async () => { directory = await mkdtemp(path.join(os.tmpdir(), "hosty-tasks-")); store = new TaskStore(directory, provider); });
 afterEach(async () => { await rm(directory, { recursive: true, force: true }); });
 const create = (input = human) => store.create(actor, { requestId: randomUUID(), input });
@@ -33,15 +33,15 @@ it("keeps numbering provider-local and references independent from display prefi
   expect(a.number).toBe(b.number); expect(a.ref).not.toEqual(b.ref);
 });
 it("supports human start, review, feedback and reopening without executions", async () => {
-  let t = await create({ ...human, requiresReview: true }); t = await action(t, "ready"); t = await action(t, "start");
+  let t = await create({ ...human, review: { mode: "owner" } }); t = await action(t, "ready"); t = await action(t, "start");
   t = await action(t, "complete", { result: { markdown: "Answer", resources: [] } });
   expect(t).toMatchObject({ status: "Blocked", blocked: { reason: "needs_review" }, attempts: [] });
-  await expect(action(t, "accept", { resultInputRevision: 0 })).rejects.toMatchObject({ code: "review_changed" });
-  t = await action(t, "request_changes", { resultInputRevision: t.inputRevision, feedback: "Include evidence" });
-  expect(t.status).toBe("Draft"); expect(t.markdown).toContain("Include evidence");
+  await expect(action(t, "accept", { resultRef: { ...t.resultRef!, inputRevision: 0 } })).rejects.toMatchObject({ code: "review_changed" });
+  t = await action(t, "request_changes", { resultRef: t.resultRef, feedback: "Include evidence" });
+  expect(t.status).toBe("Ready"); expect(t.markdown).toContain("Include evidence");
   t = await action(t, "ready"); t = await action(t, "start");
   t = await action(t, "complete", { result: { markdown: "Evidence", resources: [] } });
-  t = await action(t, "accept", { resultInputRevision: t.inputRevision }); expect(t.status).toBe("Done");
+  t = await action(t, "accept", { resultRef: t.resultRef }); expect(t.status).toBe("Done");
   t = await action(t, "draft"); expect(t.status).toBe("Draft"); expect(t.result?.markdown).toBe("Evidence");
   expect(t.outcomes?.map(o => o.result.markdown)).toEqual(["Answer", "Evidence"]);
 });
@@ -51,9 +51,9 @@ it("freezes Ready input, replays before stale revision checks and never duplicat
   t = await store.action(t.ref.id, actor, request);
   expect(await store.action(t.ref.id, actor, request)).toEqual(t);
   t = await action(t, "ready"); expect(t.attempts).toHaveLength(1);
-  expect(t.attempts[0]!.request.input).toMatchObject({ resources: [], markdown: app.markdown });
+  expect(t.attempts[0]!.request.content).toMatchObject({ resources: [], markdown: app.markdown });
   await expect(action(t, "draft")).rejects.toMatchObject({ code: "execution_active" });
-  await expect(store.edit(t.ref.id, actor, { requestId: randomUUID(), expectedRevision: t.revision, input: human })).rejects.toMatchObject({ code: "task_not_editable" });
+  await expect(store.edit(t.ref.id, actor, { requestId: randomUUID(), expectedRevision: t.revision, expectedGraphRevision: t.graphRevision, input: human })).rejects.toMatchObject({ code: "task_not_editable" });
   const fast = receipt(t, { state: "completed", stopConfirmed: true, result: { markdown: "Explicit result", resources: [] } });
   t = await store.observe(t.ref.id, fast.executionId, fast); expect(t.status).toBe("Done");
   const after = await store.observe(t.ref.id, fast.executionId, { ...fast, revision: 2, state: "running", stopConfirmed: false });
@@ -86,25 +86,24 @@ it("checks current access before request replay and isolates app installations",
   const a = await store.create(appActor, { requestId: randomUUID(), input: human });
   await expect(store.get(a.ref.id, { ...appActor, installationId: "new" })).rejects.toMatchObject({ code: "task_not_found" });
 });
-it("preserves optional existing workspace and revision-pinned resource references", async () => {
-  let t = await create({ ...app, workspaceId: "existing-workspace", resources: [{ kind: "external", id: "https://example.test/result", owner: "example.materials", version: { mode: "pinned", revision: "v1" } }] });
+it("preserves resource references without treating them as workspace authority", async () => {
+  let t = await create({ ...app, resources: [{ kind: "external", id: "https://example.test/result", owner: "example.materials", version: { mode: "pinned", revision: "v1" } }] });
   t = await action(t, "ready");
-  expect(t.attempts[0]!.request.input.workspaceId).toBe("existing-workspace");
-  expect(t.attempts[0]!.request.input.resources[0]!.version).toEqual({ mode: "pinned", revision: "v1" });
+  expect(t.attempts[0]!.request.content).not.toHaveProperty("workspaceId");
+  expect(t.attempts[0]!.request.content.resources[0]!.version).toEqual({ mode: "pinned", revision: "v1" });
 });
 
-it("defaults omitted review policy to false at the API boundary", async () => {
-  const { requiresReview: _, ...input } = human;
+it("defaults omitted review policy to none at the API boundary", async () => {
+  const { review: _, ...input } = human;
   const task = await store.create(actor, { requestId: randomUUID(), input });
-  expect(task.requiresReview).toBe(false);
+  expect(task.review.mode).toBe("none");
 });
 
-it("removes an optional workspace before the next immutable dispatch", async () => {
-  const original = await create({ ...app, workspaceId: "existing-workspace" });
-  let task = await store.edit(original.ref.id, actor, { requestId: randomUUID(), expectedRevision: original.revision, input: app });
-  expect(task.workspaceId).toBeUndefined();
-  task = await action(task, "ready");
-  expect(task.attempts[0]!.request.input.workspaceId).toBeUndefined();
+it("rejects obsolete task inputs instead of assigning source authority from them", async () => {
+  await expect(store.create(actor, { requestId: randomUUID(), input: { ...app, workspaceId: "old" } as TaskInput }))
+    .rejects.toMatchObject({ code: "task_invalid" });
+  await expect(store.create(actor, { requestId: randomUUID(), input: { ...app, requiresReview: true } as TaskInput }))
+    .rejects.toMatchObject({ code: "task_invalid" });
 });
 
 it.each(["accepted", "running", "awaiting_input", "cancelling", "interrupted"] as const)("restores %s after an outage using only identical current evidence", async state => {
@@ -129,4 +128,104 @@ it.each(["accepted", "running", "awaiting_input", "cancelling", "interrupted"] a
   expect(task.outcomes).toHaveLength(1);
   await store.unavailable(task.ref.id, "A later outage must not reopen completed work");
   expect(await store.observe(task.ref.id, current.executionId, completed)).toEqual(task);
+});
+
+const child = async (parent: TaskRecord, input: Partial<TaskInput> = {}) => store.create(actor, {
+  requestId: randomUUID(), expectedGraphRevision: (await store.get(parent.ref.id, actor)).graphRevision,
+  input: { ...human, ...input, parentTaskRef: parent.ref },
+});
+const current = (t: TaskRecord) => store.get(t.ref.id, actor);
+const completeHuman = async (task: TaskRecord) => {
+  let t = await action(await current(task), "ready"); t = await action(t, "start");
+  return action(t, "complete", { result: { markdown: "Verified result", resources: [] } });
+};
+it("derives immutable ancestry and serializes concurrent graph changes", async () => {
+  const root = await create(), request = { requestId: randomUUID(), expectedGraphRevision: root.graphRevision, input: { ...human, parentTaskRef: root.ref } };
+  const results = await Promise.allSettled([store.create(actor, request), store.create(actor, { ...request, requestId: randomUUID() })]);
+  expect(results.map(r => r.status).sort()).toEqual(["fulfilled", "rejected"]);
+  const created = await store.create(actor, request);
+  expect(created).toMatchObject({ rootTaskRef: root.ref, parentTaskRef: root.ref, depth: 1, graphRevision: 2 });
+  const nested = await child(created);
+  expect(nested).toMatchObject({ rootTaskRef: root.ref, parentTaskRef: created.ref, depth: 2 });
+  const draft = await current(created);
+  await expect(store.edit(draft.ref.id, actor, { requestId: randomUUID(), expectedRevision: draft.revision, expectedGraphRevision: draft.graphRevision,
+    input: { ...human, parentTaskRef: null } })).rejects.toMatchObject({ code: "parent_immutable" });
+});
+it("rejects prerequisite cycles including implicit parent waits and cross-tree references", async () => {
+  const root = await create(), a = await child(root), b = await child(root, { dependsOn: [a.ref] });
+  const fresh = await current(a);
+  await expect(store.edit(a.ref.id, actor, { requestId: randomUUID(), expectedRevision: fresh.revision, expectedGraphRevision: fresh.graphRevision,
+    input: { ...human, parentTaskRef: root.ref, dependsOn: [b.ref] } })).rejects.toMatchObject({ code: "relations_cycle" });
+  await expect(child(root, { dependsOn: [root.ref] })).rejects.toMatchObject({ code: "relations_cycle" });
+  const unrelated = await create();
+  await expect(child(root, { dependsOn: [unrelated.ref] })).rejects.toMatchObject({ code: "relations_invalid" });
+  expect((await store.all())).toHaveLength(4);
+});
+it("arms a dependent once and pins the exact accepted prerequisite outcome", async () => {
+  const root = await create(), prerequisite = await child(root, { review: { mode: "owner" } });
+  const dependent = await child(root, { ...app, dependsOn: [prerequisite.ref] });
+  let waiting = await action(await current(dependent), "ready");
+  expect(waiting).toMatchObject({ status: "Blocked", armed: true, blocked: { reason: "prerequisites" }, attempts: [] });
+  const result = await completeHuman(prerequisite);
+  expect((await current(dependent)).attempts).toHaveLength(0);
+  await action(result, "accept", { resultRef: result.resultRef });
+  waiting = await current(dependent);
+  expect(waiting.status).toBe("Ready"); expect(waiting.attempts).toHaveLength(1);
+  expect(waiting.attempts[0]!.request.prerequisiteOutcomes).toEqual([result.resultRef]);
+  expect((await action(waiting, "ready")).attempts).toHaveLength(1);
+});
+it("does not complete a parent before required children have accepted results", async () => {
+  const root = await create(), c = await child(root, { review: { mode: "owner" } });
+  const started = await action(await action(await current(root), "ready"), "start");
+  await expect(action(started, "complete", { result: { markdown: "Premature", resources: [] } })).rejects.toMatchObject({ code: "children_incomplete" });
+  const result = await completeHuman(c);
+  await action(result, "accept", { resultRef: result.resultRef });
+  expect((await current(root)).status).toBe("InProgress");
+  const completed = await action(await current(root), "complete", { result: { markdown: "Reviewed child evidence", resources: [] } });
+  expect(completed.status).toBe("Done");
+  expect(completed.outcomes[0]?.childOutcomes).toEqual([result.resultRef]);
+});
+it("fences running dependants when an accepted prerequisite is reopened", async () => {
+  const root = await create(), prerequisite = await child(root), dependent = await child(root, { ...app, dependsOn: [prerequisite.ref] });
+  await completeHuman(prerequisite);
+  let running = await action(await current(dependent), "ready");
+  const execution = running.attempts[0]!.executionId;
+  running = await store.observe(running.ref.id, execution, receipt(running));
+  await action(await current(prerequisite), "draft");
+  expect((await current(dependent)).attempts[0]).toMatchObject({ cancelRequested: true, invalidated: true });
+  const late = await store.observe(dependent.ref.id, execution, receipt(running, { revision: 2, state: "completed", stopConfirmed: true, result: { markdown: "Stale work", resources: [] } }));
+  expect(late).toMatchObject({ status: "Blocked", blocked: { reason: "prerequisite_changed" } });
+  expect(late.acceptedResultRef).toBeUndefined(); expect(late.outcomes[0]?.invalidated).toBe(true);
+});
+it("keeps result revision and attempt identity in review and reassignment", async () => {
+  let t = await action(await create({ ...app, review: { mode: "owner" } }), "ready");
+  t = await store.observe(t.ref.id, t.attempts[0]!.executionId, receipt(t, { state: "completed", stopConfirmed: true, result: { markdown: "First", resources: [] } }));
+  const old = t.resultRef!;
+  t = await action(t, "request_changes", { resultRef: old, feedback: "Add evidence" });
+  expect(t.attempts).toHaveLength(2); expect(t.ref).toEqual(old.taskRef);
+  t = await store.observe(t.ref.id, t.attempts[1]!.executionId, receipt(t, { state: "completed", stopConfirmed: true, result: { markdown: "Second", resources: [] } }));
+  await expect(action(t, "accept", { resultRef: old })).rejects.toMatchObject({ code: "review_changed" });
+  t = await action(t, "accept", { resultRef: t.resultRef });
+  expect(t.outcomes.map(o => o.ref.resultRevision)).toEqual([1, 2]);
+  expect(t.status).toBe("Done");
+});
+it("cancels a subtree without forgetting an uncertain native exit", async () => {
+  const root = await create(), c = await child(root, app), nested = await child(c, app);
+  await action(await current(c), "ready"); await action(await current(nested), "ready");
+  await action(await current(root), "cancel");
+  for (const task of [c, nested]) {
+    const row = await current(task);
+    expect(row.cancelRequested).toBe(true); expect(activeAttempt(row)).toBeDefined();
+    await expect(action(row, "retry")).rejects.toMatchObject({ code: "cancellation_pending" });
+  }
+});
+it("keeps provider discovery outside the writer and rechecks revision after it returns", async () => {
+  const task = await create(app);
+  let finish!: (a: NonNullable<TaskInput["assignee"]>) => void;
+  const discovery = new Promise<NonNullable<TaskInput["assignee"]>>(resolve => { finish = resolve; });
+  const mutation = store.action(task.ref.id, actor, { requestId: randomUUID(), expectedRevision: task.revision, action: "ready" }, () => discovery);
+  const other = await create();
+  expect(other.number).toBe("HRN-2");
+  await action(task, "cancel"); finish(app.assignee!);
+  await expect(mutation).rejects.toMatchObject({ code: "task_changed" });
 });

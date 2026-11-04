@@ -3,7 +3,7 @@ import type { AssistantEvent } from "./assistant-api";
 import { subscribeWorkspaceEvents } from "./workspace-events";
 import { call } from "./api";
 export type DecisionWaitView = { id: string; sessionId: string; questionId: string; state: string; core: DecisionRecord | null; error: string | null; reason: string | null };
-export type DecisionProjection = { id: string; kind: "permission" | "recovery"; sessionId: string; title: string; createdAt: string; event?: AssistantEvent; available: boolean; error?: string };
+export type DecisionProjection = { id: string; kind: "permission" | "recovery" | "task_mode"; revision?: number; approved?: boolean; sessionId: string; title: string; createdAt: string; event?: AssistantEvent; available: boolean; error?: string };
 export const readDecision = async (id: string): Promise<DecisionRecord> => (await call(`/decisions/${encodeURIComponent(id)}`)).json();
 export const readDecisionWait = async (id: string): Promise<DecisionWaitView> => (await call(`/decisions/waits/${encodeURIComponent(id)}`)).json();
 export const resolveDecision = async (id: string, input: DecisionResolve): Promise<DecisionRecord> => (await call(`/decisions/${encodeURIComponent(id)}/resolve`, { method: "POST", body: JSON.stringify(input) })).json();

@@ -98,7 +98,7 @@ it("restores the real coordinator cursor without duplicating transcript events o
   await expect.poll(async () => (await store.readRecord(record.id))!.status).toBe("idle");
   expect((await store.readEvents(record.id)).filter(e=>e.type === "assistant_text").map(e=>e.text)).toEqual(["before restart", "after restart"]);
   expect(f.starts()).toBe(1); expect(f.stopped()).toBe(1);
-  expect((await store.readRecord(record.id))!.workerRun).toBeUndefined();
+  await expect.poll(async () => (await store.readRecord(record.id))!.workerRun).toBeUndefined();
 });
 
 it("reconnects after temporary SSE unavailability without starting another execution", async () => {

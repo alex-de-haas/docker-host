@@ -1,3 +1,8 @@
+import { TaskControls } from "./controls.js";
+import { TaskSources } from "./sources.js";
+import { TaskAdoptions } from "./adoptions.js";
+import { TaskOrchestrator } from "./orchestrator.js";
+import { assertTaskCoordinator } from "./workflow.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { SessionManager } from "../sessions/manager.js";
 import { isSameOriginRequest, resolveAdminActor } from "../auth.js";
@@ -6,18 +11,24 @@ import { ProviderClient } from "@hosty-sdk/app/providers/server";
 import { ProviderError, type ProviderInvocation } from "@hosty-sdk/app/providers";
 import { mediatedTaskRequest } from "./mediation.js";
 import { MediatedTaskExecutorClient, TaskExecutorClient } from "@hosty-sdk/app/tasks/server";
-import { taskStatuses, type TaskAction, type TaskActor, type TaskAssignee, type TaskCreate, type TaskEdit,
+import { taskReferenceKey, taskStatuses, type TaskAction, type TaskActor, type TaskAssignee, type TaskCreate, type TaskEdit,
   type TaskExecutionInput, type TaskProviderRef, type TaskRecord, type TaskStatus } from "@hosty-sdk/app/tasks";
-import { TaskStore, activeAttempt, taskError, providerRef } from "./store.js";
+import { fingerprint, TaskStore, activeAttempt, taskError, providerRef } from "./store.js";
+import { TaskPolicies, type TaskLimits } from "./policy.js";
 import { HarnessTaskExecutor, type ExecutionAuthority } from "./executor.js";
 
 type Authority = ExecutionAuthority;
 export class TaskService {
   readonly store: TaskStore;
   readonly executor: HarnessTaskExecutor;
+  readonly policies: TaskPolicies;
+  readonly orchestration: TaskOrchestrator;
+  readonly adoptions: TaskAdoptions;
+  readonly sources: TaskSources;
+  readonly controls: TaskControls;
   private readonly current = new Map<string, Authority>();
   private closed = false;
-  private inFlight: Promise<void> | null = null;
+  private readonly jobs = new Map<string, Promise<void>>();
   private readonly streams = new Set<ServerResponse>();
   private readonly retries = new Map<string, { failures: number; after: number }>();
   private readonly timer: NodeJS.Timeout;
@@ -26,17 +37,53 @@ export class TaskService {
   constructor(private readonly manager: SessionManager) {
     this.provider = { appId: process.env.HOSTY_APP_ID ?? "hosty.harness", installationId: process.env.HOSTY_APP_INSTALLATION_ID ?? "standalone", key: "default" };
     this.store = new TaskStore(manager.store.dataDir, this.provider);
-    this.executor = new HarnessTaskExecutor(manager);
+    this.executor = new HarnessTaskExecutor(manager, this.store);
+    this.policies = new TaskPolicies(this.store);
+    this.orchestration = new TaskOrchestrator(this.store, manager, this.executor, this.policies);
+    this.sources = new TaskSources(this.store, manager, this.orchestration);
+    this.sources.capacityAvailable = async () => {
+      if (!manager.worker) return true;
+      const runtime = await manager.worker.capabilities();
+      return (runtime.occupied ?? 0) < runtime.capacity;
+    };
+    this.sources.admit = (state, taskId, executionId) => this.policies.reserveIn(state, taskId, executionId);
+    this.controls = new TaskControls(this.store, manager, this.policies, this.orchestration);
+    this.orchestration.beforeResume = id => this.sources.beforeResume(id);
+    this.adoptions = new TaskAdoptions(this.store, manager, (task, requestId, credential) => this.action(task.ref.id,
+      { actor: { userId: task.owner.userId, appId: null }, scope: this.ownScope(), credential, validate: async () => {} },
+      { requestId, expectedRevision: task.revision, action: "ready" }));
+    manager.taskDecisionProjections = async owner => [...await this.adoptions.projections(owner), ...await this.controls.projections(owner), ...await this.sources.projections(owner)];
+    this.store.afterCreate = (state, task) => { if (!task.parentTaskRef && task.assignee?.kind === "app") this.policies.ensure(state, task, task.assignee.executor); };
+    this.store.beforeReopen = (state, task) => this.policies.reopen(state, task);
+    manager.taskModeChanged = async record => { if (record.taskContext && record.taskExecutionId) await this.policies.setMode(record.taskContext.taskRef.id, record.taskExecutionId, record.autonomy ?? "normal"); };
+    this.store.beforeChild = (state, parent) => this.policies.child(state, parent);
+    this.store.beforeAttempt = (state, task) => this.policies.attempt(state, task);
+    this.executor.beforeResult = async (input, id) => this.own(input.taskRef) ? this.store.validateResult(input.taskRef.id, id) : [];
+    this.executor.beforeLaunch = async (input, id, sessionId, authority) => {
+      const session = await manager.getSession(sessionId);
+      if (!session || session.autonomy !== "autonomous") return false;
+      // External providers own their task lifecycle; the executor has no local task graph.
+      if (!this.own(input.taskRef)) return true;
+      await this.orchestration.bindNative(input.taskRef.id, id, sessionId, authority.taskDispatch);
+      await this.policies.setMode(input.taskRef.id, id, session.autonomy);
+      return this.sources.beforeLaunch(input, id, sessionId, authority);
+    };
+    this.executor.receiptChanged = async (input, receipt) => { await this.policies.observe(input.taskRef.id, receipt.executionId, receipt); await this.sources.writers.observe(receipt.executionId, receipt); };
+    manager.taskUsage = async (record, runId, usage) => {
+      if (record.taskExecutionId && record.taskContext && record.workerRun?.id === runId)
+        await this.policies.segmentUsage(record.taskContext.taskRef.id, record.taskExecutionId, runId, usage);
+    };
     this.timer = setInterval(() => { void this.tick(); }, 2000); this.timer.unref();
     this.unsubscribe = this.store.subscribe(() => { queueMicrotask(() => { void this.tick(); }); });
     manager.taskAction = (id, action, input, credential, dispatchGuard) => this.tool(id, action, input, credential, dispatchGuard);
   }
   close(): Promise<void> {
     this.closed = true;
-    clearInterval(this.timer); this.unsubscribe(); this.manager.taskAction = undefined;
+    this.manager.taskDecisionProjections = undefined; this.manager.taskModeChanged = undefined;
+    clearInterval(this.timer); this.unsubscribe(); this.manager.taskAction = undefined; this.manager.taskUsage = undefined;
     for (const stream of this.streams) stream.end();
     this.streams.clear();
-    return this.inFlight ?? Promise.resolve();
+    return Promise.all([...this.jobs.values()]).then(() => {});
   }
   private ownScope() { return `${this.provider.appId}:${this.provider.installationId}`; }
   private own(executor: TaskProviderRef) { return executor.appId === this.provider.appId && executor.installationId === this.provider.installationId && executor.key === this.provider.key; }
@@ -58,27 +105,68 @@ export class TaskService {
       if (!directory.some(u => u.id === assignee.userId)) return taskError("assignee_unavailable", "The selected person is no longer available.");
       return assignee;
     }
+    if (assignee.selection?.kind === "configuration") {
+      if (!this.own(assignee.executor) || !authority.actor.userId) return taskError("unsupported_capability", "Coordinated roles require this executor installation.");
+      const snapshot = await this.store.transaction(state => this.store.snapshot(state, task));
+      const config = await this.executor.configurations.resolve(assignee.selection, authority.actor.userId, snapshot);
+      return { ...assignee, name: config.name };
+    }
     const options = this.own(assignee.executor) && !authority.taskDispatch ? await this.executor.options() : await this.remote(assignee.executor, authority).options();
-    const id = assignee.optionId ?? options.defaultId;
+    const id = assignee.selection?.id ?? options.defaultId;
     const option = options.options.find(o => o.id === id);
     if (!option) return taskError("executor_option_unavailable", "Select an available executor option.");
-    return { ...assignee, optionId: option.id, name: option.name };
+    if (assignee.selection && assignee.selection.revision !== option.revision) return taskError("selection_changed", "Reload executor choices before starting this task.");
+    return { ...assignee, selection: { kind: "option", id: option.id, revision: option.revision }, name: option.name };
   }
   async action(id: string, authority: Authority, input: TaskAction) {
     await authority.validate(); this.remember(authority);
-    return this.store.action(id, authority.actor, input, t => this.selection(t, authority), authority.principalId, authority.taskDispatch, task => {
-      if (authority.principalId && input.action && ["ready", "start", "cancel"].includes(input.action)
+    // User actions enter Core once so background execution retains current, scoped provenance.
+    if (!authority.principalId && authority.credential && process.env.HOSTY_CORE_ORIGIN && process.env.HOSTY_APP_SERVICE_TOKEN
+      && ["ready", "retry", "request_changes", "cancel"].includes(input.action)) {
+      const response = await fetch(new URL("/api/tasks/v1/action", process.env.HOSTY_CORE_ORIGIN), {
+        method: "POST", redirect: "error", signal: AbortSignal.timeout(15000),
+        headers: { authorization: `Bearer ${process.env.HOSTY_APP_SERVICE_TOKEN}`, "X-Hosty-App-Identity": authority.credential, "content-type": "application/json" },
+        body: JSON.stringify({ taskRef: { ...this.provider, id }, input }),
+      });
+      const result = await response.json() as TaskRecord & { code?: string; message?: string; error?: { code: string; message: string } };
+      if (!response.ok) return taskError(result.error?.code ?? result.code ?? "provider_unavailable", result.error?.message ?? result.message ?? "Core task authorization failed; retain the original request ID.", response.status);
+      return result;
+    }
+    return this.store.action(id, authority.actor, input, t => this.selection(t, authority), authority.principalId, authority.taskDispatch, (task, state) => {
+      if (authority.taskWorkflow) {
+        const parent = assertTaskCoordinator(this.store, state, authority.taskWorkflow, authority.actor.userId!, task);
+        if (["accept", "request_changes", "disposition"].includes(input.action) && task.parentTaskRef?.id !== parent.ref.id)
+          return taskError("review_forbidden", "A coordinator reviews only its direct children.", 403);
+      }
+      if (authority.principalId && input.action && ["ready", "retry", "request_changes", "start", "cancel"].includes(input.action)
           && (task.assignee?.kind === "app" || activeAttempt(task)) && authority.mediatedOperation !== "execute")
         return taskError("execution_permission_required", "This action requires an exact Core execution authorization.", 403);
     });
   }
   tick(): Promise<void> {
-    if (this.closed) return this.inFlight ?? Promise.resolve();
-    return this.inFlight ??= this.reconcile().finally(() => { this.inFlight = null; });
+    if (this.closed) return Promise.all([...this.jobs.values()]).then(() => {});
+    // A policy question in one recovery phase must not hold the native executor or
+    // unrelated phases behind it. Each phase still has only one in-flight pass.
+    return Promise.all([
+      this.run("adoptions", () => this.adoptions.reconcile()),
+      this.run("controls", () => this.controls.reconcile()),
+      this.run("sources", () => this.sources.reconcile()),
+      this.run("orchestration", () => this.orchestration.reconcile()),
+      this.run("dispatch", () => this.reconcile()),
+    ]).then(() => {});
+  }
+  private run(key: string, action: () => Promise<void>): Promise<void> {
+    const pending = this.jobs.get(key);
+    if (pending) return pending;
+    const work = action().catch(error => { console.error(`[tasks] ${key} recovery failed`, error); })
+      .finally(() => { this.jobs.delete(key); });
+    this.jobs.set(key, work);
+    return work;
   }
   private async reconcile() {
     try {
       await this.executor.tick();
+      await this.store.refreshQueued();
       for (const task of await this.store.all()) {
         if (this.closed) break;
         const attempt = activeAttempt(task); if (!attempt) continue;
@@ -144,9 +232,85 @@ export class TaskService {
   private async tool(sessionId: string, action: string, input: Record<string, unknown>, credential?: string, dispatchGuard?: () => Promise<void>) {
     const session = await this.manager.getSession(sessionId);
     if (!session) return taskError("session_missing", "Session is unavailable.", 404);
+    if (session.taskBarrier && session.taskBarrier.state !== "resuming" && !["task-wait", "task-adopt", "task-bind-workspace", "task-get", "task-options", "task-execution-get"].includes(action))
+      return taskError("barrier_pending", "Yield the current turn; this task is waiting for its recorded continuation.");
+    if (action === "task-adopt") return this.adoptions.adopt(sessionId, input);
+    if (!session.taskContext && action === "task-execution-get") return { sessionId, mode: session.autonomy ?? "normal",
+      selectionRevision: session.selectionRevision ?? 0, contextRevision: session.appContextRevision ?? 0, autonomyRevision: session.autonomyRevision ?? 0 };
+    if (action === "task-bind-workspace") return this.sources.bind(sessionId, input);
+    if (session.taskContext && action === "task-create") return this.orchestration.create(sessionId, input);
+    if (session.taskContext && action === "task-edit") return this.orchestration.edit(sessionId, input);
+    if (action === "task-prepare-executor") return this.orchestration.prepare(sessionId, input);
+    if (action === "task-delegate") return this.orchestration.delegate(sessionId, input);
+    if (action === "task-wait") return this.orchestration.wait(sessionId, input);
+    if (action === "task-plan") return this.orchestration.plan(sessionId, input);
+    if (action === "task-execution-get") return this.orchestration.summary(sessionId, input);
+    if (session.taskContext && action === "task-action") return this.orchestration.action(sessionId, input);
+    if (session.taskContext && action === "task-get") return this.orchestration.get(sessionId, input.taskId);
+    if (session.taskContext && action === "task-list") return this.orchestration.summary(sessionId, input);
+    if (session.taskContext && action === "task-options") { await this.orchestration.context(sessionId); return this.executor.options(); }
     if (action === "task-result") return this.executor.report(sessionId, input.requestId as string, input.result);
     if (!credential) return taskError("task_credentials_required", "Refresh the session's Hosty credentials before managing tasks.", 401);
     return this.manager.invokeCoreTask(sessionId, action, input, this.provider, dispatchGuard);
+  }
+
+  async operatorRoute(request: IncomingMessage, response: ServerResponse, url: URL, owner: string, interactive: boolean, readJson: () => Promise<Record<string, unknown>>): Promise<boolean> {
+    const prefix = "/api/task-orchestration/v1";
+    if (!url.pathname.startsWith(prefix + "/")) return false;
+    const route = url.pathname.slice(prefix.length), method = request.method ?? "GET";
+    const send = (body: unknown) => { response.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" }); response.end(JSON.stringify(body)); };
+    if (method !== "GET" && (!interactive || !isSameOriginRequest(request)))
+      return taskError("interactive_action_required", "Change task execution policy through an authenticated Harness user action.", 403);
+    const workspace = route.match(/^\/workspaces\/([^/]+)\/execution-summary$/);
+    if (workspace && method === "GET") {
+      const credential = await delegationCredential(request);
+      if (!credential) return taskError("app_session_required", "Open Harness through Core to inspect task workspace history.", 401);
+      send(await this.sources.summary(decodeURIComponent(workspace[1]!), owner, credential, url.searchParams.get("cursor") ?? "0", Number(url.searchParams.get("limit") ?? 100))); return true;
+    }
+    const adoption = route.match(/^\/adoptions\/([a-f0-9-]{36})(?:\/(consent))?$/i);
+    if (adoption && method === "GET") { send(await this.adoptions.get(adoption[1]!, owner)); return true; }
+    if (adoption?.[2] === "consent" && method === "POST") {
+      const credential = await delegationCredential(request);
+      if (!credential) return taskError("app_session_required", "Open Harness through Core to answer mode proposals.", 401);
+      send(await this.adoptions.consent(adoption[1]!, owner, await readJson() as { requestId: string; expectedRevision: number; choice: "approve" | "decline" }, credential)); return true;
+    }
+    if (route === "/settings" && method === "GET") { send(await this.policies.defaults()); return true; }
+    if (route === "/settings" && method === "PUT") {
+      send(await this.policies.updateDefaults(owner, await readJson() as { requestId: string; expectedRevision: number; values: TaskLimits })); return true;
+    }
+    const sessionRoute = route.match(/^\/sessions\/([^/]+)\/adoptions$/);
+    const boundRoute = route.match(/^\/roots\/([a-f0-9-]{36})\/(plan|source)$/i);
+    const action = sessionRoute ? "task-adopt" : boundRoute ? boundRoute[2] === "plan" ? "task-plan" : "task-bind-workspace"
+      : ({ "/configurations": "task-prepare-executor", "/children": "task-delegate", "/waits": "task-wait" } as Record<string, string>)[route];
+    if (method === "POST" && action) {
+      const { sessionId: suppliedSession, ...input } = await readJson();
+      const sessionId = sessionRoute ? decodeURIComponent(sessionRoute[1]!) : suppliedSession;
+      if (typeof sessionId !== "string") return taskError("session_required", "Identify the current owned coordinating session.", 400);
+      const session = await this.manager.getSession(sessionId);
+      if (!session || session.createdBy !== owner) return taskError("session_missing", "This session is unavailable.", 404);
+      if (boundRoute && session.taskContext?.rootTaskRef.id !== boundRoute[1]) return taskError("permission_denied", "Use the session's admitted root.", 403);
+      send(await this.tool(sessionId, action, input, await delegationCredential(request))); return true;
+    }
+    const root = route.match(/^\/roots\/([a-f0-9-]{36})(?:\/(limits|control))?$/i);
+    if (root) {
+      if (method === "GET") {
+        const policy = await this.policies.get(root[1]!, owner);
+        if (root[2] === "limits") send(policy);
+        else {
+          const page = await this.store.list({ userId: owner, appId: null }, url.searchParams.get("cursor") ?? "", Number(url.searchParams.get("limit") ?? 50), undefined,
+            { rootTaskRef: taskReferenceKey(policy.rootTaskRef) });
+          send({ root: policy, plan: await this.store.readJournal("plan:" + policy.rootTaskRef.id),
+            source: await this.orchestration.sourceSummary(policy.rootTaskRef.id), tasks: page.tasks.map(t => this.publicTask(t, { userId: owner, appId: null })), nextCursor: page.nextCursor });
+        }
+        return true;
+      }
+      if (method === "PUT" && root[2] === "limits") { send(await this.policies.updateRoot(root[1]!, owner, await readJson() as { requestId: string; expectedRevision: number; values: TaskLimits })); return true; }
+      if (method === "POST" && root[2] === "control") {
+        const input = await readJson() as { requestId: string; expectedRevision: number; action: "pause" | "resume" | "stop" };
+        send(await this.policies.control(root[1]!, owner, input, () => this.controls.validateResume(root[1]!, owner))); return true;
+      }
+    }
+    return taskError("not_found", "Unknown task orchestration operation.", 404);
   }
 
   async route(request: IncomingMessage, response: ServerResponse, url: URL, readJson: () => Promise<Record<string, unknown>>): Promise<boolean> {
@@ -182,14 +346,14 @@ export class TaskService {
     const source = delegation?.taskRef;
     const authority: Authority = { actor: { userId, appId: source?.appId ?? call?.callerAppId ?? null, ...(source ? { installationId: source.installationId } : call?.callerInstallation ? { installationId: call.callerInstallation } : {}) },
       scope: source ? `${source.appId}:${source.installationId}` : call ? `${call.callerAppId}:${call.callerInstallation}` : this.ownScope(),
-      ...(mediated ? { principalId: mediated.invocation.principalId, taskDispatch: delegation?.dispatch ?? mediated.invocation.taskDispatch ?? undefined, mediatedOperation: mediated.invocation.operation } : {}),
+      ...(mediated ? { principalId: mediated.invocation.principalId, taskDispatch: delegation?.dispatch ?? mediated.invocation.taskDispatch ?? undefined, mediatedOperation: mediated.invocation.operation, taskWorkflow: mediated.invocation.taskWorkflow } : {}),
       credential: call ? undefined : await delegationCredential(request), validate: async () => { if (delegation) { const current = await new ProviderClient().taskDispatchAuthority(delegation.dispatch); if (current.scope.executionId !== delegation.executionId || current.dispatch.userId !== userId) return taskError("execution_changed", "Execution authority changed.", 403); return; } if (await validate() !== userId) return taskError("actor_changed", "Task actor changed.", 403); } };
     if (this.closed) return taskError("tasks_stopping", "Task dispatch is stopping.", 503);
     this.remember(authority);
     const send = async (status: number, body: unknown) => { await validate(); response.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" }); response.end(JSON.stringify(body)); };
     const route = url.pathname.slice(tasks ? "/api/tasks/v1".length : "/api/task-executor/v1".length);
     if (tasks) {
-      if (method === "GET" && route === "/capabilities") { await send(200, { version: 1, prefix: this.store.prefix, statuses: taskStatuses, maxPageSize: 100 }); return true; }
+      if (method === "GET" && route === "/capabilities") { await send(200, { version: 1, prefix: this.store.prefix, statuses: taskStatuses, maxPageSize: 100, capabilities: ["markdown", "resources", "review", "events", "parent-child", "prerequisites", "delegated-review"] }); return true; }
       if (method === "GET" && route === "/directory") {
         const options = await this.executor.options();
         let others: unknown[] = [], warning: string | undefined;
@@ -210,14 +374,24 @@ export class TaskService {
         response.on("close", () => { clearInterval(timer); unsubscribe(); this.streams.delete(response); }); return true;
       }
       if (route === "/tasks" && method === "GET") {
-        const page = await this.store.list(authority.actor, url.searchParams.get("cursor") ?? "", Number(url.searchParams.get("limit") ?? 50), (url.searchParams.get("status") || undefined) as TaskStatus | undefined);
+        const page = await this.store.list(authority.actor, url.searchParams.get("cursor") ?? "", Number(url.searchParams.get("limit") ?? 50), (url.searchParams.get("status") || undefined) as TaskStatus | undefined,
+          { parentTaskRef: url.searchParams.get("parentTaskRef") ?? undefined, rootTaskRef: url.searchParams.get("rootTaskRef") ?? undefined, rootsOnly: url.searchParams.get("rootsOnly") === "true" });
         await send(200, { ...page, tasks: page.tasks.map(t => this.publicTask(t, authority.actor)) }); return true;
       }
-      if (route === "/tasks" && method === "POST") { await send(201, await this.store.create(authority.actor, await readJson() as TaskCreate, authority.principalId)); return true; }
+      if (route === "/tasks" && method === "POST") {
+        const input = await readJson() as TaskCreate;
+        await send(201, await this.store.create(authority.actor, input, authority.principalId, state => {
+          if (!authority.taskWorkflow) return;
+          const parent = assertTaskCoordinator(this.store, state, authority.taskWorkflow, userId);
+          if (fingerprint(input.input.parentTaskRef) !== fingerprint(parent.ref)) return taskError("root_task_required", "Create children under this session's admitted task.");
+        })); return true;
+      }
+      const requestMatch = route.match(/^\/requests\/([a-f0-9-]{36})$/i);
+      if (requestMatch && method === "GET") { const receipt = await this.store.request(authority.actor, requestMatch[1]!, authority.principalId); await send(200, { ...receipt, result: this.publicTask(receipt.result, authority.actor) }); return true; }
       const match = route.match(/^\/tasks\/([a-f0-9-]{36})(\/actions)?$/i);
       if (match) {
         if (method === "GET" && !match[2]) await send(200, this.publicTask(await this.store.get(match[1]!, authority.actor), authority.actor));
-        else if (method === "PATCH" && !match[2]) await send(200, this.publicTask(await this.store.edit(match[1]!, authority.actor, await readJson() as TaskEdit, authority.principalId), authority.actor));
+        else if (method === "PATCH" && !match[2]) await send(200, this.publicTask(await this.store.edit(match[1]!, authority.actor, await readJson() as TaskEdit, authority.principalId, (task, state) => { if (authority.taskWorkflow) assertTaskCoordinator(this.store, state, authority.taskWorkflow, userId, task); }), authority.actor));
         else if (method === "POST" && match[2]) await send(200, this.publicTask(await this.action(match[1]!, authority, await readJson() as TaskAction), authority.actor));
         else await send(405, { code: "method_not_allowed", message: "Unsupported task method." });
         return true;

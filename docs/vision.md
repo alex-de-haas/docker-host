@@ -1,6 +1,6 @@
 ---
 created: 2026-08-19
-updated: 2026-11-03
+updated: 2026-11-04
 ---
 
 # Hosty Platform Vision
@@ -1312,6 +1312,78 @@ Decisions 1–5: 2026-08-19.
     in their owning plans; the wider provider extraction and durable scheduler remain Draft.
     This approval authorizes development, not commits, publication or a live runtime switch.
 
+70. **Flat profile executors and task-based delegation (2026-11-04).**
+    The owner selects existing Harness profiles as the only configured agent abstraction. Do not
+    introduce named-agent principals, saved teams, virtual companies or a reporting hierarchy.
+    Manager, analyst, developer and QA are ordinary profiles; any profile may delegate to another.
+    Work forms a retained task tree with separate prerequisite relationships, shared source context,
+    independent execution conversations and coordinator verification of child results. Every chat
+    task start creates its root before any children; task-first execution reuses its existing root.
+    An executor may finish the root itself, without forced delegation or a required Manager role.
+    Task-list layout remains unchanged for this slice; root-only and expandable-tree presentation
+    are deferred to later design in Harness Work Orchestration D3.
+
+    New agent task sessions, including children, use Autonomous by default with visible metadata.
+    Adopting a Normal chat first requires that user's approval through Decisions, then switches at
+    a safe turn boundary. The approved mode stays with the session after completion; already-
+    Autonomous sessions do not ask again. No approval per child is required after root admission.
+    Existing Core authority and explicit MCP Ask/Disabled rules remain independent. Chat and task
+    entry points should converge on one coordination task without creating a duplicate manager.
+    Related source tasks reuse the selected logical workspace; task completion does not publish or
+    change ordinary app lifecycle. Durable child results continue the correct parent without a
+    browser or repeated inference while waiting.
+
+    Saved profile descriptions guide selection. The owner accepts a one-off instruction/installed-
+    skill configuration only when available profiles do not fit, with an observable reason and
+    retained execution snapshot. Agents do not mutate the profile catalog. Manual agent-task
+    assignment retains saved-profile selection. With an empty directory, a no-profile chat creates
+    the root using its existing configuration and may delegate one-off children. A single generalist
+    also remains usable; no mandatory role names or seeded profile are selected. Initially inherit
+    the parent model/connection for one-off children.
+
+    An unavailable selected executor produces retained failure evidence. A working coordinator may
+    reassign that same child to another suitable available executor after confirmed non-start/exit,
+    preserving its ancestry, workspace and failed attempt. Uncertain dispatch must reconcile before
+    another attempt. A coordinator with no working connection cannot select its own replacement;
+    recovery remains visible to the user rather than implying an independent supervisor.
+
+    The owner further requests separating task semantics from source resources. Tasks can run
+    without workspaces; Core workspaces retain session participation without knowing task-provider
+    storage. The proposed Draft connects task attempts to execution sessions, which optionally use
+    a workspace, with durable executor-owned source context for queued/restarted work. Retain
+    separate attempt histories on rework/reassignment. The owner subsequently confirms tasks
+    have not been used and explicitly permits replacing the task schema without backward
+    compatibility. The common interface must remain generic and include parent/child relationships;
+    source selection moves into execution context while current broker authority remains enforced.
+
+    The final workspace clarification makes selection optional initially, but once a development
+    root selects a workspace, all its root/descendant sessions belong there, including earlier
+    planning, review and QA. Workspace details show the root task and every authorized session,
+    identifying the executor primarily by its admitted profile name when one was used. Human
+    ownership remains separate; its further presentation is deferred. This scoped sidebar change
+    does not include global task-list regrouping. The owner explicitly requests recording the plan
+    only and not starting new development. A subsequent instruction below finalizes readiness
+    while retaining that implementation boundary.
+
+    The owner accepts configurable defaults of four concurrent executions per root, three levels
+    below the root, fifty total descendants and two retries beyond each task's initial attempt.
+    Time limits are optional; monetary caps require enforceable usage. Users may adjust defaults
+    and root limits; agents cannot raise their own allowance. Exhaustion retains work for recovery.
+    Distinct tasks use distinct sessions with fresh task context, even when they use the same
+    profile. A profile can run independent tasks concurrently; there is no per-profile session pool.
+    Retain separate historical attempts after failure/reassignment and allow only one active attempt
+    per task. Broader session redesign and multiple tasks in one conversation remain deferred.
+
+    The owner first requests completing the technical contracts without implementation, and
+    confirms that the unused task API is revised in place at version 1 without v2 routes or a
+    compatibility layer. The subsequent 2026-11-04 instruction explicitly authorizes updating the
+    registered worktree from main, marking the plan Ready and starting implementation.
+    [Profile-Based Task Delegation](features/profile-task-delegation/feature.md) implements the
+    bounded D1-D8 scope: generic task relationships, immutable attempts, retained root authority,
+    explicit Normal-mode consent, native continuation, optional source binding and editable limits.
+    The broader artifact/provider/event/scheduler plans retain their own remaining scope and status.
+    Commits, publication and an ordinary-data runtime switch remain outside this authorization.
+
 ## Personal And Shared Environments (owner exploration, 2026-10-23)
 
 ### Composition And Extension Boundaries
@@ -1467,6 +1539,7 @@ the manifest contract. Two standing consequences:
 [shared-decisions](features/shared-decisions/feature.md) ·
 [durable-agent-jobs](features/durable-agent-jobs/plan.md) ·
 [harness-work-orchestration](features/harness-work-orchestration/plan.md) ·
+[profile-task-delegation](features/profile-task-delegation/feature.md) ·
 [harness-development-ui](features/harness-development-ui/feature.md) ·
 [harness-session-retention](features/harness-session-retention/feature.md) ·
 [workspaces-app](features/workspaces-app/feature.md) ·

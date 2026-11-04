@@ -364,7 +364,10 @@
           "markdown",
           "review",
           "resources",
-          "events"
+          "events",
+          "parent-child",
+          "prerequisites",
+          "delegated-review"
         ]
       }
     ],
@@ -378,7 +381,7 @@
           "markdown",
           "options",
           "cancellation",
-          "existing-workspace"
+          "configuration-ref"
         ]
       }
     ],

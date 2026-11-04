@@ -6,13 +6,13 @@ namespace Haas.Hosty.Core;
 
 internal sealed record AssistantMcpTokenRequest(string TargetAppId, string? SessionId = null);
 internal sealed record AssistantMcpClaims(string Caller, string Audience, string UserId, string GrantHash,
-    DateTimeOffset CallerInstallation, DateTimeOffset? TargetInstallation, string GrantRevision, long Expires, string? SessionId = null, string? LeaseRevision = null, bool DiscoveryOnly = false);
+    DateTimeOffset CallerInstallation, DateTimeOffset? TargetInstallation, string GrantRevision, long Expires, string? SessionId = null, string? LeaseRevision = null, bool DiscoveryOnly = false, CoreTaskMcpBinding? Task = null);
 internal sealed record AssistantMcpActor(string UserId, string Role, AppRecord Caller, bool DiscoveryOnly = false, IReadOnlyList<string>? AllowedTools = null, IReadOnlyList<string>? DeniedTools = null);
 
 // A separate signed format is never accepted by session, delegated-token or app API validators.
 // Receiving MCP handlers introspect every call, so policy and parent-session revocation apply online.
 internal sealed class AssistantMcpAccess(AppRegistryStore apps, AppServiceTokenService services,
-    AgentPolicyStore policies, AppIdentityService identity, AppSessionGrantStore grants, DelegatedTokenSigningKey signing, IClock clock, AuditStore audit, AssistantSessionAuthority authority)
+    AgentPolicyStore policies, AppIdentityService identity, AppSessionGrantStore grants, DelegatedTokenSigningKey signing, IClock clock, AuditStore audit, AssistantSessionAuthority authority, IServiceProvider? runtime = null)
 {
     internal const string Prefix = "hosty_mcp.1.";
 
@@ -80,6 +80,23 @@ internal sealed class AssistantMcpAccess(AppRegistryStore apps, AppServiceTokenS
         return new(data + "." + Encode(signing.Sign(Encoding.UTF8.GetBytes(data))), "Bearer", targetId, expires, Math.Max(0, (int)(expires - clock.UtcNow).TotalSeconds));
     }
 
+    internal async Task<DelegatedTokenResponse> IssueTaskAsync(string callerId, string targetId, string grantHash, CoreTaskMcpBinding binding, CancellationToken ct)
+    {
+        var link = await RequireLinkAsync(callerId, targetId, ct);
+        var actor = await identity.RequireOperationHashAsync(grantHash, callerId, scope => scope.Kind == "mcp" && scope.TargetAppId == targetId, ct, requireActivity: false);
+        if (actor.UserId != binding.Dispatch.UserId) throw new AppIdentityException("permission_denied", "The task's initiating user changed.");
+        await RequireTargetUserAsync(targetId, actor, ct);
+        var parent = await grants.TryResolveAsync(grantHash, ct);
+        if (parent is null || parent.CreatedAt < link.Caller.InstalledAt) throw new AppIdentityException("token_invalid", "The original app authorization is unavailable.");
+        var expires = clock.UtcNow.AddMinutes(5); if (parent.AbsoluteExpiresAt < expires) expires = parent.AbsoluteExpiresAt;
+        var claims = new AssistantMcpClaims(callerId, targetId, actor.UserId, grantHash, link.Caller.InstalledAt,
+            link.Target?.InstalledAt, link.Grant.Revision, expires.ToUnixTimeSeconds(), binding.SessionId, Task: binding);
+        var data = Prefix + Encode(JsonSerializer.SerializeToUtf8Bytes(claims, CoreJson.TypeInfo<AssistantMcpClaims>()));
+        await audit.AppendAsync(new AuditRecord($"audit_{Guid.NewGuid():N}", "auth.task-mcp.issue", "app", targetId, "succeeded", actor.UserId,
+            clock.UtcNow, new Dictionary<string, string> { ["callerAppId"] = callerId, ["executionId"] = binding.ExecutionId }), ct);
+        return new(data + "." + Encode(signing.Sign(Encoding.UTF8.GetBytes(data))), "Bearer", targetId, expires, Math.Max(0, (int)(expires - clock.UtcNow).TotalSeconds));
+    }
+
     internal async Task<AssistantMcpActor?> ValidateAsync(string token, string audience, CancellationToken ct)
     {
         try
@@ -91,7 +108,7 @@ internal sealed class AssistantMcpAccess(AppRegistryStore apps, AppServiceTokenS
             if (claims is null || claims.Audience != audience || claims.Expires <= clock.UtcNow.ToUnixTimeSeconds()) return null;
             return await ValidateClaimsAsync(claims, audience, ct);
         }
-        catch (Exception ex) when (ex is FormatException or JsonException or CryptographicException or ArgumentException or AppIdentityException)
+        catch (Exception ex) when (ex is FormatException or JsonException or CryptographicException or ArgumentException or AppIdentityException or CoreProviderException)
         { return null; }
     }
 
@@ -116,12 +133,18 @@ internal sealed class AssistantMcpAccess(AppRegistryStore apps, AppServiceTokenS
             var link = await RequireLinkAsync(claims.Caller, audience, ct, claims.DiscoveryOnly);
             if (link.Caller.InstalledAt != claims.CallerInstallation || link.Target?.InstalledAt != claims.TargetInstallation
                 || link.Grant.Revision != claims.GrantRevision) return null;
+            if (claims.Task is { } task)
+            {
+                if (runtime is null || task.SessionId != claims.SessionId || task.Dispatch.UserId != claims.UserId) return null;
+                var original = await runtime.GetRequiredService<CoreTaskMcp>().Validate(link.Caller, task, ct);
+                if (original != claims.GrantHash) return null;
+            }
             var source = await grants.TryResolveAsync(claims.GrantHash, ct);
             BackgroundScope? scope = null;
             AppSessionValidationResult actor;
             if (source?.BackgroundGrantId is not null)
                 actor = await identity.RequireOperationHashAsync(claims.GrantHash, claims.Caller,
-                    s => { scope = s; return s.Kind == "mcp" && s.TargetAppId == audience; }, ct);
+                    s => { scope = s; return s.Kind == "mcp" && s.TargetAppId == audience; }, ct, requireActivity: !retainedOperation && claims.Task is null);
             else
             {
                 if (claims.DiscoveryOnly)
@@ -132,7 +155,7 @@ internal sealed class AssistantMcpAccess(AppRegistryStore apps, AppServiceTokenS
                 else
                 {
                     if (claims.SessionId is null || claims.LeaseRevision is not null) return null;
-                    await authority.RequireAsync(claims.Caller, claims.SessionId, claims.GrantHash, ct);
+                    await authority.RequireAsync(claims.Caller, claims.SessionId, claims.GrantHash, ct, retainedOperation || claims.Task is not null);
                 }
                 actor = await identity.RevalidateHashAsync(claims.GrantHash, claims.Caller, ct);
             }
@@ -140,7 +163,7 @@ internal sealed class AssistantMcpAccess(AppRegistryStore apps, AppServiceTokenS
             await RequireTargetUserAsync(audience, actor, ct);
             return new(actor.UserId, actor.HostRole ?? "", link.Caller, claims.DiscoveryOnly, scope?.Actions, link.Grant.DeniedTools);
         }
-        catch (Exception ex) when (ex is FormatException or JsonException or CryptographicException or ArgumentException or AppIdentityException)
+        catch (Exception ex) when (ex is FormatException or JsonException or CryptographicException or ArgumentException or AppIdentityException or CoreProviderException)
         { return null; }
     }
 

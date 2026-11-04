@@ -1,7 +1,7 @@
 import { SUGGESTION_DEADLINE_MS, suggestionText, successfulResult } from "../harness/prompt-suggestion.js";
 import type { HarnessAdapter, HarnessEvent, HarnessRun } from "../harness/adapter.js";
 import { WorkerJournal } from "./journal.js";
-import { WorkerApiError, terminal, validateRun, validateMcpServers, type WorkerRunRequest, type WorkerControl, type WorkerPark, type WorkerReceipt } from "./contracts.js";
+import { WorkerApiError, terminal, safeIdentity, validateRun, validateMcpServers, type WorkerRunRequest, type WorkerControl, type WorkerPark, type WorkerReceipt } from "./contracts.js";
 
 export interface WorkerExecution {
   adapter(request: WorkerRunRequest): Promise<HarnessAdapter>;
@@ -17,8 +17,19 @@ export class WorkerEngine {
   private disabledSuggestions = new Set<string>();
   private starts = new Set<Promise<void>>();
   private closing = false;
-  constructor(readonly journal: WorkerJournal, private readonly execution: WorkerExecution, private readonly capacity: number) {}
+  private readonly usageTimer: NodeJS.Timeout;
+  constructor(readonly journal: WorkerJournal, private readonly execution: WorkerExecution, private readonly capacity: number) {
+    this.usageTimer = setInterval(() => {
+      void this.journal.exclusive(async () => { for (const id of this.admitted) await this.journal.sample(id); }).catch(() => {
+        // Fence admission immediately, then stop native consumers even when durable usage
+        // storage is unavailable. Restart keeps uncommitted usage/exit evidence uncertain.
+        if (!this.closing) void this.close().catch(() => {});
+      });
+    }, 1000);
+    this.usageTimer.unref();
+  }
 
+  get occupied(): number { return this.admitted.size; }
   async submit(id: string, input: unknown): Promise<WorkerReceipt> {
     if (this.closing) throw new WorkerApiError(503, "worker_stopping", "Worker is stopping.");
     validateRun(input);
@@ -88,7 +99,11 @@ export class WorkerEngine {
           // Prediction output cannot become another transcript/tool/approval/turn.
           return;
         }
-        if (state === "parking" || state === "parked") return; // Native shutdown is not a task result or user cancellation.
+        if (state === "parking") {
+          // Shutdown can race a native tool start. Retain effect evidence before confirming parking.
+          if (["native_effect", "tool_use", "tool_result", "command_result"].includes(event.type)) await this.journal.append(id, event);
+          return;
+        }
         if (event.type === "prompt_suggestion" || event.type === "answer_complete") return;
         await this.journal.append(id, event);
         if (event.type === "approval_request" || event.type === "question_request" && event.blocking !== false) await this.journal.update(id, "awaiting_input");
@@ -175,23 +190,78 @@ export class WorkerEngine {
       return terminal(current.state) || current.state === "parking" ? current : this.journal.update(id, "parking");
     });
     if (terminal(receipt.state)) return receipt;
+    return this.finishPark(id);
+  }
+  /** Park only after the native stream acknowledged the exact orchestration tool result. */
+  async barrier(id: string, input: import("./contracts.js").WorkerBarrier): Promise<WorkerReceipt> {
+    if (!input || !["task_adoption", "child_wait", "source_rebind", "limits"].includes(input.kind)
+      || input.origin !== undefined && input.origin !== "coordinator"
+      || input.origin === "coordinator" && !["source_rebind", "limits"].includes(input.kind)
+      || !safeIdentity(input.barrierId) || !Number.isSafeInteger(input.generation) || input.generation < 1
+      || !Number.isSafeInteger(input.acknowledgedSequence) || input.acknowledgedSequence < (input.origin === "coordinator" ? 0 : 1))
+      throw new WorkerApiError(400, "invalid_barrier", "Supply the typed barrier and acknowledged native event sequence.");
+    const receipt = await this.journal.exclusive(async () => {
+      const stored = await this.journal.load(id), current = stored.receipt;
+      if (Object.values(stored.controls).some(control => !control.applied))
+        throw new WorkerApiError(409, "control_uncertain", "Reconcile uncertain native delivery before parking.");
+      await this.journal.control(id, input.controlId, { kind: "task_barrier", input }, async record => {
+        record.receipt.barrier = { ...input };
+      }, () => {
+        const acknowledged = stored.events.find(frame => frame.sequence === input.acknowledgedSequence)?.event;
+        const marker = `hosty_task_barrier:${input.barrierId}:${input.generation}`;
+        const expectedTool = { task_adoption: "task_adopt", child_wait: "task_wait", source_rebind: "task_bind_workspace", limits: null }[input.kind];
+        const call = acknowledged?.type === "tool_result" ? stored.events.find(frame => frame.event.type === "tool_use"
+          && frame.event.toolUseId === acknowledged.toolUseId)?.event : undefined;
+        const pending = new Set<string>(); let unknown = false;
+        for (const { event } of stored.events) {
+          if (event.type === "native_effect" && event.state === "settled") pending.delete(event.id);
+          if (event.type === "tool_use") { if (event.toolUseId) pending.add(event.toolUseId); else if (event.toolName !== "FileChange") unknown = true; }
+          if (event.type === "tool_result" || event.type === "command_result") {
+            if (event.status === "unknown") unknown = true;
+            else pending.delete(event.toolUseId);
+          }
+        }
+        if (current.revision !== input.expectedRevision || !current.snapshot?.nativeSessionId
+          || input.origin !== "coordinator" && (acknowledged?.type !== "tool_result" || acknowledged.status !== "completed" || !acknowledged.output.includes(marker)
+            || call?.type !== "tool_use" || !(call.mcp?.tool === expectedTool || call.toolName.endsWith("__" + expectedTool) || call.toolName.endsWith(": " + expectedTool)))
+          || unknown || pending.size || current.pending?.length || Object.keys(current.effects ?? {}).length
+          || !["running", "completed"].includes(current.state)
+          || current.state === "running" && !this.active.get(id)?.run.stopAndWait)
+          throw new WorkerApiError(409, "barrier_pending", "Wait for this tool acknowledgement, settled effects and a resumable native checkpoint.");
+      });
+      const fresh = (await this.journal.load(id)).receipt;
+      if (fresh.state === "completed" && fresh.exitConfirmed) return this.journal.update(id, "parked");
+      return terminal(fresh.state) || fresh.state === "parking" ? fresh : this.journal.update(id, "parking");
+    });
+    if (terminal(receipt.state)) return receipt;
+    return this.finishPark(id);
+  }
+  private async finishPark(id: string): Promise<WorkerReceipt> {
     const active = this.active.get(id);
     if (!active) throw new WorkerApiError(409, "exit_unconfirmed", "The original execution must be reconciled before parking.");
     try {
       if (!active.run.stopAndWait) throw new Error("Native exit confirmation is unsupported.");
       await active.run.stopAndWait();
       await this.journal.exclusive(async () => {
-        const state = (await this.journal.load(id)).receipt.state;
+        const stored = await this.journal.load(id), state = stored.receipt.state;
+        const pending = new Set<string>(); let unknown = false;
+        for (const { event } of stored.events) {
+          if (event.type === "native_effect" && event.state === "settled") pending.delete(event.id);
+          if (event.type === "tool_use" && event.toolUseId) pending.add(event.toolUseId);
+          if (event.type === "tool_result" || event.type === "command_result") {
+            if (event.status === "unknown") unknown = true; else pending.delete(event.toolUseId);
+          }
+        }
+        if (state === "parking" && (unknown || pending.size || Object.keys(stored.receipt.effects ?? {}).length))
+          throw new WorkerApiError(409, "effects_unconfirmed", "Native exit alone does not prove external tool effects settled.");
         if (state === "parking") await this.journal.update(id, "parked");
         else if (state === "cancelling") await this.journal.update(id, "cancelled");
       });
       if (this.active.get(id) === active) { active.release(); this.active.delete(id); this.admitted.delete(id); this.disabledSuggestions.delete(id); }
-    } catch {
-      // Keep both the consumer and command identity; an uncertain exit never authorizes a resume.
-      throw new WorkerApiError(503, "exit_unconfirmed", "Parking could not confirm native execution exit.");
-    }
+    } catch { throw new WorkerApiError(503, "exit_unconfirmed", "Parking could not confirm native execution exit."); }
     return (await this.journal.load(id)).receipt;
   }
+
   async cancel(id: string, controlId: string): Promise<WorkerReceipt> {
     const receipt = await this.journal.exclusive(async () => {
       await this.journal.control(id, controlId, { kind: "cancel" }, async () => {});
@@ -242,7 +312,7 @@ export class WorkerEngine {
     return { applied: await active.run.setMcpServers(servers) };
   }
   async close(): Promise<void> {
-    this.closing = true;
+    this.closing = true; clearInterval(this.usageTimer);
     await Promise.allSettled([...this.starts]);
     await Promise.allSettled([...this.active].map(([id, active]) => active.collecting ? this.finishSuggestion(id) : this.fail(id, "Worker is shutting down.")));
     await this.journal.exclusive(async () => {});

@@ -1,3 +1,4 @@
+import { TASK_ORCHESTRATION_GUIDE } from "../tasks/tools.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
@@ -100,7 +101,7 @@ describe("native skills in a session", () => {
   it("exports selected packages while keeping standing instructions separate", async () => {
     await settings.update({ systemPrompt: "Be brief.", skillIds: [skillId], mcpProviders: { [APP]: true } });
     const prompt = await startSession();
-    expect(prompt).toBe(`${intro}\n\n${HOST_SYSTEM_PROMPT}\n\n${DEFAULT_WORKFLOW_PROMPT}\n\nBe brief.`);
+    expect(prompt).toBe(`${intro}\n\n${HOST_SYSTEM_PROMPT}\n\n${TASK_ORCHESTRATION_GUIDE}\n\n${DEFAULT_WORKFLOW_PROMPT}\n\nBe brief.`);
     expect(prompt).not.toContain("Call list_people first.");
     expect(exports[0]?.skillIds).toEqual([skillId]);
     expect(adapter.lastStart?.skillExportId).toBe(exportId);

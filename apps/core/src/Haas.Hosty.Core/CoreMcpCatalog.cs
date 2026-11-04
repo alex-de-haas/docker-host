@@ -240,7 +240,38 @@ internal static class CoreMcpCatalog
                 if (!types.Any(expected => MatchesType(value, expected)))
                     return new("mcp_argument_invalid",
                         $"Argument '{property.Name}' must have JSON type {string.Join(" or ", types)}.");
+                if (NestedArgumentError(property.Value, value, property.Name) is { } nested) return nested;
             }
+        return null;
+    }
+
+    private static ErrorResponse? NestedArgumentError(JsonElement schema, JsonElement value, string path, int depth = 0)
+    {
+        if (depth >= 32) return null;
+        if (schema.TryGetProperty("type", out var type))
+        {
+            var types = type.ValueKind == JsonValueKind.Array
+                ? type.EnumerateArray().Select(entry => entry.GetString()!).ToArray() : [type.GetString()!];
+            if (!types.Any(expected => MatchesType(value, expected)))
+                return new("mcp_argument_invalid", $"Argument '{path}' must have JSON type {string.Join(" or ", types)}.");
+        }
+        if (value.ValueKind == JsonValueKind.Object)
+        {
+            if (schema.TryGetProperty("required", out var required))
+                foreach (var entry in required.EnumerateArray())
+                    if (!value.TryGetProperty(entry.GetString()!, out _))
+                        return new("mcp_argument_required", $"Required argument '{path}.{entry.GetString()}' is missing. Preserve the nesting in the published tool schema.");
+            if (schema.TryGetProperty("properties", out var properties))
+                foreach (var property in properties.EnumerateObject())
+                    if (value.TryGetProperty(property.Name, out var child)
+                        && NestedArgumentError(property.Value, child, path + "." + property.Name, depth + 1) is { } error) return error;
+        }
+        else if (value.ValueKind == JsonValueKind.Array && schema.TryGetProperty("items", out var items))
+        {
+            var index = 0;
+            foreach (var child in value.EnumerateArray())
+                if (NestedArgumentError(items, child, $"{path}[{index++}]", depth + 1) is { } error) return error;
+        }
         return null;
     }
 

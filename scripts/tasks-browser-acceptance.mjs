@@ -32,6 +32,26 @@ try {
     headers: { Origin: config.harness }, data: { code: (await codeResponse.json()).code, codeVerifier: verifier },
   });
   assert.equal(exchange.status(), 200);
+  if (config.workspaceAcceptance) {
+    const evidence = config.workspaceAcceptance;
+    await page.goto(config.harness + '/development/?workspace=' + encodeURIComponent(evidence.workspaceId));
+    const toggle = page.getByRole('button', { name: 'Workspace details', exact: true });
+    await toggle.waitFor();
+    if (await toggle.getAttribute('aria-expanded') !== 'true') await toggle.click();
+    const sessions = page.getByRole('region', { name: 'Workspace sessions', exact: true });
+    await sessions.waitFor();
+    const rootLink = sessions.getByRole('link', { name: new RegExp(evidence.rootTitle) });
+    await rootLink.waitFor();
+    assert.equal(await rootLink.getAttribute('href'), '/tasks?task=' + evidence.rootId);
+    await sessions.getByText(evidence.profileName, { exact: true }).waitFor();
+    assert.equal(await sessions.getByText(evidence.profileName + ' renamed', { exact: true }).count(), 0);
+    await page.reload();
+    await sessions.getByText(evidence.profileName, { exact: true }).waitFor();
+    await rootLink.click();
+    await page.getByRole('button', { name: 'Reopen', exact: true }).waitFor();
+    assert.match(await page.locator('main').innerText(), new RegExp(evidence.rootTitle));
+    console.log('PASS: workspace root task navigation, retained session attribution after profile rename, and reload');
+  }
   await page.goto(config.harness+'/tasks/');
   await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
   await page.getByRole('button', { name: 'New task', exact: true }).click();
@@ -46,7 +66,7 @@ try {
   await page.getByLabel('Title', { exact: true }).fill('Unsaved browser title');
   const background = await page.request.post(config.harness+'/api/tasks/v1/tasks', {
     headers: { Origin: config.harness }, data: { requestId: randomUUID(), input: {
-      title: 'SSE background task', markdown: 'Trigger a real stream update.', assignee: null, requiresReview: false, resources: [],
+      title: 'SSE background task', markdown: 'Trigger a real stream update.', assignee: null, review: { mode: 'none' }, resources: [],
     } },
   });
   assert.equal(background.status(), 201);

@@ -208,6 +208,12 @@ internal static class ProviderEndpoints
                 }
                 catch (AppLifecycleException ex) { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), ex.Code == "workspace_forbidden" ? 403 : 409); }
             }));
+        app.MapPost(root + "/task-mcp", async (string appId, CoreTaskMcpRequest input,
+            HttpRequest request, ProviderAccessService access, CoreTaskMcp mcp, CancellationToken ct) =>
+            await Handle(async () => CoreJson.Json(await mcp.Issue(await access.AuthenticateAsync(appId, request, ct), input, ct))));
+        app.MapPost(root + "/task-workflow", async (string appId, CoreTaskWorkflowRequest input,
+            HttpRequest request, ProviderAccessService access, CoreTaskWorkflow workflow, CancellationToken ct) =>
+            await Handle(async () => CoreJson.Json(await workflow.Run(await access.AuthenticateAsync(appId, request, ct), input, ct))));
         app.MapPost(root + "/task-dispatch-authority", async (string appId, CoreTaskDispatchAuthorityRequest input,
             HttpRequest request, ProviderAccessService access, CoreProviderMediation mediation, CancellationToken ct) =>
             await Handle(async () => CoreJson.Json(await mediation.TaskDispatchAuthorityAsync(await access.AuthenticateAsync(appId, request, ct), input.Dispatch, ct))));

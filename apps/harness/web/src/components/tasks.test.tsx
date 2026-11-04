@@ -14,13 +14,13 @@ const provider = { appId: "example.tasks", installationId: "one", key: "default"
 const click = async (name: string) => act(async () => { [...container.querySelectorAll("button")].find(b => b.textContent === name)!.click(); });
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  task = { ref: { ...provider, id: "d3384b62-3740-4604-8c0f-b527751c9643" }, number: "HRN-1", revision: 1, inputRevision: 1, title: "Original title", markdown: "Original description", requiresReview: false, resources: [], assignee: null, status: "Draft", createdAt: "now", updatedAt: "now", createdBy: { userId: "owner", appId: null }, owner: { userId: "owner", appId: null }, cancelRequested: false, attempts: [] };
+  task = { ref: { ...provider, id: "d3384b62-3740-4604-8c0f-b527751c9643" }, number: "HRN-1", revision: 1, inputRevision: 1, title: "Original title", markdown: "Original description", review: { mode: "none" }, parentTaskRef: null, dependsOn: [], rootTaskRef: { ...provider, id: "d3384b62-3740-4604-8c0f-b527751c9643" }, depth: 0, relationRevision: 1, graphRevision: 1, armed: false, outcomes: [], resources: [], assignee: null, status: "Draft", createdAt: "now", updatedAt: "now", createdBy: { userId: "owner", appId: null }, owner: { userId: "owner", appId: null }, cancelRequested: false, attempts: [] };
   vi.mocked(appFetch).mockImplementation(async (_url, init) => {
     const body = new ReadableStream<Uint8Array>({ start(c) { stream = c; init?.signal?.addEventListener("abort", () => c.close()); } });
     return new Response(body);
   });
   vi.mocked(call).mockImplementation(async url => Response.json(url === "/tasks/v1/directory"
-    ? { provider, users: [{ id: "owner", displayName: "Owner" }], executors: [{ ...provider, displayName: "Harness", available: true, options: [{ id: "writer", name: "Writer" }] }], workspaces: { workspaces: [] } } : { tasks: [task], nextCursor: null }));
+    ? { provider, users: [{ id: "owner", displayName: "Owner" }], executors: [{ ...provider, displayName: "Harness", available: true, options: [{ id: "writer", revision: 1, name: "Writer", description: "", availability: { state: "unknown" }, capabilities: [] }] }], workspaces: { workspaces: [] } } : { tasks: [task], nextCursor: null }));
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
 });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.resetAllMocks(); vi.unstubAllGlobals(); });
@@ -110,7 +110,7 @@ async function delayedExecutor() {
     const select = container.querySelector<HTMLOptionElement>('option[value="app:example.tasks:one:default"]')!.closest("select")!;
     select.value = "app:example.tasks:one:default"; select.dispatchEvent(new Event("change", { bubbles: true }));
   });
-  return () => act(async () => { resolve(Response.json({ options: [{ id: "writer", name: "Writer" }], defaultId: "writer" })); });
+  return () => act(async () => { resolve(Response.json({ options: [{ id: "writer", revision: 1, name: "Writer", description: "", availability: { state: "unknown" }, capabilities: [] }], defaultId: "writer" })); });
 }
 it("preserves title and description edits while executor options load", async () => {
   const complete = await delayedExecutor();

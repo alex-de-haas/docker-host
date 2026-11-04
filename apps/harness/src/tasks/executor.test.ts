@@ -1,3 +1,5 @@
+import { TaskService } from "./service.js";
+import { TaskStore } from "./store.js";
 import { DevelopmentClient } from "../sessions/development.js";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { mkdtemp, rm, mkdir } from "node:fs/promises";
@@ -16,8 +18,10 @@ let dir: string, manager: SessionManager, profiles: ProfileStore, executor: Harn
 let runOptions: HarnessStartOptions | undefined;
 const sent = vi.fn(), stopped = vi.fn(async () => {}), valid = vi.fn(async () => {});
 const actor: ExecutionAuthority = { actor: { userId: "owner", appId: "example.producer", installationId: "one" }, scope: "example.producer:one", validate: valid };
-const input: TaskExecutionInput = { taskRef: { appId: "example.producer", installationId: "one", key: "default", id: randomUUID() }, taskRevision: 1,
-  input: { title: "Write summary", markdown: "A plain task without a workspace.", requiresReview: false, resources: [] } };
+const ref = { appId: "example.producer", installationId: "one", key: "default", id: randomUUID() };
+const input: TaskExecutionInput = { version: 1, taskRef: ref, inputRevision: 1,
+  content: { title: "Write summary", markdown: "A plain task without a workspace.", review: { mode: "none" }, resources: [] },
+  relations: { rootTaskRef: ref, parentTaskRef: null, relationRevision: 1 }, prerequisiteOutcomes: [] };
 const adapter: HarnessAdapter = { name: "controlled", capabilities: { questions: true, appMcp: true, liveReconfigure: false, autoAllow: false, denyReason: false }, probe: async () => ({ available: true }),
   start: options => { runOptions = options; return { send: sent, resolveApproval: () => true, resolveQuestion: () => true, setMcpServers: async () => false, interrupt: async () => {}, stop: stopped, stopAndWait: stopped } satisfies HarnessRun; } };
 function openManager(development: DevelopmentClient | null = null) { return new SessionManager(new SessionStore(dir), adapter, new AuditReporter(null, null, "example.harness"), dir, new SettingsStore(dir), null, null, null, "http://localhost:1234", null, null, development, null, undefined, profiles); }
@@ -29,6 +33,25 @@ beforeEach(async () => {
   manager = openManager(); executor = new HarnessTaskExecutor(manager);
 });
 afterEach(async () => { await manager.shutdown(); vi.restoreAllMocks(); vi.unstubAllEnvs(); await rm(dir, { recursive: true, force: true }); });
+it("discovers saved descriptions and revisions without exposing private configuration", async () => {
+  const before = await profiles.read();
+  const profile = before.profiles[0]!;
+  const { id, revision, ...config } = profile;
+  await profiles.save({ ...config, description: "Writes technical documentation", instructions: "Private role instructions" }, before.revision, id);
+  expect(await executor.options()).toEqual({ version: 1, revision: before.revision + 1,
+    options: [{ id, revision: revision + 1, name: "Writer", description: "Writes technical documentation",
+      capabilities: ["markdown", "resources", "options", "cancellation"], availability: { state: "unknown" } }], defaultId: id });
+});
+it("persists autonomous task admission while retaining ordinary chat defaults and replayed mode choices", async () => {
+  const chat = await manager.createSession({ createdBy: "owner" });
+  expect(chat.autonomy ?? "normal").toBe("normal");
+  const id = randomUUID(), receipt = await executor.accept(id, input, actor);
+  const task = (await manager.getSession(receipt.sessionRef!.id))!;
+  expect(task.autonomy).toBe("autonomous");
+  await manager.setAutonomy(task.id, "normal", "owner");
+  await executor.accept(id, input, actor);
+  expect((await manager.getSession(task.id))?.autonomy).toBe("normal");
+});
 it("accepts durably without running inline, then replays after profile deletion and restart", async () => {
   const id = randomUUID(), a = await executor.accept(id, input, actor); expect(a.state).toBe("accepted"); expect(sent).not.toHaveBeenCalled();
   const directory = await profiles.read(); await profiles.remove(directory.defaultId!, directory.revision);
@@ -39,7 +62,7 @@ it("accepts durably without running inline, then replays after profile deletion 
   expect(runOptions?.systemPrompt).toContain("Write carefully");
   expect(runOptions?.mcpServers).toHaveProperty("hosty-workspaces");
   await executor.accept(id, input, actor); await executor.tick(); expect(sent).toHaveBeenCalledTimes(1);
-  await expect(executor.accept(id, { ...input, input: { ...input.input, markdown: "different" } }, actor)).rejects.toMatchObject({ code: "execution_conflict" });
+  await expect(executor.accept(id, { ...input, content: { ...input.content, markdown: "different" } }, actor)).rejects.toMatchObject({ code: "execution_conflict" });
 });
 it("requires explicit outcome and confirmed native exit before success", async () => {
   const id = randomUUID(), a = await executor.accept(id, input, actor); await executor.tick();
@@ -75,7 +98,7 @@ it("checks current authority before replay and keeps missing profiles explicit",
   const id = randomUUID(); await executor.accept(id, input, actor);
   const denied = { ...actor, validate: async () => { throw new Error("revoked"); } };
   await expect(executor.accept(id, input, denied)).rejects.toThrow("revoked");
-  const bad = await executor.accept(randomUUID(), { ...input, executorOptionId: randomUUID() }, actor);
+  const bad = await executor.accept(randomUUID(), { ...input, selection: { kind: "option", id: randomUUID(), revision: 1 } }, actor);
   expect(bad).toMatchObject({ state: "failed", stopConfirmed: true, error: { code: "profile_not_found" } });
 });
 it("recovers authorized local cancellation without saved credentials and fences extra chat turns", async () => {
@@ -92,7 +115,9 @@ it("attaches an existing workspace with its participation revision and reuses or
   const id = randomUUID(), workspaceId = "existing-workspace";
   vi.spyOn(manager, "workspaceInventory").mockResolvedValue({ workspaces: [{ id: workspaceId, participation: { revision: 7 } }] });
   const attach = vi.spyOn(manager, "workspaceAction").mockResolvedValue({});
-  const a = await executor.accept(id, { ...input, input: { ...input.input, workspaceId } }, { ...actor, credential: "volatile-user" });
+  const authority = { ...actor, credential: "volatile-user" };
+  const a = await executor.accept(id, input, authority);
+  await executor.bindSource(id, workspaceId, authority);
   const session = await manager.getSession(a.sessionRef!.id);
   session!.associationRequests = [{ id, action: "attach", input: { workspaceId, expectedRevision: 3, requestId: id }, state: "succeeded" }];
   await manager.store.saveRecord(session!);
@@ -124,7 +149,7 @@ it("reserves the task's first message for its executor even when a caller knows 
   expect(sent).not.toHaveBeenCalled();
   await executor.tick();
   expect(sent).toHaveBeenCalledTimes(1);
-  expect(sent.mock.calls[0]?.[0]).toContain(input.input.markdown);
+  expect(sent.mock.calls[0]?.[0]).toContain(input.content.markdown);
 });
 
 it.each(["workspace", "adapter"] as const)("recovers a definite local %s startup rejection without replacing its attempt", async failure => {
@@ -268,7 +293,8 @@ it("admits a mediated task workspace without user credentials and releases only 
   manager = openManager(new DevelopmentClient("http://core.test", "independent.runner", "runner-service")); executor = new HarnessTaskExecutor(manager);
   const id = randomUUID(), dispatch = { userId: "owner", principalId: "manual:original", requestId: randomUUID() };
   const authority = { ...actor, taskDispatch: dispatch, principalId: dispatch.principalId };
-  const accepted = await executor.accept(id, { ...input, input: { ...input.input, workspaceId } }, authority);
+  const accepted = await executor.accept(id, input, authority);
+  await executor.bindSource(id, workspaceId, authority);
   await executor.tick();
   const running = await executor.get(id, authority);
   expect(running.error).toBeUndefined();
@@ -288,4 +314,143 @@ it("admits a mediated task workspace without user credentials and releases only 
   expect(calls.filter(c => c.activity?.stopped)).toHaveLength(1);
   expect(calls.find(c => c.activity?.stopped)?.leaseId).toBe(record.taskWorkspace?.leaseId);
   expect(await executor.get(id, authority)).toMatchObject({ state: "cancelled", stopConfirmed: true });
+});
+
+it("uses task-scoped fallback instructions without creating saved profiles or sharing sessions", async () => {
+  const parentId = randomUUID(), aggregate = new TaskStore(dir, { appId: ref.appId, installationId: ref.installationId, key: ref.key });
+  await aggregate.create(actor.actor, { requestId: randomUUID(), input: { ...input.content, assignee: null } });
+  await aggregate.transaction(state => { const task = state.tasks[0]!; task.ref = input.taskRef; task.rootTaskRef = input.taskRef;
+    task.coordination = { executionId: parentId, rootGeneration: 1, coordinatorEpoch: 1 }; });
+  executor = new HarnessTaskExecutor(manager, aggregate);
+  const parentReceipt = await executor.accept(parentId, input, actor);
+  const parent = (await manager.getSession(parentReceipt.sessionRef!.id))!;
+  const previous = await profiles.read(); await profiles.remove(previous.defaultId!, previous.revision);
+  const directory = await profiles.read();
+  const scope = { owner: "owner", rootTaskRef: input.taskRef, parentTaskRef: input.taskRef,
+    parentExecutionId: parentId, parentSessionId: parent.id, generation: 1, coordinatorEpoch: 1 };
+  const request = { requestId: randomUUID(), directoryRevision: directory.revision, name: "Requirements analyst",
+    rationale: "No saved profiles are configured.", instructions: "Extract testable acceptance criteria.", skillIds: [] };
+  const config = await executor.configurations.prepare(scope, parent, request);
+  expect(await executor.configurations.prepare(scope, parent, request)).toEqual(config);
+  expect((await profiles.read()).profiles).toHaveLength(0);
+  const childInput = { ...input, taskRef: { ...input.taskRef, id: randomUUID() }, selection: config.selection,
+    relations: { ...input.relations, parentTaskRef: input.taskRef } };
+  const a = await executor.accept(randomUUID(), childInput, actor), b = await executor.accept(randomUUID(), { ...childInput, taskRef: { ...childInput.taskRef, id: randomUUID() } }, actor);
+  expect(a.state).toBe("accepted"); expect(b.state).toBe("accepted");
+  expect(a.sessionRef!.id).not.toBe(b.sessionRef!.id);
+  const session = (await manager.getSession(a.sessionRef!.id))!;
+  expect(session).toMatchObject({ autonomy: "autonomous", taskConfiguration: { id: config.selection.id, rationale: request.rationale },
+    taskContext: { rootTaskRef: input.taskRef, executor: { kind: "configuration", name: "Requirements analyst" } } });
+  expect(session.agentProfile?.instructions).toBe(request.instructions);
+  const wrongRoot = await executor.accept(randomUUID(), { ...childInput, relations: { ...childInput.relations, rootTaskRef: { ...input.taskRef, id: randomUUID() } } }, actor);
+  expect(wrongRoot).toMatchObject({ state: "failed", stopConfirmed: true, error: { code: "configuration_unavailable" } });
+});
+it("requires current profile discovery before preparing a fallback and rejects connection overrides", async () => {
+  const id = randomUUID(), admitted = await executor.accept(id, input, actor), parent = (await manager.getSession(admitted.sessionRef!.id))!;
+  const scope = { owner: "owner", rootTaskRef: input.taskRef, parentTaskRef: input.taskRef,
+    parentExecutionId: id, parentSessionId: parent.id, generation: 1, coordinatorEpoch: 1 };
+  const request = { requestId: randomUUID(), directoryRevision: 0, name: "Analyst", rationale: "The available writer profile does not analyze requirements.", instructions: "Analyze requirements.", skillIds: [] };
+  await expect(executor.configurations.prepare(scope, parent, request)).rejects.toMatchObject({ code: "selection_changed" });
+  await expect(executor.configurations.prepare(scope, parent, { ...request, directoryRevision: (await profiles.read()).revision, connectionId: "another-account" }))
+    .rejects.toMatchObject({ code: "configuration_invalid" });
+  await expect(executor.configurations.prepare({ ...scope, owner: "other" }, parent, request)).rejects.toMatchObject({ code: "configuration_forbidden" });
+});
+
+it("recovers a persisted launch intent with the original command and never repeats an uncertain dispatch", async () => {
+  const aggregate = new TaskStore(dir, { appId: "example.producer", installationId: "one", key: "default" });
+  executor = new HarnessTaskExecutor(manager, aggregate);
+  const id = randomUUID(), accepted = await executor.accept(id, input, actor);
+  const [key, stored] = (await aggregate.journalEntries<any>("execution:"))[0]!;
+  stored.launchRequested = true;
+  stored.launch = { commandId: id, prompt: "Retained first dispatch", contextRevision: 0, selectionRevision: 0 };
+  await aggregate.writeJournal(key, stored);
+  executor = new HarnessTaskExecutor(manager, aggregate);
+  await executor.accept(id, input, actor); await executor.tick();
+  expect(sent).toHaveBeenCalledExactlyOnceWith("Retained first dispatch");
+  const receipt = (await manager.store.readMessageReceipt(accepted.sessionRef!.id, id))!;
+  await manager.store.saveMessageReceipt(accepted.sessionRef!.id, { ...receipt, state: "unknown" });
+  const uncertain = await aggregate.readJournal<any>(key);
+  uncertain.launch.delivered = false; await aggregate.writeJournal(key, uncertain);
+  executor = new HarnessTaskExecutor(manager, aggregate);
+  await executor.accept(id, input, actor); await executor.tick(); await executor.tick();
+  expect(sent).toHaveBeenCalledTimes(1);
+  expect(await executor.get(id, actor)).toMatchObject({ state: "interrupted", stopConfirmed: false, error: { code: "message_outcome_unknown" } });
+});
+
+it("rechecks policy before recovering an intent that never reached native admission", async () => {
+  const aggregate = new TaskStore(dir, { appId: ref.appId, installationId: ref.installationId, key: ref.key });
+  executor = new HarnessTaskExecutor(manager, aggregate);
+  const id = randomUUID(); await executor.accept(id, input, actor);
+  const [key, stored] = (await aggregate.journalEntries<any>("execution:"))[0]!;
+  stored.launchRequested = true;
+  stored.launch = { commandId: id, prompt: "Unstarted retained intent", contextRevision: 0, selectionRevision: 0 };
+  await aggregate.writeJournal(key, stored);
+  const admit = vi.fn(async () => false);
+  executor = new HarnessTaskExecutor(manager, aggregate); executor.beforeLaunch = admit;
+  await executor.accept(id, input, actor); await executor.tick();
+  expect(sent).not.toHaveBeenCalled();
+  expect(await executor.get(id, actor)).toMatchObject({ state: "accepted", nativeStopConfirmed: true, wait: { kind: "limits" } });
+  admit.mockResolvedValue(true); await executor.tick();
+  expect(sent).toHaveBeenCalledExactlyOnceWith("Unstarted retained intent");
+});
+
+it("retries an adopted root in a fresh session and never adopts its chat as a child", async () => {
+  const aggregate = new TaskStore(dir, { appId: ref.appId, installationId: ref.installationId, key: ref.key });
+  const configurationId = randomUUID(), choice = { kind: "configuration" as const, id: configurationId, revision: 1 };
+  let root = await aggregate.create(actor.actor, { requestId: randomUUID(), input: { ...input.content,
+    assignee: { kind: "app", executor: aggregate.provider, selection: choice } } });
+  root = await aggregate.action(root.ref.id, actor.actor, { requestId: randomUUID(), expectedRevision: root.revision, action: "ready" });
+  const oldId = root.attempts[0]!.executionId;
+  const original = await manager.createSession({ createdBy: "owner", profileId: null, taskExecutionId: oldId });
+  const profile = (await profiles.read()).profiles[0]!;
+  const configuration = { version: 1, selection: choice, name: "Chat configuration", rationale: "Retained chat instructions", directoryRevision: 1,
+    requestHash: "original", createdAt: "now", launchMode: "adopt", sessionId: original.id,
+    scope: { owner: "owner", rootTaskRef: root.ref, parentTaskRef: root.ref, parentExecutionId: configurationId, parentSessionId: original.id, generation: 1, coordinatorEpoch: 1 },
+    profile, binding: {}, adoption: { approved: true, id: configurationId } };
+  await aggregate.writeJournal("configuration:" + configurationId, configuration);
+  root = await aggregate.observe(root.ref.id, oldId, { executionId: oldId, revision: 1, state: "failed", stopConfirmed: true, createdAt: "now", updatedAt: "now" });
+  root = await aggregate.action(root.ref.id, actor.actor, { requestId: randomUUID(), expectedRevision: root.revision, action: "retry" });
+  executor = new HarnessTaskExecutor(manager, aggregate);
+  const next = root.attempts.at(-1)!;
+  const receipt = await executor.accept(next.executionId, next.request, actor);
+  expect(receipt.state).toBe("accepted"); expect(receipt.sessionRef!.id).not.toBe(original.id);
+  expect((await manager.getSession(original.id))!.taskExecutionId).toBe(oldId);
+  expect((await manager.getSession(receipt.sessionRef!.id))!.taskExecutionId).toBe(next.executionId);
+  const child = { ...next.request, taskRef: { ...root.ref, id: randomUUID() }, relations: { ...next.request.relations, parentTaskRef: root.ref } };
+  expect(await executor.accept(randomUUID(), child, actor)).toMatchObject({ state: "failed", error: { code: "configuration_unavailable" } });
+});
+
+it("starts distinct tasks concurrently from one saved profile without reusing their conversation", async () => {
+  const profile = (await profiles.read()).profiles[0]!;
+  const make = () => { const taskRef = { ...ref, id: randomUUID() }; return { ...input, taskRef, relations: { ...input.relations, rootTaskRef: taskRef }, selection: { kind: "option" as const, id: profile.id, revision: profile.revision } }; };
+  const starts = vi.spyOn(adapter, "start");
+  const receipts = await Promise.all([executor.accept(randomUUID(), make(), actor), executor.accept(randomUUID(), make(), actor)]);
+  expect(receipts[0]!.sessionRef!.id).not.toBe(receipts[1]!.sessionRef!.id);
+  await executor.tick();
+  expect(starts).toHaveBeenCalledTimes(2); expect(sent).toHaveBeenCalledTimes(2);
+  const sessions = await Promise.all(receipts.map(r => manager.getSession(r.sessionRef!.id)));
+  expect(sessions.map(s => s!.taskContext!.executor)).toEqual([expect.objectContaining({ id: profile.id, name: profile.name }), expect.objectContaining({ id: profile.id, name: profile.name })]);
+  expect(sessions[0]!.taskContext!.taskRef.id).not.toBe(sessions[1]!.taskContext!.taskRef.id);
+  expect((await profiles.read()).profiles).toHaveLength(1);
+});
+
+it.each([false, true])("executes an externally owned task through the full service (mediated=%s)", async mediated => {
+  const service = new TaskService(manager);
+  const bind = vi.spyOn(service.orchestration, "bindNative");
+  const source = vi.spyOn(service.sources, "beforeLaunch");
+  try {
+    const id = randomUUID();
+    const authority = mediated ? { ...actor, taskDispatch: { userId: "owner", principalId: "external-client", requestId: randomUUID() } } : actor;
+    const accepted = await service.executor.accept(id, input, authority);
+    await service.executor.tick();
+    expect(await service.executor.get(id, authority)).toMatchObject({ state: "running" });
+    expect(sent).toHaveBeenCalledOnce();
+    expect(bind).not.toHaveBeenCalled(); expect(source).not.toHaveBeenCalled();
+    await service.executor.report(accepted.sessionRef!.id, randomUUID(), { markdown: "External provider result", resources: [] });
+    runOptions!.onEvent({ type: "result", status: "success" });
+    await vi.waitFor(async () => expect((await manager.getSession(accepted.sessionRef!.id))?.status).toBe("idle"));
+    await service.executor.tick();
+    expect(await service.executor.get(id, authority)).toMatchObject({ state: "completed", stopConfirmed: true });
+    expect(await service.store.all()).toEqual([]);
+  } finally { await service.close(); }
 });

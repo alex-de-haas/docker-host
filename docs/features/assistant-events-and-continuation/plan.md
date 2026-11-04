@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-29
-updated: 2026-11-03
+updated: 2026-11-04
 summary: Bind application activities and delegated results to assistant conversations with authorized events, observable continuation and recoverable context.
 components: [apps/core, apps/harness, apps/desktop, apps/shell, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -21,6 +21,21 @@ the independent Hosty Chess plan. This is documentation-only authorization. The 
 no implementation, provider execution, commit, publication or live activation is approved here.
 It scopes the assistant-facing connection between existing capabilities, not a second event bus,
 task system, transcript store or scheduler.
+
+## Local Delegated-Result Transfer (2026-11-04)
+
+[Profile-Based Task Delegation](../profile-task-delegation/feature.md) receives the first same-Harness
+task-child result producer, parent wait, local outbox/inbox and bound continuation from D3/D5, with
+early/duplicate/late-result and restart acceptance. It reuses current session command/parking/resume
+primitives. This local consumer does not need the general cross-application notification transport
+and does not build a second session engine. Its Ready C4/C6 contracts specify transactional
+result delivery and typed task barriers, including busy/parked parents and coordinator replacement;
+the owner has requested documentation readiness only, not implementation.
+
+D3/D5 here retain the public event-to-session adapter and independently provided delegated results
+over the negotiated durable transport. Notifications D6 and broader session recovery remain
+prerequisites for those remaining consumers. The transfer neither ships them nor selects a second
+delivery path for the same result; all paths must preserve correlation and deduplication.
 
 ## Current Baseline And Proposed Change
 
@@ -49,7 +64,7 @@ it does not require importing a child's entire transcript or implementing a full
 | [Durable Agent Jobs D1-D5](../durable-agent-jobs/plan.md#deliverables) | General jobs, scheduling, retry policy and parked waits. | An interactive activity can use a session without acquiring a job or schedule; durable job waits consume the same event contract. |
 | [Action Summary D4](../assistant-action-summary/plan.md#deliverables) | Correlated native invocation evidence in the existing Harness journal. | Link external receipt/causation IDs to existing run evidence without a second transcript. |
 | [Agent Providers D2-D5](../agent-provider-interface/plan.md#deliverables) | Public engine invocation, native capability mapping and independent provider applications. | Assistant capability negotiation above that engine boundary; public engine extraction is not required for the first internal Harness adapter. |
-| [Harness Work Orchestration D4/D7](../harness-work-orchestration/plan.md#deliverables) | Task hierarchy/decomposition, routing policy and selected cross-session material access. | A minimal explicit child-result-to-parent-wait exchange, without delivering hierarchy or sharing private sessions. |
+| [Profile-Based Task Delegation](../profile-task-delegation/feature.md) and [Harness Work Orchestration D7](../harness-work-orchestration/plan.md#deliverables) | Flat task decomposition/routing and the first local wait consumer; richer selected material access stays with D7. | Cross-application result-to-parent exchange over the negotiated transport, preserving the existing local correlation contract. |
 | [Shared Decisions](../shared-decisions/feature.md#durable-native-waiting) | Addressed question/response records and consistent publication of their resolution. | A resolved-decision event can satisfy its correlated wait; event delivery is not approval or proof of resumed execution. |
 | [Panel System](../sdk-panel-system/feature.md) and [UI Composition](../sdk-ui-composition/feature.md) | Verified provider presentation, retained frames and navigation. | Connect a selected activity to its assistant presentation; browser view/presentation IDs are not domain identity. |
 | [Hosty Chess plan](https://github.com/alex-de-haas/hosty-chess/blob/main/docs/features/chess-v1/plan.md) | Game rules, storage, board, gameplay tools and application-side events in the independent repository. | Generic Hosty contract, assistant adapter and platform acceptance fixtures. |
@@ -318,9 +333,9 @@ changes the two initial runtime examples or grants event-triggered execution aut
 
 - [ ] D1. Specify and approve the versioned assistant capability, activity/binding/wait references, authorized operations, lifecycle, event vocabulary and receipt states; reconcile ownership with Notifications D6, Durable Agent Jobs D7 and public provider invocation, including direct-message versus domain-event boundaries and event targets for both existing-session continuation and application-owned routine activation before a conversation exists. Review the Dependabot and a minimal non-PR example against domain-neutral source/schema/filter contracts without absorbing PR discovery/UI or runner implementation, and leave implementation priority explicit.
 - [ ] D2. After Ready approval and the delivery prerequisite, implement assistant-specific routing and durable inbox consumption over Notifications D6, including authorized subscriptions, source/outbox recovery, deduplication, cursor gaps and observable delivery/continuation receipts; do not reimplement the shared transport.
-- [ ] D3. Implement the Harness event-to-session adapter over D7 and the existing journal, with idle/busy/waiting/paused/cancelled policy, trusted turn purpose, current authority, budgets, same-provider context recovery and uncertain-start reconciliation; the common session engine remains with its owner.
+- [ ] D3. Implement the remaining cross-application Harness event-to-session adapter over common session primitives, the transferred local child-result consumer and existing journal, with idle/busy/waiting/paused/cancelled policy, trusted turn purpose, current authority, budgets, same-provider recovery and uncertain-start reconciliation; do not duplicate the session engine.
 - [ ] D4. Add the versioned public SDK/provider contract and optional discovery capability, plus activity attach/reopen/pause/stop presentation in existing assistant panels; retain draft-only v1 handoffs and inference-free opening, support unsupported-provider outcomes and installation changes, and verify an unrelated third-party assistant fixture.
-- [ ] D5. Integrate the minimal delegated-task result producer and parent-wait consumer with existing task/executor results, including early completion, failure/cancellation, required-review distinctions and selected-result visibility; leave task hierarchy, decomposition and full orchestration with their owner.
+- [ ] D5. Integrate independently provided delegated-task results and parent waits over the public event contract, reusing the transferred same-Harness consumer correlation; verify early completion, failure/cancellation, required-review distinctions and selected-result visibility without duplicate delivery. Task decomposition remains with its owner.
 - [ ] D6. Verify the two end-to-end examples with the independent chess implementation and one real assistant configuration, plus contract fixtures for a separately implemented assistant; cover attribution, turn-only mutation authority, restart, lost/duplicate/out-of-order input, busy sessions, revoked access and late results without duplicate domain effects.
 - [ ] D7. Document verified capabilities, compatibility limits, retention and operator recovery in feature.md; reconcile linked owners and the chess plan without completing their outstanding scope, remove this plan only after all deliverables pass and regenerate the documentation index.
 

@@ -60,13 +60,13 @@ export class WorkerClient {
     if (!response.ok || !value.path) throw new WorkerApiError(response.status, "attachment_failed", value.message ?? "Worker attachment upload failed.");
     return value.path;
   }
-  async capabilities(): Promise<{ protocol: number; capacity: number; resources?: { trees?: string } }> {
-    const value = await this.request<{ protocol: number; capacity: number; resources?: { trees?: string } }>("/v1/capabilities");
+  async capabilities(): Promise<{ protocol: number; capacity: number; occupied?: number; resources?: { trees?: string } }> {
+    const value = await this.request<{ protocol: number; capacity: number; occupied?: number; resources?: { trees?: string } }>("/v1/capabilities");
     if (value.protocol !== WORKER_PROTOCOL) throw new WorkerApiError(409, "protocol_mismatch", "Harness and Worker versions are incompatible.");
     return value;
   }
   async events(id: string, onEvent: (event: WorkerEvent) => void | Promise<void>, signal: AbortSignal,
-    onNotice?: (message: string) => void | Promise<void>): Promise<WorkerReceipt> {
+    onNotice?: (message: string) => void | Promise<void>, onUsage?: (runId: string, usage: NonNullable<WorkerReceipt["usage"]>) => void | Promise<void>): Promise<WorkerReceipt> {
     let cursor = 0, generation: string | undefined;
     for (;;) {
       signal.throwIfAborted();
@@ -83,7 +83,14 @@ export class WorkerClient {
             const block = buffer.slice(0, index); buffer = buffer.slice(index + 2);
             const type = block.match(/^event: (.+)$/m)?.[1], data = block.match(/^data: (.+)$/m)?.[1];
             if (!data) continue;
-            if (type === "run") {
+            if (type === "usage") {
+              const value = JSON.parse(data) as Pick<WorkerReceipt, "runId" | "generation" | "usage">;
+              if (value.runId !== id || generation && value.generation !== generation || !value.usage
+                || !Number.isSafeInteger(value.usage.sequence) || value.usage.sequence < 1 || !Number.isSafeInteger(value.usage.activeMs) || value.usage.activeMs < 0
+                || typeof value.usage.unknown !== "boolean") throw new WorkerApiError(409, "usage_invalid", "Worker usage is malformed or belongs to another segment.");
+              generation = value.generation;
+              await onUsage?.(id, value.usage);
+            } else if (type === "run") {
               const frame = JSON.parse(data) as WorkerEvent;
               if ((frame.event?.type === "command_result" || frame.event?.type === "tool_result") && !validWorkerCommandEnvelope(frame))
                 throw new WorkerApiError(409, frame.event.type === "command_result" ? "invalid_command_frame" : "invalid_tool_frame", "Worker tool event identity or sequence is malformed.");
@@ -163,6 +170,7 @@ class RemoteRun implements HarnessRun {
         const current = sanitizeWorkerCommandReceipt(request ? await this.client.request<WorkerReceipt>(`/v1/runs/${id}`, "PUT", request, true)
           : await this.client.request<WorkerReceipt>(`/v1/runs/${id}`));
         accepted = true;
+        if (current.usage) await this.options.onWorkerUsage?.(id, current.usage);
         for (const frame of current.pending ?? []) {
           const event = frame.event;
           if (event.type === "approval_request") this.pending.set(event.approvalId, frame);
@@ -177,12 +185,13 @@ class RemoteRun implements HarnessRun {
           if (event.type === "result" || event.type === "error") final = event;
           else if (this.options.onWorkerEvent) await this.options.onWorkerEvent(frame);
           else this.options.onEvent(event);
-        }, signal, message => this.options.onEvent({ type: "notice", message }));
+        }, signal, message => this.options.onEvent({ type: "notice", message }), this.options.onWorkerUsage);
+        if (receipt.usage) await this.options.onWorkerUsage?.(id, receipt.usage);
         final ??= receipt.snapshot?.result;
         if (receipt.snapshot?.nativeSessionId) this.options.onEvent({ type: "harness_session", harnessSessionId: receipt.snapshot.nativeSessionId });
         this.confirmed = receipt.exitConfirmed ?? receipt.state !== "interrupted"; this.busy = false; this.pending.clear();
         if (!this.stopped) {
-          const event: HarnessEvent = receipt.state === "parked" ? { type: "execution_parked", runId: id } : final && (receipt.state === "completed" || receipt.state === "failed" && final.type === "error") ? final
+          const event: HarnessEvent = receipt.state === "parked" ? { type: "execution_parked", runId: id, ...(receipt.barrier ? { barrier: receipt.barrier } : {}) } : final && (receipt.state === "completed" || receipt.state === "failed" && final.type === "error") ? final
             : { type: "error", message: receipt.error ?? `Worker run ${receipt.state}.` };
           if (this.options.onWorkerEvent && this.confirmed) {
             // The terminal receipt revision is stable even after detailed event replay expires.

@@ -10,8 +10,8 @@ public sealed class HostyTaskClient(HostyProviderClient providers, HostyTaskProv
     /// <summary>Read provider capabilities.</summary>
     public Task<HostyTaskCapabilities> CapabilitiesAsync(CancellationToken ct = default) => Send<HostyTaskCapabilities>("/capabilities", HttpMethod.Get, null, ct);
     /// <summary>List a bounded page.</summary>
-    public Task<HostyTaskPage> ListAsync(string? cursor = null, int limit = 50, string? status = null, CancellationToken ct = default)
-        => Send<HostyTaskPage>($"/tasks?limit={limit}&cursor={Uri.EscapeDataString(cursor ?? "")}&status={Uri.EscapeDataString(status ?? "")}", HttpMethod.Get, null, ct);
+    public Task<HostyTaskPage> ListAsync(string? cursor = null, int limit = 50, string? status = null, HostyTaskRef? parentTaskRef = null, HostyTaskRef? rootTaskRef = null, bool rootsOnly = false, CancellationToken ct = default)
+        => Send<HostyTaskPage>($"/tasks?limit={limit}&cursor={Uri.EscapeDataString(cursor ?? "")}&status={Uri.EscapeDataString(status ?? "")}&rootsOnly={rootsOnly.ToString().ToLowerInvariant()}{Filter("parentTaskRef", parentTaskRef)}{Filter("rootTaskRef", rootTaskRef)}", HttpMethod.Get, null, ct);
     /// <summary>Create once under RequestId.</summary>
     public Task<HostyTaskRecord> CreateAsync(HostyTaskCreate input, CancellationToken ct = default) => Send<HostyTaskRecord>("/tasks", HttpMethod.Post, input, ct);
     /// <summary>Read the current task.</summary>
@@ -20,6 +20,11 @@ public sealed class HostyTaskClient(HostyProviderClient providers, HostyTaskProv
     public Task<HostyTaskRecord> EditAsync(HostyTaskRef task, HostyTaskEdit input, CancellationToken ct = default) => Send<HostyTaskRecord>(Route(task), HttpMethod.Patch, input, ct);
     /// <summary>Apply a lifecycle action.</summary>
     public Task<HostyTaskRecord> ActionAsync(HostyTaskRef task, HostyTaskAction input, CancellationToken ct = default) => Send<HostyTaskRecord>(Route(task) + "/actions", HttpMethod.Post, input, ct);
+    /// <summary>Recover a mutation under its original request ID.</summary>
+    public Task<HostyTaskRequestReceipt> RequestAsync(string requestId, CancellationToken ct = default)
+        => Send<HostyTaskRequestReceipt>("/requests/" + Uri.EscapeDataString(requestId), HttpMethod.Get, null, ct);
+    private static string Filter(string name, HostyTaskRef? reference) => reference is null ? "" : "&" + name + "="
+        + Uri.EscapeDataString(JsonSerializer.Serialize(new[] { reference.AppId, reference.InstallationId, reference.Key, reference.Id }, TaskJsonContext.Default.StringArray));
     private string Route(HostyTaskRef task)
     {
         if (task.AppId != provider.AppId || task.InstallationId != provider.InstallationId || task.Key != provider.Key)
@@ -73,6 +78,8 @@ internal static class HostyTaskTransport
 [JsonSerializable(typeof(HostyTaskEdit))]
 [JsonSerializable(typeof(HostyTaskAction))]
 [JsonSerializable(typeof(HostyTaskRecord))]
+[JsonSerializable(typeof(HostyTaskRequestReceipt))]
+[JsonSerializable(typeof(string[]))]
 [JsonSerializable(typeof(HostyTaskPage))]
 [JsonSerializable(typeof(HostyTaskCapabilities))]
 [JsonSerializable(typeof(HostyTaskExecutorOptions))]

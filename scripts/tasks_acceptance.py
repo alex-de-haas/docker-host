@@ -19,9 +19,9 @@ def check(context):
     manifest = json.loads((workspace/'apps/harness/manifest.json').read_text())
     manifest['source']['repository'] = context['repository']
     for service in manifest['services']:
-        if service['key'] in ['api', 'worker']: service['runtimes']['docker']['image'] = 'hosty-harness-'+service['key']+'-acceptance:local'
+        if service['key'] in ['api', 'worker']: service['runtimes']['docker']['image'] = os.environ.get('HOSTY_TASKS_'+service['key'].upper()+'_IMAGE','hosty-harness-'+service['key']+'-acceptance:local')
     next(s for s in manifest['services'] if s['key']=='worker')['runtimes']['docker']['environment']['HOSTY_HARNESS_CODEX_COMMAND'] = '/repo/apps/harness/test/fake-codex-server.mjs'
-    for permission in ['providers.tasks','providers.task-executor']:
+    for permission in ['providers.tasks','providers.task-executor','core.tasks.read','core.tasks.write','core.tasks.execute','providers.conversation-history','providers.agent-sessions']:
         manifest['optionalCorePermissions'].remove(permission); manifest['corePermissions'].append(permission)
     target = base/'harness-manifest.json'; target.write_text(json.dumps(manifest))
     run([cli,'--data-root',root,'apps','install',target,'--runtime','docker','--no-autostart'])
@@ -40,6 +40,10 @@ def check(context):
             with client.open(req,timeout=180) as response: status,raw=response.status,response.read()
         except urllib.error.HTTPError as error: status,raw=error.code,error.read()
         value=json.loads(raw) if raw else None
+        if status != expected and status >= 500 and host == app_origin:
+            for arguments in [['apps','logs',app,'--tail','60'], ['core','logs','--tail','100']]:
+                try: say(run([cli,'--data-root',root,*arguments]))
+                except RuntimeError as error: say('Diagnostic unavailable: '+str(error)[-500:])
         assert status==expected,(path,status,value)
         return value
     def h(path,body=None,method=None,expected=200): return call(app_origin,'/api'+path,body,method,expected)
@@ -57,9 +61,8 @@ def check(context):
     directory=h('/tasks/v1/directory'); provider=directory['provider']
     assert any(u['id']==user for u in directory['users'])
     caps=h('/tasks/v1/capabilities'); assert caps['statuses']==['Draft','Ready','InProgress','Blocked','Done','Cancelled']
-    def create(title,assignee,review=False,markdown='Plain Markdown task.',workspace_id=None):
-        payload={'requestId':str(uuid.uuid4()),'input':{'title':title,'markdown':markdown,'assignee':assignee,'requiresReview':review,'resources':[]}}
-        if workspace_id: payload['input']['workspaceId']=workspace_id
+    def create(title,assignee,review=False,markdown='Plain Markdown task.'):
+        payload={'requestId':str(uuid.uuid4()),'input':{'title':title,'markdown':markdown,'assignee':assignee,'review':{'mode':'owner' if review else 'none'},'resources':[],'parentTaskRef':None,'dependsOn':[]}}
         task=h('/tasks/v1/tasks',payload,expected=201)
         assert h('/tasks/v1/tasks',payload,expected=201)==task
         return task
@@ -73,10 +76,10 @@ def check(context):
     task=create('Manual review journey',human,True); number=task['number']; assert number.startswith(caps['prefix']+'-')
     task=action(task,'ready'); assert not task['attempts'] and task['status']=='Ready'
     task=action(action(task,'start'),'complete',result={'markdown':'First result','resources':[]}); assert task['blocked']['reason']=='needs_review'
-    task=action(task,'request_changes',resultInputRevision=task['resultInputRevision'],feedback='Include the conclusion.')
-    assert task['status']=='Draft' and 'Include the conclusion.' in task['markdown']
-    task=action(action(task,'ready'),'start'); task=action(task,'complete',result={'markdown':'Revised result','resources':[]})
-    task=action(task,'accept',resultInputRevision=task['resultInputRevision']); assert task['status']=='Done'
+    task=action(task,'request_changes',resultRef=task['resultRef'],feedback='Include the conclusion.')
+    assert task['status']=='Ready' and 'Include the conclusion.' in task['markdown']
+    task=action(task,'start'); task=action(task,'complete',result={'markdown':'Revised result','resources':[]})
+    task=action(task,'accept',resultRef=task['resultRef']); assert task['status']=='Done'
     task=action(task,'draft'); assert task['status']=='Draft' and task['number']==number
     assert action(task,'cancel')['status']=='Cancelled'
     say('PASS: human assignment, numbering/replay, review/rework, reopen and cancellation')
@@ -85,7 +88,7 @@ def check(context):
     profiles=h('/profiles'); config={'name':'Acceptance writer','description':'Scripted native adapter','instructions':'Complete the requested task.','connectionId':connection['id'],'model':'fixture-default','reasoningEffort':'medium','skillIds':[]}
     profiles=h('/profiles',{'expectedRevision':profiles['revision'],'profile':config},expected=201)
     profile=next(p for p in profiles['profiles'] if p['name']==config['name'])
-    assignee={'kind':'app','executor':provider,'optionId':profile['id']}
+    assignee={'kind':'app','executor':provider,'selection':{'kind':'option','id':profile['id'],'revision':profile['revision']}}
     def settle(task,wanted='Done',approve=True,timeout=100):
         last=None
         def ready():
@@ -96,14 +99,32 @@ def check(context):
                 if sid:
                     session=h('/sessions/'+sid)
                     for approval in session.get('mcpPendingApprovals',[]):
-                        assert 'task_result' in approval['tool'],approval
-                        h('/sessions/'+sid+'/approvals/'+approval['id'],{'decision':'allow'})
+                        assert approval['tool'].split(': ')[-1] in ['task_result','task_options','task_create','task_action'],approval
+                        try: h('/sessions/'+sid+'/approvals/'+approval['id'],{'decision':'allow'})
+                        except AssertionError as error:
+                            details=error.args[0]
+                            if not (isinstance(details,tuple) and details[1]==409 and details[2].get('code')=='approval_not_pending'): raise
+                            # Settlement removes the durable UI projection asynchronously.
+                            # A repeated answer is not admission evidence; keep observing the task.
             if last['status']==wanted: return True
             if last['status']=='Blocked' and last.get('blocked',{}).get('reason')=='execution_failed' and wanted!='Blocked': raise AssertionError(('Execution failed',last))
             return False
         try: wait_for(ready,timeout)
         except Exception:
             say('Task observation: '+json.dumps(last))
+            if last and last.get('attempts'):
+                failed_session=(last['attempts'][-1].get('receipt',{}).get('sessionRef') or {}).get('id')
+                if failed_session:
+                    observation=h('/sessions/'+failed_session)
+                    try:
+                        root_observation=h('/task-orchestration/v1/roots/'+last['rootTaskRef']['id'])
+                        say('Source observation: '+json.dumps(root_observation.get('source')))
+                    except Exception as error: say('Source observation unavailable: '+str(error))
+                    say('Execution observation: '+json.dumps({key:observation.get(key) for key in ['status','harnessKind','taskExecutionId','taskRun','taskBarrier','workerRun','taskWorkspace','mcpPendingApprovals']}))
+                    try:
+                        history=call(origin,'/api/history/v1/entries/query',{'conversation':{'provider':provider,'id':failed_session}})
+                        say('Execution history: '+json.dumps(history))
+                    except Exception as error: say('History observation unavailable: '+str(error))
             for log in (root/'apps'/app/'logs').glob('*.log'):
                 say(log.name+': '+log.read_text()[-6000:])
             for events in (root/'apps'/app).glob('**/events.jsonl'):
@@ -124,18 +145,42 @@ def check(context):
     waiting=settle(action(create('Cancel running work',assignee,markdown='TASK_ACCEPTANCE:WAIT'),'ready'),'InProgress',False)
     assert settle(action(waiting,'cancel'),'Cancelled',False)['attempts'][0]['receipt']['stopConfirmed']
     say('PASS: Worker/native protocol, task-scoped MCP approval/result, ordinary-turn refusal and confirmed cancellation')
+    # Source and delegated task tools use the assistant's reviewed canonical Core access.
+    review_path='/install/agents/'+urllib.parse.quote(app,safe='')+'/hosty:core'
+    with client.open(origin+review_path,timeout=30) as response:
+        review_url,review_html=response.geturl(),response.read().decode()
+    assert review_url.startswith(origin+'/install/confirm/')
+    nonce=re.search(r'name=nonce value="([^"]+)"',review_html); assert nonce
+    context['diagnostic_secrets'].add(nonce.group(1))
+    decision=urllib.parse.urlencode({'nonce':nonce.group(1),'decision':'approve','agentEnabled':'true'}).encode()
+    with client.open(urllib.request.Request(review_url,data=decision,headers={'Origin':origin,'Content-Type':'application/x-www-form-urlencoded'}),timeout=30) as response: response.read()
+    approval_id=urllib.parse.urlparse(review_url).path.rsplit('/',1)[1]
+    wait_for(lambda: call(origin,'/api/installations/'+approval_id)['status']=='succeeded',30)
     source_session=h('/sessions',{'title':'Existing workspace selection'})
     tree=h('/sessions/'+source_session['id']+'/workspaces',{'action':'prepare','requestId':str(uuid.uuid4()),'appId':app,'targetBranch':'main'})
-    task=settle(action(create('Existing workspace',assignee,markdown='TASK_ACCEPTANCE:RESULT',workspace_id=tree['workspaceId']),'ready'))
+    task=settle(action(create('Existing workspace',assignee,markdown='TASK_ACCEPTANCE:SOURCE:'+tree['workspaceId']),'ready'))
     selected=h('/sessions/'+task['attempts'][0]['receipt']['sessionRef']['id'])
     assert selected['workspaceAssociation']['id']==tree['workspaceId'] and any(w['id']==tree['id'] for w in selected['developmentWorkspaces'])
     assert any(w['id']==tree['id'] for w in h('/sessions/'+source_session['id']+'/workspaces',{'action':'list'})['workspaces'])
-    say('PASS: existing workspace reused and retained after completion')
+    source_evidence={'workspaceId':tree['workspaceId'],'rootId':task['ref']['id'],'rootTitle':task['title'],'profileName':profile['name']}
+    def source_summary_ready():
+        summary=h('/task-orchestration/v1/workspaces/'+tree['workspaceId']+'/execution-summary?limit=100')
+        return any(row['executionId']==task['attempts'][0]['executionId'] and row['associationState']=='attached' and row['executor']['name']==profile['name'] for row in summary['sessions']) and any(row['taskRef']==task['ref'] for row in summary['roots'])
+    wait_for(source_summary_ready,30)
+    say('PASS: existing workspace reused, root linked and immutable executor attribution retained after completion')
+    delegated=settle(action(create('Managed delegation',assignee,markdown='TASK_ACCEPTANCE:DELEGATE'),'ready'),timeout=150)
+    children=h('/tasks/v1/tasks?rootTaskRef='+urllib.parse.quote(json.dumps([delegated['ref'][k] for k in ['appId','installationId','key','id']],separators=(',',':'))))['tasks']
+    children=[child for child in children if child['parentTaskRef'] and child['parentTaskRef']['id']==delegated['ref']['id']]
+    assert len(children)==1 and children[0]['status']=='Done'
+    assert len(delegated['attempts'])==1 and len(children[0]['attempts'])==1
+    assert delegated['attempts'][0]['receipt']['sessionRef']['id']!=children[0]['attempts'][0]['receipt']['sessionRef']['id']
+    assert delegated['attempts'][0]['receipt']['childOutcomes']==[children[0]['acceptedResultRef']]
+    say('PASS: saved-profile discovery, root/child hierarchy, single-slot parking, direct-parent review and same-attempt continuation')
     # The canonical Core entry point retains the original caller and admits a workspace-bound
     # execution without giving the executor a general browser or MCP credential.
     canonical_input={'provider':provider,'input':{'requestId':str(uuid.uuid4()),'input':{
-        'title':'Canonical Core workspace task','markdown':'TASK_ACCEPTANCE:RESULT','assignee':assignee,
-        'workspaceId':tree['workspaceId'],'requiresReview':False,'resources':[]}}}
+        'title':'Canonical Core task without source','markdown':'TASK_ACCEPTANCE:RESULT','assignee':assignee,
+        'review':{'mode':'none'},'resources':[],'parentTaskRef':None,'dependsOn':[]}}}
     canonical=call(origin,'/api/tasks/v1/create',canonical_input)
     assert call(origin,'/api/tasks/v1/create',canonical_input)==canonical
     canonical_action={'taskRef':canonical['ref'],'input':{'requestId':str(uuid.uuid4()),'expectedRevision':canonical['revision'],'action':'ready'}}
@@ -143,8 +188,7 @@ def check(context):
     canonical=settle(canonical)
     assert len(canonical['attempts'])==1 and canonical['attempts'][0]['receipt']['stopConfirmed']
     canonical_session=h('/sessions/'+canonical['attempts'][0]['receipt']['sessionRef']['id'])
-    assert canonical_session['workspaceAssociation']['id']==tree['workspaceId']
-    assert any(w['id']==tree['id'] for w in canonical_session['developmentWorkspaces'])
+    assert not canonical_session.get('workspaceAssociation')
     canonical_read=call(origin,'/api/tasks/v1/get',{'taskRef':canonical['ref']})
     assert canonical_read['status']=='Done' and canonical_read['ref']==canonical['ref']
     conversation={'provider':provider,'id':canonical_session['id']}
@@ -155,7 +199,7 @@ def check(context):
     native=call(origin,'/api/agent-sessions/v1/sessions/query',{'provider':provider,'conversation':conversation})
     assert native['availability']=='available' and native['sessions']
     assert all(row['conversation']==conversation for row in native['sessions'])
-    say('PASS: canonical Core task replay, receipt-bound native workspace admission, explicit stopped result and common history/search/session projection')
+    say('PASS: canonical Core task replay, retained task admission, explicit stopped result and common history/search/session projection')
     image=next(s for s in manifest['services'] if s['key']=='api')['runtimes']['docker']['image']; fixture_id='example.task-conformance'
     fixture_image='hosty-tasks-conformance:'+uuid.uuid4().hex
     image_context=base/'task-fixture-image'; image_context.mkdir()
@@ -167,7 +211,7 @@ def check(context):
             'healthcheck':{'type':'exec','command':"node -e \"fetch('http://127.0.0.1:3410/healthz').then(r=>process.exit(r.ok?0:1))\"",'intervalSeconds':5,'timeoutSeconds':5,'retries':3,'gracePeriodSeconds':10}}}}],
         'data':{'enabled':True,'targets':[{'runtime':'docker','service':'api','containerPath':'/app/data','environment':'HOSTY_APP_DATA_DIR'}]},
         'endpoints':[{'key':'http','service':'api','port':'http','protocol':'http','public':True}],
-        'provides':['task-executor'],'interfaces':{'task-executor':[{'key':'default','endpoint':'http','path':'/v1','version':1,'capabilities':['markdown']}]},
+        'provides':['task-executor'],'interfaces':{'task-executor':[{'key':'default','endpoint':'http','path':'/v1','version':1,'capabilities':['markdown','options']}]},
         'corePermissions':['providers.tasks','providers.task-executor'],'ui':{'entrypoint':{'endpoint':'http','path':'/healthz'}}}
     target=base/'independent-tasks-manifest.json'; target.write_text(json.dumps(fixture))
     run([cli,'--data-root',root,'apps','install',target,'--runtime','docker','--no-autostart'])
@@ -179,16 +223,17 @@ def check(context):
     fixture_link=json.loads(run([cli,'--data-root',root,'apps','open',fixture_id,'--format','json']))['url']
     fixture_origin=urllib.parse.urlunparse(urllib.parse.urlparse(fixture_link)._replace(path='',query='',fragment='')); external=call(fixture_origin,'/healthz')
     identity=run([cli,'--data-root',root,'apps','identity',fixture_id,'--user','activation-fixture@example.test','--format','token']).strip(); context['diagnostic_secrets'].add(identity)
-    payload={'provider':provider,'request':{'requestId':str(uuid.uuid4()),'input':{'title':'Independent producer/executor','markdown':'No Harness profile','assignee':{'kind':'app','executor':external},'requiresReview':False,'resources':[]}}}
+    payload={'provider':provider,'request':{'requestId':str(uuid.uuid4()),'input':{'title':'Independent producer/executor','markdown':'No Harness profile','assignee':{'kind':'app','executor':external},'review':{'mode':'none'},'resources':[],'parentTaskRef':None,'dependsOn':[]}}}
     task=call(fixture_origin,'/produce',payload,expected=201,extra={'X-Hosty-User-Token':identity}); assert task['createdBy']['appId']==fixture_id
     assert call(fixture_origin,'/produce',payload,expected=201,extra={'X-Hosty-User-Token':identity})==task
     task=settle(action(task,'ready')); assert task['attempts'][0]['executor']==external and 'Independent executor' in task['result']['markdown']
     eid=str(uuid.uuid4()); invocation={'executor':provider,'id':eid,'operation':'cancel','requestId':str(uuid.uuid4())}
     assert call(fixture_origin,'/invoke',invocation,extra={'X-Hosty-User-Token':identity})['state']=='cancelled'
-    invocation.update(operation='accept',input={'taskRef':{**external,'id':str(uuid.uuid4())},'taskRevision':1,'executorOptionId':profile['id'],'input':{'title':'Must never launch','markdown':'TASK_ACCEPTANCE:RESULT','requiresReview':False,'resources':[]}})
+    execution_ref={**external,'id':str(uuid.uuid4())}
+    invocation.update(operation='accept',input={'version':1,'taskRef':execution_ref,'inputRevision':1,'selection':assignee['selection'],'content':{'title':'Must never launch','markdown':'TASK_ACCEPTANCE:RESULT','review':{'mode':'none'},'resources':[]},'relations':{'rootTaskRef':execution_ref,'parentTaskRef':None,'relationRevision':1},'prerequisiteOutcomes':[]})
     assert call(fixture_origin,'/invoke',invocation,extra={'X-Hosty-User-Token':identity})['state']=='cancelled'
     invocation.update(id=str(uuid.uuid4()),operation='accept')
-    invocation['input']['input'].update(title='Cross-app conversation',markdown='TASK_ACCEPTANCE:WAIT')
+    invocation['input']['content'].update(title='Cross-app conversation',markdown='TASK_ACCEPTANCE:WAIT')
     accepted=call(fixture_origin,'/invoke',invocation,extra={'X-Hosty-User-Token':identity})
     conversation=accepted['sessionRef']['path']; parsed=urllib.parse.urlparse(conversation); harness=urllib.parse.urlparse(app_origin)
     assert parsed.scheme==harness.scheme and parsed.netloc==harness.netloc and parsed.path=='/assistant', conversation
@@ -214,6 +259,8 @@ def check(context):
     # Browser checks receive the synthetic password through stdin only; never save credentials.
     if os.environ.get('HOSTY_TASKS_BROWSER'):
         import subprocess
-        result=subprocess.run(['node',str(workspace/'scripts/tasks-browser-acceptance.mjs')],input=json.dumps({'core':origin,'harness':app_origin,'email':'activation-fixture@example.test','password':password,'link':link}),text=True,cwd=workspace)
+        directory=h('/profiles')
+        h('/profiles/'+profile['id'],{'expectedRevision':directory['revision'],'profile':{**config,'name':profile['name']+' renamed'}},'PUT')
+        result=subprocess.run(['node',str(workspace/'scripts/tasks-browser-acceptance.mjs')],input=json.dumps({'core':origin,'harness':app_origin,'email':'activation-fixture@example.test','password':password,'link':link,'workspaceAcceptance':source_evidence}),text=True,cwd=workspace)
         assert result.returncode==0,'Browser acceptance failed'
     say('Task acceptance complete; parent owner will Finish the child and verify removal')

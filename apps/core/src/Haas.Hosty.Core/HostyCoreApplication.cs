@@ -80,6 +80,9 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<CoreDecisionService>();
         builder.Services.AddHostedService<CoreDecisionRetention>();
         builder.Services.AddSingleton<CoreTaskAdapter>();
+        builder.Services.AddSingleton<CoreTaskWorkflow>();
+        builder.Services.AddSingleton<CoreTaskSources>();
+        builder.Services.AddSingleton<CoreTaskMcp>();
         builder.Services.AddSingleton<CoreTaskWorkspace>();
         builder.Services.AddSingleton<CoreHistoryAdapter>();
         builder.Services.AddSingleton<CoreHistorySubscriptions>();
@@ -1185,7 +1188,10 @@ internal sealed record HostyCoreRuntimeConfig(
 
     private static bool IsLoopbackHost(string host)
     {
-        if (string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase))
+        // Named localhost browser origins are local too, including a DNS root dot.
+        host = host.TrimEnd('.');
+        if (string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase) ||
+            host.EndsWith(".localhost", StringComparison.OrdinalIgnoreCase))
         {
             return true;
         }
