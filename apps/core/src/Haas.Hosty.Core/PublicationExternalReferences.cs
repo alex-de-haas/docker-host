@@ -4,7 +4,11 @@ namespace Haas.Hosty.Core;
 
 // Read-only observations are separate from publication commands and completion/cleanup policy.
 internal sealed record ExternalPublicationSnapshot(string WorkspaceId, WorkspaceOwner Owner,
-    string Repository, string ConnectionId, InspectionPullRequest[] PullRequests);
+    string Repository, string ConnectionId, InspectionPullRequest[] PullRequests)
+{
+    // Internal attempt metadata: unavailable references keep their public Observation=null shape.
+    public Dictionary<string, DateTimeOffset>? FailedAt { get; init; }
+}
 
 internal sealed partial class PublicationService
 {
@@ -53,24 +57,111 @@ internal sealed partial class PublicationService
         try
         {
             var binding = await ExternalConnection(tree, ct, localOnly: true);
-            var snapshot = await inspectionRecords.ReadAsync<ExternalPublicationSnapshot>(ExternalPath(tree.Id), ct);
-            if (snapshot is null || snapshot.WorkspaceId != tree.Id || !snapshot.Owner.SameIdentity(tree.Owner) ||
-                snapshot.Repository != binding.Repository || snapshot.ConnectionId != binding.Connection.Id)
-                return Unavailable("PR tracking is connected; waiting for the next provider observation.");
+            ExternalPublicationSnapshot? snapshot = null;
+            try { snapshot = await inspectionRecords.ReadAsync<ExternalPublicationSnapshot>(ExternalPath(tree.Id), ct); }
+            catch (Exception ex) when (ex is IOException or JsonException) { /* A verified publication may still have a newer retained observation. */ }
+            if (!MatchesExternalSnapshot(snapshot, tree, binding.Repository, binding.Connection.Id)) snapshot = null;
+            var record = await ReadInspectionRecordAsync(tree.Id, ct);
+            if (record is null || record.WorkspaceId != tree.Id || !record.Owner.SameIdentity(tree.Owner) ||
+                record.ConnectionId != binding.Connection.Id || record.Provider != binding.Source.Descriptor.Id ||
+                record.Repository != binding.Repository || record.HeadRepository != binding.Repository || record.TargetBranch != tree.TargetBranch)
+                record = null;
             return urls.Select(url =>
             {
-                var reference = snapshot.PullRequests.FirstOrDefault(p => p.Url == url)
-                    ?? new(url, null, null, "Waiting for the next provider observation.");
-                // Older snapshots may contain exact-branch completion or private review facts.
-                // This projection remains display-only independently of the writer's version.
-                return reference with { Observation = reference.Observation is { } observation
-                    ? observation with { Complete = false, Reviews = null } : null };
+                var candidates = new List<InspectionPullRequest>();
+                candidates.AddRange(snapshot?.PullRequests.Where(p => string.Equals(p.Url, url, StringComparison.OrdinalIgnoreCase)) ?? []);
+                void AddPublication(string? candidateUrl, int? number, PublicationObservation? observation, bool historical = false)
+                {
+                    if (number is not > 0 || candidateUrl is null || observation is null ||
+                        !string.Equals(candidateUrl, url, StringComparison.OrdinalIgnoreCase) ||
+                        !string.Equals(binding.Source.Publication!.PullRequestUrl(binding.Repository, number.Value), url, StringComparison.OrdinalIgnoreCase)) return;
+                    candidates.Add(new(url, observation.Head, observation, null, Historical: historical));
+                }
+                if (record is not null)
+                {
+                    AddPublication(record.Url, record.Number, record.Observation);
+                    foreach (var previous in record.History) AddPublication(previous.Url, previous.Number, previous.Observation, historical: true);
+                }
+                return LatestExternalReference(url, candidates, FailedAt(snapshot, url), failClosed: true);
             }).ToArray();
         }
         catch (Exception ex) when (ex is PublicationException or UserConnectionException or AppLifecycleException)
         { return Unavailable(ex.Message); }
         catch (Exception ex) when (ex is IOException or JsonException)
         { return Unavailable("PR observation is unavailable; the next refresh will retry."); }
+    }
+
+    private static bool MatchesExternalSnapshot(ExternalPublicationSnapshot? snapshot, DevelopmentWorkspace tree, string repository, string connectionId)
+        => snapshot is not null && snapshot.WorkspaceId == tree.Id && snapshot.Owner.SameIdentity(tree.Owner) &&
+            snapshot.Repository == repository && snapshot.ConnectionId == connectionId;
+
+    private static DateTimeOffset? FailedAt(ExternalPublicationSnapshot? snapshot, string url)
+        => snapshot?.FailedAt?.Where(pair => string.Equals(pair.Key, url, StringComparison.OrdinalIgnoreCase))
+            .Select(pair => (DateTimeOffset?)pair.Value).Max();
+
+    private static InspectionPullRequest LatestExternalReference(string url, IEnumerable<InspectionPullRequest> candidates,
+        DateTimeOffset? failedAt = null, bool failClosed = false)
+    {
+        var items = candidates.ToArray();
+        var observed = items.Where(p => p.Observation is not null).ToArray();
+        var newest = observed.Length == 0 ? (DateTimeOffset?)null : observed.Max(p => p.Observation!.At);
+        var latest = observed.Where(p => p.Observation!.At == newest).ToArray();
+        var failed = items.FirstOrDefault(p => p.Observation is null && p.Unavailable is not null);
+        var reference = failClosed && failed is not null && (failedAt is null || newest is null || failedAt >= newest) ? failed
+            : latest.FirstOrDefault(p => p.Unavailable is not null || p.Observation!.Error is not null)
+            ?? latest.FirstOrDefault() ?? items.FirstOrDefault()
+            ?? new(url, null, null, "PR tracking is connected; waiting for the next provider observation.");
+        if (reference.Observation is not null && latest.Select(p => (p.Observation!.State, p.Observation.Head, p.Observation.Draft)).Distinct().Skip(1).Any())
+            reference = reference with { Observation = reference.Observation! with { State = "unavailable", Error = "Retained PR observations disagree; refresh provider status." } };
+        // Legacy caches and exact publication records may contain private reviews/completion proof.
+        return reference with { Url = url, Observation = reference.Observation is { } observation
+            ? observation with { Complete = false, Reviews = null } : null };
+    }
+
+    // Explicit completion checks run outside the workspace mutation gate. Retain their display
+    // facts before completion stops background observation, without retaining completion authority.
+    private async Task RetainExternalReferenceAsync(DevelopmentWorkspace tree, string repository, string connectionId,
+        string providerId, string url, int number, InspectionPullRequest reference, CancellationToken ct, bool background = false,
+        DateTimeOffset? attemptedAt = null)
+    {
+        // Capture the failed attempt before waiting for the final-write gate.
+        var failureTime = attemptedAt ?? clock.UtcNow;
+        if (!await workspaces.WritePublicationAsync(tree.Id, async () =>
+        {
+            if (background && !await workspaces.CanObserveInBackgroundAsync(tree.Id, ct)) return;
+            var current = await workspaces.Read(tree.Id, tree.Owner, ct);
+            var binding = await ExternalConnection(current, ct, localOnly: true);
+            if (!current.Owner.SameIdentity(tree.Owner) || binding.Connection.Id != connectionId || binding.Source.Descriptor.Id != providerId ||
+                binding.Repository != repository ||
+                !current.PullRequests.Contains(url, StringComparer.OrdinalIgnoreCase) ||
+                !string.Equals(binding.Source.Publication!.PullRequestUrl(binding.Repository, number), url, StringComparison.OrdinalIgnoreCase))
+                throw new PublicationException("pr_mismatch", "The workspace PR binding changed during observation.");
+            ExternalPublicationSnapshot? previous = null;
+            try { previous = await JsonStorage.ReadAsync<ExternalPublicationSnapshot>(ExternalPath(tree.Id), ct); }
+            catch (Exception ex) when (ex is IOException or JsonException) { /* Replace an unreadable display snapshot with fresh verified facts. */ }
+            var retained = MatchesExternalSnapshot(previous, current, repository, connectionId) ? previous!.PullRequests : [];
+            if (retained.Length == 0) previous = null;
+            var failureTimes = new Dictionary<string, DateTimeOffset>(StringComparer.OrdinalIgnoreCase);
+            var items = current.PullRequests.Where(SafeReference).Distinct(StringComparer.Ordinal).Select(referenceUrl =>
+            {
+                var prior = retained.FirstOrDefault(p => string.Equals(p.Url, referenceUrl, StringComparison.OrdinalIgnoreCase));
+                var updating = string.Equals(reference.Url, referenceUrl, StringComparison.OrdinalIgnoreCase);
+                var failedAt = FailedAt(previous, referenceUrl);
+                var failedNow = updating && reference.Observation is null && reference.Unavailable is not null;
+                if (failedNow && (failedAt is null || failureTime > failedAt)) failedAt = failureTime;
+                IEnumerable<InspectionPullRequest> candidates = updating
+                    ? new[] { reference, prior }.OfType<InspectionPullRequest>()
+                    : new[] { prior }.OfType<InspectionPullRequest>();
+                // A new live success can recover an untimestamped legacy failure; cached reads cannot.
+                var result = LatestExternalReference(referenceUrl, candidates, failedAt, failClosed: !updating || failedNow || failedAt is not null);
+                if (result.Observation is null && result.Unavailable is not null && failedAt is { } failed)
+                    failureTimes[referenceUrl] = failed;
+                return result;
+            }).ToArray();
+            await JsonStorage.WriteAsync(ExternalPath(tree.Id), new ExternalPublicationSnapshot(tree.Id, current.Owner,
+                repository, connectionId, items) { FailedAt = failureTimes.Count == 0 ? null : failureTimes }, restrictToOwner: true);
+        }, ct))
+            throw new PublicationException("pr_mismatch", "The workspace stopped accepting PR observations.");
     }
 
     // Fetch fresh provider evidence before acquiring the workspace mutation lock. Publication
@@ -110,6 +201,9 @@ internal sealed partial class PublicationService
                         Branch = tree.Branch, TargetBranch = tree.TargetBranch, Number = number, Url = url };
                     var observation = await connections.UseForSourceAsync(owner.UserId, binding.Connection.Id,
                         c => provider.ObserveAsync(c, record, ct), ct);
+                    if (observation.Error is null && observation.State is "open" or "closed" or "merged")
+                        await RetainExternalReferenceAsync(tree, binding.Repository, binding.Connection.Id, binding.Source.Descriptor.Id,
+                            url, number, new(url, observation.Head, observation, null), ct);
                     if (observation is { State: "merged", Complete: true, Head: { } head } && head == current.Observation?.Head)
                         result[tree.Id] = head;
                 }
@@ -168,21 +262,10 @@ internal sealed partial class PublicationService
                     { result = new(url, null, null, "Provider observation timed out; the next refresh will retry."); }
                     catch (Exception ex) when (ex is PublicationException or UserConnectionException or HttpRequestException or JsonException)
                     { result = new(url, null, null, ex is PublicationException ? ex.Message : "Provider state is unavailable. Check the source connection; the next refresh will retry."); }
-                    // Finish local persistence even when the provider budget expired. Do not extend
-                    // it with another network request. Reads independently revalidate access too.
-                    var current = await workspaces.Read(tree.Id, tree.Owner, ct);
-                    var finalBinding = await ExternalConnection(current, ct);
-                    if (finalBinding.Connection.Id != binding.Connection.Id) continue;
-                    var previous = await JsonStorage.ReadAsync<ExternalPublicationSnapshot>(ExternalPath(tree.Id), ct);
-                    var retained = previous is not null && previous.WorkspaceId == tree.Id && previous.Owner.SameIdentity(tree.Owner)
-                        && previous.Repository == binding.Repository && previous.ConnectionId == binding.Connection.Id
-                        ? previous.PullRequests : [];
-                    var results = current.PullRequests.Where(SafeReference).Distinct(StringComparer.Ordinal)
-                        .Select(reference => reference == url ? result : retained.FirstOrDefault(p => p.Url == reference)
-                            ?? new(reference, null, null, "Waiting for the next provider observation.")).ToArray();
-                    await workspaces.WritePublicationAsync(tree.Id, () => JsonStorage.WriteAsync(ExternalPath(tree.Id),
-                        new ExternalPublicationSnapshot(tree.Id, tree.Owner, binding.Repository, binding.Connection.Id, results),
-                        restrictToOwner: true), ct);
+                    // Persist after the network budget, rechecking access without another request.
+                    var observedNumber = int.TryParse(new Uri(url).AbsolutePath.Split('/').Last(), out var parsed) ? parsed : 0;
+                    await RetainExternalReferenceAsync(tree, binding.Repository, binding.Connection.Id, binding.Source.Descriptor.Id,
+                        url, observedNumber, result, ct, background: true);
                 }
                 catch (Exception ex) when (ex is PublicationException or UserConnectionException or AppLifecycleException or IOException or JsonException)
                 { /* Unavailable ownership/source/credentials are explained by the read projection. */ }

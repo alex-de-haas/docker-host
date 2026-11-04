@@ -1,6 +1,6 @@
 ---
 created: 2026-10-18
-updated: 2026-10-29
+updated: 2026-11-04
 summary: Core-owned execution selection runs installed packages or registered workspace manifests on ordinary app data, with scoped access review and recoverable lifecycle operations.
 components: [apps/core, apps/cli, apps/harness, apps/shell]
 ---
@@ -30,7 +30,9 @@ Source overrides remain supported for existing manual workflows; their retiremen
 ## Workspace Manifest Admission
 
 Core reads the workspace manifest at its bound source path and validates the installed app identity,
-supported schema and runtime recipe. The installed package manifest stays unchanged. Core stores
+supported schema and runtime recipe. A published app.0.2 package can use an app.0.1 source
+workspace, and vice versa: each manifest is validated against its own supported schema. Schema
+transitions still undergo the same access classification; application IDs must match. The installed package manifest stays unchanged. Core stores
 an admitted execution snapshot in its private development journal directory; its raw JSON retains
 unknown extension fields. The registry projects the active execution contract while preserving the
 installed package version and original install/update source.

@@ -38,7 +38,7 @@ export function FeedbackCommentInput({ label, ariaLabel = label, target, value, 
           </div>
           <div className="flex shrink-0 items-center gap-1">
             <FeedbackSpeech speech={speech} target={target} disabled={disabled} onText={onDictation} />
-            {onDone && <Button type="button" size="icon-sm" aria-label="Done" title="Done" disabled={actionsDisabled} onClick={onDone}><Check /></Button>}
+            {onDone && <Button type="button" size="sm" aria-label="Save comment" title="Save comment locally" disabled={actionsDisabled} onClick={onDone}><Check />Save comment</Button>}
           </div>
         </div>
       </InputGroupAddon>

@@ -41,6 +41,50 @@ public sealed partial class CoreLifecycleServiceTests
     }
 
     [Theory]
+    [InlineData("app.0.2", "app.0.1", false)]
+    [InlineData("app.0.1", "app.0.2", false)]
+    [InlineData("app.0.2", "app.0.1", true)]
+    public async Task WorkspaceManifest_SupportedSchemaTransitionRetainsIdentityAndAccessReview(
+        string installedSchema, string workspaceSchema, bool additionalPermission)
+    {
+        var (f, owner, _, tree, _, _) = await LocalHandoffFixture();
+        await AddManifestPackageRuntime(f, tree);
+        var app = (await f.Apps.GetAppAsync("test.created"))!;
+        foreach (var (path, schema) in new[] { (app.ManifestPath!, installedSchema), (Path.Combine(tree.Path, "manifest.json"), workspaceSchema) })
+        {
+            var manifest = JsonNode.Parse(await File.ReadAllTextAsync(path))!.AsObject();
+            manifest["schemaVersion"] = schema;
+            foreach (var service in manifest["services"]!.AsArray())
+                foreach (var runtime in service!["runtimes"]!.AsObject())
+                    if (schema == "app.0.2" && runtime.Value!["image"] is JsonObject image)
+                    {
+                        image.Remove("tag");
+                        image["digest"] = "sha256:" + new string('a', 64);
+                    }
+            await File.WriteAllTextAsync(path, manifest.ToJsonString());
+        }
+        if (additionalPermission)
+            await EditDevManifest(tree.Path, m => m["corePermissions"] = new JsonArray("apps.read"));
+        var installed = await File.ReadAllTextAsync(app.ManifestPath!);
+        var candidate = await f.Service.PrepareExecutionCandidateAsync(app, tree.Path, "dev", DevActor(owner), default);
+        Assert.Equal(workspaceSchema, candidate.Selection.Manifest.SchemaVersion);
+        Assert.Equal(additionalPermission, candidate.ReviewRequired);
+        Assert.Equal(installed, await File.ReadAllTextAsync(app.ManifestPath!));
+        var selected = await SelectManifestTarget(f, owner, tree);
+        Assert.Equal(additionalPermission ? "review-required" : "completed", selected.State);
+        if (!additionalPermission)
+        {
+            Assert.Equal("dev", (await f.Apps.GetAppAsync(app.Id))!.SelectedRuntime);
+            Assert.Equal("completed", (await SelectManifestTarget(f, owner, tree, "package")).State);
+            Assert.Equal("docker", (await f.Apps.GetAppAsync(app.Id))!.SelectedRuntime);
+            Assert.Equal(installed, await File.ReadAllTextAsync(app.ManifestPath!));
+        }
+        await EditDevManifest(tree.Path, m => m["id"] = "other.application");
+        Assert.Equal("dev_manifest_identity_changed", (await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            f.Service.PrepareExecutionCandidateAsync(app, tree.Path, "dev", DevActor(owner), default))).Code);
+    }
+
+    [Theory]
     [InlineData("metadata", false)]
     [InlineData("execution", false)]
     [InlineData("topology", false)]

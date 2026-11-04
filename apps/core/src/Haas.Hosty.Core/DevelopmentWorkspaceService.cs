@@ -395,6 +395,9 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
             if (w.SourceStamp is null && w.Observation is { } previousObservation && previousObservation.Head == local.Head
                 && previousObservation.Conflict == (merge.ExitCode == 0) && previousObservation.Local?.Files.SequenceEqual(local.Files) == true)
                 w = await Save(w with { SourceStamp = sourceStamp }, baselineSource: true);
+            // Retain bounded HEAD-to-worktree line counts in the same shared observation. List
+            // clients consume this snapshot without requesting a diff or rescanning each row.
+            local = await AppSourceService.AddLineStatisticsAsync(local, ct);
             w = w with { SourceStamp = sourceStamp, Observation = new(clock.UtcNow, "ok", local.Head, target, int.Parse(counts[0]), int.Parse(counts[1]), merge.ExitCode == 0, local, files) };
         }
         catch (Exception ex) when (ex is AppLifecycleException or IOException or UnauthorizedAccessException)

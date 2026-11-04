@@ -44,3 +44,10 @@ it.each(["{invalid", "null", JSON.stringify({ ...batch, items: [null] }), JSON.s
   sessionStorage.setItem(key, value); await render();
   expect(sessionStorage.getItem(key)).toBeNull(); expect(send).not.toHaveBeenCalled();
 });
+
+it("keeps publisher sources fixed and directs channel selection to the app Updates tab", async () => {
+  await render();
+  expect(container.textContent).toContain("Updates tab");
+  expect(container.querySelector("input:not([type=checkbox]),select")).toBeNull();
+  expect(button("Review source switch")).toBeUndefined();
+});

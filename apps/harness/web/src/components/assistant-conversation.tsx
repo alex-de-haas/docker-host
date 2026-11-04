@@ -114,6 +114,8 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
   const [autonomyNotice, setAutonomyNotice] = useState<AgentSettingsNotice | null>(null);
   const [activity, setActivity] = useState<SessionActivity | null>(null);
   const [connection, setConnection] = useState<StreamConnection>("connecting");
+  const [historyReadyFor, setHistoryReadyFor] = useState<string | null>(null);
+  const historyLoading = !!session && historyReadyFor !== session.id && connection !== "disconnected";
   const [events, setEvents] = useState<AssistantEvent[]>([]);
   const [streamed, setStreamed] = useState("");
   const [input, setInput] = useState("");
@@ -277,6 +279,7 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
     setStatus(record.status);
     setActivity(null);
     setConnection("connecting");
+    setHistoryReadyFor(null);
     setEvents([]);
     setStreamed("");
     // Whatever was left unsent in this session, put back in the box. Per session, so switching away
@@ -416,6 +419,9 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
       (state) => {
         if (abort.signal.aborted) return;
         setConnection(state);
+        // The stream reports connected only after its initial historical replay.
+        // Keep this boundary through reconnects so an existing reader is not remounted.
+        if (state === "connected") setHistoryReadyFor(record.id);
         if (state !== "connected") setActivity(null);
         if (state === "disconnected") setStreamed("");
       },
@@ -1093,7 +1099,7 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
           </>
         )}
       </header>
-      {!showSessions && pendingDecision && <div className="flex shrink-0 items-center gap-2 border-b border-warning-foreground/25 bg-warning-soft px-3 py-2 text-sm text-warning-foreground"><Diamond className="size-4 shrink-0" /><span className="min-w-0 flex-1">Needs you · {pendingDecision.type === "approval_request" ? "Approval requested" : "Answer requested"}</span><Button size="sm" variant="outline" onClick={() => { decisionCard.current?.scrollIntoView({ block: "center", behavior: "instant" }); decisionCard.current?.focus(); }}>Review</Button></div>}
+      {!showSessions && !historyLoading && pendingDecision && <div className="flex shrink-0 items-center gap-2 border-b border-warning-foreground/25 bg-warning-soft px-3 py-2 text-sm text-warning-foreground"><Diamond className="size-4 shrink-0" /><span className="min-w-0 flex-1">Needs you · {pendingDecision.type === "approval_request" ? "Approval requested" : "Answer requested"}</span><Button size="sm" variant="outline" onClick={() => { decisionCard.current?.scrollIntoView({ block: "center", behavior: "instant" }); decisionCard.current?.focus(); }}>Review</Button></div>}
 
       {!showSessions && session && <SessionCredentials key={`credentials-${session.id}`} sessionId={session.id} />}
       {!fullPage && !showSessions && session && <SessionSandboxes key={`sandbox-${session.id}`} sessionId={session.id} />}
@@ -1114,7 +1120,10 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
         />
       ) : (
         <>
-          <MessageScrollerProvider key={session?.id ?? "connecting"} autoScroll>
+          {historyLoading ? <div role="status" aria-label="Loading conversation history" className="flex min-h-0 flex-1 items-center justify-center gap-2 p-4 text-sm text-muted-foreground">
+            <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden />
+            {connection === "reconnecting" ? "Reconnecting to conversation…" : "Loading conversation history…"}
+          </div> : <MessageScrollerProvider key={session?.id ?? "connecting"} autoScroll>
             <MessageScroller className="h-auto flex-1">
               <MessageScrollerViewport aria-label="Assistant conversation">
                 <MessageScrollerContent className="mx-auto w-full max-w-[760px] gap-4 p-3 sm:p-4">
@@ -1170,7 +1179,7 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
               </MessageScrollerViewport>
               <MessageScrollerButton aria-label="Jump to latest message" />
             </MessageScroller>
-          </MessageScrollerProvider>
+          </MessageScrollerProvider>}
 
           {!composerBlocked && <>
           {contextUnavailable && (
@@ -1264,11 +1273,18 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
                     ))}
                   </div>
                 )}
-                <div className="flex items-center gap-0.5" role="group" aria-label="Message actions">
+                <div className={cn("flex items-center gap-0.5",
+                  "@max-[640px]/composer:[&_:is([data-slot=provider-usage],[data-slot=context-usage])]:h-6 @max-[640px]/composer:[&_:is([data-slot=provider-usage],[data-slot=context-usage])]:min-w-6",
+                  "@max-[640px]/composer:[&_:is([data-slot=provider-usage],[data-slot=context-usage])]:gap-0.5 @max-[640px]/composer:[&_:is([data-slot=provider-usage],[data-slot=context-usage])]:px-0",
+                  "@max-[640px]/composer:[&_[data-slot=usage-ring]]:size-5 @max-[640px]/composer:[&_[data-slot=usage-ring]>svg]:size-5 @max-[640px]/composer:[&_.font-mono]:text-[11px]",
+                  "@max-[640px]/composer:[&_[data-slot=speech-input]]:gap-0.5 @max-[640px]/composer:[&_[data-speech-control]]:size-6 @max-[640px]/composer:[&_[data-speech-control]]:p-0",
+                  "@max-[640px]/composer:[&_[data-slot=speech-input]_[data-speech-provider]]:size-6 @max-[640px]/composer:[&_[data-speech-provider]]:justify-center @max-[640px]/composer:[&_[data-speech-provider]]:gap-0 @max-[640px]/composer:[&_[data-speech-provider]]:px-0 @max-[640px]/composer:[&_[data-speech-provider]_[data-slot=select-value]]:sr-only",
+                  "@max-[640px]/composer:[&_[data-slot=speech-status]]:h-6 @max-[640px]/composer:[&_[data-slot=speech-status]]:w-4 @max-[640px]/composer:[&_[data-speech-meter]]:gap-[1.5px] @max-[640px]/composer:[&_[data-speech-bar]]:w-0.5")}
+                  role="group" aria-label="Message actions">
                   <div className="flex min-w-0 flex-1 items-center gap-0.5">
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <Button ref={addButtonRef} type="button" size="icon" variant="ghost" disabled={!session || sending || !!pendingSend || sendRecoveryBlocked || mentionSaving || providerSaving} aria-label="Add to message"><Plus /></Button>
+                        <Button ref={addButtonRef} type="button" size="icon" variant="ghost" className="@max-[640px]/composer:size-6" disabled={!session || sending || !!pendingSend || sendRecoveryBlocked || mentionSaving || providerSaving} aria-label="Add to message"><Plus /></Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent side="top" align="start" onCloseAutoFocus={event => {
                         if (openContextAfterMenu.current) {
@@ -1287,6 +1303,7 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
                         </DropdownMenuGroup>
                       </DropdownMenuContent>
                     </DropdownMenu>
+                    <div className="contents @max-[640px]/composer:[&_button]:size-6 @max-[640px]/composer:[&_button]:min-w-6 @max-[640px]/composer:[&_button]:p-0 @max-[640px]/composer:[&_button>span:not(.sr-only)]:hidden">
                     {session && <SessionAgentSettings key={`agent:${session.id}`}
                       session={{ ...session, status }} busy={sending || stopping || !!pendingSend || sendRecoveryBlocked || mentionSaving || contextSaving || providerSaving}
                       onSavingChange={onProviderSaving} onNoticeChange={setAgentNotice} onChange={record => {
@@ -1295,16 +1312,17 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
                       }} />}
                     {session && <SessionAutonomy key={`autonomy:${session.id}`} session={{ ...session, status }} busy={sending || stopping || mentionSaving || contextSaving || providerSaving}
                       onSavingChange={onProviderSaving} onChange={onSessionChange} onErrorChange={setAutonomyNotice} />}
-                    {session?.connectionId && <ProviderUsageIndicator key={session.connectionId + ":" + session.connectionRevision} connectionId={session.connectionId} revision={session.connectionRevision} />}
+                    </div>
+                    {session?.connectionId && <ProviderUsageIndicator key={session.connectionId + ":" + session.connectionRevision} connectionId={session.connectionId} revision={session.connectionRevision} model={session.executionSelection?.model} />}
                     {session && <ContextUsageIndicator usage={contextUsage.sessionId === session.id ? contextUsage.usage : null} connected={connection === "connected"} />}
                   </div>
                   {session && <SpeechInput key={session.id} onStart={suggestions.interact} disabled={sending || !!pendingSend || sendRecoveryBlocked} onText={text => setInput(current => current ? `${current}${/\s$/.test(current) ? "" : " "}${text}` : text)} />}
                   {running || stopping ? (
-                    <Button type="button" size="icon" className="shrink-0" disabled={sending || stopping} onClick={() => void stop()} aria-label="Stop" title="Stop response">
+                    <Button type="button" size="icon" className="shrink-0 @max-[640px]/composer:size-8" disabled={sending || stopping} onClick={() => void stop()} aria-label="Stop" title="Stop response">
                       {sending || stopping ? <Loader2 className="motion-safe:animate-spin" /> : <Square className="fill-current" />}
                     </Button>
                   ) : (
-                    <Button type="submit" size="icon" className="shrink-0" disabled={!session || sending || !!pendingSend || sendRecoveryBlocked || providerSaving || contextSaving || mentionSaving || !health?.available || !hasMessageContent(input, pending.length, uploaded.length)} aria-label="Send">
+                    <Button type="submit" size="icon" className="shrink-0 @max-[640px]/composer:size-8" disabled={!session || sending || !!pendingSend || sendRecoveryBlocked || providerSaving || contextSaving || mentionSaving || !health?.available || !hasMessageContent(input, pending.length, uploaded.length)} aria-label="Send">
                       {sending ? <Loader2 className="motion-safe:animate-spin" /> : <Send />}
                     </Button>
                   )}

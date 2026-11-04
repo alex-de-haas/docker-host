@@ -4,6 +4,10 @@ namespace Haas.Hosty.Core;
 internal sealed record WorkspacePullRequestSummary(int Count, string State, string Checks,
     DateTimeOffset? ObservedAt, bool Partial)
 {
+    // Known open references, including drafts. With partial observations these are lower bounds.
+    public int OpenCount { get; init; }
+    public int DraftCount { get; init; }
+
     internal static WorkspacePullRequestSummary? From(IEnumerable<InspectionPullRequest> references)
     {
         // A repeated link must not inflate counts or hide an unavailable observation.
@@ -23,7 +27,11 @@ internal sealed record WorkspacePullRequestSummary(int Count, string State, stri
             : checks.Contains("SUCCESS") ? "passed" : "none";
         // Open PR freshness is independent of old merged history in a corrective cycle.
         var dates = (open.Length > 0 ? open : known).Select(p => (DateTimeOffset?)p.At);
-        return new(items.Length, state, ci, dates.Min(), partial);
+        return new(items.Length, state, ci, dates.Min(), partial)
+        {
+            OpenCount = open.Length,
+            DraftCount = open.Count(p => p.Draft)
+        };
     }
 
     private static bool Known(InspectionPullRequest reference) => reference.Unavailable is null

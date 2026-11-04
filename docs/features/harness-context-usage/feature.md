@@ -9,7 +9,10 @@ components: [apps/harness]
 
 Harness shows the latest context observation as a compact circular indicator immediately after
 the provider selector in the composer, in both the full-page chat and the embedded assistant.
-The percentage sits beside the ring for readability.
+The ring contains a stacked-pages icon and the percentage sits beside it with a `used` suffix.
+The suffix hides below a 640 CSS px composer width while the icon and percentage stay visible.
+The neutral ring fills with context usage, turns warning-colored at 80% and destructive at 100%.
+The adjacent account-limit ring uses an hourglass and measures remaining allowance instead.
 The shared tooltip exposes used tokens, the provider-reported window, percentage, estimate status
 and measurement time, and remains available on keyboard focus. Claude observations with MCP metadata
 open a [server/tool detail dialog](../claude-mcp-context-detail/feature.md). Ollama uses the same dialog
@@ -95,7 +98,7 @@ and credits. It does not change this context meter or use billed tokens as accou
   stop preserves the selection and live callback authority. Worker recovery tests retain the context observation
   after detailed replay expires, with and without final text, for success and failure.
 - The worker Docker fixture exercises the real Claude summary control without submitting a prompt.
-- UI tests cover the circular indicator after the provider selector, estimates, unknown counts,
+- UI tests cover the stacked-pages circular indicator, used label, warning thresholds, estimates, unknown counts,
   missing limits, percentages above 100%, keyboard tooltip access, replay ordering and exclusion
   from the transcript. Check full-page and embedded composers at desktop and narrow widths.
 - Run `npm run harness:test`, `npm run harness:lint`, `npm run harness:build-web`,

@@ -1,6 +1,6 @@
 ---
 created: 2026-11-03
-updated: 2026-11-03
+updated: 2026-11-04
 summary: One responsive composer action row with a shared agent-settings panel and catalog-driven reasoning controls.
 components: [apps/harness]
 ---
@@ -12,11 +12,19 @@ Autonomy, Provider limits when applicable, Context usage, Dictation and Send/Sto
 minimum chat-pane width is 360 CSS px. The context ring and percentage remain visible. Independent
 pane scrolling and retained drafts follow [Harness Development](../harness-development-ui/feature.md).
 
+Context and provider limits share a compact ring shape with distinct center icons: stacked pages
+for used context, an hourglass for remaining account allowance. Both percentages stay visible at
+narrow widths; the `used` and `left` suffixes appear from a 640 CSS px composer width. Context is
+neutral and limits blue until their respective warning thresholds. Unknown limits use a dashed
+ring and `?`; their popover retains detailed observations and Refresh.
+Below 640 CSS px the action row uses 24 px icon controls, a 32 px Send/Stop button and
+20 px rings, leaving both percentages and the recording meter, Stop and Cancel visible together.
+
 ## Agent Settings
 
 One Brain icon button opens an upward popover containing profile, provider connection,
 model and reasoning fields. The button displays the confirmed model and effort when its composer
-container is at least 440 CSS px wide, truncates long labels, and otherwise shows only the icon.
+container is at least 640 CSS px wide, truncates long labels, and otherwise shows only the icon.
 Its accessible name and tooltip retain the full selection at every width. Container queries use
 the actual composer width, including when navigation, workspace details or an embedded host reduce
 available space inside a wide browser window.
@@ -48,11 +56,23 @@ beneath the action row.
 
 ## Dictation
 
-A single microphone button opens the dictation panel. Provider selection, recording controls,
-transcription progress and errors stay inside that panel rather than widening the action row.
-Opening settings does not request microphone access; Dictate starts capture. A running dictation
-shows an activity indicator on the trigger. Closing the panel preserves the operation, while
-conversation changes, cancellation and send blocking retain their existing cleanup behavior.
+The microphone button starts dictation immediately. Recording uses three compact inline icons:
+a five-bar microphone signal indicator, Stop and transcribe, and Cancel to discard the recording. Starting
+and transcription show a spinner and retain cancellation. Recording status is announced to assistive
+technology; there is no visible recording label or duration, and no dictation popover. Provider
+selection appears inline only when multiple providers need an explicit choice. On a narrow composer
+its trigger is a compact chevron; the selected provider remains in its accessible value and tooltip.
+Permission guidance,
+errors, microphone release, conversation changes and late-result suppression retain their existing
+behavior.
+
+The meter analyses the existing microphone stream locally using Web Audio. Bar height follows the
+measured signal; a lightweight voice-activity estimate highlights likely speech using speech-band
+energy, an adaptive noise floor and hysteresis. It is an estimate, not a guarantee of speech
+recognition. It changes only the indicator, never trims or gates the recorded audio. No audio is
+uploaded for metering and there is no second microphone request. The silent analysis graph is
+released on stop, cancellation, send blocking and conversation changes. Metering failure leaves
+recording available.
 
 ## Testing Expectations
 

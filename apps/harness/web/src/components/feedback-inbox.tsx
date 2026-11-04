@@ -7,6 +7,7 @@ import { developmentRequest, type DevelopmentWorkspace } from "@/lib/development
 import { Button } from "./ui/button";
 import { Textarea } from "./ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "./ui/dialog";
+import { RefreshCw } from "lucide-react";
 
 const selectClass = "rounded-md border bg-background px-2 py-2 text-sm";
 const isBusy = (status?: string) => !!status && ["running", "awaiting_approval", "awaiting_question", "suggesting"].includes(status);
@@ -58,14 +59,13 @@ export function FeedbackInbox({ workspaceId, sessionId, running, disabled = fals
     setReview({ reports, repeat }); setTargetWorkspace(workspaceId ?? ""); setTargetChat(sessionId ?? "");
     try { await loadDestinations(); } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   };
-  const send = async () => {
-    if (!review || busy) return;
-    const body = pending.current ?? { requestId: crypto.randomUUID(), reports: review.reports.map(r => ({ id: r.id, revision: r.revision })),
-      workspaceId: targetWorkspace || null, sessionId: targetChat || null, instruction };
+  const deliver = async (body: DispatchBody) => {
+    if (busy) return;
     pending.current = body; setBusy(true); setError("");
     try {
       const result: FeedbackDispatch = await (await call("/feedback/dispatches", { method: "POST", body: JSON.stringify(body) })).json();
       if (result.state === "rejected") throw new ApiError(409, "feedback_rejected", result.error ?? "This prompt was refused. Review and send again.");
+      if (result.state === "unknown" || result.state === "reserved") throw new Error(result.error ?? "Delivery was not confirmed. Retry the same request.");
       pending.current = null; setUncertain(false); setReview(null); setSelected([]); setInstruction("");
       setNotice("Sent to chat. Processing is tracked against this prompt."); await refresh();
     } catch (e) {
@@ -74,6 +74,18 @@ export function FeedbackInbox({ workspaceId, sessionId, running, disabled = fals
       const known = e instanceof ApiError && e.status < 500 && !["message_outcome_unknown", "feedback_dispatch_conflict"].includes(e.code ?? "");
       setUncertain(!known); if (known) pending.current = null;
     } finally { setBusy(false); }
+  };
+  const send = async () => {
+    if (!review || busy) return;
+    await deliver(pending.current ?? { requestId: crypto.randomUUID(), reports: review.reports.map(r => ({ id: r.id, revision: r.revision })),
+      workspaceId: targetWorkspace || null, sessionId: targetChat || null, instruction });
+  };
+  const sendReports = async (reports: FeedbackReport[], repeat = false) => {
+    if (!workspaceId) return openReview(reports, repeat);
+    if (!reports.length || !sessionId || running || disabled || busy || uncertain) return;
+    setError(""); setNotice("");
+    await deliver({ requestId: crypto.randomUUID(), reports: reports.map(r => ({ id: r.id, revision: r.revision })),
+      workspaceId, sessionId, instruction: "" });
   };
   const recover = async (attempt: FeedbackDispatch) => {
     setBusy(true); setError("");
@@ -93,10 +105,16 @@ export function FeedbackInbox({ workspaceId, sessionId, running, disabled = fals
   const target = sessions.find(s => s.id === targetChat);
   const targetBusy = targetChat === sessionId && running || isBusy(target?.status);
   const canSend = !!review?.reports.length && !busy && !disabled && (!targetChat || !!target && !targetBusy);
+  const chatStatus = !workspaceId ? null : !sessionId ? { label: "Select a chat", detail: "Select a chat in this workspace to send feedback." }
+    : running ? { label: "Chat busy", detail: "This chat is busy. Wait for it to finish before sending feedback." } : null;
   if (workspaceId && !error && (!loaded || !scoped.length)) return null;
-  const title = workspaceId ? <h3 className="text-sm font-semibold">Feedback</h3> : <h1 className="text-2xl font-semibold tracking-tight">Feedback</h1>;
-  return <section data-workspace-section={workspaceId ? "" : undefined} className={workspaceId ? "space-y-3" : "mx-auto max-w-5xl space-y-5 p-6"} aria-label="Feedback">
-    <header className="flex flex-wrap items-center justify-between gap-2">{title}<Button variant="outline" size="sm" disabled={busy} onClick={() => void refresh()}>Refresh</Button></header>
+  const title = workspaceId ? <h3 className="text-xs font-semibold text-muted-foreground">Feedback {!!scoped.length && <span className="ml-1 font-mono font-normal tabular-nums">{scoped.length}</span>}</h3> : <h1 className="text-2xl font-semibold tracking-tight">Feedback</h1>;
+  return <section data-workspace-section={workspaceId ? "" : undefined} className={workspaceId ? "space-y-2 text-xs" : "mx-auto max-w-5xl space-y-5 p-6"} aria-label="Feedback">
+    <header className="flex flex-wrap items-center justify-between gap-2">{title}<div className="flex items-center gap-2">
+      {chatStatus && <span role="status" title={chatStatus.detail} className="text-xs text-muted-foreground"><span aria-hidden>{chatStatus.label}</span><span className="sr-only">{chatStatus.detail}</span></span>}
+      {workspaceId ? <Button type="button" variant="ghost" size="icon-sm" className="size-6 text-muted-foreground" aria-label="Refresh feedback" title="Refresh feedback" disabled={busy} onClick={() => void refresh()}><RefreshCw className="size-3.5" aria-hidden /></Button>
+        : <Button variant="outline" size="sm" disabled={busy} onClick={() => void refresh()}>Refresh</Button>}
+    </div></header>
     {!workspaceId && <p className="text-sm text-muted-foreground">Review observations, select related feedback and send it to one chat.</p>}
     {error && <p role="alert" className="text-sm text-destructive-foreground">{error}</p>}
     {notice && <p role="status" className="text-sm">{notice}</p>}
@@ -108,28 +126,32 @@ export function FeedbackInbox({ workspaceId, sessionId, running, disabled = fals
         {[...new Map(scoped.map(r => [r.context.appId, r.context.appName])).entries()].map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select>
         <select aria-label="Feedback workspace filter" className={selectClass} value={binding} onChange={e => setBinding(e.target.value)}><option value="all">All workspaces</option><option value="unassigned">Unassigned</option></select>
     </div>}
-    <div className="flex flex-wrap gap-2">
-      <Button size="sm" disabled={disabled || busy || !selectedRows.length} onClick={() => void openReview(selectedRows, selectedRows.some(r => r.status !== "unprocessed"))}>Send selected ({selectedRows.length})</Button>
-      <Button size="sm" variant="outline" disabled={disabled || busy || !scoped.some(feedbackEligible)} onClick={() => void openReview(scoped.filter(feedbackEligible).slice(0, 50))}>Address all{scoped.filter(feedbackEligible).length > 50 ? " (first 50)" : ""}</Button>
+    {workspaceId && uncertain && <div className="space-y-2"><p role="status" className="text-sm">Delivery was not confirmed. Retry sends the same request to the original chat.</p>
+      <Button size="sm" variant="outline" disabled={busy || disabled} onClick={() => { if (pending.current) void deliver(pending.current); }}>Retry same request</Button></div>}
+    <div className={workspaceId ? "flex flex-wrap gap-1.5" : "flex flex-wrap gap-2"}>
+      <Button size="sm" className={workspaceId ? "h-7 px-2 text-xs" : undefined} disabled={disabled || busy || !selectedRows.length || !!workspaceId && (!sessionId || !!running || uncertain)} onClick={() => void sendReports(selectedRows, selectedRows.some(r => r.status !== "unprocessed"))}>Send selected ({selectedRows.length})</Button>
+      <Button size="sm" variant={workspaceId ? "ghost" : "outline"} className={workspaceId ? "h-7 px-2 text-xs text-muted-foreground" : undefined} disabled={disabled || busy || !scoped.some(feedbackEligible) || !!workspaceId && (!sessionId || !!running || uncertain)} onClick={() => void sendReports(scoped.filter(feedbackEligible).slice(0, 50))}>Address all{scoped.filter(feedbackEligible).length > 50 ? " (first 50)" : ""}</Button>
     </div>
     {!loaded ? <p role="status">Loading feedback…</p> : !rows.length ? <p className="text-sm text-muted-foreground">No feedback matches this view.</p> :
-      <ul className="divide-y rounded-md border">{rows.map(report => <li key={report.id} className="flex items-start gap-3 p-3">
-        <input type="checkbox" aria-label={"Select " + label(report)} checked={selected.includes(report.id)} disabled={report.status === "pending" || !!report.disposition || busy}
-          onChange={e => setSelected(ids => e.target.checked ? [...ids, report.id] : ids.filter(id => id !== report.id))} className="mt-1" />
-        <button className="min-w-0 flex-1 text-left" onClick={() => { setDetailId(report.id); void loadDestinations().catch(() => undefined); }}>
-          <span className="block truncate text-sm font-medium">{label(report)}</span>
-          <span className="block text-xs text-muted-foreground">{report.context.appName} · {report.context.version ?? "Version unknown"} · {report.annotations.length} annotations · {report.disposition ?? report.status}</span>
+      <ul className={workspaceId ? "space-y-1" : "divide-y rounded-md border"}>{rows.map(report => <li key={report.id} className={workspaceId ? "flex items-start gap-2 rounded-md px-2 py-1.5 hover:bg-muted focus-within:bg-muted" : "flex items-start gap-3 p-3"}>
+        <label className={workspaceId ? "-my-1 flex size-6 shrink-0 items-center justify-center" : "shrink-0"}>
+        <input type="checkbox" aria-label={"Select " + label(report)} checked={selected.includes(report.id)} disabled={report.status === "pending" || !!report.disposition || busy || !!workspaceId && uncertain}
+          onChange={e => setSelected(ids => e.target.checked ? [...ids, report.id] : ids.filter(id => id !== report.id))} className={workspaceId ? "size-3.5" : "mt-1"} /></label>
+        <button className="min-w-0 flex-1 rounded-sm text-left outline-none focus-visible:outline-2 focus-visible:outline-brand" title={workspaceId ? `${label(report)}\n${report.context.appName} · ${report.context.version ?? "Version unknown"} · ${new Date(report.context.observedAt).toLocaleString()}` : undefined} onClick={() => { setDetailId(report.id); void loadDestinations().catch(() => undefined); }}>
+          <span className={workspaceId ? "block truncate text-xs font-medium leading-4" : "block truncate text-sm font-medium"}>{label(report)}</span>
+          {workspaceId ? <span className="flex min-w-0 items-center gap-1.5 text-xs leading-4 text-muted-foreground"><span className="truncate">{report.context.appName}</span><span aria-hidden>·</span><span className="shrink-0">{report.annotations.length} {report.annotations.length === 1 ? "annotation" : "annotations"}</span><span className="ml-auto shrink-0">{report.disposition ?? report.status}</span></span> : <><span className="block text-xs text-muted-foreground">{report.context.appName} · {report.context.version ?? "Version unknown"} · {report.annotations.length} annotations · {report.disposition ?? report.status}</span>
           <span className="block text-xs text-muted-foreground">{report.workspaceId ? "Workspace " + (workspaces.find(w => w.id === report.workspaceId)?.name ?? report.workspaceId.slice(0, 8)) : "Unassigned"} · {new Date(report.context.observedAt).toLocaleString()}</span>
+          </>}
         </button></li>)}</ul>}
     <Dialog open={!!detail} onOpenChange={open => { if (!open) setDetailId(null); }}><DialogContent className="max-h-[85vh] overflow-auto sm:max-w-2xl">
-      <DialogHeader><DialogTitle>Feedback details</DialogTitle><DialogDescription>{detail?.context.appName} · {detail?.context.version ?? "Version unknown"}</DialogDescription></DialogHeader>
+      <DialogHeader><DialogTitle>Feedback details</DialogTitle><DialogDescription>{detail?.context.appName} · {detail?.context.version ?? "Version unknown"}{detail && <> · <time dateTime={detail.context.observedAt}>{new Date(detail.context.observedAt).toLocaleString()}</time></>}</DialogDescription></DialogHeader>
       {detail && <><p className="whitespace-pre-wrap text-sm">{detail.comment}</p><p className="text-xs text-muted-foreground">Observed in {detail.context.workspaceId ? "workspace " + detail.context.workspaceId.slice(0, 8) : detail.context.executionKind} · {detail.context.sourceRevision?.slice(0, 12) ?? "Source revision unknown"}. This observation is retained when reassigned.</p>
         <ol className="space-y-4">{detail.annotations.map((note, i) => <li key={note.id} className="rounded-md border p-3">
           <p className="text-xs text-muted-foreground">{i + 1}. {note.target?.label ?? note.target?.kind ?? "Page"} · {note.route}</p><p className="whitespace-pre-wrap text-sm">{note.text}</p>
           {note.mediaType && <FeedbackImage reportId={detail.id} noteId={note.id} />}</li>)}</ol>
         <label className="grid gap-1 text-sm">Current workspace<select aria-label="Current workspace" className={selectClass} value={detail.workspaceId ?? ""} disabled={busy || ["pending", "uncertain"].includes(detail.status)} onChange={e => void change(detail, e.target.value || null)}>
           <option value="">Unassigned</option>{workspaces.map(w => <option key={w.id} value={w.id}>{w.name ?? w.owner.label ?? w.id.slice(0, 8)}</option>)}</select></label>
-        <div className="flex flex-wrap gap-2"><Button disabled={busy || detail.status === "pending" || !!detail.disposition} onClick={() => { setDetailId(null); void openReview([detail], detail.status !== "unprocessed"); }}>{detail.status === "unprocessed" ? "Send to chat" : "Send again"}</Button>
+        <div className="flex flex-wrap gap-2"><Button disabled={disabled || busy || detail.status === "pending" || !!detail.disposition || !!workspaceId && (!sessionId || !!running || uncertain)} onClick={() => { setDetailId(null); void sendReports([detail], detail.status !== "unprocessed"); }}>{detail.status === "unprocessed" ? "Send to chat" : "Send again"}</Button>
           <Button variant="outline" disabled={busy || ["pending", "uncertain"].includes(detail.status)} onClick={() => void change(detail, detail.workspaceId, detail.disposition ? null : "dismissed")}>{detail.disposition ? "Restore" : "Dismiss"}</Button>
           {!detail.disposition && <Button variant="outline" disabled={busy || ["pending", "uncertain"].includes(detail.status)} onClick={() => void change(detail, detail.workspaceId, "duplicate")}>Mark duplicate</Button>}</div>
         <details><summary className="cursor-pointer text-sm font-medium">Processing history</summary><ul className="mt-2 space-y-3">{data.dispatches.filter(d => d.input.reports.some(r => r.id === detail.id)).map(d => <li key={d.id} className="rounded border p-2 text-sm">

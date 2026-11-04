@@ -1,6 +1,6 @@
 ---
 created: 2026-10-30
-updated: 2026-11-03
+updated: 2026-11-04
 summary: Core-owned annotated feedback with app-owned local drafts, reviewed Harness chat delivery, exact-prompt outcomes and workspace-aware retention.
 components: [apps/core, apps/harness, apps/shell, apps/desktop, packages/app-sdk]
 ---
@@ -132,10 +132,24 @@ reconciles or subscribes to its own attempts. Lists refresh on entry, explicit
 Refresh, focus/visibility return and workspace chat activity changes. An open send review retains its
 selected snapshots and instruction; explicit refresh actions re-review reports and chat availability.
 
+Workspace details use a muted section heading with a report count, an icon Refresh action and
+compact send controls. Reports form a borderless two-line list: observation text, then application,
+annotation count and disposition/status. The surrounding workspace is not repeated in each row.
+Version and observation time remain in the row tooltip and full report details. Missing/busy chat
+guidance is compact in the heading, with the full explanation available to assistive technology and
+in its tooltip. Read errors, delivery notices and uncertain-delivery recovery remain visible.
+The global Feedback page retains its filters and expanded report metadata.
+
 Address all selects at most 50 unprocessed reports in the current workspace/global scope, excluding
 pending, processed, partial, failed, cancelled, uncertain and dismissed/duplicate reports. Selected
-reports are reviewed together with the exact count, destination and optional instruction. Workspace
-review defaults to the displayed chat. Global review defaults to a new chat using the default agent;
+reports in workspace details go directly to the currently selected chat, without a destination
+review dialog or chat inventory lookup. Send selected and individual Send again use the same direct
+route. A missing or busy selected chat disables sending with an inline explanation; it never creates
+a different chat. An uncertain delivery exposes an inline retry retaining the original destination
+and exact request even if the selected chat changes. Successful HTTP responses with a reserved or
+unknown delivery state retain that recovery path and do not announce a confirmed send.
+The global inbox reviews selected reports
+together with their count, destination and optional instruction, defaulting to a new chat using the default agent;
 normal source preparation establishes its development workspace. Existing workspace/chat selection
 and a new chat in an existing workspace are supported. Cancellation starts no agent work.
 

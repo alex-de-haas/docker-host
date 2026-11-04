@@ -212,7 +212,9 @@ Manage application's Updates tab displays an applicable cached Core plan without
 entry. It shows installed/target version, check time, review classification, reported changes and
 known permission additions. Check now explicitly rebuilds through the existing Shell plan handler;
 Update and Review update delegate to the same queue/confirmation handler as Dashboard. Source/feed
-and account editors remain available alongside the plan. A failed check stays incomplete rather
+and account editors remain available alongside the plan. The app’s Updates tab selects channels
+from its publisher-provided feed index; it does not edit that index. Host settings retain reviewed
+publisher migration suggestions and recovery, without a manual publisher/feed URL editor. A failed check stays incomplete rather
 than current, mismatched base/digest evidence is not displayed as a fresh offer, and live source
 explains its supported restart behavior. Download size and automatic-update policies are not
 inferred. Dashboard retains all existing update entries.
