@@ -14,7 +14,8 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
     internal event Action<string>? InstalledManifestSaved;
 
     private const string ManifestFileName = "manifest.json";
-    private const string SupportedSchemaVersion = "app.0.1";
+    private const string LegacySchemaVersion = "app.0.1";
+    private const string SupportedSchemaVersion = "app.0.2";
     private const int MaxManifestBytes = 1024 * 1024;
     private static readonly Regex ContractKeyPattern = new("^[a-z][a-z0-9-]{0,62}$", RegexOptions.Compiled);
     private static readonly Regex CapabilityNamePattern = new("^[a-z][a-z0-9-]{0,62}(?:\\.[a-z][a-z0-9-]{0,62})*$", RegexOptions.Compiled);
@@ -496,10 +497,16 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
         ValidateRequired(manifest.Name, "$.name", errors);
         ValidateRequired(manifest.Version, "$.version", errors);
 
-        if (!string.Equals(manifest.SchemaVersion, SupportedSchemaVersion, StringComparison.Ordinal))
+        if (manifest.SchemaVersion is not (LegacySchemaVersion or SupportedSchemaVersion))
         {
-            errors.Add(new("unsupported_app_manifest_schema_version", "Only app.0.1 runtime app manifests are supported by Hosty Core.", "$.schemaVersion"));
+            errors.Add(new("unsupported_app_manifest_schema_version", "Only app.0.1 and app.0.2 runtime app manifests are supported by Hosty Core.", "$.schemaVersion"));
         }
+
+        if (manifest.Source?.ManifestPath is { } sourceManifestPath &&
+            (string.IsNullOrWhiteSpace(sourceManifestPath) || sourceManifestPath.Contains('\\') || sourceManifestPath.Contains(':')
+             || sourceManifestPath.Split('/').Any(part => part is "" or "." or ".." || part.Any(char.IsControl))
+             || !sourceManifestPath.EndsWith("/manifest.json", StringComparison.Ordinal) && sourceManifestPath != "manifest.json"))
+            errors.Add(new("app_manifest_source_path_invalid", "source.manifestPath must name manifest.json inside the source repository.", "$.source.manifestPath"));
 
         if (manifest.Role is not null && !string.Equals(manifest.Role, "system", StringComparison.Ordinal))
         {
@@ -723,7 +730,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
             {
                 image = runtime.Build is not null
                     ? new RuntimeDockerImage("hosty-dev-environment", "local")
-                    : ParseDockerImage(runtime.Image, errors, "$.services[].runtimes[].image");
+                    : ParseDockerImage(runtime.Image, errors, "$.services[].runtimes[].image", manifest.SchemaVersion == SupportedSchemaVersion);
                 if (image is null)
                 {
                     continue;
@@ -734,6 +741,10 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
                 errors.Add(new("app_manifest_runtime_command_required", "localCommand runtime profiles must declare command.", "$.services[].runtimes[].command"));
                 continue;
             }
+
+            if (manifest.SchemaVersion == SupportedSchemaVersion && !selectedProfile.Development
+                && runtimeType == "localCommand" && !Haas.Hosty.Releases.ArtifactIdentity.IsCommit(manifest.Source?.Commit))
+                errors.Add(new("app_manifest_source_commit_required", "Published localCommand profiles require a full immutable source.commit.", "$.source.commit"));
 
             if (runtime.SourceMount is null) ValidateSetup(service.Key, runtimeType, runtime.Setup, errors);
             DockerSourceRuntime.Validate(service.Key, selectedProfile, runtime, errors);
@@ -1059,12 +1070,30 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
 
     private sealed record AppManifestSource(string Reference, string Json, string? ManifestUrl);
 
-    private static RuntimeDockerImage? ParseDockerImage(JsonElement? value, List<AppManifestValidationError> errors, string path)
+    private static RuntimeDockerImage? ParseDockerImage(JsonElement? value, List<AppManifestValidationError> errors, string path, bool requireDigest)
     {
         if (value is null || value.Value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
         {
             errors.Add(new("app_manifest_runtime_image_required", "Docker runtime profiles must declare an image string or object.", path));
             return null;
+        }
+
+        if (requireDigest)
+        {
+            if (value.Value.ValueKind != JsonValueKind.Object)
+            {
+                errors.Add(new("app_manifest_image_digest_required", "app.0.2 images require an object with repository and digest.", path));
+                return null;
+            }
+            var pinnedRepository = ReadString(value.Value, "repository");
+            var pinnedDigest = ReadString(value.Value, "digest");
+            if (!Haas.Hosty.Releases.ArtifactIdentity.IsRepository(pinnedRepository)
+                || !Haas.Hosty.Releases.ArtifactIdentity.IsDigest(pinnedDigest))
+            {
+                errors.Add(new("app_manifest_image_digest_invalid", "Image repository must be untagged and digest must be a lowercase sha256 identity.", path));
+                return null;
+            }
+            return new RuntimeDockerImage(pinnedRepository!, string.Empty, pinnedDigest);
         }
 
         if (value.Value.ValueKind == JsonValueKind.String)
@@ -2428,6 +2457,18 @@ internal sealed partial class DockerRuntimeAdapter(
         CancellationToken cancellationToken,
         Func<Task>? onDownload = null)
     {
+        if (image.Digest is not null)
+        {
+            if (existingLock?.ImageDigest is { } locked && locked != image.Digest)
+                throw new AppLifecycleException("image_digest_mismatch", "The artifact lock differs from the digest declared by the manifest.");
+            if (!await ImageExistsLocallyAsync(image.Reference, cancellationToken))
+            {
+                if (onDownload is not null) await onDownload();
+                _ = await RunDockerAsync(["pull", image.Reference], ignoreFailures: false, cancellationToken);
+            }
+            return (image.Reference, new ArtifactLock("image", image.Digest, image.Reference, null, null, DateTimeOffset.UtcNow));
+        }
+
         if (!string.IsNullOrWhiteSpace(existingLock?.ImageDigest))
         {
             var pinnedReference = existingLock!.Kind == "local-image" ? existingLock.ImageDigest!
@@ -2444,7 +2485,7 @@ internal sealed partial class DockerRuntimeAdapter(
         }
 
         // First resolve / backfill: pull the mutable tag and capture the resolved digest.
-        var tagReference = image.TagReference;
+        var tagReference = image.Reference;
         string? pullOutput = null;
         AppLifecycleException? pullFailure = null;
         try
@@ -2836,7 +2877,7 @@ internal sealed partial class DockerRuntimeAdapter(
     // happens at apply. Tries `buildx imagetools` (multi-arch index digest) then `manifest inspect`.
     public async Task<string?> ResolveRemoteDigestAsync(RuntimeDockerImage image, CancellationToken cancellationToken = default)
     {
-        var tagReference = image.TagReference;
+        var tagReference = image.Reference;
         // The shared docker runner's deadline is sized for `docker pull` (30 minutes), which is the
         // wrong budget for a metadata lookup: an unresponsive registry would pin a probe — and the
         // host-wide probe slot it holds — far past the point of usefulness. Bound it here instead of
@@ -2851,7 +2892,7 @@ internal sealed partial class DockerRuntimeAdapter(
             if (registryDigestResolver is not null &&
                 await registryDigestResolver.TryResolveDigestAsync(image, probeDeadline.Token) is { } fastDigest)
             {
-                return fastDigest;
+                return image.Digest is null || image.Digest == fastDigest ? fastDigest : null;
             }
 
             var imagetools = await RunRawAsync(
@@ -2859,13 +2900,13 @@ internal sealed partial class DockerRuntimeAdapter(
                 probeDeadline.Token);
             if (imagetools.ExitCode == 0 && ParseSha256(imagetools.StandardOutput) is { } digest)
             {
-                return digest;
+                return image.Digest is null || image.Digest == digest ? digest : null;
             }
 
             var manifest = await RunRawAsync(["manifest", "inspect", "--verbose", tagReference], probeDeadline.Token);
             if (manifest.ExitCode == 0 && ParseManifestInspectDigest(manifest.StandardOutput) is { } manifestDigest)
             {
-                return manifestDigest;
+                return image.Digest is null || image.Digest == manifestDigest ? manifestDigest : null;
             }
 
             // Neither probe produced a digest — either one exited non-zero, or it exited 0 with output
@@ -3465,7 +3506,7 @@ internal sealed record RuntimeServiceDependency(string Service, string? Port);
 
 // A docker image the manifest declares. The manifest only ever carries intent (`repository:tag`);
 // the resolved immutable digest lives in the app-level lock (`AppRecord.ArtifactLocks`), not here.
-// `Digest` is populated transiently by the docker adapter when it combines the manifest image with a
+// `Digest` is authored by app.0.2 or populated by the docker adapter when it combines an app.0.1 image with a
 // resolved/locked digest to produce the pin (`repository@sha256:...`) that is actually run.
 internal sealed record RuntimeDockerImage(string Repository, string Tag, string? Digest = null)
 {
@@ -3477,7 +3518,7 @@ internal sealed record RuntimeDockerImage(string Repository, string Tag, string?
 
     // The mutable pointer (`repository:tag`), always tag-shaped. Used to (re-)resolve a digest at
     // install/update and to describe the manifest intent in update plans.
-    public string TagReference => $"{Repository}:{Tag}";
+    public string TagReference => string.IsNullOrEmpty(Tag) && Digest is not null ? Reference : $"{Repository}:{Tag}";
 }
 
 internal sealed class RuntimeAppManifest
@@ -3681,7 +3722,8 @@ internal sealed record RuntimeAppSource(
     string? Branch,
     string? Tag,
     string? Commit,
-    IReadOnlyList<string>? Paths = null);
+    IReadOnlyList<string>? Paths = null,
+    string? ManifestPath = null);
 
 internal sealed class RuntimeProfileManifest
 {

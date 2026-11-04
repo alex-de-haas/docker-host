@@ -84,10 +84,11 @@ export function extractAppIds(payload: unknown): string[] {
 // can take longer than the installed-apps list; give it more room but still bound it.
 const updateStatusTimeoutMs = 6_000;
 
-export type AppUpdateStatusResult = { installed: boolean; updateAvailable: boolean };
+export type AppUpdateStatusResult = { installed: boolean; updateAvailable: boolean; error?: string; errorCode?: string; readiness?: string };
+const unknownUpdate = (): AppUpdateStatusResult => ({ installed: false, updateAvailable: false, error: "Update check unavailable. Retry the check.", errorCode: "update_check_failed", readiness: "unavailable" });
 
 // Asks Core whether an already-installed catalog app has an update available (installed manifest vs
-// the feed's latest). Any failure degrades to "no update" so the details dialog never blocks.
+// the feed's latest). Failed checks remain explicit and never authorize an update.
 export async function fetchUpdateStatusFromCore(targetAppId: string): Promise<AppUpdateStatusResult> {
   const appId = process.env.HOSTY_APP_ID?.trim() || "hosty.marketplace";
   const serviceToken = process.env.HOSTY_APP_SERVICE_TOKEN?.trim();
@@ -95,7 +96,7 @@ export async function fetchUpdateStatusFromCore(targetAppId: string): Promise<Ap
     `/api/internal/apps/${encodeURIComponent(appId)}/installed-apps/${encodeURIComponent(targetAppId)}/update-status`,
   );
   if (!serviceToken || !endpoint) {
-    return { installed: false, updateAvailable: false };
+    return unknownUpdate();
   }
 
   try {
@@ -105,21 +106,26 @@ export async function fetchUpdateStatusFromCore(targetAppId: string): Promise<Ap
       signal: AbortSignal.timeout(updateStatusTimeoutMs),
     });
     if (!response.ok) {
-      return { installed: false, updateAvailable: false };
+      return unknownUpdate();
     }
     return extractUpdateStatus(await response.json().catch(() => null));
   } catch {
-    return { installed: false, updateAvailable: false };
+    return unknownUpdate();
   }
 }
 
 export function extractUpdateStatus(payload: unknown): AppUpdateStatusResult {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-    return { installed: false, updateAvailable: false };
+    return unknownUpdate();
   }
-  const record = payload as { installed?: unknown; updateAvailable?: unknown };
+  const record = payload as { installed?: unknown; updateAvailable?: unknown; error?: unknown; errorCode?: unknown; readiness?: unknown };
+  if (typeof record.installed !== "boolean" || typeof record.updateAvailable !== "boolean") return unknownUpdate();
+  const error = typeof record.error === "string" && record.error ? record.error : null;
+  const errorCode = typeof record.errorCode === "string" ? record.errorCode : null;
+  const readiness = typeof record.readiness === "string" ? record.readiness : null;
   return {
     installed: record.installed === true,
-    updateAvailable: record.updateAvailable === true,
+    updateAvailable: !error && !errorCode && (!readiness || readiness === "ready") && record.updateAvailable === true,
+    ...(error ? { error } : {}), ...(errorCode ? { errorCode } : {}), ...(readiness ? { readiness } : {}),
   };
 }

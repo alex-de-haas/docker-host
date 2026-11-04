@@ -4,7 +4,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Haas.Hosty.Core.Tests;
 
-public sealed class AppFeedLifecycleTests
+public sealed partial class AppFeedLifecycleTests
 {
     private const string FeedsUrl = "https://apps.example.test/notes/feeds.json";
     private const string MainManifestUrl = "https://apps.example.test/notes/main/manifest.json";
@@ -317,7 +317,7 @@ public sealed class AppFeedLifecycleTests
     {
         private readonly Dictionary<string, string> documents = new(StringComparer.Ordinal);
 
-        public Fixture(string root)
+        public Fixture(string root, IAppRuntimeAdapter? adapter = null)
         {
             Root = root;
             Directory.CreateDirectory(root);
@@ -342,7 +342,7 @@ public sealed class AppFeedLifecycleTests
                 manifests,
                 backups,
                 sources,
-                [new NoopDockerRuntimeAdapter()],
+                [adapter ?? new NoopDockerRuntimeAdapter()],
                 new NoopIngressController(),
                 NullLogger<CoreLifecycleService>.Instance,
                 clock: clock,
@@ -385,9 +385,18 @@ public sealed class AppFeedLifecycleTests
         public DateTimeOffset UtcNow { get; set; } = DateTimeOffset.Parse("2026-07-11T12:00:00Z");
     }
 
-    private sealed class NoopDockerRuntimeAdapter : IAppRuntimeAdapter
+    private sealed class NoopDockerRuntimeAdapter : IAppRuntimeAdapter, IImageDigestResolver, IImageArtifactPreparation
     {
         public string Type => "docker";
+        public Task<string?> ResolveRemoteDigestAsync(RuntimeDockerImage image, CancellationToken cancellationToken = default)
+            => Task.FromResult<string?>(image.Digest ?? "sha256:" + Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(image.Reference))));
+
+
+        public Task PrepareImagesAsync(RuntimeAppManifestSelection selection, IReadOnlyDictionary<string, ArtifactLock>? reviewed, CancellationToken ct)
+        {
+            Assert.All(selection.Services.Where(service => service.Image is not null), service => Assert.NotNull(reviewed?.GetValueOrDefault(service.Key)?.ImageDigest));
+            return Task.CompletedTask;
+        }
 
         public Task<AppRuntimeStartResult> StartAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
             => Task.FromResult(new AppRuntimeStartResult("running", []));

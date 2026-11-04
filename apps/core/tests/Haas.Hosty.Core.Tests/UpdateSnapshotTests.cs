@@ -151,7 +151,7 @@ public sealed partial class CoreLifecycleServiceTests
         var restarted = fixture.RecreateService();
         var failed = Assert.Single(await restarted.ListAppsAsync()).UpdateCheck!;
         Assert.Equal("Source unavailable", failed.Error);
-        Assert.True(failed.UpdateAvailable);
+        Assert.False(failed.UpdateAvailable);
         Assert.Equal(successful.TargetVersion, failed.TargetVersion);
         Assert.Equal(successful.CheckedAt, failed.LastSuccessfulCheckAt);
         await restarted.RecordUpdateCheckFailure(plan.AppId, "Still unavailable");
@@ -229,7 +229,7 @@ public sealed partial class CoreLifecycleServiceTests
         Directory.Move(repository, repository + "-offline");
         await restarted.CreateUpdatePlanAsync(plan.AppId, new AppUpdatePlanRequest());
         var failed = Assert.Single(await fixture.RecreateService().ListAppsAsync()).UpdateCheck!;
-        Assert.True(failed.UpdateAvailable);
+        Assert.False(failed.UpdateAvailable);
         Assert.NotNull(failed.Error);
         Assert.Equal(commit, failed.TargetSourceCommit);
         Assert.Equal(summary.UpdateCheck.LastSuccessfulCheckAt, failed.LastSuccessfulCheckAt);

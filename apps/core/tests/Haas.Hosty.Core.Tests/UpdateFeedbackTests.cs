@@ -116,7 +116,7 @@ public sealed partial class CoreLifecycleServiceTests
     }
 
     [Fact]
-    public async Task UpdateCheck_UnknownRegistryKeepsSuccessfulTargetThenRecovers()
+    public async Task UpdateCheck_UnknownRegistryRetainsHistoryWithoutActionableTargetThenRecovers()
     {
         var fixture = await LifecycleFixture.CreateAsync();
         fixture.Adapter.RemoteDigest = "sha256:" + new string('a', 64);
@@ -128,7 +128,7 @@ public sealed partial class CoreLifecycleServiceTests
         await fixture.Service.CreateUpdatePlanAsync("com.example.notes", new AppUpdatePlanRequest(target));
         var failed = Assert.Single(await fixture.RecreateService().ListAppsAsync()).UpdateCheck!;
         Assert.NotNull(failed.Error);
-        Assert.True(failed.UpdateAvailable);
+        Assert.False(failed.UpdateAvailable);
         Assert.Equal(before.TargetVersion, failed.TargetVersion);
         Assert.Equal(before.CheckedAt, failed.LastSuccessfulCheckAt);
         Assert.Null(failed.PlanDigest);

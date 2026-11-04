@@ -21,6 +21,13 @@ export type CoreUpdateStatus = {
   currentVersion: string;
   updateAvailable: boolean;
   releaseTag: string;
+  feedId?: string | null;
+  releaseId?: string | null;
+  offerId?: string | null;
+  operationId?: string | null;
+  readiness?: string | null;
+  sourceRevision?: string | null;
+  errorCode?: string | null;
   checkedAt: string;
   lastSuccessfulCheckAt?: string | null;
   error?: string | null;

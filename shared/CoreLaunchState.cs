@@ -135,8 +135,14 @@ internal static class CoreLaunchFiles
         }
     }
 
-    public static void AssertNoPendingOperations(string root, string? ownId = null, string? ownWorkspaceId = null)
+    public static void AssertNoPendingOperations(string root, string? ownId = null, string? ownWorkspaceId = null, string? ownPlatformUpdateId = null)
     {
+        var acceptedUpdate = Haas.Hosty.Releases.PlatformAcceptedUpdates.Pending(root);
+        if (acceptedUpdate is not null && acceptedUpdate.Id != ownPlatformUpdateId)
+            throw new InvalidOperationException($"Accepted platform update {acceptedUpdate.Id} is pending; resume it with hosty update.");
+        var platformUpdate = Haas.Hosty.Releases.PlatformUpdateTransaction.Pending(root);
+        if (platformUpdate is not null && platformUpdate.Id != ownPlatformUpdateId)
+            throw new InvalidOperationException($"Platform update {platformUpdate.Id} is pending; resume it with hosty update before changing Core lifecycle/source.");
         WorkspaceActivationSupervisor.AssertNoPending(root, ownWorkspaceId);
         var directory = Path.Combine(root, "core", "operations");
         if (!Directory.Exists(directory)) return;

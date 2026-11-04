@@ -1,6 +1,6 @@
 {
   "name": "hosty-harness-worker",
-  "version": "0.86.3",
+  "version": "0.89.1",
   "private": true,
   "dependencies": {
     "@openai/codex": "0.162.1",

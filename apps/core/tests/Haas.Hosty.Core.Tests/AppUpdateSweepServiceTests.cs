@@ -127,7 +127,7 @@ public sealed class AppUpdateSweepServiceTests
         fixture.Log.Messages.Clear();
 
         // The manifest advances before its image is published. Plan creation returns an error
-        // verdict rather than throwing, and the last confirmed offer must survive that failure.
+        // verdict rather than throwing. Historical success survives, but its offer becomes non-actionable.
         fixture.Set(MainManifestUrl, Manifest("1.2.0"));
         fixture.Adapter.UnavailableTag = "1.2.0";
         await fixture.Sweep.RunAsync(CancellationToken.None);
@@ -135,7 +135,8 @@ public sealed class AppUpdateSweepServiceTests
         var summaries = await fixture.Lifecycle.ListAppsAsync();
         var failed = summaries.Single(app => app.Id == "com.example.notes").UpdateCheck!;
         Assert.Contains("app (ghcr.io/example/notes:1.2.0)", failed.Error);
-        Assert.Contains("may not be published yet", failed.Error);
+        Assert.Contains("Image verification incomplete", failed.Error);
+        Assert.False(failed.UpdateAvailable);
         Assert.Equal(previous.TargetVersion, failed.TargetVersion);
         Assert.Equal(previous.LastSuccessfulCheckAt, failed.LastSuccessfulCheckAt);
         Assert.Null(failed.PlanDigest);

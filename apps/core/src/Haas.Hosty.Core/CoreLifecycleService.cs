@@ -839,6 +839,7 @@ internal sealed partial class CoreLifecycleService(
         var document = await apps.UpdateAppAsync(appId, current => current with
         {
             FollowedFeedId = feedId,
+            UpdateSourceRevision = Guid.NewGuid().ToString("N"),
             ManifestUrl = manifestUrl ?? current.ManifestUrl,
             OperationStatus = "configured",
             LastOperation = "set-feed",
@@ -1937,7 +1938,7 @@ internal sealed partial class CoreLifecycleService(
             TargetVersion: plan.TargetVersion,
             TargetSourceCommit: resolvedSourceCommit,
             TargetArtifactDigests: BuildTargetArtifactDigests(artifactProbes),
-            LastSuccessfulCheckAt: clock.UtcNow);
+            LastSuccessfulCheckAt: clock.UtcNow, Readiness: "ready");
         // Without an external source the plan compared the app with Core's own copy, so an empty change
         // list says nothing about newer versions. Reported as the check's error rather than as "no
         // updates": the two looked identical in every client, and a record that never got a source
@@ -1952,9 +1953,12 @@ internal sealed partial class CoreLifecycleService(
                 .Select(probe => $"{probe.Service} ({selection.Services.First(service => service.Key == probe.Service).Image!.TagReference})");
             verdict = verdict with
             {
-                Error = $"Could not resolve Docker image revisions: {string.Join(", ", unresolvedImages)}. " +
-                    "An image tag may not be published yet, or registry access may have failed. " +
-                    "Retry after publication or check registry access. See Core logs for details.",
+                UpdateAvailable = false,
+                PlanDigest = null,
+                ErrorCode = artifactProbes.First(probe => string.IsNullOrEmpty(probe.CandidateDigest)).ErrorCode ?? "image_revision_unavailable",
+                Readiness = artifactProbes.Any(probe => probe.ErrorCode == "image_missing") ? "pending-publication" : "unavailable",
+                Error = $"Image verification incomplete: {string.Join(", ", unresolvedImages)}. " +
+                    string.Join(" ", artifactProbes.Where(probe => probe.Error is not null).Select(probe => probe.Error).Distinct()),
             };
         }
         // A failed older apply can leave the record at the new pin while the running app's checkout
@@ -1973,11 +1977,11 @@ internal sealed partial class CoreLifecycleService(
                     verdict = verdict with { Error = checkoutError };
             }
         }
-        cached = cached with { Plan = plan with { Error = verdict.Error } };
+        cached = cached with { Plan = plan with { Error = verdict.Error, ErrorCode = verdict.ErrorCode, Readiness = verdict.Error is null ? "ready" : verdict.Readiness ?? "unavailable" } };
         await updateSnapshots.ChangeAsync(appId, previous => new AppUpdateSnapshot(1,
             updateBase, cached, verdict.Error is null ? verdict
                 : AppUpdateAvailability.Failed((previous?.Base == updateBase ? previous.Verdict : null) ?? (verdict with { LastSuccessfulCheckAt = null }), clock.UtcNow, verdict.Error)
-                    with { PlanDigest = null }), cancellationToken);
+                    with { PlanDigest = null, ErrorCode = verdict.ErrorCode ?? "update_check_failed", Readiness = verdict.Readiness ?? "unavailable" }), cancellationToken);
         events?.PublishAppEvent(CoreEventHub.AppUpdateCheckChanged, appId);
         return cached;
     }
@@ -2417,6 +2421,7 @@ internal sealed partial class CoreLifecycleService(
         // registry, so the recomputed digest routinely differed from the one just confirmed.
         var confirmed = await ResolveConfirmedUpdatePlan(appId, request.PlanDigest);
         var plan = confirmed.Plan;
+        if (plan.Error is not null) throw new AppLifecycleException("update_not_ready", plan.Error);
 
         var app = await RequireAppAsync(appId, cancellationToken);
         var currentSelection = await LoadSelectionForAppAsync(app, cancellationToken);
@@ -2467,8 +2472,18 @@ internal sealed partial class CoreLifecycleService(
                 ?? await sources.ResolveManifestCommitAsync(selection.Manifest.Source!, cancellationToken, selection.PrivateSources?.Git);
         }
 
-        if (selection.PrivateSources?.Git is not null && sourcePinCommit is not null)
-            await sources.PrefetchPrivateAsync(app, selection.PrivateSources.Git, sourcePinCommit, cancellationToken);
+        if (sourcePinCommit is not null)
+            await sources.PrefetchUpdateAsync(app, selection.Manifest.Source!.Repository!, sourcePinCommit,
+                selection.PrivateSources?.Git, cancellationToken);
+
+        // Freeze and materialize every selected image before touching the old runtime or its data.
+        var reviewedLocks = BuildReviewedArtifactLocks(selection, confirmed.ArtifactProbes, app.ArtifactLocks);
+        if (selection.Services.Any(service => service.Image is not null && service.Runtime.Build is null))
+        {
+            var staging = adapters.OfType<IImageArtifactPreparation>().FirstOrDefault()
+                ?? throw new AppLifecycleException("image_preparation_unavailable", "This runtime cannot prepare reviewed image artifacts.");
+            await staging.PrepareImagesAsync(selection, reviewedLocks, cancellationToken);
+        }
 
         var adapter = ResolveAdapter(currentSelection.RuntimeProfile.Type);
         var wasRunning = AppRuntimeStates.IsUp(app.RuntimeState);
@@ -2544,11 +2559,7 @@ internal sealed partial class CoreLifecycleService(
             };
         }
 
-        // The plan surfaced artifact:{svc}:{locked}->{candidate}; the operator confirmed exactly those
-        // candidates. Persist them as the run-locks so the next start pulls the reviewed digest — a tag
-        // re-pushed between apply and start no longer swaps unreviewed bytes in (C-CR1 Fix B). Services
-        // whose candidate was unresolvable at plan time carry no lock and TOFU-backfill at start.
-        var reviewedLocks = BuildReviewedArtifactLocks(selection, confirmed.ArtifactProbes, app.ArtifactLocks);
+        // Persist only the already prepared, reviewed image identities. Start uses the same bytes.
         if (reviewedLocks is not null)
         {
             next = next with { ArtifactLocks = reviewedLocks };
@@ -3157,10 +3168,10 @@ internal sealed partial class CoreLifecycleService(
             Runtime: cached.Selection.RuntimeProfile.Key,
             RuntimeType: cached.Selection.RuntimeProfile.Type,
             UpdatePolicy: DockerRuntimeAdapter.ResolveUpdatePolicy(app.UpdatePolicy),
-            UpdateAvailable: PlanIndicatesUpdateAvailable(cached.Plan.Changes),
+            UpdateAvailable: cached.Plan.Error is null && PlanIndicatesUpdateAvailable(cached.Plan.Changes),
             Services: cached.ArtifactProbes.Select(ToServiceUpdateStatus).ToList(),
             ManifestUpdateAvailable: !string.Equals(cached.CurrentManifestDigest, cached.Plan.ManifestDigest, StringComparison.Ordinal),
-            ManifestUnknown: false);
+            ManifestUnknown: false, Error: cached.Plan.Error, ErrorCode: cached.Plan.ErrorCode, Readiness: cached.Plan.Readiness);
 
     private static AppServiceUpdateStatus ToServiceUpdateStatus(AppServiceArtifactProbe probe)
         => new(
@@ -3170,7 +3181,8 @@ internal sealed partial class CoreLifecycleService(
             UpdateAvailable: !string.IsNullOrWhiteSpace(probe.LockedDigest)
                 && !string.IsNullOrWhiteSpace(probe.CandidateDigest)
                 && !string.Equals(probe.LockedDigest, probe.CandidateDigest, StringComparison.Ordinal),
-            Unknown: string.IsNullOrWhiteSpace(probe.LockedDigest) || string.IsNullOrWhiteSpace(probe.CandidateDigest));
+            Unknown: string.IsNullOrWhiteSpace(probe.LockedDigest) || string.IsNullOrWhiteSpace(probe.CandidateDigest),
+            ErrorCode: probe.ErrorCode, Error: probe.Error, Platform: probe.Platform);
 
     // Legacy live status computation, kept for the apps the plan path refuses (see
     // GetUpdateStatusAsync): resolves the candidate manifest per source with graceful per-source
@@ -3244,10 +3256,13 @@ internal sealed partial class CoreLifecycleService(
             Runtime: selection.RuntimeProfile.Key,
             RuntimeType: selection.RuntimeProfile.Type,
             UpdatePolicy: DockerRuntimeAdapter.ResolveUpdatePolicy(app.UpdatePolicy),
-            UpdateAvailable: manifestUpdateAvailable || services.Any(service => service.UpdateAvailable),
+            UpdateAvailable: !manifestUnknown && probes.All(p => p.CandidateDigest is not null) && (manifestUpdateAvailable || services.Any(service => service.UpdateAvailable)),
             Services: services,
             ManifestUpdateAvailable: manifestUpdateAvailable,
-            ManifestUnknown: manifestUnknown);
+            ManifestUnknown: manifestUnknown,
+            ErrorCode: manifestUnknown ? "manifest_unavailable" : probes.FirstOrDefault(p => p.CandidateDigest is null)?.ErrorCode ?? (probes.Any(p => p.CandidateDigest is null) ? "image_revision_unavailable" : null),
+            Error: manifestUnknown || probes.Any(p => p.CandidateDigest is null) ? "Update readiness could not be verified. Retry the check or inspect Core logs." : null,
+            Readiness: manifestUnknown || probes.Any(p => p.CandidateDigest is null) ? "unavailable" : "ready");
     }
 
     // Install-time port reservations: backfill service-scoped port assignments for existing
@@ -4383,6 +4398,10 @@ internal sealed partial class CoreLifecycleService(
                 ? null
                 : NormalizeManifestSubpath(Path.GetRelativePath(Path.GetFullPath(localSourceRoot), manifestDirectory));
         }
+
+        // Generated release manifests live on a metadata branch; their source tree location is explicit.
+        if (selection.Manifest.Source?.ManifestPath is { } authoredManifestPath)
+            return NormalizeManifestSubpath(Path.GetDirectoryName(authoredManifestPath));
 
         // URL install: derive the in-repo manifest directory from the manifest URL, anchored on the
         // repository owner/repo and with the known ref stripped (best-effort; null when not confident).
@@ -5530,6 +5549,8 @@ internal sealed partial class CoreLifecycleService(
         if (!string.Equals(app.Version, targetSelection.Manifest.Version, StringComparison.Ordinal))
         {
             changes.Add($"version:{app.Version}->{targetSelection.Manifest.Version}");
+            if (Version.TryParse(app.Version, out var currentVersion) && Version.TryParse(targetSelection.Manifest.Version, out var targetVersion) && targetVersion < currentVersion)
+                changes.Add("version-downgrade:explicit-review-required");
         }
 
         if (!string.Equals(app.SelectedRuntime, targetSelection.RuntimeProfile.Key, StringComparison.Ordinal))
@@ -5634,12 +5655,18 @@ internal sealed partial class CoreLifecycleService(
             {
                 var lockedDigest = currentLocks?.GetValueOrDefault(service.Key)?.ImageDigest;
                 string? candidateDigest = null;
+                ImageReadiness? readiness = null;
                 if (resolver is not null)
                 {
                     await artifactProbeGate.WaitAsync(cancellationToken);
                     try
                     {
-                        candidateDigest = await resolver.ResolveRemoteDigestAsync(service.Image!, cancellationToken);
+                        if (resolver is IImageReadinessResolver checkedResolver)
+                        {
+                            readiness = await checkedResolver.CheckImageAsync(service.Image!, cancellationToken);
+                            candidateDigest = readiness.Ready ? readiness.Digest : null;
+                        }
+                        else candidateDigest = await resolver.ResolveRemoteDigestAsync(service.Image!, cancellationToken);
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
@@ -5654,7 +5681,7 @@ internal sealed partial class CoreLifecycleService(
                     }
                 }
 
-                return new AppServiceArtifactProbe(service.Key, lockedDigest, candidateDigest);
+                return new AppServiceArtifactProbe(service.Key, lockedDigest, candidateDigest, readiness?.ErrorCode, readiness?.Error, readiness?.Platform);
             })
             .ToList());
     }
@@ -5672,7 +5699,9 @@ internal sealed partial class CoreLifecycleService(
     // from the operator's own folder (no pin to move), and a relative repository is rejected at
     // start time, so neither is probed or reconciled here.
     private static bool UpdateMovesSourcePin(AppRecord app, RuntimeAppManifestSelection selection)
-        => string.Equals(selection.RuntimeProfile.Type, "localCommand", StringComparison.Ordinal)
+        => selection.Services.Any(service => service.Runtime.Type == "localCommand" ||
+                string.IsNullOrEmpty(service.Runtime.Type) && selection.RuntimeProfile.Type == "localCommand")
+            && !selection.RuntimeProfile.Development
             && !string.IsNullOrWhiteSpace(app.ManifestUrl)
             && !string.IsNullOrWhiteSpace(selection.Manifest.Source?.Repository)
             && !IsRelativeSourceRepository(selection.Manifest.Source.Repository);
@@ -7185,6 +7214,8 @@ internal sealed record AppUpdatePlan(
     // Advisory from this check, excluded from the reviewed target digest. An empty change list
     // with an error is not evidence that the app is up to date.
     public string? Error { get; init; }
+    public string? ErrorCode { get; init; }
+    public string? Readiness { get; init; }
     public string? DisplayName { get; init; }
     // Null is a legacy unknown baseline, not an empty declaration list or a grant list.
     public IReadOnlyList<string>? PreviousRequiredCorePermissions { get; init; }
@@ -7247,7 +7278,7 @@ internal sealed record AppUpdateStatusResponse(
     bool UpdateAvailable,
     IReadOnlyList<AppServiceUpdateStatus> Services,
     bool ManifestUpdateAvailable = false,
-    bool ManifestUnknown = false);
+    bool ManifestUnknown = false, string? ErrorCode = null, string? Error = null, string? Readiness = null);
 
 // Per-service update status: the currently-locked digest, the remotely-resolved candidate digest, and
 // whether the candidate is a new build (lock present and differs). `Unknown` = the registry could not
@@ -7257,9 +7288,10 @@ internal sealed record AppServiceUpdateStatus(
     string? LockedDigest,
     string? CandidateDigest,
     bool UpdateAvailable,
-    bool Unknown);
+    bool Unknown, string? ErrorCode = null, string? Error = null, string? Platform = null);
 
 // One shared registry-probe result for a compiled service (see ProbeServiceArtifactsAsync). Rides the
 // cached update plan so the status projection reads the plan build's probe instead of re-hitting the
 // registry. Not serialized — internal plan/status plumbing only.
-internal sealed record AppServiceArtifactProbe(string Service, string? LockedDigest, string? CandidateDigest);
+internal sealed record AppServiceArtifactProbe(string Service, string? LockedDigest, string? CandidateDigest,
+    string? ErrorCode = null, string? Error = null, string? Platform = null);

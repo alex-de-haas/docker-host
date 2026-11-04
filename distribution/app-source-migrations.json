@@ -1,0 +1,257 @@
+{
+  "schemaVersion": "app-source-migrations.0.1",
+  "migrations": [
+    {
+      "migrationId": "hosty.shell-main-manifest-to-ready-daily-v1",
+      "appId": "hosty.shell",
+      "from": {
+        "manifestUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/shell/manifest.json",
+        "feedsUrl": null,
+        "feedId": null
+      },
+      "to": {
+        "manifestUrl": null,
+        "feedsUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/app-releases/apps/hosty.shell/feeds.json",
+        "feedId": "daily"
+      }
+    },
+    {
+      "migrationId": "hosty.shell-main-feed-to-ready-daily-v1",
+      "appId": "hosty.shell",
+      "from": {
+        "manifestUrl": null,
+        "feedsUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/shell/feeds.json",
+        "feedId": "main"
+      },
+      "to": {
+        "manifestUrl": null,
+        "feedsUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/app-releases/apps/hosty.shell/feeds.json",
+        "feedId": "daily"
+      }
+    },
+    {
+      "migrationId": "hosty.desktop-main-manifest-to-ready-daily-v1",
+      "appId": "hosty.desktop",
+      "from": {
+        "manifestUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/desktop/manifest.json",
+        "feedsUrl": null,
+        "feedId": null
+      },
+      "to": {
+        "manifestUrl": null,
+        "feedsUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/app-releases/apps/hosty.desktop/feeds.json",
+        "feedId": "daily"
+      }
+    },
+    {
+      "migrationId": "hosty.desktop-main-feed-to-ready-daily-v1",
+      "appId": "hosty.desktop",
+      "from": {
+        "manifestUrl": null,
+        "feedsUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/desktop/feeds.json",
+        "feedId": "main"
+      },
+      "to": {
+        "manifestUrl": null,
+        "feedsUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/app-releases/apps/hosty.desktop/feeds.json",
+        "feedId": "daily"
+      }
+    },
+    {
+      "migrationId": "hosty.documents-main-manifest-to-ready-daily-v1",
+      "appId": "hosty.documents",
+      "from": {
+        "manifestUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/documents/manifest.json",
+        "feedsUrl": null,
+        "feedId": null
+      },
+      "to": {
+        "manifestUrl": null,
+        "feedsUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/app-releases/apps/hosty.documents/feeds.json",
+        "feedId": "daily"
+      }
+    },
+    {
+      "migrationId": "hosty.documents-main-feed-to-ready-daily-v1",
+      "appId": "hosty.documents",
+      "from": {
+        "manifestUrl": null,
+        "feedsUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/documents/feeds.json",
+        "feedId": "main"
+      },
+      "to": {
+        "manifestUrl": null,
+        "feedsUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/app-releases/apps/hosty.documents/feeds.json",
+        "feedId": "daily"
+      }
+    },
+    {
+      "migrationId": "hosty.marketplace-main-manifest-to-ready-daily-v1",
+      "appId": "hosty.marketplace",
+      "from": {
+        "manifestUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/marketplace/manifest.json",
+        "feedsUrl": null,
+        "feedId": null
+      },
+      "to": {
+        "manifestUrl": null,
+        "feedsUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/app-releases/apps/hosty.marketplace/feeds.json",
+        "feedId": "daily"
+      }
+    },
+    {
+      "migrationId": "hosty.marketplace-main-feed-to-ready-daily-v1",
+      "appId": "hosty.marketplace",
+      "from": {
+        "manifestUrl": null,
+        "feedsUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/marketplace/feeds.json",
+        "feedId": "main"
+      },
+      "to": {
+        "manifestUrl": null,
+        "feedsUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/app-releases/apps/hosty.marketplace/feeds.json",
+        "feedId": "daily"
+      }
+    },
+    {
+      "migrationId": "com.haas.demo-app-main-manifest-to-ready-daily-v1",
+      "appId": "com.haas.demo-app",
+      "from": {
+        "manifestUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/demo-app/manifest.json",
+        "feedsUrl": null,
+        "feedId": null
+      },
+      "to": {
+        "manifestUrl": null,
+        "feedsUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/app-releases/apps/com.haas.demo-app/feeds.json",
+        "feedId": "daily"
+      }
+    },
+    {
+      "migrationId": "com.haas.demo-app-main-feed-to-ready-daily-v1",
+      "appId": "com.haas.demo-app",
+      "from": {
+        "manifestUrl": null,
+        "feedsUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/demo-app/feeds.json",
+        "feedId": "main"
+      },
+      "to": {
+        "manifestUrl": null,
+        "feedsUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/app-releases/apps/com.haas.demo-app/feeds.json",
+        "feedId": "daily"
+      }
+    },
+    {
+      "migrationId": "hosty.harness-main-manifest-to-ready-daily-v1",
+      "appId": "hosty.harness",
+      "from": {
+        "manifestUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/harness/manifest.json",
+        "feedsUrl": null,
+        "feedId": null
+      },
+      "to": {
+        "manifestUrl": null,
+        "feedsUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/app-releases/apps/hosty.harness/feeds.json",
+        "feedId": "daily"
+      }
+    },
+    {
+      "migrationId": "hosty.harness-main-feed-to-ready-daily-v1",
+      "appId": "hosty.harness",
+      "from": {
+        "manifestUrl": null,
+        "feedsUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/harness/feeds.json",
+        "feedId": "main"
+      },
+      "to": {
+        "manifestUrl": null,
+        "feedsUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/app-releases/apps/hosty.harness/feeds.json",
+        "feedId": "daily"
+      }
+    },
+    {
+      "migrationId": "hosty.telemetry-main-manifest-to-ready-daily-v1",
+      "appId": "hosty.telemetry",
+      "from": {
+        "manifestUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/telemetry/manifest.json",
+        "feedsUrl": null,
+        "feedId": null
+      },
+      "to": {
+        "manifestUrl": null,
+        "feedsUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/app-releases/apps/hosty.telemetry/feeds.json",
+        "feedId": "daily"
+      }
+    },
+    {
+      "migrationId": "hosty.telemetry-main-feed-to-ready-daily-v1",
+      "appId": "hosty.telemetry",
+      "from": {
+        "manifestUrl": null,
+        "feedsUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/telemetry/feeds.json",
+        "feedId": "main"
+      },
+      "to": {
+        "manifestUrl": null,
+        "feedsUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/app-releases/apps/hosty.telemetry/feeds.json",
+        "feedId": "daily"
+      }
+    },
+    {
+      "migrationId": "hosty.whisper-main-manifest-to-ready-daily-v1",
+      "appId": "hosty.whisper",
+      "from": {
+        "manifestUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/whisper/manifest.json",
+        "feedsUrl": null,
+        "feedId": null
+      },
+      "to": {
+        "manifestUrl": null,
+        "feedsUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/app-releases/apps/hosty.whisper/feeds.json",
+        "feedId": "daily"
+      }
+    },
+    {
+      "migrationId": "hosty.whisper-main-feed-to-ready-daily-v1",
+      "appId": "hosty.whisper",
+      "from": {
+        "manifestUrl": null,
+        "feedsUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/whisper/feeds.json",
+        "feedId": "main"
+      },
+      "to": {
+        "manifestUrl": null,
+        "feedsUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/app-releases/apps/hosty.whisper/feeds.json",
+        "feedId": "daily"
+      }
+    },
+    {
+      "migrationId": "hosty.opus-main-manifest-to-ready-daily-v1",
+      "appId": "hosty.opus",
+      "from": {
+        "manifestUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/opus/manifest.json",
+        "feedsUrl": null,
+        "feedId": null
+      },
+      "to": {
+        "manifestUrl": null,
+        "feedsUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/app-releases/apps/hosty.opus/feeds.json",
+        "feedId": "daily"
+      }
+    },
+    {
+      "migrationId": "hosty.opus-main-feed-to-ready-daily-v1",
+      "appId": "hosty.opus",
+      "from": {
+        "manifestUrl": null,
+        "feedsUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/opus/feeds.json",
+        "feedId": "main"
+      },
+      "to": {
+        "manifestUrl": null,
+        "feedsUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/app-releases/apps/hosty.opus/feeds.json",
+        "feedId": "daily"
+      }
+    }
+  ]
+}

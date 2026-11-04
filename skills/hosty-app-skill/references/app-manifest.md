@@ -11,7 +11,7 @@ Use this reference when authoring or reviewing Hosty runtime app manifests, stor
 
 ## Required Contract
 
-- `schemaVersion` must be `app.0.1`.
+- Use `app.0.1` for compatible authored/local manifests. Generated immutable releases use `app.0.2`: every Docker image is a `{repository, digest}` pair, and production local source carries a full commit. Core reads both; an app version bump alone never changes the contract schema.
 - Store repository-local manifests as `apps/{app-name}/manifest.json`.
 - Local installs can pass the app directory that contains `manifest.json`; from inside a runtime app repository, use `hosty apps install .`.
 - Remote installs must pass an HTTP(S) URL that points directly to the manifest file.

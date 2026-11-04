@@ -86,3 +86,10 @@ apps/*/CLAUDE.md
 
 # Isolated Harness production generations
 /apps/harness/.local-runtime/
+
+# Release workflow staging is not source input or build provenance dirt.
+/release-plan/
+/release-artifacts/
+/native-cli/
+/native-core/
+/scripts/__pycache__/

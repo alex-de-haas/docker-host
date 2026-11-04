@@ -183,6 +183,12 @@ bool CoreUpdateStatusParser::on_json_event(const JsonEvent& event) {
         copy_display(event.value, output_.core_update.checked_at);
     } else if (key == "error" && event.type == JsonEventType::String) {
         copy_display(event.value, output_.core_update.error);
+    } else if (key == "offerId" && event.type == JsonEventType::String) {
+        if (!output_.core_update.offer_id.assign(event.value)) reject(ProtocolError::FieldTooLong);
+    } else if (key == "operationId" && event.type == JsonEventType::String) {
+        if (!output_.core_update.operation_id.assign(event.value)) reject(ProtocolError::FieldTooLong);
+    } else if (key == "readiness" && event.type == JsonEventType::String) {
+        if (!output_.core_update.readiness.assign(event.value)) reject(ProtocolError::FieldTooLong);
     }
     return protocol_error_ == ProtocolError::None;
 }

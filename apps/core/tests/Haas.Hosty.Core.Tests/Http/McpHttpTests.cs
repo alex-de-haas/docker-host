@@ -36,20 +36,20 @@ public sealed class McpHttpTests
             [
                 "abort_workspace_merge", "acquire_workspace_lease", "agent_run_cancel", "agent_run_get", "agent_session_get",
                 "agent_session_list", "agent_session_providers", "app_create", "app_creation_capabilities", "app_creation_guide",
-                "app_creation_status", "app_local_status", "apply_app_dev_mode", "apply_app_update", "commit_workspace",
+                "app_creation_status", "app_local_status", "apply_app_dev_mode", "apply_app_update", "apply_app_update_source", "apply_app_update_sources", "commit_workspace",
                 "configure_workspace_runtime", "conversation_get", "conversation_list",
                 "decision_acknowledge", "decision_continuation", "decision_create", "decision_get", "decision_invalidate",
                 "decision_list", "decision_resolve", "decision_responses", "decision_withdraw", "delete_workspace", "environment_api",
                 "environment_consent", "environment_consumer_reconcile", "environment_consumer_register", "environment_consumer_release", "environment_create",
                 "environment_finish", "environment_list", "environment_restart", "environment_setup", "environment_start",
                 "environment_status", "environment_stop", "get_app", "get_app_dev_mode", "get_app_development_guide",
-                "get_app_execution_selection", "get_app_execution_targets", "get_core_development", "get_core_operation", "get_host_status",
+                "get_app_execution_selection", "get_app_execution_targets", "get_app_update_source_operation", "get_core_development", "get_core_operation", "get_host_status",
                 "get_workspace", "get_workspace_commit_review", "get_workspace_diff", "get_workspace_execution_selection", "get_workspace_participants",
                 "history_attachment_get", "history_capabilities", "history_entry_get", "history_export_acknowledge", "history_export_changes",
                 "history_export_create", "history_export_get", "history_export_revoke", "history_export_snapshot", "history_operation_get",
                 "history_providers", "history_read", "history_search", "history_share_create", "history_share_list",
-                "history_share_revoke", "list_apps", "list_workspaces", "merge_workspace_target", "merge_workspace_upstream",
-                "plan_app_dev_mode", "plan_app_update", "pr_commit", "pr_complete", "pr_configure",
+                "history_share_revoke", "list_app_source_migrations", "list_apps", "list_workspaces", "merge_workspace_target", "merge_workspace_upstream",
+                "plan_app_dev_mode", "plan_app_update", "plan_app_update_source", "pr_commit", "pr_complete", "pr_configure",
                 "pr_connections", "pr_corrective", "pr_link", "pr_list", "pr_merge",
                 "pr_publish", "pr_push", "pr_ready", "pr_resolve_review", "pr_status",
                 "prepare_workspace", "record_workspace_pull_requests", "refresh_workspace", "release_workspace_lease", "remote_connect",
@@ -346,7 +346,7 @@ public sealed class McpHttpTests
 
         // plan_app_update is here too: it changes nothing, but it reaches the app's source and reports
         // what is available, which is not the "safe to call unattended" promise readOnlyHint makes.
-        string[] mutations = ["decision_acknowledge", "decision_continuation", "decision_create", "decision_invalidate", "decision_resolve", "decision_withdraw", "workflow_complete", "workflow_pause", "workflow_resume", "app_create", "pr_resolve_review", "pr_commit", "pr_configure", "pr_push", "pr_publish", "pr_link", "pr_ready", "pr_merge", "pr_complete", "pr_corrective", "remote_connect", "remote_fetch", "remote_push_base", "get_workspace_commit_review", "merge_workspace_upstream", "history_export_create", "history_export_acknowledge", "history_export_revoke", "history_share_create", "history_share_revoke", "task_create", "task_edit", "task_action", "agent_run_cancel", "environment_consumer_reconcile", "environment_consumer_register", "environment_consumer_release", "environment_api", "environment_create", "environment_finish", "environment_restart", "environment_setup", "environment_start", "environment_stop", "workspace_activation", "apply_app_dev_mode", "start_app", "stop_app", "restart_app", "restart_core", "plan_app_update", "apply_app_update",
+        string[] mutations = ["decision_acknowledge", "decision_continuation", "decision_create", "decision_invalidate", "decision_resolve", "decision_withdraw", "workflow_complete", "workflow_pause", "workflow_resume", "app_create", "pr_resolve_review", "pr_commit", "pr_configure", "pr_push", "pr_publish", "pr_link", "pr_ready", "pr_merge", "pr_complete", "pr_corrective", "remote_connect", "remote_fetch", "remote_push_base", "get_workspace_commit_review", "merge_workspace_upstream", "history_export_create", "history_export_acknowledge", "history_export_revoke", "history_share_create", "history_share_revoke", "task_create", "task_edit", "task_action", "agent_run_cancel", "environment_consumer_reconcile", "environment_consumer_register", "environment_consumer_release", "environment_api", "environment_create", "environment_finish", "environment_restart", "environment_setup", "environment_start", "environment_stop", "workspace_activation", "apply_app_dev_mode", "start_app", "stop_app", "restart_app", "restart_core", "plan_app_update", "apply_app_update", "plan_app_update_source", "apply_app_update_source", "apply_app_update_sources",
             "prepare_workspace", "refresh_workspace", "commit_workspace", "merge_workspace_target", "abort_workspace_merge",
             "acquire_workspace_lease", "release_workspace_lease", "record_workspace_pull_requests", "rename_workspace", "delete_workspace",
             "select_app_execution_target", "select_workspace_execution", "configure_workspace_runtime"];
