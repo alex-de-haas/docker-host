@@ -1,6 +1,6 @@
 ---
 created: 2026-10-16
-updated: 2026-10-29
+updated: 2026-11-03
 summary: Harness expires reconciled chats, protects attached development sessions and recovers previously accepted cleanup without deleting shared source implicitly.
 components: [apps/harness, apps/core]
 ---
@@ -17,10 +17,10 @@ expiry defaults to Off. Upgrading does not enable it. Invalid persisted retentio
 expiry; unknown legacy sessions remain until Core can reconcile their resource ownership.
 
 The manager checks retention at startup and daily, and serializes each check with that session's
-mutations. Eligibility is visible beneath the conversation header: protected, off, scheduled,
-blocked or deleting, with the reason, completion time and eligibility date when available.
-Refresh obtains current Core evidence. Retry eligible cleanup retries only that conversation under
-the current policy; it is not a force-delete or an alternative completion action.
+mutations. Conversations have no retention banner or per-session cleanup controls. The policy is
+configured in Settings; an attached session is retained even when its workspace is completed.
+Automatic expiry does not delete workspaces. The diagnostic API retains eligibility and blocker
+information for operational recovery, without displaying internal cleanup states during chat.
 
 Ordinary inactive chats use their last activity time. Active turns, pending answers/approvals,
 queued completion, unresolved handoffs and resource operations prevent expiry. Sandbox-only chats
@@ -129,5 +129,5 @@ Pause alone never establishes completion or starts a completed-workspace retenti
   ownership, explicit cleanup permission and source/resource grants without saved browser tokens.
 - Recheck Core heads/leases/consumers before deletion. Recover lost responses and partial cleanup
   after restart with the original UUID/revision; preserve source/history on unknown outcomes.
-- Verify settings persistence and visible eligibility/blockers through normal Core-managed browser
+- Verify settings persistence and the absence of per-chat retention banners through normal Core-managed browser
   authentication, and confirm physical worktree/cache removal separately from conversation deletion.

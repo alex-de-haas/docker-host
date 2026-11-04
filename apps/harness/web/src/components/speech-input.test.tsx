@@ -15,8 +15,12 @@ class Recorder {
   start() { this.state = "recording"; }
   stop() { this.state = "inactive"; this.ondataavailable?.({ data: new Blob(["recording"]) }); this.onstop?.(); }
 }
-const render = async (key = "one", disabled = false) => act(async () => root.render(<SpeechInput key={key} disabled={disabled} onText={onText} />));
-const click = async (name: string) => act(async () => container.querySelector<HTMLButtonElement>(`button[aria-label="${name}"]`)!.click());
+const render = async (key = "one", disabled = false) => {
+  await act(async () => root.render(<SpeechInput key={key} disabled={disabled} onText={onText} />));
+  const trigger = document.querySelector<HTMLButtonElement>('[aria-label="Dictation settings"]')!;
+  if (trigger.getAttribute("aria-expanded") !== "true") await act(async () => trigger.click());
+};
+const click = async (name: string) => act(async () => document.querySelector<HTMLButtonElement>(`button[aria-label="${name}"]`)!.click());
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); vi.clearAllMocks();
   vi.stubGlobal("MediaRecorder", Recorder);
@@ -43,7 +47,7 @@ it.each(["cancel", "conversation", "send"])("ignores late results after %s", asy
 });
 it("does not start microphone capture without a grant", async () => {
   api.call.mockResolvedValue(Response.json({ granted: false, providers: [] }));
-  await render(); expect(container.querySelector<HTMLButtonElement>('button[aria-label="Dictate"]')!.disabled).toBe(true);
+  await render(); expect(document.querySelector<HTMLButtonElement>('button[aria-label="Dictate"]')!.disabled).toBe(true);
   expect(navigator.mediaDevices.getUserMedia).not.toHaveBeenCalled();
 });
 it.each([
@@ -57,7 +61,7 @@ it.each([
 ])("explains an unavailable microphone on keyboard focus (%j)", async (roster, message) => {
   api.call.mockResolvedValue(Response.json(roster));
   await render();
-  const button = container.querySelector<HTMLButtonElement>('button[aria-label="Dictate"]')!;
+  const button = document.querySelector<HTMLButtonElement>('button[aria-label="Dictate"]')!;
   expect(button.disabled).toBe(true);
   const trigger = button.parentElement!;
   expect(trigger.tabIndex).toBe(0);
@@ -69,24 +73,24 @@ it("distinguishes loading and failed discovery from missing consent, then recove
   let reject!: (error: Error) => void;
   api.call.mockImplementationOnce(() => new Promise((_resolve, fail) => { reject = fail; }));
   await render();
-  const reason = () => container.querySelector('button[aria-label="Dictate"]')!.parentElement!.getAttribute("aria-label");
+  const reason = () => document.querySelector('button[aria-label="Dictate"]')!.parentElement!.getAttribute("aria-label");
   expect(reason()).toContain("Checking speech-to-text availability");
   await act(async () => reject(new Error("Core unavailable")));
   expect(reason()).toContain("Could not check speech providers: Core unavailable");
   expect(reason()).not.toContain("Allow speech-to-text");
   await act(async () => window.dispatchEvent(new Event("focus")));
-  expect(container.querySelector<HTMLButtonElement>('button[aria-label="Dictate"]')!.disabled).toBe(false);
-  expect(container.querySelector('[role="alert"]')).toBeNull();
+  expect(document.querySelector<HTMLButtonElement>('button[aria-label="Dictate"]')!.disabled).toBe(false);
+  expect(document.querySelector('[role="alert"]')).toBeNull();
 });
 it("explains temporary unavailability while sending", async () => {
   await render("one", true);
-  const button = container.querySelector<HTMLButtonElement>('button[aria-label="Dictate"]')!;
+  const button = document.querySelector<HTMLButtonElement>('button[aria-label="Dictate"]')!;
   expect(button.disabled).toBe(true);
   expect(button.parentElement!.getAttribute("aria-label")).toContain("while a message is being sent");
 });
 
 const chooseProvider = async (label: string) => {
-  await act(async () => container.querySelector<HTMLElement>('[aria-label="Speech provider"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })));
+  await act(async () => document.querySelector<HTMLElement>('[aria-label="Speech provider"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })));
   const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(node => node.textContent === label)!;
   expect(option).toBeDefined();
   await act(async () => option.click());
@@ -95,7 +99,7 @@ it("preserves explicit empty and unavailable speech choices and sends the select
   const roster = { granted: true, providers: [{ appId: "speech.one", key: "fast", displayName: "Fast speech", available: true }, { appId: "speech.two", key: "accurate", displayName: "Accurate speech", available: true }, { appId: "speech.offline", key: "default", displayName: "Offline speech", available: false }] };
   api.call.mockImplementation(async (path: string) => path === "/speech/providers" ? Response.json(roster) : new Promise<Response>(resolve => { resolveTranscript = resolve; }));
   await render();
-  const dictate = () => container.querySelector<HTMLButtonElement>('[aria-label="Dictate"]')!;
+  const dictate = () => document.querySelector<HTMLButtonElement>('[aria-label="Dictate"]')!;
   expect(dictate().disabled).toBe(true);
   await chooseProvider("Offline speech (unavailable)");
   expect(dictate().disabled).toBe(true);
@@ -106,7 +110,7 @@ it("preserves explicit empty and unavailable speech choices and sends the select
   expect(navigator.mediaDevices.getUserMedia).not.toHaveBeenCalled();
   await chooseProvider("Accurate speech");
   await click("Dictate");
-  expect(container.querySelector<HTMLButtonElement>('[aria-label="Speech provider"]')!.disabled).toBe(true);
+  expect(document.querySelector<HTMLButtonElement>('[aria-label="Speech provider"]')!.disabled).toBe(true);
   await click("Stop recording");
   expect(api.call).toHaveBeenCalledWith("/speech/transcriptions?appId=speech.two&key=accurate", expect.objectContaining({ method: "POST", body: expect.any(Blob), signal: expect.any(AbortSignal) }));
   await act(async () => resolveTranscript(Response.json({ text: "selected provider result" })));
@@ -118,9 +122,9 @@ it("keeps an unknown speech identity after discovery refresh until an explicit s
   await render(); await chooseProvider("Accurate speech");
   providers = [{ appId: "speech.one", key: "fast", displayName: "Fast speech", available: true }, { appId: "speech.three", key: "new", displayName: "New speech", available: true }];
   await act(async () => window.dispatchEvent(new Event("focus")));
-  expect(container.querySelector<HTMLButtonElement>('[aria-label="Dictate"]')!.disabled).toBe(true);
-  expect(container.querySelector('[aria-label="Speech provider"]')?.textContent).not.toContain("Fast speech");
+  expect(document.querySelector<HTMLButtonElement>('[aria-label="Dictate"]')!.disabled).toBe(true);
+  expect(document.querySelector('[aria-label="Speech provider"]')?.textContent).not.toContain("Fast speech");
   expect(navigator.mediaDevices.getUserMedia).not.toHaveBeenCalled();
   await chooseProvider("Fast speech");
-  expect(container.querySelector<HTMLButtonElement>('[aria-label="Dictate"]')!.disabled).toBe(false);
+  expect(document.querySelector<HTMLButtonElement>('[aria-label="Dictate"]')!.disabled).toBe(false);
 });

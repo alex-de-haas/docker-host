@@ -1,6 +1,6 @@
 ---
 created: 2026-10-28
-updated: 2026-11-02
+updated: 2026-11-03
 summary: Optional connection-level quota and credit observations for Codex and Claude, with bounded diagnostics, retained snapshots and shared Limits controls.
 components: [apps/harness]
 ---
@@ -86,7 +86,8 @@ Unsupported and not-applicable observations hide the Limits control in both sett
 Loading, unavailable and stale observations keep the control and its refresh action; a temporary
 failure does not imply absent support. Connection revision guards prevent an old account's support
 state from hiding the control for its replacement. Unknown amounts never become a fabricated zero.
-A provider-selected active row may supply the compact label; otherwise the control says Limits.
+The control shows only a gauge icon, with a Provider limits accessible label and tooltip. A
+provider-selected active row may add its amount to the tooltip; all values remain in the popover.
 Refresh affects only usage state, preserving settings edits and message drafts and leaving Send
 independent of diagnostic availability.
 

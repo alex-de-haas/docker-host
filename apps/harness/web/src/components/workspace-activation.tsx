@@ -1,138 +1,33 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { ArrowRightLeft, CircleAlert, GitBranch, Hammer, LoaderCircle, TriangleAlert } from "lucide-react";
+import { ArrowRightLeft, ChevronDown, CircleAlert, GitBranch, Hammer, LoaderCircle, TriangleAlert } from "lucide-react";
 import { ContextAppIcon } from "@/components/context-app-icon";
 import type { ContextApp } from "@/lib/assistant-api";
 import { HostyLoader } from "../../../../../shared/web/hosty-states";
 import { Button } from "@/components/ui/button";
-import { openInstallationConfirmation, showInstallationConfirmation } from "@hosty-sdk/app/install";
-import { approveWorkspaceAccess, type WorkspaceAccessReview } from "@/lib/workspace-access-review";
-import { developmentRequest, DevelopmentRequestError } from "@/lib/development-api";
-import { useWorkspaceApplications, workspaceApplicationIsCurrent, workspaceApplicationStatus, workspaceApplicationTarget, type WorkspaceApplication } from "@/lib/workspace-applications";
+import { useWorkspaceApplications, workspaceApplicationIsCurrent, workspaceApplicationStatus, workspaceApplicationTarget } from "@/lib/workspace-applications";
+import { useWorkspaceExecution } from "@/lib/workspace-execution";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
-
-type Selection = { requestId: string; kind: "workspace" | "package"; appId?: string; workspaceId?: string; worktreeId?: string; runtime?: string };
-type Result = { requestId: string; state: string; error?: string; apps: { appId: string; state: string; error?: string; code?: string; review?: WorkspaceAccessReview }[] };
-const terminalCode = (code?: string) => ["dev_selection_changed", "dev_installation_changed", "execution_request_conflict", "selection_changed", "installation_changed"].includes(code || "");
-const terminalStale = (result: Result) => result.apps?.some(app => terminalCode(app.code));
-function savedSelection(key: string, workspaceId: string): Selection | null {
-  try { const value = JSON.parse(localStorage.getItem(key) ?? "null");
-    if (!value || typeof value.requestId !== "string" || !["workspace", "package"].includes(value.kind)) return null;
-    if (value.appId !== undefined && (typeof value.appId !== "string" || !/^[a-z0-9][a-z0-9._-]{0,62}$/.test(value.appId)
-      || value.kind !== "workspace" || value.workspaceId !== workspaceId || typeof value.worktreeId !== "string"
-      || !/^[a-f0-9]{64}$/.test(value.worktreeId) || value.runtime !== undefined && typeof value.runtime !== "string")) return null;
-    return value;
-  } catch { return null; }
-}
-
-
-function selectionPath(workspaceId: string, selection: Selection) {
-  return `/${workspaceId}${selection.appId ? `/applications/${encodeURIComponent(selection.appId)}` : ""}/execution-target`;
-}
-function selectionBody(selection: Selection) {
-  return { requestId: selection.requestId, kind: selection.kind,
-    ...(selection.appId ? { workspaceId: selection.workspaceId, worktreeId: selection.worktreeId,
-      ...(selection.runtime !== undefined ? { runtime: selection.runtime } : {}) } : {}) };
-}
-function selectionResult(selection: Selection, value: Result | Omit<Result, "apps"> & { code?: string; review?: WorkspaceAccessReview }): Result {
-  return selection.appId ? { requestId: value.requestId, state: value.state,
-    apps: [{ ...value, appId: selection.appId }] } : value as Result;
-}
 
 export function WorkspaceActivation({ workspaceId, apps, disabled, canUse = true, refresh, appMetadata = [] }: {
   workspaceId: string; apps: { appId: string; name: string }[]; disabled?: boolean; canUse?: boolean; refresh: () => void; appMetadata?: readonly ContextApp[];
 }) {
-  const storageKey = `hosty.workspace.execution:${location.origin}:${workspaceId}`;
-  const [pending, setPending] = useState<Selection | null>(() => savedSelection(storageKey, workspaceId));
   const inventory = useWorkspaceApplications(workspaceId, apps.length > 0);
-  const [result, setResult] = useState<Result | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [reviewing, setReviewing] = useState(false);
-  const [approvalLink, setApprovalLink] = useState<string | null>(null);
-  const [error, setError] = useState("");
-  const executing = useRef(false);
-  const alive = useRef(true);
-  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
-  const record = (value: Selection | null) => {
-    setPending(value);
-    try { if (value) localStorage.setItem(storageKey, JSON.stringify(value)); else localStorage.removeItem(storageKey); }
-    catch { /* Core retains the original request. */ }
-  };
-  const run = async (kind: Selection["kind"], application?: WorkspaceApplication, retry = false) => {
-    if (executing.current || disabled || kind === "workspace" && !canUse) return;
-    if (application && !retry && (!application.canSwitch || !application.target?.worktreeId || workspaceApplicationIsCurrent(application))) return;
-    executing.current = true; setBusy(true); setError(""); setResult(null);
-    const selection: Selection = retry && pending ? pending
-      : pending?.kind === kind && pending.appId === application?.appId ? pending
-      : application ? { kind, requestId: crypto.randomUUID(), appId: application.appId, workspaceId,
-        worktreeId: application.target!.worktreeId!, ...(application.target?.runtime ? { runtime: application.target.runtime } : {}) }
-      : { kind, requestId: crypto.randomUUID() };
-    record(selection);
-    try {
-      let next = selectionResult(selection, await developmentRequest<Result>(selectionPath(workspaceId, selection), selectionBody(selection)));
-      if (!alive.current) return;
-      setResult(next);
-      while (next.state === "running" && alive.current) {
-        await new Promise(resolve => setTimeout(resolve, 1500));
-        if (!alive.current) return;
-        next = selectionResult(selection, await developmentRequest<Result>(`${selectionPath(workspaceId, selection)}/${selection.requestId}`));
-        if (alive.current) setResult(next);
-      }
-      if (!alive.current) return;
-      if (next.state === "completed" || terminalStale(next)) record(null);
-      inventory.refresh(); refresh();
-    } catch (e) { if (alive.current) {
-      setError(e instanceof Error ? e.message : String(e));
-      if (e instanceof DevelopmentRequestError && terminalCode(e.code)) record(null);
-    } }
-    finally { executing.current = false; if (alive.current) setBusy(false); }
-  };
-  const reviewAccess = async (review: WorkspaceAccessReview) => {
-    if (reviewing || busy) return;
-    const popup = openInstallationConfirmation();
-    setReviewing(true); setError("");
-    try {
-      const approval = await approveWorkspaceAccess(review, request => {
-        showInstallationConfirmation(popup, request);
-        setApprovalLink(request.status === "pending" ? request.approvalUrl : null);
-      });
-      setApprovalLink(null);
-      if (approval.status === "succeeded" && pending) await run(pending.kind, undefined, true);
-      else if (approval.status === "denied") setError("The additional access was not approved.");
-    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
-    finally { setReviewing(false); }
-  };
-  useEffect(() => {
-    const saved = savedSelection(storageKey, workspaceId);
-    if (!saved) return;
-    const abort = new AbortController();
-    void developmentRequest<Result>(`${selectionPath(workspaceId, saved)}/${saved.requestId}`, undefined, abort.signal)
-      .then(raw => {
-        const value = selectionResult(saved, raw);
-        if (abort.signal.aborted) return;
-        setResult(value);
-        if (value.state === "completed" || terminalStale(value)) {
-          setPending(null);
-          try { localStorage.removeItem(storageKey); } catch { /* Optional local journal. */ }
-        }
-      }).catch(() => { /* Retry preserves the exact request if its receipt is temporarily unavailable. */ });
-    return () => abort.abort();
-  }, [storageKey, workspaceId]);
+  const execution = useWorkspaceExecution(workspaceId, { disabled, canUse, refresh: () => { inventory.refresh(); refresh(); } });
   if (!apps.length) return null;
-  const unsettled = !!pending && !["failed", "review-required"].includes(result?.state || "");
-  const problems = result?.apps?.filter(app => !["completed", "skipped"].includes(app.state)) ?? [];
-  const placements = apps.map(app => {
-    const live = inventory.applications.find(item => item.appId === app.appId);
-    if (live && workspaceApplicationIsCurrent(live)) return "current";
-    if (live?.current?.kind === "package" || live?.current?.kind === "workspace" &&
-      live.current.workspaceId?.trim() && live.current.workspaceId !== workspaceId) return "elsewhere";
-    // Missing/legacy bindings and another tree in this workspace can still need package recovery.
-    return "unknown";
-  });
-  const known = !inventory.loading && !inventory.error && placements.every(value => value !== "unknown");
-  const showWorkspace = !!pending || !known || !placements.every(value => value === "current");
-  const showPackages = !!pending || !known || !placements.every(value => value === "elsewhere");
+  const { busy, phase, pending } = execution;
+  const rows = apps.map(app => inventory.applications.find(item => item.appId === app.appId));
+  const known = !inventory.loading && !inventory.error && rows.every(app => app?.current &&
+    (app.current.kind === "package" || app.current.kind === "workspace" && app.current.workspaceId && app.current.worktreeId));
+  const hasCurrent = rows.some(app => app?.current?.kind === "workspace" && app.current.workspaceId === workspaceId);
+  const allCurrent = known && rows.every(app => app && workspaceApplicationIsCurrent(app));
+  const kind = allCurrent ? "package" : "workspace";
+  const retry = phase === "failed" && !!pending;
+  const allowed = !disabled && (retry ? pending.kind === "package" || canUse : kind === "package" || canUse && rows.every(app => app?.canSwitch));
+  const label = retry ? "Try again" : kind === "package" ? "Return to packages" : "Use workspace";
+  const progress = phase === "approval" ? "Waiting for access confirmation…" : phase === "checking" ? "Checking the switch…"
+    : pending?.appId ? `Switching ${apps.find(app => app.appId === pending.appId)?.name || pending.appId}…` : "Switching applications…";
   return <section aria-label="Workspace applications" className="flex min-w-0 flex-col gap-3">
     <ul aria-label="Bound applications" className="flex min-w-0 flex-col gap-2">{apps.map(app => {
       const live = inventory.applications.find(item => item.appId === app.appId);
@@ -157,26 +52,30 @@ export function WorkspaceActivation({ workspaceId, apps, disabled, canUse = true
             <span className="truncate">{"detail" in target ? target.detail : label}</span>
           </span>
         </div>
-        {!busy && !current && <Button type="button" variant="ghost" size="icon-sm" aria-label={`Use this workspace for ${app.name}`}
+        {apps.length > 1 && !busy && !retry && !current && <Button type="button" variant="ghost" size="icon-sm" aria-label={`Use this workspace for ${app.name}`}
           title={reason || `Use this workspace for ${app.name}`}
-          disabled={disabled || busy || reviewing || unsettled || inventory.loading || !canUse || !live?.canSwitch || !live.target?.worktreeId || status.busy || live.operationStatus === "updating"}
-          onClick={() => live && void run("workspace", live)}><ArrowRightLeft aria-hidden /></Button>}
+          disabled={disabled || busy || !known || inventory.loading || !canUse || !live?.canSwitch || !live.target?.worktreeId || status.busy || live.operationStatus === "updating"}
+          onClick={() => live && execution.run("workspace", live)}><ArrowRightLeft aria-hidden /></Button>}
       </li>;
     })}</ul>
-    {inventory.error && <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground"><span role="status">Application status unavailable.</span><Button variant="link" size="sm" onClick={inventory.refresh}>Retry</Button></div>}
-    {!busy && <div className="flex flex-wrap gap-2">
-      {showWorkspace && <Button variant="outline" size="sm" disabled={disabled || busy || reviewing || unsettled || !canUse} onClick={() => void run("workspace")}>Use workspace</Button>}
-      {showPackages && <Button variant="outline" size="sm" disabled={disabled || busy || reviewing || unsettled} onClick={() => void run("package")}>Return to packages</Button>}
-      {pending && <Button variant="outline" size="sm" disabled={disabled || busy || reviewing || pending.kind === "workspace" && !canUse}
-        title={pending.kind === "workspace" && !canUse ? "Resume this workspace before retrying its selection." : undefined}
-        onClick={() => void run(pending.kind, undefined, true)}>Retry runtime switch</Button>}
+    {busy ? <div className="flex items-center gap-2 text-xs" role="status">
+      <HostyLoader label={null} className="size-3.5" /><span>{progress}</span>
+      {phase === "approval" && <Button type="button" variant="ghost" size="sm" onClick={execution.cancelReview}>Cancel</Button>}
+    </div> : <div className="flex items-center gap-1">
+      {!known && !inventory.loading && !retry ? <Button type="button" variant="outline" size="sm" onClick={inventory.refresh}>Refresh applications</Button>
+        : <Button type="button" variant="outline" size="sm" disabled={!allowed || !known && !retry}
+          title={!canUse && (retry ? pending.kind : kind) === "workspace" ? "Resume this workspace before switching its applications." : undefined}
+          onClick={() => retry ? execution.retry() : execution.run(kind)}>{!known && !retry ? "Checking applications…" : label}</Button>}
+      {!inventory.loading && !inventory.error && hasCurrent && (kind !== "package" || retry && pending.kind !== "package") && <DropdownMenu>
+        <DropdownMenuTrigger asChild><Button type="button" variant="ghost" size="icon-sm" aria-label="Other application actions" disabled={disabled}><ChevronDown aria-hidden /></Button></DropdownMenuTrigger>
+        <DropdownMenuContent align="start"><DropdownMenuItem onSelect={() => execution.run("package")}>Return to packages</DropdownMenuItem></DropdownMenuContent>
+      </DropdownMenu>}
     </div>}
-    {busy && <p role="status" className="flex items-center gap-2 text-xs"><HostyLoader label={null} className="size-3.5" />{pending?.appId ? `Switching ${apps.find(app => app.appId === pending.appId)?.name || pending.appId}…` : "Switching applications…"}</p>}
-    {approvalLink && <a className="block text-xs underline" href={approvalLink} target="_blank" rel="noreferrer">Open Core access confirmation</a>}
-    {(error || result?.error) && <p role="alert" className="text-xs text-destructive-foreground">{error || result?.error}</p>}
-    {problems.length > 0 && <ul className="space-y-1 text-xs">{problems.map(app => <li key={app.appId}>
-      {apps.find(item => item.appId === app.appId)?.name || app.appId}: {app.error || (app.state === "review-required" ? "Additional access requires approval in Core." : app.state)}
-      {app.state === "review-required" && app.review && <Button size="sm" variant="link" disabled={reviewing || busy || pending?.kind === "workspace" && !canUse} onClick={() => void reviewAccess(app.review!)}>Review access</Button>}
-    </li>)}</ul>}
+    {execution.approvalLink && <a className="text-xs underline" href={execution.approvalLink} onClick={event => { event.preventDefault(); execution.reopenReview(); }} target="_blank" rel="noreferrer">Open access confirmation</a>}
+    {inventory.error && <p role="status" className="text-xs text-muted-foreground">Application status unavailable.</p>}
+    {execution.error && <div className="space-y-1 text-xs">
+      <p role="alert">{execution.error.startsWith("Access ") ? execution.error : "The switch could not be completed."}</p>
+      {!execution.error.startsWith("Access ") && <details className="text-muted-foreground"><summary className="cursor-pointer">Details</summary><p className="whitespace-pre-wrap break-words pt-1">{execution.error}</p></details>}
+    </div>}
   </section>;
 }

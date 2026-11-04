@@ -16,6 +16,12 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
     private async Task Save(PublicationRecord r)
         => await workspaces.WritePublicationAsync(r.WorkspaceId,
             () => JsonStorage.WriteAsync(FilePath(r.WorkspaceId), r, restrictToOwner: true), default);
+    private readonly WorkspaceRecordCache inspectionRecords = new();
+    internal async Task<PublicationRecord?> ReadInspectionRecordAsync(string id, CancellationToken ct)
+    {
+        try { return await inspectionRecords.ReadAsync<PublicationRecord>(FilePath(id), ct); }
+        catch (Exception ex) when (ex is JsonException or IOException) { return null; }
+    }
     private Task<PublicationRecord?> Read(string id, CancellationToken ct) => JsonStorage.ReadAsync<PublicationRecord>(FilePath(id), ct);
     private async Task<T> Locked<T>(Func<Task<T>> action, CancellationToken ct)
     {

@@ -895,13 +895,13 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
         return (await Git(local, ["rev-parse", "--path-format=absolute", "--git-common-dir"], ct)).StandardOutput.Trim();
     }
 
-    internal async Task RequireExternalSourceAsync(DevelopmentWorkspace workspace, CancellationToken ct, UserProviderConnection? heldConnection = null)
+    internal async Task RequireExternalSourceAsync(DevelopmentWorkspace workspace, CancellationToken ct, UserProviderConnection? heldConnection = null, bool localOnly = false)
     {
         if (!workspace.Owner.IsExternal) return;
-        await RequireCoreSourceAsync(workspace, workspace.Owner.UserId, ct, heldConnection);
+        await RequireCoreSourceAsync(workspace, workspace.Owner.UserId, ct, heldConnection, localOnly);
         if (workspace.SourceGrant is not null)
         {
-            var effective = await WorkspaceGrantAsync(workspace, ct, heldConnection);
+            var effective = await WorkspaceGrantAsync(workspace, ct, heldConnection, localOnly);
             if (effective is null || effective.OwnerId != workspace.Owner.UserId ||
                 effective.Repository != LogicalRepositoryIdentity(workspace.Repository))
                 throw PrivateSourceService.Denied("This workspace's reviewed Git source grant is no longer available.");
@@ -913,7 +913,7 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
             if (app.PrivateSources?.Git is not { } grant) continue;
             if (grant.OwnerId != workspace.Owner.UserId || grant.Repository != LogicalRepositoryIdentity(workspace.Repository))
                 throw PrivateSourceService.Denied("This workspace's source belongs to another administrator or repository.");
-            await ValidateSourceGrantAsync(grant, ct, heldConnection);
+            await ValidateSourceGrantAsync(grant, ct, heldConnection, localOnly);
         }
     }
 

@@ -4,6 +4,7 @@ import { Hammer, Loader2, MessageSquarePlus, Trash2, Search, ListFilter, Diamond
 import type { AssistantSession } from "@/lib/assistant-api";
 import type { DevelopmentWorkspace } from "@/lib/development-api";
 import { navigationItems } from "@/lib/workspace-navigation";
+import { WorkspaceRowStatus } from "./workspace-row-status";
 import { WorkspaceActivityCounts } from "./workspace-activity-counts";
 import { Input } from "@/components/ui/input";
 import { HostyMark } from "../../../../../shared/web/hosty-mark";
@@ -53,8 +54,11 @@ export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, 
         } else if (session) onPick(session);
       }} className="h-auto min-h-9 min-w-0 flex-1 justify-start gap-2 rounded-md px-3 text-left">
         {workspace ? <Hammer className="size-3.5 shrink-0 text-muted-foreground" role="img" aria-label="Workspace" /> : <MessageSquare className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />}
-        <span className="min-w-0 flex-1 text-left"><span className="block truncate text-sm font-normal" title={label}>{label}</span>
-          <WorkspaceActivityCounts counts={item.counts} />
+        <span className="min-w-0 flex-1 text-left">
+          <span className="flex min-w-0 items-center gap-2"><span className="block min-w-0 flex-1 truncate text-sm font-normal" title={label}>{label}</span>
+            {workspace && <WorkspaceActivityCounts counts={item.counts} />}
+          </span>
+          {workspace ? <WorkspaceRowStatus workspace={workspace} now={now} /> : <WorkspaceActivityCounts counts={item.counts} />}
         </span>
       </Button>
       {session && <Button variant="ghost" size="icon-sm" aria-label={`Delete ${label}`} title="Delete session"
@@ -88,7 +92,7 @@ export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, 
         </Button>;
       })}</div>
     </div>
-    <div className="min-h-0 flex-1 overflow-y-auto py-2">
+    <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-2">
       {visible.map(renderItem)}
       {!!items.length && !visible.length && <p className="p-3 text-sm text-muted-foreground">No {title.toLowerCase()} match this search and filter.</p>}
       {!items.length && <div className="flex flex-col items-center gap-3 p-5 text-center"><HostyMark appId="hosty.harness" tile className="size-12" /><p className="text-sm text-muted-foreground">{view === "workspaces" ? "Create an app or continue building to start a workspace." : "Start a new chat to ask a question."}</p></div>}

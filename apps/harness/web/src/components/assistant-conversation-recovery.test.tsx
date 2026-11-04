@@ -13,7 +13,6 @@ vi.mock("@/lib/assistant-api", async original => ({ ...await original<object>(),
 vi.mock("@/lib/development-api", async original => ({ ...await original<object>(), useDevelopmentInventory: () => ({ workspaces: [], loading: false, error: "", refresh: vi.fn() }) }));
 vi.mock("./speech-input", () => ({ SpeechInput: () => null }));
 vi.mock("./session-credentials", () => ({ SessionCredentials: () => null }));
-vi.mock("./session-retention", () => ({ SessionRetention: () => null }));
 vi.mock("./session-autonomy", () => ({ SessionAutonomy: () => null }));
 vi.mock("./app-context-picker", () => ({ AppContextPicker: () => null }));
 vi.mock("./ui/message-scroller", () => {

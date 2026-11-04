@@ -93,7 +93,7 @@ export function FeedbackInbox({ workspaceId, sessionId, running, disabled = fals
   const target = sessions.find(s => s.id === targetChat);
   const targetBusy = targetChat === sessionId && running || isBusy(target?.status);
   const canSend = !!review?.reports.length && !busy && !disabled && (!targetChat || !!target && !targetBusy);
-  if (workspaceId && loaded && !error && !scoped.length) return null;
+  if (workspaceId && !error && (!loaded || !scoped.length)) return null;
   const title = workspaceId ? <h3 className="text-sm font-semibold">Feedback</h3> : <h1 className="text-2xl font-semibold tracking-tight">Feedback</h1>;
   return <section data-workspace-section={workspaceId ? "" : undefined} className={workspaceId ? "space-y-3" : "mx-auto max-w-5xl space-y-5 p-6"} aria-label="Feedback">
     <header className="flex flex-wrap items-center justify-between gap-2">{title}<Button variant="outline" size="sm" disabled={busy} onClick={() => void refresh()}>Refresh</Button></header>
