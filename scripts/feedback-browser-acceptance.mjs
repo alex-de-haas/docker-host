@@ -2,6 +2,9 @@
 import assert from 'node:assert/strict';
 import {writeFile} from 'node:fs/promises';
 import { randomUUID, createHash } from 'node:crypto';
+const captureWindowHeight = process.env.HOSTY_FEEDBACK_CAPTURE_WINDOW_HEIGHT === undefined ? null : Number(process.env.HOSTY_FEEDBACK_CAPTURE_WINDOW_HEIGHT);
+assert.ok(captureWindowHeight === null || Number.isInteger(captureWindowHeight) && captureWindowHeight >= 960 && captureWindowHeight <= 4096,
+  'HOSTY_FEEDBACK_CAPTURE_WINDOW_HEIGHT must be an integer between 960 and 4096');
 const { chromium } = await import(process.env.HOSTY_FEEDBACK_PLAYWRIGHT_MODULE || 'playwright');
 let input = ''; for await (const chunk of process.stdin) input += chunk;
 const config = JSON.parse(input); input = '';
@@ -10,6 +13,21 @@ const browser = await chromium.launch({ headless: true, args: ['--auto-select-ta
   ...(process.env.HOSTY_FEEDBACK_BROWSER_CHANNEL ? { channel: process.env.HOSTY_FEEDBACK_BROWSER_CHANNEL } : {}) });
 const context = await browser.newContext({ viewport: { width: 1360, height: 960 } });
 const page = await context.newPage(); const errors = []; page.on('pageerror', error => errors.push(error.message));
+async function saveComment(form, last = false) {
+  const buttons = form.getByRole('button', {name:'Save comment',exact:true});
+  await (last ? buttons.last() : buttons).click();
+  await form.getByText('Comment saved locally. Submit feedback to send the report.', {exact:true}).waitFor();
+}
+async function fitCaptureWindow() {
+  if (captureWindowHeight === null) return;
+  // CSS viewport emulation does not necessarily size Chrome's native tab-capture surface.
+  const cdp = await context.newCDPSession(page);
+  try {
+    const { windowId } = await cdp.send('Browser.getWindowForTarget');
+    await cdp.send('Browser.setWindowBounds', { windowId, bounds: { width: 1360, height: captureWindowHeight } });
+  } finally { await cdp.detach(); }
+  await page.waitForTimeout(250);
+}
 // Inspect real captured pixels; the browser capture API is not replaced by a synthetic image.
 async function checkScreenshot(frame, bounds, annotationIndex = 0) {
   const image=frame.getByRole('main',{name:'Feedback draft'}).locator('ol > li').nth(annotationIndex).getByRole('img',{name:'Preview of screenshot.png'});
@@ -89,21 +107,33 @@ try {
   assert.ok(documentBounds.y>=headerBounds.y+headerBounds.height-1,'Document starts below the header');
   assert.equal(await page.evaluate(()=>document.documentElement.scrollHeight<=innerHeight+1),true,'Header does not introduce global scrolling');
   if(process.env.HOSTY_FEEDBACK_SCREENSHOT)await page.screenshot({path:process.env.HOSTY_FEEDBACK_SCREENSHOT+'.header.png'});
-  await page.setViewportSize({width:700,height:960});
-  assert.equal(await standaloneFrame.evaluate((frame,previous)=>frame===previous,retained),true);
-  await page.locator('.hosty-panel-body').getByRole('button',{name:'Minimize panel',exact:true}).click();
-  await standaloneHeader.getByRole('button',{name:'Show navigation',exact:true}).click();
-  await page.getByRole('dialog',{name:'Page navigation',exact:true}).waitFor();await page.keyboard.press('Escape');
-  assert.equal(await standaloneHeader.getByRole('button',{name:'Show navigation',exact:true}).evaluate(button=>button===document.activeElement),true);
-  await page.setViewportSize({width:1360,height:960});
+  // Native tab capture can retain resized browser geometry independently of emulated viewport
+  // dimensions. Keep the capture page untouched and exercise responsive behavior separately.
+  const narrowContext = await browser.newContext({ viewport: { width: 1360, height: 960 }, storageState: await context.storageState() });
+  try {
+    const narrowPage = await narrowContext.newPage(); narrowPage.on('pageerror', error => errors.push(error.message));
+    await narrowPage.goto(config.harness+'/development/');
+    const narrowHeader = narrowPage.locator('.hosty-standalone-header');
+    const narrowFrame = narrowPage.locator('iframe[title="Pull requests"]');
+    if (!await narrowFrame.count()) await narrowHeader.getByRole('button',{name:'Open Hosty Harness — Pull requests',exact:true}).click();
+    await narrowPage.frameLocator('iframe[title="Pull requests"]').getByRole('heading',{name:'Pull requests',exact:true}).waitFor();
+    const narrowRetained = await narrowFrame.elementHandle();
+    await narrowPage.setViewportSize({width:700,height:960});
+    assert.equal(await narrowFrame.evaluate((frame,previous)=>frame===previous,narrowRetained),true);
+    await narrowPage.locator('.hosty-panel-body').getByRole('button',{name:'Minimize panel',exact:true}).click();
+    await narrowHeader.getByRole('button',{name:'Show navigation',exact:true}).click();
+    await narrowPage.getByRole('dialog',{name:'Page navigation',exact:true}).waitFor();await narrowPage.keyboard.press('Escape');
+    assert.equal(await narrowHeader.getByRole('button',{name:'Show navigation',exact:true}).evaluate(button=>button===document.activeElement),true);
+  } finally { await narrowContext.close(); }
   console.log('PASS: standalone app identity, pinnable Tools, persisted visibility, retained frames, narrow navigation and keyboard focus');
   await page.goto(config.harness+'/feedback-panel/');
   let form=page.getByRole('main',{name:'Feedback draft'});
   assert.equal(await form.getByRole('checkbox',{name:'Include screenshot',exact:true}).isChecked(),true);
+  await fitCaptureWindow();
   await form.getByRole('button',{name:'Page comment',exact:true}).click();
   await checkScreenshot(page);
   await form.getByLabel('Comment 1',{exact:true}).fill('Standalone provider-owned comment');
-  await form.getByRole('button',{name:'Done',exact:true}).click();
+  await saveComment(form);
   await form.getByLabel('Overall comment (optional)',{exact:true}).fill(reportTitle);
   await form.getByText('Saved locally',{exact:true}).waitFor();
   await form.getByText('Saved locally',{exact:true}).waitFor();
@@ -146,7 +176,7 @@ try {
   await form.getByRole('button',{name:'Retake screenshot',exact:true}).click();
   await elementImage.evaluate(async(image,previous)=>{const deadline=Date.now()+15000;while(image.getAttribute('src')===previous){if(Date.now()>deadline)throw new Error('Retake did not replace the screenshot');await new Promise(resolve=>setTimeout(resolve,50));}},elementImageBefore);
   await checkScreenshot(feedbackFrame(),selectedBounds);
-  await form.getByLabel('Comment 1',{exact:true}).fill('Embedded application comment');await form.getByRole('button',{name:'Done',exact:true}).click();
+  await form.getByLabel('Comment 1',{exact:true}).fill('Embedded application comment');await saveComment(form);
   assert.equal(await form.isVisible(),true);
   await form.getByText('Saved locally',{exact:true}).waitFor();
   console.log('PASS: automatic and retaken full-tab screenshots contain the selected iframe element outline');
@@ -164,7 +194,7 @@ try {
   await form.getByRole('button',{name:'Submit feedback',exact:true}).click();await form.getByText('Feedback submitted.',{exact:true}).waitFor();
   await form.getByRole('checkbox',{name:'Include screenshot',exact:true}).uncheck();
   console.log('PASS: automatic and retaken region screenshots capture the full surface with a visible rectangle');
-  await form.getByRole('button',{name:'Select element',exact:true}).click();await logo.click();await form.getByLabel('Comment 1',{exact:true}).fill('Shell chrome comment');await form.getByRole('button',{name:'Done',exact:true}).click();
+  await form.getByRole('button',{name:'Select element',exact:true}).click();await logo.click();await form.getByLabel('Comment 1',{exact:true}).fill('Shell chrome comment');await saveComment(form);
   assert.equal(await form.getByLabel('Feedback application').inputValue(),'host');
   await form.getByRole('checkbox',{name:'Include screenshot',exact:true}).check();
   await form.getByRole('button',{name:'Select element',exact:true}).click();await form.getByLabel('Overall comment (optional)',{exact:true}).hover();await feedbackFrame().locator('[data-hosty-feedback-highlight]').waitFor();
@@ -174,7 +204,7 @@ try {
   await form.getByRole('checkbox',{name:'Include screenshot',exact:true}).uncheck();
   console.log('PASS: form self-feedback captures the selected DOM before changing its draft');
   await page.frames().find(f=>new URL(f.url()).pathname.replace(/\/$/,'')==='/feedback-panel').waitForFunction(()=>document.querySelector('select[aria-label="Feedback application"]')?.value!=='host');
-  await form.getByLabel('Comment 1',{exact:true}).fill('Feedback form observation');await form.getByRole('button',{name:'Done',exact:true}).click();
+  await form.getByLabel('Comment 1',{exact:true}).fill('Feedback form observation');await saveComment(form);
   assert.notEqual(await form.getByLabel('Feedback application').inputValue(),'host','Feedback form belongs to its provider application');
   await page.getByRole('button',{name:'Tools',exact:true}).click();await page.getByRole('menu').getByRole('menuitemcheckbox').filter({hasText:'Pull requests'}).first().click();
   await page.getByRole('button',{name:'Tools',exact:true}).click();await page.getByRole('menu').getByRole('menuitemcheckbox').filter({hasText:'Assistant'}).first().click();
@@ -242,7 +272,7 @@ try {
     await checkScreenshot(win.frameLocator('iframe[title="Feedback"]'),desktopBounds,desktopAnnotationIndex);
     await windowForm.getByRole('checkbox',{name:'Include screenshot',exact:true}).uncheck();
     await windowForm.getByRole('textbox',{name:/^Comment /}).last().fill('Desktop window element observation');
-    await windowForm.getByRole('button',{name:'Done',exact:true}).last().click();
+    await saveComment(windowForm, true);
     if(process.env.HOSTY_FEEDBACK_SCREENSHOT)await page.screenshot({path:process.env.HOSTY_FEEDBACK_SCREENSHOT+'.desktop-input.png'});
     await windowTools.getByRole('button',{name:'Hosty Harness: Pull requests',exact:true}).click();
     await windowTools.getByRole('button',{name:'Hosty Harness: Feedback',exact:true}).click();
@@ -299,7 +329,7 @@ try {
     await rootForm.getByLabel('Feedback application').selectOption('host');
     await rootForm.getByRole('checkbox',{name:'Include screenshot',exact:true}).uncheck();
     await page.locator('.hosty-panel-body').getByText('This tool has not confirmed that it loaded.',{exact:false}).waitFor({state:'hidden'});await rootForm.getByRole('button',{name:'Page comment',exact:true}).click();
-    await rootForm.getByLabel('Comment 1',{exact:true}).fill('Desktop root observation');await rootForm.getByRole('button',{name:'Done',exact:true}).click();
+    await rootForm.getByLabel('Comment 1',{exact:true}).fill('Desktop root observation');await saveComment(rootForm);
     await page.waitForFunction(id=>{
       const desktop=document.querySelector('.desktop')?.getBoundingClientRect();
       const frame=document.querySelector('[data-window-id="'+id+'"]')?.getBoundingClientRect();
@@ -312,7 +342,7 @@ try {
     await mainFrame.getByRole('heading',{name:/^Chats/}).click();
     await rootForm.locator('select[aria-label="Feedback application"] option:checked:not([value="host"])').waitFor({state:'attached'});
     await rootForm.getByRole('textbox',{name:/^Comment /}).last().fill('Compact Desktop application selection');
-    await rootForm.getByRole('button',{name:'Done',exact:true}).last().click();
+    await saveComment(rootForm, true);
     assert.notEqual(await rootForm.getByLabel('Feedback application').inputValue(),'host');
     assert.equal(await mainDocument.evaluate((frame,previous)=>frame===previous,originalDocument),true);
     await page.setViewportSize({width:1360,height:960});

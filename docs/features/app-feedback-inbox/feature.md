@@ -37,7 +37,7 @@ Each report belongs to one app; switching applications preserves their separate 
 Select region records a viewport rectangle; Page comment records page context without a rectangle.
 Harness includes an automatic screenshot by default for either action; the user can turn it off.
 The provider form stays visible during selection.
-Selection adds an editable comment to that form; Done completes editing after local persistence.
+Selection adds an editable comment to that form; Save comment confirms local persistence without submitting the report.
 Feedback's own form can be annotated, attributed to the provider app. Only the temporary Cancel
 selection control is excluded. Element context includes a bounded label, selector, rectangle and
 viewport, never input values or a DOM dump. Each annotation records its route and capture time.
@@ -230,8 +230,14 @@ without a workspace remain in the global inbox. Retention is independent of PR m
 - The browser journey uses Playwright Chromium (`HOSTY_FEEDBACK_BROWSER_CHANNEL` optionally selects
   installed Chrome; `HOSTY_FEEDBACK_PLAYWRIGHT_MODULE` can supply an absolute module path). It checks
   anchored/sidebar editing, real browser-approved capture, automatic full-image attachment, multi-annotation reload,
-  IndexedDB quota/stale-tab faults, draft scope isolation and lost-response retry. Test-only chooser
+  current-comment save acknowledgement, IndexedDB quota/stale-tab faults, draft scope isolation and lost-response retry.
+  Responsive navigation checks use a separate browser context so initial full-tab capture retains
+  strict width and height verification before the capture page is resized. Test-only chooser
   flags select the isolated test tab; production capture still requires the browser chooser.
+  `HOSTY_FEEDBACK_CAPTURE_WINDOW_HEIGHT` optionally sets the fixture's native Chromium window height
+  before its first capture (960–4096 pixels). Headless installed Chrome can capture a different
+  height from its emulated CSS viewport; calibrate this test-only value for the selected browser
+  while retaining exact 1360×960 capture assertions. The macOS installed-Chrome probe uses 1103.
   `HOSTY_FEEDBACK_BROWSER_ONLY=1` selects intake/browser verification without scripted-agent dispatch.
   `HOSTY_FEEDBACK_DESKTOP=1` includes a separately installed Desktop. For script iteration,
   `HOSTY_FEEDBACK_RETRY_BROWSER=1` retains the same child after a browser failure until the printed
