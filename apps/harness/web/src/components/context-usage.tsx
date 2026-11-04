@@ -10,6 +10,7 @@ const tokens = new Intl.NumberFormat("en", { notation: "compact", maximumFractio
 const percent = new Intl.NumberFormat("en", { maximumFractionDigits: 1 });
 
 export function ContextUsageIndicator({ usage, connected = true }: { usage: ContextUsage | null; connected?: boolean }) {
+  const hasDetail = Boolean(usage?.mcp || usage?.sources);
   const percentage = usage?.maxTokens ? usage.usedTokens / usage.maxTokens * 100 : null;
   const visualPercentage = percentage === null ? null : Math.min(100, Math.max(0, percentage));
   const count = usage ? `${usage.estimated ? "≈ " : ""}${tokens.format(usage.usedTokens)}` : "";
@@ -33,7 +34,7 @@ export function ContextUsageIndicator({ usage, connected = true }: { usage: Cont
     </>
   );
 
-  const button = <button type="button" aria-label={`Context usage: ${summary}${usage?.mcp ? ". View MCP detail" : ""}`}
+  const button = <button type="button" aria-label={`Context usage: ${summary}${hasDetail ? usage?.sources ? ". View local context estimates" : ". View MCP detail" : ""}`}
     data-slot="context-usage" className="flex h-9 min-w-9 shrink-0 cursor-pointer items-center justify-center gap-1 rounded-md px-1 text-muted-foreground outline-none focus-visible:outline-2 focus-visible:outline-brand">
     {visualPercentage === null ? <div className="relative size-6 shrink-0">{ring}</div> :
       <ProgressPrimitive.Root value={visualPercentage} role="meter" aria-label="Context window used"
@@ -45,13 +46,13 @@ export function ContextUsageIndicator({ usage, connected = true }: { usage: Cont
   </button>;
   return <TooltipProvider delayDuration={250}>
     <Tooltip>
-      {usage?.mcp ? <ContextMcpDetail detail={usage.mcp} observedAt={usage.observedAt} connected={connected}>
+      {usage && hasDetail ? <ContextMcpDetail detail={usage.mcp} sources={usage.sources} observedAt={usage.observedAt} connected={connected}>
         <TooltipTrigger asChild>{button}</TooltipTrigger>
       </ContextMcpDetail> : <TooltipTrigger asChild>{button}</TooltipTrigger>}
       <TooltipContent className="max-w-xs">
         <p className="font-medium">Context · {summary}</p>
         <p>{description}</p>
-        {usage?.mcp && <p>Open for MCP server and tool detail.</p>}
+        {hasDetail && <p>{usage?.sources ? "Open for local instruction, MCP server and tool estimates." : "Open for MCP server and tool detail."}</p>}
       </TooltipContent>
     </Tooltip>
   </TooltipProvider>;

@@ -1,3 +1,4 @@
+import { validInstructionTexts } from "../harness/context-sources.js";
 import type { HarnessEvent, HarnessStartOptions } from "../harness/adapter.js";
 import type { ConnectionBinding } from "../connections/registry.js";
 
@@ -17,7 +18,7 @@ export type WorkerRunRequest = {
   selection: ExecutionSelection;
   resource: ResourceReference;
   input: string;
-  options: Pick<HarnessStartOptions, "autonomy" | "systemPrompt" | "resumeHarnessSessionId" | "mcpServers" | "promptSuggestions" | "requireNativeResume">;
+  options: Pick<HarnessStartOptions, "autonomy" | "systemPrompt" | "instructionSources" | "resumeHarnessSessionId" | "mcpServers" | "promptSuggestions" | "requireNativeResume">;
   autoAllowedPrefixes: string[];
 };
 export type RunState = "accepted" | "running" | "awaiting_input" | "suggesting" | "parking" | "parked" | "cancelling" | "completed" | "failed" | "cancelled" | "interrupted";
@@ -51,8 +52,10 @@ export function validateRun(value: unknown): asserts value is WorkerRunRequest {
     throw new WorkerApiError(400, "invalid_run", "Invalid worker run request.");
   if (r.skillExportId !== undefined && (typeof r.skillExportId !== "string" || !/^[a-f0-9]{64}$/.test(r.skillExportId)))
     throw new WorkerApiError(400, "invalid_skills", "Invalid skill export reference.");
-  if (Object.keys(r.options).some(key => !["autonomy", "systemPrompt", "resumeHarnessSessionId", "mcpServers", "promptSuggestions", "requireNativeResume"].includes(key))
+  if (Object.keys(r.options).some(key => !["autonomy", "systemPrompt", "instructionSources", "resumeHarnessSessionId", "mcpServers", "promptSuggestions", "requireNativeResume"].includes(key))
     || r.options.systemPrompt !== undefined && typeof r.options.systemPrompt !== "string"
+    || r.options.instructionSources !== undefined && (!validInstructionTexts(r.options.instructionSources)
+      || r.options.instructionSources.map(block => block.text).join("\n\n") !== r.options.systemPrompt?.trim())
     || r.options.resumeHarnessSessionId !== undefined && !safeIdentity(r.options.resumeHarnessSessionId)
     || r.options.mcpServers !== undefined && (!r.options.mcpServers || typeof r.options.mcpServers !== "object" || Array.isArray(r.options.mcpServers)))
     throw new WorkerApiError(400, "invalid_options", "Invalid provider options.");
