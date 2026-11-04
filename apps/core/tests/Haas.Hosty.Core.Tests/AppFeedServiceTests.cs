@@ -7,6 +7,30 @@ public sealed class AppFeedServiceTests
 {
     private const string FeedsUrl = "https://apps.example.test/notes/feeds.json";
 
+    [Theory]
+    [InlineData(" edge")]
+    [InlineData("edge ")]
+    [InlineData("bad\u0085id")]
+    public async Task FeedIdentityIsOpaqueAndRejectsControlOrSurroundingWhitespace(string id)
+    {
+        var json = System.Text.Json.JsonSerializer.Serialize(new { schemaVersion = "app-feeds.0.1", appId = "com.example.notes",
+            feeds = new[] { new { id, manifestRef = "https://publisher.test/release.json" } } });
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() => CreateService(json).LoadAsync(FeedsUrl));
+        Assert.Equal("app_feed_id_invalid", error.Code);
+    }
+
+    [Fact]
+    public async Task TenCustomFeedsRequireExplicitSelectionAndKeepCaseSensitiveNames()
+    {
+        var json = System.Text.Json.JsonSerializer.Serialize(new { schemaVersion = "app-feeds.0.1", appId = "com.example.notes",
+            feeds = Enumerable.Range(0, 10).Select(i => new { id = "Custom-" + i, manifestRef = "https://publisher.test/" + i + "/manifest.json" }) });
+        var service = CreateService(json);
+        Assert.Equal(10, (await service.LoadAsync(FeedsUrl)).Feeds.Count);
+        await Assert.ThrowsAsync<AppLifecycleException>(() => service.ResolveAsync(FeedsUrl, null));
+        Assert.Equal("Custom-7", (await service.ResolveAsync(FeedsUrl, "Custom-7")).Feed.Id);
+        await Assert.ThrowsAsync<AppLifecycleException>(() => service.ResolveAsync(FeedsUrl, "custom-7"));
+    }
+
     [Fact]
     public async Task LoadAsync_ValidSoleFeed_NormalizesItAsDefault()
     {

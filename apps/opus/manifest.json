@@ -3,7 +3,7 @@
   "id": "hosty.opus",
   "name": "OPUS Translate",
   "description": "Local English-to-Russian text and Markdown translation with OPUS-MT Big on the host CPU.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "source": {
     "type": "git",
     "repository": "https://github.com/alex-de-haas/docker-host.git",

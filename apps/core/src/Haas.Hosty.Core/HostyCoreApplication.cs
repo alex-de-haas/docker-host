@@ -63,6 +63,7 @@ internal static class HostyCoreApplication
         // Core MCP: the protocol server plus the tool type it reflects over. The tools resolve Core's
         // own services per call, so the MCP layer holds no state of its own.
         builder.Services.AddMcpServer().WithHttpTransport().WithTools<HostyCoreTools>().WithTools<ExternalWorkspaceMcpTools>(CoreJsonSerializerContext.Default.Options).WithTools<AppDevModeMcpTools>().WithTools<WorkspaceActivationMcpTools>(CoreJsonSerializerContext.Default.Options).WithTools<AppExecutionTargetMcpTools>(CoreJsonSerializerContext.Default.Options)
+            .WithTools<AppUpdateSourceMcpTools>(CoreJsonSerializerContext.Default.Options)
             .WithTools<CoreEnvironmentMcpTools>(CoreJsonSerializerContext.Default.Options)
             .WithTools<CoreWorkflowMcpTools>(CoreJsonSerializerContext.Default.Options)
             .WithTools<CoreAppCreationMcpTools>(CoreJsonSerializerContext.Default.Options)
@@ -174,6 +175,7 @@ internal static class HostyCoreApplication
         // client. Singleton so its TTL cache survives across requests.
         builder.Services.AddHttpClient(CoreUpdateCheckService.HttpClientName, client => client.Timeout = TimeSpan.FromSeconds(20));
         builder.Services.AddSingleton<CoreUpdateCheckService>();
+        builder.Services.AddSingleton<CorePlatformFeedService>();
         // One-click Cloudflare ingress (phase 1): a named client for the Cloudflare API, the read-only
         // discovery client, and the private token store.
         builder.Services.AddHttpClient(CloudflareApiClient.HttpClientName, client => client.Timeout = TimeSpan.FromSeconds(20));

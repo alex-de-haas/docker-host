@@ -1,20 +1,15 @@
 using Haas.Hosty.Launch;
-namespace Haas.Hosty.Cli.Commands;
-
+using Haas.Hosty.Releases;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Spectre.Console;
 
+namespace Haas.Hosty.Cli.Commands;
+
 internal sealed partial class UpdateCommand(CommandContext context)
 {
-    [JsonSourceGenerationOptions(
-        PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
-        PropertyNameCaseInsensitive = true,
-        NumberHandling = JsonNumberHandling.AllowReadingFromString)]
+    [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
     [JsonSerializable(typeof(CoreStatusDocument))]
-    [JsonSerializable(typeof(AppsResponse))]
-    [JsonSerializable(typeof(AppUpdatePlanRequest))]
-    [JsonSerializable(typeof(AppUpdatePlan))]
     [JsonSerializable(typeof(ProductChannelIndex))]
     [JsonSerializable(typeof(ProductChannel))]
     internal partial class UpdateJsonContext : JsonSerializerContext;
@@ -22,306 +17,193 @@ internal sealed partial class UpdateCommand(CommandContext context)
     public async Task<int> ExecuteAsync(string[] args)
     {
         var options = ParseOptions(args);
-        if (options.ListChannels)
+        using var client = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
+        var reader = new PlatformReleaseReader(client);
+        if (options.ListFeeds) return await ListFeedsAsync(reader, options.IndexRef);
+        var executable = Environment.ProcessPath;
+        if (executable is null || !SelfUpdateService.IsManagedExecutableName(Path.GetFileName(executable)))
+            throw new InvalidOperationException("Run the installed hosty executable to update the CLI/Core pair.");
+        if (options.FeedId is null && options.IndexRef is null && options.OperationId is null
+            && PlatformFeedFiles.ReadSource(context.Environment.RootDirectory) is null && PlatformLegacyPins.Read(executable) is { } pin)
         {
-            return await ListChannelsAsync(options);
+            if (!SelfUpdateService.CurrentExecutableMatches(executable, pin.CliSha256)) throw new InvalidOperationException("The CLI differs from its explicit legacy pin.");
+            context.Console.WriteLine($"This installation is pinned to {pin.Repository}@{pin.Tag}. Select a feed explicitly to change its update source.");
+            return 0;
         }
-
-        ProductChannel? selectedChannel = null;
-        if (!string.IsNullOrWhiteSpace(options.Channel))
+        using var executableLock = PlatformUpdateTransaction.LockExecutable(executable);
+        using var launchLock = CoreLaunchFiles.Lock(context.Environment.RootDirectory);
+        var accepted = options.OperationId is null ? PlatformAcceptedUpdates.Pending(context.Environment.RootDirectory)
+            : PlatformAcceptedUpdates.Read(context.Environment.RootDirectory, options.OperationId)
+                ?? throw new InvalidOperationException("The accepted platform update was not found.");
+        if (accepted?.Status == "completed") { context.Console.WriteLine("This platform update already completed."); return 0; }
+        var pending = PlatformUpdateTransaction.Pending(context.Environment.RootDirectory);
+        CoreLaunchFiles.AssertNoPendingOperations(context.Environment.RootDirectory, ownPlatformUpdateId: pending?.Id ?? accepted?.Id);
+        PlatformReleaseSelection? selection = null;
+        if (pending is not null)
         {
-            selectedChannel = await SelectChannelAsync(options);
+            if (options.FeedId is not null || options.IndexRef is not null)
+                throw new CommandUsageException("Resume the pending frozen update with 'hosty update' before selecting another source.", Usage);
+            context.Console.WriteLine($"Resuming platform update {pending.Id} for release {pending.Selection.Release.ReleaseId}.");
         }
-
-        var releaseTag = ReleaseArtifactService.ResolveTag(selectedChannel?.ReleaseTag);
-        // Surface which release the binaries come from — this used to be silent, so `--channel <x>`
-        // looked like it selected a build while everyone actually got cli-dev (L-H3).
-        context.Console.MarkupLine($"[grey]Updating CLI and Core from release tag[/] [white]{Markup.Escape(releaseTag)}[/][grey].[/]");
-        WarnOnDowngrade(selectedChannel);
-
-        using var launchLease = CoreLaunchFiles.Lock(context.Environment.RootDirectory);
-        CoreLaunchFiles.AssertNoPendingOperations(context.Environment.RootDirectory);
-        try
+        else if (accepted is not null)
         {
-            await new SelfUpdateService(context).UpdateAsync(releaseTag);
+            if (options.FeedId is not null || options.IndexRef is not null)
+                throw new CommandUsageException("Resume the accepted update before selecting another source.", Usage);
+            selection = accepted.Selection;
         }
-        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or UnauthorizedAccessException or PlatformNotSupportedException or OperationCanceledException)
+        else
         {
-            context.Error.MarkupLine($"[red]CLI update failed:[/] {Markup.Escape(ex.Message)}");
-            context.Error.MarkupLine("Hosty Core and Shell were not changed. Retry later, then restart Core with [grey]hosty restart[/].");
-            return 1;
-        }
-
-        context.Console.MarkupLine("[green]Bootstrap CLI update step completed.[/]");
-
-        var devRunning = false;
-        using (var liveCore = await CoreControlClient.TryCreateAsync(context))
-        {
-            if (liveCore is not null)
-                devRunning = (await liveCore.GetAsync<CoreStatusDocument>("core/status"))?.Launch?.Mode == "dev";
-        }
-        if (devRunning) context.Console.WriteLine("Dev Core remains running; updating installed release artifacts only.");
-
-        // Light-stop Core before replacing its executable. On Windows the running exe is file-locked and
-        // cannot be overwritten otherwise; on every platform the new binary only takes effect after a
-        // restart. --keep-apps means this stop leaves the app containers running (Core does not run its
-        // destructive per-app docker-stop sweep), and the start below re-adopts them — so `hosty update`
-        // never disturbs running apps and cannot get wedged on a slow shutdown.
-        // A stop that failed outright must abort: proceeding would swap the executable under a still-
-        // running Core (the rename-based replace succeeds even then) and, because the outcome is not
-        // StoppedRunning, skip the restart — leaving the old Core serving with a newer binary on disk
-        // and the update-available badge stuck on. The CLI step above already completed; rerunning
-        // `hosty update` finishes the Core half.
-        var stopOutcome = devRunning ? CoreCommand.CoreUpdateStopOutcome.NotRunning : await new CoreCommand(context).StopForUpdateAsync();
-        if (stopOutcome == CoreCommand.CoreUpdateStopOutcome.Failed)
-        {
-            context.Error.MarkupLine("[red]Hosty Core did not stop cleanly; the Core update was aborted before replacing the executable.[/]");
-            context.Error.MarkupLine("[grey]The CLI itself was already updated. Check Core with [white]hosty core status[/], then rerun [white]hosty update[/].[/]");
-            return 1;
-        }
-
-        try
-        {
-            await new CoreInstallationService(context).UpdateAsync(releaseTag);
-        }
-        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or UnauthorizedAccessException or PlatformNotSupportedException or OperationCanceledException)
-        {
-            context.Error.MarkupLine($"[red]Core update failed:[/] {Markup.Escape(ex.Message)}");
-            context.Error.MarkupLine("Hosty Shell was not changed. Retry later, then restart Core with [grey]hosty restart --keep-apps[/].");
-            return 1;
-        }
-
-        context.Console.MarkupLine("[green]Hosty Core update step completed.[/]");
-
-        // Bring Core back on the new binary only when it was running before the update (a deliberately
-        // stopped Core stays stopped). The new process adopts the still-running app containers.
-        if (stopOutcome == CoreCommand.CoreUpdateStopOutcome.StoppedRunning)
-        {
-            if (await new CoreCommand(context).StartInstalledAsync() != 0)
+            selection = await PlatformFeedSource.ResolveAsync(reader, context.Environment.RootDirectory,
+                options.FeedId, options.IndexRef, executable, sourceLockHeld: true);
+            var saved = PlatformFeedSource.PersistSelection(context.Environment.RootDirectory, selection);
+            selection = selection with { Source = saved };
+            context.Console.WriteLine($"Updating CLI and Core from feed '{saved.FeedId}', release {selection.Release.ReleaseId}, version {selection.Release.Version}.");
+            if (!Version.TryParse(selection.Release.Version, out var target) || !Version.TryParse(CommandLine.Version, out var current)
+                || target < current || target == current && !await PlatformReleaseReader.MatchesAssetAsync(executable,
+                    PlatformReleaseReader.Asset(selection.Release, "cli", PlatformFeedSource.CurrentRid), default))
             {
-                context.Error.MarkupLine("[yellow]Hosty Core did not report ready after the update; check [white]hosty core status[/] and [white]hosty core logs[/].[/]");
+                context.Console.WriteLine("The selected feed has no eligible forward update for this installation. Its source was saved; the installed binaries remain in place.");
+                return 0;
             }
         }
-        else if (!devRunning)
+        try
         {
-            context.Console.MarkupLine("[grey]Core was not running; start it with [white]hosty core start[/] to run the updated binary.[/]");
+            var operation = await new PlatformUpdateTransaction(reader, new UpdateHost(context)).ExecuteAsync(
+                context.Environment.RootDirectory, executable, CoreInstallationService.GetInstalledExecutablePath(context.Environment), selection, requestId: accepted?.Id);
+            context.Console.WriteLine($"CLI/Core release {operation.Selection.Release.Version} installed and verified.");
+            if (operation.PreviousCore?.Launch.Mode == "dev") context.Console.WriteLine("The development Core remains running from its selected project.");
+            else if (operation.PreviousCore is null) context.Console.WriteLine("Core remains stopped. Start it with 'hosty core start'.");
+            return 0;
         }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException or HttpRequestException or OperationCanceledException)
+        {
+            context.Error.WriteLine($"Platform update failed: {error.Message}");
+            context.Error.WriteLine($"Recovery journal: {PlatformUpdateTransaction.JournalPath(context.Environment.RootDirectory)}. Resume the same release with 'hosty update'.");
+            return 1;
+        }
+    }
 
-        await CheckCoreAndShellAsync(selectedChannel);
-
+    internal async Task<int> FeedAsync(string[] args)
+    {
+        var feed = args.Length > 0 && !args[0].StartsWith('-') ? args[0] : null;
+        var options = ParseOptions(feed is null ? args : args[1..]);
+        if (options.FeedId is not null || options.OperationId is not null) throw new CommandUsageException("Use 'hosty core feed <id>' to select a feed.", Usage);
+        using var client = new HttpClient();
+        var reader = new PlatformReleaseReader(client);
+        if (feed is null)
+        {
+            var saved = PlatformFeedFiles.ReadSource(context.Environment.RootDirectory);
+            context.Console.WriteLine(saved is null ? "No platform update feed is selected." : $"Feed: {saved.FeedId}\nIndex: {saved.IndexRef}\nRevision: {saved.Revision}");
+            return await ListFeedsAsync(reader, options.IndexRef);
+        }
+        using var launchLock = CoreLaunchFiles.Lock(context.Environment.RootDirectory);
+        CoreLaunchFiles.AssertNoPendingOperations(context.Environment.RootDirectory);
+        var selection = await PlatformFeedSource.ResolveAsync(reader, context.Environment.RootDirectory, feed, options.IndexRef, Environment.ProcessPath, sourceLockHeld: true);
+        var source = PlatformFeedSource.PersistSelection(context.Environment.RootDirectory, selection);
+        context.Console.WriteLine($"Selected platform feed '{source.FeedId}' from {source.IndexRef}. Executables were not changed.");
         return 0;
     }
 
-    // Warns when the selected channel's declared CLI version is older than what is installed, so a
-    // `--channel <older>` downgrade is not silent (the SHA-currency check alone can't tell up from down).
-    private void WarnOnDowngrade(ProductChannel? channel)
+    private async Task<int> ListFeedsAsync(PlatformReleaseReader reader, string? indexRef)
     {
-        if (channel?.CliVersion is not { } targetVersion ||
-            !Version.TryParse(targetVersion, out var target) ||
-            !Version.TryParse(CommandLine.Version, out var current))
-        {
-            return;
-        }
-
-        if (target < current)
-        {
-            context.Console.MarkupLine(
-                $"[yellow]Warning:[/] channel [white]{Markup.Escape(channel.Id)}[/] targets CLI [white]{Markup.Escape(targetVersion)}[/], older than the installed [white]{Markup.Escape(CommandLine.Version)}[/] — this is a downgrade.");
-        }
-    }
-
-    private async Task<int> ListChannelsAsync(UpdateOptions options)
-    {
-        var index = await LoadProductChannelsAsync(options.IndexPath);
-        if (index.Channels?.Count is null or 0)
-        {
-            context.Console.MarkupLine("[grey]No channels available.[/]");
-            return 0;
-        }
-
-        var table = ConsoleUi.CreateTable("Channel", "Label", "CLI", "Shell manifest");
-        foreach (var channel in index.Channels)
-        {
-            table.AddRow(
-                Markup.Escape(channel.Id),
-                Markup.Escape(channel.Label),
-                Markup.Escape(channel.CliVersion ?? ""),
-                Markup.Escape(channel.ShellManifestPath ?? ""));
-        }
-
+        var saved = PlatformFeedFiles.ReadSource(context.Environment.RootDirectory);
+        var (index, _) = await reader.ReadIndexAsync(indexRef ?? saved?.IndexRef ?? PlatformFeedSource.Distribution.IndexRef, allowLegacy: indexRef is not null || saved?.LegacyIndex == true);
+        var table = ConsoleUi.CreateTable("Feed", "Label", "Default", "Selected");
+        foreach (var feed in index.Feeds)
+            table.AddRow(Markup.Escape(feed.Id), Markup.Escape(feed.Label ?? ""),
+                feed.Default || index.Feeds.Count == 1 ? "yes" : "", saved?.FeedId == feed.Id && (indexRef is null || saved.IndexRef == indexRef) ? "yes" : "");
         context.Console.Write(table);
         return 0;
     }
 
-    private async Task<ProductChannel> SelectChannelAsync(UpdateOptions options)
+    internal static UpdateOptions ParseOptions(string[] args)
     {
-        var index = await LoadProductChannelsAsync(options.IndexPath);
-        var channel = index.Channels.FirstOrDefault(candidate => string.Equals(candidate.Id, options.Channel, StringComparison.Ordinal)) ??
-            throw new CommandUsageException($"Product channel '{options.Channel}' was not found.", Usage);
-        var statePath = Path.Combine(context.Environment.RootDirectory, "core", "product-channel.json");
-        Directory.CreateDirectory(Path.GetDirectoryName(statePath) ?? context.Environment.RootDirectory);
-        await File.WriteAllTextAsync(statePath, CliJson.Serialize(channel));
-        context.Console.MarkupLine($"[green]Selected product channel:[/] {Markup.Escape(channel.Id)}");
-        return channel;
-    }
-
-    private async Task CheckCoreAndShellAsync(ProductChannel? selectedChannel)
-    {
-        using var core = await CoreControlClient.TryCreateAsync(context);
-        if (core is null)
+        var list = false;
+        string? feed = null, indexRef = null, operationId = null;
+        for (var index = 0; index < args.Length; index++)
         {
-            context.Console.MarkupLine("[yellow]Hosty Core update step skipped because Core is not running.[/]");
-            context.Console.MarkupLine("[grey]Start Core with [white]hosty core start[/], then rerun [white]hosty update[/] for Core/Shell checks.[/]");
-            return;
-        }
-
-        try
-        {
-            var status = await core.GetAsync<CoreStatusDocument>("core/status");
-            context.Console.MarkupLine($"[green]Hosty Core reachable:[/] {Markup.Escape(status?.Status ?? "running")}");
-            context.Console.MarkupLine("[grey]A running Core process uses the updated executable after the next Core restart.[/]");
-
-            var apps = await core.GetAsync<AppsResponse>("apps");
-            var shell = apps?.Apps.FirstOrDefault(app => string.Equals(app.Id, "hosty.shell", StringComparison.Ordinal));
-            if (shell is null)
+            if (args[index].StartsWith("--feed=", StringComparison.Ordinal) || args[index].StartsWith("--channel=", StringComparison.Ordinal))
             {
-                context.Console.MarkupLine("[yellow]Hosty Shell update step skipped because hosty.shell is not installed.[/]");
-                return;
+                var explicitFeed = args[index][(args[index].IndexOf('=') + 1)..];
+                if (string.IsNullOrWhiteSpace(explicitFeed) || feed is not null && feed != explicitFeed) throw new CommandUsageException("Invalid or conflicting feed selection.", Usage);
+                feed = explicitFeed; continue;
             }
-
-            var shellManifestPath = selectedChannel?.ShellManifestPath is null
-                ? null
-                : NormalizeManifestReference(selectedChannel.ShellManifestPath);
-            var plan = await core.PostAsync<AppUpdatePlan>("apps/hosty.shell/update/plan", new AppUpdatePlanRequest(shellManifestPath, shell.SelectedRuntime));
-            if (plan is null)
+            switch (args[index])
             {
-                context.Console.MarkupLine("[yellow]Hosty Shell update plan was not returned.[/]");
-                return;
-            }
-
-            context.Console.MarkupLine("[green]Hosty Shell update plan ready.[/]");
-            context.Console.MarkupLine($"[grey]Plan digest:[/] {Markup.Escape(plan.PlanDigest)}");
-            context.Console.MarkupLine("[grey]Apply with [white]hosty apps update hosty.shell --plan-digest <digest>[/] after reviewing the plan.[/]");
-        }
-        catch (CoreControlException ex)
-        {
-            context.Console.MarkupLine($"[yellow]Core/Shell update checks skipped:[/] {Markup.Escape(ex.Message)}");
-        }
-        catch (Exception ex) when (ex is HttpRequestException or IOException or TaskCanceledException)
-        {
-            context.Console.MarkupLine($"[yellow]Core/Shell update checks skipped:[/] {Markup.Escape(ex.Message)}");
-        }
-    }
-
-    private static async Task<ProductChannelIndex> LoadProductChannelsAsync(string? indexPath)
-    {
-        var path = indexPath ?? Environment.GetEnvironmentVariable("HOSTY_PRODUCT_CHANNEL_INDEX") ?? FindDefaultProductChannelIndex();
-        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
-        {
-            throw new CommandUsageException("Product channel index was not found. Pass --index <path>.", Usage);
-        }
-
-        await using var stream = File.OpenRead(path);
-        return await CliJson.DeserializeAsync<ProductChannelIndex>(stream) ??
-            throw new CommandUsageException("Product channel index is invalid.", Usage);
-    }
-
-    private static string? FindDefaultProductChannelIndex()
-    {
-        foreach (var root in new[] { Directory.GetCurrentDirectory(), AppContext.BaseDirectory })
-        {
-            var current = new DirectoryInfo(root);
-            while (current is not null)
-            {
-                var candidate = Path.Combine(current.FullName, "channels", "product-channels.json");
-                if (File.Exists(candidate))
-                {
-                    return candidate;
-                }
-
-                current = current.Parent;
+                case "--list-feeds": case "--list-channels": list = true; break;
+                case "--feed": case "--channel":
+                    var value = RequireValue(args, ref index);
+                    if (feed is not null && feed != value) throw new CommandUsageException("Conflicting feed/channel selections.", Usage);
+                    feed = value; break;
+                case "--operation-id":
+                    operationId = RequireValue(args, ref index);
+                    if (!Guid.TryParseExact(operationId, "N", out _)) throw new CommandUsageException("Invalid update request ID.", Usage);
+                    break;
+                case "--index":
+                    var reference = RequireValue(args, ref index);
+                    if (Uri.TryCreate(reference, UriKind.Absolute, out var uri) && !uri.IsFile && uri.Scheme != "https")
+                        throw new CommandUsageException("Remote feed indexes must use HTTPS.", Usage);
+                    reference = uri?.Scheme == "https" ? reference : Path.GetFullPath(reference);
+                    if (indexRef is not null && indexRef != reference) throw new CommandUsageException("Conflicting index selections.", Usage);
+                    indexRef = reference; break;
+                default: throw new CommandUsageException($"Unknown update option '{args[index]}'.", Usage);
             }
         }
+        if (list && feed is not null) throw new CommandUsageException("Listing feeds and selecting a feed are separate operations.", Usage);
+        if (operationId is not null && (list || feed is not null || indexRef is not null))
+            throw new CommandUsageException("An accepted operation cannot be combined with another source selection.", Usage);
+        return new(list, feed, indexRef, operationId);
+    }
 
-        return null;
+    private static string RequireValue(string[] args, ref int index)
+    {
+        if (index + 1 >= args.Length || string.IsNullOrWhiteSpace(args[index + 1]) || args[index + 1].StartsWith("--"))
+            throw new CommandUsageException($"{args[index]} requires a value.", Usage);
+        return args[++index];
     }
 
     internal static string NormalizeManifestReference(string manifestPath)
     {
-        var manifestReference = manifestPath.Trim();
-        if (Uri.TryCreate(manifestReference, UriKind.Absolute, out var uri) &&
-            !string.IsNullOrWhiteSpace(uri.Scheme) &&
-            (uri.IsFile || uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
-        {
-            return manifestReference;
-        }
-
-        return Path.GetFullPath(manifestReference);
+        var reference = manifestPath.Trim();
+        return Uri.TryCreate(reference, UriKind.Absolute, out var uri) && (uri.IsFile || uri.Scheme is "https" or "http")
+            ? reference : Path.GetFullPath(reference);
     }
 
-    private static UpdateOptions ParseOptions(string[] args)
+    private sealed class UpdateHost(CommandContext context) : IPlatformUpdateHost
     {
-        var listChannels = false;
-        string? channel = null;
-        string? indexPath = null;
-        for (var index = 0; index < args.Length; index++)
+        public async Task<PlatformCoreObservation?> ObserveAsync(CancellationToken ct)
         {
-            switch (args[index])
+            using var core = await CoreControlClient.TryCreateAsync(context, cancellationToken: ct);
+            if (core is null)
             {
-                case "--list-channels":
-                    listChannels = true;
-                    break;
-                case "--channel":
-                    channel = RequireOptionValue(args, ref index, "--channel");
-                    break;
-                case "--index":
-                    indexPath = RequireOptionValue(args, ref index, "--index");
-                    break;
-                default:
-                    throw new CommandUsageException($"Unknown update option '{args[index]}'.", Usage);
+                if (File.Exists(Path.Combine(context.Environment.RootDirectory, "core", "run", "control.json")))
+                    throw new InvalidOperationException("Core discovery could not be verified; refusing to infer that it is stopped.");
+                return null;
             }
+            var status = await core.GetAsync<CoreStatusDocument>("core/status", ct);
+            if (status?.Launch is null || string.IsNullOrWhiteSpace(status.Version) || status.Status != "running")
+                throw new InvalidOperationException("The running Core did not return a verifiable process identity/version.");
+            return new(status.Launch, status.Version, status.ListenUrl, status.CorePublicOrigin, status.RuntimePublicHost);
         }
-
-        return new UpdateOptions(listChannels, channel, indexPath);
+        public async Task<bool> StopAsync(CancellationToken ct)
+            => await new CoreCommand(context).StopForUpdateAsync() != CoreCommand.CoreUpdateStopOutcome.Failed;
+        public async Task<bool> StartAsync(PlatformCoreObservation? previous, CancellationToken ct)
+            => await new CoreCommand(context).StartInstalledAsync(previous) == 0;
     }
 
-    private static string RequireOptionValue(string[] args, ref int index, string option)
-    {
-        if (index + 1 >= args.Length)
-        {
-            throw new CommandUsageException($"{option} requires a value.", Usage);
-        }
-
-        index++;
-        return args[index];
-    }
-
-    internal sealed record CoreStatusDocument(string? Status, CoreLaunchIdentity? Launch = null);
-
-    internal sealed record AppsResponse(IReadOnlyList<AppSummary> Apps);
-
-    internal sealed record AppSummary(string Id, string? SelectedRuntime);
-
-    internal sealed record AppUpdatePlanRequest(string? ManifestPath, string? SelectedRuntime);
-
-    internal sealed record AppUpdatePlan(string PlanDigest);
-
-    internal sealed record UpdateOptions(bool ListChannels, string? Channel, string? IndexPath);
-
+    internal sealed record CoreStatusDocument(string? Status, string? Version = null, CoreLaunchIdentity? Launch = null,
+        string? ListenUrl = null, string? CorePublicOrigin = null, string? RuntimePublicHost = null);
+    internal sealed record UpdateOptions(bool ListFeeds, string? FeedId, string? IndexRef, string? OperationId = null);
+    // Retained for the explicit legacy-index reader; these are never a production default.
     internal sealed record ProductChannelIndex(IReadOnlyList<ProductChannel> Channels);
-
-    internal sealed record ProductChannel(
-        string Id,
-        string Label,
-        string? CliVersion,
-        string? CoreArtifactPrefix,
-        string? ShellManifestPath,
-        // The GitHub release tag the CLI/Core binaries are pulled from for this channel. Absent => the
-        // rolling cli-dev default (ReleaseArtifactService.DefaultReleaseTag).
-        string? ReleaseTag = null);
-
+    internal sealed record ProductChannel(string Id, string Label, string? CliVersion, string? CoreArtifactPrefix,
+        string? ShellManifestPath, string? ReleaseTag = null);
     private const string Usage = """
         Usage:
-          hosty update [--list-channels] [--channel <channel-id>] [--index <path>]
+          hosty update [--feed <id>] [--index <path-or-https-url>]
+          hosty update --list-feeds [--index <path-or-https-url>]
+          hosty core feed [<id>] [--index <path-or-https-url>]
+        Compatibility aliases:
+          hosty update [--list-channels] [--channel <id>] [--index <reference>]
         """;
 }

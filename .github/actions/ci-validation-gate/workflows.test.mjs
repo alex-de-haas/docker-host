@@ -3,11 +3,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import test from 'node:test';
 
 const workflowDirectory = new URL('../../workflows/', import.meta.url);
-const publications = [
-  'harness-worker-image.yml', 'shell-image.yml', 'desktop-image.yml', 'marketplace-image.yml', 'documents-image.yml',
-  'demo-app-image.yml', 'telemetry-backend-image.yml', 'telemetry-ui-image.yml',
-  'cli-release.yml', 'cardputer-release.yml', 'publish-app-sdk.yml', 'publish-app-sdk-dotnet.yml',
-];
+const publications = ['cardputer-release.yml', 'publish-app-sdk.yml', 'publish-app-sdk-dotnet.yml'];
 
 // Inspect dependencies, not just presence of the gate: an unrelated passing gate cannot authorize a writer.
 function jobsIn(text) {
@@ -53,7 +49,7 @@ function assertGated(text) {
 test('every remaining publication workflow is covered', () => {
   const workflows = readdirSync(workflowDirectory).filter(name => name.endsWith('.yml')
     && !['ci.yml', 'claude-code-review.yml'].includes(name));
-  assert.deepEqual(workflows.sort(), [...publications].sort());
+  assert.deepEqual(workflows.sort(), [...publications, 'ready-releases.yml', 'promote-release.yml', 'platform-bridge.yml'].sort());
 });
 
 for (const file of publications) test(`publication cannot bypass successful exact-SHA main CI: ${file}`, () => {
@@ -96,17 +92,15 @@ test('retains independent SDK publishing and Core/CLI production RID matrix', ()
     assert.doesNotMatch(text, /^    concurrency:/m);
     assert.match(text, /id-token: write/);
   }
-  const cli = readFileSync(new URL('cli-release.yml', workflowDirectory), 'utf8');
+  const cli = readFileSync(new URL('ready-releases.yml', workflowDirectory), 'utf8');
   const ci = readFileSync(new URL('ci.yml', workflowDirectory), 'utf8');
   const supportedRids = ['osx-arm64', 'linux-arm64', 'linux-x64', 'win-x64'];
-  for (const job of [jobsIn(ci).get('core-aot'), jobsIn(cli).get('publish-artifacts')]) {
+  for (const job of [jobsIn(ci).get('core-aot'), jobsIn(cli).get('native')]) {
     assert.deepEqual([...job.matchAll(/\brid: ([\w-]+)/g)].map(match => match[1]), supportedRids);
   }
-  const build = jobsIn(cli).get('publish-artifacts');
-  const preparation = cli.split('      - name: Prepare release assets\n')[1].split('      - name: ')[0];
-  for (const section of [build, preparation]) assert.doesNotMatch(section, /hosty-(?:core-)?darwin-x64/);
-  assert.match(cli, /npm run core:test/);
-  assert.match(cli, /npm run cli:test/);
+  const build = jobsIn(cli).get('native');
+  assert.doesNotMatch(build, /hosty-(?:core-)?darwin-x64/);
+  assert.match(cli, /uses: \.\/\.github\/actions\/ci-validation-gate/);
   assert.match(cli, /dotnet publish apps\/core/);
   assert.match(cli, /dotnet publish apps\/cli/);
 });
@@ -139,4 +133,46 @@ test('completed-CI publications bind every source consumer while SDKs preserve p
       assert.ok(attach > 0 && attach < text.indexOf('- name: Extract Docker metadata'), `${file} gives exact-SHA Git metadata a named local ref`);
     } else assert.match(text, /git tag --force (?:cli-dev|cardputer-dev) "\$\{?PUBLISH_SOURCE_SHA\}?"/);
   }
+});
+
+test('ready-release writers require the exact qualified source and successful artifact prerequisites', () => {
+  const text = readFileSync(new URL('ready-releases.yml', workflowDirectory), 'utf8'), jobs = jobsIn(text);
+  const prepare = jobs.get('prepare');
+  assert.match(prepare, /uses: \.\/\.github\/actions\/ci-validation-gate/);
+  assert.match(prepare, /PUBLISH_SOURCE_SHA: \$\{\{ steps.validation.outputs.source-sha \}\}/);
+  assert.doesNotMatch(text, /git push --force|--clobber/);
+  for (const name of ['prepare','images','native','publish-platform']) assert.doesNotMatch(jobs.get(name), /continue-on-error:/);
+  assert.match(jobs.get('publish-apps'), /uses: actions\/download-artifact[^\n]*\n        continue-on-error: true\n        if: needs.prepare.outputs.has-images/);
+  for (const name of ['images','native']) {
+    assert.match(jobs.get(name), /^    needs: prepare$/m);
+    assert.match(jobs.get(name), /ref: \$\{\{ needs.prepare.outputs.source \}\}/);
+  }
+  assert.match(jobs.get('publish-apps'), /^    needs: \[prepare, images\]$/m);
+  assert.match(jobs.get('publish-apps'), /if: always\(\) && needs.prepare.result == 'success' && needs.images.result != 'cancelled'/);
+  assert.match(jobs.get('publish-platform'), /^    needs: \[prepare, native\]$/m);
+  assert.match(jobs.get('publish-platform'), /if: needs.native.result == 'success'/);
+  for (const name of ['publish-apps','publish-platform']) assert.match(jobs.get(name), /ref: \$\{\{ needs.prepare.outputs.source \}\}/);
+  assert.match(text, /context: release-plan\/contexts\//);
+  assert.match(text, /tar -xf release-plan\/contexts.tar/);
+});
+
+test('manual promotion selects an exact retained release and never invokes a builder', () => {
+  const text = readFileSync(new URL('promote-release.yml', workflowDirectory), 'utf8');
+  assert.match(text, /if: github.ref == 'refs\/heads\/main'/);
+  assert.match(text, /RELEASE_ID: \$\{\{ inputs.release-id \}\}/);
+  assert.match(text, /EXPECTED_RELEASE: \$\{\{ inputs.expected-release \}\}/);
+  assert.match(text, /PROMOTION_ID: \$\{\{ inputs.request-id \}\}/);
+  assert.doesNotMatch(text, /workflow_run:|build-push-action|dotnet publish|continue-on-error:/);
+  const implementation = readFileSync(new URL('../../../scripts/releases/publish.mjs', import.meta.url), 'utf8');
+  assert.match(implementation, /await verify\(artifact.repository, artifact.digest, artifact.platforms\)/);
+  assert.match(implementation, /await prove\(/);
+});
+
+test('compatibility bridge is an explicitly selected manual cutoff, never an automatic writer', () => {
+  const text = readFileSync(new URL('platform-bridge.yml', workflowDirectory), 'utf8');
+  assert.match(text, /workflow_dispatch:/);
+  assert.match(text, /if: github.ref == 'refs\/heads\/main'/);
+  assert.match(text, /cancel-in-progress: false/);
+  assert.match(text, /RELEASE_ID: \$\{\{ inputs.release-id \}\}/);
+  assert.doesNotMatch(text, /workflow_run:|build-push-action|dotnet publish|continue-on-error:/);
 });

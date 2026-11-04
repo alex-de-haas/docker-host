@@ -246,14 +246,14 @@ internal static class DomainEndpoints
             try
             {
                 var status = await lifecycle.GetUpdateStatusAsync(targetAppId, refresh: false, cancellationToken);
-                return CoreJson.Json(new AppUpdateAvailabilityResponse(targetAppId, Installed: true, status.UpdateAvailable));
+                return CoreJson.Json(new AppUpdateAvailabilityResponse(targetAppId, Installed: true, status.Error is null && status.UpdateAvailable, status.ErrorCode, status.Error is null ? null : "Update readiness could not be verified. Retry or inspect Core logs.", status.Readiness));
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 // Availability can't be determined (no followed feed/source, unreadable manifest, etc.)
-                // — report no update rather than failing; the reviewed update flow stays the source of
+                // — report an explicit unavailable verdict; the reviewed update flow stays the source of
                 // truth. Client cancellation still propagates.
-                return CoreJson.Json(new AppUpdateAvailabilityResponse(targetAppId, Installed: true, UpdateAvailable: false));
+                return CoreJson.Json(new AppUpdateAvailabilityResponse(targetAppId, Installed: true, UpdateAvailable: false, ErrorCode: "update_check_failed", Error: "Update readiness could not be verified. Retry or inspect Core logs.", Readiness: "unavailable"));
             }
         });
 
@@ -350,7 +350,7 @@ internal sealed record AppDirectoryEntry(
 /// One declared platform interface, resolved to a ready-to-call URL from the app's endpoints.
 internal sealed record AppDirectoryInterface(string Name, string Key, string? Url, int? Version = null, IReadOnlyList<string>? Capabilities = null);
 
-internal sealed record AppUpdateAvailabilityResponse(string AppId, bool Installed, bool UpdateAvailable);
+internal sealed record AppUpdateAvailabilityResponse(string AppId, bool Installed, bool UpdateAvailable, string? ErrorCode = null, string? Error = null, string? Readiness = null);
 
 internal sealed record UsersResponse(
     IReadOnlyList<HostUserRecord> Users,

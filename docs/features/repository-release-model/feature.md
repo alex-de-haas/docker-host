@@ -1,12 +1,15 @@
 ---
 created: 2026-05-12
-updated: 2026-11-02
+updated: 2026-11-04
 summary: The repository layout, release artifacts and versioning rules for every component.
 ---
 
 # Repository And Release Model
 
 This document records the current repository layout and release artifact boundaries after the Core/Shell split and retirement of the legacy combined Host package.
+
+The [ready releases and update feeds plan](../runtime-app-update/plan.md) owns the scoped app and
+Core/CLI publication, feed selection and migration work; this document describes the implemented contracts. Initial public seeding and bridge rollout remain tracked in that plan.
 
 ## Decision
 
@@ -94,7 +97,7 @@ node -e "const l=require('./package-lock.json');for(const k of Object.keys(l.pac
 ```
 
 A change to this floor is a lockfile-only change and carries no artifact version bump; it reaches hosts the
-way any other lockfile change does (see "Mutable tags and the publish guard" for image apps, and the source
+way any other lockfile change does (see "Ready release publication" for image apps, and the source
 commit probe in [Runtime App Update](../runtime-app-update/feature.md) for source-installed apps).
 
 ## GitHub Actions Model
@@ -103,71 +106,126 @@ commit probe in [Runtime App Update](../runtime-app-update/feature.md) for sourc
 
 `ci.yml` runs on every PR and main push without a workflow-level path filter. Cheap policy, version and documentation checks run first; affected component checks run in parallel. Core unit tests and NativeAOT are separate jobs. Manual exact-revision CI runs the remaining normal checks; expensive native/Docker acceptance uses explicit local commands. Shared web changes affect Shell/Harness; root Node dependencies affect Node consumers; genuine .NET toolchain/configuration changes affect .NET consumers. Strictly verified platform version-only metadata does not run every native scenario.
 
-Image and native-release workflows start after completed main CI, validate the exact successful main push revision, and select affected artifacts. Unrelated CI completions are no-ops. SDK workflows retain path-filtered push triggers and their trusted execution context, waiting for the exact main validation before publication. Artifact-specific production validation stays where CI does not produce reusable release output. Cardputer normal publication consumes the complete verified firmware/recovery artifact of that exact CI run. Manual main recovery remains available.
+### Ready release publication
 
-The standalone Workspaces app and `workspaces-image.yml` are retired; Core workspace APIs and Harness agent tools remain supported. No workflow packages the native Apple client; its HostyKit/macOS/iOS builds remain in CI. Cardputer retains the pinned ESP-IDF build environment.
+[`ready-releases.yml`](../../../.github/workflows/ready-releases.yml) starts after successful,
+trusted `main` push CI. A pull request runs checks without advancing a feed. Manual recovery also
+requires exact successful main validation. The publisher refuses a dirty or mismatched checkout.
+SDK and Cardputer publication remain independent; the native Apple client has no publishing workflow.
 
-`claude-code-review.yml` remains an advisory PR review, separate from build validation. SDK npm/NuGet workflows retain their trusted-publisher filenames and independent version publication.
+The publisher has three separate decisions:
 
-### Concurrency And Source Identity
+1. CI selects required checks using `scripts/ci-policy.mjs`.
+2. `scripts/releases/prepare.mjs` compares effective build inputs with retained artifact receipts.
+3. An application release changes only when its manifest, production source or required artifacts
+   change, or a completed candidate still needs promotion.
 
-Superseded PR runs are cancelled. Distinct main commits retain independent validation, and manual/nightly runs cannot cancel their push validation. Publication starts after CI rather than occupying runners while waiting for it.
+An unrelated Core change therefore does not rebuild all application images. Shared inputs select
+their actual consumers. Unsupported Docker input syntax conservatively includes the whole context
+and disables reuse with an explicit reason. npm contexts project the workspace lockfile's nested,
+peer and optional dependency closure; the builder receives those exact files, modes and symlinks.
+Fingerprints also include the Dockerfile, resolved base images, frontend, builder and build arguments.
+Recipes with unpinned package-manager/network setup explicitly disable reuse.
 
-Each artifact's publishing job remains serialized without cancellation where mutable tags/releases require it. SDK publishes remain independent so intermediate unpublished versions cannot be cancelled away. The checked-out, built and tagged revision is the validated CI source SHA, even when main has advanced since that run started. Freshness checks use that source SHA, not the newer default-branch SHA of a workflow completion event.
+Reuse requires the original input fingerprint, full source commit, signed artifact provenance and
+consumer-readable content for every declared platform. A reused service retains its original build
+commit. Telemetry's backend and UI can therefore advance independently inside one complete release.
+The generated combination passes the actual Core manifest parser for every production profile before
+its candidate is recorded. This contract check complements source CI and runtime acceptance; it is
+not a claim that a digest proves application correctness.
 
-### Mutable tags and the publish guard
+### Metadata, feeds and concurrency
 
-Serializing publishes is not the same as ordering them. GitHub makes no FIFO promise about which queued
-run a concurrency group admits next, and the gate `test` job sits **outside** the group - so a newer
-commit can clear testing first, take the publish slot, and finish before an older commit's publish job
-even starts. Whichever runs last wins the mutable tags, which is exactly how `:latest` ends up on an
-older build than `main`.
+[`distribution/release-publisher.json`](../../../distribution/release-publisher.json) is publisher
+configuration. This distribution declares automatic `daily` and manually promoted `stable`, with
+stable as the fresh-install default. Feed IDs, count and default are data; another publisher may
+configure one, three or ten unrelated names. No branch is needed for each feed.
 
-Every publishing job therefore calls [`.github/actions/publish-guard`](../../../.github/actions/publish-guard/action.yml)
-as soon as it holds the slot. The guard answers two **independent** questions:
+Generated metadata lives on the configured `app-releases` branch, separate from authored `main`:
 
-| Output | Question | Effect when the answer is no |
-| --- | --- | --- |
-| `fresh` | Is `github.sha` still the tip of `main`, so this run may **move** a mutable tag that already points elsewhere? | `:latest` and the rolling `cli-dev` / `cardputer-dev` release are left on the newer build. `sha-<commit>` still ships. |
-| `push_version` | Is the declared version tag absent from the registry, so this run may **create** it? | Leave the existing version tag untouched; `:latest` and `sha-<commit>` still publish. |
+```text
+apps/<app-id>/releases/<release-id>/{manifest.json,release.json,...assets}
+apps/<app-id>/{candidate.json,feed-state.json,feeds.json,install.json}
+apps/<app-id>/promotions/<request-id>.json
+platform/releases/<release-id>/release.json
+platform/{candidate.json,feed-state.json,feeds.json,bridge-intent.json,bridge.json}
+artifacts/images/<image-id>/<input-fingerprint>/<digest>.json
+```
 
-The independence matters. Creating an absent tag is not moving one, so a stale run may still create
-the version tag it declares - and must, or version tags get stranded. A queued Marketplace or Telemetry
-run goes stale the moment *any* unrelated commit lands on `main`, including a docs-only one, and those
-commits do not match the image workflow's `paths:` filter, so no successor run is ever started to
-publish the version. `main`'s manifest would keep pinning an image that does not exist, breaking
-installation until someone happened to touch that app again.
+Release metadata is written once. Assets and exact metadata commit URLs are verified from the
+consumer's side before a separate fast-forward commit moves a feed pointer. Concurrent writers
+refresh and retry their changes without dropping unrelated apps or feeds; no force-push is used.
+An uncertain successful push is recovered from its retained bytes. Completed release metadata,
+original artifact attestations and promoted image/native bytes require retention: deleting them is
+a destructive release-management action, not automatic cleanup.
 
-Because the guard runs while the job holds the slot, no sibling run can publish between its check and
-the resulting push - the check and the tagging are atomic with respect to the group.
+An incomplete app cannot advance its feed. Independently complete apps can still publish when one
+image job fails. A missed promotion reuses its retained candidate without rebuilding it. A no-op
+source change does not manufacture a new release. Version strings describe compatibility; exact
+release identity includes the manifest and content digests, so a dependency rebuild can produce a
+distinct release with an unchanged version.
 
-The guard is the **first** step after checkout, not a late gate before publishing. The publishing job
-is itself the concurrency unit, so every step it runs holds the slot shut against the fresh run queued
-behind it; a stale run has to decide before doing work it will discard. This matters most in
-`cardputer-release.yml`, which builds firmware inside its own group - `ci.yml`'s `cardputer-shell` job
-covers that build on the pull request side, so skipping it in a stale release run costs no validation.
+[`promote-release.yml`](../../../.github/workflows/promote-release.yml) takes an exact target,
+release ID, feed ID, expected current release (`first` for an empty feed), stabilization evidence and
+a persistent promotion UUID. It rechecks existing artifacts, then advances only that feed. It builds
+nothing. A stale expected pointer, source regression/divergence, invalid artifact or reused UUID for
+another decision is refused. An older retained daily candidate can become stable while daily stays
+on a newer candidate. Retries preserve the original decision.
 
-**Version tags are immutable: first publish wins.** A rebuild that does not change the declared version
-still publishes, so its content genuinely ships - it just may not claim a version tag that already
-means something else. This is forced by two rules meeting: Dependabot pull requests are exempt from
-version bumps (see [Versioning](#versioning)), yet they do change what `npm ci` installs into the image;
-and Hosty's docker adapter TOFU-freezes a tag at install time. Without the freeze, a host resolving
-`hosty-marketplace:0.3.6` could get different artifacts than another host that resolved the same
-declared app version a week earlier.
+### Compatibility image tags
 
-The rejected alternative was to gate publication itself on a version bump. That is worse: the image
-would then never be rebuilt for a lockfile-only change, so the dependency fix would reach no host at
-all - not even through `:latest`. The guard's registry probe is also preferred over diffing the manifest
-against the previous commit, because it stays correct for `workflow_dispatch` re-publishes (a tag that
-was never pushed is still missing, so it is created) without reasoning about merge-commit ancestry.
+Release manifests use `repository@sha256:...`, never a moving tag. Build jobs upload unique candidate
+tags; first publication may also claim the declared version tag. The durable version-alias receipt
+fixes that first digest. Later same-version builds cannot overwrite it, and a missing alias is
+recovered from the original claim. Registry access failures do not count as a missing tag. Existing
+aliases predating the new publisher stay unchanged. The old app-image workflows and rolling native
+publisher are removed. Cardputer alone retains its separate rolling-release freshness guard.
 
-Not every workflow has a version tag to protect. `shell-image.yml` and `demo-app-image.yml` publish only
-`:latest` and `sha-<commit>`, and their manifests pin `"tag": "latest"`, so the guard gates `:latest`
-alone there. `marketplace-image.yml`, `telemetry-ui-image.yml`, and `telemetry-backend-image.yml` each
-tag with a manifest version and use both answers. The two telemetry workflows read the same version from
-`apps/telemetry/manifest.json` but publish different repositories, so each probes its own tag. In
-`cli-release.yml` and `cardputer-release.yml` there is no immutable fallback at all - the rolling tag is
-force-moved and the assets are clobbered - so a stale run publishes nothing.
+### First publication and existing installations
+
+The rollout sequence is explicit; code availability does not establish public release readiness:
+
+1. Validate and merge the reader/publisher revision through the ordinary repository workflow.
+2. Run Ready releases for that successful main revision. Inspect each completed app/platform
+   candidate and its artifact evidence. A failed target keeps its previous pointer.
+3. Manually promote an exact verified candidate to the configured default feed for every target.
+   With this configuration, `feeds.json` is withheld until stable is seeded, preventing the sole-feed
+   rule from accidentally making daily the fresh default. No default silently falls back to main.
+4. Publish the one-time platform bridge with `platform-bridge.yml`, selecting its exact retained
+   reader-capable release. It requires seeded platform feeds and records a permanent intent/cutoff
+   before replacing `cli-dev` assets. Retrying uses the same bytes; another release cannot move the
+   cutoff. Retain the frozen bridge for old clients.
+5. Offer reviewed app source migrations and verify the old-main-to-daily mapping. A source switch
+   preserves installed versions, data and runtime. An actual update is a separate reviewed action.
+6. Coordinate catalog entries with their repository owners. Each generated `install.json` exports
+   the feed URL, default ID and exact default manifest reference for catalog consumers; old static
+   main URLs do not become stable merely because Core supports feeds.
+
+The nine repository apps are Shell, Desktop, Documents, Marketplace, Demo App, Harness, Telemetry,
+Whisper and OPUS. Docker and supported local production profiles are declared in the configuration;
+native source apps retain full commit pins and their existing execution capabilities.
+
+The local installation and source metadata inventory observed on 2026-11-04 contains these external
+applications. Repository owners remain responsible for their separate adoption and public rollout:
+
+| App ID | Installed version | Repository / owner | Recorded source ref |
+| --- | --- | --- | --- |
+| `com.haas.media-server` | 0.93.0 | [media-server](https://github.com/alex-de-haas/media-server) / alex-de-haas | main |
+| `com.haas.movie-studio` | 0.2.0 | Not recorded; owner binding required | Not recorded |
+| `com.haas.project-manager` | 0.14.2 | [project-manager](https://github.com/alex-de-haas/project-manager) / alex-de-haas | main |
+| `com.haas.solitaire` | 0.3.1 | [solitaire](https://github.com/alex-de-haas/solitaire) / alex-de-haas | main |
+| `com.haas.torrent-engine` | 0.9.0 | [torrent-engine](https://github.com/alex-de-haas/torrent-engine) / alex-de-haas | main |
+| `com.haas.transcode-engine` | 0.14.0 | [transcode-engine](https://github.com/alex-de-haas/transcode-engine) / alex-de-haas | main |
+
+This inventory is not evidence of external adoption. This workspace grants no edits in those
+repositories. Each needs a separately authorized workspace, publisher recipes for every production
+service, compatible Core/SDK contract checks, complete artifact verification, initial default seeding,
+catalog coordination and reviewed legacy source mappings. Movie Studio has no recorded source binding;
+its owner must identify one before an adoption can be prepared. Existing installations are unchanged.
+The reusable modules under `scripts/releases/` accept publisher configuration; a GitHub fork must
+also change registry repositories, distribution URLs, provenance repository/workflow policy and
+legacy migration declarations. Familiar feed names confer no special behavior or permission.
+
 
 ### Workflow lint
 
@@ -216,113 +274,25 @@ end before they report.
 
 ## Release Artifacts
 
-Hosty Shell image artifact:
+Application releases contain an immutable `app.0.2` manifest, release descriptor and referenced
+navigation/catalog assets and skill packages. Docker services name exact OCI digests; production
+local-source services name a full Git commit. Core continues reading authored/legacy `app.0.1`.
 
-```text
-ghcr.io/alex-de-haas/hosty-shell:latest
-ghcr.io/alex-de-haas/hosty-shell:sha-<commit>
-```
+Core and CLI share one platform descriptor and eight binaries for `osx-arm64`, `linux-arm64`,
+`linux-x64` and `win-x64`; `osx-x64` is not supported. Their immutable GitHub tag is
+`platform-v<version>-<release-id>`. Asset names remain `hosty[-core]-darwin-arm64`,
+`hosty[-core]-linux-arm64`, `hosty[-core]-linux-x64` and `hosty[-core]-windows-x64.exe`.
+Each descriptor records role, RID, size, SHA256, original source, input fingerprint and provenance.
+Native receipts include resolved NuGet dependencies and the host compiler, linker and SDK evidence.
+`VERSION` and `SHA256SUMS` remain compatibility exports. All eight assets must verify before the
+platform candidate or feed advances; an interrupted upload cannot advertise a partial pair.
 
-The Shell image is the Core-managed system runtime app artifact for the browser UI. Its source of truth is `apps/shell/manifest.json` and `apps/shell/Dockerfile`. The `shell-image.yml` workflow publishes `latest` and `sha-<commit>` tags to GitHub Container Registry after successful affected `main` CI.
+See [Platform release feeds](../platform-release-feeds/feature.md) for saved selection, installers,
+paired bootstrap, migration, update preparation and recovery.
 
-Demo App image artifact:
+Cardputer keeps its independent `cardputer-dev` prerelease, pinned ESP-IDF build and firmware OTA
+contract. Its firmware, bootloader, partition table, OTA data and checksum artifacts are unchanged.
 
-```text
-ghcr.io/alex-de-haas/demo-app:latest
-ghcr.io/alex-de-haas/demo-app:sha-<commit>
-```
-
-The Demo App image is the first-party example runtime app artifact for app manifest workflows. Its source of truth is `apps/demo-app/manifest.json` and `apps/demo-app/Dockerfile`. The `demo-app-image.yml` workflow publishes `latest` and `sha-<commit>` tags to GitHub Container Registry.
-
-Marketplace image artifact:
-
-```text
-ghcr.io/alex-de-haas/hosty-marketplace:<manifest-version>
-ghcr.io/alex-de-haas/hosty-marketplace:latest
-ghcr.io/alex-de-haas/hosty-marketplace:sha-<commit>
-```
-
-Marketplace is versioned and shipped independently as a runtime app. Its manifest pins the versioned image tag; `marketplace-image.yml` also publishes `latest` and the commit tag and attaches build provenance.
-
-Telemetry image artifacts:
-
-```text
-ghcr.io/alex-de-haas/hosty-telemetry-backend:<manifest-version>
-ghcr.io/alex-de-haas/hosty-telemetry-ui:<manifest-version>
-```
-
-Both read their version from `apps/telemetry/manifest.json` - the telemetry app ships as one unit - and
-each also publishes `latest` and `sha-<commit>` into its own repository.
-
-Across these images, `sha-<commit>` records a short source SHA. It is a lookup tag, not a verified immutable build identity: a rerun can rebuild the same source. Verified artifact reuse requires the full source SHA and content digest. Version tags are written once and never moved; `:latest` follows a source revision that still passes the main freshness guard. A stale run may create an absent immutable version, but cannot move a rolling tag over newer main.
-
-Core and CLI publish native executables for macOS ARM64, Linux ARM64/x64 and Windows x64.
-macOS Intel (`osx-x64`) is excluded from CI and release builds.
-
-CLI release artifacts:
-
-```text
-hosty-darwin-arm64
-hosty-linux-arm64
-hosty-linux-x64
-hosty-windows-x64.exe
-```
-
-Core release artifacts:
-
-```text
-hosty-core-darwin-arm64
-hosty-core-linux-arm64
-hosty-core-linux-x64
-hosty-core-windows-x64.exe
-SHA256SUMS
-VERSION
-```
-
-`VERSION` holds the platform version this release publishes, read from `Directory.Build.props` in the
-same commit the binaries were stamped from. It exists so a client can name the version an update would
-install — the update check itself compares binary hashes against `SHA256SUMS` and cannot. Core reads it
-during its own update check and reports it as `availableVersion` on `GET /api/core/update-status`, next
-to the unchanged hash-derived `updateAvailable`. It is
-deliberately **not** covered by `SHA256SUMS`: tampering with it can mislabel a version in a UI, never
-smuggle a binary past the checksum gate, and every consumer treats an absent, unreadable, or
-implausible marker as "no version named" rather than as a failure.
-
-Cardputer development firmware artifacts:
-
-```text
-hosty-cardputer.bin
-hosty-cardputer-bootloader.bin
-hosty-cardputer-partition-table.bin
-hosty-cardputer-ota-data.bin
-SHA256SUMS
-```
-
-The rolling `cardputer-dev` prerelease publishes these ESP32-S3 images after
-host tests and a pinned ESP-IDF 5.5.4 build. GitHub build-provenance
-attestations cover every binary. The firmware OTA client downloads only
-`hosty-cardputer.bin` from this compiled-in release location; Core cannot
-select or serve firmware.
-
-For development and early usage, CLI and Core artifacts are published to one rolling GitHub prerelease with tag `cli-dev`. The `cli-dev` workflow overwrites existing release assets for every new release build, so installation URLs stay stable while the binaries track the latest development build. Before uploading new assets, it removes any retired Intel macOS binaries from the existing rolling release. Missing retired assets are harmless on retries; failed asset listing or deletion stops publication before its completion receipt advances.
-
-Unix users install the current development CLI through `scripts/install.sh`:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/alex-de-haas/docker-host/main/scripts/install.sh | sh
-```
-
-Windows users install the current development CLI through `scripts/install.ps1`:
-
-```powershell
-irm https://raw.githubusercontent.com/alex-de-haas/docker-host/main/scripts/install.ps1 | iex
-```
-
-Stable CLI/Core versions can use immutable GitHub releases such as `cli-v0.2.1` when that channel is enabled.
-
-`install.sh` detects OS/architecture, downloads the right CLI artifact, verifies checksums when available, installs the executable to `~/.hosty/bin/hosty`, marks it as runnable, and adds the install directory to a detected shell profile. `install.ps1` downloads `hosty-windows-x64.exe`, verifies checksums when available, installs it to `%USERPROFILE%\.hosty\bin\hosty.exe`, and adds the install directory to the current user's PATH. Hosty uses `~/.hosty` as its default local root, or `HOSTY_HOME` when explicitly set.
-
-The installer does not install Core directly. `hosty start` downloads Core only when `~/.hosty/core/bin/hosty-core` is missing. `hosty update` updates the managed CLI executable first, then installs or replaces the managed Core executable. It does not pull a Host image or recreate a Host container. Shell remains a Core-managed system runtime app. Core resolves its manifest from the release-owned distribution list and installs it with the manifest's default runtime profile (`docker`, switchable afterwards with `hosty apps switch-runtime`); when the selected runtime is `docker`, Docker pulls the image according to the Shell manifest. Which first-party apps preinstall — Shell and Marketplace by default, Telemetry opt-in — is decided by the distribution list merged with the operator's `hosty setup` choices, not by per-app manifest-path launch settings.
 
 ### First-party app images
 
@@ -348,18 +318,12 @@ two images is mode `1777`, holding only derived, non-secret output.
 
 ## Release-Ready Validation
 
-Manual validation for the current artifact model:
-
-- install the CLI through the curl flow;
-- run `hosty install` and confirm local Hosty directories are prepared;
-- start installed Core with `hosty start` and confirm missing Core bootstrap downloads `hosty-core`;
-- start source Core explicitly with `hosty core start --project apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj` when validating repository Core changes;
-- run Shell locally with `npm run shell:dev` or through the Core-managed `hosty.shell` runtime app;
-- verify `docker pull ghcr.io/alex-de-haas/hosty-shell:latest` succeeds after `shell-image.yml` runs on `main`;
-- run Marketplace through Core-managed `dev` and `docker` runtimes and verify its app-origin storefront and Shell install handoff;
-- install the Demo App through `hosty apps install apps/demo-app`;
-- start, stop, restart, log, update-plan, update, backup, restore, and remove the Demo App through `hosty apps`;
-- run `hosty update` and confirm the CLI channel works.
+Release validation includes the publisher/context/registry/concurrency tests, exact-source CI gate,
+workflow lint, generated manifest validation, affected app builds, and Core/CLI Native AOT builds.
+Use a managed sandbox with isolated users/data for mixed-artifact updates, source migration and
+ordinary Core/Shell login. Paired native replacement is exercised on the real target OS; unit tests
+or another OS do not substitute for Windows replacement acceptance. Public feeds, immutable tags
+and the compatibility bridge are operator rollout actions, not test fixtures.
 
 ## Versioning
 
@@ -367,13 +331,13 @@ Every component uses semantic versioning `major.minor.patch`, applied per releas
 
 ### Tier 1 - Platform (`apps/core` + `apps/cli`)
 
-Core and CLI are tightly coupled and ship together as one bundle (`cli-dev` / `cli-v*`), so they share a single version. The shared version lives in the root `Directory.Build.props` (`<Version>`). Individual `.csproj` files do not set their own `<Version>`; they inherit it.
+Core and CLI are tightly coupled and ship together as one immutable platform bundle, so they share a single version. The shared version lives in the root `Directory.Build.props` (`<Version>`). Individual `.csproj` files do not set their own `<Version>`; they inherit it.
 
 ### Tier 2 - Runtime apps (`apps/shell`, `apps/marketplace`, `apps/demo-app`, and external apps such as project-manager, media-server, torrent-engine)
 
 Each runtime app is its own release artifact (its own image / repository) and versions independently through the `version` field in its `manifest.json`. Shell and Marketplace are versioned exactly like other runtime apps, not as part of the platform.
 
-`version` is a separate axis from `schemaVersion` (`app.0.1`), which is the manifest *contract* version owned by Core (`RuntimeAppManifest.cs`). Bump `schemaVersion` only when the manifest format changes; it is unrelated to any single app's `version`. An app declares the `schemaVersion` it targets, and that declaration is the compatibility handshake, so no cross-repository version matrix is required.
+`version` is a separate axis from `schemaVersion` (`app.0.1` or `app.0.2`), which is the manifest *contract* version owned by Core (`RuntimeAppManifest.cs`). Bump `schemaVersion` only when the manifest format changes; it is unrelated to any single app's `version`. An app declares the `schemaVersion` it targets, and that declaration is the compatibility handshake, so no cross-repository version matrix is required.
 
 ### Tier 3 - Native clients (`apps/shell-swift`, `apps/shell-cardputer`)
 
@@ -396,8 +360,6 @@ While the project is in `0.x` (current), breaking changes go in `minor` per semv
 
 Bump the relevant component's version in the same change that ships the work.
 
-During early development, `cli-dev` is the main platform distribution channel. Immutable `cli-v*` releases can be introduced when the project needs stable public versions. The repository contains a local placeholder product-channel index that the CLI can read explicitly, but no generated publishing workflow is part of the current release model. The placeholder records the Core artifact family instead of a source project path.
-
 ## Testing Expectations
 
 - A .NET SDK floor change preserves supported build environments and passes Core/CLI Native AOT publication on the affected native target, plus affected .NET suites.
@@ -406,10 +368,10 @@ During early development, `cli-dev` is the main platform distribution channel. I
 - Core NativeAOT CI and Core/CLI release matrices contain the same four supported targets, and release asset preparation requires only their binaries.
 - Workflows pass `actionlint`, which type-checks expressions, `needs`/`outputs` references, and every `run:` block.
 - Composite action scripts under `.github/actions/**/*.sh` pass `shellcheck`.
-- A publishing run whose commit is no longer the tip of `main` moves no mutable tag: it publishes
-  `sha-<commit>`, and still creates its declared version tag if that tag is absent. In
-  `cli-release.yml` and `cardputer-release.yml` it publishes nothing at all and skips its build.
-- A publishing run whose declared version tag already exists in the registry leaves that tag on the
-  existing image and still publishes `:latest` and `sha-<commit>`.
+- App/platform publishers preserve independent pointers, refuse incomplete candidates and retain
+  immutable release bytes on retry. Automatic publication never promotes a manual-policy feed.
+- Core-only, app-only, shared-input and missed-publication fixtures select the correct builds.
+- Version aliases stay on their first digest across same-version rebuilds and recovery.
+
 - Cardputer host tests and the ESP32-S3 firmware build pass, the binary fits a 3.8125 MiB OTA slot, and release assets carry checksums and provenance.
 - The Claude review job runs only on eligible pull requests (non-draft, same-repository, human-authored) and is skipped rather than failed otherwise; it is advisory, not a required check.

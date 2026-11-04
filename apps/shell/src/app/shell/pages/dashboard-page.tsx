@@ -367,7 +367,7 @@ function CoreSection({
     : stopping.busy ? "Stopping…" : development.busy ? "Restarting…" : runtime.busy ? "Switching…" : "Updating…";
   const showRestartRequired = Boolean(development.state?.restartRequired && !development.busy && !stopping.busy);
   const needsDiagnostics = ["degraded", "unhealthy", "failed"].includes(status?.status ?? "");
-  const showUpdate = !dev && canManageApps && (coreUpdate?.updateAvailable === true || coreUpdating);
+  const showUpdate = !dev && canManageApps && (coreUpdate?.updateAvailable === true || !!coreUpdate?.operationId || coreUpdating);
 
   return (
     <div className="min-w-0 text-sm">
@@ -714,7 +714,7 @@ function CoreVersionBlock({ status, coreUpdate }: { status: CoreStatus | null; c
     return <span className="font-mono text-xs text-muted-foreground">version unknown</span>;
   }
 
-  const channel: AppRevision[] = coreUpdate ? [{ label: "Release channel", value: coreUpdate.releaseTag }] : [];
+  const channel: AppRevision[] = coreUpdate ? [{ label: "Update feed", value: coreUpdate.feedId ?? coreUpdate.releaseTag }] : [];
   const available = resolveAvailableCoreVersion(coreUpdate);
 
   return (

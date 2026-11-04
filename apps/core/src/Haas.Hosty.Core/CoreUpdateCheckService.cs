@@ -1,323 +1,128 @@
-using System.Runtime.InteropServices;
+using Haas.Hosty.Launch;
+using Haas.Hosty.Releases;
 using System.Security.Cryptography;
 
 namespace Haas.Hosty.Core;
 
-// Fast "is a newer Core available?" check for the Shell sidebar. Mirrors what `hosty update` compares:
-// the installed hosty-core executable's SHA256 against the platform Core artifact's entry in the
-// release SHA256SUMS. No download of the binary, no Core restart — one small HTTPS GET. The result is
-// TTL-cached (and refreshes are de-duplicated) so a chatty sidebar can't storm GitHub, and only a
-// managed installed executable is ever compared (a dev/source `dotnet` run reports "no update").
-internal sealed class CoreUpdateCheckService(
-    IHttpClientFactory httpClientFactory,
-    HostyCoreRuntimeConfig config,
+internal sealed class CoreUpdateCheckService(IHttpClientFactory httpClientFactory, HostyCoreRuntimeConfig config,
     ILogger<CoreUpdateCheckService> logger)
 {
     internal const string HttpClientName = "core-update";
-    private const string ReleaseBaseUrlFormat = "https://github.com/alex-de-haas/docker-host/releases/download/{0}";
-    private const string DefaultReleaseTag = "cli-dev";
-    // Short TTL so a hotfix release surfaces quickly on its own; callers can also force a fresh check
-    // (the Shell forces one when the admin opens the platform panel, so no CLI trip is needed).
-    private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(10);
-    private static readonly TimeSpan FetchTimeout = TimeSpan.FromSeconds(6);
-    // Enough for any version line with room to spare, small enough that a wrong file is discarded
-    // rather than read into memory.
-    private const int MaxVersionMarkerLength = 256;
-
     private readonly SemaphoreSlim gate = new(1, 1);
     private CoreUpdateStatus? cached;
-    // The running executable never changes on disk under us, so its hash is computed once and reused.
-    private string? installedExeSha256;
+    private string? cachedRevision;
+    private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(5);
 
-    public async Task<CoreUpdateStatus> GetStatusAsync(bool forceRefresh, CancellationToken cancellationToken)
+    public async Task<CoreUpdateStatus> GetStatusAsync(bool forceRefresh, CancellationToken ct)
     {
-        if (!forceRefresh && cached is { } fresh && !IsStale(fresh))
-        {
-            return fresh;
-        }
-
-        await gate.WaitAsync(cancellationToken);
+        await gate.WaitAsync(ct);
         try
         {
-            // Re-check under the lock: another caller may have refreshed while we waited.
-            if (!forceRefresh && cached is { } stillFresh && !IsStale(stillFresh))
-            {
-                return stillFresh;
-            }
-
-            var status = await CheckAsync(cancellationToken);
-            cached = MergeStatus(cached, status);
+            var source = PlatformFeedFiles.ReadSource(config.DataRoot);
+            if (PlatformAcceptedUpdates.Pending(config.DataRoot) is { } pending)
+                return new(CoreStatusResponse.PlatformVersionString, false, pending.Selection.Source.FeedId, DateTimeOffset.UtcNow,
+                    pending.Error, pending.Selection.Release.Version, FeedId: pending.Selection.Source.FeedId,
+                    ReleaseId: pending.Selection.Release.ReleaseId, OfferId: pending.OfferId, Readiness: "recovery-required",
+                    SourceRevision: pending.Selection.Source.Revision, OperationId: pending.Id);
+            if (!forceRefresh && cached is { } status && source?.Revision == cachedRevision && DateTimeOffset.UtcNow - status.CheckedAt < CacheTtl)
+                return status;
+            cachedRevision = source?.Revision;
+            cached = MergeStatus(cached, await CheckAsync(source, ct));
             return cached;
         }
-        finally
+        catch (Exception ex) when (ex is InvalidOperationException or IOException or System.Text.Json.JsonException)
         {
-            gate.Release();
+            return cached = MergeStatus(cached, Failure(null, ex));
         }
+        finally { gate.Release(); }
     }
 
     internal static CoreUpdateStatus MergeStatus(CoreUpdateStatus? previous, CoreUpdateStatus status)
         => status.Error is null ? status with { LastSuccessfulCheckAt = status.CheckedAt }
             : previous is not null && previous.CurrentVersion == status.CurrentVersion && previous.ReleaseTag == status.ReleaseTag
-                ? previous with
-                {
-                    Error = status.Error, CheckedAt = status.CheckedAt,
-                    LastSuccessfulCheckAt = previous.LastSuccessfulCheckAt ?? (previous.Error is null ? previous.CheckedAt : null),
-                } : status;
+                ? status with { UpdateAvailable = false, OfferId = null,
+                    LastSuccessfulCheckAt = previous.LastSuccessfulCheckAt ?? (previous.Error is null ? previous.CheckedAt : null) }
+                : status;
 
-    private static bool IsStale(CoreUpdateStatus status)
-        => DateTimeOffset.UtcNow - status.CheckedAt >= CacheTtl;
-
-    private async Task<CoreUpdateStatus> CheckAsync(CancellationToken cancellationToken)
+    private async Task<CoreUpdateStatus> CheckAsync(PlatformUpdateSource? source, CancellationToken ct)
     {
-        var currentVersion = CoreStatusResponse.PlatformVersionString;
-        var releaseTag = ResolveReleaseTag();
-
-        // Only a managed installed Core exe can be matched against a release artifact by hash. A dev/source
-        // run (the process path is the dotnet host) or an unknown path reports "no update" so the sidebar
-        // button never shows where an update can't actually be applied.
-        var exePath = Environment.ProcessPath;
-        var artifactName = TryGetCoreArtifactName();
-        if (exePath is null || artifactName is null || !IsManagedCoreExecutable(exePath))
-        {
-            return new CoreUpdateStatus(currentVersion, false, releaseTag, DateTimeOffset.UtcNow, null);
-        }
-
+        var current = CoreStatusResponse.PlatformVersionString;
+        var executable = Environment.ProcessPath;
+        if (executable is null || Path.GetFileName(executable) is not ("hosty-core" or "hosty-core.exe")
+            || CoreLaunchIdentity.Current().Mode == "dev")
+            return new(current, false, source?.FeedId ?? "", DateTimeOffset.UtcNow, null, Readiness: "not-applicable", FeedId: source?.FeedId);
         try
         {
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeout.CancelAfter(FetchTimeout);
-
-            // Both files come from the same release; fetching them back to back would spend two
-            // round-trips of the same short budget on what is one look at the channel. The marker
-            // runs on the caller's token rather than this timeout, and owns its deadline: sharing
-            // the budget let a marker request that outlived a completed checksum fetch cancel into
-            // the outer catch and report "Update check failed" for a comparison that had already
-            // succeeded. An optional field must not be able to suppress the verdict.
-            var checksumsTask = DownloadChecksumsAsync(releaseTag, timeout.Token);
-            var availableVersionTask = DownloadAvailableVersionAsync(releaseTag, cancellationToken);
-            await Task.WhenAll(checksumsTask, availableVersionTask);
-            var checksums = await checksumsTask;
-            var availableVersion = await availableVersionTask;
-            if (checksums is null || !TryFindChecksum(checksums, artifactName, out var expected))
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            deadline.CancelAfter(TimeSpan.FromSeconds(20));
+            var reader = new PlatformReleaseReader(httpClientFactory.CreateClient(HttpClientName));
+            var selection = await PlatformFeedSource.ResolveAsync(reader, config.DataRoot, executable: CoreCliLauncher.ResolveCliPath(), ct: deadline.Token);
+            if (PlatformFeedFiles.ReadSource(config.DataRoot) is null)
             {
-                return new CoreUpdateStatus(currentVersion, false, releaseTag, DateTimeOffset.UtcNow, "Release checksums were unavailable.", availableVersion);
+                using var sourceLease = CoreLaunchFiles.Lock(config.DataRoot);
+                var existing = PlatformFeedFiles.ReadSource(config.DataRoot);
+                if (existing is null) selection = selection with { Source = PlatformFeedFiles.SaveSource(config.DataRoot, selection.Source, null) };
+                else if (existing.IndexRef != selection.Source.IndexRef || existing.FeedId != selection.Source.FeedId)
+                    throw new PlatformReleaseException("platform_update_source_stale", "The selected source changed during update checking.");
+                else selection = selection with { Source = existing };
             }
-
-            var installed = await GetInstalledExeSha256Async(exePath, timeout.Token);
-            var updateAvailable = !string.Equals(installed, expected, StringComparison.OrdinalIgnoreCase);
-            return new CoreUpdateStatus(currentVersion, updateAvailable, releaseTag, DateTimeOffset.UtcNow, null, availableVersion);
+            await reader.CheckAssetsAsync(selection, PlatformFeedSource.CurrentRid, deadline.Token);
+            var core = PlatformReleaseReader.Asset(selection.Release, "core", PlatformFeedSource.CurrentRid);
+            var cli = PlatformReleaseReader.Asset(selection.Release, "cli", PlatformFeedSource.CurrentRid);
+            var cliPath = CoreCliLauncher.ResolveCliPath();
+            var available = !await PlatformReleaseReader.MatchesAssetAsync(executable, core, deadline.Token)
+                || cliPath is null || !await PlatformReleaseReader.MatchesAssetAsync(cliPath, cli, deadline.Token);
+            if (available && (!Version.TryParse(selection.Release.Version, out var targetVersion)
+                || !Version.TryParse(current, out var installedVersion) || targetVersion < installedVersion
+                || targetVersion == installedVersion && !await PlatformReleaseReader.MatchesAssetAsync(executable, core, deadline.Token)))
+                return new(current, false, selection.Source.FeedId, DateTimeOffset.UtcNow, null,
+                    selection.Release.Version, FeedId: selection.Source.FeedId, ReleaseId: selection.Release.ReleaseId,
+                    Readiness: "no-forward-update", SourceRevision: selection.Source.Revision);
+            string? offerId = null;
+            if (available)
+            {
+                offerId = Guid.NewGuid().ToString("N");
+                var offer = new CorePlatformOffer(offerId, selection, DateTimeOffset.UtcNow);
+                CoreLaunchFiles.Write(OfferPath(offerId), offer, CoreJson.TypeInfo<CorePlatformOffer>());
+                foreach (var old in Directory.EnumerateFiles(Path.GetDirectoryName(OfferPath(offerId))!, "*.json")
+                    .Where(p => File.GetLastWriteTimeUtc(p) < DateTime.UtcNow.AddHours(-1)))
+                { try { File.Delete(old); } catch (IOException) { } }
+            }
+            return new(current, available, selection.Source.FeedId, DateTimeOffset.UtcNow, null,
+                selection.Release.Version, FeedId: selection.Source.FeedId, ReleaseId: selection.Release.ReleaseId,
+                OfferId: offerId, Readiness: "ready", SourceRevision: selection.Source.Revision);
         }
-        catch (Exception ex) when (
-            ex is HttpRequestException or IOException or InvalidOperationException ||
-            // Our local FetchTimeout tripping is a graceful "check failed"; a genuine caller cancellation
-            // (request aborted) must propagate rather than be swallowed as a normal result.
-            (ex is OperationCanceledException && !cancellationToken.IsCancellationRequested))
+        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or System.Text.Json.JsonException
+            || ex is OperationCanceledException && !ct.IsCancellationRequested)
         {
-            logger.LogDebug(ex, "Core update check against release tag {ReleaseTag} did not complete.", releaseTag);
-            return new CoreUpdateStatus(currentVersion, false, releaseTag, DateTimeOffset.UtcNow, "Update check failed.");
+            logger.LogDebug(ex, "Platform feed readiness check failed.");
+            return Failure(source, ex);
         }
     }
 
-    // The release's VERSION marker: the version an update from this channel would install. Purely
-    // additive to the verdict, so every failure mode ends at null — a release published before the
-    // marker existed (404), an unreachable host, or a body that does not read like a version at all.
-    // The body is length-capped before parsing: this is an untrusted download whose only job is to be
-    // rendered, and a client must never be handed a megabyte of prose as a "version".
-    private async Task<string?> DownloadAvailableVersionAsync(string releaseTag, CancellationToken cancellationToken)
+    internal string OfferPath(string id)
     {
-        // Its own deadline, linked to the caller only. The filter below then reads unambiguously: an
-        // OperationCanceledException while the caller's token is still live is this deadline firing,
-        // which is a marker we could not read; a cancelled caller (the request went away) is not, and
-        // propagates like any other.
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(FetchTimeout);
-        try
-        {
-            var baseUrl = string.Format(System.Globalization.CultureInfo.InvariantCulture, ReleaseBaseUrlFormat, releaseTag);
-            var client = httpClientFactory.CreateClient(HttpClientName);
-            using var response = await client.GetAsync($"{baseUrl}/VERSION", HttpCompletionOption.ResponseHeadersRead, timeout.Token);
-            if (!response.IsSuccessStatusCode)
-            {
-                return null;
-            }
-
-            // Bounded read rather than ReadAsStringAsync: the cap is only worth anything if it is
-            // applied to the transfer, not to a string that has already been materialized.
-            await using var stream = await response.Content.ReadAsStreamAsync(timeout.Token);
-            var buffer = new byte[MaxVersionMarkerLength];
-            var read = await stream.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: false, timeout.Token);
-            return SanitizeVersion(System.Text.Encoding.UTF8.GetString(buffer, 0, read));
-        }
-        catch (Exception ex) when (
-            ex is HttpRequestException or IOException or InvalidOperationException ||
-            (ex is OperationCanceledException && !cancellationToken.IsCancellationRequested))
-        {
-            logger.LogDebug(ex, "Core release version marker for tag {ReleaseTag} was not readable.", releaseTag);
-            return null;
-        }
+        if (!Guid.TryParseExact(id, "N", out _)) throw new ArgumentException("Invalid platform offer ID.");
+        return Path.Combine(config.DataRoot, "core", "update-offers", id + ".json");
     }
 
-    // Accepts only what a released platform version can look like: one short line starting with a
-    // digit, then digits, dots, and the letters/hyphens a prerelease suffix uses. Anything else — an
-    // error page, a body long enough to have been truncated by the read cap, a file that is simply
-    // not this one — is not a version and is reported as none.
-    //
-    // The leading digit is load-bearing, not decoration: clients render this next to a version they
-    // prefix themselves, so a marker written as `v0.97.0` would reach the Shell's platform row as
-    // `vv0.97.0`. The marker carries the bare version; a `v` belongs to whoever displays it.
+    private static CoreUpdateStatus Failure(PlatformUpdateSource? source, Exception error)
+        => new(CoreStatusResponse.PlatformVersionString, false, source?.FeedId ?? "", DateTimeOffset.UtcNow,
+            error.Message, FeedId: source?.FeedId, Readiness: "unavailable",
+            ErrorCode: error is PlatformReleaseException typed ? typed.Code : "platform_update_check_failed", SourceRevision: source?.Revision);
+
     internal static string? SanitizeVersion(string body)
     {
         var version = body.Trim();
-        return version.Length is > 0 and <= 64 &&
-            char.IsAsciiDigit(version[0]) &&
-            version.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '-' or '+')
-                ? version
-                : null;
-    }
-
-    private async Task<string?> DownloadChecksumsAsync(string releaseTag, CancellationToken cancellationToken)
-    {
-        var baseUrl = string.Format(System.Globalization.CultureInfo.InvariantCulture, ReleaseBaseUrlFormat, releaseTag);
-        var client = httpClientFactory.CreateClient(HttpClientName);
-        using var response = await client.GetAsync($"{baseUrl}/SHA256SUMS", HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
-        {
-            return null;
-        }
-
-        response.EnsureSuccessStatusCode();
-        return await response.Content.ReadAsStringAsync(cancellationToken);
-    }
-
-    private async Task<string> GetInstalledExeSha256Async(string exePath, CancellationToken cancellationToken)
-    {
-        if (installedExeSha256 is { } cachedHash)
-        {
-            return cachedHash;
-        }
-
-        await using var stream = File.OpenRead(exePath);
-        var hash = await SHA256.HashDataAsync(stream, cancellationToken);
-        return installedExeSha256 = Convert.ToHexString(hash).ToLowerInvariant();
-    }
-
-    // Reads the operator-selected product channel's release tag (persisted by `hosty update --channel`),
-    // falling back to the rolling default. Sanitized to a safe git-tag shape so it can't traverse the
-    // releases URL path.
-    private string ResolveReleaseTag()
-    {
-        var channelPath = Path.Combine(config.DataRoot, "core", "product-channel.json");
-        try
-        {
-            if (File.Exists(channelPath))
-            {
-                using var stream = File.OpenRead(channelPath);
-                var channel = System.Text.Json.JsonSerializer.Deserialize(stream, CoreJson.TypeInfo<CoreProductChannelRef>());
-                if (SanitizeTag(channel?.ReleaseTag) is { } tag)
-                {
-                    return tag;
-                }
-            }
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
-        {
-            logger.LogDebug(ex, "Could not read product channel from {Path}; using the default release tag.", channelPath);
-        }
-
-        return DefaultReleaseTag;
-    }
-
-    private static string? SanitizeTag(string? releaseTag)
-    {
-        var tag = releaseTag?.Trim();
-        if (string.IsNullOrEmpty(tag) ||
-            tag.Contains("..", StringComparison.Ordinal) ||
-            !tag.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '_' or '-'))
-        {
-            return null;
-        }
-
-        return tag;
-    }
-
-    private static bool IsManagedCoreExecutable(string exePath)
-    {
-        var name = Path.GetFileName(exePath);
-        return string.Equals(name, "hosty-core", StringComparison.Ordinal) ||
-            string.Equals(name, "hosty-core.exe", StringComparison.OrdinalIgnoreCase);
-    }
-
-    // The platform Core release artifact for the running OS/arch, matching the CLI's naming. Null on an
-    // unsupported platform so the check degrades to "no update" instead of throwing.
-    private static string? TryGetCoreArtifactName()
-    {
-        var architecture = RuntimeInformation.OSArchitecture switch
-        {
-            Architecture.Arm64 => "arm64",
-            Architecture.X64 => "x64",
-            _ => null,
-        };
-        if (architecture is null)
-        {
-            return null;
-        }
-
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-        {
-            return $"hosty-core-darwin-{architecture}";
-        }
-
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-        {
-            return $"hosty-core-linux-{architecture}";
-        }
-
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-        {
-            return architecture == "x64" ? "hosty-core-windows-x64.exe" : null;
-        }
-
-        return null;
-    }
-
-    // Parses a `sha256  filename` SHA256SUMS body for the given artifact's digest (matches the CLI parser).
-    private static bool TryFindChecksum(string checksums, string artifact, out string sha256)
-    {
-        sha256 = string.Empty;
-        foreach (var line in checksums.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-        {
-            var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            if (parts.Length < 2)
-            {
-                continue;
-            }
-
-            if (string.Equals(parts[^1].TrimStart('*'), artifact, StringComparison.Ordinal))
-            {
-                sha256 = parts[0];
-                return true;
-            }
-        }
-
-        return false;
+        return version.Length is > 0 and <= 64 && char.IsAsciiDigit(version[0])
+            && version.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '-' or '+') ? version : null;
     }
 }
 
-// Response for GET /api/core/update-status. A failed attempt retains a previous successful verdict
-// for the same version/channel; Error and CheckedAt describe the new attempt.
-internal sealed record CoreUpdateStatus(
-    string CurrentVersion,
-    bool UpdateAvailable,
-    string ReleaseTag,
-    DateTimeOffset CheckedAt,
-    string? Error,
-    // The version the release channel is publishing, from the release's own VERSION marker. Display
-    // only: `UpdateAvailable` is and stays the hash comparison, so a missing, unreadable, or
-    // implausible marker degrades to null rather than changing the verdict. Null is expected against
-    // a release published before the marker existed — a client then names no version, exactly as it
-    // did before this field. Additive — older clients ignore it.
-    string? AvailableVersion = null,
-    DateTimeOffset? LastSuccessfulCheckAt = null);
-
-// Minimal view over {DataRoot}/core/product-channel.json (written by the CLI); only the release tag is read.
+// ReleaseTag remains a compatibility display field; it now carries the selected feed ID.
+internal sealed record CoreUpdateStatus(string CurrentVersion, bool UpdateAvailable, string ReleaseTag,
+    DateTimeOffset CheckedAt, string? Error, string? AvailableVersion = null, DateTimeOffset? LastSuccessfulCheckAt = null,
+    string? FeedId = null, string? ReleaseId = null, string? OfferId = null, string? Readiness = null,
+    string? ErrorCode = null, string? SourceRevision = null, string? OperationId = null);
+internal sealed record CorePlatformOffer(string Id, PlatformReleaseSelection Selection, DateTimeOffset CheckedAt);
 internal sealed record CoreProductChannelRef(string? ReleaseTag);

@@ -40,6 +40,7 @@ export interface InstallationRequest {
   id: string; status: "draft" | "pending" | "executing" | "succeeded" | "denied" | "failed";
   plan: InstallPlan | null;
   updatePlan?: {
+    error?: string | null; errorCode?: string | null; readiness?: string | null;
     appId: string; displayName?: string | null; targetVersion: string; targetRuntime: string; changes: string[];
     previousRequiredCorePermissions?: string[] | null; previousOptionalCorePermissions?: string[] | null;
     feedsUrl?: string | null; feedId?: string | null; targetRuntimeType?: string | null;
@@ -127,6 +128,10 @@ export class InstallationFlow {
   }
   async submit(settings?: Record<string, string | null>, autostart?: boolean): Promise<InstallationRequest | null> {
     if (this.state.busy || this.state.uncertainSubmit || this.state.request?.status !== "draft") return null;
+    if (this.state.request.updatePlan?.error) {
+      this.set({ ...this.state, error: this.state.request.updatePlan.error });
+      return null;
+    }
     const id = this.state.request.id;
     const generation = this.generation;
     this.submitting = true;

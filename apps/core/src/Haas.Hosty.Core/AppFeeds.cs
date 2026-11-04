@@ -135,8 +135,8 @@ internal sealed class AppFeedService(HttpClient client)
                 throw new AppLifecycleException("app_feed_id_invalid", "Feed id must be non-empty.");
             }
 
-            var id = candidate.Id?.Trim() ?? string.Empty;
-            if (id.Length == 0)
+            var id = candidate.Id ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(id) || id != id.Trim() || id.Any(char.IsControl))
             {
                 throw new AppLifecycleException("app_feed_id_invalid", "Feed id must be non-empty.");
             }
@@ -174,7 +174,9 @@ internal sealed class AppFeedService(HttpClient client)
         string? requestedFeedId,
         CancellationToken cancellationToken = default)
     {
-        var requested = requestedFeedId?.Trim();
+        var requested = requestedFeedId;
+        if (requested is not null && (string.IsNullOrWhiteSpace(requested) || requested != requested.Trim() || requested.Any(char.IsControl)))
+            throw new AppLifecycleException("app_feed_id_invalid", "Feed IDs must be nonempty, without surrounding whitespace or control characters.");
         if (requested?.Length > AppFeedsSchema.MaxFeedIdLength)
         {
             throw FeedIdTooLong();

@@ -12,13 +12,16 @@ FROM base AS deps
 COPY package.json package-lock.json ./
 COPY apps/telemetry-ui/package.json apps/telemetry-ui/package.json
 COPY packages/app-sdk/package.json packages/app-sdk/package.json
-RUN npm ci --workspace @haas/hosty-telemetry-ui
+RUN npm ci --ignore-scripts --workspace @haas/hosty-telemetry-ui
 
 FROM base AS builder
+COPY package.json package-lock.json ./
 ENV NODE_ENV=production
 COPY --from=deps /repo/node_modules ./node_modules
-COPY . .
-RUN npm run telemetry-ui:build
+COPY apps/telemetry-ui apps/telemetry-ui
+COPY shared/web shared/web
+COPY packages/app-sdk packages/app-sdk
+RUN --network=none npm rebuild && npm run build --workspace @haas/hosty-telemetry-ui
 
 FROM base AS runner
 WORKDIR /app

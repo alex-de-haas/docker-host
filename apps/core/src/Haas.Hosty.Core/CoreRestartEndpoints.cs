@@ -84,19 +84,18 @@ internal static class CoreRestartEndpoints
                     ? CoreJson.Json(operation) : CoreJson.Json(new ErrorResponse("operation_not_found", "Core operation was not found."), statusCode: 404))),
                 cancellationToken: cancellationToken));
 
-        // Update: self-update the CLI + Core binaries, then light-restart onto the new Core.
-        app.MapPost("/api/core/update", (
-            HttpRequest request,
-            UserDirectoryStore users,
-            IClock clock,
-            HostyCoreRuntimeConfig config,
-            ILoggerFactory loggerFactory,
-            CancellationToken cancellationToken) =>
-            SpawnCliAsync(
-                request, users, clock, config, loggerFactory, cancellationToken,
-                args: ["update"],
-                logFileName: "core-update.log",
-                operation: "update"));
+        app.MapGet("/api/core/update-feed", (HttpRequest request, UserDirectoryStore users, IClock clock,
+            CorePlatformFeedService feeds, CancellationToken ct) => CoreSessionAuthorization.RequireAdminSessionAsync(
+                request, users, clock, () => HandleAsync(async () => CoreJson.Json(await feeds.GetAsync(ct, request.Query["index"].FirstOrDefault()))), cancellationToken: ct));
+        app.MapPut("/api/core/update-feed", (HttpRequest request, CorePlatformFeedRequest input, UserDirectoryStore users,
+            IClock clock, CorePlatformFeedService feeds, CancellationToken ct) => CoreSessionAuthorization.RequireAdminSessionAsync(
+                request, users, clock, () => HandleAsync(async () => CoreJson.Json(await feeds.SelectAsync(input, ct))), requireCsrf: true, cancellationToken: ct));
+        app.MapPost("/api/core/update", (HttpRequest request, CorePlatformUpdateRequest input, UserDirectoryStore users,
+            IClock clock, CorePlatformFeedService feeds, CancellationToken ct) => CoreSessionAuthorization.RequireAdminSessionAsync(
+                request, users, clock, () => HandleAsync(async () => CoreJson.Json(await feeds.ApplyAsync(input, ct), statusCode: 202)), requireCsrf: true, cancellationToken: ct));
+        app.MapGet("/api/core/updates/{id}", (string id, HttpRequest request, UserDirectoryStore users, IClock clock,
+            CorePlatformFeedService feeds, CancellationToken ct) => CoreSessionAuthorization.RequireAdminSessionAsync(
+                request, users, clock, () => HandleAsync(() => Task.FromResult(CoreJson.Json(feeds.GetOperation(id)))), cancellationToken: ct));
 
         // Fast "is a newer Core available?" check (SHA256 of the installed binary vs release SHA256SUMS).
         app.MapGet("/api/core/update-status", async (
@@ -118,6 +117,8 @@ internal static class CoreRestartEndpoints
     private static async Task<IResult> HandleAsync(Func<Task<IResult>> action)
     {
         try { return await action(); }
+        catch (Haas.Hosty.Releases.PlatformReleaseException ex)
+        { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), statusCode: 409); }
         catch (AppLifecycleException ex)
         { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), statusCode: 409); }
         catch (ArgumentException ex)
