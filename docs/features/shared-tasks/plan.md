@@ -1,8 +1,8 @@
 ---
 status: Draft
 created: 2026-10-26
-updated: 2026-10-29
-summary: Deferred automatic workspace allocation, reuse and reverse observation across tasks, building on the independent basic task contract.
+updated: 2026-11-04
+summary: Deferred execution-source allocation, reuse and derived task observations across providers, independent of task and workspace lifecycles.
 components: [apps/core, apps/harness, packages/app-sdk, packages/app-sdk-dotnet]
 ---
 
@@ -17,11 +17,43 @@ direct execution, Harness task UI and simple result review. This stable feature 
 automatic task/workspace coordination for later design. [Vision decision 64](../../vision.md)
 records the split; this remaining plan is Draft and is not a dependency of basic task delivery.
 
-Basic Tasks supports optional resource references and explicit selection of an existing authorized
-workspace. This plan extends that baseline with allocation/reuse across related tasks and reverse
-observation. It does not implement another task store, checkout backend, model runner or permissions
-system. Task trees and agent hierarchy remain in
-[Harness Work Orchestration](../harness-work-orchestration/plan.md).
+Basic Tasks retains generic resource references. Harness provides optional source contexts and
+root/child workspace association. This plan extends that baseline with independent-provider
+coordination and reverse observation. It does not implement another task store, checkout backend, model runner or permissions
+system. Flat task trees and the first root/child binding flow are owned by
+[Profile-Based Task Delegation](../profile-task-delegation/feature.md).
+
+## Bounded Root/Child Transfer (2026-11-04)
+
+[Profile-Based Task Delegation](../profile-task-delegation/feature.md) receives D3/D5's first
+same-Harness execution-source allocation/reuse, inherited context references, session association
+and derived task/source observations, with concurrent allocation and replay acceptance. Its private
+execution context is correlated with root attempt lineage and selects the shared logical workspace;
+no allocation occurs for every child. A root can run without a workspace, but selecting one for
+development associates all root/descendant sessions, including earlier planning, review and QA.
+That feature also provides the workspace-details root-task projection and recorded-profile session labels;
+these do not move task records or profile knowledge into Core.
+
+D3/D5 here retain general independent-provider, reparenting/reassignment and independent-scope
+coordination and their acceptance. They are not completed by the transfer. The selected delegation
+feature can ship without implementing this broader policy or moving task records into Core.
+
+## Task/Session/Source Boundary (2026-11-04)
+
+The owner asks to keep task semantics independent of workspaces. The proposed model uses task
+attempts as the bridge to executor sessions; sessions optionally associate with Core workspaces.
+Task providers retain assignments, results and attempt references. Core retains source, participation
+and leases without a task registry or task-provider dependency. General coordination here extends
+that model, not a mandatory task-to-workspace foreign key.
+
+Executors retain durable source-context choices for queued/restarted work and record the revision
+used by each attempt. Source observations are authorized projections of those links; a changed
+session association cannot rewrite historical use. The owner confirms tasks are unused and permits
+replacement of their schema without backward compatibility, including moving workspace selection
+out of task input. The revised broker must still bind the authorized user/executor, task revision,
+attempt, session, source context and lease. The first Harness consumer and its revised-contract
+acceptance belong to the transferred plan. Its C1/C7 contracts are Ready under the owner's
+documentation-preparation instruction, with implementation withheld; this broader plan remains Draft.
 
 ## Target Behavior
 
@@ -36,10 +68,11 @@ collection-wide app/user operation authority. Agent/session/provider reassignmen
 initiating user without per-agent sharing approval. Selected workspace IDs and allocation keys
 are execution context, not access allowlists; no resource ACL belongs in this plan.
 
-Task-to-workspace bindings retain the task provider and stable workspace resource identities. Coordinate reverse
-task observation without moving task records into Core or requiring all task providers to share
-storage. Reassignment and reparenting do not silently move active consumers or reset source. Handle
-an unavailable/removed task provider, changed app/user authority and stale references explicitly.
+Executor source contexts retain stable source identities and their attempt/session correlations.
+Derive reverse task observations through authorized executor/task APIs without moving task records
+into Core or requiring shared provider storage. Current participation and historical source use
+remain distinguishable. Reassignment/reparenting does not silently move active consumers or reset
+source. Handle an unavailable task provider, changed authority and stale references explicitly.
 
 Reuse current Core workspace preparation, association, activity leases, sandbox and publication APIs.
 Choose a stable allocation key and reconcile uncertain operations before retrying. A task completion
@@ -62,7 +95,7 @@ and launch contract has one canonical home in Basic Tasks; this plan does not du
 ## Dependencies
 
 - [Basic Tasks](../basic-tasks/feature.md) supplies qualified task/executor identity and explicit resources.
-- [Harness Work Orchestration D4](../harness-work-orchestration/plan.md#deliverables) owns delegation,
+- [Profile-Based Task Delegation](../profile-task-delegation/feature.md) owns the first delegation flow,
   writer coordination and when a workflow chooses related versus independent source work.
 - [Workspace sessions](../workspace-sessions/feature.md), existing preparation/lease/sandbox APIs and
   their remaining plans retain resource ownership and supported execution modes.
@@ -71,13 +104,13 @@ and launch contract has one canonical home in Basic Tasks; this plan does not du
 
 ## Deliverables
 
-- [ ] D3. Define and implement, after Ready approval, automatic task-to-workspace allocation/reuse and reverse task observation through existing resource APIs, including explicit independent work, concurrent allocation, retry recovery, reparenting/reassignment and current application and initiating-user permission checks.
-- [ ] D5. Verify the full coordination flow with concurrent related tasks, deliberate independent bugfix/PR bindings, restart/lost responses, provider removal, revoked app/user permissions and active consumers; document shipped behavior in feature.md, reconcile Basic Tasks and orchestration, and regenerate the index.
+- [ ] D3. Define and implement, after Ready approval, general executor-owned source-context allocation/reuse and derived task observations beyond the transferred Harness flow, including independent providers, explicit independent scopes, reparenting/reassignment, concurrent recovery, the revised common execution contract and current app/user permission checks without mandatory task/workspace coupling.
+- [ ] D5. Verify the remaining general coordination with independent providers, reparenting/reassignment, deliberate independent bugfix/PR scopes, restart/lost responses, provider removal, revoked permissions and active consumers; consume the transferred root/child acceptance, document shipped behavior, reconcile related owners and regenerate the index.
 
 ## Open Questions
 
-- What allocation scope/key distinguishes related work from intentionally independent work?
-- Which owner maintains reverse task observations and recovers unavailable provider data?
+- Which executor-owned context and allocation key distinguish related execution from intentionally independent source work?
+- Which executor projection joins attempts/sessions/source history and reports unavailable task-provider data?
 - How do reparenting/reassignment, cancellation and active consumers affect allocation and cleanup?
 
 ## Verification

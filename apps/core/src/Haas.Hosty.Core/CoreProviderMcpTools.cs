@@ -60,8 +60,8 @@ internal sealed class CoreProviderMcpTools(IHttpContextAccessor accessor, CoreCa
         => CoreProviderResults.Run(async () => await tasks.EditAsync(await Caller("tasks", "edit", cancellationToken), input, cancellationToken));
 
     [McpServerTool(Name = "task_action", ReadOnly = false, Destructive = true, Idempotent = true)]
-    [Description("Apply a common task lifecycle/review action. Ready/start that dispatches executor work and cancellation of an active attempt require separate execute authority and current executor access. Execution results remain bound to their original executor; acceptance never proves native termination.")]
-    public Task<CallToolResult> TaskAction([Description("Qualified task reference, action, request UUID and expectedRevision; review includes the original result input revision.")] CoreTaskAction input, CancellationToken cancellationToken)
+    [Description("Apply ready, draft, start, complete, cancel, accept, request_changes, retry or disposition. To accept a delegated result, use action accept and its exact resultRef. Ready/start that dispatches executor work and cancellation of an active attempt require separate execute authority and current executor access. Execution results remain bound to their original executor; acceptance never proves native termination.")]
+    public Task<CallToolResult> TaskAction([Description("One outer input object containing taskRef (an object, not JSON text) and input (the action object with requestId, expectedRevision, action and optional exact resultRef). Preserve both nested input levels.")] CoreTaskAction input, CancellationToken cancellationToken)
         => CoreProviderResults.Run(async () => await tasks.ActionAsync(await Caller("tasks", "action", cancellationToken), input, cancellationToken));
 
     [McpServerTool(Name = "agent_session_providers", ReadOnly = true, Destructive = false)]

@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-26
-updated: 2026-11-03
+updated: 2026-11-04
 summary: Durable jobs and recoverable Harness sessions with scheduling, bounded context, same-provider continuation, budgets and decision waits.
 components: [apps/harness, apps/core, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -197,6 +197,19 @@ Notifications D6 and Assistant Events retain application-event activation and de
 here still own schedules, missed-run/overlap/retry policy, budgets, background authority and routine
 verification. The Decisions delivery authorizes none of those broader deliverables and marks none done.
 
+## Task-Child Wait Transfer (2026-11-04)
+
+[Profile-Based Task Delegation](../profile-task-delegation/feature.md) receives the bounded child-task
+wait consumer of D4/D7: durable local result delivery, parent parking, native capacity release and
+same-provider/account continuation of the original task attempt. It extends the common session
+primitives used by Decisions; it must not add another session engine or claim broader reconstruction.
+Its Ready C4-C8 contracts fix the bounded journal, native barriers, mode-action transition and task
+budgets. Only D1 documentation is complete, and implementation remains explicitly withheld.
+
+D4 retains general job wait policy. D7 retains other non-decision/non-child-task commands and broader
+recoverable context. General schedules, event-triggered routines and scheduler retry policy stay
+here. Neither shared task limits nor an Autonomous mode constitutes this general runner.
+
 ## Dependencies And Ownership
 
 - [Agent Providers](../agent-provider-interface/plan.md) owns invocation, results, cancellation and
@@ -209,9 +222,10 @@ verification. The Decisions delivery authorizes none of those broader deliverabl
   owns consumption, scheduling, deduplication and reconciliation, not a new event bus.
 - [Basic Tasks](../basic-tasks/feature.md) owns task state, explicit resources and the task executor
   adapter; its contract leaves records with a task-provider app. [Task Workspace Coordination](../shared-tasks/plan.md)
-  owns automatic source binding/reuse. [Artifacts](../shared-artifacts/plan.md) owns retained content.
+  retains general source binding/reuse beyond the transferred root/child flow.
+  [Artifacts](../shared-artifacts/plan.md) owns retained content.
   Neither task ownership nor an executor-option label is a new credential.
-- [Harness Work Orchestration](../harness-work-orchestration/plan.md) owns hierarchy, child-task
+- [Profile-Based Task Delegation](../profile-task-delegation/feature.md) owns flat child-task
   relationships, decomposition and workflow policy. General scheduled/retryable work uses this
   runner; Basic Tasks direct dispatch does not require it or create a competing scheduler.
 - Registered workspaces, publication, Sandbox and [Execution Authorization](../assistant-execution-authorization/plan.md)
@@ -228,14 +242,14 @@ verification. The Decisions delivery authorizes none of those broader deliverabl
 - [ ] D4. Integrate general job/attempt wait policy with Shared Decisions D7's ordinary-session/task question primitives and this plan's broader recovery contract, preserving pending inputs, confirmed-consumer lease discipline and cancellation; do not duplicate the proposed decision-specific wait/continuation implementation.
 - [ ] D5. Verify recurring monitoring and one authorized source job, restart/duplicate claims, lost provider responses, expired/revoked grants, budget exhaustion and failed notification delivery; cover overnight and response/parking races without duplicate effects.
 - [ ] D6. Document shipped behavior and compatibility in feature.md, reconcile consumers and remove this plan when all deliverables pass; preserve the historical Bridge D11 and session-recovery transfers without claiming they shipped earlier.
-- [ ] D7. Define, implement after Ready approval, and verify common non-decision Harness session commands, provider/account-bound continuation cursors and broader bounded recoverable context over the existing journal, consuming decision-specific controls/waits from Shared Decisions D7; cover ordinary chats and parked jobs, multi-client send/approval races, restart, unsupported resume, summary coverage, changed source and retention/revocation without duplicate tool effects.
+- [ ] D7. Define, implement after Ready approval, and verify remaining common Harness session commands and broader bounded recoverable context over the existing journal, consuming the transferred decision and task-child wait controls; cover other ordinary-chat/parked-job consumers, provider/account-bound continuation, multi-client races, restart, unsupported resume, summary coverage, changed source and retention/revocation without duplicate tool effects.
 
 ## Proposed Sequence
 
 Resolve D1-D2 alongside invocation and event contracts. Build one explicit durable job before adding
 schedules and retries; then integrate decision waits. Verify general monitoring and source work
 separately. The first Harness manual Ready flow needs durable acceptance, attempt claims and result
-reconciliation; schedules, team hierarchy and parked decisions are later consumers, not creation
+reconciliation; schedules and broader orchestration are later consumers, not creation
 prerequisites. Basic Tasks and its Harness adapter can deliver direct commands over existing Worker
 evidence before this general runner. This plan owns additional job scheduling/attempt policy and
 parked continuation; it consumes the same task-execution receipts where work is task-backed.

@@ -61,6 +61,7 @@ describe("direct worker contract", () => {
     await expect.poll(f.starts).toBe(1);
     expect((await f.put("run-1", { ...request(), selection: { model: "another", reasoningEffort: "high" } })).status).toBe(409);
     expect((await f.put("run-2")).status).toBe(409);
+    expect(await (await fetch(`${f.base}/v1/capabilities`, { headers: f.headers })).json()).toMatchObject({ capacity: 1, occupied: 1 });
     expect(f.starts()).toBe(1);
   });
   it("replays retained events after the client disconnects without resubmitting", async () => {
@@ -219,4 +220,92 @@ it.each(["local", "container"] as const)("reconciles interrupted parking using o
   const receipt = (await restarted.load("parked")).receipt;
   expect(receipt).toMatchObject({ state: boundary === "container" ? "parked" : "interrupted", exitConfirmed: boundary === "container" });
   expect(receipt.pending?.length ?? 0).toBe(boundary === "container" ? 1 : 0);
+});
+
+describe("typed task barriers", () => {
+  async function acknowledged(stop?: () => Promise<void>) {
+    const f = await setup(stop); await f.put("task-run"); await expect.poll(f.starts).toBe(1);
+    f.options()!.onEvent({ type: "harness_session", harnessSessionId: "native-checkpoint" });
+    f.options()!.onEvent({ type: "tool_use", toolName: "mcp__hosty-workspaces__task_wait", toolUseId: "wait-call", input: {} });
+    f.options()!.onEvent({ type: "tool_result", toolUseId: "wait-call", status: "completed", output: "hosty_task_barrier:wait-one:1" });
+    await expect.poll(async () => (await f.journal.load("task-run")).events.length).toBe(3);
+    const stored = await f.journal.load("task-run");
+    return { f, input: { controlId: "barrier-command", expectedRevision: stored.receipt.revision, barrierId: "wait-one", generation: 1,
+      kind: "child_wait" as const, acknowledgedSequence: stored.events.at(-1)!.sequence } };
+  }
+  it("parks a tool-acknowledged coordinator without fabricating a question and replays once", async () => {
+    const { f, input } = await acknowledged();
+    const receipt = await f.engine.barrier("task-run", input);
+    expect(receipt).toMatchObject({ state: "parked", exitConfirmed: true, barrier: input, snapshot: { nativeSessionId: "native-checkpoint" } });
+    expect(receipt.pending ?? []).toEqual([]);
+    expect(await f.engine.barrier("task-run", input)).toEqual(receipt);
+    expect((await f.put("other-run")).status).toBe(202);
+    await expect(f.engine.barrier("task-run", { ...input, generation: 2 })).rejects.toMatchObject({ code: "control_conflict" });
+  });
+  it("requires the matching native acknowledgement and settled concurrent tool effects", async () => {
+    const { f, input } = await acknowledged();
+    await expect(f.engine.barrier("task-run", { ...input, barrierId: "forged" })).rejects.toMatchObject({ code: "barrier_pending" });
+    f.options()!.onEvent({ type: "tool_use", toolUseId: "write-call", toolName: "write", input: {} });
+    await expect.poll(async () => (await f.journal.load("task-run")).events.length).toBe(4);
+    await expect(f.engine.barrier("task-run", { ...input, expectedRevision: (await f.journal.load("task-run")).receipt.revision })).rejects.toMatchObject({ code: "barrier_pending" });
+    f.options()!.onEvent({ type: "tool_result", toolUseId: "write-call", status: "completed", output: "done" });
+    await expect.poll(async () => (await f.journal.load("task-run")).events.length).toBe(5);
+    expect((await f.engine.barrier("task-run", { ...input, expectedRevision: (await f.journal.load("task-run")).receipt.revision })).state).toBe("parked");
+  });
+  it("uses native settlement for tools whose private result is not in the transcript", async () => {
+    const { f, input } = await acknowledged();
+    f.options()!.onEvent({ type: "native_effect", id: "search", state: "started" });
+    f.options()!.onEvent({ type: "tool_use", toolUseId: "search", toolName: "ToolSearch", input: {} });
+    await expect.poll(async () => (await f.journal.load("task-run")).events.length).toBe(5);
+    await expect(f.engine.barrier("task-run", { ...input, expectedRevision: (await f.journal.load("task-run")).receipt.revision })).rejects.toMatchObject({ code: "barrier_pending" });
+    f.options()!.onEvent({ type: "native_effect", id: "search", state: "settled" });
+    await expect.poll(async () => (await f.journal.load("task-run")).events.length).toBe(6);
+    expect((await f.engine.barrier("task-run", { ...input, expectedRevision: (await f.journal.load("task-run")).receipt.revision })).state).toBe("parked");
+  });
+  it("retains capacity and the barrier when native shutdown is uncertain", async () => {
+    let uncertain = true;
+    const { f, input } = await acknowledged(async () => { if (uncertain) throw new Error("No exit proof"); });
+    await expect(f.engine.barrier("task-run", input)).rejects.toMatchObject({ code: "exit_unconfirmed" });
+    expect((await f.journal.load("task-run")).receipt).toMatchObject({ state: "parking", barrier: input });
+    expect((await f.put("other-run")).status).toBe(409);
+    uncertain = false;
+    expect((await f.engine.barrier("task-run", input)).state).toBe("parked");
+  });
+  it("accepts an already completed native turn with its exact retained checkpoint", async () => {
+    const { f, input } = await acknowledged();
+    f.options()!.onEvent({ type: "result", status: "success" });
+    await expect.poll(async () => (await f.journal.load("task-run")).receipt.state).toBe("completed");
+    expect((await f.engine.barrier("task-run", { ...input, expectedRevision: (await f.journal.load("task-run")).receipt.revision })).state).toBe("parked");
+  });
+});
+
+describe("coordinator stop boundaries", () => {
+  it("parks a budget stop without impersonating a model tool acknowledgement", async () => {
+    const f = await setup(); await f.put("budget-run"); await expect.poll(f.starts).toBe(1);
+    f.options()!.onEvent({ type: "harness_session", harnessSessionId: "native-context" });
+    await expect.poll(async () => (await f.journal.load("budget-run")).receipt.snapshot?.nativeSessionId).toBe("native-context");
+    const input = { controlId: "budget-stop", expectedRevision: (await f.journal.load("budget-run")).receipt.revision,
+      kind: "limits" as const, origin: "coordinator" as const, barrierId: "budget", generation: 1, acknowledgedSequence: 0 };
+    await expect(f.engine.barrier("budget-run", { ...input, kind: "task_adoption" })).rejects.toMatchObject({ code: "invalid_barrier" });
+    expect((await f.engine.barrier("budget-run", input)).state).toBe("parked");
+  });
+  it("does not release capacity if an external effect starts during native shutdown", async () => {
+    let effectStarted = false;
+    const f = await setup(async () => {
+      if (effectStarted) return;
+      effectStarted = true;
+      f.options()!.onEvent({ type: "native_effect", id: "late-write", state: "started" });
+    });
+    await f.put("source-run"); await expect.poll(f.starts).toBe(1);
+    f.options()!.onEvent({ type: "harness_session", harnessSessionId: "native-context" });
+    await expect.poll(async () => (await f.journal.load("source-run")).receipt.snapshot?.nativeSessionId).toBe("native-context");
+    const input = { controlId: "source-stop", expectedRevision: (await f.journal.load("source-run")).receipt.revision,
+      kind: "source_rebind" as const, origin: "coordinator" as const, barrierId: "source", generation: 1, acknowledgedSequence: 0 };
+    await expect(f.engine.barrier("source-run", input)).rejects.toMatchObject({ code: "exit_unconfirmed" });
+    expect((await f.journal.load("source-run")).receipt).toMatchObject({ state: "parking", effects: { "late-write": "started" } });
+    expect((await f.put("other-run")).status).toBe(409);
+    f.options()!.onEvent({ type: "native_effect", id: "late-write", state: "settled" });
+    await expect.poll(async () => Object.keys((await f.journal.load("source-run")).receipt.effects ?? {})).toEqual([]);
+    expect((await f.engine.barrier("source-run", input)).state).toBe("parked");
+  });
 });

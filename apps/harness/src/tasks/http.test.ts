@@ -39,7 +39,7 @@ it("revalidates before creation replay and denies another actor's task", async (
   await start();
   const input = { requestId: randomUUID(), input: { title: "Task", markdown: "Work", assignee: null, resources: [] } };
   const created = await (await call("/tasks", "owner", input)).json() as TaskRecord;
-  expect(created.requiresReview).toBe(false);
+  expect(created.review.mode).toBe("none");
   expect(await (await call("/tasks", "owner", input)).json()).toEqual(created);
   expect((await call(`/tasks/${created.ref.id}`, "other")).status).toBe(404);
   auth.revoked = true;
@@ -47,13 +47,13 @@ it("revalidates before creation replay and denies another actor's task", async (
 });
 it("projects historical results for a human assignee without the owner's private conversation", async () => {
   const store = new TaskStore(directory, provider), owner = { userId: "owner", appId: null };
-  const input = { title: "Private execution", markdown: "Work", requiresReview: false, resources: [], assignee: { kind: "app" as const, executor: provider, optionId: "writer" } };
+  const input = { title: "Private execution", markdown: "Work", review: { mode: "none" as const }, resources: [], assignee: { kind: "app" as const, executor: provider, selection: { kind: "option" as const, id: "writer", revision: 1 } } };
   let task = await store.create(owner, { requestId: randomUUID(), input });
   task = await store.action(task.ref.id, owner, { requestId: randomUUID(), expectedRevision: task.revision, action: "ready" });
   const executionId = task.attempts[0]!.executionId;
   task = await store.observe(task.ref.id, executionId, { executionId, revision: 1, state: "completed", stopConfirmed: true, createdAt: "now", updatedAt: "now", result: { markdown: "Public result", resources: [] }, sessionRef: { id: "private", path: "/assistant?session=private" } });
   task = await store.action(task.ref.id, owner, { requestId: randomUUID(), expectedRevision: task.revision, action: "draft" });
-  await store.edit(task.ref.id, owner, { requestId: randomUUID(), expectedRevision: task.revision, input: { ...input, assignee: { kind: "human", userId: "reviewer" } } });
+  await store.edit(task.ref.id, owner, { requestId: randomUUID(), expectedRevision: task.revision, expectedGraphRevision: task.graphRevision, input: { ...input, assignee: { kind: "human", userId: "reviewer" } } });
   await start();
   const reader = await (await call(`/tasks/${task.ref.id}`, "reviewer")).json() as TaskRecord;
   expect(reader.attempts[0]!.receipt!.result!.markdown).toBe("Public result");
@@ -69,6 +69,7 @@ it("closes task streams and drains dispatch before shutting down native runs", a
   let finish!: () => void;
   const dispatch = vi.spyOn(service.executor, "tick").mockImplementation(() => new Promise<void>(resolve => { finish = resolve; }));
   const tick = service.tick();
+  await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
   let closed = false;
   const closing = service.close().then(() => { closed = true; });
   expect((await reader.read()).done).toBe(true);
@@ -81,7 +82,7 @@ it("closes task streams and drains dispatch before shutting down native runs", a
 it("restores an awaiting-input task after the remote executor returns the unchanged receipt", async () => {
   vi.stubEnv("HOSTY_APP_SERVICE_TOKEN", "synthetic-service-token");
   await start();
-  vi.spyOn(TaskExecutorClient.prototype, "options").mockResolvedValue({ options: [{ id: "plain", name: "Plain", capabilities: [] }], defaultId: "plain" });
+  vi.spyOn(TaskExecutorClient.prototype, "options").mockResolvedValue({ version: 1, revision: 1, options: [{ id: "plain", revision: 1, name: "Plain", description: "", capabilities: [], availability: { state: "unknown" } }], defaultId: "plain" });
   const get = vi.spyOn(TaskExecutorClient.prototype, "get").mockImplementation(async executionId => ({ executionId, revision: 2,
     state: "awaiting_input", stopConfirmed: false, createdAt: "now", updatedAt: "now" }));
   let task = await (await call("/tasks", "owner", { requestId: randomUUID(), input: { title: "Remote work", markdown: "Ask for input", resources: [],
@@ -129,9 +130,9 @@ it("recovers v2 executor dispatch after source restart without saving a bearer t
     if (request.operation === "action") throw new ProviderError("token_invalid", "Execution operation required", 401);
     return invocation;
   });
-  vi.spyOn(ProviderClient.prototype, "taskDispatchAuthority").mockResolvedValue({ dispatch, scope: { taskRef: task.ref, executor, inputRevision: 1, inputHash: "digest", optionId: "writer", executionId: null } });
+  vi.spyOn(ProviderClient.prototype, "taskDispatchAuthority").mockResolvedValue({ dispatch, scope: { taskRef: task.ref, executor, inputRevision: 1, inputHash: "digest", selection: { kind: "option", id: "writer", revision: 1 }, executionId: null } });
   const delegated = vi.spyOn(ProviderClient.prototype, "taskDispatch").mockImplementation(async input => (input.operation === "options"
-    ? { options: [{ id: "writer", name: "Writer", capabilities: [] }], defaultId: "writer" }
+    ? { version: 1, revision: 1, options: [{ id: "writer", revision: 1, name: "Writer", description: "", capabilities: [], availability: { state: "unknown" } }], defaultId: "writer" }
     : { executionId: input.executionId, revision: 1, state: "running", stopConfirmed: false, createdAt: "now", updatedAt: "now" }) as never);
   const response = await call(`/tasks/${task.ref.id}/actions`, "hosty_provider.2.test.signature", { requestId, expectedRevision: task.revision, action: "ready" });
   expect(response.status).toBe(200); task = await response.json() as TaskRecord;
@@ -141,4 +142,30 @@ it("recovers v2 executor dispatch after source restart without saving a bearer t
   expect(delegated).toHaveBeenCalledWith(expect.objectContaining({ dispatch, operation: "get", executionId: task.attempts[0]!.executionId }), undefined);
   const state = await import("node:fs/promises").then(fs => fs.readFile(path.join(directory, "tasks", "tasks.json"), "utf8"));
   expect(state).not.toContain("hosty_provider.2.test.signature");
+});
+
+it("allows the current human owner to review through an application client", async () => {
+  await start();
+  const owner = { userId: "owner", appId: null };
+  let task = await service.store.create(owner, { requestId: randomUUID(), input: { title: "Human review", markdown: "Review this", resources: [],
+    assignee: { kind: "human", userId: "owner" }, review: { mode: "owner" } } });
+  for (const action of ["ready", "start", "complete"] as const) task = await service.store.action(task.ref.id, owner,
+    { requestId: randomUUID(), expectedRevision: task.revision, action, ...(action === "complete" ? { result: { markdown: "Evidence", resources: [] } } : {}) });
+  const authority = { actor: { userId: "owner", appId: "independent.client", installationId: "one" }, scope: "client", principalId: "app:client",
+    mediatedOperation: "action", validate: async () => {} };
+  const accepted = await service.action(task.ref.id, authority, { requestId: randomUUID(), expectedRevision: task.revision, action: "accept", resultRef: task.resultRef });
+  expect(accepted.status).toBe("Done");
+});
+
+it("continues executor polling while another recovery phase awaits explicit policy approval", async () => {
+  await start();
+  let answer!: () => void;
+  const recovery = vi.spyOn(service.orchestration, "reconcile").mockImplementation(() => new Promise<void>(resolve => { answer = resolve; }));
+  const executor = vi.spyOn(service.executor, "tick").mockResolvedValue();
+  const first = service.tick();
+  await vi.waitFor(() => expect(executor).toHaveBeenCalledTimes(1));
+  try {
+    await vi.waitFor(() => { void service.tick(); expect(executor.mock.calls.length).toBeGreaterThanOrEqual(2); });
+    expect(recovery).toHaveBeenCalledTimes(1);
+  } finally { answer(); await first; }
 });

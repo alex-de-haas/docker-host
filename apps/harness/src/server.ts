@@ -337,6 +337,8 @@ async function route(
     return;
   }
 
+  if (await tasks.operatorRoute(request, response, url, actor.userId, actor.via === "app-session", () => readJson(request))) return;
+
   if (url.pathname === "/api/decisions" || url.pathname.startsWith("/api/decisions/")) {
     const token = actor.via === "app-session" ? readAppCredential(request) : null;
     if (!token || !manager.decisions) throw new DecisionError("app_session_required", "Open Harness through Core to use Decisions.", 403);

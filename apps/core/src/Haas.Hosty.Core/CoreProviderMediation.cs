@@ -93,7 +93,7 @@ internal sealed record CoreProviderClaims(int Version, string UserId, string Pri
 internal sealed record CoreProviderIntrospectionRequest(string Token, string Kind, string Key, string Operation,
     string Method, string Path, string BodyHash);
 internal sealed record CoreProviderInvocation(int Version, string UserId, string HostRole, string PrincipalId,
-    string? CallerAppId, string? CallerInstallation, string Kind, string Key, string Operation, string[] ResourceIds, CoreHistoryExportScope? Export = null, CoreTaskDispatchRef? TaskDispatch = null, CoreTaskExecutorDelegation? TaskDelegation = null);
+    string? CallerAppId, string? CallerInstallation, string Kind, string Key, string Operation, string[] ResourceIds, CoreHistoryExportScope? Export = null, CoreTaskDispatchRef? TaskDispatch = null, CoreTaskExecutorDelegation? TaskDelegation = null, CoreTaskWorkflowBinding? TaskWorkflow = null);
 internal sealed record CoreProviderBinding(string Token, ProviderDescriptor Descriptor);
 internal sealed record CoreProviderError(string Code, string Message, bool Retryable, string? OperationRef = null);
 internal sealed record CoreProviderFailure(CoreProviderError Error);
@@ -193,7 +193,7 @@ internal sealed partial class CoreProviderMediation(AppRegistryStore apps, AppId
         var export = await ExportScopeAsync(caller, claims.Provider, policy, ct);
         if (CoreJson.Text(export) != CoreJson.Text(claims.Export)) throw new AppIdentityException("permission_denied", "The approved export corpus changed.");
         return new(2, caller.User.Id, caller.User.Role, caller.PrincipalId, caller.App?.Id,
-            caller.App is null ? null : PanelIdentity.Installation(caller.App), claims.Kind, claims.Provider.Key, claims.Operation, claims.ResourceIds, export, claims.TaskDispatch, claims.TaskDelegation);
+            caller.App is null ? null : PanelIdentity.Installation(caller.App), claims.Kind, claims.Provider.Key, claims.Operation, claims.ResourceIds, export, claims.TaskDispatch, claims.TaskDelegation, claims.Kind == "tasks" ? claims.Origin.TaskWorkflow : null);
     }
     internal async Task<JsonElement> SendAsync<T>(CoreCapabilityCaller caller, HostyProviderRef provider, CoreProviderPolicy policy,
         string method, string path, T input, string[] resources, string? requestId, CancellationToken ct,

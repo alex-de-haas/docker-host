@@ -40,8 +40,15 @@ public sealed class HostyProviderClient(HttpClient http, HostyAppOptions options
     /// <summary>Use only the task's bound workspace; the response is its source/association or activity projection.</summary>
     public Task<JsonElement> TaskWorkspaceAsync(HostyTaskWorkspaceRequest input, CancellationToken cancellationToken = default)
     {
-        if (input.Kind is not ("observe" or "attach" or "lease" or "activity")) throw new ArgumentException("Unknown task workspace operation.", nameof(input));
+        if (input.Kind is not ("observe" or "attach" or "lease" or "activity" or "associate_history" or "history_observe")) throw new ArgumentException("Unknown task workspace operation.", nameof(input));
         return CoreAsync<JsonElement>("/task-workspace", input, null, cancellationToken);
+    }
+    /// <summary>Coordinate only the exact current root generation and parent execution through Core.</summary>
+    public Task<JsonElement> TaskWorkflowAsync(HostyTaskWorkflowRequest input, CancellationToken cancellationToken = default)
+    {
+        if (input.Operation is not ("create_child" or "edit" or "read" or "action" or "observe" or "bind_session" or "prepare_source" or "bind_source"))
+            throw new ArgumentException("Unknown task workflow operation.", nameof(input));
+        return CoreAsync<JsonElement>("/task-workflow", input, null, cancellationToken);
     }
     /// <summary>Observe only an existing execution authorization bound to this source or executor.</summary>
     public Task<HostyTaskDispatchAuthority> TaskDispatchAuthorityAsync(HostyTaskDispatchRef dispatch, CancellationToken cancellationToken = default)
@@ -249,12 +256,13 @@ internal sealed record MediatedProviderValidation(string Token, string Kind, str
 public record HostyMediatedProviderRequest(string Operation, string Method, string Path, ReadOnlyMemory<byte> Body);
 /// <summary>The current original caller. Direct principals have no fabricated application identity.</summary>
 public record HostyMediatedProviderInvocation(int Version, string UserId, string HostRole, string PrincipalId,
-    string? CallerAppId, string? CallerInstallation, string Kind, string Key, string Operation, string[] ResourceIds, HostyHistoryExportScope? Export = null, HostyTaskDispatchRef? TaskDispatch = null, HostyTaskExecutorDelegation? TaskDelegation = null);
+    string? CallerAppId, string? CallerInstallation, string Kind, string Key, string Operation, string[] ResourceIds, HostyHistoryExportScope? Export = null, HostyTaskDispatchRef? TaskDispatch = null, HostyTaskExecutorDelegation? TaskDelegation = null, HostyTaskWorkflowBinding? TaskWorkflow = null);
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
 [JsonSerializable(typeof(ProviderList))]
 [JsonSerializable(typeof(TaskDispatchSelection))]
 [JsonSerializable(typeof(HostyTaskDispatchRequest))]
 [JsonSerializable(typeof(HostyTaskWorkspaceRequest))]
+[JsonSerializable(typeof(HostyTaskWorkflowRequest))]
 [JsonSerializable(typeof(HostyTaskDispatchAuthority))]
 [JsonSerializable(typeof(HostyTaskExecutorOptions))]
 [JsonSerializable(typeof(HostyTaskExecutionReceipt))]
@@ -281,3 +289,10 @@ internal partial class ProviderJsonContext : JsonSerializerContext;
 
 /// <summary>The exact owner-approved source partition for a mediated export invocation.</summary>
 public sealed record HostyHistoryExportScope(string GrantId, string Revision, string OwnerUserId, HostyProviderRef Provider, string[]? ConversationIds);
+
+/// <summary>Exact, non-secret root and coordinator provenance supplied by Core.</summary>
+public record HostyTaskWorkflowBinding(HostyTaskDispatchRef RootDispatch, HostyTaskRef RootTaskRef, HostyTaskRef ParentTaskRef,
+    string ParentExecutionId, long CoordinatorEpoch, long RootGeneration);
+/// <summary>A generic operation within the retained root and its current coordinator.</summary>
+public record HostyTaskWorkflowRequest(HostyTaskDispatchRef RootDispatch, HostyTaskRef ParentTaskRef, string ParentExecutionId,
+    long CoordinatorEpoch, long RootGeneration, string Operation, string RequestId, JsonElement Payload);

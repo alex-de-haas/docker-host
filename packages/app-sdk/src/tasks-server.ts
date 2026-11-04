@@ -1,5 +1,6 @@
 import type { ProviderClient } from "./providers-server.js";
-import type { TaskProviderRef, TaskRef, TaskRecord, TaskPage, TaskCreate, TaskEdit, TaskAction,
+import { taskReferenceKey } from "./tasks.js";
+import type { TaskListOptions, TaskRequestReceipt, TaskProviderRef, TaskRef, TaskRecord, TaskPage, TaskCreate, TaskEdit, TaskAction,
   TaskStatus, TaskCapabilities, TaskExecutorOptions, TaskExecutionInput, TaskExecutionReceipt } from "./tasks.js";
 
 /** Server-side task API. Every request obtains a fresh Core binding; no mutation is retried implicitly. */
@@ -15,13 +16,17 @@ export class TaskClient {
     return encodeURIComponent(ref.id);
   }
   capabilities(signal?: AbortSignal) { return this.call<TaskCapabilities>("/capabilities", "GET", undefined, signal); }
-  list(options: { cursor?: string; limit?: number; status?: TaskStatus; signal?: AbortSignal } = {}) {
+  list(options: TaskListOptions & { signal?: AbortSignal } = {}) {
     const query = new URLSearchParams();
     if (options.cursor) query.set("cursor", options.cursor);
     if (options.limit !== undefined) query.set("limit", String(options.limit));
     if (options.status) query.set("status", options.status);
+    if (options.parentTaskRef) query.set("parentTaskRef", taskReferenceKey(options.parentTaskRef));
+    if (options.rootTaskRef) query.set("rootTaskRef", taskReferenceKey(options.rootTaskRef));
+    if (options.rootsOnly !== undefined) query.set("rootsOnly", String(options.rootsOnly));
     return this.call<TaskPage>(`/tasks?${query}`, "GET", undefined, options.signal);
   }
+  request(requestId: string, signal?: AbortSignal) { return this.call<TaskRequestReceipt>(`/requests/${encodeURIComponent(requestId)}`, "GET", undefined, signal); }
   create(input: TaskCreate, signal?: AbortSignal) { return this.call<TaskRecord>("/tasks", "POST", input, signal); }
   get(ref: TaskRef, signal?: AbortSignal) { return this.call<TaskRecord>(`/tasks/${this.id(ref)}`, "GET", undefined, signal); }
   edit(ref: TaskRef, input: TaskEdit, signal?: AbortSignal) { return this.call<TaskRecord>(`/tasks/${this.id(ref)}`, "PATCH", input, signal); }

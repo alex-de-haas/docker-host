@@ -108,8 +108,10 @@ it("parks, restarts the coordinator, and continues the same native thread once w
 it("keeps the original task attempt awaiting input through parking and reports its explicit result after continuation", async () => {
   const f = await setup(), executor = new HarnessTaskExecutor(f.manager), executionId = randomUUID();
   const authority = { actor: { userId: "owner", appId: "source", installationId: "one" }, scope: "source:one", credential: "volatile-current-authority", validate: async () => {} };
-  const input = { taskRef: { appId: "source", installationId: "one", key: "default", id: randomUUID() }, taskRevision: 1,
-    input: { title: "Summary", markdown: "Ask before writing", requiresReview: false, resources: [] } };
+  const ref = { appId: "source", installationId: "one", key: "default", id: randomUUID() };
+  const input: import("@hosty-sdk/app/tasks").TaskExecutionInput = { version: 1, taskRef: ref, inputRevision: 1,
+    content: { title: "Summary", markdown: "Ask before writing", review: { mode: "none" }, resources: [] },
+    relations: { rootTaskRef: ref, parentTaskRef: null, relationRevision: 1 }, prerequisiteOutcomes: [] };
   const accepted = await executor.accept(executionId, input, authority); await executor.tick();
   const wait = await waiting(f, accepted.sessionRef!.id);
   await f.decisions.waits.update(wait.id, w => ({ ...w!, native: { ...w!.native, kind: "codex" } }));

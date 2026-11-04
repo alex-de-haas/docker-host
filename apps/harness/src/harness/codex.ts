@@ -669,6 +669,11 @@ class CodexRun implements HarnessRun {
     if (message.method === "item/started") {
       const item = (params.item ?? {}) as Record<string, unknown>;
       if (!this.turnActive || typeof item.id !== "string" || this.deniedItems.has(item.id)) return;
+      if (["mcpToolCall", "dynamicToolCall", "commandExecution", "fileChange", "webSearch"].includes(String(item.type))
+        && params.threadId === this.threadId && typeof params.turnId === "string" && params.turnId === this.activityTurnId) {
+        const effectId = commandToolUseId(this.commandRun, this.commandTurn, item.id, params.turnId);
+        if (effectId) this.emit({ type: "native_effect", id: effectId, state: "started" });
+      }
       if (item.type === "fileChange") this.rememberFileChangeProposal(params, item);
       if (item.type === "commandExecution" && item.status === "inProgress" && params.threadId === this.threadId &&
           typeof params.turnId === "string" && params.turnId === this.activityTurnId && this.commandCalls.size < 2048 &&
@@ -729,6 +734,12 @@ class CodexRun implements HarnessRun {
       this.activity.finish(String(item.id ?? "response"));
       this.activity.finish("response");
       const type = String(item.type ?? "");
+      if (["mcpToolCall", "dynamicToolCall", "commandExecution", "fileChange", "webSearch"].includes(type)
+        && params.threadId === this.threadId && typeof params.turnId === "string" && params.turnId === this.activityTurnId && typeof item.id === "string") {
+        const effectId = commandToolUseId(this.commandRun, this.commandTurn, item.id, params.turnId);
+        if (effectId) this.emit({ type: "native_effect", id: effectId,
+          state: this.deniedItems.has(item.id) || ["completed", "failed", "declined", "cancelled"].includes(String(item.status)) || type === "webSearch" ? "settled" : "unknown" });
+      }
       if (type === "fileChange" && params.threadId === this.threadId && params.turnId === this.activityTurnId && typeof item.id === "string")
         this.closeFileChangeProposal(item.id);
       const scopedTool = (type === "mcpToolCall" || type === "dynamicToolCall")

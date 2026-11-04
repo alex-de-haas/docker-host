@@ -78,6 +78,7 @@ export class McpProxy {
   policy?: McpToolPolicy;
   /** Client-side source binding and native stop coordination; Core still authorizes the invocation. */
   platformCall?: (sessionId: string, name: string, input: unknown, guard: () => Promise<void>) => Promise<{ result: unknown } | null>;
+  beforeDispatch?: (sessionId: string) => Promise<void>;
   identity?: (appId: string) => Promise<string>;
   deniedTools?: (appId: string) => Promise<readonly string[]>;
   private readonly sessions = new Map<string, Registration>();
@@ -220,6 +221,7 @@ export class McpProxy {
             if (!token) throw new Error("Session delegation expired before dispatch.");
             if (!this.sessions.has(sessionId) || abort.signal.aborted) throw new Error("Session ended before dispatch.");
             if ((await this.deniedTools?.(appId) ?? []).includes(rpc.params.name)) throw new Error("Core has disabled this tool.");
+            await this.beforeDispatch?.(sessionId);
             await dispatchGuard();
             const coordinated = appId === "hosty:core" ? await this.platformCall?.(sessionId, rpc.params.name, rpc.params.arguments ?? {}, dispatchGuard) : null;
             if (coordinated) sendJson(response, 200, { jsonrpc: "2.0", id: rpc.id,

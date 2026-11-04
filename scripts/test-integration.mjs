@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { readFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -82,14 +83,16 @@ export function suitePlan(suite, { platform = process.platform, node = process.e
       ] };
     case 'tasks':
     case 'sessions': {
-      const images = ['api', 'worker'].map(key => `hosty-harness-${key}-acceptance:local`);
+      const tag = suite === 'tasks' ? randomUUID() : 'local';
+      const images = ['api', 'worker'].map(key => `hosty-harness-${key}-acceptance:${tag}`);
+      const imageEnvironment = suite === 'tasks' ? { HOSTY_TASKS_API_IMAGE: images[0], HOSTY_TASKS_WORKER_IMAGE: images[1] } : {};
       const holdUi = suite === 'sessions' && process.env.HOSTY_ACCEPTANCE_HOLD_UI === '1';
       return { prerequisites: [dotnet, command('git', ['--version']), pythonCheck, docker], steps: [
         build(core), build(cli),
         command('docker', ['build', '-f', 'apps/harness/Dockerfile', '-t', images[0], '.']),
         command('docker', ['build', '-f', 'apps/harness/worker/Dockerfile', '-t', images[1], '.']),
         ...(holdUi ? [command('docker', ['build', '-f', 'apps/shell/Dockerfile', '-t', 'hosty-shell-acceptance:local', '.'])] : []),
-        command(python, ['scripts/check-workspace-activation.py', '.', suite, '--managed', ...(holdUi ? ['--hold-ui'] : [])]),
+        command(python, ['scripts/check-workspace-activation.py', '.', suite, '--managed', ...(holdUi ? ['--hold-ui'] : [])], imageEnvironment),
       ] };
     }
     case 'windows':

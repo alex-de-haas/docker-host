@@ -1,3 +1,6 @@
+using ModelContextProtocol;
+using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 
@@ -26,12 +29,18 @@ internal static class AssistantMcpDiscovery
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeout.CancelAfter(TimeSpan.FromSeconds(20));
             using var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false });
-            return CoreJson.Json(await ReadCatalogAsync(new Uri(endpoint.Url), token.Token, client, timeout.Token));
+            return CoreJson.Json(WireCatalog(await ReadCatalogAsync(new Uri(endpoint.Url), token.Token, client, timeout.Token)));
         }
         catch (AppIdentityException ex) { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), AuthEndpoints.MapIdentityErrorStatus(ex.Code)); }
         catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or ModelContextProtocol.McpException or InvalidOperationException)
         { return CoreJson.Json(new ErrorResponse("mcp_catalog_unavailable", "The tool catalog could not be read. Existing rules are unchanged."), 503); }
     });
+    // The MCP and settings paths must expose identical definitions. Core's ordinary JSON
+    // defaults add null protocol fields, which would invalidate reviewed tool preferences.
+    internal static JsonElement WireCatalog(AssistantMcpCatalog catalog) => JsonSerializer.SerializeToElement(
+        new ListToolsResult { Tools = catalog.Tools.ToList() },
+        (JsonTypeInfo<ListToolsResult>)McpJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ListToolsResult)));
+
     internal static async Task<AssistantMcpCatalog> ReadCatalogAsync(Uri endpoint, string token, HttpClient client, CancellationToken ct)
     {
         await using var transport = new HttpClientTransport(new()

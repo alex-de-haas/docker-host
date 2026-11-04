@@ -490,6 +490,12 @@ class ClaudeRun implements HarnessRun {
       if (Array.isArray(content)) for (const block of content) {
         if (block.type === "tool_result" && typeof block.tool_use_id === "string") {
           const key = JSON.stringify([message.parent_tool_use_id ?? "main", block.tool_use_id]);
+          const effectId = commandToolUseId(this.commandRun, this.commandTurn, block.tool_use_id, typeof message.parent_tool_use_id === "string" ? message.parent_tool_use_id : "main");
+          if (this.turnActive && !message.isReplay && effectId) {
+            const structured = resultBlocks.length === 1 && message.tool_use_result && typeof message.tool_use_result === "object" ? message.tool_use_result as Record<string, unknown> : {};
+            this.options.onEvent({ type: "native_effect", id: effectId,
+              state: structured.detachedToolCall === true || structured.backgroundedByUser === true || typeof structured.backgroundTaskId === "string" ? "unknown" : "settled" });
+          }
           const command = this.commandCalls.get(key);
           if (this.turnActive && !message.isReplay && command && !this.deniedToolCalls.has(command.rawId)) {
             const result = claudeCommandResult(command.id, block,
@@ -562,6 +568,10 @@ class ClaudeRun implements HarnessRun {
           if (block.type === "text" && typeof block.text === "string" && block.text) {
             this.options.onEvent({ type: "assistant_text", text: block.text });
           } else if (block.type === "tool_use") {
+            if (this.turnActive && !message.isReplay) {
+              const effectId = commandToolUseId(this.commandRun, this.commandTurn, block.id, typeof message.parent_tool_use_id === "string" ? message.parent_tool_use_id : "main");
+              if (effectId) this.options.onEvent({ type: "native_effect", id: effectId, state: "started" });
+            }
             if (typeof block.id === "string") this.proposedTools.set(block.id, activeTool(String(block.name ?? "Tool"), block.input));
             // The question card is already the transcript record for an ask, so the raw tool_use
             // block would render a second, redundant entry carrying the same options as JSON.

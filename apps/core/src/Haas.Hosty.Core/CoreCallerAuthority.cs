@@ -4,7 +4,7 @@ namespace Haas.Hosty.Core;
 // from an ordinary request body; only Core constructs it from an authenticated request.
 internal sealed record CoreCallerAuthority(string Kind, string? CredentialHash = null, string? AppId = null,
     DateTimeOffset? Installation = null, string? PermissionRevision = null, string? IdentityHash = null,
-    AssistantMcpClaims? Mcp = null, string? InvokedTool = null, string? ExportGrantId = null, CoreTaskDispatchRef? TaskDispatch = null);
+    AssistantMcpClaims? Mcp = null, string? InvokedTool = null, string? ExportGrantId = null, CoreTaskDispatchRef? TaskDispatch = null, CoreTaskWorkflowBinding? TaskWorkflow = null);
 
 internal sealed partial class CoreCapabilityAuthorization
 {
@@ -60,7 +60,7 @@ internal sealed partial class CoreCapabilityAuthorization
                 throw new AppIdentityException("permission_denied", "The originating installation or its reviewed grants changed.");
             if (origin.Kind == "assistant")
             {
-                var actor = origin.Mcp is null ? null : await assistants.ValidateClaimsAsync(origin.Mcp, AgentMcpDirectory.CoreId, ct, retainedOperation: retainedTask);
+                var actor = origin.Mcp is null ? null : await assistants.ValidateClaimsAsync(origin.Mcp, AgentMcpDirectory.CoreId, ct, retainedOperation: retainedTask || origin.TaskWorkflow is not null);
                 var authorizedTool = origin.InvokedTool ?? toolName;
                 if (actor is null || actor.DiscoveryOnly || actor.UserId != user.Id || actor.DeniedTools?.Contains(authorizedTool) == true
                     || actor.AllowedTools is { } allowed && !allowed.Contains(authorizedTool))
@@ -70,7 +70,7 @@ internal sealed partial class CoreCapabilityAuthorization
             {
                 if (origin.IdentityHash is null) throw new AppIdentityException("permission_denied", "Originating user authority is missing.");
                 var actor = await identity.RequireOperationHashAsync(origin.IdentityHash, app.Id,
-                    scope => scope.Kind == "provider" && scope.TargetAppId == providerAppId && scope.ProviderKind == kind && scope.Key == key, ct);
+                    scope => scope.Kind == "provider" && scope.TargetAppId == providerAppId && scope.ProviderKind == kind && scope.Key == key, ct, requireActivity: !retainedTask && origin.TaskWorkflow is null);
                 if (actor.UserId != user.Id) throw new AppIdentityException("permission_denied", "The originating user changed.");
             }
             caller = new(user, AppPrincipal(app), app, null) { Authority = origin };
