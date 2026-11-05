@@ -133,10 +133,10 @@ export class TaskStore {
       if (s.version !== 1 || !Number.isSafeInteger(s.next) || s.next < 1 || !Array.isArray(s.tasks) || !Array.isArray(s.requests)) throw new Error("Invalid task store; refusing to reset it.");
       // Earlier version-one stores predate rootTaskRef. Preserve those records without
       // feeding them into tree policy, graph traversal or executor reconciliation.
-      const legacy = s.tasks.filter(t => !t.rootTaskRef);
+      const legacy = s.tasks.filter(t => !t?.rootTaskRef);
       if (legacy.length) {
         s.legacyTasks = [...(s.legacyTasks ?? []), ...legacy];
-        s.tasks = s.tasks.filter(t => !!t.rootTaskRef);
+        s.tasks = s.tasks.filter(t => !!t?.rootTaskRef);
       }
       return s;
     } catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") return { version: 1, next: 1, tasks: [], requests: [] }; throw e; }
@@ -171,7 +171,9 @@ export class TaskStore {
   }
   private localRef(s: TaskState, ref: TaskRef, actor: TaskActor): TaskRecord {
     if (fingerprint(providerRef(ref)) !== fingerprint(this.provider)) return taskError("unsupported_capability", "Relationships require the same task provider installation.");
-    return this.find(s, ref.id, actor);
+    const task = this.find(s, ref.id, actor);
+    if (task.removed) return taskError("task_removed", "Restore this task before using it in new work.");
+    return task;
   }
   private replay(s: TaskState, actor: TaskActor, requestId: string, input: unknown, taskId?: string, principalId?: string) {
     const r = s.requests.find(r => sameActor(r.actor, actor) && r.requestId === requestId && r.principalId === principalId);
@@ -192,14 +194,42 @@ export class TaskStore {
       return { requestId: r.requestId, state: "applied" as const, taskRef: r.result.ref, result: r.result };
     });
   }
-  list(actor: TaskActor, cursor = "", limit = 50, status?: TaskStatus, filters: { parentTaskRef?: string; rootTaskRef?: string; rootsOnly?: boolean } = {}) {
+  list(actor: TaskActor, cursor = "", limit = 50, status?: TaskStatus, filters: { parentTaskRef?: string; rootTaskRef?: string; rootsOnly?: boolean; removed?: boolean } = {}) {
     return this.serial(async () => {
       if (!Number.isInteger(limit) || limit < 1 || limit > 100 || cursor && !/^\d+$/.test(cursor) || status && !taskStatuses.includes(status)) return taskError("query_invalid", "Use a valid cursor, status and page size (1–100).", 400);
-      const rows = (await this.load()).tasks.filter(t => canRead(t, actor) && (!status || t.status === status)
+      const rows = (await this.load()).tasks.filter(t => canRead(t, actor) && !!t.removed === !!filters.removed && (!status || t.status === status)
         && (!filters.rootsOnly || t.parentTaskRef === null)
         && (!filters.parentTaskRef || t.parentTaskRef && taskReferenceKey(t.parentTaskRef) === filters.parentTaskRef)
         && (!filters.rootTaskRef || taskReferenceKey(t.rootTaskRef) === filters.rootTaskRef));
       const start = Number(cursor || 0); return { tasks: rows.slice(start, start + limit), nextCursor: start + limit < rows.length ? String(start + limit) : null };
+    });
+  }
+  private legacyRows(state: TaskState, actor: TaskActor) {
+    return (state.legacyTasks ?? []).flatMap(raw => {
+      if (!raw || typeof raw !== "object") return [];
+      const row = raw as { title?: unknown; number?: unknown; status?: unknown; owner?: TaskActor };
+      if (!row.owner || !sameActor(row.owner, actor)) return [];
+      const id = fingerprint(raw);
+      return [{ id, title: typeof row.title === "string" ? row.title.slice(0, 200) : "Retained legacy task",
+        number: typeof row.number === "string" ? row.number.slice(0, 100) : "Legacy", status: typeof row.status === "string" ? row.status.slice(0, 100) : "Unknown",
+        removed: state.journal?.["legacy-removed:" + id] === true }];
+    });
+  }
+  legacyList(actor: TaskActor, cursor = 0) {
+    if (!Number.isSafeInteger(cursor) || cursor < 0) return Promise.reject(new ProviderError("query_invalid", "Use a bounded legacy cursor.", 400));
+    return this.transaction(state => { const rows = this.legacyRows(state, actor); return { tasks: rows.slice(cursor, cursor + 100), nextCursor: cursor + 100 < rows.length ? cursor + 100 : null }; });
+  }
+  legacyAction(actor: TaskActor, id: unknown, input: Record<string, unknown>) {
+    return this.transaction(state => {
+      const row = this.legacyRows(state, actor).find(row => row.id === id);
+      if (!row) return taskError("task_not_found", "Retained task not found.", 404);
+      if (input.action !== "remove" && input.action !== "restore") return taskError("action_invalid", "Remove or restore the retained record.", 400);
+      const requestId = uuid(input.requestId), key = "legacy-request:" + fingerprint(actor) + ":" + requestId;
+      const hash = fingerprint({ id, input }), prior = state.journal?.[key] as { hash: string; result: typeof row } | undefined;
+      if (prior) { if (prior.hash !== hash) return taskError("request_conflict", "Recover the original legacy operation."); return prior.result; }
+      const result = { ...row, removed: input.action === "remove" };
+      (state.journal ??= {})["legacy-removed:" + id] = result.removed;
+      state.journal[key] = { hash, result }; return result;
     });
   }
   dispatch(id: string) { return this.serial(async () => (await this.load()).dispatches?.[uuid(id)]); }
@@ -269,6 +299,7 @@ export class TaskStore {
       const requestId = uuid(input.requestId), t = this.find(s, id, actor), payload = { operation, id, ...input };
       const replay = this.replay(s, actor, requestId, payload, id, principalId); if (replay) return replay;
       if (input.expectedRevision !== t.revision) return taskError("task_changed", "Task changed. Reload before applying this action.");
+      if (t.removed && !("action" in input && input.action === "restore")) return taskError("task_removed", "Restore this task before changing it.");
       fn(t, s); if (dispatch) (s.dispatches ??= {})[t.ref.id] = dispatch;
       this.touch(t); this.refresh(s); this.publishChild(s, t); this.remember(s, actor, requestId, payload, t, principalId); return t;
     });
@@ -308,7 +339,7 @@ export class TaskStore {
       prerequisiteOutcomes: t.dependsOn.map(ref => this.find(s, ref.id).acceptedResultRef!) };
   }
   private admit(s: TaskState, t: TaskRecord) {
-    if (!t.armed || activeAttempt(t) || !t.assignee) return;
+    if (t.removed || !t.armed || activeAttempt(t) || !t.assignee) return;
     if (!this.satisfied(s, t)) { t.status = "Blocked"; t.blocked = { reason: "prerequisites", message: "Waiting for accepted prerequisite outcomes." }; return; }
     t.status = "Ready"; delete t.blocked;
     if (t.assignee.kind === "app") {
@@ -322,7 +353,7 @@ export class TaskStore {
   }
   private refresh(s: TaskState) {
     for (const t of s.tasks) {
-      if (t.armed && ["prerequisites", "limits"].includes(t.blocked?.reason ?? "") && this.satisfied(s, t)) {
+      if (!t.removed && t.armed && ["prerequisites", "limits"].includes(t.blocked?.reason ?? "") && this.satisfied(s, t)) {
         const before = fingerprint(t);
         try { this.admit(s, t); }
         catch (error) {
@@ -395,6 +426,35 @@ export class TaskStore {
       guard?.(t, s); const active = activeAttempt(t);
       if (t.cancelRequested && input.action !== "cancel") return taskError("cancellation_pending", "Wait for confirmed cancellation.");
       switch (input.action) {
+        case "remove": case "restore": {
+          if (!sameActor(t.owner, actor)) return taskError("removal_forbidden", "Only the task owner may remove or restore it.", 403);
+          const restoring = input.action === "restore";
+          if (restoring && !t.removed) return taskError("task_not_removed", "This task is not in the trash.");
+          const scope = restoring ? s.tasks.filter(row => row.removed?.batchId === t.removed!.batchId) : [t];
+          if (!restoring) for (let i = 0; i < scope.length; i++) scope.push(...s.tasks.filter(row => !row.removed && row.parentTaskRef?.id === scope[i]!.ref.id));
+          const requested = input.removalScope;
+          if (!Array.isArray(requested) || requested.length !== scope.length || requested.length > 100
+            || new Set(requested.map(row => row?.taskRef?.id)).size !== scope.length
+            || scope.some(row => !requested.some(target => fingerprint(target.taskRef) === fingerprint(row.ref) && target.revision === row.revision)))
+            return taskError("removal_scope_changed", "Review the exact current subtree or removal batch, including every task revision.");
+          const ids = new Set(scope.map(row => row.ref.id));
+          for (const row of scope) {
+            if (!sameActor(row.owner, actor)) return taskError("removal_forbidden", "Every selected task must belong to this owner.", 403);
+            if (activeAttempt(row) || row.cancelRequested || row.armed || row.status === "InProgress")
+              return taskError("execution_active", "Stop all selected work and confirm native exit before removal or restoration.");
+            if (restoring && row.parentTaskRef && !ids.has(row.parentTaskRef.id) && this.find(s, row.parentTaskRef.id).removed)
+              return taskError("parent_removed", "Restore the parent task first.");
+          }
+          if (!restoring && s.tasks.some(row => !row.removed && !ids.has(row.ref.id) && !["Done", "Cancelled"].includes(row.status)
+            && (row.dependsOn.some(ref => ids.has(ref.id)) || row.disposition?.replacementRefs.some(ref => ids.has(ref.id)) || scope.some(child => child.parentTaskRef?.id === row.ref.id))))
+            return taskError("task_referenced", "An open task outside this selection still requires these tasks.");
+          for (const row of scope) {
+            if (restoring) delete row.removed;
+            else row.removed = { batchId: input.requestId, at: new Date().toISOString(), by: actor };
+            if (row !== t) this.touch(row);
+          }
+          return;
+        }
         case "ready":
           if (["Ready", "InProgress"].includes(t.status) || t.armed) return;
           if (t.status !== "Draft" || active) return taskError("task_not_ready", "Return stopped work to Draft before starting a new attempt.");
@@ -482,7 +542,7 @@ export class TaskStore {
         } else if (taskExecutionTerminal(receipt.state)) {
           t.status = "Blocked"; t.blocked = { reason: a.invalidated ? "prerequisite_changed" : "execution_failed", message: receipt.error?.message ?? "The execution ended without an explicit task result." };
         } else if (receipt.state === "awaiting_input") {
-          t.status = "Blocked"; t.blocked = { reason: receipt.wait?.kind === "children" ? "waiting_children" : receipt.wait?.kind === "limits" ? receipt.error?.code ?? "limits" : "needs_input", message: "The execution is waiting for a continuation." };
+          t.status = "Blocked"; t.blocked = { reason: receipt.wait?.kind === "children" ? "waiting_children" : receipt.wait?.kind === "limits" ? receipt.error?.code ?? "limits" : "needs_input", message: receipt.error?.message ?? "The execution is waiting for a continuation." };
         } else if (receipt.state === "running") { t.status = "InProgress"; delete t.blocked; }
       }
       this.touch(t); this.refresh(s); this.publishChild(s, t); return t;

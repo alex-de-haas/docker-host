@@ -10,8 +10,8 @@ public sealed class HostyTaskClient(HostyProviderClient providers, HostyTaskProv
     /// <summary>Read provider capabilities.</summary>
     public Task<HostyTaskCapabilities> CapabilitiesAsync(CancellationToken ct = default) => Send<HostyTaskCapabilities>("/capabilities", HttpMethod.Get, null, ct);
     /// <summary>List a bounded page.</summary>
-    public Task<HostyTaskPage> ListAsync(string? cursor = null, int limit = 50, string? status = null, HostyTaskRef? parentTaskRef = null, HostyTaskRef? rootTaskRef = null, bool rootsOnly = false, CancellationToken ct = default)
-        => Send<HostyTaskPage>($"/tasks?limit={limit}&cursor={Uri.EscapeDataString(cursor ?? "")}&status={Uri.EscapeDataString(status ?? "")}&rootsOnly={rootsOnly.ToString().ToLowerInvariant()}{Filter("parentTaskRef", parentTaskRef)}{Filter("rootTaskRef", rootTaskRef)}", HttpMethod.Get, null, ct);
+    public Task<HostyTaskPage> ListAsync(string? cursor = null, int limit = 50, string? status = null, HostyTaskRef? parentTaskRef = null, HostyTaskRef? rootTaskRef = null, bool rootsOnly = false, CancellationToken ct = default, bool removed = false)
+        => Send<HostyTaskPage>($"/tasks?limit={limit}&cursor={Uri.EscapeDataString(cursor ?? "")}&status={Uri.EscapeDataString(status ?? "")}&removed={removed.ToString().ToLowerInvariant()}&rootsOnly={rootsOnly.ToString().ToLowerInvariant()}{Filter("parentTaskRef", parentTaskRef)}{Filter("rootTaskRef", rootTaskRef)}", HttpMethod.Get, null, ct);
     /// <summary>Create once under RequestId.</summary>
     public Task<HostyTaskRecord> CreateAsync(HostyTaskCreate input, CancellationToken ct = default) => Send<HostyTaskRecord>("/tasks", HttpMethod.Post, input, ct);
     /// <summary>Read the current task.</summary>

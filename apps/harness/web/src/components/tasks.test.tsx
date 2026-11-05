@@ -146,3 +146,24 @@ it("marks executor selection dirty immediately and ignores responses after disca
   expect(container.querySelector<HTMLInputElement>("input")!.value).toBe("");
   expect(container.querySelector<HTMLOptionElement>('option[value="human:owner"]')!.closest("select")!.value).toBe("");
 });
+
+it("reviews every descendant and retains exact removal scope through refresh and lost reply", async () => {
+  const child = { ...task, ref: { ...provider, id: "73cf12e4-447c-4a63-88f8-5555dcc99324" }, number: "HRN-2", title: "Child", parentTaskRef: task.ref };
+  const original = vi.mocked(call).getMockImplementation()!;
+  vi.mocked(call).mockImplementation(async (url, init) => url.startsWith("/tasks/v1/tasks?")
+    ? Response.json({ tasks: [task, child], nextCursor: null }) : original(url, init));
+  await mount();
+  await act(async () => { [...container.querySelectorAll<HTMLButtonElement>('nav[aria-label="Tasks"] button')].find(b => b.textContent?.includes("HRN-1"))!.click(); });
+  await click("Delete task");
+  const dialog = container.querySelector('[role="alertdialog"]');
+  expect(dialog?.textContent).toContain("HRN-1"); expect(dialog?.textContent).toContain("HRN-2");
+  task = { ...task, revision: 9 };
+  await act(async () => { stream.enqueue(new TextEncoder().encode("event: changed\ndata: {}\n\n")); });
+  const listing = vi.mocked(call).getMockImplementation()!;
+  vi.mocked(call).mockImplementation(async (url, init) => { if (init?.method === "POST") throw new Error("Lost removal reply"); return listing(url, init); });
+  await click("Move to trash");
+  const first = vi.mocked(call).mock.calls.find(([, init]) => init?.method === "POST")!;
+  expect(JSON.parse(String(first[1]!.body)).removalScope).toEqual([{ taskRef: task.ref, revision: 1 }, { taskRef: child.ref, revision: 1 }]);
+  await click("Retry original request");
+  expect(vi.mocked(call).mock.calls.filter(([, init]) => init?.method === "POST")).toEqual([first, first]);
+});

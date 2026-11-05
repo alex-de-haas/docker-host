@@ -21,7 +21,7 @@ const types = { task_mode: "Autonomous task execution", question: "Agent questio
 const selectClass = "w-full rounded-md border bg-background px-3 py-2 text-sm";
 export function DecisionsInbox() {
   const [items, setItems] = useState<Item[]>([]), [history, setHistory] = useState(false), [kind, setKind] = useState("");
-  const [selected, setSelected] = useState<string | null>(null), [session, setSession] = useState(""), [task, setTask] = useState(""), [search, setSearch] = useState("");
+  const [selected, setSelected] = useState<string | null>(null), [session, setSession] = useState(() => typeof window === "undefined" ? "" : new URL(window.location.href).searchParams.get("session") ?? ""), [task, setTask] = useState(""), [search, setSearch] = useState("");
   const [errors, setErrors] = useState<string[]>([]), [loaded, setLoaded] = useState(false), [pending, setPending] = useState<number | null>(null);
   const generation = useRef(0), openedLink = useRef(false);
   const refresh = useCallback(async () => {
@@ -126,6 +126,7 @@ function DecisionDetail({ item, refresh }: { item: Item; refresh: () => Promise<
     decision={projection.available ? null : { decision: "cancelled", message: projection.error ?? "The native request is unavailable." }} reasonBox
     onDecide={async (id, decision, message) => { await resolveApproval(projection.sessionId, id, decision, message); await refresh(); }} />
     : <section className="space-y-3 rounded-lg border p-4"><h2 className="font-semibold">{projection.title}</h2><p className="text-sm">{projection.error}</p><p className="text-sm text-muted-foreground">Recovery uses the original chat’s supported controls. An unknown stop must be reconciled there.</p></section>}
+    {projection.taskId && <a className="text-sm text-primary underline" href={`/tasks?task=${encodeURIComponent(projection.taskId)}`}>Open task and recovery actions</a>}
     <a className="text-sm text-primary underline" href={`/development?session=${encodeURIComponent(projection.sessionId)}`}>Open originating chat</a>
   </div>;
 }

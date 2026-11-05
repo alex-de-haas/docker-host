@@ -1,3 +1,4 @@
+import { taskTools } from "../tasks/tools.js";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
@@ -240,4 +241,13 @@ it.each([false, true])("honors explicit Delete Ask, Run and Disabled with autono
   expect(await policy.catalog("hosty:development", "v1", [tool])).toEqual([]);
   await expect(invoke("disabled")).rejects.toThrow("disabled");
   await expect(automatic()).rejects.toThrow("changed");
+});
+
+it("keeps the session-owned executor directory discoverable when Core replaces generic task aliases", async () => {
+  await policy.catalog("hosty:core", "core-instance", [{ name: "task_options", _meta: { "io.hosty/core-tool": { schemaVersion: 1, owner: "hosty:core" } } }]);
+  expect(policy.canonicalCore).toBe(true);
+  const tools = await policy.localCatalog(taskTools());
+  expect(tools.some(tool => tool.name === "task_options")).toBe(false);
+  expect(tools.find(tool => tool.name === "task_executor_options")?.annotations?.readOnlyHint).toBe(true);
+  expect(tools.some(tool => tool.name === "task_request_input")).toBe(true);
 });

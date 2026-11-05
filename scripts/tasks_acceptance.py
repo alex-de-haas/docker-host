@@ -82,7 +82,15 @@ def check(context):
     task=action(task,'accept',resultRef=task['resultRef']); assert task['status']=='Done'
     task=action(task,'draft'); assert task['status']=='Draft' and task['number']==number
     assert action(task,'cancel')['status']=='Cancelled'
-    say('PASS: human assignment, numbering/replay, review/rework, reopen and cancellation')
+    removal = {'requestId':str(uuid.uuid4()),'expectedRevision':task['revision'],'action':'remove','removalScope':[{'taskRef':task['ref'],'revision':task['revision']}]}
+    task = read(task); removal['expectedRevision']=task['revision']; removal['removalScope'][0]['revision']=task['revision']
+    route='/tasks/v1/tasks/'+task['ref']['id']+'/actions'
+    removed=h(route,removal); assert h(route,removal)==removed
+    assert all(row['ref']!=task['ref'] for row in h('/tasks/v1/tasks')['tasks'])
+    assert any(row['ref']==task['ref'] for row in h('/tasks/v1/tasks?removed=true')['tasks'])
+    restored=action(removed,'restore',removalScope=[{'taskRef':removed['ref'],'revision':removed['revision']}])
+    assert not restored.get('removed') and restored['attempts']==task['attempts']
+    say('PASS: human assignment, review/rework, cancellation and recoverable removal with exact scope and replay')
     connection=h('/connections',{'name':'Scripted acceptance connection','kind':'codex','auth':'api-key','secret':'synthetic-task-fixture-only'},expected=201)
     h('/connections/'+connection['id']+'/test',{})
     profiles=h('/profiles'); config={'name':'Acceptance writer','description':'Scripted native adapter','instructions':'Complete the requested task.','connectionId':connection['id'],'model':'fixture-default','reasoningEffort':'medium','skillIds':[]}
@@ -99,7 +107,7 @@ def check(context):
                 if sid:
                     session=h('/sessions/'+sid)
                     for approval in session.get('mcpPendingApprovals',[]):
-                        assert approval['tool'].split(': ')[-1] in ['task_result','task_options','task_create','task_action'],approval
+                        assert approval['tool'].split(': ')[-1] in ['task_result','task_options','task_executor_options','task_create','task_action'],approval
                         try: h('/sessions/'+sid+'/approvals/'+approval['id'],{'decision':'allow'})
                         except AssertionError as error:
                             details=error.args[0]

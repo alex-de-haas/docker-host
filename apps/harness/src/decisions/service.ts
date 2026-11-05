@@ -1,3 +1,6 @@
+import { readNativeQuestions } from "../harness/questions.js";
+import { fingerprint, uuid, taskError } from "../tasks/store.js";
+import { continuationInput } from "./waits.js";
 import { randomUUID } from "node:crypto";
 import { DecisionError, type DecisionClient, type DecisionRecord, type DecisionResolve, type DecisionQuery, type DecisionContinuationState, type DecisionContinuationReason } from "@hosty-sdk/app/decisions";
 import { DecisionServerClient } from "@hosty-sdk/app/decisions/server";
@@ -43,6 +46,31 @@ export class DecisionsService {
     const initial = newWait(record, event);
     const wait = await this.waits.update(initial.id, previous => previous ?? initial);
     this.changed(wait.owner); this.kick(); return wait;
+  }
+  /** Task questions have a durable tool boundary, independent of native question support. */
+  async registerTask(record: SessionRecord, input: Record<string, unknown>, title?: string): Promise<DecisionWait> {
+    const id = uuid(input.requestId);
+    if (!record.taskExecutionId) return taskError("task_binding_required", "Required input belongs to an admitted task.");
+    if (typeof input.reason !== "string" || !input.reason.trim() || input.reason.length > 2000)
+      return taskError("invalid_input", "Explain the required input in at most 2000 characters.", 400);
+    let questions;
+    try { questions = readNativeQuestions(input, "codex"); }
+    catch (error) { return taskError("invalid_input", error instanceof Error ? error.message : "Invalid questions.", 400); }
+    const hash = fingerprint({ executionId: record.taskExecutionId, input });
+    const initial = newWait(record, { type: "question_request", questionId: id, questions, blocking: true });
+    initial.taskInput = { requestHash: hash, barrierId: id, reason: input.reason };
+    if (title) initial.create.input.title = title.slice(0, 160);
+    initial.create.input.reason = input.reason;
+    initial.create.input.originPath = `/decisions?session=${encodeURIComponent(record.id)}`;
+    // The caller binds this wait and its barrier before scheduling registration/continuation.
+    return this.waits.update(initial.id, previous => {
+      if (previous && previous.taskInput?.requestHash !== hash) return taskError("request_conflict", "Recover the original required-input request.");
+      return previous ?? initial;
+    });
+  }
+  async requiredInput(sessionId: string): Promise<DecisionWait | undefined> {
+    return (await this.waits.list()).find(wait => wait.sessionId === sessionId && wait.event.blocking !== false
+      && !["running", "completed", "cancelled"].includes(wait.state));
   }
   kick(): void {
     if (this.stopped || this.ticking) return;
@@ -129,7 +157,7 @@ export class DecisionsService {
         await this.cancel(wait, "The originating work was cancelled or deleted."); return;
       }
       // Resource parking is independent of answer delivery and expiring browser authority.
-      if (wait.event.blocking !== false && !wait.control && !wait.resumeRequested
+      if (!wait.taskInput && wait.event.blocking !== false && !wait.control && !wait.resumeRequested
         && this.now() - Date.parse(wait.createdAt) >= this.parkingMs) {
         await this.park(wait); wait = (await this.waits.read(id))!;
       }
@@ -139,7 +167,19 @@ export class DecisionsService {
           const core = await this.client(wait.owner).create(wait.create);
           if (core.userId !== wait.owner) throw new DecisionError("identity_required", "The current actor does not own this wait.", 403);
           wait = await this.update(id, { core, state: wait.state === "registering" ? "waiting" : wait.state, error: undefined, reason: undefined });
-        } catch (error) { await this.problem(wait, error, "missing_authority"); }
+        } catch (error) { await this.problem(wait, error, "missing_provider"); }
+      }
+      if (wait.core?.notificationPending && (wait.notificationRetryAt ?? 0) <= this.now()) {
+        wait = await this.update(id, { notificationRetryAt: this.now() + 30000 });
+        try { wait = await this.update(id, { core: await this.client(wait.owner).create(wait.create) }); }
+        catch { /* Keep the visible pending notification and retry the same creation identity. */ }
+      }
+      if (wait.taskInput) {
+        try { await this.manager.advanceTaskBarrier(wait.sessionId); }
+        catch (error) { if ((error as { code?: string }).code !== "barrier_pending") throw error; }
+        const barrier = (await this.manager.getSession(wait.sessionId))?.taskBarrier;
+        if (barrier?.id === wait.taskInput.barrierId && barrier.state === "parked" && wait.core && !wait.inbox)
+          wait = await this.update(id, { state: "parked", error: undefined, reason: undefined });
       }
       if (wait.withdrawal && wait.core) {
         const core = await this.client(wait.owner).withdraw(wait.core.id, wait.withdrawal);
@@ -166,6 +206,7 @@ export class DecisionsService {
         wait = await this.update(id, { answeredEvent: true });
       }
       if (closed(wait)) return;
+      if (wait.taskInput) { await this.continueTaskInput(wait); return; }
       if (wait.state === "running" || wait.state === "admitted" || wait.resumeRequested) { await this.observeContinuation(wait); return; }
       if (wait.park && wait.native.workerRunId && this.manager.worker) {
         const receipt = await this.manager.worker.request<WorkerReceipt>(`/v1/runs/${wait.native.workerRunId}`);
@@ -244,7 +285,7 @@ export class DecisionsService {
     const runId = wait.resumedRunId ?? wait.native.workerRunId;
     if (!runId) throw new DecisionError("unsupported_resume", "This question has no durable native execution identity.", 409);
     const receipt = await this.manager.worker.request<WorkerReceipt>(`/v1/runs/${runId}`);
-    if ((receipt.state === "completed" || receipt.state === "parked" && receipt.pending?.some(frame => frame.event.type === "question_request" && frame.event.questionId !== wait.questionId)) && receipt.exitConfirmed) {
+    if ((receipt.state === "completed" || receipt.state === "parked" && (receipt.barrier?.barrierId !== undefined && receipt.barrier.barrierId !== wait.taskInput?.barrierId || receipt.pending?.some(frame => frame.event.type === "question_request" && frame.event.questionId !== wait.questionId))) && receipt.exitConfirmed) {
       wait = await this.report(wait, "running"); wait = await this.report(wait, "completed");
       await this.update(wait.id, { state: "completed", error: undefined, reason: undefined }); await this.manager.finishDecision(wait); return;
     }
@@ -253,6 +294,27 @@ export class DecisionsService {
       wait = await this.report(wait, receipt.state === "cancelled" ? "cancelled" : "failed", receipt.state === "cancelled" ? "cancelled" : "provider_failed");
       await this.update(wait.id, { state: "completed", error: "Continuation ended before successful completion." }); await this.manager.finishDecision(wait);
     }
+  }
+  private async continueTaskInput(wait: DecisionWait): Promise<void> {
+    if (wait.resumedRunId) { await this.observeContinuation(wait); return; }
+    await this.manager.checkDecision(wait);
+    const session = await this.manager.getSession(wait.sessionId), barrier = session?.taskBarrier;
+    if (barrier?.id !== wait.taskInput!.barrierId) throw new DecisionError("stale_input", "The required-input boundary changed.", 409);
+    if (barrier.state !== "parked" && barrier.state !== "resuming") return;
+    if (!wait.resumeRequested) {
+      if (this.manager.beforeTaskDecisionResume && !await this.manager.beforeTaskDecisionResume(wait.sessionId)) return;
+      wait = await this.report(wait, "admitted");
+      wait = await this.update(wait.id, { resumeRequested: true, state: "admitted" });
+    }
+    // resumeTaskBarrier reuses the original durable command after uncertain admission.
+    await this.manager.resumeTaskBarrier(wait.sessionId, wait.owner, continuationInput(wait), this.credentials.get(wait.owner));
+    const receipt = await this.manager.messageReceipt(wait.sessionId, barrier.commandId, wait.owner);
+    if (receipt.state !== "accepted") throw new DecisionError("unknown_admission", "The original continuation requires recovery.", 409);
+    const current = await this.manager.getSession(wait.sessionId);
+    const resumedRunId = current?.decisionRunIds?.[wait.commandId];
+    if (!resumedRunId || resumedRunId === wait.native.workerRunId) throw new DecisionError("unknown_admission", "Continuation run identity is unavailable.", 409);
+    wait = await this.update(wait.id, { state: "running", resumedRunId, error: undefined, reason: undefined });
+    await this.report(wait, "running");
   }
   private async problem(wait: DecisionWait, error: unknown, fallback: DecisionContinuationReason = "missing_provider"): Promise<void> {
     const code = (error as { code?: string }).code;
@@ -311,7 +373,14 @@ export class DecisionsService {
       await this.update(wait.id, { state: "cancelled", deleteRequested: true, cancellationSettled: false });
     this.kick();
   }
-  async projections(owner: string) { return this.manager.decisionProjections(owner); }
+  async projections(owner: string) {
+    const result = await this.manager.decisionProjections(owner);
+    for (const wait of await this.waits.list(owner)) if (!closed(wait) && (!wait.core || wait.error)) result.items.push({
+      id: `decision-wait:${wait.id}`, kind: "recovery", sessionId: wait.sessionId, title: wait.create.input.title,
+      createdAt: wait.createdAt, available: true, error: wait.error ?? "The required question is saved locally and is waiting for Core registration.",
+    });
+    return result;
+  }
   async list(owner: string, query: DecisionQuery = {}) { return this.client(owner).list(query); }
   async get(owner: string, id: string) { return this.client(owner).get(id); }
   async local(owner: string, id: string): Promise<DecisionWait> {

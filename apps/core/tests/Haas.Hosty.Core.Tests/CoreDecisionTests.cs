@@ -180,6 +180,23 @@ public sealed class CoreDecisionTests
         await Conflict(() => f.Service.CreateAsync(f.Source, create with { RequestId = Id() }));
     }
 
+    [Fact]
+    public async Task NotificationFailureRetainsQuestionAndReplayRetriesOneDeduplicatedNotice()
+    {
+        using var f = await Fixture.Create();
+        var path = Path.Combine(f.Paths.CoreRoot, "notifications", "notifications.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        await File.WriteAllTextAsync(path, "invalid JSON");
+        var command = Input(); var row = await f.Service.CreateAsync(f.Source, command);
+        Assert.True(row.NotificationPending);
+        Assert.Equal("pending", (await f.Service.GetAsync(f.Owner, row.Id)).State);
+        File.Delete(path); f.Restart();
+        var recovered = await f.Service.CreateAsync(f.Source, command);
+        Assert.False(recovered.NotificationPending); Assert.Equal(row.Id, recovered.Id);
+        await f.Service.CreateAsync(f.Source, command);
+        Assert.Single((await new NotificationStore(f.Paths).ReadAsync()).Notifications);
+    }
+
     private static string Id() => Guid.NewGuid().ToString("D");
     private static HostyDecisionCreate Input() => new(Id(), new(Id(), "Choose an approach", [new("q", "Which approach?")], Subject: new("conversation", "source:conversation:1", "1")));
     private static Dictionary<string, HostyDecisionAnswer> Answers(string text) => new() { ["q"] = new(Text: text) };

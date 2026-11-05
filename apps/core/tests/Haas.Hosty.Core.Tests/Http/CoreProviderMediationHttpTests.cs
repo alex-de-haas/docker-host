@@ -194,6 +194,26 @@ public sealed class CoreProviderMediationHttpTests
         Assert.Equal(HttpStatusCode.Conflict, (await client.PostAsJsonAsync("/api/tasks/v1/action", input with { Input = input.Input with { Action = "cancel" } })).StatusCode);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Removal_RequiresAnIndependentProvidersDeclaredCapability(bool supported)
+    {
+        using var transport = new ProviderTransport(); await using var host = await Start(transport);
+        var provider = await AddProvider(host, "independent.task.archive", "tasks", supported ? ["removal"] : []);
+        transport.Provider = provider; transport.Services = host.Services;
+        var reference = new HostyTaskProviderRef(provider.Id, PanelIdentity.Installation(provider), "custom");
+        var task = Task(reference); transport.Reply = JsonSerializer.SerializeToElement(task, JsonSerializerOptions.Web);
+        using var client = host.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new("Bearer", await Issue(host,
+            [AccessTokenScopes.McpRead, AccessTokenScopes.McpTasksRead, AccessTokenScopes.McpTasksWrite]));
+        var input = new CoreTaskAction(task.Ref, new(Guid.NewGuid().ToString(), 1, "remove",
+            RemovalScope: [new(task.Ref, 1)]));
+        var response = await client.PostAsJsonAsync("/api/tasks/v1/action", input);
+        Assert.Equal(supported ? HttpStatusCode.OK : HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        if (supported) Assert.Equal(task.Ref.Id, transport.LastAction!.Value.GetProperty("removalScope")[0].GetProperty("taskRef").GetProperty("id").GetString());
+    }
+
     [Fact]
     public async Task Ready_SelectsAndRetainsAnIndependentExecutorsDefaultOption()
     {

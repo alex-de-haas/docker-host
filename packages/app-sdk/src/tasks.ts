@@ -46,6 +46,7 @@ export type TaskOutcome = {
 export type TaskDisposition = { kind: "superseded" | "not_required"; reason: string; replacementRefs: TaskRef[] };
 export type TaskCoordination = { rootGeneration: number; coordinatorEpoch: number; executionId: string };
 export type TaskRecord = TaskInput & {
+  removed?: { batchId: string; at: string; by: TaskActor };
   coordination?: TaskCoordination;
   ref: TaskRef; number: string; revision: number; inputRevision: number; status: TaskStatus;
   rootTaskRef: TaskRef; depth: number; relationRevision: number; graphRevision: number;
@@ -60,13 +61,14 @@ export type TaskInputWrite = Omit<TaskInput, "review" | "parentTaskRef" | "depen
 export type TaskCreate = { requestId: string; input: TaskInputWrite; expectedGraphRevision?: number };
 export type TaskEdit = TaskMutation & { input: TaskInputWrite; expectedGraphRevision?: number };
 export type TaskAction = TaskMutation & {
-  action: "ready" | "draft" | "start" | "complete" | "cancel" | "accept" | "request_changes" | "retry" | "disposition";
+  action: "ready" | "draft" | "start" | "complete" | "cancel" | "accept" | "request_changes" | "retry" | "disposition" | "remove" | "restore";
   result?: TaskResult; resultRef?: TaskOutcomeRef; feedback?: string;
   selection?: TaskSelection; disposition?: TaskDisposition;
+  removalScope?: Array<{ taskRef: TaskRef; revision: number }>;
 };
 export type TaskRequestReceipt = { requestId: string; state: "applied"; taskRef: TaskRef; result: TaskRecord };
 export type TaskPage = { tasks: TaskRecord[]; nextCursor: string | null };
-export type TaskListOptions = { cursor?: string; limit?: number; status?: TaskStatus; parentTaskRef?: TaskRef; rootTaskRef?: TaskRef; rootsOnly?: boolean };
+export type TaskListOptions = { cursor?: string; limit?: number; status?: TaskStatus; parentTaskRef?: TaskRef; rootTaskRef?: TaskRef; rootsOnly?: boolean; removed?: boolean };
 export type TaskCapabilities = { version: 1; prefix: string; statuses: TaskStatus[]; maxPageSize: number; capabilities?: string[] };
 export type TaskExecutorAvailability = { state: "available" | "unavailable" | "unknown"; reason?: string };
 export type TaskExecutorOption = {
