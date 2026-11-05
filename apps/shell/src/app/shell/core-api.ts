@@ -71,7 +71,8 @@ export async function getAppFeeds(coreOrigin: string, appId: string, signal?: Ab
   });
   redirectToCoreLoginIfAuthRequired(response, coreOrigin);
   if (!response.ok) {
-    throw new Error(await readCoreError(response));
+    const detail = await readCoreErrorDetail(response);
+    throw new CoreRequestError(detail.message, detail.code, response.status, detail.body);
   }
 
   return (await response.json()) as CoreAppFeedsResponse;

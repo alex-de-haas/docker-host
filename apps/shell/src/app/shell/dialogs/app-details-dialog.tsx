@@ -5,6 +5,7 @@ import { AppMetricsPanel } from "../resources/resource-usage";
 import { AppPermissions } from "./app-permissions";
 import { ConsoleLogsPanel } from "./app-console-logs";
 import { AppUpdatesPanel } from "./app-updates-panel";
+import { AppFeedSource } from "./app-feed-source";
 import { HostyLoader } from "../../../../../../shared/web/hosty-states";
 import { PrivateSourceConnections } from "./private-source-connections";
 
@@ -29,7 +30,7 @@ import Link from "next/link";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { detailTitle, formatBytes, isAppAutostartEnabled } from "../app-helpers";
-import { getAppFeeds, isAuthRequiredRedirectError } from "../core-api";
+import { CoreRequestError, getAppFeeds, isAuthRequiredRedirectError } from "../core-api";
 import {
   buildPublicOriginGroups,
   isPublicOriginSettingKey,
@@ -967,6 +968,7 @@ function FeedSection({ app, coreOrigin, canManageApps, busyAction, onSetFeed, ac
 }) {
   const [feedState, setFeedState] = useState<CoreAppFeedsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [unbound, setUnbound] = useState(false);
   const [reload, setReload] = useState(0);
   const [wasActive, setWasActive] = useState(active);
   const [activation, setActivation] = useState(0);
@@ -982,9 +984,15 @@ function FeedSection({ app, coreOrigin, canManageApps, busyAction, onSetFeed, ac
     if (!active) return;
     const controller = new AbortController();
     void getAppFeeds(coreOrigin, app.id, controller.signal).then(payload => {
-      if (!controller.signal.aborted) { setFeedState(payload); setError(null); setSettledKey(readKey); }
+      if (!controller.signal.aborted) { setFeedState(payload); setUnbound(false); setError(null); setSettledKey(readKey); }
     }).catch((cause: unknown) => {
-      if (!controller.signal.aborted && !isAuthRequiredRedirectError(cause)) { setError(cause instanceof Error ? cause.message : "Update feeds are unavailable."); setSettledKey(readKey); }
+      if (!controller.signal.aborted && !isAuthRequiredRedirectError(cause)) {
+        const missingBinding = cause instanceof CoreRequestError && cause.code === "app_feeds_not_configured";
+        setUnbound(missingBinding);
+        if (missingBinding) setFeedState(null);
+        setError(missingBinding ? null : cause instanceof Error ? cause.message : "Update feeds are unavailable.");
+        setSettledKey(readKey);
+      }
     });
     return () => controller.abort();
   }, [active, coreOrigin, app.followedFeedId, app.id, readKey]);
@@ -1008,6 +1016,7 @@ function FeedSection({ app, coreOrigin, canManageApps, busyAction, onSetFeed, ac
       <div className="min-w-0 flex-1 space-y-3">
         {validating && !error && <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><HostyLoader label={null} className="size-5" />{feedState ? "Refreshing update feeds…" : "Loading update feeds…"}</p>}
         {error && <div className="space-y-2"><p role="alert" className="break-words text-sm text-destructive-foreground">{error}</p><Button type="button" variant="outline" size="sm" onClick={() => { setError(null); setReload(value => value + 1); }}>Retry feeds</Button></div>}
+        {unbound && <p className="text-sm text-muted-foreground">No update feed is configured. This installation can continue using its existing source.</p>}
         {feedState && feeds?.length === 0 && <p className="text-sm text-muted-foreground">No update feeds are declared for this app.</p>}
         {feedState?.feedsUrl && <p className="break-all font-mono text-xs text-muted-foreground">{feedState.feedsUrl}</p>}
         {feedState && <p className="text-xs text-muted-foreground">Confirmed feed: {followed ?? "None"}{unavailable ? " (last observed)" : ""}</p>}
@@ -1019,6 +1028,7 @@ function FeedSection({ app, coreOrigin, canManageApps, busyAction, onSetFeed, ac
             <SelectContent position="popper"><SelectItem value={emptyValue}>{followed === null ? "Choose a feed…" : "None (stop following)"}</SelectItem>{followedMissing && <SelectItem value={followed}>{followed} (missing)</SelectItem>}{feeds.map(feed => <SelectItem key={feed.id} value={feed.id}>{feed.id}{feed.default && feeds.length > 1 ? " (default)" : ""}</SelectItem>)}</SelectContent>
           </Select><Button type="button" size="sm" variant="outline" onClick={() => onSetFeed(app, selected)} disabled={!canManageApps || busy || unavailable || selected === followed || (followed === null && selected.length === 0)}>{busy ? <HostyLoader label={null} className="size-4" /> : <Rss className="size-4" />}{selected.length === 0 && followed !== null ? "Stop following" : "Follow feed"}</Button></div>
         </>}
+        {canManageApps && !app.live && !app.devMode && <AppFeedSource key={`${coreOrigin}|${app.id}|${app.installationId ?? "legacy"}`} app={app} coreOrigin={coreOrigin} active={active} unbound={unbound} onChanged={() => setReload(value => value + 1)} />}
       </div>
     </div>
   </section>;
