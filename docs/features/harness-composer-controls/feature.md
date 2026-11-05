@@ -1,6 +1,6 @@
 ---
 created: 2026-11-03
-updated: 2026-11-04
+updated: 2026-11-05
 summary: One responsive composer action row with a shared agent-settings panel and catalog-driven reasoning controls.
 components: [apps/harness]
 ---
@@ -54,6 +54,30 @@ existing rules. Errors and recovery notices remain visible beneath the row when 
 closed; opening it exposes their detailed controls and retry actions. Autonomy errors also render
 beneath the action row.
 
+## Remembered Manual Choices
+
+The browser remembers the last successfully saved manual model and reasoning pair per provider
+connection, plus the last explicitly saved autonomy mode. Preferences belong to the current
+Harness origin and authenticated user. They contain no profile selection, conversation identifier
+or credentials. Merely opening a chat, receiving its updates or reading a profile does not change
+them. A deliberate model override on a profiled chat is a manual choice and can be remembered
+for later chats without a profile.
+
+New ordinary, workspace and building chats send these optional browser defaults with their creation
+request. New feedback-chat review displays the remembered choices before Send. The server selects
+the profile and provider first, then validates an applicable remembered model/effort against that
+provider's current catalog. A selected/default profile wins over remembered model settings; explicit
+creation settings win over either remembered value. Unsupported pairs and unavailable catalogs
+leave the usual defaults available. Admitted task settings stay fixed.
+
+Creation stores the resulting settings atomically. A repeated creation request returns its original
+chat even when browser defaults change. Opening an existing chat never replaces its settings with
+browser preferences. Defaults carry their authenticated owner so an account switch between loading
+preferences and creating a chat cannot apply another user's settings. Browser storage failure,
+corrupt/oversized records and missing identity leave normal chat creation available. Preferences
+survive reloads in that browser; browser storage clearing removes them and they do not synchronize
+between browsers or origins.
+
 ## Dictation
 
 The microphone button starts dictation immediately. Recording uses three compact inline icons:
@@ -80,6 +104,9 @@ recording available.
   profile/task locks and concurrent configuration revision ordering.
 - Verify slider keyboard focus, pointer preview versus commit, explicit Default, binary thinking,
   single-level and unsupported catalogs, unavailable values, retries and save failure.
+- Verify remembered manual pairs and autonomy across new-chat entry points, per-user and per-provider
+  isolation, profile/explicit-setting precedence, account-switch races, immutable creation replay,
+  unavailable catalogs, corrupt/blocked storage and no writes from mounted profiles or failed saves.
 - Close settings during persistence: retain the Send interlock, confirmed result/error and draft.
 - Check the real action row at 360, 390, 480 and 640 CSS px, including wide viewports with narrow
   panes, light/dark themes, long model names, unknown and over-limit context usage. All supported

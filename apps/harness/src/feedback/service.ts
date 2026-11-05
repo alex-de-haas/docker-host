@@ -94,28 +94,36 @@ export class FeedbackService {
   }
   async send(body: Record<string, unknown>, token: string, actor: string) {
     if (typeof body.requestId !== "string" || !/^[0-9a-f-]{36}$/i.test(body.requestId)) fail("feedback_invalid", "Use a stable UUID for this dispatch.", 400);
+    if (body.sessionId !== undefined && body.sessionId !== null && typeof body.sessionId !== "string") fail("feedback_invalid", "Choose a destination chat or start a new chat.", 400);
     const requestId = body.requestId as string;
     return this.serial("send:" + requestId, async () => {
       const client = this.clientFactory();
       const [collection, scope] = await Promise.all([client.list(token), client.capabilities(token)]);
       const prior = collection.dispatches.find(d => d.id === requestId && d.actorId === actor && owned(d, scope));
-      let sessionId = typeof body.sessionId === "string" ? body.sessionId : prior?.input.sessionId;
+      const explicitSessionId = typeof body.sessionId === "string" && body.sessionId.length > 0 ? body.sessionId : undefined;
+      let sessionId = explicitSessionId ?? prior?.input.sessionId;
       const workspaceId = typeof body.workspaceId === "string" ? body.workspaceId : null;
       if (!Array.isArray(body.reports) || !body.reports.length || body.reports.length > 50 || typeof body.instruction !== "string" || body.instruction.length > 5000)
         fail("feedback_invalid", "Choose up to 50 feedback reports and a bounded instruction.", 400);
       const reports = body.reports as FeedbackDispatchInput["reports"];
       if (reports.some(r => !r || typeof r.id !== "string" || !Number.isSafeInteger(r.revision))) fail("feedback_invalid", "Review the selected report revisions.", 400);
-      if (!sessionId) {
-        const chosen = reports.map(r => collection.reports.find(report => report.id === r.id) ?? fail("feedback_not_found", "A selected report is unavailable.", 404));
-        const existing = (await this.manager.store.listRecords()).find(r => r.createdBy === actor && r.creationRequest?.id === requestId);
+      const existing = !explicitSessionId ? (await this.manager.store.listRecords()).find(r => r.createdBy === actor && r.creationRequest?.id === requestId) : undefined;
+      const creating = !explicitSessionId && (!prior || !!existing);
+      if (!creating && ["profileId", "profileRevision", "connectionId", "executionSelection", "autonomy"].some(key => body[key] !== undefined))
+        fail("feedback_existing_settings", "Choose agent settings only when starting a new chat. Existing chats keep their current settings.", 400);
+      if (creating) {
+        const chosen = existing ? [] : reports.map(r => collection.reports.find(report => report.id === r.id) ?? fail("feedback_not_found", "A selected report is unavailable.", 404));
         // Historical report context survives uninstall; only live apps belong in a new chat's selection.
-        // A retry preserves its original selection even if the app catalog has since changed.
+        // The creation fingerprint retains the original app selection even after later chat edits.
+        // Creation replay also checks that the requested agent settings have not changed.
         const available = existing ? [] : await readContextApps(this.providers);
-        const appIds = existing?.appIds ?? [...new Set(chosen.map(r => r.context.appId))].filter(id => available.some(app => app.id === id)).slice(0, MAX_CONTEXT_APPS);
+        const appIds = existing ? (JSON.parse(existing.creationRequest!.fingerprint) as { appIds: string[] }).appIds
+          : [...new Set(chosen.map(r => r.context.appId))].filter(id => available.some(app => app.id === id)).slice(0, MAX_CONTEXT_APPS);
         const created = await this.manager.createSession({ createdBy: actor, title: "Feedback", clientRequestId: requestId,
-          appIds, profileId: body.profileId, profileRevision: body.profileRevision });
+          appIds, profileId: body.profileId, profileRevision: body.profileRevision, connectionId: body.connectionId,
+          executionSelection: body.executionSelection, autonomy: body.autonomy, browserDefaults: body.browserDefaults });
         sessionId = created.id;
-        if (workspaceId) {
+        if (workspaceId && !prior) {
           const attachment = created.associationRequests?.find(r => r.id === requestId);
           if (attachment && (attachment.action !== "attach" || attachment.input.workspaceId !== workspaceId))
             fail("workspace_request_conflict", "Reuse the original workspace destination.");

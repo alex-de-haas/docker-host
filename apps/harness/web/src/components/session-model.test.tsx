@@ -4,11 +4,13 @@ import { createRoot, type Root } from "react-dom/client";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { SessionModel } from "./session-model";
 import * as api from "@/lib/assistant-api";
+import { readBrowserAgentDefaults, rememberManualModel } from "@/lib/browser-agent-preferences";
 vi.mock("@/lib/assistant-api", () => ({ getSessionModels: vi.fn(), setSessionModel: vi.fn() }));
 let root: Root, container: HTMLDivElement;
 const record: api.AssistantSession = { id: "chat", title: "Chat", createdAt: "", status: "idle", connectionId: "account", selectionRevision: 7, executionSelection: { model: "first", reasoningEffort: "high" } };
 const changed = vi.fn(), saving = vi.fn();
 beforeEach(() => {
+  localStorage.clear();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.mocked(api.getSessionModels).mockResolvedValue({ revision: "catalog", models: [
     { id: "first", label: "First", efforts: [{ id: "high", label: "High" }] },
@@ -84,4 +86,24 @@ it("keeps an accepted task's model and effort selectors locked while its chat is
   expect(container.querySelector<HTMLButtonElement>('[aria-label="Model"]')!.disabled).toBe(true);
   expect([...container.querySelectorAll("button")].every(button => button.disabled)).toBe(true);
   expect(api.setSessionModel).not.toHaveBeenCalled();
+});
+
+it("remembers only confirmed manual choices, including an explicit override on a profiled chat", async () => {
+  const owned = { ...record, createdBy: "operator", agentProfile: { id: "profile", name: "Profile" } } as api.AssistantSession;
+  await act(async () => root.render(<SessionModel session={owned} busy={false} onChange={changed} onSavingChange={saving} />));
+  expect(readBrowserAgentDefaults("operator")).toBeUndefined();
+  vi.mocked(api.setSessionModel).mockResolvedValue({ ...owned, executionSelection: { model: "second", reasoningEffort: null } });
+  await choose("Model", "Second");
+  expect(readBrowserAgentDefaults("operator")?.models?.account).toEqual({ model: "second", reasoningEffort: null });
+  vi.mocked(api.setSessionModel).mockRejectedValue(new Error("Save failed"));
+  await choose("Model", "First");
+  expect(readBrowserAgentDefaults("operator")?.models?.account).toEqual({ model: "second", reasoningEffort: null });
+});
+
+it("opening another conversation never adopts or overwrites remembered manual settings", async () => {
+  rememberManualModel({ ...record, createdBy: "operator", executionSelection: { model: "second", reasoningEffort: "xhigh" } });
+  await act(async () => root.render(<SessionModel session={{ ...record, createdBy: "operator" }} busy={false} onChange={changed} onSavingChange={saving} />));
+  expect(api.setSessionModel).not.toHaveBeenCalled();
+  expect(readBrowserAgentDefaults("operator")?.models?.account?.model).toBe("second");
+  expect(container.querySelector('[aria-label="Model"]')?.textContent).toBe("First");
 });
