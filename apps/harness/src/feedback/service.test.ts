@@ -10,11 +10,13 @@ import { ProviderDirectory } from "../settings/providers.js";
 import { DevelopmentClient } from "../sessions/development.js";
 import { AuditReporter } from "../audit.js";
 import type { HarnessAdapter, HarnessStartOptions } from "../harness/adapter.js";
+import type { ConnectionService } from "../connections/service.js";
+import { ProfileStore } from "../profiles/store.js";
 import type { FeedbackServerClient } from "@hosty-sdk/app/feedback/server";
 import type { FeedbackDispatch, FeedbackDispatchInput, FeedbackDelivery, FeedbackOutcome, FeedbackReport } from "@hosty-sdk/app/feedback";
 let dir: string, manager: SessionManager, service: FeedbackService, run: HarnessStartOptions;
 let report: FeedbackReport, attempts: FeedbackDispatch[], directory: ProviderDirectory;
-const buildManager = (development: DevelopmentClient | null = null) => new SessionManager(new SessionStore(dir), adapter, new AuditReporter(null, null, "harness"), dir, null, directory, null, null, "http://localhost:1234", null, null, development);
+const buildManager = (development: DevelopmentClient | null = null, connections: ConnectionService | null = null, profiles: ProfileStore | null = null) => new SessionManager(new SessionStore(dir), adapter, new AuditReporter(null, null, "harness"), dir, null, directory, null, null, "http://localhost:1234", null, connections, development, null, undefined, profiles);
 const sent = vi.fn();
 const adapter: HarnessAdapter = { name: "controlled", capabilities: { questions: true, appMcp: true, liveReconfigure: false, autoAllow: false, denyReason: false }, probe: async () => ({ available: true }),
   start: options => { run = options; return { send: sent, resolveApproval: () => true, resolveQuestion: () => true, setMcpServers: async () => false, interrupt: async () => {}, stop: async () => {}, stopAndWait: async () => {} }; } };
@@ -192,4 +194,118 @@ it.each(["attach", "reserve"])("replays original workspace attachment after a lo
   expect(inventory).toHaveBeenCalledTimes(1);
   const attachments = calls.mock.calls.filter(c => c[2] === "attach");
   expect(attachments).toHaveLength(2); expect(attachments[1]).toEqual(attachments[0]);
+  expect((await service.send(input, "grant", "owner")).id).toBe(attempt.id);
+  expect(calls.mock.calls.filter(c => c[2] === "attach")).toHaveLength(2); expect(sent).toHaveBeenCalledTimes(1);
+});
+
+it.each(["profileId", "profileRevision", "connectionId", "executionSelection", "autonomy"])("does not apply %s to an existing feedback destination", async field => {
+  const session = await manager.createSession({ createdBy: "owner" });
+  const before = await manager.store.readRecord(session.id);
+  await expect(service.send({ ...body(session.id), [field]: field === "autonomy" ? "autonomous" : null }, "grant", "owner"))
+    .rejects.toMatchObject({ code: "feedback_existing_settings", status: 400 });
+  expect(await manager.store.readRecord(session.id)).toEqual(before);
+  expect(client.reserve).not.toHaveBeenCalled(); expect(sent).not.toHaveBeenCalled();
+});
+
+async function configureAgentSettings() {
+  const profiles = new ProfileStore(dir, async () => ({ name: "Default", description: "", instructions: "", connectionId: "account",
+    model: "model-one", reasoningEffort: "high", skillIds: [] }));
+  const choices = await profiles.read(); await profiles.setDefault(choices.profiles[0]!.id, choices.revision);
+  const binding = vi.fn(async (id?: unknown) => ({ connectionId: id ?? "account", connectionRevision: 1, harnessKind: "claude" }));
+  const models = vi.fn(async () => ({ revision: "models", defaultModel: "model-one",
+    models: [{ id: "model-one", label: "One", efforts: [{ id: "high", label: "High" }] }] }));
+  const connections = { binding, models, reserve: async () => () => {}, adapter: async () => adapter } as unknown as ConnectionService;
+  await service.close(); await manager.shutdown(); manager = buildManager(null, connections, profiles);
+  service = new FeedbackService(manager, () => client as unknown as FeedbackServerClient, directory);
+  return { profiles, connections, binding, models };
+}
+
+it("keeps initial feedback agent settings through a lost reserve reply, restart and exact concurrent replay", async () => {
+  const config = await configureAgentSettings();
+  const { sessionId: _unused, ...input } = { ...body(""), profileId: null, connectionId: "account",
+    executionSelection: { model: "model-one", reasoningEffort: "high" }, autonomy: "autonomous" };
+  client.reserve.mockRejectedValueOnce(new Error("Lost reserve response"));
+  await expect(service.send(input, "grant", "owner")).rejects.toThrow("Lost reserve response");
+  const created = (await manager.store.listRecords())[0]!;
+  expect(created).toMatchObject({ agentProfile: null, connectionId: "account", executionSelection: input.executionSelection, autonomy: "autonomous" });
+  await service.close(); await manager.shutdown(); manager = buildManager(null, config.connections, config.profiles);
+  service = new FeedbackService(manager, () => client as unknown as FeedbackServerClient, directory);
+  config.binding.mockRejectedValue(new Error("Provider catalog unavailable"));
+  config.models.mockRejectedValue(new Error("Model catalog unavailable"));
+  vi.mocked(directory.readApps).mockResolvedValue([]);
+  const [first, replay] = await Promise.all([service.send(input, "grant", "owner"), service.send(input, "grant", "owner")]);
+  expect(first.id).toBe(replay.id); expect(first.input.sessionId).toBe(created.id);
+  expect(await manager.store.listRecords()).toHaveLength(1); expect(sent).toHaveBeenCalledTimes(1);
+  expect(run).toMatchObject({ model: "model-one", reasoningEffort: "high", autonomy: "autonomous" });
+  await expect(service.send({ ...input, autonomy: "normal" }, "grant", "owner")).rejects.toMatchObject({ code: "creation_conflict" });
+  expect((await manager.getSession(created.id))!.autonomy).toBe("autonomous");
+  expect(sent).toHaveBeenCalledTimes(1);
+});
+
+it("preserves a feedback profile snapshot after its deletion and rejects replacement on retry", async () => {
+  const { profiles } = await configureAgentSettings();
+  const directory = await profiles.read(); const profile = directory.profiles[0]!;
+  const { sessionId: _unused, ...input } = { ...body(""), profileId: profile.id, profileRevision: profile.revision, autonomy: "normal" };
+  const attempt = await service.send(input, "grant", "owner");
+  await profiles.remove(profile.id, directory.revision);
+  expect((await service.send(input, "grant", "owner")).input.sessionId).toBe(attempt.input.sessionId);
+  await expect(service.send({ ...input, profileId: null }, "grant", "owner")).rejects.toMatchObject({ code: "creation_conflict" });
+  expect((await manager.getSession(attempt.input.sessionId))!.agentProfile?.id).toBe(profile.id);
+  expect(sent).toHaveBeenCalledTimes(1);
+});
+
+it("replays completed new-chat dispatches after later app selection changes", async () => {
+  const { sessionId: _unused, ...input } = body("");
+  const attempt = await service.send(input, "grant", "owner");
+  run.onEvent({ type: "result", status: "success" });
+  await vi.waitFor(() => expect(attempt.state).toBe("succeeded"));
+  await manager.setAppContext(attempt.input.sessionId, [], 0, "owner");
+  expect((await service.send(input, "grant", "owner")).id).toBe(attempt.id);
+  expect((await manager.getSession(attempt.input.sessionId))!.appIds).toEqual([]);
+  expect(sent).toHaveBeenCalledTimes(1); expect(await manager.store.listRecords()).toHaveLength(1);
+});
+
+it("resolves concurrent conflicting settings to one original feedback chat", async () => {
+  await configureAgentSettings();
+  const { sessionId: _unused, ...input } = { ...body(""), profileId: null, connectionId: "account",
+    executionSelection: { model: "model-one", reasoningEffort: "high" }, autonomy: "normal" };
+  const results = await Promise.allSettled([service.send(input, "grant", "owner"), service.send({ ...input, autonomy: "autonomous" }, "grant", "owner")]);
+  expect(results[0]!.status).toBe("fulfilled");
+  expect(results[1]).toMatchObject({ status: "rejected", reason: { code: "creation_conflict" } });
+  expect(await manager.store.listRecords()).toHaveLength(1); expect(sent).toHaveBeenCalledTimes(1);
+  expect((await manager.store.listRecords())[0]!.autonomy).toBe("normal");
+});
+
+it.each([
+  [{ executionSelection: { model: "unavailable", reasoningEffort: null } }, "model_unavailable"],
+  [{ executionSelection: { model: "model-one", reasoningEffort: "unsupported" } }, "effort_unavailable"],
+  [{ autonomy: "unrestricted" }, "autonomy_invalid"],
+] as const)("rejects invalid new feedback chat settings before reserving or creating a chat: %j", async (settings, code) => {
+  await configureAgentSettings();
+  const { sessionId: _unused, ...input } = { ...body(""), profileId: null, connectionId: "account", ...settings };
+  await expect(service.send(input, "grant", "owner")).rejects.toMatchObject({ code });
+  expect(await manager.store.listRecords()).toHaveLength(0); expect(client.reserve).not.toHaveBeenCalled(); expect(sent).not.toHaveBeenCalled();
+});
+
+it("keeps new feedback browser defaults after response loss and changed browser preferences", async () => {
+  await configureAgentSettings();
+  const selection = { model: "model-one", reasoningEffort: "high" };
+  const { sessionId: _unused, ...input } = { ...body(""), profileId: null,
+    browserDefaults: { ownerId: "owner", models: { account: selection }, autonomy: "autonomous" } };
+  client.reserve.mockRejectedValueOnce(new Error("Lost reserve response"));
+  await expect(service.send(input, "grant", "owner")).rejects.toThrow("Lost reserve response");
+  const created = (await manager.store.listRecords())[0]!;
+  expect(created).toMatchObject({ executionSelection: selection, autonomy: "autonomous" });
+  const replay = await service.send({ ...input, browserDefaults: { ownerId: "owner", models: { account: { model: null, reasoningEffort: null } }, autonomy: "normal" } }, "grant", "owner");
+  expect(replay.input.sessionId).toBe(created.id);
+  expect((await manager.getSession(created.id))).toMatchObject({ executionSelection: selection, autonomy: "autonomous" });
+  expect(sent).toHaveBeenCalledTimes(1); expect(await manager.store.listRecords()).toHaveLength(1);
+});
+
+it("ignores browser defaults when feedback targets an existing chat", async () => {
+  const session = await manager.createSession({ createdBy: "owner" });
+  await service.send({ ...body(session.id), browserDefaults: { ownerId: "owner", autonomy: "autonomous", models: { account: { model: "missing", reasoningEffort: "high" } } } }, "grant", "owner");
+  const saved = (await manager.getSession(session.id))!;
+  expect(saved.autonomy).toBeUndefined(); expect(saved.executionSelection).toBeUndefined();
+  expect(run.autonomy).toBe("normal"); expect(sent).toHaveBeenCalledTimes(1);
 });

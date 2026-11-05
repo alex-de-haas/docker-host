@@ -8,6 +8,7 @@ import { Field, FieldTitle, FieldDescription, FieldGroup } from "@/components/ui
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { getSessionModels, setSessionModel, type AssistantSession, type ModelCatalog } from "@/lib/assistant-api";
+import { rememberManualModel } from "@/lib/browser-agent-preferences";
 
 type ModelProps = {
   session: AssistantSession; busy: boolean; onChange(record: AssistantSession): void; onSavingChange(saving: boolean): void;
@@ -34,7 +35,10 @@ export function useSessionModel({ session, busy, onChange, onSavingChange }: Mod
   async function save(next: typeof selected) {
     if (disabled || savingRef.current) return;
     savingRef.current = true; setSaving(true); onSavingChange(true); setError("");
-    try { onChange(await setSessionModel(session.id, next, session.selectionRevision ?? 0)); }
+    try {
+      const record = await setSessionModel(session.id, next, session.selectionRevision ?? 0);
+      rememberManualModel(record); onChange(record);
+    }
     catch (cause) { setError(cause instanceof Error ? cause.message : "Could not save model selection."); }
     finally { savingRef.current = false; setSaving(false); onSavingChange(false); }
   }

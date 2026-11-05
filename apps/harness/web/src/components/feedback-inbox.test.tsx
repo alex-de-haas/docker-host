@@ -4,12 +4,16 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { FeedbackInbox } from "./feedback-inbox";
 import { call, ApiError } from "@/lib/api";
-import { listSessions } from "@/lib/assistant-api";
+import { listAgentConnections, listSessions } from "@/lib/assistant-api";
+import { connectionModels, listProfiles } from "@/lib/profiles-api";
+import { loadBrowserAgentDefaults } from "@/lib/browser-agent-preferences";
 import { developmentRequest } from "@/lib/development-api";
 import type { FeedbackReport } from "@hosty-sdk/app/feedback";
 vi.mock("@/lib/api", () => ({ call: vi.fn(), ApiError: class extends Error { constructor(public status: number, public code: string, message: string) { super(message); } } }));
-vi.mock("@/lib/assistant-api", () => ({ listSessions: vi.fn() }));
+vi.mock("@/lib/assistant-api", () => ({ listSessions: vi.fn(), listAgentConnections: vi.fn() }));
+vi.mock("@/lib/profiles-api", () => ({ listProfiles: vi.fn(), connectionModels: vi.fn() }));
 vi.mock("@/lib/development-api", () => ({ developmentRequest: vi.fn() }));
+vi.mock("@/lib/browser-agent-preferences", () => ({ loadBrowserAgentDefaults: vi.fn() }));
 let root: Root, element: HTMLDivElement;
 const report = (id: string, status = "unprocessed", disposition: string | null = null) => ({ id, revision: 1, status, disposition, workspaceId: "workspace", comment: id,
   context: { appId: "example.app", appName: "Example", observedAt: "2026-10-30", version: "1.0" }, annotations: [{id:"note",text:"Move the label"}] }) as FeedbackReport;
@@ -22,10 +26,22 @@ const choose = async (label: string, value: string) => act(async () => {
 const selectReport = async (name: string) => act(async () => element.querySelector<HTMLInputElement>('input[aria-label="Select ' + name + '"]')!.click());
 const writes = () => vi.mocked(call).mock.calls.filter(([, init]) => init?.method === "POST");
 beforeEach(() => {
+  vi.mocked(loadBrowserAgentDefaults).mockResolvedValue(undefined);
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.mocked(call).mockImplementation(async () => Response.json({reports:[report("New"),report("Done","processed"),report("Busy","pending"),report("Dismissed","unprocessed","dismissed"),report("Partial","partial")],dispatches:[]}));
   vi.mocked(listSessions).mockResolvedValue([{id:"chat",title:"Existing chat",status:"idle",workspaceAssociation:{id:"workspace"}}] as never);
   vi.mocked(developmentRequest).mockResolvedValue({workspaces:[{id:"workspace",name:"Workspace",workflow:{state:"active"}}]});
+  vi.mocked(listProfiles).mockResolvedValue({ revision: 1, defaultId: null, profiles: [
+    { id: "reviewer", revision: 3, name: "Reviewer", description: "Review changes", instructions: "Review", connectionId: "codex", model: "fast", reasoningEffort: "high", skillIds: [] },
+  ] });
+  vi.mocked(listAgentConnections).mockResolvedValue({ defaultId: "codex", connections: [
+    { id: "codex", name: "Codex account", kind: "codex", revision: 1, available: true, auth: "chatgpt" },
+    { id: "claude", name: "Claude account", kind: "claude", revision: 1, available: true, auth: "claude-token" },
+  ] });
+  vi.mocked(connectionModels).mockResolvedValue({ revision: "one", defaultModel: "fast", models: [
+    { id: "fast", label: "Fast model", efforts: [{ id: "low", label: "Low" }, { id: "high", label: "High" }] },
+    { id: "plain", label: "Plain model", efforts: [] },
+  ] });
   element = document.createElement("div"); document.body.append(element); root = createRoot(element);
 });
 afterEach(async () => { await act(async () => root.unmount()); element.remove(); vi.resetAllMocks(); vi.unstubAllGlobals(); });
@@ -291,4 +307,90 @@ it("retains loading and empty states on the full feedback page", async () => {
   expect(element.textContent).toContain("Loading feedback…");
   await act(async () => read.resolve(Response.json({ reports: [], dispatches: [] })));
   expect(element.textContent).toContain("No feedback matches this view.");
+});
+
+it("freezes a new chat's reviewed agent choices across an uncertain delivery", async () => {
+  const original = vi.mocked(call).getMockImplementation()!;
+  vi.mocked(call).mockImplementation(async (url, init) => {
+    if (init?.method === "POST") throw new Error("Reply lost");
+    return original(url, init);
+  });
+  await act(async () => root.render(<FeedbackInbox />)); await click("Address all");
+  await choose("Agent profile", "__none__"); await choose("Agent / provider", "claude");
+  await choose("Model", "fast"); await choose("Reasoning effort", "high"); await choose("Autonomy", "autonomous");
+  expect(writes()).toHaveLength(0);
+  await click("Send to chat");
+  expect(JSON.parse(writes()[0]![1]!.body as string)).toMatchObject({ sessionId: null, profileId: null, connectionId: "claude",
+    executionSelection: { model: "fast", reasoningEffort: "high" }, autonomy: "autonomous" });
+  expect(document.querySelector<HTMLFieldSetElement>("fieldset")!.disabled).toBe(true);
+  await click("Retry same request");
+  expect(writes()).toHaveLength(2); expect(writes()[1]).toEqual(writes()[0]);
+});
+
+it("uses profile revisions and omits new-chat settings for an existing destination", async () => {
+  const original = vi.mocked(call).getMockImplementation()!;
+  vi.mocked(call).mockImplementation(async (url, init) => init?.method === "POST" ? Response.json({ state: "accepted" }) : original(url, init));
+  await act(async () => root.render(<FeedbackInbox />)); await click("Address all");
+  await choose("Agent profile", "reviewer"); await choose("Autonomy", "autonomous");
+  expect(document.querySelector<HTMLSelectElement>('select[aria-label="Model"]')!.disabled).toBe(true);
+  await click("Send to chat");
+  const body = JSON.parse(writes()[0]![1]!.body as string);
+  expect(body).toMatchObject({ profileId: "reviewer", profileRevision: 3, autonomy: "autonomous" });
+  expect(body).not.toHaveProperty("executionSelection");
+  await click("Address all"); await choose("Agent profile", "reviewer");
+  await choose("Workspace", "workspace"); await choose("Chat", "chat");
+  expect(document.querySelector('select[aria-label="Autonomy"]')).toBeNull();
+  expect(document.querySelector('[role="dialog"]')!.textContent).toContain("current agent, reasoning and autonomy");
+  await click("Send to chat");
+  const existing = JSON.parse(writes()[1]![1]!.body as string);
+  expect(existing.sessionId).toBe("chat"); expect(existing).not.toHaveProperty("profileId"); expect(existing).not.toHaveProperty("autonomy");
+});
+
+it("clears unsupported effort when the model changes and leaves cancellation free of writes", async () => {
+  await act(async () => root.render(<FeedbackInbox />)); await click("Address all");
+  await choose("Reasoning effort", "high"); await choose("Model", "plain");
+  expect(document.querySelector<HTMLSelectElement>('select[aria-label="Reasoning effort"]')!.value).toBe("");
+  expect(document.querySelector<HTMLSelectElement>('select[aria-label="Reasoning effort"]')!.disabled).toBe(true);
+  await click("Cancel"); expect(writes()).toHaveLength(0);
+});
+
+it("blocks new-chat delivery while agent choices are unavailable and supports explicit refresh", async () => {
+  vi.mocked(listAgentConnections).mockRejectedValueOnce(new Error("Connection catalog unavailable"));
+  await act(async () => root.render(<FeedbackInbox />)); await click("Address all");
+  expect(button("Send to chat").disabled).toBe(true);
+  expect(document.querySelector('[role="dialog"]')!.textContent).toContain("Connection catalog unavailable");
+  await click("Refresh agent choices"); expect(button("Send to chat").disabled).toBe(false);
+  expect(writes()).toHaveLength(0);
+});
+
+it("requires review of a selected profile that changed while refreshing choices", async () => {
+  await act(async () => root.render(<FeedbackInbox />)); await click("Address all");
+  await choose("Agent profile", "reviewer");
+  const previous = await listProfiles();
+  vi.mocked(listProfiles).mockResolvedValue({ ...previous, profiles: previous.profiles.map(profile => ({ ...profile, revision: 4, reasoningEffort: "low" })) });
+  vi.mocked(connectionModels).mockRejectedValueOnce(new Error("Model catalog unavailable")).mockRejectedValueOnce(new Error("Model catalog unavailable"));
+  await choose("Agent profile", "__none__"); await choose("Agent / provider", "claude");
+  await choose("Agent profile", "reviewer");
+  // The failed catalog creates an explicit refresh entry point without changing the selected profile.
+  expect(button("Refresh agent choices")).toBeDefined();
+  await click("Refresh agent choices");
+  expect(button("Send to chat").disabled).toBe(true);
+  expect(document.querySelector('[role="dialog"]')!.textContent).toContain("This profile changed");
+  await click("Use updated profile");
+  expect(button("Send to chat").disabled).toBe(false);
+  expect(document.querySelector<HTMLSelectElement>('select[aria-label="Reasoning effort"]')!.value).toBe("low");
+});
+
+it("reviews remembered manual model, effort and autonomy before creating a feedback chat", async () => {
+  const defaults = { models: { codex: { model: "fast", reasoningEffort: "high" } }, autonomy: "autonomous" as const };
+  vi.mocked(loadBrowserAgentDefaults).mockResolvedValue(defaults);
+  await act(async () => root.render(<FeedbackInbox />)); await click("Address all");
+  expect(document.querySelector<HTMLSelectElement>('select[aria-label="Model"]')!.value).toBe("fast");
+  expect(document.querySelector<HTMLSelectElement>('select[aria-label="Reasoning effort"]')!.value).toBe("high");
+  expect(document.querySelector<HTMLSelectElement>('select[aria-label="Autonomy"]')!.value).toBe("autonomous");
+  expect(writes()).toHaveLength(0);
+  const original = vi.mocked(call).getMockImplementation()!;
+  vi.mocked(call).mockImplementation(async (url, init) => init?.method === "POST" ? Response.json({ state: "accepted" }) : original(url, init));
+  await choose("Autonomy", "normal"); await click("Send to chat");
+  expect(JSON.parse(writes()[0]![1]!.body as string)).toMatchObject({ browserDefaults: defaults, autonomy: "normal" });
 });

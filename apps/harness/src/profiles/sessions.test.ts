@@ -25,7 +25,7 @@ beforeEach(async () => {
   const defaults = await profiles.read(); await profiles.setDefault(defaults.profiles[0]!.id, defaults.revision);
   store = new SessionStore(dir); adapter = new FakeHarnessAdapter(); manager = open();
 });
-afterEach(async () => { await manager.shutdown(); await rm(dir, { recursive: true, force: true }); });
+afterEach(async () => { await manager.shutdown(); vi.restoreAllMocks(); await rm(dir, { recursive: true, force: true }); });
 async function idle(id: string) { await vi.waitFor(async () => expect((await manager.getSession(id))?.status).toBe("idle")); }
 it("selects all profile fields together, without inheriting global skills, and locks the role after dispatch", async () => {
   let directory = await profiles.read(); directory = await profiles.save(config("Developer"), directory.revision);
@@ -78,4 +78,120 @@ it("starts without a profile when no default was explicitly configured", async (
   const session = await manager.createSession({ createdBy: "admin" });
   expect(session.agentProfile).toBeNull(); expect(session.skillIds).toEqual([]);
   expect(session.providerLocked).not.toBe(true);
+});
+
+it("creates manual model and autonomy settings together without inheriting the default profile", async () => {
+  const before = await settings.read();
+  const session = await manager.createSession({ createdBy: "admin", connectionId: "account",
+    executionSelection: { model: "model-one", reasoningEffort: "high" }, autonomy: "autonomous" });
+  expect(session).toMatchObject({ agentProfile: null, connectionId: "account", skillIds: [],
+    executionSelection: { model: "model-one", reasoningEffort: "high" }, autonomy: "autonomous" });
+  expect(await store.readRecord(session.id)).toMatchObject({ executionSelection: session.executionSelection, autonomy: "autonomous" });
+  expect(await settings.read()).toEqual(before);
+  await manager.postMessage(session.id, "hello"); await idle(session.id);
+  expect(adapter.lastStart).toMatchObject({ model: "model-one", reasoningEffort: "high", autonomy: "autonomous" });
+});
+
+it.each([
+  [{ executionSelection: null }, "invalid_selection"],
+  [{ executionSelection: { model: 1 } }, "invalid_selection"],
+  [{ executionSelection: { model: "model-one", extra: true } }, "invalid_selection"],
+  [{ executionSelection: { model: "missing", reasoningEffort: null } }, "model_unavailable"],
+  [{ executionSelection: { model: "model-one", reasoningEffort: "unsupported" } }, "effort_unavailable"],
+  [{ autonomy: "run" }, "autonomy_invalid"],
+] as const)("rejects invalid initial settings before recording a chat: %j", async (input, code) => {
+  await expect(manager.createSession({ createdBy: "admin", ...input })).rejects.toMatchObject({ code });
+  expect(await store.listRecords()).toEqual([]);
+});
+
+it("keeps selected profiles intact when creating a chat with explicit autonomy", async () => {
+  const directory = await profiles.read();
+  const input = { createdBy: "admin", profileId: directory.defaultId, profileRevision: directory.profiles[0]!.revision };
+  await expect(manager.createSession({ ...input, executionSelection: { model: null, reasoningEffort: null } }))
+    .rejects.toMatchObject({ code: "profile_overrides" });
+  expect(await store.listRecords()).toEqual([]);
+  expect(await manager.createSession({ ...input, autonomy: "normal" })).toMatchObject({ agentProfile: { name: "Planner" },
+    executionSelection: { model: "model-one", reasoningEffort: "high" }, autonomy: "normal" });
+});
+
+it("replays concurrent creation with immutable settings after catalog loss and rejects changed input", async () => {
+  const input = { createdBy: "admin", clientRequestId: "manual-feedback", connectionId: "account",
+    executionSelection: { model: "model-one", reasoningEffort: "high" }, autonomy: "autonomous" };
+  const [first, second] = await Promise.all([manager.createSession(input), manager.createSession(input)]);
+  expect(first.id).toBe(second.id); expect(await store.listRecords()).toHaveLength(1);
+  missingProvider = true;
+  expect((await manager.createSession({ ...input, executionSelection: { reasoningEffort: "high", model: "model-one" } })).id).toBe(first.id);
+  await expect(manager.createSession({ ...input, autonomy: "normal" })).rejects.toMatchObject({ code: "creation_conflict" });
+  await expect(manager.createSession({ ...input, executionSelection: { model: null, reasoningEffort: null } }))
+    .rejects.toMatchObject({ code: "creation_conflict" });
+  expect(await store.listRecords()).toHaveLength(1);
+});
+
+const remembered = { ownerId: "admin", models: { account: { model: "model-one", reasoningEffort: "high" } }, autonomy: "autonomous" };
+it("uses remembered manual settings only for the resolved provider of a new unprofiled chat", async () => {
+  const directory = await profiles.read(); await profiles.setDefault(null, directory.revision);
+  const before = await settings.read();
+  const session = await manager.createSession({ createdBy: "admin", browserDefaults: remembered });
+  expect(session).toMatchObject({ agentProfile: null, connectionId: "account", executionSelection: remembered.models.account, autonomy: "autonomous" });
+  expect(adapter.lastStart).toBeNull(); expect(await settings.read()).toEqual(before);
+  const other = await manager.createSession({ createdBy: "admin", connectionId: "other", browserDefaults: remembered });
+  expect(other.connectionId).toBe("other"); expect(other.executionSelection).toBeUndefined(); expect(other.autonomy).toBe("autonomous");
+});
+
+it("retains default and explicit profiles ahead of browser model defaults", async () => {
+  const directory = await profiles.read(); const profile = directory.profiles[0]!;
+  const defaults = { ownerId: "admin", models: { account: { model: null, reasoningEffort: null } }, autonomy: "autonomous" };
+  for (const choice of [{}, { profileId: profile.id, profileRevision: profile.revision }]) {
+    const session = await manager.createSession({ createdBy: "admin", ...choice, browserDefaults: defaults });
+    expect(session).toMatchObject({ agentProfile: { id: profile.id }, executionSelection: { model: "model-one", reasoningEffort: "high" }, autonomy: "autonomous" });
+  }
+});
+
+it("keeps explicit initial selection and autonomy ahead of remembered defaults", async () => {
+  const session = await manager.createSession({ createdBy: "admin", profileId: null,
+    executionSelection: { model: null, reasoningEffort: null }, autonomy: "normal", browserDefaults: remembered });
+  expect(session).toMatchObject({ executionSelection: { model: null, reasoningEffort: null }, autonomy: "normal" });
+  await expect(manager.createSession({ createdBy: "admin", profileId: null, executionSelection: { model: "missing", reasoningEffort: null }, browserDefaults: remembered }))
+    .rejects.toMatchObject({ code: "model_unavailable" });
+});
+
+it.each([
+  null, [], "broken", { autonomy: "run", models: [] },
+  { models: { account: { model: "model-one" } } },
+  { models: { account: { model: 1, reasoningEffort: "high" } } },
+  { models: { account: { model: "missing", reasoningEffort: null } } },
+  { models: { account: { model: "model-one", reasoningEffort: "unsupported" } } },
+  { models: Object.fromEntries(Array.from({ length: 101 }, (_, i) => [i === 0 ? "account" : `provider-${i}`, { model: "model-one", reasoningEffort: "high" }])) },
+])("ignores malformed or incompatible optional browser settings: %j", async browserDefaults => {
+  const session = await manager.createSession({ createdBy: "admin", profileId: null,
+    browserDefaults: browserDefaults && typeof browserDefaults === "object" && !Array.isArray(browserDefaults) ? { ownerId: "admin", ...browserDefaults } : browserDefaults });
+  expect(session.executionSelection).toBeUndefined(); expect(session.autonomy).toBeUndefined();
+});
+
+it("allows ordinary defaults when the remembered model catalog is unavailable", async () => {
+  vi.spyOn(connections, "models").mockRejectedValue(new Error("Catalog unavailable"));
+  const session = await manager.createSession({ createdBy: "admin", profileId: null, browserDefaults: remembered });
+  expect(session.executionSelection).toBeUndefined(); expect(session.autonomy).toBe("autonomous");
+});
+
+it("replays original creation after browser defaults change without consulting current providers", async () => {
+  const input = { createdBy: "admin", profileId: null, clientRequestId: "remembered-chat" };
+  const first = await manager.createSession({ ...input, browserDefaults: remembered });
+  missingProvider = true;
+  const replay = await manager.createSession({ ...input, browserDefaults: { ownerId: "admin", autonomy: "normal", models: { account: { model: null, reasoningEffort: null } } } });
+  expect(replay.id).toBe(first.id); expect(replay).toMatchObject({ executionSelection: remembered.models.account, autonomy: "autonomous" });
+  expect(await store.listRecords()).toHaveLength(1);
+});
+
+it("does not apply browser preferences to an admitted task session", async () => {
+  const session = await manager.createSession({ createdBy: "admin", profileId: null, taskExecutionId: "accepted-attempt", browserDefaults: remembered });
+  expect(session).toMatchObject({ taskExecutionId: "accepted-attempt", autonomy: "autonomous" });
+  expect(session.executionSelection).toBeUndefined();
+  const normal = await manager.createSession({ createdBy: "admin", profileId: null, taskExecutionId: "second-attempt", browserDefaults: { ownerId: "admin", autonomy: "normal" } });
+  expect(normal.autonomy).toBe("autonomous");
+});
+
+it.each([undefined, "previous-account"])("ignores browser settings whose owner does not match the creator: %s", async ownerId => {
+  const session = await manager.createSession({ createdBy: "admin", profileId: null, browserDefaults: { ...remembered, ownerId } });
+  expect(session.executionSelection).toBeUndefined(); expect(session.autonomy).toBeUndefined();
 });

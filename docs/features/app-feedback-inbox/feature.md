@@ -1,6 +1,6 @@
 ---
 created: 2026-10-30
-updated: 2026-11-04
+updated: 2026-11-05
 summary: Core-owned annotated feedback with app-owned local drafts, reviewed Harness chat delivery, exact-prompt outcomes and workspace-aware retention.
 components: [apps/core, apps/harness, apps/shell, apps/desktop, packages/app-sdk]
 ---
@@ -153,6 +153,23 @@ together with their count, destination and optional instruction, defaulting to a
 normal source preparation establishes its development workspace. Existing workspace/chat selection
 and a new chat in an existing workspace are supported. Cancellation starts no agent work.
 
+New-chat review offers an agent profile or custom provider connection, model, catalog-supported
+reasoning effort and Normal/Autonomous mode. A profile retains its provider/model/reasoning bundle;
+custom settings select these separately without changing saved defaults. Choosing Autonomous is
+explicit and describes its approval behavior. Existing destinations use the chat's current agent,
+reasoning and autonomy; feedback delivery never reconfigures them. Unavailable choices block new-chat
+delivery and offer an explicit refresh. Changing models clears effort unsupported by the new model.
+All choices remain draft-only until Send. The server validates and stores initial configuration
+atomically with creation and includes it in the creation receipt, preserving the same configuration
+and chat across uncertain retries. A selected profile includes its reviewed revision.
+The review initializes compatible custom model/effort and autonomy from the authenticated user's
+[remembered browser choices](../harness-composer-controls/feature.md#remembered-manual-choices).
+An explicit choice in the review takes precedence, and cancellation writes no browser preferences.
+
+The send dialog keeps its header and actions visible while its body scrolls. Destination and agent
+fields have bounded widths and allow their grid columns to shrink, including long chat/workspace
+names. Short and narrow viewports retain the same controls without horizontal dialog scrolling.
+
 After successful administrator capture, the composer offers direct review links. Eligible clients declare
 `ui.navigation[].feedbackReview: true` and hold `apps.feedback.manage`; Core resolves their declared
 endpoint/path through its normal launch contract with a `feedback` query parameter. Harness opens
@@ -222,6 +239,10 @@ without a workspace remain in the global inbox. Retention is independent of PR m
 - Harness tests cover exact-message admission, lost replies, busy/foreign-chat refusal, scoped agent
   tools, interruption followed by an ordinary continuation and explicit resend, recovery guidance,
   user/app/installation changes, unrelated terminal events, unprocessed-only bulk review and frozen UI retries.
+- New-chat tests cover atomic provider/model/effort/autonomy creation, selected profile revisions,
+  unavailable catalogs, profile refresh/review, unsupported-effort reset, cancellation without writes,
+  unchanged settings on existing chats and replay after provider/profile removal. Browser checks
+  measure long destination names at desktop, narrow and short viewport sizes with fixed dialog actions.
 - `npm run test:integration -- feedback` builds Core/CLI and uses the existing parent-managed child
   Core/native Harness and Shell acceptance path with separate password-authenticated accounts and synthetic
   agent credentials and explicit administrator review of assistant-to-Core MCP access in the child.

@@ -1,6 +1,6 @@
 ---
 created: 2026-07-09
-updated: 2026-11-03
+updated: 2026-11-05
 summary: Apps publish named update sources in an app-owned feeds.json that Core validates and follows without a catalog or Marketplace.
 components: [apps/core]
 ---
@@ -92,9 +92,10 @@ the application. Private, local and active-development sources use their own sou
 Distribution migrations additionally match exact historical URLs and require app.0.2 destinations;
 explicit source pins are excluded from automatic suggestions.
 
-Shell's Host → Updates page shows suggested migrations and explicit custom feed selection, before/
-after review, recovery and return to the previous source. Delegated clients need both `apps.install`
-and `apps.sources.full`; applying also requires Core's operator confirmation for the exact request.
+Shell's App Details → Updates tab selects the channel published by the application. Host → Updates
+contains no application source or migration section. Delegated source-switch clients need both
+`apps.install` and `apps.sources.full`; applying
+also requires Core's operator confirmation for the exact request.
 Ordinary app update permission alone cannot approve a publisher switch. Direct CLI and authorized
 Core MCP operations use the same durable domain plan and revision guards.
 

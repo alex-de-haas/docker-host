@@ -106,20 +106,22 @@ describe("development session coordination", () => {
     expect(await manager.deleteSession(record.id, "admin", "token")).toBe(true);
   });
   it("recovers new building preparation across restart without duplicating the session or starting an agent", async () => {
-    const input = { appId: "notes", requestId: "12345678-1234-4234-8234-123456789abc", expectedLocalHead: "b".repeat(40) };
+    const input = { appId: "notes", requestId: "12345678-1234-4234-8234-123456789abc", expectedLocalHead: "b".repeat(40), browserDefaults: { ownerId: "admin", autonomy: "autonomous" } };
     vi.mocked(client.call).mockRejectedValueOnce(new Error("response lost"));
     await expect(manager.newBuildingSession("admin", "token", input)).rejects.toThrow("response lost");
     const original = (await store.listRecords())[0]!;
     await expect(manager.deleteSession(original.id, "admin", "token")).rejects.toThrow("Recover this session");
     await manager.shutdown(); manager = build();
-    const resumed = await manager.newBuildingSession("admin", "token", input);
+    const resumed = await manager.newBuildingSession("admin", "token", { ...input, browserDefaults: { ownerId: "admin", autonomy: "normal" } });
     expect(resumed.id).toBe(original.id);
+    expect(resumed.autonomy).toBe("autonomous");
     expect(resumed.developmentWorkspaces).toEqual([tree]);
     expect(await store.listRecords()).toHaveLength(1);
     const calls = vi.mocked(client.call).mock.calls.length;
     expect((await manager.newBuildingSession("admin", "token", input)).id).toBe(original.id);
     expect(client.call).toHaveBeenCalledTimes(calls);
     expect(starts).toHaveLength(0);
+    expect(vi.mocked(client.call).mock.calls.filter(c => c[2] === "prepare").every(c => !("browserDefaults" in c[3]!))).toBe(true);
     await expect(manager.newBuildingSession("admin", "token", { ...input, expectedLocalHead: "c".repeat(40) })).rejects.toThrow("different session details");
   });
   it("does not store app handoff responses as worktrees", async () => {
@@ -584,19 +586,21 @@ describe("shared workspace session boundaries", () => {
       if (action === "attach") { if (lost) { lost = false; throw new Error("response lost"); } return { workspace: { id: workspaceId, revision: 3 } }; }
       return { workspaces: [tree] };
     });
-    const input = { workspaceId, requestId, expectedRevision: 2 };
+    const input = { workspaceId, requestId, expectedRevision: 2, browserDefaults: { ownerId: "member", autonomy: "autonomous" } };
     await expect(manager.newWorkspaceSession("member", "member-token", input)).rejects.toThrow("response lost");
     const initial = (await store.listRecords())[0]!;
     await manager.shutdown(); manager = build();
     inspection.mockResolvedValue({ workspaces: [{ id: workspaceId, worktrees: [{ apps: [{ appId: "later-app" }] }] }] });
-    const recovered = await manager.newWorkspaceSession("member", "member-token", input);
+    const recovered = await manager.newWorkspaceSession("member", "member-token", { ...input, browserDefaults: { ownerId: "member", autonomy: "normal" } });
     expect(recovered.id).toBe(initial.id);
     expect(recovered.appIds).toEqual(["notes"]);
+    expect(recovered.autonomy).toBe("autonomous");
     expect(recovered.workspaceAssociation).toEqual({ id: workspaceId, revision: 3 });
     expect(await store.listRecords()).toHaveLength(1);
     expect(starts).toHaveLength(0); expect(sent).toHaveLength(0);
     const attachments = vi.mocked(client.call).mock.calls.filter(c => c[2] === "attach");
     expect(attachments[0]).toEqual(attachments[1]);
+    expect(attachments.every(c => !("browserDefaults" in c[3]!))).toBe(true);
     expect(await store.readEvents(initial.id)).not.toEqual(expect.arrayContaining([expect.objectContaining({ type: "user_message" })]));
   });
 

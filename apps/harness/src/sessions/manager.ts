@@ -60,6 +60,27 @@ function isWorktreeBinding(value: unknown): value is DevelopmentWorkspace {
     && "path" in value && typeof value.path === "string" && value.path.length > 0;
 }
 
+/** Browser hints are optional defaults, never an instruction to replace a profile or saved chat. */
+function browserSessionDefaults(input: unknown, ownerId: string): { autonomy?: "normal" | "autonomous"; models?: Record<string, unknown> } {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return {};
+  const value = input as Record<string, unknown>;
+  // Identity can change between the browser's preference lookup and this creation request.
+  if (value.ownerId !== ownerId) return {};
+  const models = value.models && typeof value.models === "object" && !Array.isArray(value.models)
+    && Object.keys(value.models).length <= 100 ? value.models as Record<string, unknown> : undefined;
+  return { models, ...(value.autonomy === "normal" || value.autonomy === "autonomous" ? { autonomy: value.autonomy } : {}) };
+}
+
+function browserModelDefault(models: Record<string, unknown> | undefined, connectionId: string): import("../worker/contracts.js").ExecutionSelection | undefined {
+  if (!models || !Object.hasOwn(models, connectionId)) return;
+  const value = models[connectionId];
+  if (!value || typeof value !== "object" || Array.isArray(value)) return;
+  const selection = value as Record<string, unknown>;
+  const valid = (part: unknown) => part === null || typeof part === "string" && /^[A-Za-z0-9][A-Za-z0-9._/:-]{0,255}$/.test(part);
+  if (!valid(selection.model) || !valid(selection.reasoningEffort)) return;
+  return { model: selection.model as string | null, reasoningEffort: selection.reasoningEffort as string | null };
+}
+
 // Owns session lifecycle: one harness run per live session, an append-only event log with a
 // monotonic seq (the SSE reattach cursor), and status transitions driven by harness events.
 // Deltas fan out live but are not persisted — the final assistant_text is the transcript record.
@@ -1101,11 +1122,12 @@ export class SessionManager {
     return issued ? { token: issued.token, expiresAtMs: new Date(issued.expiresAt).getTime() } : null;
   }
 
-  async newWorkspaceSession(userId: string, credential: string, input: { workspaceId: string; requestId: string; expectedRevision: number }): Promise<SessionRecord> {
+  async newWorkspaceSession(userId: string, credential: string, input: { workspaceId: string; requestId: string; expectedRevision: number; browserDefaults?: unknown }): Promise<SessionRecord> {
     if (!/^[a-f0-9]{64}$/.test(input.workspaceId ?? "") || !/^[0-9a-f-]{36}$/i.test(input.requestId ?? "") || !Number.isSafeInteger(input.expectedRevision))
       throw new AppContextError(400, "workspace_request_invalid", "Supply the reviewed workspace, revision and request ID.");
     if (!this.development) throw new AppContextError(503, "workspaces_unavailable", "Workspace access requires Core.");
     return this.serialize("workspace-session:" + userId + ":" + input.requestId, async () => {
+      const { browserDefaults, ...associationInput } = input;
       const inventory = await this.development!.inspection(credential) as { workspaces: { id: string; worktrees: { apps: { appId: string }[] }[] }[] };
       const workspace = inventory.workspaces.find(w => w.id === input.workspaceId);
       if (!workspace) throw new AppContextError(404, "workspace_missing", "Workspace not found.");
@@ -1113,24 +1135,25 @@ export class SessionManager {
       if (existing && existing.context?.workspace !== input.workspaceId)
         throw new AppContextError(409, "creation_conflict", "Reuse the original workspace for this session request.");
       const record = existing ?? await this.createSession({ createdBy: userId, clientRequestId: input.requestId, title: "New session",
-        appIds: [...new Set(workspace.worktrees.flatMap(t => t.apps.map(a => a.appId)))], context: { workspace: input.workspaceId } });
-      await this.workspaceAction(record.id, "attach", input, credential, userId);
+        appIds: [...new Set(workspace.worktrees.flatMap(t => t.apps.map(a => a.appId)))], context: { workspace: input.workspaceId }, browserDefaults });
+      await this.workspaceAction(record.id, "attach", associationInput, credential, userId);
       return (await this.getSession(record.id))!;
     });
   }
 
-  async newBuildingSession(userId: string, credential: string, input: { appId: string; requestId: string; expectedLocalHead: string }): Promise<SessionRecord> {
+  async newBuildingSession(userId: string, credential: string, input: { appId: string; requestId: string; expectedLocalHead: string; browserDefaults?: unknown }): Promise<SessionRecord> {
     if (!/^[a-z0-9][a-z0-9._-]{0,62}$/.test(input.appId ?? "") ||
         !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.requestId ?? "") ||
         !/^[0-9a-f]{40,64}$/.test(input.expectedLocalHead ?? ""))
       throw new AppContextError(400, "building_request_invalid", "Supply the local app, reviewed main commit and a UUID requestId.");
     return this.serialize("building:" + userId + ":" + input.requestId, async () => {
+      const { browserDefaults, ...preparationInput } = input;
       // Persist allocation before Core preparation; reuse both IDs after a lost response.
       const session = await this.createSession({ createdBy: userId, appIds: [input.appId],
         clientRequestId: input.requestId, title: "Build " + input.appId,
-        context: { localBuildingApp: input.appId, acceptedHead: input.expectedLocalHead } });
+        context: { localBuildingApp: input.appId, acceptedHead: input.expectedLocalHead }, browserDefaults });
       if (!session.developmentWorkspaces?.some(w => w.apps?.some(a => a.appId === input.appId))) {
-        try { await this.workspaceAction(session.id, "prepare", { ...input, targetBranch: "main" }, credential, userId); }
+        try { await this.workspaceAction(session.id, "prepare", { ...preparationInput, targetBranch: "main" }, credential, userId); }
         catch (error) {
           if (error instanceof AppContextError && ["workspace_local_head_changed", "workspace_local_source_unavailable",
             "workspace_local_source_required", "workspace_local_target_invalid"].includes(error.code)) {
@@ -1162,17 +1185,32 @@ export class SessionManager {
     appIds?: unknown;
     clientRequestId?: unknown;
     connectionId?: unknown;
+    executionSelection?: unknown;
+    autonomy?: unknown;
+    browserDefaults?: unknown;
     reservedHandoffId?: string;
     taskExecutionId?: string;
     taskConfiguration?: import("../tasks/configurations.js").TaskConfiguration;
   }): Promise<SessionRecord> {
     return this.serialize("create", async () => {
       if (input.skillIds !== undefined && !validSkillIds(input.skillIds)) throw new AppContextError(400, "skills_invalid", "Choose stable skill IDs from the Core catalog.");
+      if (input.autonomy !== undefined && input.autonomy !== "normal" && input.autonomy !== "autonomous")
+        throw new AppContextError(400, "autonomy_invalid", "Choose Normal or Autonomous.");
+      let executionSelection: import("../worker/contracts.js").ExecutionSelection | undefined;
+      if (input.executionSelection !== undefined) {
+        const proposed = input.executionSelection;
+        if (!proposed || typeof proposed !== "object" || Array.isArray(proposed) || Object.keys(proposed).some(key => !["model", "reasoningEffort"].includes(key)))
+          throw new AppContextError(400, "invalid_selection", "Choose a model and reasoning effort.");
+        const selection = { model: null, reasoningEffort: null, ...proposed };
+        if (![selection.model, selection.reasoningEffort].every(value => value === null || typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._/:-]{0,255}$/.test(value)))
+          throw new AppContextError(400, "invalid_selection", "Choose a model and reasoning effort.");
+        executionSelection = { model: selection.model, reasoningEffort: selection.reasoningEffort };
+      }
       const appIds = parseAppIds(input.appIds === undefined ? [] : input.appIds);
       const requestId = input.clientRequestId;
       if (requestId !== undefined && (typeof requestId !== "string" || !/^[a-zA-Z0-9-]{1,128}$/.test(requestId)))
         throw new AppContextError(400, "request_id_invalid", "Invalid creation request id.");
-      const fingerprint = JSON.stringify({ ...(input.taskConfiguration ? { taskConfiguration: input.taskConfiguration } : {}), ...(input.taskExecutionId ? { taskExecutionId: input.taskExecutionId } : {}), ...(input.profileId !== undefined ? { profileId: input.profileId, profileRevision: input.profileRevision } : {}), ...(input.skillIds !== undefined ? { skillIds: input.skillIds } : {}), title: normalizeTitle(input.title), context: input.context ?? null, appIds, ...(input.connectionId !== undefined ? { connectionId: input.connectionId } : {}) });
+      const fingerprint = JSON.stringify({ ...(input.taskConfiguration ? { taskConfiguration: input.taskConfiguration } : {}), ...(input.taskExecutionId ? { taskExecutionId: input.taskExecutionId } : {}), ...(input.profileId !== undefined ? { profileId: input.profileId, profileRevision: input.profileRevision } : {}), ...(input.skillIds !== undefined ? { skillIds: input.skillIds } : {}), title: normalizeTitle(input.title), context: input.context ?? null, appIds, ...(input.connectionId !== undefined ? { connectionId: input.connectionId } : {}), ...(executionSelection ? { executionSelection } : {}), ...(input.autonomy !== undefined ? { autonomy: input.autonomy } : {}) });
       if (typeof requestId === "string") {
         const existing = (await this.store.listRecords()).find(r => r.createdBy === input.createdBy && r.creationRequest?.id === requestId);
         if (existing) {
@@ -1182,11 +1220,14 @@ export class SessionManager {
       }
       await validateSelection(this.providers, appIds);
       if (input.profileId !== undefined && !this.profiles) throw new AppContextError(409, "profiles_unavailable", "Profiles are unavailable.");
+      if (input.connectionId !== undefined && !this.connections) throw new ConnectionError(409, "providers_unavailable", "Provider selection is unavailable.");
+      if (input.taskExecutionId && (executionSelection !== undefined || input.autonomy !== undefined))
+        throw new AppContextError(403, "configuration_forbidden", "An admitted task keeps its prepared execution settings.");
       if (input.taskConfiguration && (!input.taskExecutionId || input.profileId !== undefined || input.taskConfiguration.scope.owner !== input.createdBy))
         throw new AppContextError(403, "configuration_forbidden", "Only an admitted task can use its prepared role.");
-      const selectedProfile = input.taskConfiguration?.profile ?? (this.profiles ? await this.profiles.select(input.profileId === undefined && (input.connectionId !== undefined || input.skillIds !== undefined) ? null : input.profileId, input.profileRevision) : null);
-      if (selectedProfile && (input.skillIds !== undefined || input.connectionId !== undefined))
-        throw new AppContextError(400, "profile_overrides", "Select a profile or supply manual connection and skill settings.");
+      const selectedProfile = input.taskConfiguration?.profile ?? (this.profiles ? await this.profiles.select(input.profileId === undefined && (input.connectionId !== undefined || input.skillIds !== undefined || executionSelection !== undefined) ? null : input.profileId, input.profileRevision) : null);
+      if (selectedProfile && (input.skillIds !== undefined || input.connectionId !== undefined || executionSelection !== undefined))
+        throw new AppContextError(400, "profile_overrides", "Select a profile or supply manual provider, model and skill settings.");
       const binding = await this.connections?.binding(selectedProfile?.connectionId ?? input.connectionId);
       if (input.taskConfiguration) {
         const expected = input.taskConfiguration.binding;
@@ -1195,13 +1236,33 @@ export class SessionManager {
           throw new AppContextError(409, "configuration_connection_changed", "The inherited provider binding changed. Prepare a new task role from the current parent.");
       }
       await this.validateProfileSelection(selectedProfile, binding?.connectionId);
+      if (executionSelection && (executionSelection.model || executionSelection.reasoningEffort)) {
+        if (!binding?.connectionId || !this.connections) throw new ConnectionError(409, "provider_required", "Choose a provider for this model selection.");
+        const { validateSelection } = await import("../worker/models.js");
+        validateSelection(executionSelection, await this.connections.models(binding.connectionId));
+      }
+      // Resolve normal profiles and provider defaults first. Hints cannot select a different role,
+      // and changed browser/server defaults never rewrite an accepted creation on replay.
+      const browserDefaults = input.taskExecutionId ? {} : browserSessionDefaults(input.browserDefaults, input.createdBy);
+      if (!selectedProfile && executionSelection === undefined && binding?.connectionId && this.connections) {
+        const remembered = browserModelDefault(browserDefaults.models, binding.connectionId);
+        if (remembered) {
+          try {
+            const { validateSelection } = await import("../worker/models.js");
+            if (remembered.model || remembered.reasoningEffort) validateSelection(remembered, await this.connections.models(binding.connectionId));
+            executionSelection = remembered;
+          } catch { /* Optional browser defaults cannot prevent creating a chat when a catalog changes. */ }
+        }
+      }
+      const autonomy = input.autonomy ?? browserDefaults.autonomy;
       const now = new Date().toISOString();
       const title = normalizeTitle(input.title);
       const record: SessionRecord = {
         ...(this.profiles || input.taskConfiguration ? { agentProfile: selectedProfile, profileLocked: !!input.taskExecutionId } : {}),
         ...(input.taskConfiguration ? { taskConfiguration: { id: input.taskConfiguration.selection.id, revision: input.taskConfiguration.selection.revision, rationale: input.taskConfiguration.rationale } } : {}),
-        ...(selectedProfile ? { executionSelection: { model: selectedProfile.model, reasoningEffort: selectedProfile.reasoningEffort } } : {}),
+        ...(selectedProfile ? { executionSelection: { model: selectedProfile.model, reasoningEffort: selectedProfile.reasoningEffort } } : executionSelection ? { executionSelection } : {}),
         skillIds: selectedProfile?.skillIds ?? input.skillIds as string[] | undefined ?? (this.profiles ? [] : (await this.settings?.read())?.skillIds),
+        ...(autonomy !== undefined ? { autonomy } : {}),
         ...(input.taskExecutionId ? { taskExecutionId: input.taskExecutionId, autonomy: "autonomous" as const } : {}),
         retentionVersion: 1,
         executionMode: this.executionMode ?? (await this.settings?.read())?.executionMode ?? "native",

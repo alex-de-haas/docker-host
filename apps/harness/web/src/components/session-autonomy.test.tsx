@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { SessionAutonomy } from "./session-autonomy";
 import type { AssistantSession } from "../lib/assistant-api";
+import { readBrowserAgentDefaults, rememberAutonomy } from "@/lib/browser-agent-preferences";
 const api = vi.hoisted(() => ({ setSessionAutonomy: vi.fn() }));
 vi.mock("@/lib/assistant-api", () => api);
 let container: HTMLDivElement, root: Root;
@@ -20,6 +21,7 @@ const select = async () => {
   await act(async () => item.click());
 };
 beforeEach(() => {
+  localStorage.clear();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); vi.clearAllMocks();
   api.setSessionAutonomy.mockResolvedValue(chat({ autonomy: "autonomous" }));
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
@@ -43,4 +45,16 @@ it("preserves the confirmed mode on failure and blocks the composer during savin
   expect(trigger().getAttribute("aria-label")).toBe("Autonomy: Normal"); expect(change).not.toHaveBeenCalled();
   expect(container.querySelector('[role="alert"]')?.textContent).toBe("Session busy");
   expect(saving).toHaveBeenLastCalledWith(false);
+});
+
+it("remembers confirmed explicit autonomy and never changes an opened existing chat", async () => {
+  const owned = chat({ createdBy: "operator", autonomy: "normal" });
+  rememberAutonomy(chat({ createdBy: "operator", autonomy: "autonomous" }));
+  await render(owned);
+  expect(trigger().getAttribute("aria-label")).toBe("Autonomy: Normal");
+  expect(api.setSessionAutonomy).not.toHaveBeenCalled();
+  api.setSessionAutonomy.mockResolvedValue(chat({ createdBy: "operator", autonomy: "autonomous" }));
+  await select(); expect(readBrowserAgentDefaults("operator")?.autonomy).toBe("autonomous");
+  api.setSessionAutonomy.mockRejectedValue(new Error("Save failed"));
+  await select(); expect(readBrowserAgentDefaults("operator")?.autonomy).toBe("autonomous");
 });
