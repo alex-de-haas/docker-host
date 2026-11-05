@@ -177,6 +177,10 @@ export class HarnessTaskExecutor {
             return taskError("result_conflict", "Recover the original unsuccessful report.");
           return { recorded: true, executionId: record.receipt.executionId, outcome: "failed" };
         }
+        const inputGeneration = (await this.manager.getSession(sessionId))?.taskInputGeneration ?? 0;
+        if (record.outcome && (record.outcome.inputGeneration ?? 0) !== inputGeneration) {
+          (record.supersededOutcomes ??= []).push(record.outcome); delete record.outcome;
+        }
         if (record.cancellation || record.outcome || taskExecutionTerminal(record.receipt.state)) return taskError("execution_closed", "This attempt no longer accepts a different report.");
         record.failure = { requestId, result }; this.touch(record); await this.save(key, record);
         return { recorded: true, executionId: record.receipt.executionId, outcome: "failed" };
@@ -190,10 +194,12 @@ export class HarnessTaskExecutor {
       for (const key of await this.keys()) {
         const record = (await this.load(key))!;
         if (record.sessionId !== sessionId) continue;
+        // Capture before awaiting barrier reads: a question arriving during admission must
+        // supersede this report, even if its answer is delivered before reconciliation.
+        const inputGeneration = (await this.manager.getSession(sessionId))?.taskInputGeneration ?? 0;
         const barrier = await this.manager.taskCompletionBarrier(sessionId);
         if (barrier) return taskError("required_input_pending", barrier.message);
         if (record.failure) return taskError("result_conflict", "An unsuccessful outcome is already recorded.");
-        const inputGeneration = (await this.manager.getSession(sessionId))?.taskInputGeneration ?? 0;
         if (record.outcome && (record.outcome.inputGeneration ?? 0) !== inputGeneration) {
           if (record.outcome.requestId === requestId) return taskError("result_superseded", "Required input superseded that result. Verify the answer and report a new result.");
           (record.supersededOutcomes ??= []).push(record.outcome); delete record.outcome;

@@ -477,3 +477,18 @@ it("keeps optional nonblocking clarification independent of successful task comp
   await vi.waitFor(async () => expect((await manager.getSession(receipt.sessionRef!.id))?.status).toBe("idle"));
   await executor.tick(); expect((await executor.get(id, actor)).state).toBe("completed");
 });
+
+it("invalidates a report when required input arrives during its barrier check", async () => {
+  const id = randomUUID(), accepted = await executor.accept(id, input, actor); await executor.tick();
+  const sessionId = accepted.sessionRef!.id, requestId = randomUUID(), result = { markdown: "Checked before the new question", resources: [] };
+  const getSession = manager.getSession.bind(manager); let generation = 0;
+  vi.spyOn(manager, "getSession").mockImplementation(async session => {
+    const record = await getSession(session); return record && { ...record, taskInputGeneration: generation };
+  });
+  // The wait can be persisted immediately after the barrier's final read. Its answer must not
+  // make a report already in flight count as fresh post-answer evidence.
+  vi.spyOn(manager, "taskCompletionBarrier").mockImplementationOnce(async () => { generation++; return undefined; });
+  await executor.report(sessionId, requestId, result);
+  await expect(executor.report(sessionId, requestId, result)).rejects.toMatchObject({ code: "result_superseded" });
+  await executor.report(sessionId, randomUUID(), { markdown: "Rechecked after the answer", resources: [] });
+});

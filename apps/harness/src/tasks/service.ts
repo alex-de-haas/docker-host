@@ -53,9 +53,12 @@ export class TaskService {
     this.controls = new TaskControls(this.store, manager, this.policies, this.orchestration);
     this.orchestration.beforeResume = id => this.sources.beforeResume(id);
     manager.beforeTaskDecisionResume = async id => {
-      if (!await this.sources.beforeResume(id)) return false;
       const session = await manager.getSession(id);
-      return !session?.taskContext || !session.taskExecutionId || await this.policies.reserve(session.taskContext.taskRef.id, session.taskExecutionId);
+      if (!session) return false;
+      // As at initial admission, another provider owns its graph and source policy.
+      if (!session.taskContext || !session.taskExecutionId || !this.own(session.taskContext.taskRef)) return true;
+      if (!await this.sources.beforeResume(id)) return false;
+      return this.policies.reserve(session.taskContext.taskRef.id, session.taskExecutionId);
     };
     this.adoptions = new TaskAdoptions(this.store, manager, (task, requestId, credential) => this.action(task.ref.id,
       { actor: { userId: task.owner.userId, appId: null }, scope: this.ownScope(), credential, validate: async () => {} },

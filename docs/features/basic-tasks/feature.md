@@ -138,7 +138,9 @@ deduplicated attention notifications and retained recovery projections. Notifica
 records and waits remain authoritative if delivery fails.
 
 An accepted answer resumes the original attempt, session and native checkpoint after current
-identity, permissions, input snapshot, source capacity and cancellation checks. The continuation
+identity, permissions, input snapshot, source capacity and cancellation checks. External task
+providers retain their own graph/source policy; their continuation does not require a local Harness
+task record. The continuation
 instructs the agent to recheck actual setup. Cancellation is durably fenced before acknowledgement;
 a late answer cannot restart the task. Uncertain stops or unavailable checkpoints remain recoverable
 and do not create replacement attempts. Optional native nonblocking questions remain independent.
@@ -147,7 +149,10 @@ and do not create replacement attempts. Optional native nonblocking questions re
 unsuccessful diagnostic outcome and maps it to Blocked, not Done. Both report admission and terminal
 reconciliation enforce runtime-owned barriers, including mandatory input and unresolved approvals.
 A new mandatory question invalidates an earlier success report; continuation must submit fresh
-completion evidence. Historical reports remain retained. The runtime does not infer completion from
+completion evidence. Admission captures the input generation before reading barriers, so a question
+arriving during that check also supersedes the in-flight report. An invalidated success also permits
+a subsequent unsuccessful report with its actual diagnostic evidence. Historical reports remain
+retained. The runtime does not infer completion from
 Markdown wording or prove arbitrary output quality; configured review remains a separate check.
 
 ## Recoverable Removal
@@ -252,6 +257,7 @@ managed runtime/browser journey. Changes are not deployed to the operator's live
 | `npm run build --workspace @hosty-sdk/app` and `npm test --workspace @hosty-sdk/app` | Build passed; 712 tests passed. |
 | `dotnet build packages/app-sdk-dotnet/HostySdk.App/HostySdk.App.csproj` | net8.0 and net10.0 passed. |
 | `npm run sdk:dotnet:test` | 70 passed, including create/edit requests with an explicit null assignee. |
+| Review regressions: task, Decision, Worker and Tasks UI suites | 238 passed, including external-provider required-input continuation after restart, stale-success-to-failure transitions and an input/result admission race. |
 | `npm run harness:lint` | API/web TypeScript and web ESLint passed. |
 | `npm test --workspace @haas/hosty-harness` | Full suite passed: 164 files, 1790 tests after lifecycle, availability recovery, draft race and cross-app link fixes. |
 | `npm test --workspace @haas/hosty-harness -- src/tasks src/profiles web/src/components/tasks.test.tsx web/src/components/session-model.test.tsx web/src/components/session-profile.test.tsx` | Review-fix suite passed: 9 files, 52 tests, including accepted-task selection/dispatch locks and draft recovery after Ready/Cancelled transitions. |
@@ -303,6 +309,7 @@ The managed runtime uses separate users/data, Docker app services and normal Cor
 | `npm test --workspace @hosty-sdk/app` | 781 passed; the subsequently expanded task-server file passes all four cases. |
 | `dotnet test packages/app-sdk-dotnet/HostySdk.App.Tests/HostySdk.App.Tests.csproj` | 75 passed. |
 | Core Decisions and provider mediation selections | 47 passed; the final expanded mediation selection passes 35 cases. |
+| Review regressions: task, Decision, Worker and Tasks UI suites | 238 passed, including external-provider required-input continuation after restart, stale-success-to-failure transitions and an input/result admission race. |
 | `npm run harness:lint` | API/web TypeScript and web ESLint passed. |
 | `HOSTY_TASKS_BROWSER=1 HOSTY_TASKS_BROWSER_CHANNEL=chrome npm run test:integration -- tasks` | Final Core/CLI/API/Worker builds, managed task/Decision acceptance and Chromium checks passed. The installed Playwright module was selected with `HOSTY_TASKS_PLAYWRIGHT_MODULE`. |
 | `node scripts/check-versions.mjs`, documentation/index validation and `git diff --check` | Passed. |

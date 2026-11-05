@@ -16,6 +16,7 @@ import { createWorkerServer } from "../worker/http.js";
 import { ensureServiceIdentity } from "../worker/auth.js";
 import { ProfileStore } from "../profiles/store.js";
 import { HarnessTaskExecutor } from "../tasks/executor.js";
+import { TaskService } from "../tasks/service.js";
 import type { HarnessStartOptions } from "../harness/adapter.js";
 
 const cleanup: (() => Promise<unknown>)[] = [];
@@ -130,8 +131,9 @@ it("keeps the original task attempt awaiting input through parking and reports i
 });
 
 
-it.each(["codex", "claude"] as const)("%s registers required input, fences stale results and resumes once after restart", async kind => {
-  const f = await setup(false, kind), executor = new HarnessTaskExecutor(f.manager), executionId = randomUUID();
+it.each([["codex", "completed"], ["claude", "completed"], ["codex", "failed"], ["claude", "failed"]] as const)("%s resumes an external required-input task through TaskService after restart (%s)", async (kind, outcome) => {
+  const f = await setup(false, kind), service = new TaskService(f.manager), executor = service.executor, executionId = randomUUID();
+  cleanup.push(() => service.close());
   const authority = { actor: { userId: "owner", appId: "source", installationId: "one" }, scope: "source:one", credential: "volatile-current-authority", validate: async () => {} };
   const ref = { appId: "source", installationId: "one", key: "default", id: randomUUID() };
   const accepted = await executor.accept(executionId, { version: 1, taskRef: ref, inputRevision: 1,
@@ -157,8 +159,9 @@ it.each(["codex", "claude"] as const)("%s registers required input, fences stale
   await vi.waitFor(async () => expect((await f.manager.getSession(sessionId))?.taskBarrier?.state).toBe("parked"));
   await executor.tick(); expect(await executor.get(executionId, authority)).toMatchObject({ state: "awaiting_input", stopConfirmed: false, nativeStopConfirmed: true, wait: { kind: "human" } });
   expect(await f.manager.sweepAbandoned(1, Date.now() + 86400000)).toEqual([]);
-  await f.decisions.close(); await f.manager.shutdown();
-  const reopened = f.open(), wait = await reopened.decisions.local("owner", registered.waitId);
+  await service.close(); await f.decisions.close(); await f.manager.shutdown();
+  const reopened = f.open(), resumedService = new TaskService(reopened.manager), wait = await reopened.decisions.local("owner", registered.waitId);
+  cleanup.push(() => resumedService.close());
   await reopened.decisions.resolve("owner", wait.core!.id, { requestId: randomUUID(), expectedRevision: wait.core!.revision, answers: { setup: { text: "Configured" } } });
   await reopened.decisions.tick();
   await vi.waitFor(() => expect(f.starts).toHaveLength(2));
@@ -166,15 +169,18 @@ it.each(["codex", "claude"] as const)("%s registers required input, fences stale
   expect(f.inputs[1]).toContain("Recheck any setup prerequisite");
   expect((await reopened.manager.getSession(sessionId))?.taskExecutionId).toBe(executionId);
   await reopened.decisions.tick(); expect(f.starts).toHaveLength(2);
-  const resumed = new HarnessTaskExecutor(reopened.manager);
+  const resumed = resumedService.executor;
   await expect(resumed.report(sessionId, previousResult, { markdown: "Premature success", resources: [] })).rejects.toMatchObject({ code: "result_superseded" });
   const replayed = await reopened.manager.requestTaskInput(sessionId, request);
   expect(replayed.state).toBe("running");
   expect((await reopened.manager.getSession(sessionId))?.status).toBe("running");
-  await resumed.report(sessionId, randomUUID(), { markdown: "Verified setup and completed work", resources: [] });
+  const evidence = { markdown: outcome === "completed" ? "Verified setup and completed work" : "Setup was supplied but the build still failed", resources: [] };
+  if (outcome === "completed") await resumed.report(sessionId, randomUUID(), evidence);
+  else await resumed.fail(sessionId, randomUUID(), evidence);
   f.starts[1]!.onEvent({ type: "result", status: "success" });
   await vi.waitFor(async () => expect((await reopened.manager.getSession(sessionId))?.status).toBe("idle"));
-  await resumed.tick(); expect(await resumed.get(executionId, authority)).toMatchObject({ state: "completed", stopConfirmed: true });
+  await resumed.tick(); expect(await resumed.get(executionId, authority)).toMatchObject({ state: outcome, stopConfirmed: true, result: evidence });
+  expect(await resumedService.store.all()).toEqual([]);
 });
 
 async function requiredFixture() {
