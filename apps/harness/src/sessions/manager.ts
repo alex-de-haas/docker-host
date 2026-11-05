@@ -39,6 +39,7 @@ import { sanitizeCommandResult } from "../harness/command-result.js";
 import { sanitizeToolResult, shouldRetainToolOutput } from "../harness/tool-result.js";
 import { workingActivity, type SessionActivity, type HarnessActivity } from "../harness/activity.js";
 import { messageRequestId, type MessageReceipt, type StoredMessageReceipt, type SessionRecord, type SessionStatus, type SessionStore, type StoredEvent } from "./store.js";
+import type { FeedbackMessageReference } from "../feedback/presentation.js";
 import type { AuditReporter } from "../audit.js";
 import type { SettingsStore } from "../settings/store.js";
 import { CORE_PROVIDER_ID, type McpProvider, type ProviderDirectory } from "../settings/providers.js";
@@ -2129,9 +2130,15 @@ export class SessionManager {
     });
   }
 
-  async postMessage(id: string, text: string, credential?: string, attachments: string[] = [], context: { taskContinuation?: { id: string; generation: number; owner: string; snapshot: string }; decisionContinuation?: Pick<DecisionWait, "id" | "owner" | "snapshot" | "cancellationGeneration">; promptSuggestions?: boolean; taskDispatch?: boolean; selectionRevision?: unknown; expectedRevision?: unknown; withoutDetails?: boolean; dispatchId?: string; workspaceCredential?: string | null; clientRequestId?: unknown; actorUserId?: string } = {}): Promise<MessageReceipt | void> {
+  async postMessage(id: string, text: string, credential?: string, attachments: string[] = [], context: { feedback?: FeedbackMessageReference; taskContinuation?: { id: string; generation: number; owner: string; snapshot: string }; decisionContinuation?: Pick<DecisionWait, "id" | "owner" | "snapshot" | "cancellationGeneration">; promptSuggestions?: boolean; taskDispatch?: boolean; selectionRevision?: unknown; expectedRevision?: unknown; withoutDetails?: boolean; dispatchId?: string; workspaceCredential?: string | null; clientRequestId?: unknown; actorUserId?: string } = {}): Promise<MessageReceipt | void> {
     const clientRequestId = context.clientRequestId === undefined ? undefined : this.messageRequest(context.clientRequestId);
     const actorUserId = clientRequestId ? this.messageActor(context.actorUserId) : undefined;
+    if (context.feedback && (context.feedback.version !== 1 || typeof context.feedback.dispatchId !== "string"
+      || !clientRequestId || context.feedback.dispatchId.toLowerCase() !== clientRequestId))
+      throw new AppContextError(400, "feedback_reference_invalid", "Feedback presentation must reference this exact admitted message.");
+    const feedback: FeedbackMessageReference | undefined = context.feedback ? { version: 1, dispatchId: clientRequestId! } : undefined;
+    // The reference is derived from the message UUID, not independent admission input. Keep the
+    // existing fingerprint so accepted/uncertain receipts from before cards remain replayable.
     const fingerprint = clientRequestId ? createHash("sha256").update(JSON.stringify({
       ...(context.promptSuggestions === true ? { promptSuggestions: true } : {}),
       actorUserId, text, attachments, appContextRevision: context.expectedRevision ?? 0,
@@ -2298,6 +2305,7 @@ export class SessionManager {
         const messageEventSeq = await this.append(id, {
           type: "user_message",
           ...(clientRequestId ? { clientRequestId } : {}),
+          ...(feedback ? { feedback } : {}),
           executionSelection: session.record.executionSelection ?? { model: null, reasoningEffort: null },
           selectionRevision: session.record.selectionRevision ?? 0,
           // The native resume envelope is private coordinator input, not operator-facing prose.

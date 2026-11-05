@@ -529,7 +529,10 @@ dirty files or a Core project path do not create a consumer or add Core to the b
 separately authorized [Core/workspace activation flow](../workspace-live-activation/feature.md) and
 [Core development controls](../core-dev-target/feature.md) retain Core selection and Return.
 
-Preview cards keep Open preview/Open test Core visible. Their compact ReUI action menus retain
+Preview cards keep Open preview visible and place an accessible Open test Core icon at the end of
+the Core URL field while the child is running. The sandbox menu sits at the top right beside its
+name; its runtime badge shares the Separate Core and test data row. Operation progress, recovery
+and informational messages remain below the URL. Their compact ReUI action menus retain
 sandbox lifecycle, reviewed checks, restart and service logs, including original-request recovery
 and confirmations. Current launch stage/time and service state come from Core. Missing full launch
 history, time-to-ready, Not pushed counts or child-Core test-user totals are not invented.

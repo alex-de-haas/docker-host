@@ -501,7 +501,7 @@ under reduced motion. Approval surfaces use semantic warning tokens; selected an
 Field labels use lime, while attachment actions retain one child focus indicator without a
 second parent halo.
 
-Harness source/diff/speech choices use the existing Radix Select; retention fields and provider/
+Harness source/diff/speech and feedback choices use the existing themed Radix Select; retention fields and provider/
 handoff confirmations use shared Input/Checkbox. Empty, detached, unavailable and unknown choices
 remain explicit, with no first-choice substitution. File upload retains its hidden native input.
 Provider/settings/app-roster/mention reads and workspace actions show labelled grid loading;

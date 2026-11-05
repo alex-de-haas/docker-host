@@ -1,6 +1,7 @@
 import type { ProviderServerOptions } from "@hosty-sdk/app/providers/server";
 import { FeedbackError, type FeedbackCapabilities, type FeedbackSubmit, type FeedbackReport,
-  type FeedbackCollection, type FeedbackDispatch, type FeedbackDispatchInput, type FeedbackDelivery, type FeedbackOutcome } from "@hosty-sdk/app/feedback";
+  type FeedbackCollection, type FeedbackDispatch, type FeedbackDispatchInput, type FeedbackDelivery, type FeedbackOutcome,
+  type FeedbackEdit, type FeedbackDelete } from "@hosty-sdk/app/feedback";
 
 export class FeedbackServerClient {
   private readonly appId: string; private readonly core: URL; private readonly service: string;
@@ -10,7 +11,7 @@ export class FeedbackServerClient {
     this.service = options.serviceToken ?? process.env.HOSTY_APP_SERVICE_TOKEN ?? "";
     if (!this.appId || !this.service) throw new FeedbackError("hosty_misconfigured", "Hosty app credentials are unavailable.", 503);
   }
-  private async response(path: string, token: string, body?: unknown, signal?: AbortSignal) {
+  private async response(path: string, token: string, body?: unknown, signal?: AbortSignal, mutation?: "editing" | "deleting") {
     if (!token) throw new FeedbackError("identity_required", "Sign in to use feedback.", 401);
     const response = await fetch(new URL("/api/internal/apps/" + encodeURIComponent(this.appId) + "/" + path, this.core), {
       method: body === undefined ? "GET" : "POST", redirect: "error", cache: "no-store",
@@ -20,12 +21,14 @@ export class FeedbackServerClient {
     });
     if (!response.ok) {
       const error = await response.json().catch(() => null) as { code?: string; message?: string } | null;
+      if (mutation && error === null && (response.status === 404 || response.status === 405))
+        throw new FeedbackError("feedback_mutation_unsupported", `This Core does not support ${mutation} feedback. Update Core and retry.`, response.status);
       throw new FeedbackError(error?.code ?? "feedback_unavailable", error?.message ?? "Feedback is unavailable. Your draft is retained.", response.status);
     }
     return response;
   }
-  private async request<T>(path: string, token: string, body?: unknown, signal?: AbortSignal): Promise<T> {
-    return (await this.response(path, token, body, signal)).json() as Promise<T>;
+  private async request<T>(path: string, token: string, body?: unknown, signal?: AbortSignal, mutation?: "editing" | "deleting"): Promise<T> {
+    return (await this.response(path, token, body, signal, mutation)).json() as Promise<T>;
   }
   capabilities(token: string, signal?: AbortSignal): Promise<FeedbackCapabilities> { return this.request("ui/feedback", token, undefined, signal); }
   submit(input: FeedbackSubmit, token: string, signal?: AbortSignal): Promise<{ id: string; status: string }> { return this.request("ui/feedback", token, input, signal); }
@@ -33,6 +36,12 @@ export class FeedbackServerClient {
   list(token: string, signal?: AbortSignal): Promise<FeedbackCollection> { return this.request("feedback", token, undefined, signal); }
   change(id: string, input: { expectedRevision: number; workspaceId: string | null; disposition?: string | null }, token: string) {
     return this.request<FeedbackReport>("feedback/" + encodeURIComponent(id), token, input);
+  }
+  edit(id: string, input: FeedbackEdit, token: string) {
+    return this.request<FeedbackReport>("feedback/" + encodeURIComponent(id) + "/edit", token, input, undefined, "editing");
+  }
+  remove(id: string, input: FeedbackDelete, token: string) {
+    return this.request<{ id: string; status: "deleted" }>("feedback/" + encodeURIComponent(id) + "/delete", token, input, undefined, "deleting");
   }
   reserve(input: FeedbackDispatchInput, token: string) { return this.request<FeedbackDispatch>("feedback/dispatches", token, input); }
   delivery(id: string, input: FeedbackDelivery, token: string) {

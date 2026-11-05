@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 import { ChatCodeBlock } from "@/components/chat-code-block";
 import { markdownCodeProps } from "@/components/reui/code-block/code-block-highlight";
 
-// Assistant prose, rendered the way Marketplace renders an app description
+// User and assistant prose, rendered the way Marketplace renders an app description
 // (`apps/marketplace/src/components/markdown-description.tsx`): react-markdown with remark-gfm, and
 // prose styling expressed as arbitrary descendant selectors so the output stays on the shell's
 // design tokens without a typography plugin. Sizing is the chat's own — this is a narrow panel, and

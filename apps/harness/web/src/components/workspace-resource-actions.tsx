@@ -14,9 +14,9 @@ function read(key: string): Request | null {
     && typeof v.requestId === "string" && Number.isSafeInteger(v.expectedRevision) ? v : null; } catch { return null; }
 }
 const sameId = (a: string, b: string) => a.replaceAll("-", "") === b.replaceAll("-", "");
-export function WorkspaceResourceActions({ workspaceId, kind, resource, label, canStart, disabled, refresh, compact = false }: {
+export function WorkspaceResourceActions({ workspaceId, kind, resource, label, canStart, disabled, refresh, compact = false, menuTriggerClassName }: {
   workspaceId: string; kind: "environments"; resource: Resource; label: string;
-  canStart: boolean; disabled: boolean; refresh: () => void; compact?: boolean;
+  canStart: boolean; disabled: boolean; refresh: () => void; compact?: boolean; menuTriggerClassName?: string;
 }) {
   const key = `hosty.workspace.resource.${workspaceId}.${kind}.${resource.id}`;
   const [stored, setStored] = useState<Request | null>(() => read(key));
@@ -57,7 +57,7 @@ export function WorkspaceResourceActions({ workspaceId, kind, resource, label, c
   const removing = ["finishing", "cleanup-failed", "finished"].includes(resource.state);
   const progress = (busy || inFlight) && <p role="status" className="flex items-center gap-2 text-xs"><HostyLoader label={null} className="size-3.5 shrink-0" />Sandbox operation in progress…</p>;
   return <div aria-label={`${label} controls`} className="flex flex-col gap-2">
-    {compact && !pending ? <DropdownMenu><DropdownMenuTrigger asChild><Button size="icon-sm" variant="ghost" aria-label={`${label} sandbox actions`}><MoreHorizontal className="size-4" /></Button></DropdownMenuTrigger>
+    {compact && !pending ? <DropdownMenu><DropdownMenuTrigger asChild><Button size="icon-sm" variant="ghost" className={menuTriggerClassName} aria-label={`${label} sandbox actions`}><MoreHorizontal className="size-4" /></Button></DropdownMenuTrigger>
       <DropdownMenuContent align="end">
         {stopped && <DropdownMenuItem disabled={locked || !canStart || inFlight} onSelect={() => void run(request("start"))}>Start sandbox</DropdownMenuItem>}
         {!stopped && !removing && <DropdownMenuItem disabled={locked || inFlight} onSelect={() => void run(request("stop"))}>Stop sandbox</DropdownMenuItem>}

@@ -30,6 +30,7 @@ export type AssistantSession = {
   profileLocked?: boolean;
   taskExecutionId?: string;
   workspaceAssociation?: { id: string; revision: number } | null;
+  developmentWorkspaces?: { state: string; workspaceId?: string | null }[];
   executionSelection?: { model: string | null; reasoningEffort: string | null };
   selectionRevision?: number;
   appCreations?: { input: Record<string, unknown>; state: "pending" | "observed" | "rejected"; prompt?: string }[];
