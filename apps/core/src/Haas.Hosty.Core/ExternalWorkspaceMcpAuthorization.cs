@@ -74,6 +74,10 @@ internal sealed record ExternalWorkspaceMcpCaller(string UserId, string Principa
     private static AppIdentityException DeniedOrigin() => new("workspace_authority_required", "The originating Core tool is required.");
 
     public WorkspaceOwner Owner(string taskId, string? label = null)
-        => App is not null ? new(App.Id, App.InstalledAt, UserId, taskId) : WorkspaceOwner.ForExternal(UserId, PrincipalId, taskId,
-            label is null ? Label : ExternalWorkspaceMcpAuthorization.NormalizeLabel(label));
+        // The allocation's task ID is only a fallback for clients without a signed session.
+        // Hosted MCP operations must match the actor used by session APIs and activity leases.
+        => App is not null ? new(App.Id, App.InstalledAt, UserId,
+            Authority is { Kind: "assistant", Mcp.SessionId: { } session } ? session : taskId)
+            : WorkspaceOwner.ForExternal(UserId, PrincipalId, taskId,
+                label is null ? Label : ExternalWorkspaceMcpAuthorization.NormalizeLabel(label));
 }

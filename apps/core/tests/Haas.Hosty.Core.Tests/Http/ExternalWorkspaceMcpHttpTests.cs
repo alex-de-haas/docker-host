@@ -50,6 +50,93 @@ public sealed class ExternalWorkspaceMcpHttpTests
     }
 
     [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AttachedSession_ContinuesRetainedSourceWithItsAuthenticatedMcpIdentity(bool external)
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        await SeedAdminAsync(host);
+        var origin = await SeedSourceAsync(host);
+        var now = host.Services.GetRequiredService<IClock>().UtcNow;
+        var assistant = AssistantMcpAccessHttpTests.Record("independent.source.assistant", now) with {
+            ConfirmedRoles = ["assistant"], GrantedCorePermissions = [CoreAppPermissions.Sources],
+            Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> {
+                ["assistant"] = [new("default", null, "/agent")] } };
+        await host.Services.GetRequiredService<AppRegistryStore>().UpsertAppAsync(assistant);
+        var grant = await BrowserAuthorityFixture.Grant(host, assistant.Id, "admin");
+        await host.Services.GetRequiredService<AgentPolicyStore>().ChangeAsync("hosty:core", new(null, true,
+            new Dictionary<string, string>(), new Dictionary<string, AssistantTargetGrant> {
+                [assistant.Id] = new(now, "workspace-continuation") }));
+        var serviceToken = host.Services.GetRequiredService<AppServiceTokenService>().CreateToken(assistant.Id);
+        var access = host.Services.GetRequiredService<AssistantMcpAccess>();
+        const string currentSession = "replacement-session";
+        var token = await access.IssueAsync(assistant.Id, "hosty:core", serviceToken, grant.AccessToken, default, currentSession);
+        var actor = new WorkspaceOwner(assistant.Id, assistant.InstalledAt, "admin", currentSession);
+        var creator = external ? WorkspaceOwner.ForExternal("admin", "manual:lost-client", "lost-external-task", "External client")
+            : actor with { SessionId = "lost-hosted-session" };
+        var service = host.Services.GetRequiredService<DevelopmentWorkspaceService>();
+        var originalLease = Guid.NewGuid().ToString();
+        var tree = await service.PrepareAsync(creator, new(Guid.NewGuid().ToString(), creator.SessionId, SourceApp,
+            external ? null : "/sessions/lost-hosted-session", "main", originalLease, Name: "Retained work"), default);
+        await File.WriteAllTextAsync(Path.Combine(tree.Path, "README.md"), "unfinished work survives the old session\n");
+        await File.WriteAllTextAsync(Path.Combine(tree.Path, "notes.txt"), "unrelated uncommitted work\n");
+        await service.CommandAsync(tree.Id, creator, "release-lease", new(Guid.NewGuid().ToString(), LeaseId: originalLease), default);
+
+        using var client = host.CreateClient();
+        using var sessionClient = host.CreateClient();
+        sessionClient.DefaultRequestHeaders.Authorization = new("Bearer", serviceToken);
+        sessionClient.DefaultRequestHeaders.Add("X-Hosty-User-Token", grant.AccessToken);
+        var root = $"/api/internal/apps/{assistant.Id}/sessions/{currentSession}";
+        var participation = await service.ParticipationAsync(tree.WorkspaceId, "admin", default);
+        using var attached = await sessionClient.PostAsJsonAsync(root + $"/workspace-association/{tree.WorkspaceId}/attach",
+            new WorkspaceSessionCommand(Guid.NewGuid().ToString(), participation.Revision, "Continue retained work", "/sessions/replacement-session"));
+        Assert.Equal(HttpStatusCode.OK, attached.StatusCode);
+        var leaseId = Guid.NewGuid().ToString();
+        using var leased = await sessionClient.PostAsJsonAsync(root + $"/workspaces/{tree.Id}/operations/lease",
+            new WorkspaceCommand(Guid.NewGuid().ToString(), LeaseId: leaseId));
+        Assert.Equal(HttpStatusCode.OK, leased.StatusCode);
+
+        // MCP review and the session API must agree on the current actor, even though the
+        // allocation still names a vanished external client or an earlier hosted conversation.
+        var review = await ToolAsync(client, token.Token, "get_workspace_commit_review", new {
+            workspaceId = tree.Id, input = new WorkspaceCommitReviewRequest(Guid.NewGuid().ToString(), tree.OriginalBase, ["README.md"]) });
+        Assert.Equal(currentSession, review.GetProperty("actor").GetProperty("sessionId").GetString());
+        var command = new WorkspaceCommand(Guid.NewGuid().ToString(), tree.OriginalBase, "Continue retained source",
+            ["README.md"], "Test Author", "author@example.test", ReviewId: review.GetProperty("id").GetString());
+        using var committed = await sessionClient.PostAsJsonAsync(root + $"/workspaces/{tree.Id}/operations/commit", command);
+        Assert.Equal(HttpStatusCode.OK, committed.StatusCode);
+        var saved = (await committed.Content.ReadFromJsonAsync<DevelopmentWorkspace>())!;
+        Assert.Equal("succeeded", saved.Operations.Last().State);
+        Assert.Equal("unrelated uncommitted work\n", await File.ReadAllTextAsync(Path.Combine(tree.Path, "notes.txt")));
+        File.Delete(Path.Combine(tree.Path, "notes.txt"));
+        await File.WriteAllTextAsync(Path.Combine(origin, "upstream.txt"), "new target content\n");
+        await GitAsync(origin, "add", "upstream.txt");
+        await GitAsync(origin, "-c", "user.name=Test Author", "-c", "user.email=author@example.test", "commit", "-m", "target update");
+        var merge = new { workspaceId = tree.Id, requestId = Guid.NewGuid().ToString(), expectedHead = saved.Observation!.Head,
+            message = "Integrate updated target", authorName = "Test Author", authorEmail = "author@example.test" };
+        var other = await access.IssueAsync(assistant.Id, "hosty:core", serviceToken, grant.AccessToken, default, "other-session");
+        var refused = await ToolAsync(client, other.Token, "merge_workspace_target", merge);
+        Assert.Contains("other source writers", refused.GetProperty("error").GetString());
+        var merged = await ToolAsync(client, token.Token, "merge_workspace_target", merge);
+        Assert.False(merged.TryGetProperty("error", out var error), error.ToString());
+        Assert.Equal("succeeded", merged.GetProperty("operations").EnumerateArray().Last().GetProperty("state").GetString());
+        var observed = await service.Read(tree.Id, actor, default);
+        Assert.Equal(actor, observed.Operations.Last().Actor);
+        Assert.Equal(actor, Assert.Single(observed.LeaseClaims!).Session);
+        Assert.Equal(creator, observed.Owner);
+        Assert.Equal(tree.Path, observed.Path);
+        Assert.Equal(tree.Branch, observed.Branch);
+        Assert.Equal(tree.OriginalBase, observed.OriginalBase);
+        Assert.Equal("unfinished work survives the old session\n", await File.ReadAllTextAsync(Path.Combine(tree.Path, "README.md")));
+        Assert.Equal("new target content\n", await File.ReadAllTextAsync(Path.Combine(tree.Path, "upstream.txt")));
+        var replay = await ToolAsync(client, token.Token, "merge_workspace_target", merge);
+        Assert.Equal(merged.GetProperty("observation").GetProperty("head").GetString(), replay.GetProperty("observation").GetProperty("head").GetString());
+        var listed = await ToolAsync(client, token.Token, "list_workspaces", new { });
+        Assert.Equal(currentSession, Assert.Single(listed.GetProperty("workspaces").EnumerateArray())
+            .GetProperty("operations").EnumerateArray().Last().GetProperty("actor").GetProperty("sessionId").GetString());
+    }
+
+    [Theory]
     [InlineData("read-only")]
     [InlineData("browser")]
     [InlineData("full-role")]
