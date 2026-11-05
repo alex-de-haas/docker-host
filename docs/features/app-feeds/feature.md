@@ -1,6 +1,6 @@
 ---
 created: 2026-07-09
-updated: 2026-11-03
+updated: 2026-11-05
 summary: Apps publish named update sources in an app-owned feeds.json that Core validates and follows without a catalog or Marketplace.
 components: [apps/core]
 ---
@@ -92,6 +92,12 @@ the application. Private, local and active-development sources use their own sou
 Distribution migrations additionally match exact historical URLs and require app.0.2 destinations;
 explicit source pins are excluded from automatic suggestions.
 
+Shell's App Details → Updates tab also exposes exact source-migration suggestions for that
+application, including first-time feed binding, before/after review, durable recovery and return
+to the previous source. An installation without a feeds document is a normal state, not a retryable
+feed-read failure. Opening the tab does not select a source, update the app or restart it. Live and
+development installations retain their source controls without a migration action.
+
 Shell's Host → Updates page shows suggested migrations and explicit custom feed selection, before/
 after review, recovery and return to the previous source. Delegated clients need both `apps.install`
 and `apps.sources.full`; applying also requires Core's operator confirmation for the exact request.
@@ -112,3 +118,8 @@ the generated default feed. See [release publication](../repository-release-mode
 - The install plan carries the resolved feed, manifest URL and digests; the legacy apply route
   refuses with `approval_required`; the confirmed installation uses the cached selection.
 - Changing the followed feed does not restart the app; update planning resolves the followed feed.
+- App Details treats `app_feeds_not_configured` as an ordinary unbound installation, while actual
+  feed read failures retain retry and last-confirmed state. No source mutation occurs on entry.
+- Per-app source review filters suggestions by app identity, applies the exact plan/request ID,
+  survives an uncertain response and remount, and discards stale or cancelled reviews. A saved
+  source remains completed when refreshing details fails; source selection does not update binaries.
