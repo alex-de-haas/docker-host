@@ -484,9 +484,19 @@ async function taskOutcome(text, emitItem) {
     if (result.isError) throw new Error(name + " refused: " + JSON.stringify(result.content));
     return JSON.parse(result.content.find(item => item.type === "text").text);
   };
+  if (text.includes("TASK_ACCEPTANCE:REQUIRED")) {
+    const wait = await invoke("task_request_input", { requestId: crypto.randomUUID(), reason: "The isolated setup prerequisite is missing.",
+      questions: [{ id: "setup", header: "Setup", question: "Confirm setup, then the task must recheck it.", isOther: true, options: [{ label: "Configured", description: "Recheck the prerequisite" }] }] });
+    if (!wait.barrier) throw new Error("Required input did not retain a boundary");
+    await client.close(); return true;
+  }
+  if (text.includes("TASK_ACCEPTANCE:FAIL")) {
+    await invoke("task_fail", { requestId: crypto.randomUUID(), result: { markdown: "The fixture could not complete its work.", resources: [] } });
+    await client.close(); return;
+  }
   if (text.includes("TASK_ACCEPTANCE:DELEGATE")) {
     const summary = await invoke("task_execution_get", {});
-    const directory = await invoke("task_options", {});
+    const directory = await invoke("task_executor_options", {});
     const option = directory.options.find(option => option.name === "Acceptance writer");
     if (!option) throw new Error("The saved child profile is absent");
     const selected = await invoke("task_prepare_executor", { requestId: crypto.randomUUID(), directoryRevision: directory.revision, option: { id: option.id, revision: option.revision } });
@@ -515,7 +525,7 @@ async function taskOutcome(text, emitItem) {
     emitItem("item/completed", { type: "mcpToolCall", id, status: "completed", server: "hosty-workspaces", tool: "task_bind_workspace", result });
     await client.close(); return true;
   }
-  const result = await client.callTool({ name: "task_result", arguments: { requestId: crypto.randomUUID(), result: { markdown: "Verified explicit task outcome from the scripted native adapter.", resources: [] } } });
+  const result = await client.callTool({ name: "task_result", arguments: { requestId: crypto.randomUUID(), completed: true, result: { markdown: "Verified explicit task outcome from the scripted native adapter.", resources: [] } } });
   if (result.isError) throw new Error("Task result tool refused: " + JSON.stringify(result.content));
   await client.close();
 }

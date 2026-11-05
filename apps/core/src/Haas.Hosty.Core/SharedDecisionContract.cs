@@ -43,6 +43,6 @@ public sealed record HostyDecisionRecord(string Id, long Sequence, long Revision
     string? SourceAppId, DateTimeOffset? SourceInstallation, string SourcePrincipal, HostyDecisionInput? Input,
     string State, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, HostyDecisionResolution? Resolution = null,
     HostyDecisionDelivery? Delivery = null, HostyDecisionContinuation? Continuation = null, string? Reason = null,
-    DateTimeOffset? ContentRemovedAt = null);
+    DateTimeOffset? ContentRemovedAt = null, bool? NotificationPending = null);
 /// <summary>Version-one decision page contract.</summary>
 public sealed record HostyDecisionPage(IReadOnlyList<HostyDecisionRecord> Items, int PendingCount, string? Cursor);

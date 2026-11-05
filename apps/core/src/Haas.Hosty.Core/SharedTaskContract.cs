@@ -73,6 +73,10 @@ public record HostyTaskOutcome(HostyTaskOutcomeRef Ref, HostyTaskResult Result, 
 public record HostyTaskDisposition(string Kind, string Reason, HostyTaskRef[] ReplacementRefs);
 /// <summary>A provider-owned task with computed ancestry and retained execution history.</summary>
 public record HostyTaskCoordination(long RootGeneration, long CoordinatorEpoch, string ExecutionId);
+/// <summary>Recoverable removal metadata; source and execution history remain intact.</summary>
+public record HostyTaskRemoval(string BatchId, string At, HostyTaskActor By);
+/// <summary>One explicitly reviewed task and revision in a removal or restoration scope.</summary>
+public record HostyTaskRemovalTarget(HostyTaskRef TaskRef, long Revision);
 /// <summary>Provider-owned task and optional coordinated execution identity.</summary>
 public record HostyTaskRecord(HostyTaskRef Ref, string Number, long Revision, long InputRevision, string Status, string Title, string Markdown,
     HostyTaskAssignee? Assignee, HostyTaskReview Review, HostyTaskResource[] Resources, HostyTaskActor CreatedBy, HostyTaskActor Owner,
@@ -84,7 +88,8 @@ public record HostyTaskRecord(HostyTaskRef Ref, string Number, long Revision, lo
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] HostyTaskOutcomeRef? ResultRef = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] HostyTaskOutcomeRef? AcceptedResultRef = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] HostyTaskDisposition? Disposition = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] HostyTaskCoordination? Coordination = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] HostyTaskCoordination? Coordination = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] HostyTaskRemoval? Removed = null);
 /// <summary>Idempotent creation; retain the request ID after an uncertain response.</summary>
 public record HostyTaskCreate(string RequestId, HostyTaskInput Input, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? ExpectedGraphRevision = null);
 /// <summary>Optimistic replacement of stopped Draft inputs and prerequisites.</summary>
@@ -96,7 +101,8 @@ public record HostyTaskAction(string RequestId, long ExpectedRevision, string Ac
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Feedback = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] HostyTaskSelection? Selection = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] HostyTaskDisposition? Disposition = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] HostyTaskCoordination? Coordination = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] HostyTaskCoordination? Coordination = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] HostyTaskRemovalTarget[]? RemovalScope = null);
 /// <summary>A bounded task page and opaque continuation cursor.</summary>
 public record HostyTaskPage(HostyTaskRecord[] Tasks, string? NextCursor);
 /// <summary>A retained mutation response scoped to its authenticated origin.</summary>

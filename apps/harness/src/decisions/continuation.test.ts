@@ -20,28 +20,28 @@ import type { HarnessStartOptions } from "../harness/adapter.js";
 
 const cleanup: (() => Promise<unknown>)[] = [];
 afterEach(async () => { for (const action of cleanup.splice(0).reverse()) await action(); vi.restoreAllMocks(); vi.unstubAllEnvs(); });
-async function setup() {
+async function setup(nativeQuestion = true, kind: "codex" | "claude" = "codex") {
   const dir = await mkdtemp(path.join(os.tmpdir(), "decision-native-boundary-")); cleanup.push(() => rm(dir, { recursive: true, force: true }));
   vi.stubEnv("HOSTY_PUBLIC_ORIGIN_HTTP", "https://harness.example.test");
   const journal = new WorkerJournal(path.join(dir, "worker")); await journal.initialize();
   const identity = await ensureServiceIdentity(path.join(dir, "identity"));
-  const starts: HarnessStartOptions[] = [], inputs: string[] = []; let releases = 0;
+  const starts: HarnessStartOptions[] = [], inputs: string[] = [], stop = vi.fn(async () => {}); let releases = 0;
   const capabilities = { questions: true, appMcp: true, liveReconfigure: false, autoAllow: true, denyReason: true };
   const engine = new WorkerEngine(journal, { reserve: async () => () => { releases++; }, validateSelection: async () => {}, cwd: async () => dir,
-    adapter: async () => ({ name: "codex", capabilities, probe: async () => ({ available: true }), start: options => {
+    adapter: async () => ({ name: kind, capabilities, probe: async () => ({ available: true }), start: options => {
       starts.push(options);
       return { send: input => {
         inputs.push(input); options.onEvent({ type: "harness_session", harnessSessionId: "native-thread" });
-        if (!options.resumeHarnessSessionId) options.onEvent({ type: "question_request", questionId: "native-question", blocking: true,
+        if (nativeQuestion && !options.resumeHarnessSessionId) options.onEvent({ type: "question_request", questionId: "native-question", blocking: true,
           questions: [{ id: "choice", header: "Choose", question: "Which summary?", options: [{ id: "brief", label: "Brief", description: "One paragraph" }], multiSelect: false }] });
-      }, resolveApproval: () => true, resolveQuestion: () => true, setMcpServers: async () => false, interrupt: async () => {}, stop: async () => {}, stopAndWait: async () => {} };
+      }, resolveApproval: () => true, resolveQuestion: () => true, setMcpServers: async () => false, interrupt: async () => {}, stop: async () => {}, stopAndWait: stop };
     } }),
   }, 1);
   const server = createWorkerServer(engine, async () => identity, { capabilities: async () => ({ capacity: 1 }), configure: async () => ({}), connection: async () => ({}), models: async () => ({}) });
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
   cleanup.push(async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await engine.close(); });
   const worker = new WorkerClient(`http://127.0.0.1:${(server.address() as { port: number }).port}`, identity);
-  const remote = worker.adapter({ connectionId: "account", connectionRevision: 1, harnessKind: "codex" }, capabilities, "codex");
+  const remote = worker.adapter({ connectionId: "account", connectionRevision: 1, harnessKind: kind }, capabilities, kind);
   const profiles = new ProfileStore(dir, async () => ({ name: "Writer", description: "", instructions: "Write carefully", connectionId: null, model: null, reasoningEffort: null, skillIds: [] }), async () => []);
   const directory = await profiles.read(); await profiles.setDefault(directory.profiles[0]!.id, directory.revision);
   const rows = new Map<string, DecisionRecord>(), client = new DecisionClient(async () => { throw new Error("No transport"); });
@@ -59,6 +59,7 @@ async function setup() {
     row.delivery = { resolutionRevision: row.revision, receivedAt: null }; row.continuation = { revision: 1, commandId: null, state: "pending", updatedAt: row.createdAt };
     return structuredClone(row);
   };
+  client.withdraw = async id => { const row = rows.get(id)!; row.state = "withdrawn"; return structuredClone(row); };
   client.acknowledge = async id => { const row = rows.get(id)!; row.delivery!.receivedAt = new Date().toISOString(); row.continuation!.state = "received"; return structuredClone(row); };
   client.continuation = async (id, input) => { const row = rows.get(id)!; expect(input.expectedRevision).toBe(row.continuation!.revision); row.continuation = { ...row.continuation!, commandId: input.commandId, state: input.state, reason: input.reason, revision: input.expectedRevision + 1 }; return structuredClone(row); };
   const open = () => {
@@ -69,7 +70,7 @@ async function setup() {
     return { manager, decisions };
   };
   const initial = open();
-  return { ...initial, open, starts, inputs, releases: () => releases, journal, dir, client };
+  return { ...initial, open, starts, inputs, releases: () => releases, journal, dir, client, stop };
 }
 async function waiting(f: Awaited<ReturnType<typeof setup>>, id: string) {
   await vi.waitFor(async () => expect((await f.manager.getSession(id))?.status).toBe("awaiting_question"));
@@ -126,4 +127,110 @@ it("keeps the original task attempt awaiting input through parking and reports i
   await vi.waitFor(async () => expect((await f.manager.getSession(wait.sessionId))?.status).toBe("idle"));
   await executor.tick(); expect(await executor.get(executionId, authority)).toMatchObject({ state: "completed", stopConfirmed: true, result: { markdown: "The requested summary" } });
   expect(f.starts).toHaveLength(2);
+});
+
+
+it.each(["codex", "claude"] as const)("%s registers required input, fences stale results and resumes once after restart", async kind => {
+  const f = await setup(false, kind), executor = new HarnessTaskExecutor(f.manager), executionId = randomUUID();
+  const authority = { actor: { userId: "owner", appId: "source", installationId: "one" }, scope: "source:one", credential: "volatile-current-authority", validate: async () => {} };
+  const ref = { appId: "source", installationId: "one", key: "default", id: randomUUID() };
+  const accepted = await executor.accept(executionId, { version: 1, taskRef: ref, inputRevision: 1,
+    content: { title: "Missing setup", markdown: "Require configured setup before completing", review: { mode: "none" }, resources: [] },
+    relations: { rootTaskRef: ref, parentTaskRef: null, relationRevision: 1 }, prerequisiteOutcomes: [] }, authority);
+  await executor.tick(); const sessionId = accepted.sessionRef!.id;
+  await vi.waitFor(async () => expect((await f.manager.getSession(sessionId))?.harnessSessionId).toBe("native-thread"));
+  const previousResult = randomUUID();
+  await executor.report(sessionId, previousResult, { markdown: "Premature success", resources: [] });
+  const request = { requestId: randomUUID(), reason: "Configure the missing Git author",
+    questions: [{ id: "setup", header: "Setup", question: "Have you configured the Git author?", isOther: true,
+      options: [{ label: "Configured", description: "Recheck the saved configuration" }] }] };
+  f.starts[0]!.onEvent({ type: "tool_use", toolUseId: "input-call", toolName: "mcp__tasks__task_request_input", input: request });
+  const registered = await f.manager.requestTaskInput(sessionId, request);
+  await f.decisions.tick();
+  expect((await f.decisions.local("owner", registered.waitId)).core?.state).toBe("pending");
+  expect(f.releases()).toBe(0);
+  await expect(executor.report(sessionId, randomUUID(), { markdown: "Not done, waiting", resources: [] })).rejects.toMatchObject({ code: "required_input_pending" });
+  await expect(f.manager.requestTaskInput(sessionId, { ...request, reason: "Changed request" })).rejects.toMatchObject({ code: "request_conflict" });
+  f.starts[0]!.onEvent({ type: "tool_result", toolUseId: "input-call", status: "completed", output: JSON.stringify(registered) });
+  await vi.waitFor(async () => expect((await f.manager.getSession(sessionId))?.taskBarrier?.acknowledgedSequence).toBeTruthy());
+  await f.decisions.tick();
+  await vi.waitFor(async () => expect((await f.manager.getSession(sessionId))?.taskBarrier?.state).toBe("parked"));
+  await executor.tick(); expect(await executor.get(executionId, authority)).toMatchObject({ state: "awaiting_input", stopConfirmed: false, nativeStopConfirmed: true, wait: { kind: "human" } });
+  expect(await f.manager.sweepAbandoned(1, Date.now() + 86400000)).toEqual([]);
+  await f.decisions.close(); await f.manager.shutdown();
+  const reopened = f.open(), wait = await reopened.decisions.local("owner", registered.waitId);
+  await reopened.decisions.resolve("owner", wait.core!.id, { requestId: randomUUID(), expectedRevision: wait.core!.revision, answers: { setup: { text: "Configured" } } });
+  await reopened.decisions.tick();
+  await vi.waitFor(() => expect(f.starts).toHaveLength(2));
+  expect(f.starts[1]).toMatchObject({ requireNativeResume: true, resumeHarnessSessionId: "native-thread" });
+  expect(f.inputs[1]).toContain("Recheck any setup prerequisite");
+  expect((await reopened.manager.getSession(sessionId))?.taskExecutionId).toBe(executionId);
+  await reopened.decisions.tick(); expect(f.starts).toHaveLength(2);
+  const resumed = new HarnessTaskExecutor(reopened.manager);
+  await expect(resumed.report(sessionId, previousResult, { markdown: "Premature success", resources: [] })).rejects.toMatchObject({ code: "result_superseded" });
+  const replayed = await reopened.manager.requestTaskInput(sessionId, request);
+  expect(replayed.state).toBe("running");
+  expect((await reopened.manager.getSession(sessionId))?.status).toBe("running");
+  await resumed.report(sessionId, randomUUID(), { markdown: "Verified setup and completed work", resources: [] });
+  f.starts[1]!.onEvent({ type: "result", status: "success" });
+  await vi.waitFor(async () => expect((await reopened.manager.getSession(sessionId))?.status).toBe("idle"));
+  await resumed.tick(); expect(await resumed.get(executionId, authority)).toMatchObject({ state: "completed", stopConfirmed: true });
+});
+
+async function requiredFixture() {
+  const f = await setup(false), executor = new HarnessTaskExecutor(f.manager), executionId = randomUUID();
+  const authority = { actor: { userId: "owner", appId: "source", installationId: "one" }, scope: "source:one", credential: "volatile-current-authority", validate: async () => {} };
+  const ref = { appId: "source", installationId: "one", key: "default", id: randomUUID() };
+  const receipt = await executor.accept(executionId, { version: 1, taskRef: ref, inputRevision: 1,
+    content: { title: "Required input", markdown: "Wait for setup", review: { mode: "none" }, resources: [] },
+    relations: { rootTaskRef: ref, parentTaskRef: null, relationRevision: 1 }, prerequisiteOutcomes: [] }, authority);
+  await executor.tick(); const id = receipt.sessionRef!.id;
+  await vi.waitFor(async () => expect((await f.manager.getSession(id))?.harnessSessionId).toBe("native-thread"));
+  const request = { requestId: randomUUID(), reason: "Missing setup", questions: [{ id: "setup", header: "Setup", question: "Is setup configured?", isOther: true }] };
+  f.starts[0]!.onEvent({ type: "tool_use", toolUseId: "required", toolName: "mcp__tasks__task_request_input", input: request });
+  const registered = await f.manager.requestTaskInput(id, request);
+  const acknowledge = async () => {
+    f.starts[0]!.onEvent({ type: "tool_result", toolUseId: "required", status: "completed", output: JSON.stringify(registered) });
+    await vi.waitFor(async () => expect((await f.manager.getSession(id))?.taskBarrier?.acknowledgedSequence).toBeTruthy());
+  };
+  const answer = async () => {
+    const wait = await f.decisions.local("owner", registered.waitId);
+    await f.decisions.resolve("owner", wait.core!.id, { requestId: randomUUID(), expectedRevision: wait.core!.revision, answers: { setup: { text: "Configured" } } });
+  };
+  return { ...f, executor, executionId, authority, id, registered, acknowledge, answer };
+}
+it("retains failed Decision registration visibly and retries the same request after recovery", async () => {
+  const f = await requiredFixture();
+  const create = vi.spyOn(f.client, "create").mockRejectedValue(new Error("Core unavailable"));
+  await f.decisions.tick();
+  const wait = await f.decisions.local("owner", f.registered.waitId);
+  expect(wait.core).toBeUndefined(); expect(wait.error).toContain("Core unavailable");
+  expect((await f.decisions.projections("owner")).items).toContainEqual(expect.objectContaining({ id: `decision-wait:${wait.id}`, kind: "recovery" }));
+  await expect(f.executor.report(f.id, randomUUID(), { markdown: "Unfinished", resources: [] })).rejects.toMatchObject({ code: "required_input_pending" });
+  create.mockRestore(); await f.decisions.tick();
+  expect((await f.decisions.local("owner", wait.id)).create.requestId).toBe(wait.create.requestId);
+  expect((await f.decisions.local("owner", wait.id)).core?.state).toBe("pending");
+});
+it("saves an early answer but cannot resume before acknowledgement and confirmed parking", async () => {
+  const f = await requiredFixture(); await f.decisions.tick(); await f.answer(); await f.decisions.tick();
+  expect(f.starts).toHaveLength(1); expect(f.releases()).toBe(0);
+  await f.acknowledge(); await f.decisions.tick(); await f.decisions.tick();
+  await vi.waitFor(() => expect(f.starts).toHaveLength(2));
+  await f.decisions.tick(); expect(f.starts).toHaveLength(2);
+});
+it("fences an answered required-input wait after cancellation", async () => {
+  const f = await requiredFixture(); await f.decisions.tick(); await f.acknowledge(); await f.decisions.tick();
+  await vi.waitFor(async () => expect((await f.manager.getSession(f.id))?.taskBarrier?.state).toBe("parked"));
+  await f.answer(); await f.executor.cancel(f.executionId, randomUUID(), f.authority); await f.decisions.tick();
+  expect(f.starts).toHaveLength(1);
+  expect((await f.manager.getSession(f.id))?.status).toBe("cancelled");
+  await expect(f.executor.report(f.id, randomUUID(), { markdown: "Late", resources: [] })).rejects.toBeTruthy();
+});
+it("retains unknown task-input stop without starting a replacement", async () => {
+  const f = await requiredFixture(); await f.decisions.tick(); f.stop.mockRejectedValue(new Error("Native process still exists"));
+  await f.acknowledge(); await f.answer(); await f.decisions.tick();
+  expect(f.starts).toHaveLength(1); expect(f.releases()).toBe(0);
+  await f.executor.tick();
+  expect(await f.executor.get(f.executionId, f.authority)).toMatchObject({ state: "awaiting_input", stopConfirmed: false, nativeStopConfirmed: false });
+  f.stop.mockResolvedValue();
 });

@@ -15,8 +15,9 @@ a separate agent identity, team registry or permission role.
 
 ## Selection And Sessions
 
-`task_options` exposes descriptions, revisioned selections and known availability. Manual assignment
-retains a saved-profile selection. `task_prepare_executor` validates the current directory revision
+Harness `task_executor_options` exposes descriptions, revisioned selections and known availability. Manual assignment
+retains a saved-profile selection. Core’s provider-neutral `task_options` remains a distinct
+mediated operation; the session-owned directory does not shadow its name. `task_prepare_executor` validates the current directory revision
 before selecting an existing profile. A fallback requires a name, rationale, instructions and
 installed skill IDs; it inherits the coordinating session's connection and model. The retained
 configuration belongs to that owner, root and coordinator. It creates no catalog profile.
@@ -60,7 +61,10 @@ cycles, stale graph revisions and completion with unresolved required children a
 Children require direct-parent review of an exact `resultRef`. Requesting changes records feedback
 and arms a new attempt on the same task. Retry and reassignment retain prior attempts, ancestry and
 root accounting. A result is explicit `task_result` evidence followed by confirmed native exit;
-an ordinary final chat response alone does not complete a task.
+an ordinary final chat response alone does not complete a task. Mandatory human intervention uses
+`task_request_input`; unsuccessful terminal evidence uses `task_fail`. Neither can satisfy a successful
+child dependency. [Basic Tasks](../basic-tasks/feature.md) owns the completion barriers and recoverable
+removal contract.
 
 `task_wait` records monotonic child task revisions and an any/all wait. These observations and
 outbox identities distinguish separate attempts even when native receipt counters restart. Durable child outbox and parent

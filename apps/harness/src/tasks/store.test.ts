@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { TaskAttention } from "./attention.js";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import os from "node:os";
@@ -228,4 +229,61 @@ it("keeps provider discovery outside the writer and rechecks revision after it r
   expect(other.number).toBe("HRN-2");
   await action(task, "cancel"); finish(app.assignee!);
   await expect(mutation).rejects.toMatchObject({ code: "task_changed" });
+});
+
+
+const removalScope = (...rows: TaskRecord[]) => rows.map(t => ({ taskRef: t.ref, revision: t.revision }));
+it("removes and restores the reviewed subtree atomically without losing history or starting work", async () => {
+  let root = await create();
+  const child = await store.create(actor, { requestId: randomUUID(), expectedGraphRevision: root.graphRevision, input: { ...human, parentTaskRef: root.ref } });
+  root = await store.get(root.ref.id, actor);
+  await expect(action(root, "remove", { removalScope: removalScope(root) })).rejects.toMatchObject({ code: "removal_scope_changed" });
+  const request: TaskAction = { requestId: randomUUID(), expectedRevision: root.revision, action: "remove", removalScope: removalScope(root, child) };
+  root = await store.action(root.ref.id, actor, request);
+  expect((await store.list(actor)).tasks).toHaveLength(0);
+  const trash = (await store.list(actor, "", 100, undefined, { removed: true })).tasks;
+  expect(trash).toHaveLength(2); expect(trash.every(t => t.removed?.batchId === request.requestId)).toBe(true);
+  expect(await store.action(root.ref.id, actor, request)).toEqual(root);
+  await expect(action(root, "ready")).rejects.toMatchObject({ code: "task_removed" });
+  root = await action(root, "restore", { removalScope: removalScope(...trash) });
+  expect(root.status).toBe("Draft"); expect(root.attempts).toHaveLength(0);
+  expect((await store.list(actor)).tasks).toHaveLength(2);
+  expect((await create()).number).toBe("HRN-3");
+});
+it("rejects removal of active or uncertain attempts and missing external dependency scope", async () => {
+  let root = await action(await create(app), "ready");
+  await expect(action(root, "remove", { removalScope: removalScope(root) })).rejects.toMatchObject({ code: "execution_active" });
+  root = await store.observe(root.ref.id, root.attempts[0]!.executionId, receipt(root, { state: "interrupted", stopConfirmed: false }));
+  await expect(action(root, "remove", { removalScope: removalScope(root) })).rejects.toMatchObject({ code: "execution_active" });
+  const parent = await create();
+  const child = await store.create(actor, { requestId: randomUUID(), expectedGraphRevision: parent.graphRevision, input: { ...human, parentTaskRef: parent.ref } });
+  await expect(action(child, "remove", { removalScope: removalScope(child) })).rejects.toMatchObject({ code: "task_referenced" });
+  await expect(store.action(parent.ref.id, { userId: "stranger", appId: null }, { requestId: randomUUID(), expectedRevision: parent.revision, action: "remove", removalScope: removalScope(parent) })).rejects.toMatchObject({ code: "task_not_found" });
+});
+
+it("keeps quarantined cleanup scoped, recoverable and idempotent without promoting malformed rows", async () => {
+  await store.transaction(state => { state.legacyTasks = [{ id: "old", title: "Old work", owner: actor, status: "Cancelled", malformed: true }, null, { owner: { userId: "stranger", appId: null }, title: "Private" }]; });
+  const page = await store.legacyList(actor); expect(page.tasks).toHaveLength(1);
+  const id = page.tasks[0]!.id, request = { requestId: randomUUID(), action: "remove" };
+  expect(await store.legacyAction(actor, id, request)).toEqual(await store.legacyAction(actor, id, request));
+  expect((await store.legacyList(actor)).tasks[0]!.removed).toBe(true);
+  await expect(store.legacyAction({ userId: "stranger", appId: null }, id, request)).rejects.toMatchObject({ code: "task_not_found" });
+  await expect(store.legacyAction(actor, id, { ...request, action: "restore" })).rejects.toMatchObject({ code: "request_conflict" });
+  await store.legacyAction(actor, id, { requestId: randomUUID(), action: "restore" });
+  expect((await store.legacyList(actor)).tasks[0]!.removed).toBe(false);
+  expect((await store.list(actor)).tasks).toHaveLength(0);
+});
+
+it("retains failed-attention delivery, retries once and scopes recovery to the owner", async () => {
+  let task = await action(await create(app), "ready");
+  task = await store.observe(task.ref.id, task.attempts[0]!.executionId, receipt(task, { state: "failed", stopConfirmed: true,
+    sessionRef: { id: "failed-session", path: "/development?session=failed-session" }, error: { code: "task_failed", message: "Work incomplete" } }));
+  let now = 1000; const publish = vi.fn(async () => {}), attention = new TaskAttention(store, publish, () => now);
+  publish.mockRejectedValueOnce(new Error("Notification transport offline"));
+  await attention.reconcile(); await attention.reconcile(); expect(publish).toHaveBeenCalledTimes(1);
+  expect(await attention.projections("stranger")).toEqual([]);
+  expect(await attention.projections("owner")).toEqual([expect.objectContaining({ taskId: task.ref.id, error: expect.stringContaining("could not be delivered") })]);
+  now += 30000; await attention.reconcile(); await attention.reconcile(); expect(publish).toHaveBeenCalledTimes(2);
+  expect((await attention.projections("owner"))[0]!.error).not.toContain("could not be delivered");
+  await action(task, "remove", { removalScope: removalScope(task) }); expect(await attention.projections("owner")).toEqual([]);
 });

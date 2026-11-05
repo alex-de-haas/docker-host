@@ -1,3 +1,4 @@
+import { TaskAttention } from "./attention.js";
 import { TaskControls } from "./controls.js";
 import { TaskSources } from "./sources.js";
 import { TaskAdoptions } from "./adoptions.js";
@@ -26,6 +27,7 @@ export class TaskService {
   readonly adoptions: TaskAdoptions;
   readonly sources: TaskSources;
   readonly controls: TaskControls;
+  readonly attention: TaskAttention;
   private readonly current = new Map<string, Authority>();
   private closed = false;
   private readonly jobs = new Map<string, Promise<void>>();
@@ -39,6 +41,7 @@ export class TaskService {
     this.store = new TaskStore(manager.store.dataDir, this.provider);
     this.executor = new HarnessTaskExecutor(manager, this.store);
     this.policies = new TaskPolicies(this.store);
+    this.attention = new TaskAttention(this.store, (owner, task, execution) => manager.notifyTask(owner, task, execution));
     this.orchestration = new TaskOrchestrator(this.store, manager, this.executor, this.policies);
     this.sources = new TaskSources(this.store, manager, this.orchestration);
     this.sources.capacityAvailable = async () => {
@@ -49,10 +52,15 @@ export class TaskService {
     this.sources.admit = (state, taskId, executionId) => this.policies.reserveIn(state, taskId, executionId);
     this.controls = new TaskControls(this.store, manager, this.policies, this.orchestration);
     this.orchestration.beforeResume = id => this.sources.beforeResume(id);
+    manager.beforeTaskDecisionResume = async id => {
+      if (!await this.sources.beforeResume(id)) return false;
+      const session = await manager.getSession(id);
+      return !session?.taskContext || !session.taskExecutionId || await this.policies.reserve(session.taskContext.taskRef.id, session.taskExecutionId);
+    };
     this.adoptions = new TaskAdoptions(this.store, manager, (task, requestId, credential) => this.action(task.ref.id,
       { actor: { userId: task.owner.userId, appId: null }, scope: this.ownScope(), credential, validate: async () => {} },
       { requestId, expectedRevision: task.revision, action: "ready" }));
-    manager.taskDecisionProjections = async owner => [...await this.adoptions.projections(owner), ...await this.controls.projections(owner), ...await this.sources.projections(owner)];
+    manager.taskDecisionProjections = async owner => [...await this.adoptions.projections(owner), ...await this.controls.projections(owner), ...await this.sources.projections(owner), ...await this.attention.projections(owner)];
     this.store.afterCreate = (state, task) => { if (!task.parentTaskRef && task.assignee?.kind === "app") this.policies.ensure(state, task, task.assignee.executor); };
     this.store.beforeReopen = (state, task) => this.policies.reopen(state, task);
     manager.taskModeChanged = async record => { if (record.taskContext && record.taskExecutionId) await this.policies.setMode(record.taskContext.taskRef.id, record.taskExecutionId, record.autonomy ?? "normal"); };
@@ -80,7 +88,7 @@ export class TaskService {
   close(): Promise<void> {
     this.closed = true;
     this.manager.taskDecisionProjections = undefined; this.manager.taskModeChanged = undefined;
-    clearInterval(this.timer); this.unsubscribe(); this.manager.taskAction = undefined; this.manager.taskUsage = undefined;
+    clearInterval(this.timer); this.unsubscribe(); this.manager.taskAction = undefined; this.manager.taskUsage = undefined; this.manager.beforeTaskDecisionResume = undefined;
     for (const stream of this.streams) stream.end();
     this.streams.clear();
     return Promise.all([...this.jobs.values()]).then(() => {});
@@ -133,6 +141,8 @@ export class TaskService {
       return result;
     }
     return this.store.action(id, authority.actor, input, t => this.selection(t, authority), authority.principalId, authority.taskDispatch, (task, state) => {
+      if (authority.taskWorkflow && ["remove", "restore"].includes(input.action))
+        return taskError("removal_forbidden", "Task-bound agents cannot remove execution history.", 403);
       if (authority.taskWorkflow) {
         const parent = assertTaskCoordinator(this.store, state, authority.taskWorkflow, authority.actor.userId!, task);
         if (["accept", "request_changes", "disposition"].includes(input.action) && task.parentTaskRef?.id !== parent.ref.id)
@@ -153,6 +163,7 @@ export class TaskService {
       this.run("sources", () => this.sources.reconcile()),
       this.run("orchestration", () => this.orchestration.reconcile()),
       this.run("dispatch", () => this.reconcile()),
+      this.run("attention", () => this.attention.reconcile()),
     ]).then(() => {});
   }
   private run(key: string, action: () => Promise<void>): Promise<void> {
@@ -232,8 +243,13 @@ export class TaskService {
   private async tool(sessionId: string, action: string, input: Record<string, unknown>, credential?: string, dispatchGuard?: () => Promise<void>) {
     const session = await this.manager.getSession(sessionId);
     if (!session) return taskError("session_missing", "Session is unavailable.", 404);
-    if (session.taskBarrier && session.taskBarrier.state !== "resuming" && !["task-wait", "task-adopt", "task-bind-workspace", "task-get", "task-options", "task-execution-get"].includes(action))
+    if (session.taskBarrier && session.taskBarrier.state !== "resuming" && !["task-wait", "task-request-input", "task-adopt", "task-bind-workspace", "task-get", "task-options", "task-execution-get"].includes(action))
       return taskError("barrier_pending", "Yield the current turn; this task is waiting for its recorded continuation.");
+    if (action === "task-legacy-list" || action === "task-legacy-action") {
+      if (session.taskContext) return taskError("removal_forbidden", "Task-bound agents cannot manage retained legacy records.", 403);
+      const actor = { userId: session.createdBy, appId: null };
+      return action === "task-legacy-list" ? this.store.legacyList(actor, Number(input.cursor ?? 0)) : this.store.legacyAction(actor, input.id, input);
+    }
     if (action === "task-adopt") return this.adoptions.adopt(sessionId, input);
     if (!session.taskContext && action === "task-execution-get") return { sessionId, mode: session.autonomy ?? "normal",
       selectionRevision: session.selectionRevision ?? 0, contextRevision: session.appContextRevision ?? 0, autonomyRevision: session.autonomyRevision ?? 0 };
@@ -248,8 +264,18 @@ export class TaskService {
     if (session.taskContext && action === "task-action") return this.orchestration.action(sessionId, input);
     if (session.taskContext && action === "task-get") return this.orchestration.get(sessionId, input.taskId);
     if (session.taskContext && action === "task-list") return this.orchestration.summary(sessionId, input);
+    if (action === "task-executor-options") { if (session.taskContext) await this.orchestration.context(sessionId); return this.executor.options(); }
     if (session.taskContext && action === "task-options") { await this.orchestration.context(sessionId); return this.executor.options(); }
-    if (action === "task-result") return this.executor.report(sessionId, input.requestId as string, input.result);
+    if (action === "task-request-input") {
+      const title = session.taskContext && this.own(session.taskContext.taskRef)
+        ? await this.store.get(session.taskContext.taskRef.id, { userId: session.createdBy, appId: null }).then(task => `${task.number} · ${task.title}`) : undefined;
+      return this.manager.requestTaskInput(sessionId, input, title);
+    }
+    if (action === "task-fail") return this.executor.fail(sessionId, input.requestId as string, input.result);
+    if (action === "task-result") {
+      if (input.completed !== true) return taskError("completion_required", "Attest completed work. Use task_request_input for required answers or task_fail for an unsuccessful outcome.", 400);
+      return this.executor.report(sessionId, input.requestId as string, input.result);
+    }
     if (!credential) return taskError("task_credentials_required", "Refresh the session's Hosty credentials before managing tasks.", 401);
     return this.manager.invokeCoreTask(sessionId, action, input, this.provider, dispatchGuard);
   }
@@ -261,6 +287,9 @@ export class TaskService {
     const send = (body: unknown) => { response.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" }); response.end(JSON.stringify(body)); };
     if (method !== "GET" && (!interactive || !isSameOriginRequest(request)))
       return taskError("interactive_action_required", "Change task execution policy through an authenticated Harness user action.", 403);
+    if (route === "/legacy-tasks" && method === "GET") { send(await this.store.legacyList({ userId: owner, appId: null }, Number(url.searchParams.get("cursor") ?? 0))); return true; }
+    const legacy = route.match(/^\/legacy-tasks\/([a-f0-9]{64})\/actions$/);
+    if (legacy && method === "POST") { send(await this.store.legacyAction({ userId: owner, appId: null }, legacy[1], await readJson())); return true; }
     const workspace = route.match(/^\/workspaces\/([^/]+)\/execution-summary$/);
     if (workspace && method === "GET") {
       const credential = await delegationCredential(request);
@@ -353,7 +382,7 @@ export class TaskService {
     const send = async (status: number, body: unknown) => { await validate(); response.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" }); response.end(JSON.stringify(body)); };
     const route = url.pathname.slice(tasks ? "/api/tasks/v1".length : "/api/task-executor/v1".length);
     if (tasks) {
-      if (method === "GET" && route === "/capabilities") { await send(200, { version: 1, prefix: this.store.prefix, statuses: taskStatuses, maxPageSize: 100, capabilities: ["markdown", "resources", "review", "events", "parent-child", "prerequisites", "delegated-review"] }); return true; }
+      if (method === "GET" && route === "/capabilities") { await send(200, { version: 1, prefix: this.store.prefix, statuses: taskStatuses, maxPageSize: 100, capabilities: ["markdown", "resources", "review", "events", "parent-child", "prerequisites", "delegated-review", "removal"] }); return true; }
       if (method === "GET" && route === "/directory") {
         const options = await this.executor.options();
         let others: unknown[] = [], warning: string | undefined;
@@ -375,7 +404,7 @@ export class TaskService {
       }
       if (route === "/tasks" && method === "GET") {
         const page = await this.store.list(authority.actor, url.searchParams.get("cursor") ?? "", Number(url.searchParams.get("limit") ?? 50), (url.searchParams.get("status") || undefined) as TaskStatus | undefined,
-          { parentTaskRef: url.searchParams.get("parentTaskRef") ?? undefined, rootTaskRef: url.searchParams.get("rootTaskRef") ?? undefined, rootsOnly: url.searchParams.get("rootsOnly") === "true" });
+          { parentTaskRef: url.searchParams.get("parentTaskRef") ?? undefined, rootTaskRef: url.searchParams.get("rootTaskRef") ?? undefined, rootsOnly: url.searchParams.get("rootsOnly") === "true", removed: url.searchParams.get("removed") === "true" });
         await send(200, { ...page, tasks: page.tasks.map(t => this.publicTask(t, authority.actor)) }); return true;
       }
       if (route === "/tasks" && method === "POST") {

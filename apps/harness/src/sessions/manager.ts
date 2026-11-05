@@ -119,7 +119,7 @@ export class SessionManager {
   feedbackAction?: (sessionId: string, action: string, input: Record<string, unknown>, credential?: string) => Promise<unknown>;
   taskModeChanged?: (record: SessionRecord) => Promise<void>;
   taskUsage?: (record: SessionRecord, runId: string, usage: NonNullable<import("../worker/contracts.js").WorkerReceipt["usage"]>) => Promise<void>;
-  taskDecisionProjections?: (owner: string) => Promise<Array<{ id: string; kind: "task_mode" | "recovery"; sessionId: string; title: string; createdAt: string; revision?: number; available: boolean; error?: string }>>;
+  taskDecisionProjections?: (owner: string) => Promise<Array<{ id: string; kind: "task_mode" | "recovery"; sessionId: string; taskId?: string; title: string; createdAt: string; revision?: number; available: boolean; error?: string }>>;
   taskAction?: (sessionId: string, action: string, input: Record<string, unknown>, credential?: string, dispatchGuard?: () => Promise<void>) => Promise<unknown>;
   readonly mcpPolicy: McpToolPolicy;
   readonly developmentMcp = new DevelopmentMcp(async (id, action, input, dispatchGuard) => {
@@ -127,7 +127,7 @@ export class SessionManager {
     if (!session || !["running", "awaiting_approval", "awaiting_question"].includes(session.record.status))
       throw new AppContextError(409, "workspace_turn_inactive", "Workspace agent tools require an active turn.");
     if (session.record.taskBarrier && session.record.taskBarrier.state !== "resuming"
-      && !["task-adopt", "task-wait", "task-bind-workspace", "task-execution-get"].includes(action))
+      && !["task-adopt", "task-wait", "task-request-input", "task-bind-workspace", "task-execution-get"].includes(action))
       throw new AppContextError(409, "barrier_pending", "Yield the current turn at its retained task boundary.");
     const platform = coreAliases[action.replaceAll("-", "_")];
     if (!platform) return this.workspaceAction(id, action, input, undefined, undefined, dispatchGuard);
@@ -417,7 +417,8 @@ export class SessionManager {
       if (!record || record.createdBy !== wait.owner) return;
       // A decision may stop only its original segment or its one recorded continuation.
       const owned = record.workerRun?.id && [wait.native.workerRunId, wait.resumedRunId].includes(record.workerRun.id);
-      const parked = !record.workerRun && record.parkedQuestionRun?.id === wait.native.workerRunId;
+      const parked = !record.workerRun && (record.parkedQuestionRun?.id === wait.native.workerRunId
+        || record.taskBarrier?.kind === "human_input" && record.taskBarrier.id === wait.taskInput?.barrierId && record.taskBarrier.state === "parked");
       if (owned || parked) await this.cancelSessionLocked(wait.sessionId);
     });
   }
@@ -428,6 +429,66 @@ export class SessionManager {
       session.record.decisionWaitIds = session.record.decisionWaitIds?.filter(id => id !== wait.id);
       await this.store.saveRecord(session.record);
     });
+  }
+
+  async fenceTaskCancellation(id: string, executionId: string): Promise<void> {
+    await this.serialize(id, async () => {
+      const record = await this.store.readRecord(id);
+      if (!record || record.taskExecutionId !== executionId || record.taskCancellationRequested === executionId) return;
+      const session = await this.requireLive(id);
+      session.record.taskCancellationRequested = executionId;
+      session.record.decisionGeneration = (session.record.decisionGeneration ?? 0) + 1;
+      await this.store.saveRecord(session.record);
+    });
+  }
+
+  async notifyTask(owner: string, taskId: string, executionId: string): Promise<void> {
+    if (!this.notifier) throw new Error("Task notification delivery is unavailable.");
+    await this.notifier.task(owner, taskId, executionId);
+  }
+
+  beforeTaskDecisionResume?: (sessionId: string) => Promise<boolean>;
+
+  async requestTaskInput(id: string, input: Record<string, unknown>, title?: string) {
+    return this.serialize(id, async () => {
+      const session = await this.requireLive(id), record = session.record;
+      if (!this.decisions) throw new AppContextError(503, "decisions_unavailable", "Decisions is unavailable; the task cannot complete without required input.");
+      if (!record.taskExecutionId || record.taskCancellationRequested || ["cancelled", "abandoned"].includes(record.status))
+        throw new AppContextError(409, "task_binding_required", "Request input only for this active task.");
+      if (!this.worker || !record.workerRun || !["codex", "claude"].includes(record.harnessKind ?? this.adapter.name))
+        throw new AppContextError(422, "unsupported_resume", "Required input needs a supported durable task connection.");
+      if (record.taskBarrier && record.taskBarrier.state !== "resuming" && record.taskBarrier.id !== input.requestId)
+        throw new AppContextError(409, "barrier_pending", "Recover the existing task wait first.");
+      const wait = await this.decisions.registerTask(record, input, title);
+      if (wait.resumeRequested || ["running", "completed", "cancelled"].includes(wait.state))
+        return { waitId: wait.id, decisionId: wait.core?.id, state: wait.state, instruction: "This input request is already handled. Do not recreate it." };
+      if (!record.decisionWaitIds?.includes(wait.id)) record.taskInputGeneration = (record.taskInputGeneration ?? 0) + 1;
+      record.decisionWaitIds = [...new Set([...(record.decisionWaitIds ?? []), wait.id])];
+      if (record.taskBarrier?.id !== wait.taskInput!.barrierId) record.taskBarrier = {
+        id: wait.taskInput!.barrierId, kind: "human_input", generation: 1, owner: record.createdBy,
+        snapshot: decisionSnapshot(record), runId: record.workerRun.id, state: "armed", commandId: wait.commandId,
+        sourceBefore: structuredClone(record.taskWorkspace),
+      };
+      await this.store.saveRecord(record);
+      if (!(await this.store.readEvents(id)).some(event => event.type === "question_request" && event.questionId === wait.questionId))
+        await this.append(id, { ...wait.event, decisionWaitId: wait.id });
+      await this.setStatus(id, "awaiting_question");
+      this.decisions.kick();
+      return { waitId: wait.id, decisionId: wait.core?.id, state: "pending",
+        barrier: `hosty_task_barrier:${record.taskBarrier.id}:${record.taskBarrier.generation}`,
+        instruction: "Yield this turn now. The required question is durably registered; the same task continues after its Decision is answered. Do not call task_result, poll, or start a replacement task." };
+    });
+  }
+
+  async taskCompletionBarrier(id: string): Promise<{ reference: string; message: string } | undefined> {
+    const record = await this.getSession(id);
+    const wait = await this.decisions?.requiredInput(id);
+    if (wait) return { reference: wait.core?.id ?? wait.id, message: wait.error ?? wait.taskInput?.reason ?? "Answer the required question in Decisions." };
+    const live = this.live.get(id);
+    if (record?.taskBarrier && record.taskBarrier.state !== "resuming") return { reference: record.taskBarrier.id, message: "The task is waiting for its recorded continuation." };
+    if (record?.status === "awaiting_approval" || live?.pendingApprovals.size || record?.mcpPendingApprovals?.length)
+      return { reference: id, message: "Resolve the pending approval before completing this task." };
+    if (record?.status === "awaiting_question") return { reference: id, message: "Answer the required question before completing this task." };
   }
 
   async armTaskBarrier(id: string, owner: string, barrierId: string, kind: import("../worker/contracts.js").WorkerBarrier["kind"], generation = 1, origin?: "coordinator"): Promise<string> {
@@ -488,14 +549,14 @@ export class SessionManager {
 
   private checkTaskContinuation(record: SessionRecord, command: { id: string; generation: number; owner: string; snapshot: string }): void {
     const barrier = record.taskBarrier;
-    if (!barrier || barrier.id !== command.id || barrier.generation !== command.generation || barrier.owner !== command.owner
+    if (record.taskCancellationRequested || !barrier || barrier.id !== command.id || barrier.generation !== command.generation || barrier.owner !== command.owner
       || record.createdBy !== command.owner || barrier.state !== "parked" || !barrier.nativeSessionId
       || record.harnessSessionId !== barrier.nativeSessionId || command.snapshot !== barrier.snapshot
       || decisionSnapshot(record) !== command.snapshot || ["cancelled", "abandoned"].includes(record.status))
       throw new AppContextError(409, "stale_input", "The task continuation's original configuration or native checkpoint changed.");
   }
 
-  async decisionProjections(owner: string): Promise<{ items: Array<{ id: string; kind: "permission" | "recovery" | "task_mode"; revision?: number; sessionId: string;
+  async decisionProjections(owner: string): Promise<{ items: Array<{ id: string; kind: "permission" | "recovery" | "task_mode"; revision?: number; sessionId: string; taskId?: string;
     title: string; createdAt: string; event?: StoredEvent; available: boolean; error?: string }>; warnings: string[] }> {
     const items: Awaited<ReturnType<SessionManager["decisionProjections"]>>["items"] = [], warnings: string[] = [];
     for (const record of (await this.store.listRecords()).filter(record => record.createdBy === owner)) {
@@ -2191,7 +2252,11 @@ export class SessionManager {
           if (this.worker) {
             preparedWorker = true; session.persistedWorkerSequences = new Set();
             session.record.workerRun = { id: randomUUID(), sequence: 0 };
-            if (context.taskContinuation && session.record.taskBarrier) session.record.taskBarrier.state = "resuming";
+            if (context.taskContinuation && session.record.taskBarrier) {
+              if (session.record.taskBarrier.kind === "human_input" && clientRequestId)
+                (session.record.decisionRunIds ??= {})[clientRequestId] = session.record.workerRun.id;
+              session.record.taskBarrier.state = "resuming";
+            }
             if (context.decisionContinuation && clientRequestId) (session.record.decisionRunIds ??= {})[clientRequestId] = session.record.workerRun.id;
             await this.store.saveRecord(session.record);
           }
@@ -3112,6 +3177,8 @@ export class SessionManager {
       case "question_request":
         if (this.decisions) {
           const wait = await this.decisions.register(session.record, event);
+          if (event.blocking !== false && !session.record.decisionWaitIds?.includes(wait.id))
+            session.record.taskInputGeneration = (session.record.taskInputGeneration ?? 0) + 1;
           session.record.decisionWaitIds = [...new Set([...(session.record.decisionWaitIds ?? []), wait.id])];
           await this.store.saveRecord(session.record);
           // Registration is durable locally; the shared record appears only after its Core receipt.
@@ -3242,7 +3309,7 @@ export class SessionManager {
     // nobody reopened would never be swept and would sit in the list — and in the attention count —
     // as permanently blocked.
     for (const record of await this.store.listRecords()) {
-      if (!isWaitingStatus(record.status) || this.live.has(record.id)) {
+      if (!isWaitingStatus(record.status) || this.live.has(record.id) || record.decisionWaitIds?.length || record.taskBarrier) {
         continue;
       }
 
@@ -3267,7 +3334,7 @@ export class SessionManager {
 
     for (const [id, session] of this.live) {
       await this.serialize(id, async () => {
-        if (!isWaitingStatus(session.record.status) || now - Date.parse(session.record.updatedAt) < maxWaitMs) return;
+        if (!isWaitingStatus(session.record.status) || session.record.decisionWaitIds?.length || session.record.taskBarrier || now - Date.parse(session.record.updatedAt) < maxWaitMs) return;
         const waitedMs = now - Date.parse(session.record.updatedAt);
         if (session.record.executionMode === "docker" || session.record.taskExecutionId) {
           // Keep Local task handles too until native exit is confirmed; a failed stop must not
@@ -3399,7 +3466,7 @@ export class SessionManager {
     // the status has not changed, so a session that is asked about repeatedly does not re-announce.
     // Nothing is published on resolution — an inbox row that appears and disappears on its own is
     // one the operator learns to distrust; the state the UI reads is cleared instead.
-    if (isWaitingStatus(status)) {
+    if (isWaitingStatus(status) && !(status === "awaiting_question" && session.record.taskBarrier?.kind === "human_input")) {
       this.notifier?.waiting(id, status, session.record.createdBy ?? null);
     }
     // Status can change without another event (for example an automatic MCP decision).

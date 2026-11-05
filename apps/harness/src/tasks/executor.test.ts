@@ -454,3 +454,26 @@ it.each([false, true])("executes an externally owned task through the full servi
     expect(await service.store.all()).toEqual([]);
   } finally { await service.close(); }
 });
+
+
+it("retains an unsuccessful report as failed attempt evidence rather than completed work", async () => {
+  const id = randomUUID(), accepted = await executor.accept(id, input, actor); await executor.tick();
+  const requestId = randomUUID(), result = { markdown: "The application is not implemented: build failed.", resources: [] };
+  await executor.fail(accepted.sessionRef!.id, requestId, result);
+  await executor.fail(accepted.sessionRef!.id, requestId, result);
+  await expect(executor.report(accepted.sessionRef!.id, randomUUID(), result)).rejects.toMatchObject({ code: "result_conflict" });
+  runOptions!.onEvent({ type: "result", status: "success" });
+  await vi.waitFor(async () => expect((await manager.getSession(accepted.sessionRef!.id))?.status).toBe("idle"));
+  await executor.tick(); expect(await executor.get(id, actor)).toMatchObject({ state: "failed", stopConfirmed: true, result, error: { code: "task_failed" } });
+});
+
+it("keeps optional nonblocking clarification independent of successful task completion", async () => {
+  const id = randomUUID(), receipt = await executor.accept(id, input, actor); await executor.tick();
+  runOptions!.onEvent({ type: "question_request", questionId: "optional", blocking: false,
+    questions: [{ id: "extra", header: "Optional", question: "Any optional additions?", options: [], multiSelect: false }] });
+  await vi.waitFor(async () => expect((await manager.store.readEvents(receipt.sessionRef!.id)).some(e => e.type === "question_request")).toBe(true));
+  await executor.report(receipt.sessionRef!.id, randomUUID(), { markdown: "Required work verified", resources: [] });
+  runOptions!.onEvent({ type: "result", status: "success" });
+  await vi.waitFor(async () => expect((await manager.getSession(receipt.sessionRef!.id))?.status).toBe("idle"));
+  await executor.tick(); expect((await executor.get(id, actor)).state).toBe("completed");
+});

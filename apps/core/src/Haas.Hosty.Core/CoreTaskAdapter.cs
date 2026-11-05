@@ -4,7 +4,7 @@ using HostySdk.App;
 namespace Haas.Hosty.Core;
 
 internal sealed record CoreTaskOptions(HostyTaskProviderRef Provider, HostyTaskProviderRef? Executor = null);
-internal sealed record CoreTaskQuery(HostyTaskProviderRef Provider, string? Cursor = null, int Limit = 50, string? Status = null, HostyTaskRef? ParentTaskRef = null, HostyTaskRef? RootTaskRef = null, bool RootsOnly = false);
+internal sealed record CoreTaskQuery(HostyTaskProviderRef Provider, string? Cursor = null, int Limit = 50, string? Status = null, HostyTaskRef? ParentTaskRef = null, HostyTaskRef? RootTaskRef = null, bool RootsOnly = false, bool Removed = false);
 internal sealed record CoreTaskGet(HostyTaskRef TaskRef);
 internal sealed record CoreTaskCreate(HostyTaskProviderRef Provider, HostyTaskCreate Input);
 internal sealed record CoreTaskEdit(HostyTaskRef TaskRef, HostyTaskEdit Input);
@@ -40,7 +40,7 @@ internal sealed class CoreTaskAdapter(CoreProviderMediation providers, CoreProvi
             + (input.Status is null ? "" : "&status=" + Uri.EscapeDataString(input.Status))
             + (input.ParentTaskRef is null ? "" : "&parentTaskRef=" + Uri.EscapeDataString(ReferenceKey(input.ParentTaskRef)))
             + (input.RootTaskRef is null ? "" : "&rootTaskRef=" + Uri.EscapeDataString(ReferenceKey(input.RootTaskRef)))
-            + (input.RootsOnly ? "&rootsOnly=true" : "");
+            + (input.RootsOnly ? "&rootsOnly=true" : "") + (input.Removed ? "&removed=true" : "");
         var result = await providers.SendAsync<JsonElement?>(caller, Ref(input.Provider), CoreProviderPolicy.For("tasks", "list"), "GET", route, null, [], null, ct);
         var page = result.Deserialize(CoreJson.TypeInfo<HostyTaskPage>()) ?? throw Invalid();
         if (page.Tasks is null || page.Tasks.Length > input.Limit) throw Invalid();
@@ -75,11 +75,17 @@ internal sealed class CoreTaskAdapter(CoreProviderMediation providers, CoreProvi
     }
     internal async Task<JsonElement> ActionAsync(CoreCapabilityCaller caller, CoreTaskAction input, CancellationToken ct)
     {
-        if (input.Input is null || input.Input.Action is not ("ready" or "draft" or "start" or "complete" or "cancel" or "accept" or "request_changes" or "retry" or "disposition"))
+        if (input.Input is null || input.Input.Action is not ("ready" or "draft" or "start" or "complete" or "cancel" or "accept" or "request_changes" or "retry" or "disposition" or "remove" or "restore"))
             throw new CoreProviderException("invalid_input", "Use a common task action. Execution results belong to the bound executor.", 400);
         var provider = Ref(input.TaskRef);
         caller = await BoundCallerAsync(caller, ct);
         await CheckBoundTarget(caller, input.TaskRef, ct);
+        if (input.Input.Action is "remove" or "restore")
+        {
+            if (caller.Authority?.TaskWorkflow is not null) throw new CoreProviderException("permission_denied", "Task-bound agents cannot remove task provenance.", 403);
+            var descriptor = await providers.ResolveAsync(caller, Ref(provider), "tasks", ct);
+            if (!descriptor.Capabilities.Contains("removal")) throw new CoreProviderException("unsupported_capability", "The task provider does not declare removal.", 422);
+        }
         var receipt = await operations.PrepareTaskActionAsync(caller, input, async () =>
         {
             var task = Task(await GetAsync(caller, new(input.TaskRef), ct));

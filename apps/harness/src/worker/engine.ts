@@ -194,7 +194,7 @@ export class WorkerEngine {
   }
   /** Park only after the native stream acknowledged the exact orchestration tool result. */
   async barrier(id: string, input: import("./contracts.js").WorkerBarrier): Promise<WorkerReceipt> {
-    if (!input || !["task_adoption", "child_wait", "source_rebind", "limits"].includes(input.kind)
+    if (!input || !["task_adoption", "child_wait", "source_rebind", "limits", "human_input"].includes(input.kind)
       || input.origin !== undefined && input.origin !== "coordinator"
       || input.origin === "coordinator" && !["source_rebind", "limits"].includes(input.kind)
       || !safeIdentity(input.barrierId) || !Number.isSafeInteger(input.generation) || input.generation < 1
@@ -209,7 +209,7 @@ export class WorkerEngine {
       }, () => {
         const acknowledged = stored.events.find(frame => frame.sequence === input.acknowledgedSequence)?.event;
         const marker = `hosty_task_barrier:${input.barrierId}:${input.generation}`;
-        const expectedTool = { task_adoption: "task_adopt", child_wait: "task_wait", source_rebind: "task_bind_workspace", limits: null }[input.kind];
+        const expectedTool = { task_adoption: "task_adopt", child_wait: "task_wait", source_rebind: "task_bind_workspace", human_input: "task_request_input", limits: null }[input.kind];
         const call = acknowledged?.type === "tool_result" ? stored.events.find(frame => frame.event.type === "tool_use"
           && frame.event.toolUseId === acknowledged.toolUseId)?.event : undefined;
         const pending = new Set<string>(); let unknown = false;

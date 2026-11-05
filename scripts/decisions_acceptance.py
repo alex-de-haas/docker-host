@@ -48,7 +48,28 @@ def _check(c):
     assert answers[second['id']]['text']==command['answers'][second['id']]['text']
     say('PASS: ordinary native question, duplicate IDs/labels, independent Core response, immutable replay and one live continuation')
 
-    task = c['action'](c['create']('Parked decision task', c['assignee'], markdown='TASK_ACCEPTANCE:QUESTION'), 'ready')
+    required = c['action'](c['create']('Required setup task', c['assignee'], markdown='TASK_ACCEPTANCE:REQUIRED'), 'ready')
+    wait(lambda: c['read'](required)['attempts'] and c['read'](required)['attempts'][0].get('receipt',{}).get('state')=='awaiting_input', 60)
+    required = c['read'](required); attempt = required['attempts'][0]; sid = attempt['receipt']['sessionRef']['id']
+    wait(lambda: find(sid), 60); question = find(sid)
+    assert required['status']=='Blocked' and question['input']['title'].startswith(required['number'])
+    assert question['input']['reason']=='The isolated setup prerequisite is missing.'
+    assert question['notificationPending'] is False
+    wait(lambda: h('/sessions/'+sid).get('taskBarrier',{}).get('state')=='parked', 60)
+    wait(lambda: c['read'](required)['attempts'][0]['receipt'].get('nativeStopConfirmed') is True, 30)
+    assert not c['read'](required)['attempts'][0]['receipt']['stopConfirmed']
+    h('/decisions/'+question['id']+'/resolve', {'requestId':str(uuid.uuid4()), 'expectedRevision':question['revision'], 'answers':{'setup':{'text':'TASK_ACCEPTANCE:RESULT'}}})
+    finished = c['settle'](required)
+    assert len(finished['attempts'])==1 and finished['attempts'][0]['executionId']==attempt['executionId']
+    assert finished['attempts'][0]['receipt']['sessionRef']['id']==sid
+    failure = c['settle'](c['action'](c['create']('Explicit unsuccessful task', c['assignee'], markdown='TASK_ACCEPTANCE:FAIL'), 'ready'), 'Blocked')
+    wait(lambda: c['read'](failure)['attempts'][0]['receipt'].get('stopConfirmed') is True, 30)
+    failure = c['read'](failure)
+    assert failure['attempts'][0]['receipt']['state']=='failed' and failure.get('resultRef') is None
+    wait(lambda: any(row.get('taskId')==failure['ref']['id'] for row in h('/decisions/projections')['items']), 30)
+    say('PASS: required task Decision, notification, confirmed boundary, same-attempt answer and truthful unsuccessful outcome')
+
+    task = c['action'](c['create']('Parked decision task' , c['assignee'], markdown='TASK_ACCEPTANCE:QUESTION'), 'ready')
     def waiting():
         current = c['read'](task)
         return current['attempts'] and current['attempts'][0].get('receipt',{}).get('state')=='awaiting_input'
