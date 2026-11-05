@@ -3,13 +3,19 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { selectedContextApps } from "@/lib/assistant-api";
+import { prRequest } from "@/lib/pull-requests-api";
+import { subscribePullRequests } from "@/lib/pull-requests-events";
 import { WorkspaceDetails } from "./workspace-details";
 import { developmentRequest, DevelopmentRequestError, type DevelopmentWorkspace } from "@/lib/development-api";
+vi.mock("@/lib/pull-requests-api", async original => ({ ...await original<object>(), prRequest: vi.fn() }));
+vi.mock("@/lib/pull-requests-events", () => ({ subscribePullRequests: vi.fn() }));
 vi.mock("@/lib/assistant-api", async original => ({ ...await original<object>(), selectedContextApps: vi.fn() }));
 vi.mock("@/lib/development-api", async original => ({ ...await original<object>(), developmentRequest: vi.fn() }));
 vi.mock("@/lib/workspace-applications", async original => ({ ...await original<object>(), useWorkspaceApplications: () => ({ applications: [], loading: false, error: "", refresh: () => {} }) }));
 let root: Root, container: HTMLDivElement;
 beforeEach(() => {
+  vi.mocked(prRequest).mockResolvedValue({ storageScope: "owner" });
+  vi.mocked(subscribePullRequests).mockReturnValue(() => {});
   vi.mocked(selectedContextApps).mockResolvedValue([]);
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   Element.prototype.scrollIntoView = vi.fn();
@@ -719,4 +725,58 @@ it("resolves icons for Used by without chats and omits them from repository card
   expect(container.querySelector('[aria-label="Workspace applications"] img')?.getAttribute("src")).toBe("https://core.test/api/apps/media/assets/icon.svg");
   await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Refresh workspace"]')!.click());
   expect(selectedContextApps).toHaveBeenCalledTimes(2);
+});
+
+it("refreshes provider CI through the scoped queue and retains the expanded card while new results arrive", async () => {
+  const w = workspace(); w.worktrees = [w.worktrees[0]];
+  const initial = { at: "2026-11-05T13:41:21Z", state: "merged", complete: false, draft: false, unresolvedThreads: 0,
+    checks: [{ name: "PR build", state: "SUCCESS" }], error: "Old internal missing-check diagnostic",
+    completionIssue: { kind: "check", requirement: "ci-required", state: "missing", mergeCommit: "merge" } };
+  w.worktrees[0].pullRequests[0].observation = initial;
+  replies(w); const refresh = vi.fn();
+  const render = (value: DevelopmentWorkspace) => act(async () => root.render(<WorkspaceDetails workspace={value} title="CI freshness" refresh={refresh} />));
+  await render(w); await expandCards();
+  expect(subscribePullRequests).toHaveBeenCalledWith("owner", expect.objectContaining({ scope: { workspaces: [w.id] } }));
+  vi.mocked(prRequest).mockResolvedValueOnce({ state: "queued" });
+  await act(async () => [...container.querySelectorAll("button")].find(button => button.textContent === "Check now")!.click());
+  expect(prRequest).toHaveBeenCalledWith("/refresh", { requestId: expect.any(String), workspaces: [w.id] });
+  expect(container.textContent).toContain("CI refresh queued");
+  expect(developmentRequest).toHaveBeenCalledWith("/workspace/worktrees/one?refresh=true", undefined, expect.any(AbortSignal));
+  const updated = structuredClone(w);
+  updated.worktrees[0].observationRevision = "publication-2";
+  updated.worktrees[0].pullRequests[0].observation = { ...initial, at: new Date().toISOString(), complete: true, error: undefined, completionIssue: null };
+  replies(updated);
+  await act(async () => { await vi.mocked(subscribePullRequests).mock.calls[0][1].sync(); });
+  expect(refresh).toHaveBeenCalled();
+  await render(updated);
+  expect(container.querySelector('[data-slot="pull-request-card"] > button')?.getAttribute("aria-expanded")).toBe("true");
+  expect(container.textContent).toContain("CI passed");
+  expect(container.textContent).not.toContain("CI refresh queued");
+  expect(container.textContent).not.toContain("Old internal missing-check diagnostic");
+});
+it("reports deferred or unavailable manual CI refresh without inventing a new observation", async () => {
+  const w = workspace(); replies(w);
+  await act(async () => root.render(<WorkspaceDetails workspace={w} title="Provider backoff" refresh={vi.fn()} />));
+  vi.mocked(prRequest).mockResolvedValueOnce({ state: "deferred", nextAttemptAt: "2026-11-05T14:00:00Z" });
+  await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Refresh workspace"]')!.click());
+  expect(container.textContent).toContain("Try again after");
+  vi.mocked(prRequest).mockRejectedValueOnce(new Error("Provider connection unavailable"));
+  await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Refresh workspace"]')!.click());
+  expect(container.textContent).toContain("Provider connection unavailable");
+  expect(container.querySelector('[aria-label="Refresh workspace"]')?.hasAttribute("disabled")).toBe(false);
+});
+
+it.each([true, false])("subscribes to publication-backed PRs absent from inventory URLs (summary available: %s)", async withSummary => {
+  const inventory = workspace();
+  const details = structuredClone(inventory);
+  inventory.worktrees = inventory.worktrees.map(tree => ({ ...tree, pullRequests: [] }));
+  if (withSummary) inventory.pullRequestSummary = { count: 1, state: "merged", checks: "passed", partial: false };
+  replies(details);
+  const refresh = vi.fn();
+  await act(async () => root.render(<WorkspaceDetails workspace={inventory} title="Published PR" refresh={refresh} />));
+  expect(subscribePullRequests).toHaveBeenCalledWith("owner", expect.objectContaining({ scope: { workspaces: [inventory.id] } }));
+  await expandCards();
+  vi.mocked(prRequest).mockResolvedValueOnce({ state: "queued" });
+  await act(async () => [...container.querySelectorAll("button")].find(button => button.textContent === "Check now")!.click());
+  expect(prRequest).toHaveBeenCalledWith("/refresh", expect.objectContaining({ workspaces: [inventory.id] }));
 });

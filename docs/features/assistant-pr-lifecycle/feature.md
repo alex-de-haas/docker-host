@@ -1,6 +1,6 @@
 ---
 created: 2026-09-29
-updated: 2026-10-29
+updated: 2026-11-05
 summary: GitHub pull request publication, review, merge and completion for assistant session workspaces.
 components: [apps/core, apps/harness]
 ---
@@ -146,8 +146,10 @@ ranges from unavailable evidence. These ranges never authorize posting working c
 
 ## Observation And Completion
 
-A Core background service observes draft, ready and completed-contribution PRs every thirty seconds,
-without an open browser or model turn. It rechecks the assistant installation/grant and enabled user,
+Core's [shared PR scheduler](../harness-pull-request-inbox/feature.md#shared-observation) observes
+eligible active workspace publications without a model turn. Visible running checks and missing or
+pending merge-completion evidence use the active interval; no-subscriber observation uses the slower
+baseline. Paused and completed workspaces retain observations without background provider reads. It rechecks the assistant installation/grant and enabled user,
 then uses the selected connection. Unavailable provider access is a timestamped unavailable result.
 Old observations do not count as fresh evidence. Observed external merges are facts, not proof that
 Core authorized them. No automatic merge or cleanup follows an observation alone.
@@ -160,7 +162,10 @@ merge itself supplies the post-merge evidence. Workflow observations select the 
 target branch, rather than a moving latest-main badge. Unknown, missing or failed evidence blocks
 merged completion. The observation includes a bounded `completionIssue` naming the first unmet
 requirement, its kind, merge commit and state (`missing`, `pending`, `failed`, `unverified` or
-`unavailable`), plus an actionable error. Provider failures retain the merged PR state without
+`unavailable`), plus a diagnostic error. Workspace cards present this structured issue separately from PR-head
+checks: missing/pending results are waiting, unavailable/unverified results are unknown, and stale
+failures are neutral last-observed evidence. Completion still requires the same verified policy.
+Provider failures retain the merged PR state without
 exposing response bodies or credentials. Checks with duplicate names must all succeed; incomplete
 pages and unknown states remain unavailable. The latest matching workflow must be completed and
 successful; an older success cannot cover a later failed or pending run. PR-triggered workflows do

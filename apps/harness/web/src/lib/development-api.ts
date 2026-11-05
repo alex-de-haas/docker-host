@@ -16,6 +16,7 @@ export function workflowLabel(workflow: Workflow): string {
 export type Change = { path: string; status: string; binary?: boolean; lineStats?: { additions: number; deletions: number } | null };
 export type PullRequest = { historical?: boolean; url: string; unavailable?: string; publishedHead?: string; observation?: {
   at: string; mergedAt?: string | null; state: string; complete?: boolean; title?: string; commentCount?: number; head?: string; draft: boolean;
+  completionIssue?: { kind: string; requirement: string; state: string; mergeCommit: string } | null;
   reviewDecision?: string; unresolvedThreads: number; checks?: { name: string; state: string }[]; error?: string;
 } | null };
 export type Worktree = { observationHealth?: string; observationRevision?: string; id: string; workspaceId: string; repository: string; branch: string; targetBranch?: string; state: string;
