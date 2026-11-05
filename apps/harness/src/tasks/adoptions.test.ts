@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, mkdir, writeFile, readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import os from "node:os";
@@ -7,6 +7,7 @@ import type { TaskCreate, TaskEdit, TaskRecord, TaskExecutionInput } from "@host
 import { SessionManager } from "../sessions/manager.js";
 import type { SessionRecord } from "../sessions/store.js";
 import { decisionSnapshot } from "../decisions/waits.js";
+import { TaskPolicies } from "./policy.js";
 import { TaskStore } from "./store.js";
 import { TaskAdoptions, type TaskAdoption } from "./adoptions.js";
 import type { TaskConfiguration } from "./configurations.js";
@@ -18,6 +19,9 @@ const resume = vi.fn();
 const command = () => ({ requestId: randomUUID(), title: "Build an app", markdown: "Implement and verify the described app.", resources: [], selectionRevision: 0, contextRevision: 0, autonomyRevision: 0 });
 beforeEach(async () => {
   dir = await mkdtemp(path.join(os.tmpdir(), "task-adoptions-")); store = new TaskStore(dir, provider); loseReply = false; resume.mockReset();
+  const policies = new TaskPolicies(store);
+  store.afterCreate = (state, task) => { if (task.assignee?.kind === "app") policies.ensure(state, task, task.assignee.executor); };
+  store.beforeAttempt = (state, task) => policies.attempt(state, task);
   session = { id: "original-chat", createdBy: "owner", harnessSessionId: "original-native-context", harnessKind: "codex", autonomy: "normal",
     title: "Original chat", context: null, lastEventSeq: 4, status: "running", appIds: [], instructionSnapshot: "Existing instructions", skillIds: [], createdAt: "now", updatedAt: "now",
     workerRun: { id: "original-run", sequence: 4 } } as SessionRecord;
@@ -108,4 +112,26 @@ it("does not ask again when the conversation already runs autonomously", async (
   expect(await adoptions.projections("owner")).toEqual([]);
   expect((await store.all())[0]!.attempts).toHaveLength(0);
   park(); await adoptions.reconcile(); await bind(input.requestId); expect(session.autonomyRevision).toBe(0);
+});
+
+it("adopts and starts a new root while retaining pre-tree version-one records", async () => {
+  const legacy = { ref: { ...provider, id: randomUUID() }, number: "HRN-1", title: "Old task", status: "Draft" };
+  await mkdir(path.join(dir, "tasks"), { recursive: true });
+  await writeFile(path.join(dir, "tasks/tasks.json"), JSON.stringify({ version: 1, next: 2, tasks: [legacy], requests: [] }));
+  const input = command();
+  await adoptions.adopt(session.id, input);
+  let value = await adopted(input.requestId);
+  expect(value.root!.number).toBe("HRN-2");
+  await store.action(value.root!.ref.id, actor, { requestId: randomUUID(), expectedRevision: value.root!.revision, action: "ready" });
+  const root = (await store.all())[0]!;
+  expect(root.attempts).toHaveLength(1);
+  const policy = await new TaskPolicies(store).get(root.ref.id, "owner");
+  expect(policy.descendantCount).toBe(0);
+  const saved = JSON.parse(await readFile(path.join(dir, "tasks/tasks.json"), "utf8"));
+  expect(saved.legacyTasks).toEqual([legacy]);
+  expect(saved.tasks).toHaveLength(1);
+  const reloaded = new TaskStore(dir, provider);
+  expect(await reloaded.all()).toHaveLength(1);
+  await reloaded.writeJournal("test-reload", true);
+  expect(JSON.parse(await readFile(path.join(dir, "tasks/tasks.json"), "utf8")).legacyTasks).toEqual([legacy]);
 });

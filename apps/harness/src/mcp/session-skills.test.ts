@@ -102,6 +102,8 @@ describe("native skills in a session", () => {
     await settings.update({ systemPrompt: "Be brief.", skillIds: [skillId], mcpProviders: { [APP]: true } });
     const prompt = await startSession();
     expect(prompt).toBe(`${intro}\n\n${HOST_SYSTEM_PROMPT}\n\n${TASK_ORCHESTRATION_GUIDE}\n\n${DEFAULT_WORKFLOW_PROMPT}\n\nBe brief.`);
+    expect(prompt).toContain("Start Tasks only when the user explicitly requests task orchestration or the selected profile explicitly requires Tasks for this work.");
+    expect(prompt).not.toContain("Before undertaking a new multi-step objective");
     expect(prompt).not.toContain("Call list_people first.");
     expect(exports[0]?.skillIds).toEqual([skillId]);
     expect(adapter.lastStart?.skillExportId).toBe(exportId);
