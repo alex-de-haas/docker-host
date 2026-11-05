@@ -1005,6 +1005,19 @@ async function route(
     return;
   }
 
+  if (rest === "/execution-recovery" && (method === "GET" || method === "POST")) {
+    const credential = readAppCredential(request);
+    if (actor.via !== "app-session" || !credential)
+      throw new AppContextError(403, "recovery_operator_required", "Sign in through Core as the owning operator to recover an execution.");
+    response.setHeader("Cache-Control", "no-store");
+    if (method === "GET") sendJson(response, 200, await manager.executionRecovery(sessionId, actor.userId));
+    else {
+      await manager.recoverExecution(sessionId, actor.userId, await readJson(request), credential);
+      sendJson(response, 200, { recovered: true });
+    }
+    return;
+  }
+
   if (rest === "/cancel" && method === "POST") {
     await manager.cancelSession(sessionId);
     sendJson(response, 200, { cancelled: true });

@@ -26,6 +26,8 @@ export type AssistantQuestion = {
 };
 
 export type AssistantSession = {
+  workerRun?: { id: string; sequence: number; generation?: string };
+  workerRecovery?: { state: "pending" | "completed" };
   agentProfile?: import("../../../src/profiles/types").AgentProfile | null;
   profileLocked?: boolean;
   taskExecutionId?: string;
@@ -410,4 +412,13 @@ export async function getSessionModels(id: string): Promise<ModelCatalog> {
 }
 export async function setSessionModel(id: string, selection: NonNullable<AssistantSession["executionSelection"]>, expectedRevision: number): Promise<AssistantSession> {
   return (await call(`/sessions/${encodeURIComponent(id)}/model`, { method: "PUT", body: JSON.stringify({ selection, expectedRevision }) })).json() as Promise<AssistantSession>;
+}
+
+export type ExecutionRecoveryRequest = { requestId: string; runId: string; generation: string; expectedRevision: number; consumerExitConfirmed: true };
+export type ExecutionRecoveryReview = { runId: string; generation: string; expectedRevision: number; recoverable: boolean; pending?: ExecutionRecoveryRequest };
+export async function getExecutionRecovery(id: string): Promise<ExecutionRecoveryReview | null> {
+  return (await call(`/sessions/${encodeURIComponent(id)}/execution-recovery`)).json();
+}
+export async function recoverExecution(id: string, input: ExecutionRecoveryRequest): Promise<void> {
+  await call(`/sessions/${encodeURIComponent(id)}/execution-recovery`, { method: "POST", body: JSON.stringify(input) });
 }

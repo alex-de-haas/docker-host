@@ -309,3 +309,25 @@ describe("coordinator stop boundaries", () => {
     expect((await f.engine.barrier("source-run", input)).state).toBe("parked");
   });
 });
+
+it("recovers a legacy Local receipt atomically after explicit exit confirmation, without replaying work", async () => {
+  const f = await setup();
+  await f.journal.accept("legacy", request()); await f.journal.update("legacy", "running");
+  const restarted = new WorkerJournal(path.join(f.root, "journal")); await restarted.initialize();
+  const before = await restarted.load("legacy");
+  const input = { requestId: "96247241-d236-4db5-b065-055f9481f3e2", generation: before.receipt.generation,
+    expectedRevision: before.receipt.revision, consumerExitConfirmed: true as const, actorId: "owner" };
+  const recover = (body: unknown, auth = f.headers) => fetch(`${f.base}/v1/runs/legacy/recover`, { method: "POST", headers: auth, body: JSON.stringify(body) });
+  expect((await recover(input, {} as typeof f.headers)).status).toBe(401);
+  expect((await recover({ ...input, consumerExitConfirmed: false })).status).toBe(400);
+  expect((await recover({ ...input, expectedRevision: 0 })).status).toBe(409);
+  expect((await recover({ ...input, generation: "another" })).status).toBe(409);
+  expect((await f.journal.load("legacy")).receipt).toEqual(before.receipt);
+  const response = await recover(input); expect(response.status).toBe(200);
+  const receipt = await response.json(); expect(receipt).toMatchObject({ state: "cancelled", exitConfirmed: true, recovery: { actorId: "owner", requestId: input.requestId } });
+  const again = new WorkerJournal(path.join(f.root, "journal")); await again.initialize();
+  expect(await again.recover("legacy", input)).toEqual(receipt);
+  expect((await recover({ ...input, actorId: "other" })).status).toBe(409);
+  expect((await f.put("legacy")).status).toBe(202); expect(f.starts()).toBe(0);
+  expect((await again.load("legacy")).events).toEqual(before.events);
+});

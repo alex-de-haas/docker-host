@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, open, unlink } from "node:fs/promises";
 import path from "node:path";
-import { MAX_EVENT_BYTES, REPLAY_MS, WorkerApiError, safeIdentity, terminal, type WorkerEvent, type WorkerReceipt, type WorkerRunRequest } from "./contracts.js";
+import { MAX_EVENT_BYTES, REPLAY_MS, WorkerApiError, safeIdentity, terminal, type WorkerEvent, type WorkerReceipt, type WorkerRecovery, type WorkerRunRequest } from "./contracts.js";
 import type { HarnessEvent } from "../harness/adapter.js";
 import { sanitizeToolResult } from "../harness/tool-result.js";
 import { sanitizeCommandResult } from "../harness/command-result.js";
@@ -132,6 +132,29 @@ export class WorkerJournal {
     record.receipt.revision++; record.receipt.updatedAt = new Date().toISOString();
     if (error) record.receipt.error = error;
     await this.save(record); return record.receipt;
+  }
+  /** Operator attestation and its replay receipt commit together; no native action is replayed. */
+  async recover(id: string, input: WorkerRecovery): Promise<WorkerReceipt> {
+    if (!input || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.requestId)
+      || !safeIdentity(input.generation) || !Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0
+      || input.consumerExitConfirmed !== true || typeof input.actorId !== "string" || !input.actorId.trim() || input.actorId.length > 512)
+      throw new WorkerApiError(400, "recovery_invalid", "Review the exact run and confirm that its agent and commands have stopped.");
+    const record = await this.load(id), hash = digest({ kind: "recover", ...input }), prior = record.controls[input.requestId];
+    if (prior) {
+      if (prior.hash !== hash || !prior.applied) throw new WorkerApiError(409, "recovery_conflict", "Reuse the original recovery request.");
+      return record.receipt;
+    }
+    if (record.receipt.state !== "interrupted" || record.receipt.exitConfirmed || record.receipt.generation !== input.generation
+      || record.receipt.revision !== input.expectedRevision)
+      throw new WorkerApiError(409, "recovery_stale", "The run changed. Refresh its recovery review.");
+    if (Object.keys(record.controls).length >= 10000) throw new WorkerApiError(413, "control_limit", "Run control limit exceeded.");
+    const now = new Date().toISOString();
+    record.receipt = { ...record.receipt, state: "cancelled", exitConfirmed: true, pending: [],
+      revision: record.receipt.revision + 1, updatedAt: now,
+      recovery: { requestId: input.requestId, actorId: input.actorId, confirmedAt: now } };
+    record.controls[input.requestId] = { hash, applied: true };
+    await this.save(record);
+    return record.receipt;
   }
   async append(id: string, event: HarnessEvent): Promise<WorkerEvent | null> {
     if (event.type === "command_result" || event.type === "tool_result") {

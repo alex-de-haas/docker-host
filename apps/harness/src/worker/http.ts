@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { MAX_COMMAND_BYTES, WORKER_PROTOCOL, WorkerApiError, terminal, type WorkerControl } from "./contracts.js";
+import { MAX_COMMAND_BYTES, WORKER_PROTOCOL, WorkerApiError, terminal, type WorkerControl, type WorkerRecovery } from "./contracts.js";
 import { authorizeService, type ServiceIdentity } from "./auth.js";
 import type { WorkerEngine } from "./engine.js";
 
@@ -53,7 +53,7 @@ export function createWorkerServer(engine: WorkerEngine, identity: () => Promise
     if (method === "GET" && models) { json(response, 200, await control.models(models[1]!)); return; }
     const controlMatch = url.pathname.match(/^\/v1\/runs\/([A-Za-z0-9-]+)\/controls\/([A-Za-z0-9-]+)$/);
     if (method === "GET" && controlMatch) { json(response, 200, await engine.journal.controlOutcome(controlMatch[1]!, controlMatch[2]!)); return; }
-    const match = url.pathname.match(/^\/v1\/runs\/([A-Za-z0-9-]+)(?:\/(events|responses|cancel|park|barrier|configuration|disable-suggestions))?$/);
+    const match = url.pathname.match(/^\/v1\/runs\/([A-Za-z0-9-]+)(?:\/(events|responses|cancel|recover|park|barrier|configuration|disable-suggestions))?$/);
     if (!match) throw new WorkerApiError(404, "not_found", "Unknown worker route.");
     const id = match[1]!;
     if (method === "PUT" && !match[2]) { json(response, 202, await engine.submit(id, await readCommand(request))); return; }
@@ -69,6 +69,9 @@ export function createWorkerServer(engine: WorkerEngine, identity: () => Promise
     if (method === "POST" && match[2] === "disable-suggestions") {
       const input = await readCommand(request) as { controlId: string };
       json(response, 200, await engine.disableSuggestions(id, input?.controlId)); return;
+    }
+    if (method === "POST" && match[2] === "recover") {
+      json(response, 200, await engine.recover(id, await readCommand(request) as WorkerRecovery)); return;
     }
     if (method === "POST" && match[2] === "cancel") {
       const input = await readCommand(request) as { controlId: string };

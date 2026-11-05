@@ -25,7 +25,7 @@ async function fixture() {
   cleanups.push(async () => { stopFailure = false; await engine.close(); });
   await engine.submit("run1", request()); await vi.waitFor(() => expect(runs.length).toBe(1));
   const answer = async () => { runs[0]!.onEvent({ type: "result", status: "success" }); await vi.waitFor(async () => expect((await journal.load("run1")).receipt.state).toBe("suggesting")); };
-  return { engine, journal, runs, answer, failStop: () => { stopFailure = true; }, released: () => released, stopped: () => stopped };
+  return { engine, journal, runs, answer, failStop: () => { stopFailure = true; }, allowStop: () => { stopFailure = false; }, released: () => released, stopped: () => stopped };
 }
 it("separates answer, optional collection and confirmed exit; ignores late tools and duplicate output", async () => {
   const f = await fixture(); await f.answer();
@@ -90,4 +90,18 @@ it("disables a collecting prediction durably and idempotently", async () => {
   expect(first.state).toBe("completed"); expect(first.exitConfirmed).toBe(true);
   expect(await f.engine.disableSuggestions("run1", "disable1")).toEqual(first);
   expect(f.stopped()).toBe(1);
+});
+
+it("retries native cleanup after an interrupted stop and releases its claim exactly once", async () => {
+  const f = await fixture(); f.failStop();
+  await f.engine.cancel("run1", "retry-stop");
+  expect((await f.journal.load("run1")).receipt).toMatchObject({ state: "interrupted", exitConfirmed: false });
+  expect(f.released()).toBe(0);
+  const receipt = (await f.journal.load("run1")).receipt;
+  await expect(f.engine.recover("run1", { requestId: "4df7b526-9016-44fc-a7fa-297ec171f852", generation: receipt.generation,
+    expectedRevision: receipt.revision, consumerExitConfirmed: true, actorId: "owner" })).rejects.toMatchObject({ code: "recovery_active" });
+  f.allowStop();
+  expect(await f.engine.cancel("run1", "retry-stop")).toMatchObject({ state: "cancelled", exitConfirmed: true });
+  await f.engine.cancel("run1", "retry-stop"); expect(f.released()).toBe(1);
+  await expect(f.engine.submit("run2", request())).resolves.toMatchObject({ state: "accepted" });
 });

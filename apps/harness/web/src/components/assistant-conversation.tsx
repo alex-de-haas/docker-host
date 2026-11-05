@@ -5,6 +5,7 @@ import { applyContextUsage, emptyContextUsage } from "@/lib/context-usage";
 import { HostyNavigationBoundary } from "@hosty-sdk/app/react";
 import { SessionAgentSettings, type AgentSettingsNotice } from "@/components/session-agent-settings";
 import { SessionAutonomy } from "@/components/session-autonomy";
+import { SessionExecutionRecovery } from "@/components/session-execution-recovery";
 import { SessionExecutionIndicator } from "@/components/session-execution-indicator";
 import { useHostyUi } from "@hosty-sdk/app/ui/react";
 import { AssistantActivity } from "@/components/assistant-activity";
@@ -1107,6 +1108,12 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
       {!fullPage && !showSessions && session && <SessionSandboxes key={`sandbox-${session.id}`} sessionId={session.id} />}
       {!fullPage && !showSessions && session && <SessionWorkspaces key={`workspaces-${session.id}`} session={session} running={running} />}
       {error && <div className="shrink-0 p-3" role="alert"><InlineError message={error} /></div>}
+      {session && (session.workerRun || session.workerRecovery?.state === "pending") && <SessionExecutionRecovery key={session.id}
+        sessionId={session.id} refreshKey={`${session.workerRun?.id ?? ""}:${status}:${error ?? ""}`} onRecovered={async () => {
+          const current = await getSession(session.id);
+          if (activeSessionId.current === session.id) { onSessionChange(current); setStatus(current.status); setError(null); }
+        }} />}
+
       {pendingSend && <div className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-warning-soft px-3 py-2 text-sm" role="status">
         <span className="min-w-0 flex-1">Send not confirmed. Your draft is retained; Retry checks the original request.</span>
         <Button type="button" variant="outline" size="sm" disabled={sending} onClick={() => void recoverSend()}>{sending ? "Checking send…" : "Retry send"}</Button>

@@ -59,6 +59,7 @@ export interface SessionRecord {
   executionSelection?: import("../worker/contracts.js").ExecutionSelection;
   selectionRevision?: number;
   workerRun?: { id: string; sequence: number; generation?: string };
+  workerRecovery?: { runId: string; input: import("../worker/contracts.js").WorkerRecovery; state: "pending" | "completed" };
   retentionVersion?: 1;
   retention?: import("./retention.js").RetentionStatus;
   retentionCleanup?: { requestId: string; expectedRevision: number };

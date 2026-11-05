@@ -88,6 +88,13 @@ def check(context):
             assert response.status == 200 and len(response.read()) > 0
     say('PASS: production API/worker, password login, Core launch-code identity, sessions API and compiled static assets')
 
+    if os.environ.get('HOSTY_EXECUTION_RECOVERY'):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('execution_recovery_acceptance', workspace/'apps/harness/test/execution_recovery_acceptance.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        module.check(context, app, app_origin, call, timed, link)
+
     if context.get('scenario') == 'feedback':
         from feedback_acceptance import check as check_feedback
         check_feedback(context, app_origin, link)
