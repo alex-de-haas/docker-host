@@ -22,6 +22,7 @@ import { hasWorkspaceHistory, hasResourceHistory, reconcileRetentionSnapshot, re
 import type { RetentionSnapshot } from "./development.js";
 import { DEFAULT_WORKFLOW_PROMPT } from "../settings/workflow.js";
 import { WorkerError } from "../runtime/errors.js";
+import { WorkerApiError, type WorkerReceipt, type WorkerRecovery } from "../worker/contracts.js";
 import type { WorkerClient } from "../worker/client.js";
 import { McpToolPolicy } from "../mcp/policy.js";
 import { type CoreEnvironmentAction, type CoreEnvironment } from "@hosty-sdk/app/sandbox/server";
@@ -2164,6 +2165,8 @@ export class SessionManager {
       if (context.taskContinuation) this.checkTaskContinuation(session.record, context.taskContinuation);
       if (session.record.taskExecutionId && (!context.taskDispatch || clientRequestId !== session.record.taskExecutionId && !context.decisionContinuation && !context.taskContinuation))
         throw new AppContextError(409, "task_managed_session", "Use the task lifecycle to start a new attempt. This conversation belongs to one immutable task execution.");
+      if (session.record.workerRecovery?.state === "pending")
+        throw new AppContextError(409, "recovery_pending", "Retry the retained execution recovery before sending another message.");
       if (session.record.associationRequests?.some(request => request.state === "pending"))
         throw new AppContextError(409, "workspace_association_pending", "Retry the pending workspace attachment or detachment before sending another message.");
       if (session.record.retentionCleanup) throw new AppContextError(409, "cleanup_pending", "Workspace cleanup has started. Recover deletion before starting a new conversation.");
@@ -2819,6 +2822,69 @@ export class SessionManager {
       const live = await this.requireLive(conversation);
       if (!live.run) throw new AppContextError(503, "provider_unavailable", "The native execution handle is unavailable; its exit is not confirmed.");
       await validate(); await this.cancelSessionLocked(conversation);
+    });
+  }
+
+  async executionRecovery(id: string, actorId: string) {
+    const session = await this.requireLive(id);
+    if (session.record.createdBy !== actorId) throw new AppContextError(404, "session_not_found", "Session not found.");
+    const pending = session.record.workerRecovery?.state === "pending" ? session.record.workerRecovery : undefined;
+    const runId = session.record.workerRun?.id ?? pending?.runId;
+    if (!this.worker || !runId) return null;
+    const receipt = await this.worker.request<WorkerReceipt>(`/v1/runs/${runId}`);
+    if (receipt.conversationId !== id) throw new AppContextError(409, "recovery_mismatch", "The run does not belong to this conversation.");
+    const recoverable = receipt.state === "interrupted" && !receipt.exitConfirmed;
+    if (!recoverable && !pending) return null;
+    return { runId, generation: receipt.generation, expectedRevision: receipt.revision, recoverable,
+      pending: pending && { ...pending.input, runId: pending.runId } };
+  }
+
+  async recoverExecution(id: string, actorId: string, value: Record<string, unknown>, credential?: string): Promise<void> {
+    await this.serialize(id, async () => {
+      const session = await this.requireLive(id);
+      if (session.record.createdBy !== actorId) throw new AppContextError(404, "session_not_found", "Session not found.");
+      const requestId = this.messageRequest(value.requestId);
+      if (value.consumerExitConfirmed !== true || typeof value.runId !== "string" || !/^[A-Za-z0-9-]{1,100}$/.test(value.runId)
+        || typeof value.generation !== "string" || !/^[A-Za-z0-9-]{1,100}$/.test(value.generation)
+        || !Number.isSafeInteger(value.expectedRevision) || Number(value.expectedRevision) < 0)
+        throw new AppContextError(400, "recovery_invalid", "Review this run and confirm that its agent and commands have stopped.");
+      const input: WorkerRecovery = { requestId, generation: value.generation, expectedRevision: Number(value.expectedRevision), consumerExitConfirmed: true, actorId };
+      const previous = session.record.workerRecovery;
+      const replay = previous?.input.requestId === requestId;
+      if (replay && (previous.runId !== value.runId || JSON.stringify(previous.input) !== JSON.stringify(input)))
+        throw new AppContextError(409, "recovery_conflict", "Reuse the original recovery request.");
+      if (session.record.workerRun && session.record.workerRun.id !== value.runId)
+        throw new AppContextError(409, "recovery_stale", "This conversation has another execution. Refresh its state.");
+      if (replay && previous.state === "completed") return;
+      if (!this.worker || !replay && session.record.workerRun?.id !== value.runId)
+        throw new AppContextError(409, "recovery_stale", "This conversation has no matching interrupted execution.");
+      if (previous?.state === "pending" && !replay)
+        throw new AppContextError(409, "recovery_pending", "Retry the retained recovery request first.");
+      // Read before retaining a new request: a stale review must not poison future recovery.
+      if (!replay) {
+        const receipt = await this.worker.request<WorkerReceipt>(`/v1/runs/${value.runId}`);
+        if (receipt.conversationId !== id || receipt.generation !== input.generation || receipt.revision !== input.expectedRevision
+          || receipt.state !== "interrupted" || receipt.exitConfirmed)
+          throw new AppContextError(409, "recovery_stale", "The execution changed. Refresh its recovery review.");
+        session.record.workerRecovery = { runId: value.runId, input, state: "pending" };
+        await this.store.saveRecord(session.record);
+      }
+      if (credential) session.workspaceCredential = credential;
+      let receipt: WorkerReceipt;
+      try { receipt = await this.worker.request<WorkerReceipt>(`/v1/runs/${value.runId}/recover`, "POST", input, true); }
+      catch (error) {
+        if (error instanceof WorkerApiError && ["recovery_active", "recovery_stale", "recovery_invalid"].includes(error.code)) {
+          delete session.record.workerRecovery;
+          await this.store.saveRecord(session.record);
+        }
+        throw error;
+      }
+      if (receipt.conversationId !== id || !receipt.exitConfirmed || receipt.recovery?.requestId !== requestId)
+        throw new AppContextError(503, "exit_unconfirmed", "Recovery did not confirm this execution. Keep its source leases.");
+      await this.cancelSessionLocked(id);
+      session.record.workerRecovery = { runId: value.runId, input, state: "completed" };
+      await this.store.saveRecord(session.record);
+      this.audit.report("ai_execution_recovered", { sessionId: id, runId: value.runId, requestId, actorId });
     });
   }
 

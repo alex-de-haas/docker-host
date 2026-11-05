@@ -1,7 +1,7 @@
 import { SUGGESTION_DEADLINE_MS, suggestionText, successfulResult } from "../harness/prompt-suggestion.js";
 import type { HarnessAdapter, HarnessEvent, HarnessRun } from "../harness/adapter.js";
 import { WorkerJournal } from "./journal.js";
-import { WorkerApiError, terminal, safeIdentity, validateRun, validateMcpServers, type WorkerRunRequest, type WorkerControl, type WorkerPark, type WorkerReceipt } from "./contracts.js";
+import { WorkerApiError, terminal, safeIdentity, validateRun, validateMcpServers, type WorkerRunRequest, type WorkerControl, type WorkerPark, type WorkerReceipt, type WorkerRecovery } from "./contracts.js";
 
 export interface WorkerExecution {
   adapter(request: WorkerRunRequest): Promise<HarnessAdapter>;
@@ -273,18 +273,25 @@ export class WorkerEngine {
       return (await this.journal.load(id)).receipt;
     }
     const active = this.active.get(id);
-    if (!terminal(receipt.state) && active) {
+    if ((!terminal(receipt.state) || receipt.state === "interrupted" && !receipt.exitConfirmed) && active) {
       try {
         await active.run.interrupt();
         if (active.run.stopAndWait) await active.run.stopAndWait(); else await active.run.stop();
         await this.journal.exclusive(async () => {
           const current = (await this.journal.load(id)).receipt;
-          if (!terminal(current.state)) await this.journal.update(id, "cancelled");
+          if (!terminal(current.state) || current.state === "interrupted" && !current.exitConfirmed) await this.journal.update(id, "cancelled");
         });
         if (this.active.get(id) === active) { active.release(); this.active.delete(id); this.admitted.delete(id); this.disabledSuggestions.delete(id); }
       } catch { await this.fail(id, "Cancellation could not confirm native execution exit."); }
     }
     return (await this.journal.load(id)).receipt;
+  }
+  async recover(id: string, input: WorkerRecovery): Promise<WorkerReceipt> {
+    return this.journal.exclusive(async () => {
+      if (this.active.has(id) || this.admitted.has(id))
+        throw new WorkerApiError(409, "recovery_active", "The worker still owns this execution. Retry Stop to verify native exit.");
+      return this.journal.recover(id, input);
+    });
   }
   async disableSuggestions(id: string, controlId: string): Promise<WorkerReceipt> {
     return this.journal.exclusive(async () => {
