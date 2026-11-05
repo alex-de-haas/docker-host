@@ -92,15 +92,16 @@ the application. Private, local and active-development sources use their own sou
 Distribution migrations additionally match exact historical URLs and require app.0.2 destinations;
 explicit source pins are excluded from automatic suggestions.
 
-Shell's App Details → Updates tab also exposes exact source-migration suggestions for that
-application, including first-time feed binding, before/after review, durable recovery and return
-to the previous source. An installation without a feeds document is a normal state, not a retryable
-feed-read failure. Opening the tab does not select a source, update the app or restart it. Live and
-development installations retain their source controls without a migration action.
+Shell's App Details → Updates tab selects the channel published by the application and exposes
+exact source-migration suggestions for that application, including first-time feed binding,
+before/after review, durable recovery and return to the previous source. An installation without a
+feeds document is a normal state, not a retryable feed-read failure. Opening the tab does not select
+a source, update the app or restart it. Live and development installations retain their source
+controls without a migration action.
 
-Shell's Host → Updates page shows suggested migrations and explicit custom feed selection, before/
-after review, recovery and return to the previous source. Delegated clients need both `apps.install`
-and `apps.sources.full`; applying also requires Core's operator confirmation for the exact request.
+Host → Updates contains no application source or migration section. Delegated source-switch
+clients need both `apps.install` and `apps.sources.full`; applying also requires Core's operator
+confirmation for the exact request.
 Ordinary app update permission alone cannot approve a publisher switch. Direct CLI and authorized
 Core MCP operations use the same durable domain plan and revision guards.
 

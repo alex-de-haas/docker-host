@@ -6,15 +6,17 @@ import { listSessions, type AssistantSession } from "@/lib/assistant-api";
 import { developmentRequest, type DevelopmentWorkspace } from "@/lib/development-api";
 import { Button } from "./ui/button";
 import { Textarea } from "./ui/textarea";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "./ui/dialog";
+import { Dialog, DialogContent, DialogBody, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "./ui/dialog";
 import { RefreshCw } from "lucide-react";
+import { FeedbackAgentSettings, type FeedbackAgentConfig } from "./feedback-agent-settings";
+import type { BrowserAgentDefaults } from "@/lib/browser-agent-preferences";
 
-const selectClass = "rounded-md border bg-background px-2 py-2 text-sm";
+const selectClass = "w-full min-w-0 max-w-full rounded-md border bg-background px-2 py-2 text-sm";
 const isBusy = (status?: string) => !!status && ["running", "awaiting_approval", "awaiting_question", "suggesting"].includes(status);
 export const feedbackEligible = (report: FeedbackReport) => report.status === "unprocessed" && !report.disposition;
 const label = (r: FeedbackReport) => r.comment.trim() || r.annotations[0]?.text || "Feedback";
 type Review = { reports: FeedbackReport[]; repeat: boolean };
-type DispatchBody = { requestId: string; reports: { id: string; revision: number }[]; sessionId: string | null; workspaceId: string | null; instruction: string };
+type DispatchBody = FeedbackAgentConfig & { requestId: string; reports: { id: string; revision: number }[]; sessionId: string | null; workspaceId: string | null; instruction: string };
 
 export function FeedbackInbox({ workspaceId, sessionId, running, disabled = false }: { workspaceId?: string; sessionId?: string; running?: boolean; disabled?: boolean }) {
   const [data, setData] = useState<FeedbackCollection>({ reports: [], dispatches: [] });
@@ -25,6 +27,8 @@ export function FeedbackInbox({ workspaceId, sessionId, running, disabled = fals
   const [targetWorkspace, setTargetWorkspace] = useState(workspaceId ?? ""), [targetChat, setTargetChat] = useState(sessionId ?? "");
   const [sessions, setSessions] = useState<AssistantSession[]>([]), [workspaces, setWorkspaces] = useState<DevelopmentWorkspace[]>([]);
   const [busy, setBusy] = useState(false), [uncertain, setUncertain] = useState(false);
+  const [agentConfig, setAgentConfig] = useState<FeedbackAgentConfig>({}), [agentReady, setAgentReady] = useState(false);
+  const onBrowserDefaults = useCallback((defaults: BrowserAgentDefaults | undefined) => setAgentConfig(current => ({ ...current, browserDefaults: defaults })), []);
   const pending = useRef<DispatchBody | null>(null), generation = useRef(0), directOpened = useRef(false);
   const refresh = useCallback(() => {
     const current = ++generation.current;
@@ -56,7 +60,7 @@ export function FeedbackInbox({ workspaceId, sessionId, running, disabled = fals
   const openReview = async (reports: FeedbackReport[], repeat = false) => {
     if (!reports.length || disabled || busy) return;
     pending.current = null; setUncertain(false); setError(""); setNotice("");
-    setReview({ reports, repeat }); setTargetWorkspace(workspaceId ?? ""); setTargetChat(sessionId ?? "");
+    setReview({ reports, repeat }); setTargetWorkspace(workspaceId ?? ""); setTargetChat(sessionId ?? ""); setAgentConfig({}); setAgentReady(false);
     try { await loadDestinations(); } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   };
   const deliver = async (body: DispatchBody) => {
@@ -78,7 +82,7 @@ export function FeedbackInbox({ workspaceId, sessionId, running, disabled = fals
   const send = async () => {
     if (!review || busy) return;
     await deliver(pending.current ?? { requestId: crypto.randomUUID(), reports: review.reports.map(r => ({ id: r.id, revision: r.revision })),
-      workspaceId: targetWorkspace || null, sessionId: targetChat || null, instruction });
+      workspaceId: targetWorkspace || null, sessionId: targetChat || null, instruction, ...(!targetChat ? agentConfig : {}) });
   };
   const sendReports = async (reports: FeedbackReport[], repeat = false) => {
     if (!workspaceId) return openReview(reports, repeat);
@@ -104,7 +108,7 @@ export function FeedbackInbox({ workspaceId, sessionId, running, disabled = fals
   const detail = data.reports.find(r => r.id === detailId);
   const target = sessions.find(s => s.id === targetChat);
   const targetBusy = targetChat === sessionId && running || isBusy(target?.status);
-  const canSend = !!review?.reports.length && !busy && !disabled && (!targetChat || !!target && !targetBusy);
+  const canSend = !!review?.reports.length && !busy && !disabled && (!targetChat ? agentReady : !!target && !targetBusy);
   const chatStatus = !workspaceId ? null : !sessionId ? { label: "Select a chat", detail: "Select a chat in this workspace to send feedback." }
     : running ? { label: "Chat busy", detail: "This chat is busy. Wait for it to finish before sending feedback." } : null;
   if (workspaceId && !error && (!loaded || !scoped.length)) return null;
@@ -118,7 +122,7 @@ export function FeedbackInbox({ workspaceId, sessionId, running, disabled = fals
     {!workspaceId && <p className="text-sm text-muted-foreground">Review observations, select related feedback and send it to one chat.</p>}
     {error && <p role="alert" className="text-sm text-destructive-foreground">{error}</p>}
     {notice && <p role="status" className="text-sm">{notice}</p>}
-    {!workspaceId && <div className="flex flex-wrap gap-2">
+    {!workspaceId && <div className="flex flex-wrap gap-2 [&>select]:w-auto">
       <select aria-label="Feedback status" className={selectClass} value={status} onChange={e => setStatus(e.target.value)}>
         <option value="unprocessed">Unprocessed</option><option value="pending">In progress</option><option value="processed">Processed</option><option value="needs-review">Needs review</option><option value="all">All</option>
       </select>
@@ -160,13 +164,16 @@ export function FeedbackInbox({ workspaceId, sessionId, running, disabled = fals
           {d.state === "reserved" && <Button size="sm" variant="outline" disabled={busy} onClick={() => void recover(d)}>Recover delivery</Button>}
         </li>)}</ul></details></>}
     </DialogContent></Dialog>
-    <Dialog open={!!review} onOpenChange={open => { if (!open && !busy && !uncertain) setReview(null); }}><DialogContent className="max-h-[85vh] overflow-auto sm:max-w-xl" onEscapeKeyDown={e => { if (uncertain || busy) e.preventDefault(); }} onPointerDownOutside={e => { if (uncertain || busy) e.preventDefault(); }}>
+    <Dialog open={!!review} onOpenChange={open => { if (!open && !busy && !uncertain) setReview(null); }}><DialogContent className="sm:max-w-xl" showCloseButton={!busy && !uncertain} onEscapeKeyDown={e => { if (uncertain || busy) e.preventDefault(); }} onPointerDownOutside={e => { if (uncertain || busy) e.preventDefault(); }}>
       <DialogHeader><DialogTitle>{review?.repeat ? "Send feedback again" : "Send feedback to chat"}</DialogTitle><DialogDescription>One prompt will contain {review?.reports.length ?? 0} complete reports. Review the destination and add any instructions.</DialogDescription></DialogHeader>
-      <ul className="max-h-40 list-inside list-decimal overflow-auto text-sm">{review?.reports.map(r => <li key={r.id}>{label(r)} · {r.annotations.length} annotations · {r.status}</li>)}</ul>
-      <label className="grid gap-1 text-sm">Workspace<select aria-label="Workspace" className={selectClass} value={targetWorkspace} disabled={busy || uncertain} onChange={e => { setTargetWorkspace(e.target.value); setTargetChat(""); }}>
+      <DialogBody>
+      <ul className="max-h-40 min-w-0 list-inside list-decimal overflow-y-auto text-sm wrap-anywhere">{review?.reports.map(r => <li key={r.id}>{label(r)} · {r.annotations.length} annotations · {r.status}</li>)}</ul>
+      <label className="grid min-w-0 gap-1 text-sm">Workspace<select aria-label="Workspace" className={selectClass} value={targetWorkspace} disabled={busy || uncertain} onChange={e => { setTargetWorkspace(e.target.value); setTargetChat(""); if (targetChat) setAgentReady(false); }}>
         <option value="">New workspace through a new chat</option>{workspaces.map(w => <option key={w.id} value={w.id}>{w.name ?? w.owner.label ?? w.id.slice(0, 8)}</option>)}</select></label>
-      <label className="grid gap-1 text-sm">Chat<select aria-label="Chat" className={selectClass} value={targetChat} disabled={busy || uncertain} onChange={e => setTargetChat(e.target.value)}><option value="">New chat · default agent</option>
+      <label className="grid min-w-0 gap-1 text-sm">Chat<select aria-label="Chat" className={selectClass} value={targetChat} disabled={busy || uncertain} onChange={e => { setTargetChat(e.target.value); if (!e.target.value) setAgentReady(false); }}><option value="">New chat</option>
         {sessions.filter(s => (s.workspaceAssociation?.id ?? "") === targetWorkspace).map(s => <option key={s.id} value={s.id}>{s.title ?? "Untitled chat"}{isBusy(s.status) ? " · busy" : ""}</option>)}</select></label>
+      {!targetChat ? <FeedbackAgentSettings value={agentConfig} onChange={setAgentConfig} onReadyChange={setAgentReady} onDefaultsChange={onBrowserDefaults} disabled={busy || uncertain} />
+        : <p className="text-sm text-muted-foreground">Uses this chat’s current agent, reasoning and autonomy settings.</p>}
       <Button variant="outline" size="sm" disabled={busy || uncertain} onClick={() => {
         void call("/feedback").then(response => response.json() as Promise<FeedbackCollection>).then(fresh => {
           setData(fresh); setReview(previous => previous && { ...previous, reports: previous.reports.flatMap(old => {
@@ -181,6 +188,7 @@ export function FeedbackInbox({ workspaceId, sessionId, running, disabled = fals
       {targetBusy && <p role="status" className="text-sm">This chat is busy. Wait for it to finish or choose another chat.</p>}
       {uncertain && <p role="status" className="text-sm">Delivery was not confirmed. Retry uses the same request and cannot create a second prompt.</p>}
       {error && <p role="alert" className="text-sm text-destructive-foreground">{error}</p>}
+      </DialogBody>
       <DialogFooter><Button variant="outline" disabled={busy || uncertain} onClick={() => setReview(null)}>Cancel</Button><Button disabled={!canSend && !uncertain || busy} onClick={() => void send()}>{busy ? "Sending…" : uncertain ? "Retry same request" : "Send to chat"}</Button></DialogFooter>
     </DialogContent></Dialog>
   </section>;

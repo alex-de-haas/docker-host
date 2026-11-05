@@ -5,6 +5,7 @@ import { Loader2, Shield, ShieldAlert } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { setSessionAutonomy, type AssistantSession } from "@/lib/assistant-api";
+import { rememberAutonomy } from "@/lib/browser-agent-preferences";
 
 export function SessionAutonomy({ session, busy, onChange, onSavingChange, onErrorChange }: {
   session: AssistantSession;
@@ -22,7 +23,10 @@ export function SessionAutonomy({ session, busy, onChange, onSavingChange, onErr
   const save = async (value: string) => {
     if (savingRef.current || busy || active || value !== "normal" && value !== "autonomous") return;
     savingRef.current = true; setSaving(true); onSavingChange(true); setError("");
-    try { onChange(await setSessionAutonomy(session.id, value)); }
+    try {
+      const record = await setSessionAutonomy(session.id, value);
+      rememberAutonomy(record); onChange(record);
+    }
     catch (cause) { setError(cause instanceof Error ? cause.message : "Could not change autonomy."); }
     finally { savingRef.current = false; setSaving(false); onSavingChange(false); }
   };
