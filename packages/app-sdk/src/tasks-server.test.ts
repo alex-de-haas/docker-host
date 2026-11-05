@@ -41,3 +41,16 @@ it("rejects another installation and route escape before reaching the provider",
   expect(fetch).toHaveBeenCalledTimes(1);
   expect(() => new TaskClient(providers(), ref).get({ ...ref, installationId: "other", id: "x" })).toThrow("another provider");
 });
+
+it("preserves recoverable-removal scope and forwards the explicit trash query in v1", async () => {
+  const fetch = vi.fn().mockResolvedValueOnce(Response.json({ token: "scoped", provider: descriptor("tasks") }))
+    .mockResolvedValueOnce(Response.json({ tasks: [], nextCursor: null }))
+    .mockResolvedValueOnce(Response.json({ token: "scoped", provider: descriptor("tasks") }))
+    .mockResolvedValueOnce(Response.json({ removed: { batchId: "request" } }));
+  vi.stubGlobal("fetch", fetch); const client = new TaskClient(providers(), ref);
+  await client.list({ removed: true });
+  expect(fetch.mock.calls[1]![0]).toContain("removed=true");
+  const taskRef = { ...ref, id: "task" }, command = { requestId: "request", expectedRevision: 4, action: "remove" as const, removalScope: [{ taskRef, revision: 4 }] };
+  await client.action(taskRef, command);
+  expect(JSON.parse(fetch.mock.calls[3]![1].body)).toEqual(command);
+});

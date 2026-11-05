@@ -12,7 +12,9 @@ type Execution = {
   source?: { workspaceId: string };
   sessionId?: string; adoptionId?: string; launchRequested: boolean; cancellation: boolean;
   launch?: { commandId: string; prompt: string; contextRevision: number; selectionRevision: number; delivered?: boolean };
-  outcome?: { requestId: string; result: TaskResult; childOutcomes?: import("@hosty-sdk/app/tasks").TaskOutcomeRef[] }; cancelRequests: string[];
+  failure?: { requestId: string; result: TaskResult };
+  supersededOutcomes?: unknown[];
+  outcome?: { requestId: string; result: TaskResult; inputGeneration?: number; childOutcomes?: import("@hosty-sdk/app/tasks").TaskOutcomeRef[] }; cancelRequests: string[];
 };
 
 /** The acceptance and cancellation tombstones outlive session/event retention. */
@@ -148,14 +150,42 @@ export class HarnessTaskExecutor {
         const now = new Date().toISOString(); record = { scope: authority.scope, actor: authority.actor, launchRequested: false,
           cancellation: true, cancelRequests: [requestId], receipt: { executionId: uuid(id), revision: 1, state: "cancelled", stopConfirmed: true, createdAt: now, updatedAt: now } };
       } else {
-        this.checked(record, authority); if (record.cancelRequests.includes(requestId)) return record.receipt;
+        this.checked(record, authority);
+        if (record.cancelRequests.includes(requestId)) {
+          if (record.sessionId) await this.manager.fenceTaskCancellation(record.sessionId, id);
+          return record.receipt;
+        }
         record.cancelRequests.push(requestId); record.cancellation = true;
         if (!taskExecutionTerminal(record.receipt.state) || !record.receipt.stopConfirmed) {
           record.receipt.state = record.launchRequested ? "cancelling" : "cancelled";
           record.receipt.stopConfirmed = !record.launchRequested; this.touch(record);
         }
       }
-      await this.save(key, record); this.authorities.set(key, authority); return record.receipt;
+      await this.save(key, record);
+      if (record.sessionId) await this.manager.fenceTaskCancellation(record.sessionId, id);
+      this.authorities.set(key, authority); return record.receipt;
+    });
+  }
+  fail(sessionId: string, requestId: string, value: unknown) {
+    return this.serial(async () => {
+      uuid(requestId); const result = taskResult(value);
+      for (const key of await this.keys()) {
+        const record = (await this.load(key))!;
+        if (record.sessionId !== sessionId) continue;
+        if (record.failure) {
+          if (record.failure.requestId !== requestId || fingerprint(record.failure.result) !== fingerprint(result))
+            return taskError("result_conflict", "Recover the original unsuccessful report.");
+          return { recorded: true, executionId: record.receipt.executionId, outcome: "failed" };
+        }
+        const inputGeneration = (await this.manager.getSession(sessionId))?.taskInputGeneration ?? 0;
+        if (record.outcome && (record.outcome.inputGeneration ?? 0) !== inputGeneration) {
+          (record.supersededOutcomes ??= []).push(record.outcome); delete record.outcome;
+        }
+        if (record.cancellation || record.outcome || taskExecutionTerminal(record.receipt.state)) return taskError("execution_closed", "This attempt no longer accepts a different report.");
+        record.failure = { requestId, result }; this.touch(record); await this.save(key, record);
+        return { recorded: true, executionId: record.receipt.executionId, outcome: "failed" };
+      }
+      return taskError("task_binding_required", "This session is not bound to an active task.");
     });
   }
   report(sessionId: string, requestId: string, value: unknown) {
@@ -164,6 +194,16 @@ export class HarnessTaskExecutor {
       for (const key of await this.keys()) {
         const record = (await this.load(key))!;
         if (record.sessionId !== sessionId) continue;
+        // Capture before awaiting barrier reads: a question arriving during admission must
+        // supersede this report, even if its answer is delivered before reconciliation.
+        const inputGeneration = (await this.manager.getSession(sessionId))?.taskInputGeneration ?? 0;
+        const barrier = await this.manager.taskCompletionBarrier(sessionId);
+        if (barrier) return taskError("required_input_pending", barrier.message);
+        if (record.failure) return taskError("result_conflict", "An unsuccessful outcome is already recorded.");
+        if (record.outcome && (record.outcome.inputGeneration ?? 0) !== inputGeneration) {
+          if (record.outcome.requestId === requestId) return taskError("result_superseded", "Required input superseded that result. Verify the answer and report a new result.");
+          (record.supersededOutcomes ??= []).push(record.outcome); delete record.outcome;
+        }
         if (record.outcome) {
           if (record.outcome.requestId !== requestId || fingerprint(record.outcome.result) !== fingerprint(result)) return taskError("result_conflict", "An explicit result is already recorded.");
           return { recorded: true, executionId: record.receipt.executionId };
@@ -173,7 +213,7 @@ export class HarnessTaskExecutor {
         if (record.cancellation || taskExecutionTerminal(record.receipt.state) && !liveInterrupted)
           return taskError("execution_closed", "This task execution no longer accepts results.");
         const childOutcomes = record.input ? await this.beforeResult?.(record.input, record.receipt.executionId) : undefined;
-        record.outcome = { requestId, result, childOutcomes }; this.touch(record); await this.save(key, record);
+        record.outcome = { requestId, result, childOutcomes, inputGeneration }; this.touch(record); await this.save(key, record);
         return { recorded: true, executionId: record.receipt.executionId };
       }
       return taskError("task_binding_required", "This session is not bound to an active task.");
@@ -235,7 +275,7 @@ export class HarnessTaskExecutor {
         // crash ambiguity after this point; recovery must never send a fresh turn automatically.
         const session = (await this.manager.getSession(r.sessionId))!;
         const input = r.input!.content;
-        const prompt = `${input.title}\n\n${input.markdown}\n\nTask resource references (context, not permission):\n${JSON.stringify(input.resources)}\n\nReport the explicit task outcome with task_result using a UUID requestId and result { markdown, resources }. Then finish this turn. A chat reply alone does not complete the task.`;
+        const prompt = `${input.title}\n\n${input.markdown}\n\nTask resource references (context, not permission):\n${JSON.stringify(input.resources)}\n\nWhen the requested work and required verification are complete, call task_result with a fresh UUID requestId, completed: true and result { markdown, resources }, then finish. Missing mandatory information or setup requires task_request_input and yielding for its Decision, never a successful result or a question only in chat. Use task_fail for an unsuccessful terminal outcome. A chat reply or stopped turn alone is not task completion.`;
         r.launch = { commandId: r.adoptionId ? session.taskBarrier!.commandId : r.receipt.executionId, prompt,
           contextRevision: session.appContextRevision ?? 0, selectionRevision: session.selectionRevision ?? 0 };
         r.launchRequested = true; await this.save(key, r);
@@ -265,6 +305,7 @@ export class HarnessTaskExecutor {
       }
       if (!r.cancellation && r.launchRequested) {
         const session = await this.manager.getSession(r.sessionId);
+        const completionBarrier = session ? await this.manager.taskCompletionBarrier(r.sessionId) : undefined;
         if (!session) { r.receipt.state = "interrupted"; r.receipt.stopConfirmed = false; r.receipt.error = { code: "session_missing", message: "The execution session is unavailable; native exit is unconfirmed." }; }
         else if (session.taskBarrier && session.taskBarrier.state !== "resuming") {
           r.receipt.state = "awaiting_input"; r.receipt.stopConfirmed = false;
@@ -273,17 +314,19 @@ export class HarnessTaskExecutor {
             const control = await this.aggregate.readJournal<{ reason: string }>("runtime-control:" + r.receipt.executionId);
             r.receipt.error = { code: control?.reason ?? "limits", message: "Execution is paused at its retained checkpoint by root policy." };
           }
-          r.receipt.wait = { kind: session.taskBarrier.kind === "child_wait" ? "children" : session.taskBarrier.kind === "task_adoption" ? "mode" : session.taskBarrier.kind === "limits" ? "limits" : "source", reference: session.taskBarrier.id };
+          if (session.taskBarrier.kind === "human_input" && completionBarrier) r.receipt.error = { code: "required_input", message: completionBarrier.message };
+          r.receipt.wait = { kind: session.taskBarrier.kind === "human_input" ? "human" : session.taskBarrier.kind === "child_wait" ? "children" : session.taskBarrier.kind === "task_adoption" ? "mode" : session.taskBarrier.kind === "limits" ? "limits" : "source", reference: session.taskBarrier.id };
         }
         else if (session.taskRun?.error) { r.receipt.state = "interrupted"; r.receipt.stopConfirmed = false; r.receipt.error = { code: "exit_unconfirmed", message: session.taskRun.error }; }
         else if (session.taskRun?.exitConfirmed && !session.taskRun.started) {
           r.receipt.state = "failed"; r.receipt.stopConfirmed = true;
           r.receipt.error = { code: "admission_failed", message: "The task was rejected before native execution started." };
-        } else if (["awaiting_question", "awaiting_approval"].includes(session.status)) {
+        } else if (completionBarrier || ["awaiting_question", "awaiting_approval"].includes(session.status)) {
           r.receipt.state = "awaiting_input";
           r.receipt.stopConfirmed = false;
           r.receipt.nativeStopConfirmed = session.taskRun?.exitConfirmed === true;
-          delete r.receipt.error;
+          if (completionBarrier) { r.receipt.wait = { kind: "human", reference: completionBarrier.reference }; r.receipt.error = { code: "required_input", message: completionBarrier.message }; }
+          else delete r.receipt.error;
         }
         else if (session.status === "running") {
           r.receipt.state = "running"; r.receipt.nativeStopConfirmed = false; delete r.receipt.wait; delete r.receipt.error;
@@ -294,7 +337,8 @@ export class HarnessTaskExecutor {
         } else if (session.taskRun?.exitConfirmed) {
           r.receipt.stopConfirmed = true;
           if (session.status === "cancelled") r.receipt.state = "cancelled";
-          else if (session.status === "idle" && r.outcome) { r.receipt.state = "completed"; r.receipt.result = r.outcome.result; r.receipt.childOutcomes = r.outcome.childOutcomes; delete r.receipt.error; }
+          else if (r.failure) { r.receipt.state = "failed"; r.receipt.result = r.failure.result; r.receipt.error = { code: "task_failed", message: r.failure.result.markdown.slice(0, 2000) }; }
+          else if (session.status === "idle" && r.outcome && (r.outcome.inputGeneration ?? 0) === (session.taskInputGeneration ?? 0)) { r.receipt.state = "completed"; r.receipt.result = r.outcome.result; r.receipt.childOutcomes = r.outcome.childOutcomes; delete r.receipt.error; }
           else { r.receipt.state = "failed"; r.receipt.error = { code: "task_result_missing", message: "The turn stopped without an explicit successful task outcome." }; }
         } else {
           const receipt = await this.manager.messageReceipt(r.sessionId, r.launch?.commandId ?? r.receipt.executionId, r.actor.userId!);

@@ -23,6 +23,7 @@ export class TaskClient {
     if (options.status) query.set("status", options.status);
     if (options.parentTaskRef) query.set("parentTaskRef", taskReferenceKey(options.parentTaskRef));
     if (options.rootTaskRef) query.set("rootTaskRef", taskReferenceKey(options.rootTaskRef));
+    if (options.removed !== undefined) query.set("removed", String(options.removed));
     if (options.rootsOnly !== undefined) query.set("rootsOnly", String(options.rootsOnly));
     return this.call<TaskPage>(`/tasks?${query}`, "GET", undefined, options.signal);
   }

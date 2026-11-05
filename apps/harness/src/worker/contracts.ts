@@ -32,7 +32,7 @@ export type WorkerReceipt = {
   usage?: { sequence: number; activeMs: number; unknown: boolean };
   selection: ExecutionSelection; snapshot?: { text?: string; nativeSessionId?: string; result?: HarnessEvent; contextUsage?: WorkerEvent }; createdAt: string; updatedAt: string; error?: string;
 };
-export type WorkerBarrier = { controlId: string; expectedRevision: number; kind: "task_adoption" | "child_wait" | "source_rebind" | "limits"; barrierId: string; generation: number; acknowledgedSequence: number; origin?: "coordinator" };
+export type WorkerBarrier = { controlId: string; expectedRevision: number; kind: "task_adoption" | "child_wait" | "source_rebind" | "limits" | "human_input"; barrierId: string; generation: number; acknowledgedSequence: number; origin?: "coordinator" };
 export type WorkerPark = { controlId: string; eventId: number; expectedRevision: number; id: string };
 export type WorkerControl = { controlId: string; eventId: number; expectedRevision: number } & (
   { kind: "approval"; id: string; decision: "allow" | "deny"; message?: string }

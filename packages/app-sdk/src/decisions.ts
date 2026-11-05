@@ -25,6 +25,7 @@ export interface DecisionRecord {
   sourceAppId: string | null; sourceInstallation: string | null; sourcePrincipal: string;
   input: DecisionInput | null; state: DecisionState; createdAt: string; updatedAt: string;
   resolution: DecisionResolution | null; delivery: { resolutionRevision: number; receivedAt: string | null } | null;
+  notificationPending?: boolean | null;
   continuation: DecisionContinuation | null; reason?: string | null; contentRemovedAt?: string | null;
 }
 export interface DecisionPage { items: DecisionRecord[]; pendingCount: number; cursor: string | null }

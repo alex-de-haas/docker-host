@@ -102,6 +102,7 @@ export function DecisionAnswerForm({ record, unavailable = false, onSaved }: { r
       })) })}>I reviewed this revision</Button></div>}
     {pending && <div className="space-y-2"><p className="text-xs text-muted-foreground">Your answer is saved once and passed to the originating work. Permissions remain separate.</p>
       <Button disabled={busy || unavailable || !draft.request && (!valid || stale)} onClick={() => void submit()}>{busy ? "Saving…" : draft.request ? "Check original submission" : "Submit answer"}</Button></div>}
+    {record.notificationPending && record.state === "pending" && <p role="alert">The question is saved, but its notification could not be delivered. Delivery will be retried.</p>}
     {record.resolution && <div role="status" className="space-y-1 border-t pt-3 text-sm"><p>Answer saved · {new Date(record.resolution.answeredAt).toLocaleString()}</p>
       <p>Continuation: {label(record.continuation?.state ?? "pending")}{record.continuation?.reason ? ` · ${label(record.continuation.reason)}` : ""}</p>
       {record.continuation?.outcome && <p>{record.continuation.outcome}</p>}

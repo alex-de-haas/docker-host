@@ -34,6 +34,8 @@ export interface SessionRecord {
   taskDispatch?: import("@hosty-sdk/app/providers").TaskDispatchRef;
   autonomyRevision?: number;
   taskAdoptionApplied?: { id: string; executionId: string; before: string; after: string };
+  taskInputGeneration?: number;
+  taskCancellationRequested?: string;
   taskBarrier?: {
     id: string; kind: import("../worker/contracts.js").WorkerBarrier["kind"]; generation: number; owner: string;
     snapshot: string; runId: string; state: "armed" | "parked" | "resuming"; commandId: string;
