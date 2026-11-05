@@ -148,6 +148,68 @@ try {
   const reports=await (await page.request.get(config.harness+'/api/feedback')).json();const report=reports.reports.find(r=>r.comment===reportTitle);
   assert.ok(report,'submitted report is in Core inbox');assert.equal(report.context.appId,'hosty.harness');assert.equal(submitted.scope.appId,'hosty.harness');
   console.log('PASS: Harness owns drafts, automatic full screenshots, persistence and frozen retry; source identity survives submission');
+  // Use a separate page so inbox acceptance does not resize the native tab-capture surface.
+  const inbox=await context.newPage();inbox.on('pageerror',error=>errors.push(error.message));
+  try {
+    const revisedTitle=reportTitle+' revised',revisedNote='Revised browser observation';
+    const dispatches=[];inbox.on('request',request=>{if(request.method()==='POST'&&new URL(request.url()).pathname==='/api/feedback/dispatches')dispatches.push(request.url());});
+    const row=title=>inbox.getByRole('listitem').filter({hasText:title});
+    const openReport=async title=>row(title).getByRole('button').first().click();
+    const action=async(title,name,scope=inbox)=>{
+      await scope.getByRole('button',{name:'Feedback actions for '+title,exact:true}).click();
+      await inbox.getByRole('menu').waitFor();
+      assert.deepEqual(await inbox.getByRole('menuitem').allTextContents(),['Edit','Delete']);
+      await inbox.getByRole('menuitem',{name,exact:true}).click();
+    };
+    await inbox.goto(config.harness+'/feedback/');await openReport(reportTitle);
+    const details=inbox.getByRole('dialog',{name:'Feedback details',exact:true});
+    await details.getByRole('img',{name:'User-approved screenshot for this annotation',exact:true}).waitFor();
+    assert.equal(await details.locator('input,select,textarea').count(),0,'Feedback preview has no editable controls');
+    assert.equal(await details.getByRole('button',{name:/^(Send to chat|Send again|Dismiss|Restore|Mark duplicate|Recover delivery)$/}).count(),0,'Preview keeps sending and report management out of its actions');
+    await action(reportTitle,'Edit',details);
+    const editor=inbox.getByRole('dialog',{name:'Edit feedback',exact:true});
+    await editor.getByLabel('Overall comment',{exact:true}).fill('Cancelled browser edit');
+    await editor.getByRole('button',{name:'Cancel',exact:true}).click();
+    await details.getByText(reportTitle,{exact:true}).waitFor();
+    await details.getByRole('button',{name:'Close',exact:true}).click();
+    await details.waitFor({state:'hidden'});
+    await row(reportTitle).getByRole('button').first().waitFor();
+    assert.equal(await row(reportTitle).getByRole('button').count(),2,'A row has separate preview and actions controls');
+    await action(reportTitle,'Edit');
+    assert.equal(await inbox.getByLabel('Select '+reportTitle,{exact:true}).isChecked(),false,'Opening the row menu does not select the report');
+    await editor.getByLabel('Overall comment',{exact:true}).fill(revisedTitle);
+    await editor.getByLabel('Annotation 1',{exact:true}).fill(revisedNote);
+    await editor.getByRole('button',{name:'Save changes',exact:true}).click();
+    await details.getByText(revisedTitle,{exact:true}).waitFor();
+    await details.getByText(revisedNote,{exact:true}).waitFor();
+    const editedCollection=await (await inbox.request.get(config.harness+'/api/feedback')).json();
+    const edited=editedCollection.reports.find(r=>r.id===report.id);
+    assert.equal(edited.comment,revisedTitle);assert.equal(edited.annotations[0].text,revisedNote);
+    assert.equal(edited.status,'unprocessed');assert.equal(edited.currentAttemptId,null);
+    assert.deepEqual(edited.context,report.context);
+    assert.deepEqual(edited.annotations,report.annotations.map((note,i)=>({...note,text:i===0?revisedNote:note.text})));
+    await inbox.reload();await openReport(revisedTitle);
+    await details.getByText(revisedNote,{exact:true}).waitFor();
+    await details.getByRole('img',{name:'User-approved screenshot for this annotation',exact:true}).waitFor();
+    await action(revisedTitle,'Delete',details);
+    const confirmation=inbox.getByRole('dialog',{name:'Delete feedback?',exact:true});
+    await confirmation.getByRole('button',{name:'Cancel',exact:true}).click();
+    await details.getByText(revisedTitle,{exact:true}).waitFor();
+    await details.getByRole('button',{name:'Close',exact:true}).click();
+    await action(revisedTitle,'Delete');
+    await confirmation.getByRole('button',{name:'Delete feedback',exact:true}).click();
+    await inbox.getByText('Feedback deleted.',{exact:true}).waitFor();
+    await inbox.getByRole('dialog').waitFor({state:'hidden'});
+    assert.equal(await inbox.getByRole('dialog').count(),0);
+    assert.equal(await inbox.getByRole('listitem').filter({hasText:revisedTitle}).count(),0);
+    const remaining=await (await inbox.request.get(config.harness+'/api/feedback')).json();
+    assert.equal(remaining.reports.some(r=>r.id===report.id),false);
+    assert.equal((await inbox.request.get(config.harness+'/api/feedback/'+report.id+'/images/'+report.annotations[0].id)).status(),404);
+    assert.equal(dispatches.length,0,'Preview and Edit/Delete menus never dispatch an agent prompt');
+    const replay=await inbox.request.post(config.harness+'/api/hosty/ui/feedback',{headers:{Origin:config.harness},data:submitted});
+    assert.equal(replay.status(),200);assert.deepEqual(await replay.json(),{id:report.id,status:'deleted'});
+    console.log('PASS: read-only feedback preview, row/header Edit/Delete menus, retained screenshots/context, reload, confirmation and tombstoned intake retry');
+  } finally {await inbox.close();}
   // Browser IndexedDB exercises real transactional conflicts, not a storage mock.
   const stale=await context.newPage();await stale.goto(config.harness+'/feedback-panel/');const staleForm=stale.getByRole('main',{name:'Feedback draft'});
   await staleForm.getByText('New report',{exact:true}).waitFor();

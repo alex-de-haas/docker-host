@@ -55,10 +55,29 @@ it("shows the observed child process and preserves ordinary application preview 
   await act(async () => root.render(<WorkspacePreviews workspaceId="work" />));
   expect(container.querySelector('time[datetime="2026-10-21T12:00:00Z"]')).not.toBeNull();
   expect(container.textContent).not.toContain("time to ready");
-  expect(container.querySelector('a[href="http://core.test/login"]')?.textContent).toContain("Open test Core");
+  const core = container.querySelector<HTMLAnchorElement>('a[aria-label="Open test Core"]')!;
+  expect(core.href).toBe("http://core.test/login"); expect(core.target).toBe("_blank"); expect(core.rel.split(/\s+/)).toContain("noreferrer");
+  expect(core.textContent).toBe(""); expect(core.querySelector('svg[aria-hidden="true"]')).not.toBeNull();
   expect(container.querySelector('a[href="http://app.test/view?mode=preview#section"]')).not.toBeNull();
   const warning = [...container.querySelectorAll('[role="status"]')].find(node => node.textContent?.startsWith("Restart required"))!;
   expect(warning.closest("details")).toBeNull();
+});
+
+it.each(["stopped", "starting", "failed"])("keeps the child %s state visible without an active test Core link", async state => {
+  vi.mocked(developmentRequest).mockResolvedValue({ environments: [{ id: "child", label: "Retained preview", state, previewUrl: "https://core.test" }], applications: {} });
+  await act(async () => root.render(<WorkspacePreviews workspaceId="work" />));
+  const badge = container.querySelector('[data-slot="badge"]')!;
+  expect(badge.textContent).toBe(state); expect(badge.closest("details, [hidden]")).toBeNull();
+  expect(container.textContent).toContain("Separate Core and test data");
+  expect(container.querySelector('a[aria-label="Open test Core"]')).toBeNull();
+});
+
+it.each([undefined, "javascript:alert(1)", "https://user:password@core.test"])("omits the test Core link for unavailable or unsafe preview URL %s", async previewUrl => {
+  vi.mocked(developmentRequest).mockResolvedValue({ ...reply({}), environments: [{ id: "child", label: "Retained preview", state: "running", previewUrl }] });
+  await act(async () => root.render(<WorkspacePreviews workspaceId="work" />));
+  expect(container.querySelector('[data-slot="badge"]')?.textContent).toBe("running");
+  expect(container.querySelector('a[aria-label="Open test Core"]')).toBeNull();
+  expect(container.querySelector('a[href="http://core.test/open"]')).not.toBeNull();
 });
 
 function deferred<T>() {

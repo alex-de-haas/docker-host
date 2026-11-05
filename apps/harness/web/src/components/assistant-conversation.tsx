@@ -32,6 +32,7 @@ import {
   MessageScrollerItem, MessageScrollerProvider, MessageScrollerViewport,
 } from "@/components/ui/message-scroller";
 import { transcriptItems } from "@/lib/transcript-items";
+import { feedbackCardForEvent, useFeedbackTranscript } from "@/lib/feedback-transcript";
 import { resolveTranscriptReview, type TranscriptReviewReference } from "@/lib/transcript-edits";
 import { InputGroup, InputGroupAddon } from "@/components/ui/input-group";
 import { useWorkspaceSessionActions } from "@/lib/use-workspace-session-actions";
@@ -996,6 +997,7 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
   // nowhere else.
   const attachmentIndex = useMemo(() => indexAttachments(events), [events]);
   const items = useMemo(() => transcriptItems(events, attachmentIndex.claimed), [events, attachmentIndex]);
+  const feedbackTranscript = useFeedbackTranscript(session?.id, events, !historyLoading && !showSessions);
 
   const pendingDecision = events.find(event => status === "awaiting_approval" && event.type === "approval_request" && !decidedApprovals.has(String(event.approvalId)) || status === "awaiting_question" && event.type === "question_request" && !cancelledQuestionIds.has(String(event.questionId)) && !answeredQuestions.has(String(event.questionId)));
 
@@ -1148,6 +1150,8 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
                       event={item.event}
                       appNames={appNames}
                       attachments={attachmentIndex}
+                      feedbackCard={feedbackCardForEvent(item.event, feedbackTranscript.cards)}
+                      feedbackLoading={feedbackTranscript.loading}
                       reviewContext={transcriptReviewContext}
                       decision={item.event.type === "approval_request" ? decidedApprovals.get(String(item.event.approvalId)) ?? null : null}
                       questionCancelled={item.event.type === "question_request" && cancelledQuestionIds.has(String(item.event.questionId))}

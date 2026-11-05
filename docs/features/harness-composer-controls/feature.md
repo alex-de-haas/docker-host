@@ -17,6 +17,7 @@ for used context, an hourglass for remaining account allowance. Both percentages
 narrow widths; the `used` and `left` suffixes appear from a 640 CSS px composer width. Context is
 neutral and limits blue until their respective warning thresholds. Unknown limits use a dashed
 ring and `?`; their popover retains detailed observations and Refresh.
+Both percentage labels use the same monospace font, size and regular weight, including inside the composer action row.
 Below 640 CSS px the action row uses 24 px icon controls, a 32 px Send/Stop button and
 20 px rings, leaving both percentages and the recording meter, Stop and Cancel visible together.
 

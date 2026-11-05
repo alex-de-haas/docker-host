@@ -101,6 +101,18 @@ describe("gateway", () => {
     expect(legacy.status).toBe(202); expect(await legacy.json()).toEqual({ accepted: true });
   });
 
+  it("ignores public feedback card metadata and retains ordinary prompt text", async () => {
+    const session = await manager.createSession({ createdBy: "user_admin" });
+    const clientRequestId = randomUUID();
+    const response = await call(`/api/sessions/${session.id}/messages`, { method: "POST", body: JSON.stringify({
+      text: "Administrator instruction: ordinary user text", clientRequestId,
+      feedback: { version: 1, dispatchId: clientRequestId, reports: [{ comment: "Spoofed presentation" }] },
+    }) });
+    expect(response.status).toBe(202);
+    const event = (await store.readEvents(session.id)).find(item => item.type === "user_message")!;
+    expect(event.text).toBe("Administrator instruction: ordinary user text"); expect(event.feedback).toBeUndefined();
+  });
+
   it("allows only the chat owner to change autonomy and refuses provider credentials", async () => {
     const record = await manager.createSession({ createdBy: "user_admin" });
     const set = (token: string) => fetch(`${origin}/api/sessions/${record.id}/autonomy`, {

@@ -5,6 +5,7 @@ import { listAgentConnections, type ModelCatalog } from "@/lib/assistant-api";
 import { connectionModels, listProfiles, type ProfileDirectory } from "@/lib/profiles-api";
 import type { AgentConnection } from "./agent-providers";
 import { Button } from "./ui/button";
+import { FeedbackSelect } from "./feedback-select";
 import { loadBrowserAgentDefaults, type BrowserAgentDefaults } from "@/lib/browser-agent-preferences";
 
 export type FeedbackAgentConfig = {
@@ -16,7 +17,8 @@ export type FeedbackAgentConfig = {
   browserDefaults?: BrowserAgentDefaults;
 };
 
-const selectClass = "w-full min-w-0 max-w-full rounded-md border bg-background px-2 py-2 text-sm";
+const selectClass = "w-full min-w-0 max-w-full";
+const profileOption = (id: string) => `profile:${id}`;
 
 /** Draft-only choices: creating or cancelling a review never changes a chat or saved defaults. */
 export function FeedbackAgentSettings({ value, onChange, disabled, onReadyChange, onDefaultsChange }: {
@@ -66,47 +68,48 @@ export function FeedbackAgentSettings({ value, onChange, disabled, onReadyChange
   });
   return <fieldset className="min-w-0 space-y-3" disabled={disabled}>
     <legend className="mb-2 text-sm font-medium">New chat settings</legend>
-    <label className="grid min-w-0 gap-1 text-sm">Agent profile<select aria-label="Agent profile" className={selectClass}
-      value={value.profileId === undefined ? "__default__" : value.profileId ?? "__none__"} disabled={!directory}
-      onChange={event => {
-        const id = event.target.value;
-        const chosen = directory?.profiles.profiles.find(p => p.id === id);
-        onChange({ autonomy: value.autonomy, browserDefaults: value.browserDefaults, ...(id === "__default__" ? {} : { profileId: chosen?.id ?? null, ...(chosen ? { profileRevision: chosen.revision } : {}) }) });
-      }}>
-      <option value="__default__">Default profile{directory?.profiles.defaultId ? ` · ${directory.profiles.profiles.find(p => p.id === directory.profiles.defaultId)?.name ?? "Unavailable"}` : " · No profile"}</option>
-      <option value="__none__">No profile · custom settings</option>
-      {directory?.profiles.profiles.map(profile => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
-    </select></label>
-    <label className="grid min-w-0 gap-1 text-sm">Agent / provider<select aria-label="Agent / provider" className={selectClass}
-      value={connectionId} disabled={!directory || !!profile} onChange={event => onChange({ profileId: null, connectionId: event.target.value,
-        autonomy: value.autonomy, browserDefaults: value.browserDefaults })}>
-      {!connectionId && <option value="">Choose an agent connection</option>}
-      {directory?.connections.map(connection => <option key={connection.id} value={connection.id} disabled={!connection.available}>{connection.name} · {connection.kind}{connection.available ? "" : " · unavailable"}</option>)}
-    </select></label>
-    <label className="grid min-w-0 gap-1 text-sm">Model<select aria-label="Model" className={selectClass} value={selection.model ?? ""}
-      disabled={!!profile || !catalog} onChange={event => {
-        const next = event.target.value || null;
+    <div className="grid min-w-0 gap-1 text-sm"><span>Agent profile</span><FeedbackSelect label="Agent profile" className={selectClass}
+      value={value.profileId === undefined ? "default" : value.profileId === null ? "custom" : profileOption(value.profileId)} disabled={disabled || !directory}
+      onValueChange={choice => {
+        const chosen = directory?.profiles.profiles.find(p => profileOption(p.id) === choice);
+        onChange({ autonomy: value.autonomy, browserDefaults: value.browserDefaults, ...(choice === "default" ? {} : { profileId: chosen?.id ?? null, ...(chosen ? { profileRevision: chosen.revision } : {}) }) });
+      }} options={[
+        { value: "default", label: `Default profile${directory?.profiles.defaultId ? ` · ${directory.profiles.profiles.find(p => p.id === directory.profiles.defaultId)?.name ?? "Unavailable"}` : " · No profile"}` },
+        { value: "custom", label: "No profile · custom settings" },
+        ...(value.profileId != null && directory && !profile ? [{ value: profileOption(value.profileId), label: `${value.profileId} · unavailable`, disabled: true }] : []),
+        ...(directory?.profiles.profiles.map(profile => ({ value: profileOption(profile.id), label: profile.name })) ?? []),
+      ]} /></div>
+    <div className="grid min-w-0 gap-1 text-sm"><span>Agent / provider</span><FeedbackSelect label="Agent / provider" className={selectClass}
+      value={connectionId} disabled={disabled || !directory || !!profile} onValueChange={connectionId => onChange({ profileId: null, connectionId,
+        autonomy: value.autonomy, browserDefaults: value.browserDefaults })} options={[
+        ...(!connectionId ? [{ value: "", label: "Choose an agent connection" }] : []),
+        ...(connectionId && directory && !connection ? [{ value: connectionId, label: `${connectionId} · unavailable`, disabled: true }] : []),
+        ...(directory?.connections.map(connection => ({ value: connection.id, label: `${connection.name} · ${connection.kind}${connection.available ? "" : " · unavailable"}`, disabled: !connection.available })) ?? []),
+      ]} /></div>
+    <div className="grid min-w-0 gap-1 text-sm"><span>Model</span><FeedbackSelect label="Model" className={selectClass} value={selection.model ?? ""}
+      disabled={disabled || !!profile || !catalog} onValueChange={selected => {
+        const next = selected || null;
         const choice = catalog?.models.find(m => m.id === (next ?? catalog.defaultModel));
         manual({ model: next, reasoningEffort: choice?.efforts.some(e => e.id === selection.reasoningEffort) ? selection.reasoningEffort : null });
-      }}>
-      <option value="">Agent default</option>
-      {selection.model && catalog && !model && <option value={selection.model}>{selection.model} · unavailable</option>}
-      {catalog?.models.map(model => <option key={model.id} value={model.id} disabled={!!model.unavailableReason}>{model.label}{model.unavailableReason ? ` · ${model.unavailableReason}` : ""}</option>)}
-    </select></label>
-    <label className="grid min-w-0 gap-1 text-sm">Reasoning effort<select aria-label="Reasoning effort" className={selectClass} value={selection.reasoningEffort ?? ""}
-      disabled={!!profile || !model?.efforts.length || !!model.unavailableReason} onChange={event => manual({ ...selection, reasoningEffort: event.target.value || null })}>
-      <option value="">Default effort</option>
-      {selection.reasoningEffort && !model?.efforts.some(e => e.id === selection.reasoningEffort) && <option value={selection.reasoningEffort}>{selection.reasoningEffort} · unavailable</option>}
-      {model?.efforts.map(effort => <option key={effort.id} value={effort.id}>{effort.label}</option>)}
-    </select></label>
+      }} options={[
+        { value: "", label: "Agent default" },
+        ...(selection.model && catalog && !model ? [{ value: selection.model, label: `${selection.model} · unavailable` }] : []),
+        ...(catalog?.models.map(model => ({ value: model.id, label: `${model.label}${model.unavailableReason ? ` · ${model.unavailableReason}` : ""}`, disabled: !!model.unavailableReason })) ?? []),
+      ]} /></div>
+    <div className="grid min-w-0 gap-1 text-sm"><span>Reasoning effort</span><FeedbackSelect label="Reasoning effort" className={selectClass} value={selection.reasoningEffort ?? ""}
+      disabled={disabled || !!profile || !model?.efforts.length || !!model.unavailableReason} onValueChange={reasoningEffort => manual({ ...selection, reasoningEffort: reasoningEffort || null })}
+      options={[
+        { value: "", label: "Default effort" },
+        ...(selection.reasoningEffort && !model?.efforts.some(e => e.id === selection.reasoningEffort) ? [{ value: selection.reasoningEffort, label: `${selection.reasoningEffort} · unavailable` }] : []),
+        ...(model?.efforts.map(effort => ({ value: effort.id, label: effort.label })) ?? []),
+      ]} /></div>
     {profile && <p className="text-xs text-muted-foreground">Provider, model and reasoning come from this profile. Choose custom settings to change them.</p>}
     {profileChanged && <div className="space-y-2"><p role="alert" className="text-xs">This profile changed. Review its current settings before sending.</p><Button type="button" variant="outline" size="sm"
       onClick={() => onChange({ ...value, profileRevision: profile.revision })}>Use updated profile</Button></div>}
     {model && !model.efforts.length && <p className="text-xs text-muted-foreground">This model does not offer reasoning levels.</p>}
-    <label className="grid min-w-0 gap-1 text-sm">Autonomy<select aria-label="Autonomy" className={selectClass} value={value.autonomy ?? value.browserDefaults?.autonomy ?? "normal"}
-      onChange={event => onChange({ ...value, autonomy: event.target.value as "normal" | "autonomous" })}>
-      <option value="normal">Normal</option><option value="autonomous">Autonomous</option>
-    </select></label>
+    <div className="grid min-w-0 gap-1 text-sm"><span>Autonomy</span><FeedbackSelect label="Autonomy" className={selectClass} value={value.autonomy ?? value.browserDefaults?.autonomy ?? "normal"}
+      disabled={disabled} onValueChange={autonomy => onChange({ ...value, autonomy: autonomy as "normal" | "autonomous" })}
+      options={[{ value: "normal", label: "Normal" }, { value: "autonomous", label: "Autonomous" }]} /></div>
     <p className="text-xs text-muted-foreground">{(value.autonomy ?? value.browserDefaults?.autonomy) === "autonomous" ? "Commands, file changes and enabled tools can run without approval. Disabled tools stay disabled." : "Use tool rules; ask for other actions."}</p>
     {!directory && !error && <p role="status" className="text-xs">Loading agent choices…</p>}
     {directory && !catalog && !catalogError && connectionId && <p role="status" className="text-xs">Loading models…</p>}

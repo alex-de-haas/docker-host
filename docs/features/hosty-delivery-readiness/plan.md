@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-13
-updated: 2026-10-30
+updated: 2026-11-05
 summary: Local demo priorities through November 5 for host-contained agents, workspace Docker sandboxes, app creation, Git review, optional feedback and gradual redesign.
 components: [apps/core, apps/harness, apps/shell]
 ---
@@ -286,8 +286,8 @@ sending is refused without a queue and preserves the selected reports/instructio
 excludes already processed and accepted/running reports. Processing is linked to each report's
 exact prompt/run outcome, with no separate Closed state. Retain evidence for manual Send again
 with new explanations and attempt history. A report has zero or one current workspace binding;
-reassignment preserves the observation/version snapshot. On workspace deletion, delete currently
-processed reports/evidence and detach all others intact into the global inbox. PR state and app
+reassignment preserves the observation/version snapshot. On workspace deletion, delete all currently
+bound reports/evidence regardless of processing state, retaining reports reassigned elsewhere. PR state and app
 rollout do not gate processing or trigger deletion. Only administrators inspect reports and outcomes;
 ordinary reporters receive no post-submission view, status or notifications. Browser screenshots
 use the selected Screen Capture API with explicit user permission, without DOM-renderer workarounds.

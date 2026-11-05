@@ -12,6 +12,8 @@ export type FeedbackReport = { id: string; reporterId: string; comment: string; 
     executionKind: string; workspaceId: string | null; sourceRevision: string | null };
   workspaceId: string | null; revision: number; status: string; currentAttemptId: string | null; disposition: string | null };
 export type FeedbackSelection = { id: string; revision: number };
+export type FeedbackEdit = { requestId: string; expectedRevision: number; comment: string; annotations: { id: string; text: string }[] };
+export type FeedbackDelete = { requestId: string; expectedRevision: number };
 export type FeedbackDispatchInput = { requestId: string; sessionId: string; workspaceId: string | null;
   reports: FeedbackSelection[]; instruction: string; appContextRevision?: number; selectionRevision?: number };
 export type FeedbackOutcome = { reportId: string; summary: string; handledAnnotationIds: string[]; handled: boolean };

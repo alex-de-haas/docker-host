@@ -53,6 +53,14 @@ internal static class FeedbackEndpoints
                 await Workspace(workspaces, inspection, actor.UserId, input.WorkspaceId, ctx.RequestAborted);
                 return CoreJson.Json(await store.ChangeAsync(reportId, input, ctx.RequestAborted));
             }));
+        app.MapPost(admin + "/{reportId}/edit", (string appId, string reportId, HttpContext ctx,
+            ProviderAccessService access, AppIdentityService identity, FeedbackStore store) =>
+            WithApp(appId, ctx, access, identity, true, async (_, _) =>
+                CoreJson.Json(await store.EditAsync(reportId, await Read<FeedbackEdit>(ctx), ctx.RequestAborted))));
+        app.MapPost(admin + "/{reportId}/delete", (string appId, string reportId, HttpContext ctx,
+            ProviderAccessService access, AppIdentityService identity, FeedbackStore store) =>
+            WithApp(appId, ctx, access, identity, true, async (_, _) =>
+                CoreJson.Json(await store.DeleteAsync(reportId, await Read<FeedbackDelete>(ctx), ctx.RequestAborted))));
         app.MapPost(admin + "/dispatches", (string appId, HttpContext ctx, ProviderAccessService access,
             AppIdentityService identity, FeedbackStore store, DevelopmentWorkspaceService workspaces, WorkspaceInspectionService inspection) =>
             WithApp(appId, ctx, access, identity, true, async (caller, actor) =>
@@ -79,6 +87,14 @@ internal static class FeedbackEndpoints
         app.MapGet("/api/feedback", (HttpContext ctx, UserDirectoryStore users, IClock clock, FeedbackStore store) =>
             CoreSessionAuthorization.RequireAdminSessionAsync(ctx.Request, users, clock,
                 () => Handle(ctx, async () => CoreJson.Json(await store.ListAsync(ctx.RequestAborted))), cancellationToken: ctx.RequestAborted));
+        app.MapPost("/api/feedback/{reportId}/edit", (string reportId, HttpContext ctx, UserDirectoryStore users, IClock clock, FeedbackStore store) =>
+            CoreSessionAuthorization.RequireAdminSessionAsync(ctx.Request, users, clock,
+                () => Handle(ctx, async () => CoreJson.Json(await store.EditAsync(reportId, await Read<FeedbackEdit>(ctx), ctx.RequestAborted))),
+                requireCsrf: true, cancellationToken: ctx.RequestAborted));
+        app.MapPost("/api/feedback/{reportId}/delete", (string reportId, HttpContext ctx, UserDirectoryStore users, IClock clock, FeedbackStore store) =>
+            CoreSessionAuthorization.RequireAdminSessionAsync(ctx.Request, users, clock,
+                () => Handle(ctx, async () => CoreJson.Json(await store.DeleteAsync(reportId, await Read<FeedbackDelete>(ctx), ctx.RequestAborted))),
+                requireCsrf: true, cancellationToken: ctx.RequestAborted));
         app.MapPost("/api/apps/{appId}/feedback", (string appId, HttpContext ctx, UserDirectoryStore users, IClock clock,
             AppIdentityService identity, FeedbackStore store, CoreDataPaths paths, DevelopmentWorkspaceService workspaces) =>
             CoreSessionAuthorization.RequireSessionAsync(ctx.Request, users, clock, actor => Handle(ctx, async () =>

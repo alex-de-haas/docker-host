@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-24
-updated: 2026-10-31
+updated: 2026-11-05
 summary: Umbrella for assistant sessions that own a conversation, its source workspaces, tests and pull requests.
 components: [apps/harness, apps/core, apps/shell]
 ---
@@ -171,8 +171,8 @@ global dispatch defaults to a new session and normally new source preparation, w
 existing-workspace alternative. The October 30 scope is manual dispatch of several reports to one
 session, with prompt-linked processing and administrator-only tracking. Processed reports support
 manual repeat attempts with retained evidence; there is no Closed state. Each report has at most
-one current workspace binding. Deleting that workspace removes processed reports and detaches all
-others with their evidence/version context intact. Automatic routing, reporter outcome
+one current workspace binding. Deleting that workspace removes all currently bound reports and
+their evidence, regardless of processing state. Reports reassigned elsewhere remain intact. Automatic routing, reporter outcome
 views/notifications and task associations are outside that feature's current delivery.
 Cross-session handoffs and the broader acceptance below remain tracked requirements of this
 umbrella, but are not prerequisites for the one-provider first demonstration. Partial integration

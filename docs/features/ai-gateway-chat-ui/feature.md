@@ -1,6 +1,6 @@
 ---
 created: 2026-09-22
-updated: 2026-10-28
+updated: 2026-11-05
 summary: The chat components Harness uses for messages, code blocks, attachments, the composer and collapsible activity.
 components: [apps/harness]
 ---
@@ -42,16 +42,32 @@ The viewport keeps a thin scrollbar and a stable gutter during automatic and man
 scrolling. Following the bottom does not hide the scrollbar: changing its width reflows
 messages and can trigger a resize/autoscroll loop even in an idle conversation.
 
+## Message Formatting
+
+Submitted user prompts and assistant replies use the same Markdown renderer. User bubbles retain
+their visual alignment while rendering headings, emphasis, lists, block quotes, tables, inline code
+and fenced code. Single line breaks remain visible. The composer and stored/sent message text retain
+the original Markdown source; formatting also applies to messages restored from history.
+
+Raw HTML stays inert. Links use the existing allowed URL schemes and open separately; Markdown
+image references remain links instead of fetching remote images. Uploaded attachments retain their
+existing message association, including attachment-only prompts.
+
+Reviewed feedback uses a compact [feedback card](../app-feedback-inbox/feature.md#feedback-cards-in-chat-history)
+with counts and observation summaries. Details and the exact original request expand separately;
+screenshots remain counts. Server-owned dispatch identity and authorized snapshots distinguish
+these cards from ordinary Markdown messages, including messages restored from older history.
+
 ## Code Blocks
 
-Assistant markdown fences, expanded tool input, command approvals, and fallback approval
+User and assistant Markdown fences, expanded tool input, command approvals, and fallback approval
 JSON use a shared code block. It supports syntax highlighting, copy, optional wrapping,
 and expansion beyond the initial 12 lines. Long lines scroll inside the block. Unknown
 languages remain readable, and unfinished fences render during streaming.
 
 Explicit copy values preserve commands and notation-like comments. Markdown extraction
 removes the parser's closing newline. Existing markdown link/image restrictions remain
-in force. User messages remain plain text, and file-change before/after views retain
+in force. File-change before/after views retain
 their existing diff presentation and limits.
 
 ## Composer and App Context
@@ -188,6 +204,10 @@ installation has only a Codex connection.
 
 ## Testing Expectations
 
+- User prompt rendering covers Markdown structure, literal code and preserved line breaks, allowed
+  links and inert HTML/image references, plus attachment-only turns and unchanged source text.
+- Feedback-card coverage checks exact message identity, historical/live loading, session and focus
+  recovery, unavailable-data fallback, collapsed details/original request and retained attachments.
 - Verify aligned command/MCP rows, per-call failure badges and a separately labeled execution-time
   badge. Cover zero, missing, invalid and conflicting durations without deriving time from event
   timestamps. Exercise Codex result fields, Claude success/failure hooks and ambiguous child calls,

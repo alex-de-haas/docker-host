@@ -1,22 +1,19 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { FeedbackServerClient } from "@hosty-sdk/app/feedback/server";
-import { FeedbackError, type FeedbackDispatch, type FeedbackDispatchInput, type FeedbackOutcome, type FeedbackCapabilities } from "@hosty-sdk/app/feedback";
+import { FeedbackError, type FeedbackDispatch, type FeedbackDispatchInput, type FeedbackOutcome, type FeedbackCapabilities, type FeedbackEdit, type FeedbackDelete } from "@hosty-sdk/app/feedback";
 import type { SessionManager } from "../sessions/manager.js";
-import type { SessionRecord, StoredEvent } from "../sessions/store.js";
+import type { StoredEvent } from "../sessions/store.js";
 import { AppContextError, MAX_CONTEXT_APPS, readContextApps } from "../sessions/app-context.js";
 import type { ProviderDirectory } from "../settings/providers.js";
 import { feedbackRecoveryHint } from "./tools.js";
+import { feedbackWorkspace } from "./workspace.js";
+import { feedbackPresentation, isFeedbackMessageReference, type FeedbackTranscript } from "./presentation.js";
+export { feedbackWorkspace } from "./workspace.js";
 
 const owned = (d: FeedbackDispatch, scope: FeedbackCapabilities) => d.actorId === scope.userId && d.callerAppId === scope.appId && d.callerInstallation === scope.installation;
 const active = (d: FeedbackDispatch) => ["reserved", "accepted", "unknown"].includes(d.state);
 const busy = (status: string) => ["running", "awaiting_question", "awaiting_approval", "suggesting"].includes(status);
 const fail = (code: string, message: string, status = 409): never => { throw new FeedbackError(code, message, status); };
-
-export function feedbackWorkspace(session: SessionRecord): string | null {
-  if (session.workspaceAssociation) return session.workspaceAssociation.id;
-  const ids = [...new Set((session.developmentWorkspaces ?? []).filter(w => w.state === "active").map(w => w.workspaceId).filter((id): id is string => !!id))];
-  return ids.length === 1 ? ids[0]! : null;
-}
 
 /** Only persisted events belonging to the accepted message establish completion. */
 export function feedbackTurn(events: StoredEvent[], sequence: number): { state: string; error?: string } | null {
@@ -92,6 +89,33 @@ export class FeedbackService {
     }
     return client.list(token);
   }
+  async transcript(sessionId: string, token: string, actor: string): Promise<FeedbackTranscript> {
+    if (!/^[a-zA-Z0-9-]+$/.test(sessionId)) fail("feedback_invalid", "Choose a valid chat.", 400);
+    const session = await this.manager.getSession(sessionId);
+    if (!session || session.createdBy !== actor) fail("session_not_found", "This chat is unavailable.", 404);
+    const client = this.clientFactory();
+    // These calls recheck the current administrator and app management grant without reconciling
+    // processing attempts or loading image evidence merely to render a conversation.
+    const [collection, scope] = await Promise.all([client.list(token), client.capabilities(token)]);
+    const events = (await this.manager.store.readEvents(sessionId)).filter(event => event.type === "user_message");
+    const cards: FeedbackTranscript["cards"] = [];
+    for (const dispatch of collection.dispatches.filter(d => d.input.sessionId === sessionId && d.actorId === actor && owned(d, scope))) {
+      const presentation = feedbackPresentation(dispatch);
+      if (!presentation) continue;
+      const matches = events.filter(event => {
+        if (typeof event.clientRequestId !== "string" || event.clientRequestId.toLowerCase() !== dispatch.id.toLowerCase()) return false;
+        if (isFeedbackMessageReference(event.feedback)) return event.feedback.dispatchId.toLowerCase() === dispatch.id.toLowerCase()
+          && (dispatch.messageSequence === null || event.seq === dispatch.messageSequence);
+        // Legacy events have no trusted reference. Core's exact admitted sequence plus the
+        // original message request identity binds them; prompt text is never interpreted.
+        return event.feedback === undefined && dispatch.messageSequence !== null && dispatch.messageSequence > 0
+          && event.seq === dispatch.messageSequence;
+      });
+      if (matches.length === 1 && Number.isSafeInteger(matches[0]!.seq) && matches[0]!.seq > 0)
+        cards.push({ ...presentation, messageSequence: matches[0]!.seq });
+    }
+    return { cards: cards.sort((a, b) => a.messageSequence - b.messageSequence) };
+  }
   async send(body: Record<string, unknown>, token: string, actor: string) {
     if (typeof body.requestId !== "string" || !/^[0-9a-f-]{36}$/i.test(body.requestId)) fail("feedback_invalid", "Use a stable UUID for this dispatch.", 400);
     if (body.sessionId !== undefined && body.sessionId !== null && typeof body.sessionId !== "string") fail("feedback_invalid", "Choose a destination chat or start a new chat.", 400);
@@ -153,7 +177,8 @@ export class FeedbackService {
         "Before finishing, call feedback_result with an outcome for every report: reportId, summary, handledAnnotationIds, handled. Set handled=true only when all requested work including the overall comment is handled. Include only annotations actually handled. Then finish this turn normally. Partial work and questions must remain unprocessed."].join("\n\n");
       try {
         const posted = await this.manager.postMessage(sessionId!, text, token, [], { workspaceCredential: token, clientRequestId: requestId, actorUserId: actor,
-          expectedRevision: dispatch.input.appContextRevision, selectionRevision: dispatch.input.selectionRevision, promptSuggestions: false });
+          expectedRevision: dispatch.input.appContextRevision, selectionRevision: dispatch.input.selectionRevision, promptSuggestions: false,
+          feedback: { version: 1, dispatchId: dispatch.id } });
         const receipt = posted ?? await this.manager.messageReceipt(sessionId!, requestId, actor);
         await client.delivery(requestId, { state: receipt.state === "accepted" ? "accepted" : "unknown", messageSequence: receipt.eventSeq, workspaceId }, token);
       } catch (error) {
@@ -200,13 +225,19 @@ export class FeedbackService {
     const send = (value: unknown) => { response.setHeader("content-type", "application/json"); response.end(JSON.stringify(value)); };
     const client = this.clientFactory(), method = request.method;
     if (url.pathname === "/api/feedback" && method === "GET") send(await this.list(token, actor));
+    else if (url.pathname === "/api/feedback/transcript" && method === "GET") send(await this.transcript(url.searchParams.get("sessionId") ?? "", token, actor));
     else if (url.pathname === "/api/feedback/dispatches" && method === "POST") send(await this.send(await readJson(), token, actor));
     else {
       const image = url.pathname.match(/^\/api\/feedback\/([a-f0-9]{64})\/images\/([0-9a-f-]{36})$/i);
       const report = url.pathname.match(/^\/api\/feedback\/([a-f0-9]{64})$/);
+      const mutation = url.pathname.match(/^\/api\/feedback\/([a-f0-9]{64})\/(edit|delete)$/);
       if (image && method === "GET") {
         const result = await client.image(image[1]!, image[2]!, token); response.setHeader("content-type", result.headers.get("content-type") ?? "application/octet-stream");
         response.setHeader("X-Content-Type-Options", "nosniff"); response.end(Buffer.from(await result.arrayBuffer()));
+      } else if (mutation && method === "POST") {
+        const body = await readJson();
+        send(mutation[2] === "edit" ? await client.edit(mutation[1]!, body as FeedbackEdit, token)
+          : await client.remove(mutation[1]!, body as FeedbackDelete, token));
       } else if (report && method === "POST") {
         const body = await readJson(); send(await client.change(report[1]!, { expectedRevision: body.expectedRevision as number,
           workspaceId: body.workspaceId as string | null, disposition: body.disposition as string | null }, token));

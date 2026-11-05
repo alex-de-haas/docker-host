@@ -9,6 +9,8 @@ import { Button } from "@/components/ui/button";
 import { InlineError } from "@/components/status";
 import { Markdown } from "@/components/markdown";
 import { ChatAttachment } from "@/components/chat-attachment";
+import { FeedbackMessageCard } from "@/components/feedback-message-card";
+import { feedbackCardForEvent, feedbackReferenceForEvent, type FeedbackTranscriptCard } from "@/lib/feedback-transcript";
 import { ChatCodeBlock } from "@/components/chat-code-block";
 import { cn } from "@/lib/utils";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -37,9 +39,8 @@ export type TranscriptReviewContext = {
 // The transcript, moved out of Shell with the rest of the panel. The gateway's event log is the
 // source: every proposed write pauses as an inline approval card until the operator decides.
 //
-// Assistant prose is markdown; the operator's own message is not. What they typed is shown back to
-// them exactly as they typed it — a message that reformatted itself on send would leave them unsure
-// which of the two texts the harness actually received.
+// User prompts and assistant prose share Markdown presentation. The event log retains the original
+// source text; rendering does not rewrite the submitted prompt or its attachment metadata.
 
 /** How a card was resolved: the verdict, and the operator's reason when a deny carried one. */
 export type ApprovalDecision = { decision: string; message: string | null };
@@ -96,6 +97,8 @@ export function TranscriptEvent({
   onAnswer,
   appNames,
   attachments,
+  feedbackCard,
+  feedbackLoading = false,
   reviewContext,
 }: {
   event: AssistantEvent;
@@ -110,6 +113,8 @@ export function TranscriptEvent({
   appNames?: Record<string, string>;
   /** Every upload in the log; absent, each upload simply draws its own row. */
   attachments?: AttachmentIndex;
+  feedbackCard?: FeedbackTranscriptCard;
+  feedbackLoading?: boolean;
   reviewContext?: TranscriptReviewContext;
 }) {
   switch (event.type) {
@@ -122,10 +127,12 @@ export function TranscriptEvent({
       // this event is the only one that knows which message they belong to. Their upload rows draw
       // nothing in return, so no name reaches the screen twice.
       const names = (Array.isArray(event.attachments) ? event.attachments : []).map(String);
+      const card = feedbackCardForEvent(event, feedbackCard ? [feedbackCard] : []);
       return (
         <div className="space-y-1">
-          {String(event.text ?? "").trim() && <div className="ml-3 min-w-0 rounded-lg bg-primary/10 px-3 py-2 text-sm whitespace-pre-wrap wrap-anywhere sm:ml-8">
-            {String(event.text ?? "")}
+          {card || feedbackReferenceForEvent(event) ? <FeedbackMessageCard card={card} originalText={String(event.text ?? "")} loading={feedbackLoading} />
+            : String(event.text ?? "").trim() && <div className="ml-3 min-w-0 rounded-lg bg-primary/10 px-3 py-2 sm:ml-8">
+            <Markdown text={String(event.text ?? "")} />
           </div>}
           {names.length > 0 && (
             <AttachmentRow files={names.map((name) => ({ name, size: attachments?.sizes.get(name) ?? null }))} />

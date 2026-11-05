@@ -51,6 +51,8 @@ internal static class CoreJson
 [JsonSerializable(typeof(FeedbackResults))]
 [JsonSerializable(typeof(FeedbackDelivery))]
 [JsonSerializable(typeof(FeedbackChange))]
+[JsonSerializable(typeof(FeedbackEdit))]
+[JsonSerializable(typeof(FeedbackDelete))]
 [JsonSerializable(typeof(FeedbackCapabilities))]
 [JsonSerializable(typeof(FeedbackReviewTargets))]
 [JsonSerializable(typeof(FeedbackSubmissionReceipt))]
