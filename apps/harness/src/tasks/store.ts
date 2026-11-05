@@ -108,6 +108,8 @@ export type TaskState = {
   dispatches?: Record<string, import("@hosty-sdk/app/providers").TaskDispatchRef>;
   /** Executor-owned records share the same fsynced aggregate; they never appear in task responses. */
   journal?: Record<string, unknown>;
+  /** Pre-tree task records are retained verbatim, never admitted as execution trees. */
+  legacyTasks?: unknown[];
 };
 
 /** Single writer for tasks, graph, request receipts and private orchestration intents. No network I/O inside transactions. */
@@ -129,6 +131,13 @@ export class TaskStore {
     try {
       const s = JSON.parse(await readFile(this.file, "utf8")) as TaskState;
       if (s.version !== 1 || !Number.isSafeInteger(s.next) || s.next < 1 || !Array.isArray(s.tasks) || !Array.isArray(s.requests)) throw new Error("Invalid task store; refusing to reset it.");
+      // Earlier version-one stores predate rootTaskRef. Preserve those records without
+      // feeding them into tree policy, graph traversal or executor reconciliation.
+      const legacy = s.tasks.filter(t => !t.rootTaskRef);
+      if (legacy.length) {
+        s.legacyTasks = [...(s.legacyTasks ?? []), ...legacy];
+        s.tasks = s.tasks.filter(t => !!t.rootTaskRef);
+      }
       return s;
     } catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") return { version: 1, next: 1, tasks: [], requests: [] }; throw e; }
   }
