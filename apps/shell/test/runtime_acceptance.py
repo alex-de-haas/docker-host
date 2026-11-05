@@ -52,7 +52,7 @@ def check(context):
         {'redirectUri':link,'codeChallenge':challenge,'codeChallengeMethod':'S256'}, csrf)['code']
     call(app_origin, '/api/auth/app-code', {'code':code,'codeVerifier':verifier})
     assert call(app_origin, '/api/core/api/auth/session')['authenticated']
-    # Review only fixture workspace metadata access through the ordinary Core approval page.
+    # Review fixture workspace metadata and update-source access through the ordinary Core approval page.
     # No user data, provider permission or ordinary Core grant participates in this test.
     review = request('/api/installations', {'permissionsAppId':'hosty.shell'})
     request('/api/installations/'+review['id']+'/submit', {})
@@ -60,16 +60,31 @@ def check(context):
     with context['browser'].open(origin+review_path, timeout=30) as page:
         html = page.read().decode()
     nonce = re.search(r'name=nonce value="([^"]+)"', html)
-    assert nonce and 'apps.workspaces.read' in html, 'Missing fixture metadata permission review'
+    assert nonce and all(permission in html for permission in ['apps.workspaces.read', 'apps.sources.full']), 'Missing fixture source permission review'
     context['diagnostic_secrets'].add(nonce.group(1))
-    decision = urllib.parse.urlencode({'nonce':nonce.group(1), 'decision':'approve',
-        'optionalPermission':'apps.workspaces.read'}).encode()
+    decision = urllib.parse.urlencode([('nonce',nonce.group(1)), ('decision','approve'),
+        ('optionalPermission','apps.workspaces.read'), ('optionalPermission','apps.sources.full')]).encode()
     with context['browser'].open(urllib.request.Request(origin+review_path, data=decision,
         headers={'Content-Type':'application/x-www-form-urlencoded','Origin':origin}), timeout=30) as response: response.read()
     wait_for(lambda: request('/api/installations/'+review['id'])['status'] == 'succeeded')
     assert isinstance(call(app_origin, '/api/core/api/apps/execution-targets')['apps'], list)
     assert isinstance(call(app_origin, '/api/core/api/development/activation-workspaces')['workspaces'], list)
     say('PASS: Docker Shell, password login, Core launch identity and both workspace inventory endpoints')
+    # This local fixture intentionally has no feed. The proxy must preserve the structured
+    # absence code consumed by App Details, and migration reads must not alter the installation.
+    before_source_read = next(app for app in request('/api/apps')['apps'] if app['id'] == 'hosty.shell')
+    try:
+        call(app_origin, '/api/core/api/apps/hosty.shell/feeds')
+        raise AssertionError('An unbound installation unexpectedly acquired a feed')
+    except urllib.error.HTTPError as error:
+        assert json.load(error)['code'] == 'app_feeds_not_configured'
+    suggestions = call(app_origin, '/api/core/api/apps/update-source/suggestions')['suggestions']
+    assert not any(item['migration']['appId'] == 'hosty.shell' for item in suggestions)
+    after_source_read = next(app for app in request('/api/apps')['apps'] if app['id'] == 'hosty.shell')
+    for key in ['version', 'selectedRuntime', 'runtimeState', 'followedFeedId', 'installationId']:
+        assert before_source_read.get(key) == after_source_read.get(key), key
+    say('PASS: unbound feed state and source suggestions through authenticated Shell without installation changes')
+
     # A different authenticated client changes the managed inventory while Shell keeps one stream.
     # Payloads must contain final state without any inventory GET by the consumer.
     def stream_snapshot(stream, predicate):

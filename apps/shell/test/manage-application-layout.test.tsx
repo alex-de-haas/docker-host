@@ -281,3 +281,20 @@ it.each(["services", "metrics"] as const)("opens %s directly and retains section
   props.settingsTab = "app"; await render();
   expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe("Launch");
 });
+
+
+it("treats a missing feed binding as a normal state and offers this app's reviewed migration", async () => {
+  props.settingsTab = "source";
+  props.app = { ...app, live: false, selectedRuntime: "docker", installationId: "feed-install" };
+  vi.mocked(fetch).mockImplementation(async input => String(input).endsWith("/feeds")
+    ? Response.json({ code: "app_feeds_not_configured", message: "Runtime app is not bound to a feeds document." }, { status: 409 })
+    : Response.json({ suggestions: [{ migration: { migrationId: "media-migration", appId: app.id,
+      from: { manifestUrl: "https://publisher.test/main.json", feedsUrl: null, feedId: null },
+      to: { manifestUrl: null, feedsUrl: "https://publisher.test/feeds.json", feedId: "daily" } }, revision: "current" }] }));
+  await render();
+  expect(container.textContent).toContain("No update feed is configured");
+  expect(container.textContent).toContain("Review daily feed");
+  expect(container.textContent).not.toContain("Runtime app is not bound");
+  expect(container.textContent).not.toContain("Retry feeds");
+  expect(props.onSetFeed).not.toHaveBeenCalled(); expect(props.onManageAction).not.toHaveBeenCalled();
+});
