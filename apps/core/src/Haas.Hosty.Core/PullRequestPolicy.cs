@@ -18,6 +18,10 @@ internal static class PullRequestPolicy
         => pr.State == "open" && (pr.Checks.Items.Any(c => c.State is "running" or "pending") ||
             pr.Checks.Completeness == "unknown" && now - headObservedAt < UnknownWindow);
 
+    public static bool IsActive(PublicationObservation? observation)
+        => observation is null || observation.Checks?.Any(c => CheckState(c.State, c.State) is "pending" or "running") == true ||
+            observation is { State: "merged", Complete: false, CompletionIssue.State: "missing" or "pending" };
+
     public static TimeSpan Interval(bool demand, bool discovery, bool active)
         => !demand ? Baseline : discovery ? Discovery : active ? Active : Quiet;
 

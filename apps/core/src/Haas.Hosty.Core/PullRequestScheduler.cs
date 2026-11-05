@@ -69,7 +69,7 @@ internal sealed partial class PullRequestService
             }
             var preferred = SchedulingWeights[schedulingSlot++ % SchedulingWeights.Length];
             job = jobs.Where(j => j.Priority == preferred).OrderBy(j => j.Due).FirstOrDefault() ?? jobs.OrderBy(j => j.Due).FirstOrDefault();
-            var workspace = NextWorkspaceJob();
+            var workspace = NextWorkspaceJob(preferred);
             if (workspace is { } candidate && (job is null || candidate.Priority == preferred && job.Priority != preferred ||
                 candidate.Priority == job.Priority && candidate.Due < job.Due)) { workspaceJob = candidate.Job; job = null; }
             if (job is not null) { job.Repository.Busy = true; job.Repository.AttemptAt = clock.UtcNow; }
@@ -172,9 +172,12 @@ internal sealed partial class PullRequestService
     public async Task<PullRequestRefreshResult> RefreshAsync(PullRequestActor actor, PullRequestRefresh request, CancellationToken ct)
     {
         if (!Guid.TryParse(request.RequestId, out _) || request.Repositories?.Length > 100 || request.PullRequests?.Length > 100 || request.Repositories?.Any(id => id is null || id.Length > 128) == true ||
-            request.PullRequests?.Any(p => p is null || p.RepositoryId is null || p.RepositoryId.Length > 128) == true)
+            request.PullRequests?.Any(p => p is null || p.RepositoryId is null || p.RepositoryId.Length > 128) == true ||
+            request.Workspaces?.Length > 50 || request.Workspaces?.Any(id => id is null || id.Length != 64 || !id.All(char.IsAsciiHexDigit)) == true)
             throw new PullRequestException("pr_request_invalid", "Supply a UUID and bounded resource references.", 400);
+        await publications.ValidateObservationScopesAsync(actor, request.Workspaces ?? [], ct, request.PullRequests?.Distinct().Count() ?? 0);
         var owner = await ReconcileAsync(actor, ct);
+        if (request.Workspaces is { Length: > 0 }) await ReconcileWorkspaceJobsAsync(ct, force: true);
         lock (sync)
         {
             foreach (var key in refreshRequests.Where(p => p.Value <= clock.UtcNow).Select(p => p.Key).ToArray()) refreshRequests.Remove(key);
@@ -185,7 +188,21 @@ internal sealed partial class PullRequestService
             var repos = owner.Repositories.Values.Where(r => ids.Contains(r.Id, StringComparer.Ordinal) || refs.Any(p => p.RepositoryId == r.Id)).ToArray();
             if (ids.Any(id => !repos.Any(r => r.Id == id)) || refs.Any(p => p.Number <= 0 || !repos.Any(r => r.Id == p.RepositoryId && r.Items.ContainsKey(p.Number))))
                 throw new PullRequestException("pr_not_found", "Refresh references must identify currently authorized PR resources.", 404);
+            var workspaceIds = (request.Workspaces ?? []).Distinct(StringComparer.Ordinal).ToArray();
+            if (workspaceIds.Any(id => !workspaceJobs.Values.Any(v => v.Job.UserId == actor.UserId && v.Job.WorkspaceId == id)))
+                throw new PullRequestException("pr_workspace_inactive", "This workspace has no active tracked pull requests to refresh.", 409);
             DateTimeOffset? next = null;
+            foreach (var id in workspaceIds)
+            {
+                var cooldown = workspaceManualAt.TryGetValue(id, out var last) ? last.AddSeconds(10) : DateTimeOffset.MinValue;
+                if (cooldown > clock.UtcNow) { if (next is null || cooldown > next) next = cooldown; continue; }
+                workspaceManualAt[id] = clock.UtcNow;
+                foreach (var value in workspaceJobs.Values.Where(v => v.Job.UserId == actor.UserId && v.Job.WorkspaceId == id))
+                {
+                    requestedWorkspaceJobs.Add(value.Job.Id);
+                    if (value.Retry > clock.UtcNow && (next is null || value.Retry > next)) next = value.Retry;
+                }
+            }
             foreach (var r in repos)
             {
                 var cooldown = r.ManualAt?.AddSeconds(10);

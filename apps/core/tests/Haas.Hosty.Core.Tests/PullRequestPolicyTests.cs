@@ -18,6 +18,23 @@ public sealed class PullRequestPolicyTests
     [InlineData("MISSING", "", "unknown")]
     public void CheckResultsDoNotTreatSkippedOrUnknownAsPassing(string status, string conclusion, string expected)
         => Assert.Equal(expected, PullRequestPolicy.CheckState(status, conclusion));
+    [Theory]
+    [InlineData("missing", false, true)]
+    [InlineData("pending", false, true)]
+    [InlineData("failed", false, false)]
+    [InlineData("unavailable", false, false)]
+    [InlineData("unverified", false, false)]
+    [InlineData(null, false, false)]
+    [InlineData(null, true, false)]
+    public void MergeCompletionControlsActiveObservationIndependentlyOfPrHeadChecks(string? state, bool complete, bool active)
+    {
+        var observation = new PublicationObservation(DateTimeOffset.UnixEpoch, "merged", Complete: complete,
+            Checks: [new("tests", "SUCCESS")], CompletionIssue: state is null ? null : new("check", "release-ci", state, "merge"));
+        Assert.Equal(active, PullRequestPolicy.IsActive(observation));
+        Assert.Equal(active ? TimeSpan.FromSeconds(10) : TimeSpan.FromMinutes(1),
+            PullRequestPolicy.Interval(true, false, PullRequestPolicy.IsActive(observation)));
+    }
+
     [Fact]
     public void NoDemandAlwaysSelectsFiveMinutesEvenForActiveCi()
     {

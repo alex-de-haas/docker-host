@@ -2,7 +2,7 @@
 import { useState, useSyncExternalStore } from "react";
 import { CheckCircle2, CircleHelp, Clock3, XCircle, X, MinusCircle } from "lucide-react";
 import type { PullRequest } from "@/lib/development-api";
-import { hasRetainedCi } from "@/lib/pull-request-presentation";
+import { hasRetainedCi, completionPresentation } from "@/lib/pull-request-presentation";
 import { checkResult } from "@/lib/pull-request-checks";
 import { PullRequestCheckSummary } from "./pull-request-check-summary";
 import type { PrCheck } from "@/lib/pull-requests-api";
@@ -36,9 +36,11 @@ export function PullRequestChecks({ pr, stale, label, segmented = false }: { pr:
       check.state.toUpperCase() === "CANCELLED" ? "cancelled" : checkResult(check.state).kind }));
   const triggerContent = segmented ? <PullRequestCheckSummary checks={{ items: normalized, total: checks?.length ?? null, completeness: checks ? "complete" : "unknown" }} stale={cached} retained={retainedCi} /> : <>CI {summary}</>;
   const triggerClass = segmented ? "h-auto w-full justify-start p-0 hover:bg-transparent" : "h-auto p-0";
+  const completion = completionPresentation(pr, stale);
   const content = <>
       {retainedCi ? <p className="text-xs text-muted-foreground">These are the last observed check results.</p> : stale && <p className="text-xs text-muted-foreground">These results are outdated or have not been observed yet.</p>}
-      {(pr.unavailable || pr.observation?.error) && <p className="text-xs text-destructive-foreground">{pr.unavailable || pr.observation?.error}</p>}
+      {completion ? <p className={`text-xs ${completion.color}`}>{completion.message}</p>
+        : (pr.unavailable || pr.observation?.error) && <p className="text-xs text-muted-foreground">{pr.unavailable || pr.observation?.error}</p>}
       {!checks ? <p className="text-sm text-muted-foreground">Check results are unavailable.</p> : checks.length === 0
         ? <p className="text-sm text-muted-foreground">No CI checks reported.</p>
         : <ul className="flex flex-col gap-2 text-sm">{checks.map((check, index) => {

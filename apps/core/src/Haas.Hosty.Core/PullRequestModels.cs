@@ -36,7 +36,7 @@ internal sealed record PullRequestDiff(string Head, string Base, string MergeBas
 internal sealed record PullRequestScope(bool AllInstalled = false, string[]? Repositories = null,
     PullRequestRef[]? PullRequests = null, string[]? Workspaces = null);
 internal sealed record PullRequestSubscription(string Id, DateTimeOffset ExpiresAt);
-internal sealed record PullRequestRefresh(string RequestId, string[]? Repositories = null, PullRequestRef[]? PullRequests = null);
+internal sealed record PullRequestRefresh(string RequestId, string[]? Repositories = null, PullRequestRef[]? PullRequests = null, string[]? Workspaces = null);
 internal sealed record PullRequestRefreshResult(string State, DateTimeOffset? NextAttemptAt);
 internal sealed record PullRequestChanged(string Revision, string[] Repositories, PullRequestRef[] PullRequests);
 internal sealed record PullRequestQuery(string? Repository = null, string? App = null, string? Author = null,
