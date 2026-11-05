@@ -1,6 +1,6 @@
 ---
 created: 2026-11-04
-updated: 2026-11-04
+updated: 2026-11-05
 summary: Harness task trees select saved profiles or scoped configurations, retain execution history and coordinate optional source access through Core.
 components: [apps/harness, apps/core, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -27,6 +27,15 @@ two tasks can use the same profile concurrently. Each attempt retains its explic
 conversation reference. Uncertain native termination prevents a replacement attempt.
 
 ## Starting In Chat
+
+Ordinary chat work runs in its independent session, with an authorized workspace for source edits.
+Multiple steps and Autonomous mode do not trigger task creation. Tasks start only on an explicit
+user request or when the selected profile explicitly requires them. A manager profile's name alone
+does not impose task orchestration.
+
+Pre-tree version-one task records without `rootTaskRef` are retained verbatim in `legacyTasks`
+on the next store write and excluded from tree execution, listing and reconciliation. They are
+not converted into executable trees; their presence does not block new root creation.
 
 `task_adopt` persists one root before delegation and binds the originating conversation to its first
 attempt. Repeated requests recover the same root. A declined proposal leaves an unstarted Draft;
