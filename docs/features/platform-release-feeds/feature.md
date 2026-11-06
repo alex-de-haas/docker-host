@@ -1,6 +1,6 @@
 ---
 created: 2026-11-03
-updated: 2026-11-04
+updated: 2026-11-06
 summary: Shared Core and CLI release feeds, paired bootstrap, reviewed source selection and recoverable native updates.
 components: [apps/core, apps/cli, apps/shell]
 ---
@@ -72,6 +72,11 @@ describes promotion and retention.
 Before stopping Core or replacing either executable, update stages and verifies both artifacts and
 the previous executable backups. A missing/corrupt counterpart leaves the running Core and CLI
 untouched. The per-root launch lock and shared CLI executable lock serialize competing operations.
+Core accepts UI updates under the launch lock and saves the frozen request before releasing that
+lock and starting the detached CLI helper. Initial requests and retries use the same handoff, so
+the helper can acquire the lock during Windows startup probing. The saved acceptance continues
+blocking unrelated lifecycle and source changes. A failed helper launch preserves that acceptance
+for recovery without overwriting a running helper's journal or a completed receipt.
 The durable `core/platform-update.json` journal records the exact source/descriptor, request ID,
 original launch identity and each replacement step. Recovery with `hosty update` uses those retained
 bytes and never resolves a newer release from a moving feed. A source or installation change at
@@ -102,6 +107,9 @@ selection. Temporary users, executables and data are removed after verified proc
   explicit legacy inputs, bootstrap pairing and exact legacy provenance migration.
 - Reject stale source revisions and offers, unauthorized delegated callers and missing CSRF;
   source selection has no lifecycle or app-feed side effect.
+- Verify initial and retried UI updates release the actual launch lock before helper startup while
+  retaining the frozen acceptance and blocking unrelated operations. Check launch-failure recovery,
+  completed/conflicting replay and preservation of helper progress during error reporting.
 - Check corrupt second assets, interrupted replacements, failed stop/start/readiness, frozen replay,
   shared CLI locks and stopped/dev modes. Verify the listener and a new ready process on native OSes.
 - Verify all eight published artifacts and hashes; test interrupted upload and no-build promotion.
