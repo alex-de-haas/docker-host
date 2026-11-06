@@ -263,3 +263,18 @@ it("destroys refused upgrade sockets after flushing the response even when the p
     await vi.waitFor(() => expect(accepted.destroyed).toBe(true));
   } finally { peer.destroy(); }
 });
+
+it("serves authenticated connection limits and their snapshot stream without a chat subscription", async () => {
+  const { absentUsage } = await import("./harness/provider-usage.js");
+  const connection = { id: "usage-connection", revision: 1 };
+  const usage = vi.fn(async () => ({ ...absentUsage("unsupported", "unsupported_auth"), connectionRevision: 1 }));
+  const connections = { usage, get: async () => connection } as unknown as import("./connections/service.js").ConnectionService;
+  await close(server);
+  server = createGatewayServer(manager, new FakeHarnessAdapter(), null, null, null, null, connections); origin = await listen(server);
+  expect((await fetch(origin + "/api/connections/usage-connection/usage")).status).toBe(401);
+  const snapshot = await fetch(origin + "/api/connections/usage-connection/usage?refresh=true", { headers: { authorization: "Bearer hostyg_owner" } });
+  expect(snapshot.status).toBe(200); expect(await snapshot.json()).toMatchObject({ state: "unsupported", rows: [] });
+  const { socket, chunks } = await connected(await ticket("/api/connections/usage-connection/usage/events"));
+  await vi.waitFor(() => expect(chunks.join("")).toContain('"state":"unsupported"'));
+  expect(usage).toHaveBeenCalledWith("usage-connection", false); socket.close();
+});

@@ -23,9 +23,11 @@ node assets/hosty-brand/build-assets.mjs --web-only
 ```
 
 Requires Node.js 24 and the repository's `sharp` dependency. The command rewrites
-the SVG masters, PNG variants, ICO, preview sheet and Shell public
-`favicon.svg`, `favicon-light.svg`, `favicon-dark.svg`, `favicon.ico` and
-`apple-touch-icon.png`. **`--web-only` preserves
+the SVG masters, PNG variants, ICO, preview sheet and public favicons for Shell, Desktop,
+Documents, Harness, Marketplace and Telemetry. Each app gets `favicon.svg`, `favicon-light.svg`,
+`favicon-dark.svg` and `favicon.ico`, derived from its own `assets/icon.svg` cells and accent.
+Shell also gets its own tiled `apple-touch-icon.png`. Use `--favicons-only` to regenerate just
+these browser app files. **`--web-only` preserves
 every Swift AppIcon file.** Without that flag, the existing native generation
 branch also runs; native outputs require their own approved scope and version change.
 
@@ -62,6 +64,8 @@ refer to the same baked ink tile; they are compatibility aliases, not colored ti
 The transparent SVG favicons use the 1.16 scale cut for small sizes. `favicon.svg`
 follows the browser's light/dark preference before hydration. Shell then selects
 `favicon-light.svg` or `favicon-dark.svg` from its resolved theme, including a saved
-manual choice. Dark uses six white cells; light uses ink; both keep the lime Core.
+manual choice. The other browser apps likewise follow their resolved document theme. Neutral
+cells are white in dark mode and ink in light mode; each app keeps its own accent and cell layout.
+Core embeds the original Hosty favicon masters with the lime center for its own browser pages.
 The single SVG icon link avoids a competing fixed ICO in the document head.
-PNG/ICO files remain direct-URL fallbacks with ink cells and a lime Core.
+PNG/ICO files remain direct-URL fallbacks with ink cells and the corresponding identity accent.

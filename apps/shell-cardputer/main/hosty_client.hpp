@@ -41,7 +41,7 @@ public:
     HttpResult start_update_check() const;
     HttpResult apply_routine_update(std::string_view app_id, std::string_view plan_digest) const;
     HttpResult restart_core() const;
-    HttpResult update_core() const;
+    HttpResult update_core(std::string_view offer_id, std::string_view operation_id) const;
     HttpResult logout() const;
     HttpResult mark_notifications_read() const;
 
@@ -72,5 +72,6 @@ private:
     mutable esp_http_client_handle_t client_ = nullptr;
     mutable ResponseContext response_;
     mutable hosty::FixedString<32> pending_restart_id_;
+    mutable hosty::CoreUpdateAttempt pending_update_;
     mutable std::uint64_t last_request_ms_ = 0;
 };

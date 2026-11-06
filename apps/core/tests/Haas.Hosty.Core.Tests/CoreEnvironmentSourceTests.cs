@@ -9,8 +9,7 @@ public sealed partial class CoreLifecycleServiceTests
     [InlineData("prefix")]
     [InlineData("symlink")]
     [InlineData("unattached")]
-    [InlineData("other-session")]
-    public async Task EnvironmentSource_AppCannotSelectUnownedOrEscapingProject(string scenario)
+    public async Task EnvironmentSource_AppCannotSelectUnattachedOrEscapingProject(string scenario)
     {
         var (f, _) = await SourceFixtureAsync();
         var workspaces = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock);
@@ -28,15 +27,17 @@ public sealed partial class CoreLifecycleServiceTests
         }
         if (scenario == "symlink") { File.Delete(project); File.CreateSymbolicLink(project, outside); }
         var input = new CoreEnvironmentCreate(Guid.NewGuid().ToString(), "Source", "source", project,
-            new(SessionId: scenario == "other-session" ? "other-session" : owner.SessionId), scenario == "unattached" ? [] : [tree.Id]);
+            new(SessionId: owner.SessionId), scenario == "unattached" ? [] : [tree.Id]);
         var error = await Assert.ThrowsAsync<SandboxException>(() => service.CreateAsync(actor, input, default));
         Assert.Equal(403, error.Status);
-        Assert.Equal(scenario == "other-session" ? "environment_worktree_forbidden" : "environment_project_forbidden", error.Code);
+        Assert.Equal("environment_project_forbidden", error.Code);
         Assert.Empty((await service.ListAsync(actor, default)).Environments);
     }
 
-    [Fact]
-    public async Task EnvironmentSource_AttachedProjectWorks_ChangedLinkIsRejectedBeforeBuild_OperatorKeepsPathAuthority()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task EnvironmentSource_AttachedProjectWorksAcrossSessions_ChangedLinkIsRejectedBeforeBuild(bool anotherSession)
     {
         var (f, _) = await SourceFixtureAsync();
         var workspaces = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock);
@@ -47,7 +48,7 @@ public sealed partial class CoreLifecycleServiceTests
         var actor = new SandboxActor(owner.UserId, owner.AppId, owner.Installation);
         var project = Path.Combine(tree.Path, "Core.csproj"); await File.WriteAllTextAsync(project, "<Project />");
         var item = await service.CreateAsync(actor, new(Guid.NewGuid().ToString(), "Source", "source", project,
-            new(SessionId: owner.SessionId), [tree.Id]), default);
+            new(SessionId: anotherSession ? "other-session" : owner.SessionId), [tree.Id]), default);
         Assert.Contains(item.Id, (await workspaces.Read(tree.Id, owner, default)).SandboxConsumers);
         var outside = Path.Combine(f.Root, "outside.csproj"); await File.WriteAllTextAsync(outside, "<Project />");
         File.Delete(project); File.CreateSymbolicLink(project, outside);

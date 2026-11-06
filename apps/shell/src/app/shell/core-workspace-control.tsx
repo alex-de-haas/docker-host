@@ -16,7 +16,7 @@ import { CheckboxRow, InlineError } from "./ui";
 type Selection = { coreSelected: boolean; coreWorktreeId?: string | null; apps: { appId: string; selected: boolean; worktreeId?: string | null; runtime?: string | null }[] };
 type Participant = { id: string; kind: string; selected: boolean; worktreeId?: string | null; worktreeOptions?: string[]; sourcePath?: string | null; branch?: string | null; commit?: string | null; changedFiles?: number | null; unavailable?: string | null; targetRuntime?: string | null };
 type Review = { plan: { coreInstance: string; coreSourceRevision?: string; participants: Participant[] }; planDigest: string; consequences: string[] };
-type Activation = { id: string; workspaceId?: string; coreWorktreeId?: string | null; replacesCoreActivationId?: string | null; activatedCore?: CoreLaunch | null; coreReturnTarget?: { launch: CoreLaunch } | null; phase: string; coreProject?: string | null; coreReturned?: boolean; previousCore?: { mode: string; projectPath?: string | null }; preparationReleased?: boolean; error?: string | null; returns?: { request: { requestId: string }; state: string }[] };
+type Activation = { id: string; workspaceId?: string; coreWorktreeId?: string | null; replacesCoreActivationId?: string | null; activatedCore?: CoreLaunch | null; coreReturnTarget?: { launch: CoreLaunch } | null; phase: string; coreProject?: string | null; coreReturned?: boolean; previousCore?: { mode: string; projectPath?: string | null }; preparationReleased?: boolean; error?: string | null; returns?: { request: { requestId: string; core?: boolean }; state: string }[] };
 type Retained = { workspaceId: string; activation: Activation };
 type Detail = { status: { activation: Activation; helper?: { state: string; error?: string | null; logPath?: string | null }; cancellationRequested?: boolean }; children?: { appId: string; phase: string; error?: string | null }[] };
 type Target = { kind: "release" } | { kind: "workspace"; workspaceId: string; worktreeId: string; label: string };
@@ -24,7 +24,7 @@ type Candidate = { target: Extract<Target, { kind: "workspace" }>; unavailable?:
 type CoreExecutionTargets = { targets: { workspaceId: string; worktreeId: string; label: string; projectPath: string | null; unavailable?: string | null }[]; activations: Retained[] };
 type Pending = { kind: "apply" | "return" | "resume" | "cancel"; workspaceId: string; body: Record<string, unknown> };
 type ReleaseStage = { fromInstance: string; operationId?: string; status?: string; error?: string };
-type Recovery = { release?: ReleaseStage; expectedCoreProject?: string; target: Target | null; workspaceId: string; activationId: string; pending?: Pending | null; originalApply?: Pending | null };
+type Recovery = { refusal?: { message: string; code: string | null; status: number | null }; release?: ReleaseStage; expectedCoreProject?: string; target: Target | null; workspaceId: string; activationId: string; pending?: Pending | null; originalApply?: Pending | null };
 export type CoreWorkspaceControlProps = {
   coreOrigin: string; state: CoreDevelopment | null; workspaces: ActivationWorkspace[]; workspace?: WorkspaceSource;
   disabled: boolean; onRelease: (signal: AbortSignal) => Promise<string>; menu?: boolean;
@@ -56,6 +56,16 @@ function matchesTarget(activation: Activation, entry: Recovery, state: CoreDevel
     activation.activatedCore?.mode === state.launch.mode && pathKey(activation.activatedCore.projectPath) === pathKey(state.launch.projectPath) &&
     pathKey(activation.activatedCore.generationPath) === pathKey(state.launch.generationPath) &&
     activation.activatedCore.processId === state.launch.processId && activation.activatedCore.startedAt === state.launch.startedAt;
+}
+function completedReturnWasFollowedByAnotherLaunch(activation: Activation, entry: Recovery, state: CoreDevelopment | null) {
+  const pendingReturn = entry.pending?.kind === "return" ? (entry.pending.body.return as { requestId?: string } | undefined)?.requestId : undefined;
+  return activation.id === entry.activationId && activation.workspaceId === entry.workspaceId &&
+    entry.target?.kind === "release" && (!entry.pending || entry.pending.kind === "return" && !!pendingReturn) &&
+    activation.coreReturned && (activation.coreReturnTarget?.launch ?? activation.previousCore)?.mode === "release" &&
+    activation.returns?.some(receipt => receipt.request.core && receipt.state === "succeeded" &&
+      (!pendingReturn || receipt.request.requestId === pendingReturn)) &&
+    state?.launch.mode === "dev" && !!activation.activatedCore &&
+    Date.parse(state.launch.startedAt) > Date.parse(activation.activatedCore.startedAt);
 }
 function readRecovery(key: string): Recovery | null {
   try {
@@ -181,14 +191,21 @@ export function useCoreWorkspaceControl({ coreOrigin, state, workspaces, workspa
       const others = previous.filter(row => row.activation.id !== activation.id && (activation.phase !== "active" || row.activation.id !== activation.replacesCoreActivationId));
       return ownsCore(activation) ? [...others, { workspaceId: entry.workspaceId, activation }] : others;
     });
+    // A completed Return is historical fact. A later workspace launch must not keep
+    // this browser waiting for its old Release target or replay that old lifecycle request.
+    if (completedReturnWasFollowedByAnotherLaunch(activation, entry, state)) {
+      remember(null); setDetail(null); setTarget(null); setReview(null); setAccept(false); setCompletion("");
+      setNotice("The saved Return completed. Core has since been started from a workspace.");
+      return value;
+    }
     if (entry.pending && (entry.pending.kind === "apply" && activation.id === entry.activationId ||
         entry.pending.kind === "return" && activation.returns?.some(receipt => receipt.request.requestId === (entry.pending!.body.return as { requestId?: string })?.requestId) ||
         entry.pending.kind === "resume" && value.status.helper && ["accepted", "running", "completed"].includes(value.status.helper.state) ||
         entry.pending.kind === "cancel" && value.status.cancellationRequested)) {
-      remember({ ...entry, pending: null });
+      remember({ ...entry, refusal: undefined, pending: null });
     }
     return value;
-  }, [remember, request]);
+  }, [remember, request, state]);
   const observed = recovery && detail?.status.activation.id === recovery.activationId ? detail.status.activation : null;
   const helper = observed ? detail?.status.helper : null;
   const awaitingLaunch = !!recovery?.originalApply && observed?.phase === "active" && !observed.coreReturned && !matchesTarget(observed, recovery, state);
@@ -206,9 +223,10 @@ export function useCoreWorkspaceControl({ coreOrigin, state, workspaces, workspa
       catch (cause) {
         if (!controller.signal.aborted && !isAuthRequiredRedirectError(cause)) {
           setStatusFailures(value => value + 1);
-          setErrorCode(cause instanceof ActivationError ? cause.code : coreErrorCode(cause));
-          setErrorStatus(cause instanceof ActivationError || cause instanceof CoreRequestError ? cause.status : null);
-          setError("Core status could not be confirmed. The original request is retained. " + (cause instanceof Error ? cause.message : ""));
+          const refusal = recoveryRef.current?.refusal;
+          setErrorCode(refusal?.code ?? (cause instanceof ActivationError ? cause.code : coreErrorCode(cause)));
+          setErrorStatus(refusal?.status ?? (cause instanceof ActivationError || cause instanceof CoreRequestError ? cause.status : null));
+          setError(refusal ? refusal.message : "Core status could not be confirmed. The original request is retained. " + (cause instanceof Error ? cause.message : ""));
         }
       }
       finally { reading = false; if (!controller.signal.aborted && transition) timer = setTimeout(() => void poll(), 3000); }
@@ -222,7 +240,7 @@ export function useCoreWorkspaceControl({ coreOrigin, state, workspaces, workspa
     const scope = lifetime.current;
     if (executing.current || disabled || !state?.manageable || !activeUser?.id || !scope || scope.signal.aborted) return;
     executing.current = true; setBusy(true); setNotice(""); setStatusFailures(0); setError(""); setErrorCode(null); setErrorStatus(null);
-    const original = { ...entry, pending, originalApply: pending.kind === "apply" ? pending : entry.originalApply };
+    const original = { ...entry, refusal: undefined, pending, originalApply: pending.kind === "apply" ? pending : entry.originalApply };
     remember(original);
     try {
       await request<unknown>(pending.workspaceId, pending.kind, pending.body, scope.signal);
@@ -231,9 +249,13 @@ export function useCoreWorkspaceControl({ coreOrigin, state, workspaces, workspa
       await inspect({ ...original, pending: null }, scope.signal);
     } catch (cause) {
       if (!scope.signal.aborted && !isAuthRequiredRedirectError(cause)) {
-        setErrorCode(cause instanceof ActivationError ? cause.code : coreErrorCode(cause));
-        setErrorStatus(cause instanceof ActivationError || cause instanceof CoreRequestError ? cause.status : null);
-        setError("The operation could not be confirmed. Its original request is retained. " + (cause instanceof Error ? cause.message : ""));
+        const code = cause instanceof ActivationError ? cause.code : coreErrorCode(cause);
+        const status = cause instanceof ActivationError || cause instanceof CoreRequestError ? cause.status : null;
+        const message = "The operation could not be confirmed. Its original request is retained. " + (cause instanceof Error ? cause.message : "");
+        setErrorCode(code); setErrorStatus(status); setError(message);
+        // A later missing-record response must not hide a refusal before admission.
+        if (status !== null && status >= 400 && status < 500 && ![408, 429].includes(status))
+          remember({ ...original, refusal: { message, code, status } });
       }
     } finally { if (lifetime.current === scope) { executing.current = false; if (!scope.signal.aborted) { setBusy(false); setStatusRevision(value => value + 1); } } }
   };
@@ -464,7 +486,7 @@ export function useCoreWorkspaceControl({ coreOrigin, state, workspaces, workspa
         <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => setStatusRevision(value => value + 1)}>Check progress</Button>
         {recovery.release.status === "failed" && <Button type="button" variant="outline" size="sm" onClick={() => { remember(null); setError(""); setTarget(null); }}>Dismiss failed switch</Button>}
       </section>}
-      {target?.kind === "workspace" && recovery?.originalApply && (repairing || review?.repair || errorCode === "activation_review_changed" || observed?.phase === "preparing" && observed.preparationReleased) && <div className="space-y-2">
+      {target?.kind === "workspace" && recovery?.originalApply && (repairing || review?.repair || errorCode === "activation_review_changed" || !observed && stalled && errorStatus !== 401 && errorStatus !== 403 && errorCode !== "workspace_not_found" || observed?.phase === "preparing" && observed.preparationReleased) && <div className="space-y-2">
         <Button type="button" variant="outline" disabled={unavailable || busy} onClick={() => void prepareReview(target, recovery.originalApply!)}>Review workspace again</Button>
         {review && <Button type="button" disabled={unavailable || busy} onClick={() => void run({ ...recovery.originalApply!, body: { ...recovery.originalApply!.body, planDigest: review.value.planDigest } },
           { ...recovery, expectedCoreProject: review.value.plan.participants.find(row => row.kind === "core")?.sourcePath ?? undefined })}>Retry reviewed switch</Button>}

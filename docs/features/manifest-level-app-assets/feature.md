@@ -1,6 +1,6 @@
 ---
 created: 2026-07-07
-updated: 2026-10-22
+updated: 2026-11-02
 summary: An app's icon, screenshots and markdown description live in its own repository and Core serves them for installed apps.
 components: [apps/core, apps/shell, apps/marketplace]
 ---
@@ -69,7 +69,7 @@ On install and update Core copies the asset subtree (Git and folder installs) or
 assets plus the images the description references (manifest-by-URL) into the app's internal copy, so
 assets keep working for image-only apps and after the upstream repository disappears. Development
 Mode retains the installed copy as fallback. While a registered app workspace is factually active,
-Core reads only the installation's declared relative catalog icon from that app's manifest folder
+Core reads the installation's declared relative catalog icon and `ui.navigation[].iconAsset` files from that app's manifest folder
 in the bound worktree. The development journal, installation, runtime, source path, app binding,
 manifest subpath and workspace identity must still agree; source admission failures retain the
 installed icon. Screenshots, descriptions and unrelated repository images remain served from the
@@ -118,7 +118,7 @@ absence does not. The published entry gets a generated `display.descriptionUrl`;
 - Vendoring: per-file, count and total budgets; treated-as-absent on violation; the manifest-by-URL
   declared-plus-referenced set; Development Mode live serving; the capped reader aborts an oversized
   body regardless of `Content-Length`.
-- Active workspace icons: exact app/installation/runtime/source binding and manifest folder;
+- Active workspace app and navigation icons: exact app/installation/runtime/source binding and manifest folder;
   assignment/session checks; inactive/Return and invalid-source package fallback; undeclared
   paths, symlinks and oversized source files stay inaccessible. Source reads preserve the installed
   package, and content ETags change for same-size/same-timestamp edits.

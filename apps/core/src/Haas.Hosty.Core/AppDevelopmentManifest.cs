@@ -13,7 +13,8 @@ internal sealed record AppDevelopmentAccessPlan(string AppId, string DisplayName
     string UserId, string Via, string[] Changes, string[] RequiredPermissions, string[] OptionalPermissions,
     string[] BaseGrantedPermissions, string[] BaseConfirmedRoles);
 internal sealed record AppDevelopmentCandidate(RuntimeAppManifestSelection Selection, string SourcePath,
-    string AuthorityStamp, AppDevelopmentManifestClassification Classification, AppDevelopmentAccessPlan Review, AppDevActor Actor)
+    string AuthorityStamp, AppDevelopmentManifestClassification Classification, AppDevelopmentAccessPlan Review, AppDevActor Actor,
+    string[] GrantedPermissions, string[] ConfirmedRoles)
 {
     public bool ReviewRequired => Classification.ReviewRequired;
     public string[] AdditionalAccess => Classification.AdditionalAccess;
@@ -43,7 +44,11 @@ internal static class AppDevelopmentManifest
         RuntimeAppManifestSelection candidate, IReadOnlyList<string> granted, IReadOnlyList<string> confirmedRoles,
         IReadOnlyList<AppMountBinding>? boundMounts = null, bool system = false)
     {
-        if (baseline.Manifest.Id != candidate.Manifest.Id || baseline.Manifest.SchemaVersion != candidate.Manifest.SchemaVersion)
+        // Published packages use app.0.2 while their editable source can still use app.0.1.
+        // Both inputs remain validated; schema equality is not application identity.
+        if (baseline.Manifest.Id != candidate.Manifest.Id ||
+            !AppManifestService.IsSupportedSchemaVersion(baseline.Manifest.SchemaVersion) ||
+            !AppManifestService.IsSupportedSchemaVersion(candidate.Manifest.SchemaVersion))
             throw new AppLifecycleException("dev_manifest_identity_changed", "The workspace manifest must retain the installed app identity and supported schema.");
         var additional = new List<string>();
         foreach (var permission in candidate.Manifest.CorePermissions.Except(granted, StringComparer.Ordinal))

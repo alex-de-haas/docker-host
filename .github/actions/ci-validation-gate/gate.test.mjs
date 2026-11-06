@@ -15,7 +15,7 @@ function fixture({ runs = [successfulRun], jobs = [requiredJob], current = succe
     sleep: async ms => { time += ms; }, log: () => {}, request: async path => {
       calls.push(path);
       if (path.includes('/workflows/ci.yml/runs?')) return { workflow_runs: typeof runs === 'function' ? runs(calls) : runs };
-      if (path.includes('/jobs?')) return { jobs };
+      if (path.includes('/jobs?')) return { jobs: typeof jobs === 'function' ? jobs(calls) : jobs };
       return current;
     } };
   return { options, calls };
@@ -164,4 +164,93 @@ test('automatic publication never waits while a completed trigger has since been
   options.sleep = async () => assert.fail('automatic publication must not poll');
   await assert.rejects(waitForValidation(options), /no longer completed successfully/);
   assert.equal(calls.length, 1);
+});
+
+for (const event of ['push', 'workflow_dispatch', 'workflow_run']) {
+  test(`${event} waits for delayed required-job evidence before accepting completed CI`, async () => {
+    let reads = 0;
+    const caller = { ...context, event, ...(event === 'workflow_run' ? { trigger: successfulRun } : {}) };
+    const { options, calls } = fixture({ context: caller, jobs: () => {
+      reads++;
+      return reads === 1 ? [] : reads === 2 ? [{ ...requiredJob, status: 'in_progress', conclusion: null }] : [requiredJob];
+    } });
+    assert.deepEqual(await waitForValidation(options), { runId: '123', sourceSha: context.sha });
+    assert.equal(reads, 3);
+    assert.equal(calls.filter(path => path.endsWith('/runs/123')).length, event === 'workflow_run' ? 6 : 3);
+  });
+}
+
+test('missing required-job evidence expires within two minutes even with a longer CI deadline', async () => {
+  const { options, calls } = fixture({ jobs: [] });
+  options.timeoutMs = 1_800_000;
+  options.pollMs = 15_000;
+  await assert.rejects(waitForValidation(options), /one successful ci-required/);
+  assert.equal(options.now(), 120_000);
+  assert.equal(calls.filter(path => path.includes('/jobs?')).length, 9);
+});
+
+for (const jobs of [[{ ...requiredJob, conclusion: 'failure' }], [{ ...requiredJob, conclusion: 'skipped' }],
+  [{ ...requiredJob, status: 'unknown' }], [requiredJob, requiredJob]]) {
+  test(`invalid required-job evidence never polls: ${JSON.stringify(jobs)}`, async () => {
+    const { options } = fixture({ jobs });
+    options.sleep = async () => assert.fail('terminal or ambiguous evidence must fail immediately');
+    await assert.rejects(waitForValidation(options), /ci-required/);
+  });
+}
+
+test('delayed job evidence never hides a subsequently failed CI run', async () => {
+  let reads = 0;
+  const { options } = fixture({ jobs: [], runs: () => [{ ...successfulRun, conclusion: ++reads === 1 ? 'success' : 'failure' }] });
+  await assert.rejects(waitForValidation(options), /CI run 123 concluded failure/);
+  assert.equal(reads, 2);
+});
+
+test('automatic publication rejects a rerun discovered while required-job evidence is missing', async () => {
+  const caller = { ...context, event: 'workflow_run', trigger: successfulRun };
+  const { options } = fixture({ context: caller, jobs: [] });
+  const request = options.request;
+  let reads = 0;
+  options.request = async path => path.endsWith('/runs/123') && ++reads === 2
+    ? { ...successfulRun, run_attempt: 3, status: 'in_progress', conclusion: null } : request(path);
+  options.sleep = async () => assert.fail('a new CI attempt requires a new completed trigger');
+  await assert.rejects(waitForValidation(options), /being rerun/);
+});
+
+for (const conclusion of ['cancelled', 'timed_out', 'neutral', 'action_required', null]) {
+  test(`completed required-job conclusion ${conclusion} cannot be retried into success`, async () => {
+    const { options } = fixture({ jobs: [{ ...requiredJob, conclusion }] });
+    options.sleep = async () => assert.fail('terminal evidence must fail immediately');
+    await assert.rejects(waitForValidation(options), /ci-required/);
+  });
+}
+
+test('a rerun discovered after delayed job evidence clears its expired evidence deadline', async () => {
+  const { options } = fixture({ jobs: [] });
+  options.timeoutMs = 150_000;
+  options.pollMs = 60_000;
+  const request = options.request;
+  options.request = async path => path.endsWith('/runs/123') && options.now() >= 120_000
+    ? { ...successfulRun, run_attempt: 3, status: 'in_progress', conclusion: null } : request(path);
+  await assert.rejects(waitForValidation(options), /Timed out waiting for CI rerun/);
+  assert.equal(options.now(), 150_000);
+});
+
+for (const event of ['push', 'workflow_run']) {
+  test(`${event} missing evidence also respects the shorter overall deadline`, async () => {
+    const caller = { ...context, event, ...(event === 'workflow_run' ? { trigger: successfulRun } : {}) };
+    const { options } = fixture({ context: caller, jobs: [] });
+    await assert.rejects(waitForValidation(options), /Timed out waiting for one successful ci-required/);
+    assert.equal(options.now(), 30);
+  });
+}
+
+test('an empty run list after missing job evidence cannot keep polling past the evidence deadline', async () => {
+  const { options } = fixture({ jobs: [] });
+  options.timeoutMs = 1_800_000;
+  options.pollMs = 15_000;
+  const request = options.request;
+  options.request = async path => path.includes('/workflows/ci.yml/runs?') && options.now() >= 120_000
+    ? { workflow_runs: [] } : request(path);
+  await assert.rejects(waitForValidation(options), /Timed out waiting/);
+  assert.equal(options.now(), 120_000);
 });

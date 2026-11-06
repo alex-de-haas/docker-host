@@ -1,9 +1,9 @@
 ---
 status: Draft
 created: 2026-10-08
-updated: 2026-10-20
+updated: 2026-10-27
 summary: Early ideas for an optional plan-provider interface across Markdown specification-driven plans, task trackers and checklists, with possible MCP tools.
-components: [apps/plans, apps/harness, apps/core, packages/app-sdk]
+components: [apps/documents, apps/harness, apps/core, packages/app-sdk]
 ---
 
 # Plan Provider Interface
@@ -57,6 +57,41 @@ PR descriptions may cite document paths and deliverable IDs. They can supply att
 hints, but do not prove current canonical progress, verified deliverable completion or target-branch
 integration. Explore this within D1/D2 using both explicit references and PR-derived hints; preserve
 source-of-truth/version semantics instead of parsing an arbitrary description as authoritative state.
+
+## Shared Work Coordination (2026-10-26)
+
+[Basic Tasks](../basic-tasks/feature.md) owns Core-defined task contracts with app-owned records and
+human/application executor assignments; this plan retains source-native plan/progress semantics. A document or tracker item can be linked
+to a shared task without becoming the same object. A successful run or completed task must not
+silently check off source deliverables or replace the source owner's acceptance rules.
+
+[Shared Artifacts](../shared-artifacts/plan.md) owns retained materials and readable versioned
+references. Reconcile D2 with approved document revisions and workspace variants, keeping navigation,
+content access and selected agent context distinct. [Basic Tasks](../basic-tasks/feature.md)
+owns the first manual/API task journey independently of Documents and orchestration. A Documents-to-task action is an optional producer integration
+using provider-qualified task references; it does not create a second registry or make plans mandatory
+for execution. Existing D1-D4 and Draft status remain.
+
+## Documents App Consumer (2026-10-26)
+
+The approved [Documents App](../documents-app/feature.md) defines replacing Plans with a specification-driven reader for root, vision, ideas, features, plans and reviews. Its current progress comes from
+Git target/worktree documents and Core's registered workspaces and PR references. The owner excludes
+an app-owned association database and durable history; deleting a workspace removes its projection.
+This is a concrete Markdown consumer scenario for D1-D3 here, not approval or completion of this
+plan's generic provider exploration.
+
+Documents derives document/backlinks and workspace-to-document/deliverable changes from source.
+It needs no manual relationship store or link-writing tools. Agents edit Markdown directly in
+registered worktrees; the existing read-only plan MCP tools remain optional convenience under the
+new app identity. No new mandatory MCP or document-write interface is required for that release.
+
+This plan retains tracker comparison, optional explicit provider-bound relationships, a common
+contract and generic MCP/write decisions in D1-D4. They remain exploratory rather than dependencies
+of Documents. A shared repository never proves active session-to-deliverable ownership, and a
+workspace PR link never proves all its local changes were published. Core does not learn Markdown
+status semantics. Documents uses existing draft-only assistant handoffs for discussion, repair and
+implementation preparation; automatic execution/publication and a universal provider protocol stay
+outside its scope.
 
 ## Deliverables
 

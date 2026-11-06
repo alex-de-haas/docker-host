@@ -135,6 +135,24 @@ public class TelemetryMcpEndpointTests
     }
 
     [Fact]
+    public void TraceLogSearchReportsTheRetainedHistoryWindow()
+    {
+        using var fixture = new StoreFixture();
+        const string traceId = "0123456789abcdef0123456789abcdef";
+        fixture.Store.RecordLogs([new ParsedOtlpLog("app", new OtlpLogRecord(
+            DateTimeOffset.UtcNow.AddHours(-2).ToUnixTimeMilliseconds(), 9, "INFO", "Older correlated log",
+            new Dictionary<string, string>(StringComparer.Ordinal), traceId, "0123456789abcdef"))]);
+        var payload = Payload(Handle(
+            """{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"search_logs","arguments":{"trace_id":"0123456789abcdef0123456789abcdef","range_seconds":60}}}""",
+            fixture.Query));
+
+        Assert.Equal(0, payload["window"]!["rangeSeconds"]!.GetValue<int>());
+        Assert.True(payload["window"]!["rangeIgnored"]!.GetValue<bool>());
+        Assert.False(payload["window"]!["rangeClamped"]!.GetValue<bool>());
+        Assert.Equal(1, payload["window"]!["returned"]!.GetValue<int>());
+    }
+
+    [Fact]
     public void AnUnclampedRequestDoesNotClaimItWasClamped()
     {
         // Paired with the case above: a flag that is always true says nothing.

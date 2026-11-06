@@ -298,6 +298,30 @@ PCM16 WAV. Browser microphone consent is separate from Core permission.
 credentials and the acting user's access. It does not expose general agent execution.
 See [Provider consumption](../../docs/features/provider-consumption/feature.md) for the full contract.
 
+## Tasks And Execution Providers
+
+Core 0.159.0 and SDK 0.36.0 support independent `tasks` and `task-executor` categories. Request
+`providers.tasks` or `providers.task-executor`, select an app/installation/key explicitly and use
+server-only clients. Models, credentials and Harness profile internals are not shared task fields.
+
+```ts
+import { ProviderClient } from "@hosty-sdk/app/providers/server";
+import { TaskClient, TaskExecutorClient } from "@hosty-sdk/app/tasks/server";
+const providers = new ProviderClient();
+const tasks = new TaskClient(providers, selectedTaskProvider, getCurrentUserToken);
+const draft = await tasks.create({ requestId, input: {
+  title: "Summarize the meeting", markdown: "List decisions and next steps.",
+  assignee: { kind: "app", executor: selectedExecutor, optionId }, resources: [],
+} });
+await tasks.action(draft.ref, { requestId: readyRequestId, expectedRevision: draft.revision, action: "ready" });
+const executions = new TaskExecutorClient(providers, selectedExecutor, getCurrentUserToken);
+const receipt = await executions.get(executionId);
+```
+
+Retain each UUID and exact body after a timeout. Clients do not retry mutations implicitly. A task
+provider persists execution intent before PUT; completed model output alone is not a task result.
+See [Basic Tasks](../../docs/features/basic-tasks/feature.md) for the protocol and authority boundaries.
+
 ### Assistant MCP credentials
 
 MCP handlers use `introspectMcpToken` from `@hosty-sdk/app/scoped-token` for online validation of
@@ -372,8 +396,10 @@ export const POST = handler;
 ```
 
 Non-Next servers use `createHostyUiResponse` from `@hosty-sdk/app/ui/server` with their
-revalidated own app-user session/token. `UiServerClient` provides only `bootstrap`,
-`listPanels`, `resolvePanel`, `navigation` and `resolveNavigation`; never expose a generic Core proxy or caller-supplied credentials.
+revalidated own app-user session/token. Forward the returned status, headers and body unchanged:
+UI routes include the binary `icon` response as well as JSON metadata. The same-origin icon route
+serves only the caller's declared icon using its service token and the revalidated user session.
+`UiServerClient` exposes fixed operations; never expose a generic Core proxy or caller-supplied credentials.
 Both server adapters return `no-store` metadata. The React root's `uiPath` defaults to
 `/api/hosty/ui` and must be a same-origin path.
 
@@ -568,16 +594,49 @@ navigation/launcher and disabled tools until they provide a panel host. `panelLa
 rendering choice, not a disable policy: explicitly disable local tools or register a renderer.
 See [UI composition and browser acceptance](../../docs/features/sdk-ui-composition/feature.md).
 
+## Annotated feedback (Core 0.165.0 / SDK 0.38.0)
+
+`HostyUiRoot` includes an authenticated Annotate entry through the existing UI server adapter.
+Users can select an element/region or add a page comment, enter text beside it, edit that same note
+in the side panel and submit several annotations as one report. IndexedDB preserves text and image
+blobs by Core/app/installation/user. Storage failure is visible; confirmed submission clears the
+draft, while an uncertain response retains its exact UUID for retry.
+
+Screenshots use the standard Screen Capture API chooser, still-image preview/crop and explicit
+inclusion. Shared SDK frames delegate `display-capture` to their source; browser/webview support and
+parent policy still apply. Text feedback works when capture is unsupported or denied. Optional
+dictation requires an approved `providers.speech-to-text` permission and discovered provider.
+
+Own-app intake needs app access, not a management grant. Administrator clients can use
+`FeedbackServerClient` from `@hosty-sdk/app/feedback/server` with the reviewed `apps.feedback.manage`
+permission and the current app-user token; DTOs are exported from `@hosty-sdk/app/feedback`.
+These server methods expose fixed Core contracts, never a browser-accessible arbitrary proxy.
+
+A feedback-review client can mark its declared navigation item with `feedbackReview: true`. Core
+resolves its own endpoint/path through normal app launch with a `feedback=<report-id>` query. The
+client opens a review, not an automatic dispatch. The declaration grants no authority. Ordinary
+reporters get immediate submission confirmation but no processing inbox or notifications.
+
+See [App Feedback Inbox](../../docs/features/app-feedback-inbox/feature.md) for limits, access,
+manual chat dispatch, exact-prompt outcomes and workspace deletion retention.
+
 ## Child Core sandbox controls
 
 `@hosty-sdk/app/sandbox/react` exports `CoreEnvironmentPanel` for operator-facing child Core
 management. Supply an authenticated `EnvironmentRequest` transport, a tab-local replay storage key
-and optionally a workspace with its active worktrees. Shell and Workspaces use this shared panel
-for create/start, current/source Core selection, normal test-account setup, app status, preview and
-confirmed deletion. The component does not grant authority: Core independently checks the optional
+and optionally a workspace with its active worktrees. It supports create/start, current/source
+Core selection, normal test-account setup, app status, preview and confirmed deletion. Shell has
+its own combined Core/environment rows and current-mode creation dialog. The component does not grant authority: Core independently checks the optional
 `core.environments.inspect/operate` grants, administrator identity and workspace source access.
 
-`@hosty-sdk/app/sandbox/server` provides the server-side clients for independent app sandboxes and
-child Core environments. Caller-owned `core.environments.read/manage` authority remains distinct
+`@hosty-sdk/app/sandbox/server` provides CoreEnvironmentClient for child Core environments. Caller-owned `core.environments.read/manage` authority remains distinct
 from the operator panel's cross-caller permissions. See the
-[sandbox contract](../../docs/features/app-sandbox-runtimes/feature.md) for lifecycle and cleanup rules.
+[environment contract](../../docs/features/app-sandbox-runtimes/feature.md) for lifecycle and cleanup rules.
+
+Version 0.37 removes SandboxClient, SandboxAction, the single-app Sandbox* request/view types,
+SandboxIdentity/SandboxTarget, readSandboxIdentity and readSandboxTarget. No relay identity or
+HOSTY_SANDBOX_* protocol is supported. Use CoreEnvironmentClient plus ordinary child app/user APIs;
+apps run with the same normal identity and app-owned roles as any other Core installation. Existing
+core.environments.* grants require their ordinary review; removed apps.sandboxes.* grants confer
+no replacement authority. The /sandbox/server and /sandbox/react module paths remain for the
+retained child-environment API.

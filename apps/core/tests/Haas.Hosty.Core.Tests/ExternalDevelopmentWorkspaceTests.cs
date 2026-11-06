@@ -46,12 +46,10 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.Equal(first.RepositoryId, second.RepositoryId);
         Assert.Equal(first.RepositoryId, third.RepositoryId);
         Assert.Single((await service.ListAsync(ExternalOwner(), false, default)).Workspaces);
-        var denied = await Assert.ThrowsAsync<AppLifecycleException>(() => service.ObserveAsync(first.Id, third.Owner, default));
-        Assert.Equal("workspace_forbidden", denied.Code);
-        Assert.Equal("workspace_forbidden", (await Assert.ThrowsAsync<AppLifecycleException>(() =>
-            service.DiffAsync(first.Id, third.Owner, new("README.md"), default))).Code);
-        Assert.Equal("workspace_forbidden", (await Assert.ThrowsAsync<AppLifecycleException>(() =>
-            service.CommandAsync(first.Id, third.Owner, "refresh", new(Guid.NewGuid().ToString()), default))).Code);
+        Assert.Equal(first.Path, (await service.ObserveAsync(first.Id, third.Owner, default)).Path);
+        await File.AppendAllTextAsync(Path.Combine(first.Path, "README.md"), "\nShared local edit\n");
+        await service.DiffAsync(first.Id, third.Owner, new("README.md"), default);
+        Assert.Equal(first.Id, (await service.CommandAsync(first.Id, third.Owner, "refresh", new(Guid.NewGuid().ToString()), default)).Id);
         Assert.True(Directory.Exists(first.Path));
     }
 
@@ -132,7 +130,7 @@ public sealed partial class CoreLifecycleServiceTests
     [InlineData("clear")]
     [InlineData("rebind")]
     [InlineData("revoke")]
-    public async Task ExternalWorkspaces_RevalidatePrivateSourceBeforeManagedReadsAndMutations(string transition)
+    public async Task ExternalWorkspaces_RetainLocalAuthorityButRevalidateRemoteProviderCredentials(string transition)
     {
         var (fixture, _, initial, _) = await DocumentFixtureAsync();
         var workspace = await initial.PrepareAsync(ExternalOwner(), ExternalPrepare(), default);
@@ -151,10 +149,15 @@ public sealed partial class CoreLifecycleServiceTests
             var replacement = transition == "rebind" ? await access.BindAsync("bob", "source-bob", workspace.Repository, false, default) : null;
             await fixture.Apps.UpdateAppAsync(SourceTestApp, app => app with { PrivateSources = replacement is null ? null : new(Git: replacement) });
         }
-        await Assert.ThrowsAsync<AppLifecycleException>(() => service.ObserveAsync(workspace.Id, workspace.Owner, default));
-        await Assert.ThrowsAsync<AppLifecycleException>(() => service.DiffAsync(workspace.Id, workspace.Owner, new(PlanPath), default));
-        await Assert.ThrowsAsync<AppLifecycleException>(() => service.CommandAsync(workspace.Id, workspace.Owner, "commit",
-            WorkspaceCommit(workspace.OriginalBase, "feat: denied", PlanPath), default));
+        Assert.Equal(workspace.Path, (await service.ObserveAsync(workspace.Id, workspace.Owner, default)).Path);
+        Assert.Contains("Local private plan", (await service.DiffAsync(workspace.Id, workspace.Owner, new(PlanPath), default)).Combined);
+        var committed = await service.CommandAsync(workspace.Id, workspace.Owner, "commit",
+            WorkspaceCommit(workspace.OriginalBase, "feat: retained local work", PlanPath), default);
+        Assert.NotEqual(workspace.OriginalBase, committed.Observation!.Head);
+        if (transition == "clear")
+            await service.CommandAsync(workspace.Id, workspace.Owner, "refresh", new(Guid.NewGuid().ToString()), default);
+        else
+            await Assert.ThrowsAsync<AppLifecycleException>(() => service.CommandAsync(workspace.Id, workspace.Owner, "refresh", new(Guid.NewGuid().ToString()), default));
         Assert.Equal("# Local private plan\n", await File.ReadAllTextAsync(Path.Combine(workspace.Path, PlanPath)));
     }
 }

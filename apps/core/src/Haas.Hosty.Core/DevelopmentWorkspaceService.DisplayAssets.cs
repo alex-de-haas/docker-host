@@ -14,18 +14,15 @@ internal sealed partial class DevelopmentWorkspaceService
 
         var tree = await Read(id, null, ct);
         var actor = operation.Actor.WorkspaceOwner;
-        if (actor is null || (!tree.Owner.SameIdentity(actor) &&
-            (await ReadParticipationAsync(tree.WorkspaceId, ct))?.Sessions.Any(s => s.Session.SameIdentity(actor)) != true))
-            return null;
-        // An explicitly activated runtime retains its app-authorized icon until Return, even
-        // after its initiating conversation detaches. This route exposes only that declared asset.
+        if (actor is null) return null;
+        // An explicitly activated runtime retains its app-authorized icons until Return, even
+        // after its initiating conversation detaches. This route exposes only declared icons.
         var bindings = tree.Apps.Where(a => a.AppId == app.Id && a.Installation == app.InstalledAt).ToArray();
         if (tree.State != "active" || tree.Operations.Any(o => o.State is "pending" or "unknown") ||
             tree.Path != operation.SourcePath || bindings.Length != 1 || bindings[0].Subpath != app.SourceState.ManifestSubpath)
             return null;
 
         await ValidateTree(tree, ct);
-        await WorkspaceGrantAsync(tree, ct, localOnly: true);
         var binding = bindings[0];
         var root = tree.Path;
         if (!string.IsNullOrEmpty(binding.Subpath) &&

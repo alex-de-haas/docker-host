@@ -1,4 +1,6 @@
 "use client";
+import { TaskLimits } from "@/components/task-limits";
+import { AgentProfiles } from "@/components/agent-profiles";
 
 import { useCallback, useEffect, useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -16,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { AgentRuntime } from "@/components/agent-runtime";
 import { AgentProviders } from "@/components/agent-providers";
 import { TranslationProviders } from "@/components/translation-providers";
+import { SkillLibrary } from "@/components/skill-library";
 import { McpAccess } from "@/components/mcp-access";
 import { HostyLoader } from "../../../../../shared/web/hosty-states";
 import {
@@ -28,7 +31,7 @@ import {
 export function GatewaySettings({
   section = "providers",
 }: {
-  section?: "providers" | "translation" | "sources" | "prompt" | "access";
+  section?: "tasks" | "profiles" | "providers" | "translation" | "sources" | "skills" | "prompt" | "access";
 }) {
   const [data, setData] = useState<SettingsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -116,9 +119,12 @@ export function GatewaySettings({
           <TabsList variant="line" aria-label="Hosty Harness settings">
             {(
               [
+                ["profiles", "Agent profiles"],
+                ["tasks", "Tasks"],
                 ["providers", "Agent providers"],
                 ["translation", "Translation providers"],
                 ["prompt", "Instructions and retention"],
+                ["skills", "Skills"],
                 ["access", "MCP access"],
               ] as const
             ).map(([value, label]) => (
@@ -136,6 +142,9 @@ export function GatewaySettings({
           <AgentRuntime />
           {data.agentConnections && <AgentProviders />}
         </TabsContent>
+        <TabsContent value="tasks"><TaskLimits /></TabsContent>
+        <TabsContent value="profiles"><AgentProfiles /></TabsContent>
+        <TabsContent value="skills"><SkillLibrary /></TabsContent>
         <TabsContent value="translation">
           {data.agentConnections && <TranslationProviders />}
         </TabsContent>
@@ -176,10 +185,9 @@ export function GatewaySettings({
               <FieldDescription>Off by default: received prompts wait as drafts. Enabling this also lets authorized apps submit prompts without individual Send confirmation. Tool permissions still apply.</FieldDescription>
             </Field>
             <Field>
-              <FieldLabel htmlFor="system-prompt">System prompt</FieldLabel>
+              <FieldLabel htmlFor="system-prompt">Common instructions</FieldLabel>
               <FieldDescription id="system-prompt-description">
-                Appended to the harness&apos;s own instruction sources, never
-                replacing them.
+                Use this for shared working rules, such as repository conventions. Specialization and role-specific expectations belong in Agent profiles. Common instructions apply alongside the selected role.
               </FieldDescription>
               <Textarea
                 id="system-prompt"

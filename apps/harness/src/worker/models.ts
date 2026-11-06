@@ -8,7 +8,7 @@ export function catalog(models: ModelChoice[], defaultModel?: string): ModelCata
 export function validateSelection(selection: ExecutionSelection, available: ModelCatalog): void {
   if (selection.model === null && selection.reasoningEffort === null) return;
   const model = available.models.find(m => m.id === (selection.model ?? available.defaultModel));
-  if (!model) throw new WorkerApiError(400, "model_unavailable", "Select an available model for this connection.");
+  if (!model || model.unavailableReason) throw new WorkerApiError(400, "model_unavailable", "Select an available model for this connection.");
   if (selection.reasoningEffort !== null && !model.efforts.some(e => e.id === selection.reasoningEffort))
     throw new WorkerApiError(400, "effort_unavailable", "This model does not support the selected reasoning effort.");
 }

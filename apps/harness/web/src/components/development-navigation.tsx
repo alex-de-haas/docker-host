@@ -1,15 +1,16 @@
 "use client";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Hammer, Loader2, MessageSquarePlus, Trash2, Search, ListFilter, Diamond, CircleAlert, MessageSquare } from "lucide-react";
+import { Hammer, Loader2, MessageSquarePlus, Trash2, Search, ListFilter, Diamond, CircleAlert, MessageSquare, PanelLeftClose } from "lucide-react";
 import type { AssistantSession } from "@/lib/assistant-api";
 import type { DevelopmentWorkspace } from "@/lib/development-api";
 import { navigationItems } from "@/lib/workspace-navigation";
+import { WorkspaceRowStatus } from "./workspace-row-status";
 import { WorkspaceActivityCounts } from "./workspace-activity-counts";
 import { Input } from "@/components/ui/input";
 import { HostyMark } from "../../../../../shared/web/hosty-mark";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogBody, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ContinueBuilding } from "@/components/continue-building";
 import { cn } from "@/lib/utils";
 
@@ -20,7 +21,8 @@ const statusFilters = [
   { key: "failed", label: "Failed", Icon: CircleAlert, tone: "text-destructive-foreground" },
 ] as const;
 
-export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, onNew, onDelete, activeWorkspaceId, onWorkspace, createAppAction }: {
+export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, onNew, onDelete, activeWorkspaceId, onWorkspace, createAppAction, onClose, view = "chats" }: {
+  view?: "workspaces" | "chats"; onClose?: () => void;
   activeWorkspaceId?: string; onWorkspace?: (workspace: DevelopmentWorkspace, session?: AssistantSession) => void; createAppAction?: ReactNode;
   sessions: AssistantSession[]; activeId?: string; workspaces: DevelopmentWorkspace[];
   onPick: (session: AssistantSession) => void; onNew: () => void; onDelete: (sessionId: string) => Promise<void>;
@@ -35,7 +37,8 @@ export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, 
   const [stateFilter, setStateFilter] = useState("all");
   const [now, setNow] = useState(Date.now);
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 15_000); return () => clearInterval(timer); }, []);
-  const items = navigationItems(workspaces, sessions, now);
+  const items = navigationItems(workspaces, sessions, now, view);
+  const title = view === "workspaces" ? "Workspaces" : "Chats";
   const matchesState = (item: typeof items[number], state: string) => state === "all" || item.counts[state as "waiting" | "working" | "failed"] > 0;
   const visible = items.filter(item => matchesState(item, stateFilter) && (!query.trim() || item.search.includes(query.trim().toLowerCase())));
   const sessionLabel = (session: AssistantSession) => session.title?.trim() || "Untitled session";
@@ -51,8 +54,11 @@ export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, 
         } else if (session) onPick(session);
       }} className="h-auto min-h-9 min-w-0 flex-1 justify-start gap-2 rounded-md px-3 text-left">
         {workspace ? <Hammer className="size-3.5 shrink-0 text-muted-foreground" role="img" aria-label="Workspace" /> : <MessageSquare className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />}
-        <span className="min-w-0 flex-1 text-left"><span className="block truncate text-sm font-normal" title={label}>{label}</span>
-          <WorkspaceActivityCounts counts={item.counts} />
+        <span className="min-w-0 flex-1 text-left">
+          <span className="flex min-w-0 items-center gap-2"><span className="block min-w-0 flex-1 truncate text-sm font-normal" title={label}>{label}</span>
+            {workspace && <WorkspaceActivityCounts counts={item.counts} />}
+          </span>
+          {workspace ? <WorkspaceRowStatus workspace={workspace} now={now} /> : <WorkspaceActivityCounts counts={item.counts} />}
         </span>
       </Button>
       {session && <Button variant="ghost" size="icon-sm" aria-label={`Delete ${label}`} title="Delete session"
@@ -60,24 +66,24 @@ export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, 
         onClick={event => { deleteTrigger.current = event.currentTarget; setError(null); setDeleting(session); }}><Trash2 /></Button>}
     </div>;
   };
-  return <nav aria-label="Workspaces and chats" className="flex h-full min-h-0 flex-col">
+  return <nav aria-label={title} className="flex h-full min-h-0 flex-col">
     <div className="space-y-3 border-b p-3">
       <div className="flex items-center justify-between gap-2">
-        <h1 className="text-sm font-semibold">Workspaces &amp; chats <span className="ml-1 font-mono text-xs font-normal tabular-nums text-muted-foreground">{items.length}</span></h1>
+        <h1 className="text-sm font-semibold">{title} <span className="ml-1 font-mono text-xs font-normal tabular-nums text-muted-foreground">{items.length}</span></h1>
         <div className="flex shrink-0 items-center gap-1">
-          {createAppAction}
-          <ContinueBuilding sessions={sessions} onPick={onPick} />
-          <TooltipProvider delayDuration={250}>
+          {onClose && <Button variant="ghost" size="icon-sm" className="md:hidden" aria-label={`Hide ${title.toLowerCase()}`} title={`Hide ${title.toLowerCase()}`} onClick={onClose}><PanelLeftClose aria-hidden /></Button>}
+          {view === "workspaces" && <>{createAppAction}<ContinueBuilding sessions={sessions} onPick={onPick} /></>}
+          {view === "chats" && <TooltipProvider delayDuration={250}>
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button ref={newButton} variant="ghost" size="icon-sm" aria-label="New session" onClick={onNew}><MessageSquarePlus aria-hidden="true" /></Button>
               </TooltipTrigger>
               <TooltipContent side="right">New session</TooltipContent>
             </Tooltip>
-          </TooltipProvider>
+          </TooltipProvider>}
         </div>
       </div>
-      <div className="relative"><Search className="pointer-events-none absolute top-2.5 left-2.5 size-4 text-muted-foreground" /><Input aria-label="Search workspaces and chats" placeholder="Search…" className="pl-8" value={query} onChange={event => setQuery(event.target.value)} /></div>
+      <div className="relative"><Search className="pointer-events-none absolute top-2.5 left-2.5 size-4 text-muted-foreground" /><Input aria-label={`Search ${title.toLowerCase()}`} placeholder="Search…" className="pl-8" value={query} onChange={event => setQuery(event.target.value)} /></div>
       <div className="flex flex-wrap gap-1" aria-label="Activity filters">{statusFilters.map(({ key, label, Icon, tone }) => {
         const count = items.filter(item => matchesState(item, key)).length;
         return <Button key={key} size="sm" variant={stateFilter === key ? "secondary" : "ghost"} aria-pressed={stateFilter === key} className="h-7 gap-1 rounded-full px-2 text-xs" onClick={() => setStateFilter(key)}>
@@ -86,10 +92,10 @@ export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, 
         </Button>;
       })}</div>
     </div>
-    <div className="min-h-0 flex-1 overflow-y-auto py-2">
+    <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-2">
       {visible.map(renderItem)}
-      {!!items.length && !visible.length && <p className="p-3 text-sm text-muted-foreground">No workspaces or chats match this search and filter.</p>}
-      {!items.length && <div className="flex flex-col items-center gap-3 p-5 text-center"><HostyMark appId="hosty.harness" tile className="size-12" /><p className="text-sm text-muted-foreground">Start a session to ask a question or work on an application.</p></div>}
+      {!!items.length && !visible.length && <p className="p-3 text-sm text-muted-foreground">No {title.toLowerCase()} match this search and filter.</p>}
+      {!items.length && <div className="flex flex-col items-center gap-3 p-5 text-center"><HostyMark appId="hosty.harness" tile className="size-12" /><p className="text-sm text-muted-foreground">{view === "workspaces" ? "Create an app or continue building to start a workspace." : "Start a new chat to ask a question."}</p></div>}
     </div>
     <Dialog open={deleting !== null} onOpenChange={open => { if (!open && !deletionPending.current) setDeleting(null); }}>
       <DialogContent showCloseButton={!pending} onCloseAutoFocus={event => {
@@ -99,8 +105,10 @@ export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, 
         <DialogHeader><DialogTitle>Delete session?</DialogTitle>
           <DialogDescription>Delete the session “{deleting ? sessionLabel(deleting) : "Untitled session"}” and its conversation history? This cannot be undone. The session is stopped and detached. Shared source and other conversations are retained; unresolved session resources must be reconciled first.</DialogDescription>
         </DialogHeader>
-        {error && <p role="alert" className="text-sm text-destructive-foreground">{error}</p>}
-        <DialogFooter>
+      <DialogBody>
+          {error && <p role="alert" className="text-sm text-destructive-foreground">{error}</p>}
+      </DialogBody>
+      <DialogFooter>
           <Button variant="outline" disabled={pending} onClick={() => setDeleting(null)}>Keep session</Button>
           <Button variant="destructive" disabled={pending} onClick={async () => {
             if (!deleting || deletionPending.current) return;

@@ -503,6 +503,7 @@ public sealed partial class CoreLifecycleServiceTests
         var fixture = await LifecycleFixture.CreateAsync();
         var manifest = await fixture.WriteManifestAsync("1.0.0");
         await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        await fixture.PinUnchangedImageAsync();
 
         var plan = await fixture.Service.CreateUpdatePlanAsync("com.example.notes", new AppUpdatePlanRequest());
 
@@ -515,6 +516,7 @@ public sealed partial class CoreLifecycleServiceTests
         var fixture = await LifecycleFixture.CreateAsync();
         var manifest = await fixture.WriteManifestAsync("1.0.0");
         await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        await fixture.PinUnchangedImageAsync();
         var targetManifest = Path.Combine(fixture.Root, "notes-description-only.json");
         var json = await File.ReadAllTextAsync(manifest);
         await File.WriteAllTextAsync(targetManifest, json.Replace("Personal notes.", "Personal notes with updated copy.", StringComparison.Ordinal));
@@ -1069,6 +1071,7 @@ public sealed partial class CoreLifecycleServiceTests
         var manifestPath = Path.Combine(folder, "manifest.json");
         await File.WriteAllTextAsync(manifestPath, CreateRemoteManifestJson("1.0.0"));
         await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath));
+        await fixture.PinUnchangedImageAsync();
 
         // Simulate a legacy/corrupted record whose source pointer is Core's own internal copy.
         var internalCopy = Path.Combine(fixture.Paths.AppsRoot, "com.example.notes", "manifest.json");
@@ -2352,7 +2355,7 @@ public sealed partial class CoreLifecycleServiceTests
     }
 
     [Fact]
-    public async Task ApplyUpdateAsync_ResetsArtifactLocksSoNextStartReResolves()
+    public async Task ApplyUpdateAsync_PreservesPreparedArtifactLocksForTheNextStart()
     {
         var fixture = await LifecycleFixture.CreateAsync();
         var manifestV1 = await fixture.WriteManifestAsync("1.0.0");
@@ -2371,8 +2374,8 @@ public sealed partial class CoreLifecycleServiceTests
         await fixture.Service.ApplyUpdateAsync("com.example.notes", new AppUpdateApplyRequest(plan.PlanDigest, manifestV2));
         var app = await fixture.Apps.GetAppAsync("com.example.notes");
 
-        // The stale lock is dropped on update so the next start re-resolves the new target digest.
-        Assert.Null(app!.ArtifactLocks);
+        // The next start must keep the prepared, reviewed identity rather than resolving the tag again.
+        Assert.Equal(fixture.Adapter.RemoteDigest, app!.ArtifactLocks!["app"].ImageDigest);
     }
 
     [Fact]
@@ -2691,6 +2694,7 @@ public sealed partial class CoreLifecycleServiceTests
         var fixture = await LifecycleFixture.CreateAsync();
         var manifest = await fixture.WriteManifestAsync("1.0.0");
         await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        await fixture.PinUnchangedImageAsync();
         // Core-owned configuration on the record (never manifest-declared); the update
         // carries it forward rather than removing it, so the plan must not report it "removed" —
         // that phantom made the same-version plan review-class forever (apply preserves the key, the
@@ -2735,6 +2739,7 @@ public sealed partial class CoreLifecycleServiceTests
     {
         var fixture = await LifecycleFixture.CreateAsync();
         await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+        await fixture.PinUnchangedImageAsync();
         var app = (await fixture.Apps.GetAppAsync("com.example.notes"))!;
         await fixture.Apps.UpsertAppAsync(app with
         {
@@ -3867,11 +3872,10 @@ public sealed partial class CoreLifecycleServiceTests
     }
 
     [Fact]
-    public async Task EnsurePinnedCommit_FallsBackToTheReviewedRefWhenTheRecordedCommitIsUnreachable()
+    public async Task EnsurePinnedCommit_RefusesSubstitutionWhenTheRecordedCommitIsUnreachable()
     {
-        // Records written before the override kept its own commit field carry a foreign repository's
-        // commit in the pin; a force-pushed branch can also drop one upstream. Neither may wedge every
-        // start of the app: the pin falls back to the reviewed ref and the record self-heals.
+        // A missing reviewed revision requires an explicit source review. Starting must never
+        // replace it with whatever the branch happens to name now.
         var fixture = await LifecycleFixture.CreateAsync();
         var repository = await CreateLocalCommandGitRepositoryAsync(fixture.Root);
         var manifest = await fixture.WriteManifestAsync("1.0.0", sourceRepository: repository);
@@ -3885,9 +3889,9 @@ public sealed partial class CoreLifecycleServiceTests
         var record = await fixture.Apps.GetAppAsync("com.example.notes");
         await fixture.Apps.UpsertAppAsync(record! with { SourceState = record.SourceState! with { Commit = foreignCommit } });
 
-        var repinned = await fixture.Sources.EnsurePinnedCommitAsync("com.example.notes");
-
-        Assert.Equal(reviewedCommit, repinned.Source?.Commit);
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() => fixture.Sources.EnsurePinnedCommitAsync("com.example.notes"));
+        Assert.Equal("source_commit_unavailable", error.Code);
+        Assert.Equal(foreignCommit, (await fixture.Apps.GetAppAsync("com.example.notes"))!.SourceState!.Commit);
         Assert.Equal(reviewedCommit, await RunGitAsync(checkout, ["rev-parse", "HEAD"]));
     }
 
@@ -7169,6 +7173,25 @@ public sealed partial class CoreLifecycleServiceTests
         });
     }
 
+    [Fact]
+    public async Task ApplyUpdateAsync_PreparationFailurePreservesTheRunningAppAndManifest()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var before = await fixture.WriteManifestAsync("1.0.0");
+        var after = await fixture.WriteManifestAsync("1.0.1");
+        await fixture.Service.InstallAsync(new AppInstallRequest(before));
+        await fixture.Service.StartAsync("com.example.notes");
+        var plan = await fixture.Service.CreateUpdatePlanAsync("com.example.notes", new AppUpdatePlanRequest(after));
+        var stopCount = fixture.Adapter.StopCount;
+        fixture.Adapter.ImagePreparationProbe = () => throw new AppLifecycleException("image_missing", "Reviewed image is unavailable.");
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() => fixture.Service.ApplyUpdateAsync("com.example.notes", new AppUpdateApplyRequest(plan.PlanDigest, after)));
+        Assert.Equal("image_missing", error.Code);
+        Assert.Equal(stopCount, fixture.Adapter.StopCount);
+        var current = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.Equal("1.0.0", current!.Version);
+        Assert.Equal("running", current.RuntimeState);
+    }
+
     private sealed class LifecycleFixture
     {
         private LifecycleFixture(
@@ -7229,6 +7252,16 @@ public sealed partial class CoreLifecycleServiceTests
         public LocalCommandProcessRegistry LocalProcesses { get; }
 
         public FakeClock Clock { get; }
+
+        // Contract-only scenarios already have the same installed bytes as the reachable registry.
+        // Leave other fixtures lockless when they exercise first resolution or artifact movement.
+        public Task PinUnchangedImageAsync() => Apps.UpdateAppAsync("com.example.notes", app => app with
+        {
+            ArtifactLocks = new Dictionary<string, ArtifactLock>
+            {
+                ["app"] = new("image", Adapter.RemoteDigest, "ghcr.io/example/notes:1.0.0", null, null, DateTimeOffset.UtcNow),
+            },
+        });
 
         public static async Task<LifecycleFixture> CreateAsync(
             AppManifestService? manifests = null,
@@ -7301,11 +7334,12 @@ public sealed partial class CoreLifecycleServiceTests
             return new LifecycleFixture(root, paths, apps, backups, manifests, sources, service, adapter, localAdapter, localProcesses, clock, coreSettings, publications);
         }
 
-        public CoreLifecycleService RecreateService(CorePublicOriginResolver? coreOrigins = null, PrivateSourceService? privateSources = null)
+        public CoreLifecycleService RecreateService(CorePublicOriginResolver? coreOrigins = null, PrivateSourceService? privateSources = null,
+            IAppRuntimeAdapter? localRuntimeAdapter = null)
         {
             var registry = new AppRegistryStore(Paths);
             return new CoreLifecycleService(Paths, registry, Manifests, new AppBackupService(Paths, Clock),
-                new AppSourceService(Paths, registry, Clock), [Adapter, LocalAdapter], new NoopIngressController(),
+                new AppSourceService(Paths, registry, Clock), [Adapter, localRuntimeAdapter ?? LocalAdapter], new NoopIngressController(),
                 Microsoft.Extensions.Logging.Abstractions.NullLogger<CoreLifecycleService>.Instance, clock: Clock, coreOrigins: coreOrigins, privateSources: privateSources);
         }
 
@@ -7690,8 +7724,16 @@ public sealed partial class CoreLifecycleServiceTests
         public void Dispose() => stopping.Dispose();
     }
 
-    private sealed class RecordingRuntimeAdapter(string type = "docker") : IRuntimePreparation, IAppRuntimeAdapter, IImageDigestResolver, IRunningContainerProbe
+    private sealed class RecordingRuntimeAdapter(string type = "docker") : IImageArtifactPreparation, IRuntimePreparation, IAppRuntimeAdapter, IImageDigestResolver, IRunningContainerProbe
     {
+        public Func<Task>? ImagePreparationProbe { get; set; }
+        public async Task PrepareImagesAsync(RuntimeAppManifestSelection selection, IReadOnlyDictionary<string, ArtifactLock>? reviewed, CancellationToken ct)
+        {
+            foreach (var service in selection.Services.Where(s => s.Image is not null && s.Runtime.Build is null))
+                if (reviewed?.GetValueOrDefault(service.Key)?.ImageDigest is null)
+                    throw new AppLifecycleException("image_revision_unavailable", "No reviewed image digest.");
+            if (ImagePreparationProbe is not null) await ImagePreparationProbe();
+        }
         public Func<RuntimeLifecycleContext, Task>? PreparationProbe { get; set; }
         public async Task<RuntimePreparation> PrepareAsync(RuntimeLifecycleContext context, CancellationToken ct)
         {
@@ -7729,7 +7771,7 @@ public sealed partial class CoreLifecycleServiceTests
         public IReadOnlyDictionary<string, ArtifactLock>? StartLocks { get; set; }
 
         // Digest the fake resolver returns for plan-time remote lookups; null = registry unreachable.
-        public string? RemoteDigest { get; set; }
+        public string? RemoteDigest { get; set; } = "sha256:" + new string('a', 64);
 
         // Awaited inside the verb, so a test can observe the record exactly while the operation is in
         // flight — which is the only moment the transitional state is persisted.

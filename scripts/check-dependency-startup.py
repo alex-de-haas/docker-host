@@ -107,14 +107,14 @@ def environment_action(action):
     return child_record
 
 
-def fixture(app_id, provider=None, delay=0):
+def fixture(app_id, provider=None, delay=0, fail=False):
     with socket.socket() as listener:
         listener.bind(('127.0.0.1', 0))
         host_port = listener.getsockname()[1]
     result = {'schemaVersion': 'app.0.1', 'id': app_id, 'name': app_id, 'version': '0.1.0',
         'runtimeProfiles': [{'key': 'docker', 'type': 'docker', 'default': True, 'readinessTimeoutSeconds': 1}],
         'defaultRuntime': 'docker', 'services': [{'key': 'web', 'runtimes': {'docker': {
-            'type': 'docker', 'image': image, 'environment': {'HEALTH_DELAY': str(delay)},
+            'type': 'docker', 'image': image, 'environment': {'HEALTH_DELAY': str(delay), 'FAIL_START': '1' if fail else '0'},
             'ports': [{'key': 'http', 'containerPort': 8080, 'hostPort': host_port, 'protocol': 'http', 'expose': 'host'}],
             'healthcheck': {'type': 'exec', 'command': "node -e \"fetch('http://localhost:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
                             'intervalSeconds': 1, 'timeoutSeconds': 1, 'retries': 1}}}}],
@@ -125,7 +125,8 @@ def fixture(app_id, provider=None, delay=0):
 
 try:
     # Tiny fixture reports the injected provider URL and whether it answers from the consumer.
-    (base / 'server.cjs').write_text("""const http = require('node:http');
+    (base / 'server.cjs').write_text("""if (process.env.FAIL_START === '1') process.exit(1);
+const http = require('node:http');
 const started = Date.now();
 http.createServer(async (req, res) => {
   if (req.url === '/health') { res.statusCode = Date.now()-started >= Number(process.env.HEALTH_DELAY||0)*1000 ? 200 : 503; return res.end(); }
@@ -159,7 +160,7 @@ http.createServer(async (req, res) => {
     parent.request('/api/auth/bootstrap', {'setupToken': token, 'email': email, 'displayName': 'Dependency fixture', 'password': password})
     parent.login()
     create = {'requestId': str(uuid.uuid4()), 'label': 'Dependency startup acceptance', 'mode': 'source', 'projectPath': str(project),
-              'limits': {'applicationMemoryBytes': 536870912, 'applicationCpus': 0.5, 'applicationPids': 128}}
+              'limits': {'applicationMemoryBytes': 536870912, 'applicationCpus': 0.25, 'applicationPids': 64}}
     (base / 'create.json').write_text(json.dumps(create))
     child_record = parent.request('/api/core-environments', create)
     environment_action('start')
@@ -175,29 +176,55 @@ http.createServer(async (req, res) => {
     assert result['status'] == 'waiting' and child.app(consumer)['runtimeState'] == 'waiting'
     assert not run(['docker', 'ps', '-q', '--filter', 'label=hosty.instance=' + child_record['id']])
     say('PASS: missing required provider settles manual Start as waiting without launching a container')
-    child.install(fixture(provider, delay=6))
     child.action(consumer, 'stop')
+    child.install(fixture(provider, delay=6))
     child.action(provider, 'start')
     wait_for(lambda: child.app(provider).get('health', {}).get('status') == 'healthy', 'Provider readiness')
     assert child.app(consumer)['runtimeState'] == 'stopped'
     say('PASS: Stop cancels waiting; provider readiness does not revive the consumer')
     child.action(provider, 'stop')
     assert child.action(consumer, 'start')['status'] == 'waiting'
-    child.action(provider, 'start')
     wait_for(lambda: child.app(consumer)['runtimeState'] == 'running', 'Automatic dependency resume')
     endpoint = child.app(consumer)['endpoints'][0]['url']
     with urllib.request.urlopen(endpoint, timeout=15) as response:
         payload = json.load(response)
     assert payload['provider'] and payload['reachable'], payload
-    say('PASS: delayed healthy provider wakes consumer; injected URL answers from its Docker container')
-    for app_id in (provider, consumer):
-        child.request('/api/apps/' + app_id + '/autostart', {'autostart': True})
+    say('PASS: one consumer Start automatically starts its disabled provider, waits for health and injects a reachable URL')
+    assert not child.app(provider)['autostart']
+    child.request('/api/apps/' + consumer + '/autostart', {'autostart': True})
     old_pid = child_record['process']['pid']
     environment_action('restart')
     assert child_record['state'] == 'running' and child_record['process']['pid'] != old_pid
     child.login()
     wait_for(lambda: child.app(consumer)['runtimeState'] == 'running', 'Dependency-ordered boot')
-    say('PASS: Core restart starts reverse-alphabetical provider/consumer chain without manual intervention')
+    assert not child.app(provider)['autostart']
+    say('PASS: Core restart starts the required disabled provider without changing its autostart setting')
+    shared = 'org.example.shared-consumer'
+    child.install(fixture(shared, provider))
+    child.action(consumer, 'stop')
+    child.action(provider, 'stop')
+    child.action(consumer, 'start')
+    child.action(shared, 'start')
+    child.action(consumer, 'stop')
+    wait_for(lambda: child.app(shared)['runtimeState'] == 'running', 'Shared provider startup')
+    assert child.app(consumer)['runtimeState'] == 'stopped'
+    child.action(shared, 'stop')
+    say('PASS: cancelling one consumer preserves the shared provider and starts the other consumer')
+    bad, retry = 'org.example.failed-provider', 'org.example.retry-consumer'
+    child.install(fixture(bad, fail=True))
+    child.install(fixture(retry, bad))
+    child.action(retry, 'start')
+    wait_for(lambda: child.app(bad).get('lastError') and child.app(retry).get('lastError'), 'Provider failure diagnostics')
+    assert child.app(retry)['runtimeState'] == 'waiting'
+    fixed = fixture(bad)
+    fixed['version'] = '0.1.1'
+    fixed_path = base / 'fixed-provider.json'
+    fixed_path.write_text(json.dumps(fixed))
+    fix_plan = child.request('/control/v1/apps/' + bad + '/update/plan', {'manifestPath': str(fixed_path)}, control=True)
+    child.request('/control/v1/apps/' + bad + '/update', {'planDigest': fix_plan['planDigest']}, control=True)
+    child.action(retry, 'start')
+    wait_for(lambda: child.app(retry)['runtimeState'] == 'running', 'Retry repaired provider chain')
+    say('PASS: failed provider is diagnosed; a new Start retries the repaired chain')
     shell_image = os.environ.get('HOSTY_DEPENDENCY_SHELL_IMAGE')
     if shell_image:
         shell = json.loads((workspace / 'apps/shell/manifest.json').read_text())
@@ -218,18 +245,19 @@ http.createServer(async (req, res) => {
             say('BROWSER READY: ' + str(browser) + '; remove browser-hold after QA')
             wait_for(lambda: not hold.exists(), 'Browser QA hold exceeded 15 minutes', timeout=900)
         browser.unlink()
-    child.action(provider, 'stop')
-    assert child.action(consumer, 'restart')['status'] == 'waiting'
-    repaired = json.loads((base / (consumer + '.json')).read_text())
+    repair_consumer = 'org.example.repair-consumer'
+    child.install(fixture(repair_consumer, 'org.example.absent'))
+    assert child.action(repair_consumer, 'start')['status'] == 'waiting'
+    repaired = json.loads((base / (repair_consumer + '.json')).read_text())
     repaired.pop('dependencies')
     repaired['version'] = '0.2.0'
     repaired_path = base / 'reviewed-repair.json'
     repaired_path.write_text(json.dumps(repaired))
-    plan = child.request('/control/v1/apps/' + consumer + '/update/plan',
+    plan = child.request('/control/v1/apps/' + repair_consumer + '/update/plan',
                          {'manifestPath': str(repaired_path)}, control=True)
-    child.request('/control/v1/apps/' + consumer + '/update', {'planDigest': plan['planDigest']}, control=True)
-    wait_for(lambda: child.app(consumer)['runtimeState'] == 'running', 'Reviewed graph repair resumes waiting start')
-    assert child.app(consumer)['version'] == '0.2.0'
+    child.request('/control/v1/apps/' + repair_consumer + '/update', {'planDigest': plan['planDigest']}, control=True)
+    wait_for(lambda: child.app(repair_consumer)['runtimeState'] == 'running', 'Reviewed graph repair resumes waiting start')
+    assert child.app(repair_consumer)['version'] == '0.2.0'
     say('PASS: a reviewed dependency repair preserves pending start and launches the updated consumer')
     success = True
 finally:

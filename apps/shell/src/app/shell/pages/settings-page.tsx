@@ -6,6 +6,7 @@ import { SettingsPageNavigation } from "../sidebar/settings-navigation";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { getManageAppHref } from "../shell-routes";
+import { PlatformFeedSettings } from "./platform-feed-settings";
 import { CoreSourceSettings } from "../core-development";
 import { useRouter } from "next/navigation";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -127,6 +128,7 @@ export function SettingsPage({
         {!assistants.length && <p className="text-sm text-muted-foreground">Install and confirm an assistant to use these features.</p>}</div></div>
       </section>}
 
+      {canManageApps && resolvedTab === "general" && <PlatformFeedSettings coreOrigin={coreOrigin} sendCsrfJson={sendCsrfJson} />}
       {canManageApps && resolvedTab === "source" && <CoreSourceSettings coreOrigin={coreOrigin} />}
 
       {canManageApps && resolvedTab === "connections" && <SourceProviders coreOrigin={coreOrigin} sendCsrfJson={sendCsrfJson} />}

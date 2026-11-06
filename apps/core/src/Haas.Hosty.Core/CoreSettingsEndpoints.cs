@@ -100,6 +100,7 @@ internal static class CoreSettingsEndpoints
     internal static CoreSettingsResponse Build(CoreSettingsService settings, CorePublicOriginResolver origins)
     {
         var rows = new List<CoreSettingSummary>();
+        rows.AddRange(settings.GetDiagnosticRows());
         foreach (var row in settings.GetAuthRows().Where(r => r.Definition.Key != "HOSTY_AUTH_APP_ACTIVITY_HOURS"))
         {
             rows.Add(new CoreSettingSummary(

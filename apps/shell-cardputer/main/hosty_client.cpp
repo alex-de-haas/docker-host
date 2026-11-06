@@ -28,6 +28,7 @@ char hex_digit(unsigned value) { return static_cast<char>(value < 10 ? '0' + val
 
 bool HostyClient::configure(std::string_view origin, std::string_view access_token) {
     release();
+    if (origin_.view() != origin) pending_update_ = {};
     if (!origin_.assign(origin) || !access_token_.assign(access_token)) return false;
     secure_ = origin.starts_with("https://");
     if (request_lock_ == nullptr) {
@@ -164,8 +165,17 @@ HttpResult HostyClient::restart_core() const {
     return {ESP_ERR_TIMEOUT};
 }
 
-HttpResult HostyClient::update_core() const {
-    return request(HTTP_METHOD_POST, "/api/core/update", "{}", true, nullptr);
+HttpResult HostyClient::update_core(std::string_view offer_id, std::string_view operation_id) const {
+    char id[33];
+    std::snprintf(id, sizeof(id), "%08lx%08lx%08lx%08lx",
+                  static_cast<unsigned long>(esp_random()), static_cast<unsigned long>(esp_random()),
+                  static_cast<unsigned long>(esp_random()), static_cast<unsigned long>(esp_random()));
+    hosty::FixedString<256> body;
+    if (!pending_update_.bind(offer_id, operation_id, id) || !pending_update_.body(body)) return {ESP_ERR_INVALID_ARG};
+    const HttpResult result = request(HTTP_METHOD_POST, "/api/core/update", body.view(), true, nullptr);
+    // Preserve identity after acceptance, a dropped response or a server-side preparation failure.
+    if (result.transport_error == ESP_OK && (result.status_code == 400 || result.status_code == 409)) pending_update_ = {};
+    return result;
 }
 
 HttpResult HostyClient::logout() const {

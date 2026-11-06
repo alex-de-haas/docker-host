@@ -5,29 +5,29 @@
       "id": "hosty.shell",
       "title": "Hosty Shell",
       "description": "Web UI client for this host.",
-      "manifestRef": "apps/shell/manifest.json",
-      "defaultEnabled": true
+      "defaultEnabled": true,
+      "feedsUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/app-releases/apps/hosty.shell/feeds.json"
     },
     {
       "id": "hosty.telemetry",
       "title": "Telemetry",
       "description": "OpenTelemetry collector and observability backend.",
-      "manifestRef": "apps/telemetry/manifest.json",
-      "defaultEnabled": false
+      "defaultEnabled": false,
+      "feedsUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/app-releases/apps/hosty.telemetry/feeds.json"
     },
     {
       "id": "hosty.marketplace",
       "title": "Marketplace",
       "description": "App discovery storefront.",
-      "manifestRef": "apps/marketplace/manifest.json",
-      "defaultEnabled": true
+      "defaultEnabled": true,
+      "feedsUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/app-releases/apps/hosty.marketplace/feeds.json"
     },
     {
       "id": "hosty.harness",
       "title": "Hosty Harness",
       "description": "Admin-only Hosty assistant: operator chat sessions on a host-resident agent harness.",
-      "manifestRef": "apps/harness/manifest.json",
-      "defaultEnabled": false
+      "defaultEnabled": false,
+      "feedsUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/app-releases/apps/hosty.harness/feeds.json"
     }
   ]
 }

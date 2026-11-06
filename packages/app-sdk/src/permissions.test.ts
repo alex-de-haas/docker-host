@@ -11,12 +11,13 @@ it("shows known missing required access only to administrators", () => {
   expect(permissionNotice({ ...state, permissions: { required: [], optional: [], granted: [] } })).toBeNull();
   expect(permissionNotice({ ...state, permissions: { ...state.permissions!, granted: ["apps.read"] } })).toBeNull();
 });
-it("prioritizes unsupported names and never opens review for them", () => {
-  const unsupported = { ...state, permissions: { ...state.permissions!, unsupportedRequired: ["retired"] } };
+it("warns about unsupported names but still offers review for missing known access", () => {
+  const unsupported = { ...state, permissions: { ...state.permissions!, required: ["retired"], unsupportedRequired: ["retired"] } };
   expect(permissionNotice(unsupported)).toBe("unsupported");
   const browser = { open: vi.fn(), parent: {} };
   requestPermissionReview(unsupported, browser as unknown as Window);
   expect(browser.open).not.toHaveBeenCalled();
+  expect(permissionNotice({ ...unsupported, permissions: { ...unsupported.permissions, required: ["retired", "apps.read"] } })).toBe("missing");
 });
 it("opens standalone review immediately but only messages the parent when embedded", () => {
   const browser = { open: vi.fn(), parent: null as unknown };

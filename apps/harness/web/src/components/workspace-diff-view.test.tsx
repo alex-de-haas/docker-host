@@ -2,15 +2,16 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-const { preload, renderDiff } = vi.hoisted(() => ({ preload: vi.fn(), renderDiff: vi.fn() }));
-vi.mock("@pierre/diffs", async importOriginal => ({ ...await importOriginal<object>(), preloadHighlighter: preload }));
+const { preload, loadedHighlighter, renderDiff } = vi.hoisted(() => ({ preload: vi.fn(), loadedHighlighter: vi.fn(), renderDiff: vi.fn() }));
+vi.mock("@pierre/diffs", async importOriginal => ({ ...await importOriginal<object>(), preloadHighlighter: preload, getHighlighterIfLoaded: loadedHighlighter }));
 vi.mock("@pierre/diffs/react", () => ({ FileDiff: renderDiff }));
 import WorkspaceDiffView from "./workspace-diff-view";
 let root: Root, container: HTMLDivElement;
 const diff = { contentKind: "text" as const, path: "new.ts", combined: "const value = 1;\n", truncated: false, binary: false };
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); container = document.createElement("div"); document.body.append(container); root = createRoot(container);
-  preload.mockReset().mockResolvedValue(undefined); renderDiff.mockReset().mockReturnValue(<div>Highlighted diff</div>);
+  loadedHighlighter.mockReset().mockReturnValue(undefined);
+  preload.mockReset().mockImplementation(async () => { loadedHighlighter.mockReturnValue({}); }); renderDiff.mockReset().mockReturnValue(<div>Highlighted diff</div>);
 });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); document.documentElement.classList.remove("dark"); vi.unstubAllGlobals(); });
 it("follows Hosty's live theme and changes layout without altering source", async () => {
@@ -28,6 +29,37 @@ it("retains the original text if highlighting cannot load", async () => {
   await act(async () => root.render(<WorkspaceDiffView diff={diff} layout="unified" wrap />));
   expect(container.textContent).toContain("could not load"); expect(container.querySelector("pre")?.textContent).toBe(diff.combined);
   expect(renderDiff).not.toHaveBeenCalled();
+});
+
+it("reuses the loaded highlighter immediately when switching files", async () => {
+  await act(async () => root.render(<WorkspaceDiffView key="first" diff={diff} layout="unified" wrap onAsk={vi.fn()} />));
+  expect(preload).toHaveBeenCalledTimes(1);
+  await act(async () => renderDiff.mock.lastCall?.[0].options.onLineSelectionEnd({ start: 1, end: 1, side: "additions" }));
+  expect(container.textContent).toContain("Lines 1–1");
+
+  act(() => root.render(<WorkspaceDiffView key="second" diff={{ ...diff, path: "second.ts" }} layout="unified" wrap onAsk={vi.fn()} />));
+  expect(container.textContent).toContain("Highlighted diff");
+  expect(container.textContent).not.toContain("Loading diff viewer…");
+  expect(container.textContent).not.toContain("Lines 1–1");
+  expect(renderDiff.mock.lastCall?.[0].selectedLines).toBe(null);
+  expect(loadedHighlighter).toHaveBeenCalledWith({ theme: { light: "pierre-light", dark: "pierre-dark" }, lang: "text" });
+  expect(preload).toHaveBeenCalledTimes(1);
+
+  act(() => root.render(<WorkspaceDiffView key="first" diff={diff} layout="unified" wrap />));
+  expect(container.textContent).toContain("Highlighted diff");
+  expect(container.textContent).not.toContain("Loading diff viewer…");
+  expect(preload).toHaveBeenCalledTimes(1);
+});
+
+it("retries highlighter loading after a failed viewer is remounted", async () => {
+  preload.mockRejectedValueOnce(new Error("offline"));
+  await act(async () => root.render(<WorkspaceDiffView key="first" diff={diff} layout="unified" wrap />));
+  expect(container.textContent).toContain("could not load");
+
+  await act(async () => root.render(<WorkspaceDiffView key="second" diff={diff} layout="unified" wrap />));
+  expect(container.textContent).toContain("Highlighted diff");
+  expect(container.textContent).not.toContain("could not load");
+  expect(preload).toHaveBeenCalledTimes(2);
 });
 
 it("renders current-side threads inline and retains file, outdated and missing-coordinate threads", async () => {

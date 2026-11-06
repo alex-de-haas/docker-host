@@ -10,7 +10,8 @@ const controls = vi.hoisted(() => ({ workspaces: [] as DevelopmentWorkspace[], l
 vi.mock("@hosty-sdk/app/ui/react", () => ({ useHostyUi: () => controls.ui }));
 vi.mock("@/lib/assistant-api", async original => ({ ...await original<object>(), getHealth: vi.fn(), listSessions: vi.fn(), getSession: vi.fn(), createSession: vi.fn(), listAppNames: vi.fn(), listAgentConnections: vi.fn(), streamEvents: vi.fn(), postMessage: vi.fn() }));
 vi.mock("@/lib/development-api", async original => ({ ...await original<object>(), useDevelopmentInventory: (enabled: boolean) => { controls.inventoryEnabled.push(enabled); return { workspaces: controls.workspaces, loading: controls.loading, error: controls.error, refresh: vi.fn() }; } }));
-vi.mock("./workspace-details", () => ({ WorkspaceDetails: ({ workspace, onReview }: { workspace: DevelopmentWorkspace; onReview: (tree: Worktree, choice?: ReviewChoice) => void }) => <div>
+vi.mock("./workspace-details", () => ({ WorkspaceDetails: ({ workspace, onReview, onSessionPicked }: { workspace: DevelopmentWorkspace; onSessionPicked: (id: string) => void; onReview: (tree: Worktree, choice?: ReviewChoice) => void }) => <div>
+  {workspace.participation?.sessions.filter(s => s.attached && s.canOpen).map(s => <button key={s.sessionId} data-workspace-session onClick={() => onSessionPicked(s.sessionId)}>{s.title}</button>)}
   <button onClick={() => onReview(workspace.worktrees[0], { view: `pr:${workspace.worktrees[0].pullRequests[0].url}`, path: "" })}>Review PR in {workspace.id}</button>
   <button onClick={() => onReview(workspace.worktrees[0])}>Resume review in {workspace.id}</button>
   <textarea aria-label={`Workspace draft ${workspace.id}`} defaultValue="workspace form" />
@@ -29,6 +30,7 @@ vi.mock("./ui/message-scroller", () => {
   return { ...Object.fromEntries(["MessageScroller", "MessageScrollerProvider", "MessageScrollerViewport", "MessageScrollerContent", "MessageScrollerItem"].map(name => [name, Wrap])), MessageScrollerButton: () => null };
 });
 let root: Root, container: HTMLDivElement;
+const workspaceButton = (name: string) => [...container.querySelectorAll<HTMLButtonElement>('nav[aria-label="Workspaces"] button')].find(button => [...button.querySelectorAll("span")].some(span => span.textContent === name))!;
 const button = (text: string) => [...container.querySelectorAll("button")].find(button => button.textContent === text)!;
 function workspace(id: string, kind: "assistant" | "external"): DevelopmentWorkspace {
   return { id, name: id, state: "active", owner: { kind, appId: kind === "assistant" ? "hosty.harness" : undefined, reference: kind === "assistant" ? "session-one" : "external-task", label: kind }, workflow: { state: "in-progress", revision: 0 },
@@ -42,7 +44,7 @@ beforeEach(() => {
   vi.mocked(api.getHealth).mockResolvedValue({ name: "fake", available: true }); vi.mocked(api.listSessions).mockResolvedValue([record]);
   vi.mocked(api.getSession).mockResolvedValue(record); vi.mocked(api.createSession).mockResolvedValue(record); vi.mocked(api.listAppNames).mockResolvedValue({}); vi.mocked(api.listAgentConnections).mockResolvedValue({ connections: [], defaultId: null });
   controls.events = []; controls.loading = false; controls.error = ""; controls.inventoryEnabled = []; controls.capturedReviewAsk = undefined;
-  vi.mocked(api.streamEvents).mockImplementation(async (_id, onEvent) => { controls.events.forEach(onEvent); });
+  vi.mocked(api.streamEvents).mockImplementation(async (_id, onEvent, _signal, onConnection) => { controls.events.forEach(onEvent); onConnection?.("connected"); });
   controls.workspaces = [workspace("session-workspace", "assistant"), workspace("external-workspace", "external")];
   localStorage.setItem("hosty.assistant.session", record.id); window.history.replaceState({}, "", "/development?session=session-one");
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
@@ -68,12 +70,12 @@ it.each([true, false])("retains drafts and returns Ask to the conversation from 
 });
 it("opens an external PR in its own workspace without enabling Ask in an unrelated session", async () => {
   await act(async () => root.render(<AssistantConversation fullPage />));
-  await act(async () => button("external-workspace").click()); await act(async () => button("Review PR in external-workspace").click());
+  await act(async () => workspaceButton("external-workspace").click()); await act(async () => button("Review PR in external-workspace").click());
   expect(container.querySelector('[aria-label="Mock workspace review"]')?.textContent).toContain("external-workspace / external-workspace-tree / pr:https://github.com/example/external-workspace/pull/7");
   expect(button("Ask from review").disabled).toBe(true); expect(api.postMessage).not.toHaveBeenCalled();
   await act(async () => button("Back to session").click());
   expect(container.querySelector('[aria-label="Mock workspace review"]')).toBeNull();
-  expect(container.querySelector('nav[aria-label="Workspaces and chats"] button[aria-current="page"]')?.textContent).toContain("external-workspace");
+  expect(container.querySelector('nav[aria-label="Workspaces"] button[aria-current="page"]')?.textContent).toContain("external-workspace");
 });
 
 it("opens persisted transcript edits in their exact tree and session scope while retaining the prior PR choice and composer", async () => {
@@ -199,7 +201,7 @@ it("disables Ask from an already open review when its workspace closes", async (
   expect(messageField()?.value).toBe("Keep this draft");
 });
 
-it("switches workspace tabs with independent drafts and excludes other users' chats", async () => {
+it("switches sidebar sessions with independent drafts and excludes other users' chats", async () => {
   const records = [{ id: "session-one", title: "Implementation", status: "idle", createdAt: "2026-10-25" }, { id: "session-two", title: "Review", status: "idle", createdAt: "2026-10-25" }, { id: "solo", title: "Standalone", status: "idle", createdAt: "2026-10-25" }];
   vi.mocked(api.listSessions).mockResolvedValue(records);
   vi.mocked(api.getSession).mockImplementation(async id => records.find(r => r.id === id)!);
@@ -210,23 +212,24 @@ it("switches workspace tabs with independent drafts and excludes other users' ch
   ] };
   controls.workspaces = [shared, workspace("external", "external")];
   await act(async () => root.render(<AssistantConversation fullPage />));
-  const tabs = () => [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
-  expect(tabs().map(t => t.textContent)).toEqual(["Implementation", "Review"]);
+  const sessionRows = () => [...container.querySelectorAll<HTMLButtonElement>('[data-workspace-session]')];
+  expect(sessionRows().map(t => t.textContent)).toEqual(["Implementation", "Review"]);
+  expect(container.querySelector('[role="tablist"]')).toBeNull();
+  expect(container.querySelector('main header [aria-label="Workspace details"]')).not.toBeNull();
   expect(container.querySelectorAll('nav button[aria-current="page"]')).toHaveLength(1);
   const input = () => container.querySelector<HTMLTextAreaElement>('[aria-label="Message"]')!;
   const draft = async (text: string) => act(async () => { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(input(), text); input().dispatchEvent(new Event("input", { bubbles: true })); });
   await draft("Implementation draft");
-  await act(async () => tabs()[1].click()); await draft("Review draft");
+  await act(async () => sessionRows()[1].click()); await draft("Review draft");
   expect(window.location.search).toBe("?session=session-two");
-  await act(async () => tabs()[0].click()); expect(input().value).toBe("Implementation draft");
-  await act(async () => button("external").click());
-  expect(container.querySelector('[aria-label="Message composer"]')).toBeNull(); expect(tabs()).toHaveLength(0);
+  await act(async () => sessionRows()[0].click()); expect(input().value).toBe("Implementation draft");
+  await act(async () => workspaceButton("external").click());
+  expect(container.querySelector('[aria-label="Message composer"]')).toBeNull(); expect(sessionRows()).toHaveLength(0);
   expect(window.location.search).toBe("?workspace=external");
   await act(async () => [...container.querySelectorAll<HTMLButtonElement>("nav button")].find(b => b.textContent?.startsWith("shared"))!.click());
   expect(input().value).toBe("Implementation draft");
-  await act(async () => tabs()[1].click()); expect(input().value).toBe("Review draft");
-  await act(async () => button("Standalone").click());
-  expect(tabs()).toHaveLength(0); expect(container.querySelector('[aria-label="Workspace draft shared"]')).toBeNull();
+  await act(async () => sessionRows()[1].click()); expect(input().value).toBe("Review draft");
+  expect([...container.querySelectorAll('nav[aria-label="Workspaces"] button')].some(node => node.textContent === "Standalone")).toBe(false);
   expect(api.createSession).not.toHaveBeenCalled(); expect(api.postMessage).not.toHaveBeenCalled();
 });
 it.each(["external", "empty"])("restores a %s workspace route without creating or reopening an unrelated conversation", async kind => {
@@ -239,4 +242,21 @@ it.each(["external", "empty"])("restores a %s workspace route without creating o
   expect(container.querySelector('[aria-label="New session in workspace"]')).toBeNull();
   expect(api.createSession).not.toHaveBeenCalled(); expect(api.postMessage).not.toHaveBeenCalled();
   expect(controls.ui.reportSurfaceState).toHaveBeenCalledWith(expect.objectContaining({ route: `/development?workspace=${kind}`, state: "ready" }));
+});
+
+it("keeps workspace details reachable without session tabs on narrow layouts", async () => {
+  vi.stubGlobal("matchMedia", (query: string) => ({ matches: query.includes("max-width: 899px"), addEventListener() {}, removeEventListener() {} }));
+  window.history.replaceState({}, "", "/development?workspace=external-workspace");
+  await act(async () => root.render(<AssistantConversation fullPage />));
+  expect(container.querySelector(".harness-conversation > header")).toBeNull();
+  const opener = container.querySelector<HTMLButtonElement>('main [aria-label="Workspace details"]')!;
+  expect(opener).not.toBeNull();
+  const field = container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Workspace draft external-workspace"]')!;
+  field.value = "Keep workspace edits";
+  await act(async () => opener.click());
+  expect(container.querySelector('[role="dialog"][aria-label="Workspace"]')).not.toBeNull();
+  await act(async () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+  expect(container.querySelector('[role="dialog"][aria-label="Workspace"]')).toBeNull();
+  expect(container.querySelector('textarea[aria-label="Workspace draft external-workspace"]')).toBe(field);
+  expect(field.value).toBe("Keep workspace edits");
 });

@@ -581,8 +581,8 @@ export interface HostThemeBridgeProps {
  *
  * Pair it with `themeBootstrapScript` in the head: this effect runs after first paint, so without
  * the script a document paints in the default theme for a frame before it is corrected. The system
- * preference is followed live only while no shell has spoken — a declared theme is a choice, and a
- * choice is not overruled by the OS.
+ * preference is followed live while no shell has spoken, or while a standalone tab retains a
+ * declared system preference. Explicit light/dark choices and embedded host decisions stay authoritative.
  */
 export function HostThemeBridge({ followSystem = true, onTheme }: HostThemeBridgeProps = {}) {
   const onThemeRef = useRef(onTheme);
@@ -593,6 +593,7 @@ export function HostThemeBridge({ followSystem = true, onTheme }: HostThemeBridg
   useEffect(() => {
     const root = document.documentElement;
     const system = window.matchMedia("(prefers-color-scheme: dark)");
+    const standalone = window.parent === window.self;
     const apply = (theme: HostyResolvedTheme, preference: HostyThemePreference, declared: boolean) => {
       applyTheme(root, theme, preference);
       if (declared) {
@@ -610,8 +611,10 @@ export function HostThemeBridge({ followSystem = true, onTheme }: HostThemeBridg
       stored: readStoredTheme(THEME_STORAGE_KEY),
       storedPreference: readStoredTheme(THEME_PREFERENCE_STORAGE_KEY),
       systemPrefersDark: system.matches,
+      standalone,
     });
     let declared = resolution.source !== "system";
+    let preference = resolution.preference;
     if (declared || followSystem) {
       apply(resolution.theme, resolution.preference, declared);
     }
@@ -630,11 +633,12 @@ export function HostThemeBridge({ followSystem = true, onTheme }: HostThemeBridg
         return;
       }
       declared = true;
-      apply(message.theme, message.preference, true);
+      preference = message.preference;
+      apply(message.theme, preference, true);
     };
     const handleSystemChange = () => {
-      if (!declared && followSystem) {
-        apply(system.matches ? "dark" : "light", "system", false);
+      if (declared ? standalone && preference === "system" : followSystem) {
+        apply(system.matches ? "dark" : "light", "system", declared);
       }
     };
 

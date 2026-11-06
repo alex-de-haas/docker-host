@@ -41,8 +41,6 @@ internal static class WorkspaceParticipationEndpoints
                     var legacy = (await workspaces.ListAsync(actor, true, ct)).Workspaces.FirstOrDefault();
                     if (legacy is not null) participation = await workspaces.ParticipationAsync(legacy.WorkspaceId, actor.UserId, ct);
                 }
-                if (participation is not null && !participation.Members.Any(m => m.UserId == actor.UserId && m.RevokedAt is null))
-                    throw DevelopmentWorkspaceService.Error("membership_revoked", "Workspace membership was revoked. Stop this execution and detach.");
                 return new WorkspaceAssociationView(participation is null ? null : await Project(await workspaces.ParticipationAsync(participation.Id, actor.UserId, ct), actor.UserId, appId, users, apps, ct));
             }, request));
         app.MapPost(association + "/{workspaceId}/{kind}", async (string appId, string sessionId, string workspaceId,
@@ -53,7 +51,7 @@ internal static class WorkspaceParticipationEndpoints
                 await workspaces.ChangeSessionAsync(workspaceId, actor, kind, input, ct);
                 // A retained receipt must not restore an association changed by a later request.
                 var current = await workspaces.SessionParticipationAsync(actor, ct);
-                if (current is null || !current.Members.Any(m => m.UserId == actor.UserId && m.RevokedAt is null))
+                if (current is null)
                     return new WorkspaceAssociationView(null);
                 return new WorkspaceAssociationView(await Project(await workspaces.ParticipationAsync(current.Id, actor.UserId, ct), actor.UserId, appId, users, apps, ct));
             }, request));
@@ -64,11 +62,12 @@ internal static class WorkspaceParticipationEndpoints
     {
         var directory = users is null ? [] : (await users.ReadAsync(ct)).Users;
         var installation = (await apps.GetAppAsync(appId, ct))?.InstalledAt;
-        var role = value.Members.First(m => m.UserId == actor && m.RevokedAt is null).Role;
+        var role = "operator";
         string Name(string userId) => directory.FirstOrDefault(u => u.Id == userId)?.DisplayName ?? "Workspace participant";
         return new(value.Id, value.Revision, role,
             value.Members.Select(m => new WorkspaceMemberView(m.UserId, Name(m.UserId), m.Role, m.WorktreeIds, m.RevokedAt is not null)).ToArray(),
-            value.Sessions.Select(s => new WorkspaceSessionView(s.Session.AppId, s.Session.UserId, s.Session.SessionId, s.Title,
+            // External allocation evidence is retained internally, not exposed as a hosted chat or activity.
+            value.Sessions.Where(s => !s.Session.IsExternal).Select(s => new WorkspaceSessionView(s.Session.AppId, s.Session.UserId, s.Session.SessionId, s.Title,
                 s.DetachedAt is null, s.Session.UserId == actor && s.Session.AppId == appId && s.Session.Installation == installation,
                 s.Session.UserId == actor && s.Session.AppId == appId && s.Session.Installation == installation ? s.ViewerPath : null,
                 s.Status is not ("idle" or "failed") && (s.ActivityAt is null || DateTimeOffset.UtcNow - s.ActivityAt > TimeSpan.FromSeconds(45)) ? "unknown" : s.Status, s.ActivityAt, s.Session.AppId == appId && s.Session.Installation == installation, s.ChangedAt ?? s.AttachedAt)).ToArray(),

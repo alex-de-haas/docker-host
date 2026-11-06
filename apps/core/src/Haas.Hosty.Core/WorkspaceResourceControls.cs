@@ -21,20 +21,4 @@ internal sealed partial class WorkspaceCleanupService
             cleanup: action != "start" || replay);
     }
 
-    public async Task<SandboxView> SandboxCommandAsync(string workspaceId, string userId, string caller,
-        string id, string action, SandboxCommand input, CancellationToken ct)
-    {
-        if (action is not ("start" or "stop" or "dispose"))
-            throw new SandboxException("sandbox_operation_invalid", "Choose Start, Stop or Delete sandbox.", 400);
-        var owner = await inspection.ReadOwnerAsync(workspaceId, userId, ct);
-        await RequirePermission(caller, CoreAppPermissions.SandboxesManage, ct);
-        var instance = await sandboxService.ReadAsync(new(userId), id, ct);
-        if (!Belongs(instance.Owner, instance.Context, owner with { UserId = userId }, workspaceId))
-            throw new SandboxException("sandbox_not_found", "This sandbox does not belong to the selected workspace.", 404);
-        var replay = instance.Operations.Any(o => o.Id == input.RequestId && o.State == "succeeded");
-        if (action == "start" && !replay) await RequirePermission(caller, CoreAppPermissions.Sources, ct);
-        return await workspaces.WithResourceContextAsync(new(userId), new(WorkspaceId: workspaceId),
-            () => sandboxOperations.CommandAsync(new(userId), id, action, input, ct), ct,
-            cleanup: action != "start" || replay);
-    }
 }

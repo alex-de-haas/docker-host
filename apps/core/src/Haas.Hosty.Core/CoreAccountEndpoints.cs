@@ -6,6 +6,16 @@ namespace Haas.Hosty.Core;
 // inside Core; no executable code or user credentials are loaded from a replaceable runtime app.
 internal static class CoreAccountEndpoints
 {
+    private static readonly string Styles = ReadStyles();
+
+    private static string ReadStyles()
+    {
+        using var stream = typeof(CoreAccountEndpoints).Assembly.GetManifestResourceStream("Haas.Hosty.Core.Browser.account.css")
+            ?? throw new InvalidOperationException("Missing Core account styles.");
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
+    }
+
     public static void Map(WebApplication app)
     {
         foreach (var path in new[] { "/account/tokens", "/account/device", "/account/background", "/oauth/consent" })
@@ -22,7 +32,7 @@ internal static class CoreAccountEndpoints
         var request = context.Request;
         context.Response.Headers.CacheControl = "no-store";
         context.Response.Headers["Content-Security-Policy"] =
-            "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'none'";
+            "default-src 'none'; img-src 'self'; script-src 'self'; style-src 'unsafe-inline'; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'none'";
         context.Response.Headers["X-Frame-Options"] = "DENY";
         context.Response.Headers["X-Content-Type-Options"] = "nosniff";
         context.Response.Headers["Referrer-Policy"] = "same-origin";
@@ -35,7 +45,7 @@ internal static class CoreAccountEndpoints
         var title = request.Path == "/account/device" ? "Connect a device" : request.Path == "/account/background" ? "Authorize background access"
             : request.Path == "/oauth/consent" ? "Authorize an application" : "Create access token";
         return Results.Content(CoreBrowserPages.Approval(title, null, null, "Your Hosty account",
-            "<p id=error role=alert hidden></p><p id=notice role=status hidden></p><div id=content>Loading…</div><script src=/account/assets/account.js defer></script>"), "text/html");
+            "<p id=error class=error role=alert hidden></p><p id=notice class=account-notice role=status hidden></p><div id=content class=account-content aria-live=polite>Loading…</div><script src=/account/assets/account.js defer></script>", Styles), "text/html");
     }
 
     private static IResult Asset(string name, string contentType)

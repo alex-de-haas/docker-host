@@ -19,5 +19,6 @@ internal sealed record SourceWorkspace(string Id, string RepositoryId, string Re
     string Branch, string State, string AdministratorId, string? AssistantAppId, string SessionId,
     string? SessionUrl, string? SessionUrlError, DateTimeOffset? ObservationAt, string? ObservationState,
     string[] PullRequests, string? BaseCommit, string? TargetCommit, SourceDocumentChange[]? Changes, string? Error = null,
-    string OwnerKind = "assistant", string? OwnerLabel = null);
+    string OwnerKind = "assistant", string? OwnerLabel = null, string? Name = null,
+    InspectionPullRequest[]? PullRequestDetails = null, string? Head = null, bool? HasLocalChanges = null);
 internal sealed record SourceWorkspaceList(SourceWorkspace[] Workspaces);

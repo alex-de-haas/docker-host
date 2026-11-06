@@ -27,16 +27,20 @@ export function readActivityLabel(events: readonly AssistantEvent[]): string {
   const parts = [files ? `${files} ${files === 1 ? "file" : "files"}` : "", searches ? `${searches} ${searches === 1 ? "search" : "searches"}` : "", web ? `${web} web ${web === 1 ? "request" : "requests"}` : ""].filter(Boolean);
   return `Read ${parts.join(" and ")}`;
 }
-export type RecordedFileEdit = TranscriptFileEdit & { key: string; calls: number };
+export type RecordedLineCount = { known: number | undefined; complete: boolean; overflowed: boolean };
+export type RecordedLineTotals = { additions: RecordedLineCount; deletions: RecordedLineCount };
+export type RecordedFileEdit = TranscriptFileEdit & { key: string; calls: number; counts: RecordedLineTotals };
 export function recordedFileEdits(events: readonly AssistantEvent[]): RecordedFileEdit[] {
   const edits = new Map<string, RecordedFileEdit>();
   for (const event of events) transcriptEdits(event).forEach((edit, index) => {
     const ref = edit.review;
     const key = ref ? JSON.stringify([ref.sessionId, ref.workspaceId, ref.worktreeId, ref.repository, ref.path]) : JSON.stringify([event.seq, index]);
     const prior = edits.get(key);
-    if (!prior) edits.set(key, { ...edit, key, calls: 1 });
+    const counts = { additions: lineCount(edit.additions), deletions: lineCount(edit.deletions) };
+    if (!prior) edits.set(key, { ...edit, key, calls: 1, counts });
     else edits.set(key, { ...prior, calls: prior.calls + 1,
-      additions: safeSum(prior.additions, edit.additions), deletions: safeSum(prior.deletions, edit.deletions) });
+      additions: safeSum(prior.additions, edit.additions), deletions: safeSum(prior.deletions, edit.deletions),
+      counts: { additions: mergeLineCounts(prior.counts.additions, counts.additions), deletions: mergeLineCounts(prior.counts.deletions, counts.deletions) } });
   });
   return [...edits.values()];
 }
@@ -59,6 +63,22 @@ export function recordedEditTotals(edits: readonly RecordedFileEdit[]) {
     additions: edits.reduce<number | undefined>((total, edit) => safeSum(total, edit.additions), 0),
     deletions: edits.reduce<number | undefined>((total, edit) => safeSum(total, edit.deletions), 0),
   };
+}
+/** Keep reported operations visible when another operation omits its count. */
+export function recordedLineTotals(edits: readonly RecordedFileEdit[]): RecordedLineTotals {
+  const initial: RecordedLineCount = { known: undefined, complete: true, overflowed: false };
+  return {
+    additions: edits.reduce((total, edit) => mergeLineCounts(total, edit.counts.additions), initial),
+    deletions: edits.reduce((total, edit) => mergeLineCounts(total, edit.counts.deletions), initial),
+  };
+}
+function lineCount(value: number | undefined): RecordedLineCount {
+  return { known: value, complete: value !== undefined, overflowed: false };
+}
+function mergeLineCounts(a: RecordedLineCount, b: RecordedLineCount): RecordedLineCount {
+  const known = a.known === undefined ? b.known : b.known === undefined ? a.known : safeSum(a.known, b.known);
+  const overflowed = a.overflowed || b.overflowed || a.known !== undefined && b.known !== undefined && known === undefined;
+  return { known: overflowed ? undefined : known, complete: a.complete && b.complete && !overflowed, overflowed };
 }
 function safeSum(a?: number, b?: number): number | undefined {
   return a !== undefined && b !== undefined && Number.isSafeInteger(a + b) ? a + b : undefined;

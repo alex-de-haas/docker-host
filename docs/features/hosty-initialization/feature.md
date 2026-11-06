@@ -1,6 +1,6 @@
 ---
 created: 2026-10-21
-updated: 2026-10-21
+updated: 2026-10-29
 summary: Core-owned first-run initialization selects applications, persists automatic ports and opens ordinary administrator setup from CLI or Dashboard environments.
 components: [apps/core, apps/cli, apps/shell, packages/app-sdk, scripts]
 ---
@@ -85,23 +85,41 @@ fallback for explicit non-initialization launch paths are unchanged.
 
 ## Dashboard Environments
 
-The administrator's Dashboard keeps Sandboxes visible when empty. Create environment offers a name,
+The administrator's Dashboard lists child environments under the connected Core. Create environment offers a name,
 the distribution catalog with recommended selections, and optional port/resource fields. The parent
 allocates an owned root and starts a child through the existing environment lifecycle. It then submits
 an explicit selection to the child's initialization service. Initialization is separate from the
 child's process state; a running Core can still have preparing or failed applications.
 
-Creation and Start keep separate durable request IDs in existing operation receipts. Lost responses
-and reloads use the retained requests. Expanded rows show selected-app progress, errors and Resume.
-Set up administrator obtains a fresh setup link, opens it and offers explicit link/token copying.
-After registration the row offers Shell when installed or CLI/API guidance for a Core-only child.
-Setup credentials stay in component memory, outside inventory and persisted browser receipts.
+Create environment is one form without numbered stages. Its header and Create/Cancel footer stay
+visible while the name, catalog and optional port/resource controls scroll. Local validation keeps
+invalid input in the dialog. A valid Create closes it immediately; Dashboard owns the request and
+shows a named pending row until the child appears. Failed or uncertain creation retains its error
+and exact-request retry, without reopening the form or silently creating a second environment.
+Creation and Start keep separate durable request IDs in existing operation receipts.
 
-The parent dialog and expanded progress use Choose apps, Install, Administrator and Open stages.
-Their state follows actual initialization/readiness/setup observations rather than a synthetic
-percentage. Recommended choices remain editable; loading is neutral, per-app failures and the
-existing Resume action stay visible. Core-only completion has its own CLI/API guidance. Child
-registration reuses the existing Core-owned form; the stage display grants no new setup authority.
+Initialized-child rows show the current application being prepared/installed/started or administrator
+setup requirement below their status. Initialization failures appear as a name-adjacent icon with
+a hover/focus tooltip. The parent reads the existing bounded initialization
+endpoint while setup is incomplete; these observations are not part of the sandbox SSE payload.
+Checks pause while hidden, recover on focus/visibility return, and stop on readiness with a registered
+administrator. Stopped, replaced and unmounted children reject obsolete reads and setup responses.
+Environment Details shows one installed-app inventory with each app's runtime and health on the same
+line, plus resources and access. There is no inline expansion, second app progress list or stage display.
+
+One primary row action offers Sign Up when first registration is available, Stop for a
+running child, or Start for a stopped child. The three-dot menu contains other applicable operations,
+Resume initialization, status refresh and confirmed deletion. Open Core appears there only after
+administrator existence is confirmed and opens the child login in a new tab. It is absent before
+registration; setup disappears after registration. Legacy children retain their account connection
+flow and obtain navigation readiness from its application inventory.
+
+Set up administrator obtains a fresh setup link and opens the child's browser form. A dialog retains
+Open registration, explicit link/token copying and renewal when opening is blocked or the link expires.
+Setup credentials remain in component memory, outside inventory and persisted browser receipts,
+and are cleared after registration or a child lifecycle/scope change. Existing users needing recovery
+remain on the normal administrator recovery path. This action cannot add another administrator after
+first setup has completed.
 
 The child has its own users, keys, app registry and data. Parent observation, app inventory and
 setup-link issuance use bounded fixed control operations and need no child password or
@@ -138,6 +156,12 @@ Related contracts: [CLI bootstrap](../cli-bootstrap/feature.md),
 [child environments](../app-sandbox-runtimes/feature.md).
 
 ## Testing Expectations
+
+- Verify the single creation form at narrow/short viewport sizes, persistent header/footer, local
+  validation, immediate close, named pending progress, lost-response recovery and exact-request retry.
+  Cover collapsed install/setup progress, one expanded installed-app inventory, lifecycle/menu actions,
+  no Open Core before registration and no setup afterward. Verify setup fallback/copy/renewal,
+  stopped-child and obsolete-response guards, hidden-page recovery and no idle setup polling after readiness.
 
 - Exercise pre-selection suppression, durable replay, explicit review, failed starts, actual readiness,
   corrupt state, repeated init and post-init app removal using the real Core lifecycle with isolated adapters.

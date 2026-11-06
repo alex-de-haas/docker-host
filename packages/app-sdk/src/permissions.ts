@@ -7,8 +7,8 @@ export const PERMISSION_REVIEW_REQUEST = "hosty:request-permission-review";
 export function permissionNotice(state: PermissionNoticeState): "missing" | "unsupported" | null {
   if (state.hostRole !== "host.admin" || !state.permissions) return null;
   const p = state.permissions;
-  if (p.unsupportedRequired?.length) return "unsupported";
-  return p.required.some(name => !p.granted.includes(name)) ? "missing" : null;
+  if (p.required.some(name => !p.unsupportedRequired?.includes(name) && !p.granted.includes(name))) return "missing";
+  return p.unsupportedRequired?.length ? "unsupported" : null;
 }
 
 export function permissionReviewUrl(corePublicOrigin: string, appId: string): string {

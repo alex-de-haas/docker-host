@@ -58,6 +58,107 @@ public sealed partial class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task ExecutionTargets_NewSkillMountDoesNotApplyToPreviousWorkspaceStop()
+    {
+        var (f, owner, workspaces, first, _, _) = await LocalHandoffFixture();
+        await AddManifestPackageRuntime(f, first);
+        var second = await AnotherExecutionTree(f, owner, workspaces, first);
+        await f.Service.StartAsync("test.created");
+        await f.Service.ExecuteTargetAsync(await ExecutionRequest(f, owner, "workspace", first), default);
+        await EditDevManifest(second.Path, manifest =>
+        {
+            manifest["corePermissions"] = new System.Text.Json.Nodes.JsonArray("apps.skills.read");
+            manifest["externalMounts"] = new System.Text.Json.Nodes.JsonObject
+            {
+                ["skills"] = new System.Text.Json.Nodes.JsonObject
+                {
+                    ["kind"] = "agent-skills", ["scope"] = "instance", ["mode"] = "ro",
+                    ["required"] = true, ["service"] = manifest["services"]![0]!["key"]!.GetValue<string>()
+                }
+            };
+        });
+        var request = await ExecutionRequest(f, owner, "workspace", second);
+        var review = await f.Service.ExecuteTargetAsync(request, default);
+        Assert.Equal("review-required", review.State);
+        await f.Service.ApproveWorkspaceManifestAsync(review.Review!.WorkspaceManifest!, owner.UserId, [], default);
+        Assert.Equal("completed", (await f.Service.ExecuteTargetAsync(request, default)).State);
+        var app = (await f.Apps.GetAppAsync("test.created"))!;
+        Assert.Equal("running", app.RuntimeState);
+        Assert.Equal(second.Path, app.SourceState!.LocalOverridePath);
+        Assert.Contains(app.MountSlots!, slot => slot.Kind == "agent-skills");
+        Assert.Equal("completed", (await f.Service.ExecuteTargetAsync(await ExecutionRequest(f, owner, "package"), default)).State);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ExecutionTargets_ReturnReportsPackageWhileStartingAndAfterStartFailure(bool failStart)
+    {
+        var (f, owner, workspaces, tree, _, _) = await LocalHandoffFixture();
+        await AddManifestPackageRuntime(f, tree);
+        await f.Service.StartAsync("test.created");
+        await f.Service.ExecuteTargetAsync(await ExecutionRequest(f, owner, "workspace", tree), default);
+        var inventory = await new WorkspaceInspectionService(workspaces, f.Apps, f.Clock).ListAsync(owner.UserId, default);
+        var before = await f.Service.ReadExecutionTargetsAsync("test.created", inventory, default);
+        Assert.Equal(tree.Id, before.Current.WorktreeId);
+
+        var observedStart = false;
+        f.Adapter.StartContextProbe = async (_, _) =>
+        {
+            var app = (await f.Apps.GetAppAsync("test.created"))!;
+            Assert.Equal("starting", app.RuntimeState);
+            Assert.Equal("return-starting", (await f.Service.GetDevModeAsync(app.Id)).Phase);
+            var current = (await f.Service.ReadExecutionTargetsAsync(app.Id, inventory, default)).Current;
+            Assert.Equal("package", current.Kind);
+            Assert.Equal("docker", current.Runtime);
+            Assert.Null(current.WorkspaceId);
+            Assert.Null(current.WorktreeId);
+            observedStart = true;
+            if (failStart) throw new IOException("Interrupted package start");
+        };
+        var back = await ExecutionRequest(f, owner, "package");
+        if (failStart)
+        {
+            await Assert.ThrowsAsync<IOException>(() => f.Service.ExecuteTargetAsync(back, default));
+            Assert.Equal("package", (await f.Service.ReadExecutionTargetsAsync("test.created", inventory, default)).Current.Kind);
+            f.Adapter.StartContextProbe = null;
+            back = (await AppExecutionStore.ReadAsync(f.Paths, back.AppId, back.Request.RequestId, default))!;
+        }
+        Assert.Equal("completed", (await f.Service.ExecuteTargetAsync(back, default)).State);
+        Assert.True(observedStart);
+        Assert.Equal("package", (await f.Service.ReadExecutionTargetsAsync("test.created", inventory, default)).Current.Kind);
+    }
+
+    [Fact]
+    public async Task ExecutionTargets_EntryReportsWorkspaceOnlyAfterItsRuntimeAndSourceAreBound()
+    {
+        var (f, owner, workspaces, tree, _, _) = await LocalHandoffFixture();
+        await AddManifestPackageRuntime(f, tree);
+        await f.Service.StartAsync("test.created");
+        var inventory = await new WorkspaceInspectionService(workspaces, f.Apps, f.Clock).ListAsync(owner.UserId, default);
+        var observedStop = false;
+        var observedStart = false;
+        f.Adapter.StopProbe = async () =>
+        {
+            if ((await f.Service.GetDevModeAsync("test.created")).Phase != "prepared") return;
+            var current = (await f.Service.ReadExecutionTargetsAsync("test.created", inventory, default)).Current;
+            Assert.Equal("package", current.Kind);
+            Assert.Null(current.WorktreeId);
+            observedStop = true;
+        };
+        f.Adapter.StartContextProbe = async (_, _) =>
+        {
+            var current = (await f.Service.ReadExecutionTargetsAsync("test.created", inventory, default)).Current;
+            Assert.Equal("workspace", current.Kind);
+            Assert.Equal(tree.Id, current.WorktreeId);
+            observedStart = true;
+        };
+        await f.Service.ExecuteTargetAsync(await ExecutionRequest(f, owner, "workspace", tree), default);
+        Assert.True(observedStop);
+        Assert.True(observedStart);
+    }
+
+    [Fact]
     public async Task ExecutionTargets_FailedPreparationKeepsRunningWorkspaceAndCanReturn()
     {
         var (f, owner, workspaces, first, _, _) = await LocalHandoffFixture();

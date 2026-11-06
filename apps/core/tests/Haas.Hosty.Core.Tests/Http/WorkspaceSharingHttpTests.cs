@@ -9,7 +9,7 @@ namespace Haas.Hosty.Core.Tests.Http;
 public sealed class WorkspaceSharingHttpTests
 {
     [Fact]
-    public async Task SharingRequiresExplicitMembershipAndNeverLendsExecutionIdentity()
+    public async Task WorkspacePermissionAllowsEveryWorkspaceWithoutLendingExecutionIdentity()
     {
         await using var host = await CoreHttpHarness.StartAsync();
         var now = host.Services.GetRequiredService<IClock>().UtcNow;
@@ -40,32 +40,27 @@ public sealed class WorkspaceSharingHttpTests
         var tree = (await prepared.Content.ReadFromJsonAsync(CoreJson.TypeInfo<DevelopmentWorkspace>()))!;
         var participants = api + "/workspace-inspection/" + tree.WorkspaceId + "/participants";
         var association = api + "/sessions/second/workspace-association/" + tree.WorkspaceId;
-        Assert.Equal(HttpStatusCode.Forbidden, (await member.GetAsync(participants)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await member.GetAsync(participants)).StatusCode);
         var state = (await owner.GetFromJsonAsync(participants, CoreJson.TypeInfo<WorkspaceParticipationView>()))!;
-        var grant = await owner.PostAsJsonAsync(participants + "/grant", new WorkspaceMemberCommand(Guid.NewGuid().ToString(), state.Revision, "member", [tree.Id]), CoreJson.TypeInfo<WorkspaceMemberCommand>());
-        Assert.Equal(HttpStatusCode.OK, grant.StatusCode);
-        state = (await grant.Content.ReadFromJsonAsync(CoreJson.TypeInfo<WorkspaceParticipationView>()))!;
         var attached = await member.PostAsJsonAsync(association + "/attach", new WorkspaceSessionCommand(Guid.NewGuid().ToString(), state.Revision, "Member chat", "/chat/second"), CoreJson.TypeInfo<WorkspaceSessionCommand>());
         Assert.Equal(HttpStatusCode.OK, attached.StatusCode);
         state = (await attached.Content.ReadFromJsonAsync(CoreJson.TypeInfo<WorkspaceAssociationView>()))!.Workspace!;
         Assert.False(state.Sessions.Single(s => s.UserId == "owner").CanOpen);
         Assert.Null(state.Sessions.Single(s => s.UserId == "owner").ViewerPath);
-        Assert.Empty(state.EligibleUsers);
+        Assert.Equal("operator", state.Role);
         var shared = (await member.GetFromJsonAsync(api + "/sessions/second/workspaces", CoreJson.TypeInfo<WorkspaceList>()))!;
         Assert.Equal(tree.Path, Assert.Single(shared.Workspaces).Path);
         Assert.Null(shared.Workspaces[0].SourceGrant);
         var third = (await outsider.GetFromJsonAsync(api + "/workspace-inspection", CoreJson.TypeInfo<WorkspaceInventory>()))!;
-        Assert.Empty(third.Workspaces);
-        Assert.Equal(HttpStatusCode.Forbidden, (await outsider.GetAsync(api + "/workspace-inspection/" + tree.WorkspaceId + "/worktrees/" + tree.Id)).StatusCode);
+        Assert.Single(third.Workspaces);
+        Assert.Equal(HttpStatusCode.OK, (await outsider.GetAsync(api + "/workspace-inspection/" + tree.WorkspaceId + "/worktrees/" + tree.Id)).StatusCode);
         var lease = Guid.NewGuid().ToString();
         Assert.Equal(HttpStatusCode.OK, (await owner.PostAsJsonAsync(api + "/sessions/first/workspaces/" + tree.Id + "/operations/lease",
             new WorkspaceCommand(Guid.NewGuid().ToString(), LeaseId: lease), CoreJson.TypeInfo<WorkspaceCommand>())).StatusCode);
         // A forged user property is ignored: authority still comes from Member's own app grant.
         Assert.Equal(HttpStatusCode.Conflict, (await member.PostAsJsonAsync(api + "/sessions/second/workspace-activity",
             new { userId = "owner", status = "idle", leaseId = lease, stopped = true })).StatusCode);
-        Assert.Equal(HttpStatusCode.Forbidden, (await member.PostAsJsonAsync(participants + "/revoke", new WorkspaceMemberCommand(Guid.NewGuid().ToString(), state.Revision, "owner"), CoreJson.TypeInfo<WorkspaceMemberCommand>())).StatusCode);
-        Assert.Equal(HttpStatusCode.OK, (await owner.PostAsJsonAsync(participants + "/revoke", new WorkspaceMemberCommand(Guid.NewGuid().ToString(), state.Revision, "member"), CoreJson.TypeInfo<WorkspaceMemberCommand>())).StatusCode);
-        Assert.Equal(HttpStatusCode.Forbidden, (await member.GetAsync(api + "/sessions/second/workspaces/" + tree.Id)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await member.GetAsync(api + "/sessions/second/workspaces/" + tree.Id)).StatusCode);
         Assert.Contains(lease, (await host.Services.GetRequiredService<DevelopmentWorkspaceService>().Read(tree.Id, null, default)).Leases);
         Assert.Equal(HttpStatusCode.OK, (await owner.PostAsJsonAsync(api + "/sessions/first/workspace-activity",
             new { status = "idle", leaseId = lease, stopped = true })).StatusCode);
@@ -75,7 +70,7 @@ public sealed class WorkspaceSharingHttpTests
         var detachedWorkflow = await owner.GetAsync(api + "/sessions/first/workspaces/workflow");
         Assert.Equal(HttpStatusCode.OK, detachedWorkflow.StatusCode);
         Assert.Equal(new WorkspaceWorkflow(), await detachedWorkflow.Content.ReadFromJsonAsync(CoreJson.TypeInfo<WorkspaceWorkflow>()));
-        Assert.Equal(HttpStatusCode.Forbidden, (await owner.GetAsync(api + "/sessions/first/workspaces/" + tree.Id)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await owner.GetAsync(api + "/sessions/first/workspaces/" + tree.Id)).StatusCode);
         Assert.DoesNotContain(await apps.ListAppRecordsAsync(), a => a.Id.StartsWith("hosty.", StringComparison.Ordinal));
 
         async Task<HttpClient> Client(string user)

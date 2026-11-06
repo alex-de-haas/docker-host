@@ -1,6 +1,6 @@
 namespace Haas.Hosty.Core;
 
-internal sealed class CoreEnvironmentStore(CoreDataPaths paths)
+internal sealed class CoreEnvironmentStore(CoreDataPaths paths, CoreEventHub? events = null)
 {
     public string RegistryRoot => Path.Combine(paths.CoreRoot, "environments");
     public string Roots => Path.Combine(paths.DataRoot, "environments");
@@ -16,8 +16,11 @@ internal sealed class CoreEnvironmentStore(CoreDataPaths paths)
     }
     public Task<CoreEnvironmentRecord?> ReadAsync(string id, CancellationToken ct)
         => JsonStorage.ReadAsync<CoreEnvironmentRecord>(RecordPath(id), ct);
-    public Task WriteAsync(CoreEnvironmentRecord record, CancellationToken ct)
-        => JsonStorage.WriteAsync(RecordPath(record.Id), record, true, ct);
+    public async Task WriteAsync(CoreEnvironmentRecord record, CancellationToken ct)
+    {
+        await JsonStorage.WriteAsync(RecordPath(record.Id), record, true, ct);
+        events?.PublishSandboxChange(record.Owner.UserId);
+    }
     public async Task<CoreEnvironmentRecord[]> ListAsync(CancellationToken ct)
     {
         if (!Directory.Exists(RegistryRoot)) return [];

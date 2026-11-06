@@ -5,6 +5,18 @@ namespace Haas.Hosty.Core.Tests;
 public sealed class CoreEnvironmentTests
 {
     [Fact]
+    public async Task SupervisorObservation_DetectsExitedCoreWithoutAnyInventoryRead()
+    {
+        using var f = new Fixture(); var item = await f.Command(await f.Create(), "start");
+        f.Runtime.ExitAll();
+        await f.Service.ObserveResourcesAsync(default);
+        var record = await f.Store.ReadAsync(item.Id, default);
+        Assert.Equal("stopped", record!.State);
+        Assert.Null(record.Process);
+        Assert.True(record.Revision > item.Revision);
+    }
+
+    [Fact]
     public async Task Create_ReplayAndCrossOwner_KeepIndependentRootsWithoutWorkspace()
     {
         using var f = new Fixture(); var input = new CoreEnvironmentCreate(Guid.NewGuid().ToString(), "QA");
@@ -438,7 +450,98 @@ public sealed class CoreEnvironmentTests
         Assert.Single(await f.Store.ListAsync(default));
     }
 
+    [Fact]
+    public async Task VersionFollowsObservedChildAndSurvivesStopWithoutChangingLaunchSelection()
+    {
+        using var f = new Fixture();
+        var item = await f.Create();
+        Assert.Null(item.CoreVersion);
+        f.Runtime.Version = "0.150.1";
+        item = await f.Command(item, "start");
+        Assert.Equal("0.150.1", item.CoreVersion);
+        f.Runtime.Version = "0.162.0";
+        item = await f.Service.ReadAsync(f.Actor, item.Id, default);
+        Assert.Equal("0.162.0", item.CoreVersion);
+        item = await f.Command(item, "stop");
+        Assert.Equal("0.162.0", item.CoreVersion);
+        Assert.Equal("current", item.Mode);
+        Assert.Null(item.Process);
+    }
+
     private sealed class Clock : IClock { public DateTimeOffset UtcNow => DateTimeOffset.UtcNow; }
+    [Theory]
+    [InlineData("stop")]
+    [InlineData("restart")]
+    [InlineData("finish")]
+    public async Task NativeConsumerClaimsBlockLifecycleUntilExplicitOwnerRelease(string kind)
+    {
+        using var f = new Fixture(); var item = await f.Create();
+        var actor = new SandboxActor("admin", PrincipalId: "manual:one");
+        var input = new CoreEnvironmentConsumerRegister(Guid.NewGuid().ToString(), Guid.NewGuid().ToString(), item.Revision);
+        var admitted = await f.Service.RegisterConsumerAsync(actor, item.Id, input, default);
+        var replay = await f.Service.RegisterConsumerAsync(actor, item.Id, input, default);
+        Assert.Equal(admitted, replay);
+        var replacement = new CoreEnvironmentService(f.Store, f.Runtime, new Clock());
+        var commandId = Guid.NewGuid().ToString();
+        var blocked = await Assert.ThrowsAsync<SandboxException>(() => replacement.CommandAsync(actor, item.Id, kind,
+            new(commandId, admitted.EnvironmentRevision), default));
+        Assert.Equal("resource_in_use", blocked.Code);
+        Assert.Empty((await f.Store.ReadAsync(item.Id, default))!.Operations ?? []);
+        Assert.Empty(f.Runtime.Removals);
+        Assert.Equal(0, f.Runtime.Starts);
+        var release = new CoreEnvironmentConsumerRelease(input.ConsumerId, Guid.NewGuid().ToString(), 1,
+            new("native-stopped", DateTimeOffset.UtcNow, "The local client and all its processes exited."));
+        var other = actor with { PrincipalId = "manual:two" };
+        Assert.Equal("environment_consumer_forbidden", (await Assert.ThrowsAsync<SandboxException>(() =>
+            replacement.ReleaseConsumerAsync(other, item.Id, release, false, default))).Code);
+        var released = await replacement.ReleaseConsumerAsync(actor, item.Id, release, false, default);
+        Assert.Equal(released, await replacement.ReleaseConsumerAsync(actor, item.Id, release, false, default));
+        var completed = await replacement.CommandAsync(actor, item.Id, kind, new(commandId, released.EnvironmentRevision), default);
+        Assert.Equal("succeeded", Assert.Single(completed.Operations).State);
+        Assert.Equal("released", Assert.Single(completed.Consumers!).State);
+        if (kind == "finish") Assert.False(Directory.Exists(item.DataRoot));
+    }
+
+    [Fact]
+    public async Task ReconciliationRequiresExplicitEvidenceAndKeepsAnAuditReceipt()
+    {
+        using var f = new Fixture(); var item = await f.Create();
+        var actor = new SandboxActor("admin", PrincipalId: "revoked-principal");
+        var register = new CoreEnvironmentConsumerRegister(Guid.NewGuid().ToString(), Guid.NewGuid().ToString(), item.Revision);
+        var claim = await f.Service.RegisterConsumerAsync(actor, item.Id, register, default);
+        var owner = new SandboxActor("admin", PrincipalId: "replacement-principal");
+        var input = new CoreEnvironmentConsumerRelease(register.ConsumerId, Guid.NewGuid().ToString(), 1,
+            new("native-stopped", DateTimeOffset.UtcNow, "Verified stopped."));
+        Assert.Equal("environment_consumer_evidence_invalid", (await Assert.ThrowsAsync<SandboxException>(() =>
+            f.Service.ReleaseConsumerAsync(owner, item.Id, input, true, default))).Code);
+        input = input with { StopEvidence = input.StopEvidence with { Kind = "operator-confirmed-stop" } };
+        await f.Service.ReleaseConsumerAsync(owner, item.Id, input, true, default);
+        var record = (await f.Store.ReadAsync(item.Id, default))!;
+        var receipt = record.ConsumerOperations!.Last();
+        Assert.Equal("reconcile", receipt.Kind);
+        Assert.Equal("replacement-principal", receipt.PrincipalId);
+        Assert.Equal("revoked-principal", receipt.Result.Consumer.PrincipalId);
+        Assert.Equal("operator-confirmed-stop", receipt.Result.Consumer.StopEvidence!.Kind);
+        Assert.Equal("environment_replay_conflict", (await Assert.ThrowsAsync<SandboxException>(() =>
+            f.Service.ReleaseConsumerAsync(owner, item.Id, input with { StopEvidence = input.StopEvidence with { Reason = "Different" } }, true, default))).Code);
+        Assert.Equal("environment_forbidden", (await Assert.ThrowsAsync<SandboxException>(() =>
+            f.Service.RegisterConsumerAsync(new("another-user"), item.Id, register, default))).Code);
+    }
+
+    [Fact]
+    public async Task RegistrationCannotRacePastAnAdmittedFinish()
+    {
+        using var f = new Fixture(); var item = await f.Create();
+        var gate = f.Service.Gate(item.Id); await gate.WaitAsync();
+        var finish = f.Command(item, "finish");
+        var register = f.Service.RegisterConsumerAsync(new("admin", PrincipalId: "client"), item.Id,
+            new(Guid.NewGuid().ToString(), Guid.NewGuid().ToString(), item.Revision), default);
+        gate.Release();
+        Assert.Equal("finished", (await finish).State);
+        Assert.Equal("environment_consumer_admission_closed", (await Assert.ThrowsAsync<SandboxException>(() => register)).Code);
+        Assert.Empty((await f.Store.ReadAsync(item.Id, default))!.Consumers ?? []);
+    }
+
     private sealed class Fixture : IDisposable
     {
         public string Root { get; } = Path.Combine(Path.GetTempPath(), "hosty-environment-test-" + Guid.NewGuid().ToString("N"));
@@ -458,6 +561,7 @@ public sealed class CoreEnvironmentTests
     }
     private sealed class FakeRuntime : ICoreEnvironmentRuntime
     {
+        public string? Version;
         public void ExitAll() => live.Clear();
         public CoreEnvironmentUsage? Usage; public bool FailObservation;
         public Task<CoreEnvironmentUsage?> InspectResourcesAsync(CoreEnvironmentRecord record, string root, CancellationToken ct)
@@ -471,9 +575,9 @@ public sealed class CoreEnvironmentTests
         public Task<CoreEnvironmentProcess?> ObserveAsync(CoreEnvironmentRecord record, string root, CancellationToken ct)
             => Incompatible && live.ContainsKey(record.Id)
                 ? throw new SandboxException("environment_core_version", "Unsupported old child", 409)
-                : Task.FromResult(live.GetValueOrDefault(record.Id));
+                : Task.FromResult(live.GetValueOrDefault(record.Id) is { } process ? process with { Version = Version } : null);
         public async Task StartAsync(CoreEnvironmentRecord record, string root, Func<CoreEnvironmentProcess, Task> save, CancellationToken ct)
-        { Starts++; var process = new CoreEnvironmentProcess(1234567, DateTimeOffset.UtcNow); live[record.Id] = process; await save(process); }
+        { Starts++; var process = new CoreEnvironmentProcess(1234567, DateTimeOffset.UtcNow, Version); live[record.Id] = process; await save(process); }
         public Task StopAsync(CoreEnvironmentRecord record, string root, bool remove, CancellationToken ct)
         { if (FailStop) throw new IOException("Docker unavailable"); Removals.Add(remove); live.Remove(record.Id); return Task.CompletedTask; }
     }

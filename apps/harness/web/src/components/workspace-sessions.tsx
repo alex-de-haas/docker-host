@@ -1,64 +1,74 @@
 "use client";
-import { useState } from "react";
+import { useTaskExecutionSummary } from "@/lib/task-execution-api";
+import { useRef, useState } from "react";
+import { MoreHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { listSessions, type AssistantSession } from "@/lib/assistant-api";
-import { repositoryName, workflowIsActive, type DevelopmentWorkspace } from "@/lib/development-api";
-
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { WorkspaceSessionControls } from "./workspace-session-controls";
+import { WorkspaceSectionHeading } from "./workspace-section-heading";
+import type { AssistantSession } from "@/lib/assistant-api";
+import type { DevelopmentWorkspace } from "@/lib/development-api";
 import { useWorkspaceSessionActions, type WorkspaceSessionActions } from "@/lib/use-workspace-session-actions";
-type Props = { actions?: WorkspaceSessionActions; workspace: DevelopmentWorkspace; sessionId?: string; running?: boolean; refresh: () => void; onSelect?: (session: AssistantSession) => void };
-export function WorkspaceSessions(props: Props) {
-  return <WorkspaceSessionsContent key={`${props.workspace.participation?.viewerUserId ?? "legacy"}:${props.workspace.id}`} {...props} />;
-}
-function WorkspaceSessionsContent({ workspace, sessionId, running, refresh, onSelect, actions }: Props) {
-  const participation = workspace.participation!;
-  const [error, setError] = useState("");
-  const [sharing, setSharing] = useState(false);
-  const [joining, setJoining] = useState(false);
-  const [sessions, setSessions] = useState<AssistantSession[]>([]);
-  const [selectedSession, setSelectedSession] = useState("");
-  const [selectedUser, setSelectedUser] = useState("");
-  const [repositories, setRepositories] = useState<string[]>(workspace.worktrees.map(t => t.id));
+
+type Props = { actions?: WorkspaceSessionActions; workspace: DevelopmentWorkspace; sessionId?: string; running?: boolean; refresh: () => void; onSelect?: (session: AssistantSession) => void; onPick?: (sessionId: string) => void; onDelete?: (sessionId: string) => Promise<void> };
+export function WorkspaceSessions({ workspace, sessionId, running, refresh, onSelect, actions, onPick, onDelete }: Props) {
+  const participation = workspace.participation;
+  const execution = useTaskExecutionSummary(workspace.id, participation?.revision);
+  const [deleting, setDeleting] = useState<{ sessionId: string; title: string } | null>(null);
+  const [removing, setRemoving] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+  const removalPending = useRef(false);
+  const section = useRef<HTMLElement>(null);
   const localActions = useWorkspaceSessionActions(actions ? undefined : workspace, refresh, onSelect);
-  const { busy, retry, pending, run, command, error: actionError } = actions ?? localActions;
-  const active = workflowIsActive(workspace.workflow);
-  const mine = participation.sessions.some(s => s.attached && s.canOpen && s.sessionId === sessionId);
-  return <section aria-label="Workspace sessions" className="space-y-3 rounded-md border p-3 text-xs">
-    <div className="flex items-center justify-between gap-2"><h3 className="font-semibold">Participants</h3><span className="text-muted-foreground">{participation.role}</span></div>
-    <p className="text-muted-foreground">Sessions share these files and can run in parallel. Names and activity are visible to participants; conversations and approvals stay private. Concurrent edits require coordination.</p>
-    <ul className="space-y-2">{participation.sessions.filter(s => s.attached).map(s => <li key={`${s.appId}:${s.userId}:${s.sessionId}`} className="flex items-start justify-between gap-2">
-      <div className="min-w-0"><div className="truncate">{s.title}{s.sessionId === sessionId && s.canOpen ? " · this session" : ""}</div>
-        <div className="text-muted-foreground">{participation.members.find(m => m.userId === s.userId)?.name ?? "Participant"} · {s.status.replaceAll("_", " ")}{s.status === "unknown" ? " (not confirmed)" : ""}</div></div>
-      {!s.canOpen && <span className="shrink-0 text-muted-foreground">Private chat</span>}
-    </li>)}</ul>
-    {!participation.sessions.some(s => s.attached) && <p className="text-muted-foreground">No sessions attached. Source is retained.</p>}
-    <div className="flex flex-wrap gap-2">
-      <Button size="sm" variant="ghost" disabled={busy || retry || !active} onClick={async () => {
-        setJoining(!joining); setError("");
-        try { setSessions(await listSessions()); } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
-      }}>Attach session</Button>
-      {mine && <Button size="sm" variant="ghost" disabled={busy || retry || running} onClick={() => void command("detach", {}, sessionId)}>Detach this session</Button>}
-      {participation.role === "owner" && <Button size="sm" variant="ghost" disabled={busy || retry} onClick={() => setSharing(!sharing)}>Manage sharing</Button>}
-    </div>
-    {joining && <div className="space-y-2">
-      <p>Choose an idle session. Attaching starts a fresh agent context on its next message and retains its conversation.</p>
-      <Select value={selectedSession} onValueChange={setSelectedSession}><SelectTrigger aria-label="Session to attach"><SelectValue placeholder="Choose your session" /></SelectTrigger><SelectContent>
-        {sessions.filter(s => !["running", "awaiting_approval", "awaiting_question"].includes(s.status) && !participation.sessions.some(b => b.attached && b.canOpen && b.sessionId === s.id)).map(s => <SelectItem key={s.id} value={s.id}>{s.title || "Untitled session"}</SelectItem>)}
-      </SelectContent></Select>
-      <Button size="sm" disabled={!selectedSession || busy || retry} onClick={() => void command("attach", {}, selectedSession)}>Attach selected session</Button>
-    </div>}
-    {sharing && participation.role === "owner" && <div className="space-y-3 border-t pt-3">
-      <p>Sharing discloses the selected repositories, checked-out private source, diffs, commit metadata, session names and activity. Provider accounts remain separate from workspace access.</p>
-      <Select value={selectedUser} onValueChange={setSelectedUser}><SelectTrigger aria-label="User to share with"><SelectValue placeholder="Choose a user" /></SelectTrigger><SelectContent>
-        {participation.eligibleUsers.filter(u => !participation.members.some(m => m.role === "owner" && m.userId === u.id)).map(u => <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>)}
-      </SelectContent></Select>
-      {workspace.worktrees.map(t => <label key={t.id} className="flex items-center gap-2"><Checkbox checked={repositories.includes(t.id)} onCheckedChange={checked => setRepositories(ids => checked === true ? [...ids.filter(id => id !== t.id), t.id] : ids.filter(id => id !== t.id))} />{repositoryName(t.repository)}</label>)}
-      <Button size="sm" disabled={!selectedUser || !repositories.length || busy || retry || !active} onClick={() => void command("grant", { userId: selectedUser, worktreeIds: repositories })}>Share selected source</Button>
-      {participation.members.filter(m => m.role !== "owner" && !m.revoked).map(m => <div key={m.userId} className="flex items-center justify-between gap-2"><span>{m.name}</span><Button variant="outline" size="sm" disabled={busy || retry} onClick={() => void command("revoke", { userId: m.userId })}>Revoke access</Button></div>)}
-      <p className="text-muted-foreground">Revocation blocks new access and requests execution stop. Unknown activity retains its leases until shutdown is confirmed.</p>
-    </div>}
-    {(error || actionError) && <p role="alert" className="text-destructive-foreground">{error || actionError}</p>}
-    {retry && !busy && pending && <Button size="sm" variant="outline" onClick={() => void run(pending!)}>Retry same request</Button>}
+  const sessionActions = actions ?? localActions;
+  const { busy, retry, pending, run, command, error } = sessionActions;
+  const sessions = participation?.sessions.filter(s => s.attached) ?? [];
+  return <section ref={section} aria-label="Workspace sessions" data-workspace-section className="space-y-3 text-xs">
+    <WorkspaceSectionHeading actions={participation && <WorkspaceSessionControls key={`${participation.viewerUserId}:${workspace.id}`} workspace={workspace} actions={sessionActions} disabled={removing} />} informationLabel="About workspace sessions" information="Attached chats share workspace files. Task executions show the profile used for that attempt; owners and private conversations retain their access rules.">Sessions</WorkspaceSectionHeading>
+    {!!execution.summary?.roots.length && <nav aria-label="Workspace root tasks" className="space-y-1">{execution.summary.roots.map(root => <a key={root.taskRef.id} href={root.path} className="block text-primary underline">{root.number} · {root.title}</a>)}</nav>}
+    {execution.error && <p role="status" className="text-muted-foreground">Task attribution is unavailable. {execution.error}</p>}
+    {sessions.length ? <ul className="space-y-1">{sessions.map(s => {
+      const selected = s.canOpen && s.sessionId === sessionId;
+      const inactive = ["idle", "failed"].includes(s.status) && !(selected && running);
+      const attribution = execution.summary?.sessions.find(row => row.appId === s.appId && row.ownerId === s.userId && row.sessionId === s.sessionId);
+      const label = attribution?.executor ? attribution.executor.kind === "option" ? attribution.executor.name : attribution.executor.kind === "none" ? "No profile" : `Task-specific executor · ${attribution.executor.name}` : null;
+      const description = <><span className="block truncate">{label ?? s.title ?? "Untitled session"}</span>
+        {label && <span className="block truncate text-muted-foreground">{s.title || attribution?.title || "Untitled session"}</span>}
+        <span className="block truncate text-muted-foreground">{participation?.members.find(m => m.userId === s.userId)?.name ?? "Participant"} · {s.status.replaceAll("_", " ")}{s.status === "unknown" ? " (not confirmed)" : ""}</span></>;
+      return <li key={`${s.appId}:${s.userId}:${s.sessionId}`} className={`flex items-center gap-1 rounded-md pr-1 ${selected ? "bg-accent" : ""}`}>
+        {s.canOpen ? <Button type="button" variant="ghost" className="h-auto min-w-0 flex-1 justify-start px-2 py-2 text-left text-xs font-normal" aria-label={`Open session ${s.title || "Untitled session"}`} aria-current={selected ? "page" : undefined} disabled={!onPick || removing} onClick={() => onPick?.(s.sessionId)}><span className="min-w-0 flex-1">{description}</span></Button>
+          : <div className="min-w-0 flex-1 px-2 py-2">{description}</div>}
+        {s.canOpen ? <DropdownMenu>
+          <DropdownMenuTrigger asChild><Button type="button" variant="ghost" size="icon-sm" className="size-6 shrink-0 text-muted-foreground" disabled={busy || retry || removing} aria-label={`Session actions for ${s.title}`}><MoreHorizontal className="size-3.5" aria-hidden /></Button></DropdownMenuTrigger>
+          <DropdownMenuContent align="end" onCloseAutoFocus={event => { if (deleting) event.preventDefault(); }}>
+            <DropdownMenuItem disabled={busy || retry || removing || !inactive} onSelect={() => void command("detach", {}, s.sessionId)}>Detach session</DropdownMenuItem>
+            {onDelete && <DropdownMenuItem variant="destructive" disabled={busy || retry || removing || !inactive} onSelect={() => { setDeleteError(""); setDeleting({ sessionId: s.sessionId, title: s.title || "Untitled session" }); }}>Delete session…</DropdownMenuItem>}
+          </DropdownMenuContent>
+        </DropdownMenu> : <span className="shrink-0 text-muted-foreground">Private chat</span>}
+      </li>;
+    })}</ul> : <p className="text-muted-foreground">No sessions.</p>}
+    {execution.summary?.sessions.filter(row => !sessions.some(s => s.appId === row.appId && s.userId === row.ownerId && s.sessionId === row.sessionId)).map(row => <div key={row.executionId} className="rounded-md border border-dashed px-2 py-2">
+      <span className="block truncate">{row.executor?.kind === "option" ? row.executor.name : row.executor?.kind === "none" ? "No profile" : "Task-specific executor"}</span>
+      <span className="block truncate text-muted-foreground">{row.title} · {row.associationState}</span>
+      {row.historyPath && <a className="text-primary underline" href={row.historyPath}>Open retained history</a>}
+    </div>)}
+    <Dialog open={deleting !== null} onOpenChange={open => { if (!open && !removalPending.current) setDeleting(null); }}>
+      <DialogContent showCloseButton={!removing} onCloseAutoFocus={event => { event.preventDefault(); section.current?.querySelector<HTMLButtonElement>("button")?.focus(); }}>
+        <DialogHeader><DialogTitle>Delete session?</DialogTitle><DialogDescription>Delete “{deleting?.title}” and its conversation history? This cannot be undone. The session is detached; workspace files and other conversations are retained.</DialogDescription></DialogHeader>
+        {deleteError && <p role="alert" className="text-sm text-destructive-foreground">{deleteError}</p>}
+        <DialogFooter><Button variant="outline" disabled={removing} onClick={() => setDeleting(null)}>Keep session</Button>
+          <Button variant="destructive" disabled={removing || busy || retry} onClick={async () => {
+            if (!deleting || !onDelete || removalPending.current) return;
+            removalPending.current = true; setRemoving(true); setDeleteError("");
+            try { await onDelete(deleting.sessionId); setDeleting(null); }
+            catch (cause) { setDeleteError(cause instanceof Error ? cause.message : String(cause)); }
+            finally { removalPending.current = false; setRemoving(false); refresh(); }
+          }}>{removing ? "Deleting…" : "Delete session"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+    {error && <p role="alert" className="text-destructive-foreground">{error}</p>}
+    {retry && !busy && pending && <Button size="sm" variant="outline" onClick={() => void run(pending)}>Retry same request</Button>}
   </section>;
 }

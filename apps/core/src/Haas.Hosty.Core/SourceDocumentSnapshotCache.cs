@@ -1,7 +1,7 @@
 namespace Haas.Hosty.Core;
 
-// Immutable Git values only. Access decisions, target refs and mutable worktree bytes never enter
-// this cache; the service resolves them again before consulting it on every request.
+// Bounded typed snapshots. Callers supply immutable Git keys or validate file/observer versions
+// before reuse. Access decisions are never cached; current authority stays with each caller.
 internal sealed class SourceDocumentSnapshotCache(int capacity = 1024, long byteLimit = 64 * 1024 * 1024)
 {
     private sealed record Entry(object Value, long Size, LinkedListNode<string> Node);

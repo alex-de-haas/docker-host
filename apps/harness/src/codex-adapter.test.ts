@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import os from "node:os";
@@ -44,7 +44,9 @@ describe("codex harness adapter", () => {
     delete process.env.HOSTY_HARNESS_CODEX_COMMAND;
     delete process.env.HOSTY_FAKE_CODEX_REJECT_RESUME;
     delete process.env.HOSTY_TEST_AUTONOMY;
+    delete process.env.HOSTY_TEST_PREDICTION_VERSION;
     delete process.env.HOSTY_TEST_EXTERNAL_SANDBOX;
+    delete process.env.HOSTY_TEST_CONTEXT_CATALOG;
   });
 
   function start(resumeHarnessSessionId?: string): HarnessRun {
@@ -57,6 +59,132 @@ describe("codex harness adapter", () => {
     });
     return run;
   }
+
+  it("attaches local instruction/catalog estimates without changing native totals and refreshes on MCP replacement", async () => {
+    run = new CodexHarnessAdapter({ dataDir: authDir }).start({ sessionId: "s1", cwd: process.cwd(),
+      systemPrompt: "hello world", instructionSources: [{ source: "runtime", text: "hello world" }], onEvent: e => events.push(e) });
+    run.send("local-context");
+    const snapshot = () => events.filter(e => e.type === "context_usage").findLast(e => e.usage?.sources?.catalog.state === "complete");
+    const first = await waitFor(snapshot, "local context");
+    if (first.type !== "context_usage" || !first.usage) throw Error("Missing context");
+    expect(first.usage).toMatchObject({ usedTokens: 123, maxTokens: 1000, sources: { instructions: [{ source: "runtime", tokens: 2 }] } });
+    expect(first.usage.mcp?.tools.map(t => [t.server, t.name, t.inclusion])).toEqual([["first", "inspect", "unknown"], ["second", "inspect", "unknown"]]);
+    expect(JSON.stringify(first)).not.toContain("private definition");
+    expect(await run.setMcpServers({})).toBe(true);
+    events = []; run.send("local-context");
+    const second = await waitFor(snapshot, "reconfigured context");
+    expect(second).toMatchObject({ usage: { usedTokens: 123, sources: { instructions: [{ source: "runtime", tokens: 2 }] } } });
+  });
+
+  it.each(["failed", "timeout"])("keeps native usage when MCP diagnostics are %s", async mode => {
+    process.env.HOSTY_TEST_CONTEXT_CATALOG = mode;
+    start().send("local-context");
+    await waitFor(() => events.some(e => e.type === "context_usage" && e.usage?.usedTokens === 123), "native total");
+    await vi.waitFor(() => expect(events.some(e => e.type === "context_usage" && e.usage?.sources?.catalog.state === "unavailable")).toBe(true), { timeout: 6500 });
+    expect(events.some(e => e.type === "error")).toBe(false);
+    await run!.stopAndWait!(); const length = events.length;
+    await new Promise(resolve => setTimeout(resolve, 30)); expect(events).toHaveLength(length);
+  }, 10000);
+
+  it("finishes the bounded catalog before worker-style teardown on the terminal result", async () => {
+    process.env.HOSTY_TEST_CONTEXT_CATALOG = "delayed";
+    run = new CodexHarnessAdapter({ dataDir: authDir }).start({ sessionId: "s1", cwd: process.cwd(), onEvent: e => {
+      events.push(e); if (e.type === "result") void run?.stop();
+    } });
+    run.send("local-context");
+    await waitFor(() => events.some(e => e.type === "result"), "terminal result");
+    const context = events.findLast(e => e.type === "context_usage");
+    expect(context).toMatchObject({ usage: { usedTokens: 123, sources: { catalog: { state: "complete" } }, mcp: { tools: expect.arrayContaining([expect.objectContaining({ name: "inspect" })]) } } });
+    expect(events.indexOf(context!)).toBeLessThan(events.findIndex(e => e.type === "result"));
+    const totals = events.filter(e => e.type === "context_usage").map(e => e.usage?.observedAt);
+    expect(new Set(totals).size).toBe(1);
+  });
+
+  it("does not resurrect a compacted observation when delayed catalog collection completes", async () => {
+    process.env.HOSTY_TEST_CONTEXT_CATALOG = "delayed";
+    start().send("compact-context");
+    await waitFor(() => events.some(e => e.type === "result"), "compaction");
+    await new Promise(resolve => setTimeout(resolve, 350));
+    expect(events.filter(e => e.type === "context_usage").at(-1)).toEqual({ type: "context_usage", usage: null });
+  });
+
+  it.each(["question-blocking", "question-nonblocking"])("delivers stable native question IDs and text answers (%s)", async prompt => {
+    const active = start(); active.send(prompt);
+    const asked = await waitFor(() => events.find(event => event.type === "question_request"), "question");
+    if (asked.type !== "question_request") throw new Error("Expected question");
+    expect(asked.blocking).toBe(prompt === "question-blocking");
+    expect(asked.questions.map(q => q.id)).toEqual(["first", "second"]);
+    expect(asked.questions[0]!.options.map(o => o.id)).toEqual(["o1", "o2"]);
+    expect(asked.questions[1]!.allowText).toBe(true);
+    expect(active.resolveQuestion(asked.questionId, { "Same wording": "ambiguous" })).toBe(false);
+    expect(active.resolveQuestion(asked.questionId, { first: "Same label — Second option", second: "Free text" })).toBe(true);
+    await waitFor(() => events.find(e => e.type === "result"), "native continuation");
+    expect(events.some(e => e.type === "assistant_text" && e.text.includes('"second":{"answers":["Free text"]}'))).toBe(true);
+    expect(active.resolveQuestion(asked.questionId, { first: "again", second: "again" })).toBe(false);
+  });
+
+  it("rejects secret native questions without storing their content as a question", async () => {
+    start().send("question-secret");
+    await waitFor(() => events.find(e => e.type === "result"), "secret rejection");
+    expect(events.some(e => e.type === "question_request")).toBe(false);
+    expect(events.some(e => e.type === "notice" && e.message.includes("secure credential setup"))).toBe(true);
+  });
+
+  it("does not answer a cancelled native question", async () => {
+    const active = start(); active.send("question-blocking");
+    const asked = await waitFor(() => events.find(e => e.type === "question_request"), "question");
+    if (asked.type !== "question_request") throw new Error("Expected question");
+    await active.stop();
+    expect(active.resolveQuestion(asked.questionId, { first: "Yes", second: "Text" })).toBe(false);
+  });
+
+  it.each(["text", "null", "failed", "unsupported"])("receives a bounded Codex prediction (%s) for the exact native turn", async shape => {
+    run = new CodexHarnessAdapter({ dataDir: authDir }).start({ sessionId: "s1", cwd: process.cwd(), promptSuggestions: true, onEvent: e => events.push(e) });
+    run.send(`suggestion-${shape}`);
+    await waitFor(() => events.find(e => e.type === "prompt_suggestion"), "prediction response");
+    expect(events.filter(e => e.type === "prompt_suggestion")).toEqual([{ type: "prompt_suggestion", text: shape === "text" ? "Review the changes" : null,
+      ...(shape === "failed" ? { reason: "unavailable" } : shape === "unsupported" ? { reason: "unsupported" } : {}) }]);
+    expect(events.filter(e => e.type === "result")).toHaveLength(1);
+    expect(events.filter(e => e.type === "tool_use")).toHaveLength(0);
+  });
+
+  it("detects an upgraded native runtime without a feature flag or repeated requests to the unsupported version", async () => {
+    for (const [version, prompt, reason] of [["1.0.0", "unsupported", "unsupported"], ["1.0.0", "text", "unsupported"], ["1.1.0", "text", undefined]] as const) {
+      process.env.HOSTY_TEST_PREDICTION_VERSION = version; events = [];
+      run = new CodexHarnessAdapter({ dataDir: authDir }).start({ sessionId: "s1", cwd: process.cwd(), promptSuggestions: true, onEvent: e => events.push(e) });
+      run.send(`suggestion-${prompt}`);
+      await waitFor(() => events.find(e => e.type === "prompt_suggestion"), "version-aware native prediction");
+      expect(events.filter(e => e.type === "prompt_suggestion")).toEqual([{ type: "prompt_suggestion", text: reason ? null : "Review the changes", ...(reason ? { reason } : {}) }]);
+      await run.stop(); run = null;
+    }
+  });
+
+  it("returns unavailable and releases a diagnostic whose native process cannot spawn", async () => {
+    process.env.HOSTY_HARNESS_CODEX_COMMAND = "/tmp/hosty-missing-codex-usage-binary";
+    expect((await new CodexHarnessAdapter({ dataDir: authDir }).readUsage()).state).toBe("unavailable");
+  });
+
+  it("reads account limits without creating a thread and receives live multi-window updates", async () => {
+    const adapter = new CodexHarnessAdapter({ dataDir: authDir });
+    expect((await adapter.readUsage()).rows.map(row => row.used)).toEqual([12, 25]);
+    start().send("provider-usage");
+    await waitFor(() => events.find(event => event.type === "result"), "usage turn");
+    expect(events.filter(event => event.type === "provider_usage").some(event => event.usage.rows.some(row => row.used === 40))).toBe(true);
+  });
+
+  it("reports each MCP startup failure once until recovery or a changed cause", async () => {
+    const active = start();
+    active.send("startup-notices");
+    await waitFor(() => events.find(event => event.type === "result"), "first startup failure");
+    expect(events.filter(event => event.type === "notice")).toHaveLength(2);
+    events = [];
+    active.send("startup-notices recover");
+    await waitFor(() => events.find(event => event.type === "result"), "recovered startup failure");
+    const notices = events.filter(event => event.type === "notice");
+    expect(notices).toHaveLength(2);
+    expect(notices[0]).toMatchObject({ message: expect.stringContaining("HTTP 401") });
+    expect(notices[1]).toMatchObject({ message: expect.stringContaining("HTTP 503") });
+  });
 
   it("applies model and effort on resumed native context and resets both to runtime defaults", async () => {
     for (const selection of [{ model: "fixture-other", reasoningEffort: "xhigh" }, { model: null, reasoningEffort: null }]) {
@@ -380,7 +508,9 @@ describe("codex binary resolution", () => {
     delete process.env.HOSTY_HARNESS_CODEX_COMMAND;
     delete process.env.HOSTY_FAKE_CODEX_REJECT_RESUME;
     delete process.env.HOSTY_TEST_AUTONOMY;
+    delete process.env.HOSTY_TEST_PREDICTION_VERSION;
     delete process.env.HOSTY_TEST_EXTERNAL_SANDBOX;
+    delete process.env.HOSTY_TEST_CONTEXT_CATALOG;
   });
 
   it("prefers the operator override over the pinned dependency", async () => {
@@ -411,7 +541,9 @@ describe("codex auth modes", () => {
     delete process.env.HOSTY_HARNESS_CODEX_COMMAND;
     delete process.env.HOSTY_FAKE_CODEX_REJECT_RESUME;
     delete process.env.HOSTY_TEST_AUTONOMY;
+    delete process.env.HOSTY_TEST_PREDICTION_VERSION;
     delete process.env.HOSTY_TEST_EXTERNAL_SANDBOX;
+    delete process.env.HOSTY_TEST_CONTEXT_CATALOG;
     rmSync(dir, { recursive: true, force: true });
   });
 

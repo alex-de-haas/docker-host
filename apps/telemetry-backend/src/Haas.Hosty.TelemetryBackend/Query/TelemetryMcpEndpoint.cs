@@ -64,6 +64,8 @@ internal static class TelemetryMcpEndpoint
                 ["min_severity"] = Prop("integer", "Minimum OTLP severity number: 9 is INFO, 13 WARN, 17 ERROR."),
                 ["apps"] = Prop("string", "Comma-separated app ids to restrict to. Omit for every app."),
                 ["query"] = Prop("string", "Substring the log body must contain."),
+                ["caller_app_id"] = Prop("string", "Verified calling app on Core records; different from their hosty.core producer."),
+                ["trace_id"] = Prop("string", "Correlated logs for one trace across retained history; overrides range_seconds."),
                 ["limit"] = Prop("integer", "Maximum rows. Capped at 2000; the default is 500."),
             }),
         Tool(
@@ -74,6 +76,7 @@ internal static class TelemetryMcpEndpoint
                 ["range_seconds"] = Prop("integer", "How far back to look, in seconds. Capped at 3600 (1 hour)."),
                 ["apps"] = Prop("string", "Comma-separated app ids to restrict to."),
                 ["query"] = Prop("string", "Substring the trace's root name must contain."),
+                ["caller_app_id"] = Prop("string", "Verified calling app on Core spans. Trace counts are sampled, not request counts."),
                 ["limit"] = Prop("integer", "Maximum traces. Capped at 200."),
             }),
         Tool(
@@ -88,7 +91,7 @@ internal static class TelemetryMcpEndpoint
             + "\u2014 `container.cpu.percent`, `container.memory.bytes` and `container.memory.percent` "
             + "come from docker stats; process.cpu.percent and process.memory.bytes come from Core and local service process trees. Repeated identical values are dropped on ingest and re-recorded "
             + "only once a minute, so a flat series has far fewer points than scrapes: a low point "
-            + "count means the value was steady, never that collection is broken.",
+            + "count means the value was steady, never that collection is broken. hosty_core_api_requests_total is an exact cumulative counter per run_id; use changes within a run, never sampled span counts, to measure API traffic.",
             new JsonObject
             {
                 ["app"] = Prop("string", "The app id to read. Metrics are stored per app, so this is required."),
@@ -132,7 +135,7 @@ internal static class TelemetryMcpEndpoint
             Int(arguments, "min_severity"),
             requestedLimit,
             ParseCsv(Str(arguments, "apps")),
-            Str(arguments, "query"));
+            Str(arguments, "query"), Str(arguments, "caller_app_id"), Str(arguments, "trace_id"));
 
         var rows = new JsonArray();
         foreach (var record in result.Records)
@@ -144,10 +147,19 @@ internal static class TelemetryMcpEndpoint
                 ["severity"] = record.SeverityText,
                 ["body"] = record.Body,
                 ["traceId"] = record.TraceId,
+                ["spanId"] = record.SpanId,
+                ["callerAppId"] = record.AppId == CoreLogPullParser.CoreAppId ? record.Attributes.GetValueOrDefault("hosty.caller.app.id") : null,
             });
         }
 
-        return WithWindow(new JsonObject { ["logs"] = rows }, rows.Count, requestedRange, requestedLimit, 3600, 2000, 500);
+        var payload = WithWindow(new JsonObject { ["logs"] = rows, ["coreTracing"] = Coverage(result.CoreTracing), ["allRetainedHistory"] = result.RangeSeconds == 0 }, rows.Count, requestedRange, requestedLimit, 3600, 2000, 500);
+        if (result.RangeSeconds == 0 && payload["window"] is JsonObject window)
+        {
+            window["rangeSeconds"] = 0;
+            window["rangeClamped"] = false;
+            window["rangeIgnored"] = true;
+        }
+        return payload;
     }
 
     private static JsonObject ListTraces(JsonNode? arguments, TelemetryQueryService query)
@@ -155,7 +167,7 @@ internal static class TelemetryMcpEndpoint
         var requestedRange = Int(arguments, "range_seconds");
         var requestedLimit = Int(arguments, "limit");
         var result = query.GetFleetTraces(
-            requestedRange, requestedLimit, ParseCsv(Str(arguments, "apps")), Str(arguments, "query"));
+            requestedRange, requestedLimit, ParseCsv(Str(arguments, "apps")), Str(arguments, "query"), Str(arguments, "caller_app_id"));
 
         var rows = new JsonArray();
         foreach (var trace in result.Traces)
@@ -173,7 +185,7 @@ internal static class TelemetryMcpEndpoint
         // 50, matching TelemetryQueryService.DefaultTracesLimit. It was 100 here, so a full page of
         // 50 reported limit:100 and truncated:false — recreating the silent truncation this
         // contract exists to prevent, inside the contract itself.
-        return WithWindow(new JsonObject { ["traces"] = rows }, rows.Count, requestedRange, requestedLimit, 3600, 200, 50);
+        return WithWindow(new JsonObject { ["traces"] = rows, ["coreTracing"] = Coverage(result.CoreTracing), ["countingNote"] = "Trace counts are sampled. Exact app-to-Core request totals are hosty_core_api_requests_total metrics, separated by run_id and installation_id." }, rows.Count, requestedRange, requestedLimit, 3600, 200, 50);
     }
 
     private static JsonObject GetTrace(JsonNode? arguments, TelemetryQueryService query)
@@ -192,11 +204,15 @@ internal static class TelemetryMcpEndpoint
                 ["startedAt"] = DateTimeOffset.FromUnixTimeMilliseconds((long)span.StartUnixMs).ToString("O"),
                 ["durationMs"] = span.DurationMs,
                 ["status"] = span.StatusCode,
+                ["spanId"] = span.SpanId, ["parentSpanId"] = span.ParentSpanId,
+                ["attributes"] = new JsonObject(span.Attributes.Select(kv => new KeyValuePair<string, JsonNode?>(kv.Key, JsonValue.Create(kv.Value)))),
             });
         }
 
-        return new JsonObject { ["traceId"] = traceId, ["spans"] = spans };
+        return new JsonObject { ["traceId"] = traceId, ["spans"] = spans, ["coreTracing"] = Coverage(trace.CoreTracing), ["unavailableReason"] = trace.UnavailableReason };
     }
+
+    private static JsonNode? Coverage(CoreTraceCoverage? value) => value is null ? null : JsonSerializer.SerializeToNode(value, CoreTraceJsonContext.Default.CoreTraceCoverage);
 
     // The three series `docker stats` produces, copied from Core's DockerStatsExposition because the
     // backend is a separate app and cannot reference it. Matched exactly rather than by a `container.`

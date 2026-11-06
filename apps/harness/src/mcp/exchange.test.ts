@@ -197,3 +197,31 @@ it("binds token issuance to the exact assistant session and cannot use legacy se
   expect(await exchange.exchange("legacy-signed-token", "notes", "session-one")).toBeNull();
   expect(network).not.toHaveBeenCalled();
 });
+
+describe("canonical Core invocation for retained aliases", () => {
+  it("requires a current Core grant and never falls back to service-only mutation", async () => {
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("denied", { status: 403 }));
+    const exchange = new TokenExchange(CORE, GATEWAY, "service-secret");
+    await expect(exchange.invokeCore("hostyg_parent", "session", CORE + "/api/mcp", "prepare_workspace", {})).rejects.toThrow("Current Core MCP access");
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(JSON.parse(String(fetch.mock.calls[0]![1]!.body))).toEqual({ targetAppId: "hosty:core", sessionId: "session" });
+  });
+  it("keeps operation arguments and current dispatch guard across the MCP handshake", async () => {
+    const methods: string[] = [], guard = vi.fn().mockResolvedValue(undefined);
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+      if (String(url).endsWith("/mcp/token")) return issued("fresh-core-token");
+      const body = JSON.parse(String(init!.body)); methods.push(body.method);
+      expect(new Headers(init!.headers).get("authorization")).toBe("Bearer fresh-core-token");
+      if (body.method === "notifications/initialized") return new Response(null, { status: 202 });
+      if (body.method === "tools/call") {
+        expect(guard).toHaveBeenCalledOnce();
+        expect(body.params).toEqual({ name: "commit_workspace", arguments: { requestId: "same-id", expectedHead: "same-head" } });
+      }
+      return new Response(JSON.stringify({ jsonrpc: "2.0", id: body.id, result: body.method === "initialize" ? { protocolVersion: "2025-06-18", capabilities: {} } : { content: [{ type: "text", text: '{"state":"succeeded"}' }] } }), { headers: { "content-type": "application/json" } });
+    });
+    const exchange = new TokenExchange(CORE, GATEWAY, "service-secret");
+    expect(await exchange.invokeCore("hostyg_parent", "session", CORE + "/api/mcp", "commit_workspace", { requestId: "same-id", expectedHead: "same-head" }, guard)).toEqual({ state: "succeeded" });
+    expect(methods).toEqual(["initialize", "notifications/initialized", "tools/call"]);
+    expect(fetch).toHaveBeenCalledTimes(4);
+  });
+});

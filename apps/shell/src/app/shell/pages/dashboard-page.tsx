@@ -40,6 +40,7 @@ import {
   RefreshCw,
   RotateCcw,
   Settings,
+  ShieldCheck,
   Square,
   Terminal,
   Trash2,
@@ -203,11 +204,7 @@ export function DashboardPage({
   // app the action could not actually enqueue.
   const routineUpdateCount = apps.filter(isRoutineUpdate).length;
 
-  return (
-    <ResourceUsageProvider coreOrigin={coreOrigin}>
-    <div className="dashboard-layout space-y-6">
-      <h1 className="sr-only">Dashboard</h1>
-      <CoreSection
+  const coreSection = <CoreSection
         workspaces={workspaces}
         status={status}
         coreUpdate={coreUpdate}
@@ -215,7 +212,14 @@ export function DashboardPage({
         canManageApps={canManageApps}
         coreOrigin={coreOrigin}
         onUpdateCore={onUpdateCore}
-      />
+      />;
+
+  return (
+    <ResourceUsageProvider coreOrigin={coreOrigin}>
+    <div className="dashboard-layout space-y-6">
+      <h1 className="sr-only">Dashboard</h1>
+      {canManageApps ? <DashboardSandboxes coreOrigin={coreOrigin} workspaces={workspaces} connectedCore={coreSection} />
+        : <Frame><FramePanel className="min-w-0 p-0">{coreSection}</FramePanel></Frame>}
 
 
       <section className="dashboard-heading grid items-center gap-3">
@@ -290,7 +294,6 @@ export function DashboardPage({
           )}
         </FramePanel>
       </Frame>
-      {canManageApps && <DashboardSandboxes coreOrigin={coreOrigin} apps={apps} workspaces={workspaces} />}
     </div>
     </ResourceUsageProvider>
   );
@@ -364,11 +367,10 @@ function CoreSection({
     : stopping.busy ? "Stopping…" : development.busy ? "Restarting…" : runtime.busy ? "Switching…" : "Updating…";
   const showRestartRequired = Boolean(development.state?.restartRequired && !development.busy && !stopping.busy);
   const needsDiagnostics = ["degraded", "unhealthy", "failed"].includes(status?.status ?? "");
-  const showUpdate = !dev && canManageApps && (coreUpdate?.updateAvailable === true || coreUpdating);
+  const showUpdate = !dev && canManageApps && (coreUpdate?.updateAvailable === true || !!coreUpdate?.operationId || coreUpdating);
 
   return (
-    <Frame role="region" aria-label="Hosty Core" className="text-sm">
-      <FramePanel className="min-w-0 p-0">
+    <div className="min-w-0 text-sm">
         <Table role="table" className="dashboard-table" aria-label="Hosty Core">
           <DashboardTableHeader />
           <TableBody role="rowgroup">
@@ -433,8 +435,7 @@ function CoreSection({
         {runtime.dialog}
         {stopping.dialog}
         <CoreLogsDialog open={logsOpen} coreOrigin={coreOrigin} onOpenChange={setLogsOpen} />
-      </FramePanel>
-    </Frame>
+    </div>
   );
 }
 
@@ -575,6 +576,8 @@ function InstalledAppRow({
   // A missing cached digest makes the click rebuild the plan and classify the fresh candidate.
   // Only its review-required verdict opens Core confirmation; routine updates queue directly.
   const needsReview = verdict?.requiresReview === true;
+  const permissionReviewUrl = canManageApps && app.permissionState?.status === "known" && app.permissionState.missingRequired.length > 0
+    ? `${coreOrigin}/install/permissions/${encodeURIComponent(app.id)}` : undefined;
   const configurationRequired = app.configurationReadiness?.required === true;
   const showRestartRequired = Boolean(app.restartRequired && !lifecycleLabel);
   // Removal, like start/stop/restart/update, is an inherent Core operation: the endpoint authorizes on
@@ -656,6 +659,7 @@ function InstalledAppRow({
                 aria-label={needsReview ? "Review update in Core" : undefined}
                 title={needsReview ? "Core confirmation required" : undefined}
                 onClick={() => needsReview ? onOpenPanel(app, "update") : onUpdateApp(app)}>Update</Button>
+              : permissionReviewUrl ? <Button asChild variant="outline" size="sm"><a href={permissionReviewUrl} target="_blank" rel="noopener noreferrer">Review Access</a></Button>
               : !running && canControl ? <Button variant="outline" size="sm" disabled={lifecycleDisabled || isBusy("start")} onClick={() => onAction(app, "start")}>Start</Button>
               : canViewLogs && !canControl ? <Button variant="outline" size="sm" onClick={() => onOpenPanel(app, "logs")}>Logs</Button>
               : running && canControl ? <Button variant="outline" size="sm" disabled={lifecycleDisabled || isBusy("stop")} onClick={() => onAction(app, "stop")}>Stop</Button> : null}
@@ -676,6 +680,7 @@ function InstalledAppRow({
             canRemove={canRemove}
             canCheckUpdate={canUpdate}
             canReviewUpdate={updateVisible}
+            permissionReviewUrl={permissionReviewUrl}
             checkingUpdate={checkingUpdate}
             onLifecycleAction={(action) => onAction(app, action)}
             onCheckUpdate={() => onCheckUpdate(app)}
@@ -709,7 +714,7 @@ function CoreVersionBlock({ status, coreUpdate }: { status: CoreStatus | null; c
     return <span className="font-mono text-xs text-muted-foreground">version unknown</span>;
   }
 
-  const channel: AppRevision[] = coreUpdate ? [{ label: "Release channel", value: coreUpdate.releaseTag }] : [];
+  const channel: AppRevision[] = coreUpdate ? [{ label: "Update feed", value: coreUpdate.feedId ?? coreUpdate.releaseTag }] : [];
   const available = resolveAvailableCoreVersion(coreUpdate);
 
   return (
@@ -932,6 +937,7 @@ function InstalledAppActionsMenu({
   canRemove,
   canCheckUpdate,
   canReviewUpdate,
+  permissionReviewUrl,
   checkingUpdate,
   onLifecycleAction,
   onCheckUpdate,
@@ -958,6 +964,7 @@ function InstalledAppActionsMenu({
   // True exactly when the row shows its update icon, so the plan is reachable from the menu as well
   // — the only way in for a routine update, whose icon applies straight away.
   canReviewUpdate: boolean;
+  permissionReviewUrl?: string;
   checkingUpdate: boolean;
   onCheckUpdate: () => void;
   onReviewUpdate: () => void;
@@ -967,6 +974,7 @@ function InstalledAppActionsMenu({
     canControl ||
     canCheckUpdate ||
     canReviewUpdate ||
+    permissionReviewUrl ||
     canViewLogs ||
     canBackup ||
     canConfigure ||
@@ -1014,6 +1022,14 @@ function InstalledAppActionsMenu({
             Update app
           </DropdownMenuItem>
         )}
+        {permissionReviewUrl && (
+          <DropdownMenuItem asChild>
+            <a href={permissionReviewUrl} target="_blank" rel="noopener noreferrer">
+              <ShieldCheck className="h-4 w-4" />
+              Review Access
+            </a>
+          </DropdownMenuItem>
+        )}
         {canCheckUpdate && (
           <DropdownMenuItem
             disabled={checkingUpdate}
@@ -1027,7 +1043,7 @@ function InstalledAppActionsMenu({
             Check for updates
           </DropdownMenuItem>
         )}
-        {(canCheckUpdate || canReviewUpdate) &&
+        {(canCheckUpdate || canReviewUpdate || permissionReviewUrl) &&
           (canViewLogs || canBackup || canConfigure || canRemove) && <DropdownMenuSeparator />}
         {canViewLogs && (
           <DropdownMenuItem onClick={() => onOpenPanel(app, "logs")}>

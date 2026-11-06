@@ -5,9 +5,9 @@ namespace Haas.Hosty.Core.Tests;
 public sealed partial class CoreLifecycleServiceTests
 {
     private static async Task<(LifecycleFixture Fixture, WorkspaceOwner Owner, DevelopmentWorkspaceService Workspaces,
-        DevelopmentWorkspace Tree, AppCreationResult Created, LocalAppHandoffRequest Request)> LocalHandoffFixture()
+        DevelopmentWorkspace Tree, AppCreationResult Created, LocalAppHandoffRequest Request)> LocalHandoffFixture(bool shortPaths = false)
     {
-        var f = await LifecycleFixture.CreateAsync();
+        var f = await LifecycleFixture.CreateAsync(shortPaths: shortPaths);
         var owner = WorkspaceTestOwner(f);
         var input = NewApp();
         var created = await f.Service.CreateLocalAppAsync(owner, input, null, default);
@@ -72,7 +72,7 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.Equal("local_diverged", (await Assert.ThrowsAsync<AppLifecycleException>(() => f.Service.HandoffLocalAppAsync(owner, "test.created", "accept", request, service, default))).Code);
         Assert.Equal(target, (await DevelopmentWorkspaceService.Git(root, ["rev-parse", "HEAD"], default)).StandardOutput.Trim());
         Assert.Equal("local_request_conflict", (await Assert.ThrowsAsync<AppLifecycleException>(() => f.Service.HandoffLocalAppAsync(owner, "test.created", "accept", request with { ExpectedHead = target }, service, default))).Code);
-        Assert.Equal("workspace_forbidden", (await Assert.ThrowsAsync<AppLifecycleException>(() => f.Service.HandoffLocalAppAsync(owner with { SessionId = "foreign" }, "test.created", "accept", request, service, default))).Code);
+        Assert.Equal("local_request_conflict", (await Assert.ThrowsAsync<AppLifecycleException>(() => f.Service.HandoffLocalAppAsync(owner with { SessionId = "foreign" }, "test.created", "accept", request, service, default))).Code);
     }
 
     [Fact]

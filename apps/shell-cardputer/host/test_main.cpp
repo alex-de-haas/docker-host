@@ -163,6 +163,14 @@ void test_core_update_status() {
     CHECK(feed_chunked(parser, json, 4) == hosty::ProtocolError::None);
     CHECK(snapshot.core_update.known);
     CHECK(snapshot.core_update.available);
+    CHECK(!snapshot.core_update.can_apply()); // Older Core supplies no reviewed offer.
+    hosty::CoreUpdateStatusParser ready(snapshot);
+    CHECK(feed_chunked(ready, R"({"updateAvailable":true,"offerId":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","readiness":"ready"})", 3) == hosty::ProtocolError::None);
+    CHECK(snapshot.core_update.can_apply());
+    hosty::CoreUpdateStatusParser recovery(snapshot);
+    CHECK(feed_chunked(recovery, R"({"updateAvailable":false,"offerId":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","operationId":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","readiness":"recovery-required","error":"interrupted"})", 2) == hosty::ProtocolError::None);
+    CHECK(snapshot.core_update.can_apply());
+    CHECK(snapshot.core_update.operation_id == "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
 }
 
 void test_apps_fixture() {

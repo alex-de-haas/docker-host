@@ -62,7 +62,7 @@ internal static class OtlpTracesJsonParser
             foreach (var resourceSpan in resourceSpans.EnumerateArray())
             {
                 var appId = OtlpJsonParsing.ResolveAppId(resourceSpan);
-                if (string.IsNullOrWhiteSpace(appId))
+                if (string.IsNullOrWhiteSpace(appId) || string.Equals(appId, CoreLogPullParser.CoreAppId, StringComparison.Ordinal))
                 {
                     continue;
                 }

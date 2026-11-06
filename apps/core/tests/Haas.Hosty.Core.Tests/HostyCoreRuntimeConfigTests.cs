@@ -152,10 +152,31 @@ public sealed class HostyCoreRuntimeConfigTests
         Assert.Null(config.CorePublicOrigin);
     }
 
-    [Fact]
-    public void BuildPublicOriginWarnings_WarnsForInsecureNonLoopbackOrigins()
+    [Theory]
+    [InlineData("http://localhost:7070")]
+    [InlineData("http://localhost.:7070")]
+    [InlineData("http://127.0.0.1:7070")]
+    [InlineData("http://127.0.0.2:7070")]
+    [InlineData("http://[::1]:7070")]
+    [InlineData("http://core.hosty.localhost:7070")]
+    [InlineData("http://core.i-test.hosty.localhost:7070")]
+    [InlineData("http://custom.localhost:7070")]
+    [InlineData("http://CORE.HOSTY.LOCALHOST.:7070")]
+    [InlineData("https://core.example")]
+    public void BuildPublicOriginWarnings_AcceptsLocalOrHttpsOrigins(string origin)
     {
-        using var coreEnv = TemporaryEnvironment.With("HOSTY_CORE_PUBLIC_ORIGIN", "http://core.example");
+        Assert.Empty(HostyCoreRuntimeConfig.BuildPublicOriginWarnings(origin));
+    }
+
+    [Theory]
+    [InlineData("http://core.example")]
+    [InlineData("http://192.168.1.10:7070")]
+    [InlineData("http://notlocalhost:7070")]
+    [InlineData("http://core.localhost.example:7070")]
+    [InlineData("http://core.localhost.example.:7070")]
+    public void BuildPublicOriginWarnings_WarnsForInsecureNonLoopbackOrigins(string origin)
+    {
+        using var coreEnv = TemporaryEnvironment.With("HOSTY_CORE_PUBLIC_ORIGIN", origin);
         using var shellEnv = TemporaryEnvironment.With("HOSTY_SHELL_PUBLIC_ORIGIN", "http://127.0.0.1:3000");
 
         var config = HostyCoreRuntimeConfig.FromEnvironment(new TestHostEnvironment(Environments.Production));

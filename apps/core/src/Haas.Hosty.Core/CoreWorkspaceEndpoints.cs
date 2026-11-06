@@ -125,6 +125,7 @@ internal static class CoreWorkspaceEndpoints
     internal static async Task<IResult> HandleResult(Func<Task<IResult>> action)
     {
         try { return await action(); }
+        catch (SandboxException ex) { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), ex.Status); }
         catch (AppIdentityException ex) { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), AuthEndpoints.MapIdentityErrorStatus(ex.Code)); }
         catch (AppLifecycleException ex) { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), 409); }
         catch (ArgumentException ex) { return CoreJson.Json(new ErrorResponse("invalid_request", ex.Message), 400); }
@@ -132,11 +133,12 @@ internal static class CoreWorkspaceEndpoints
         { return CoreJson.Json(new ErrorResponse("activation_recovery_required", ex.Message), 409); }
     }
 
-    private static async Task<IResult> Handle<T>(Func<Task<T>> action)
+    internal static async Task<IResult> Handle<T>(Func<Task<T>> action)
     {
         try { return CoreJson.Json(await action()); }
         catch (OperationCanceledException ex) { return CoreJson.Json(new ErrorResponse("activation_paused", ex.Message), statusCode: 409); }
         catch (ArgumentException ex) { return CoreJson.Json(new ErrorResponse("invalid_request", ex.Message), statusCode: 400); }
+        catch (SandboxException ex) { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), ex.Status); }
         catch (AppIdentityException ex) { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), statusCode: AuthEndpoints.MapIdentityErrorStatus(ex.Code)); }
         catch (AppLifecycleException ex) { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), statusCode: 409); }
         catch (Exception ex) when (ex is IOException or InvalidOperationException)

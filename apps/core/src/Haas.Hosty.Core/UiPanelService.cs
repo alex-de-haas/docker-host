@@ -10,14 +10,15 @@ internal sealed record UiFramePolicy(bool Microphone, bool PopupEscape)
         AppManagementAuthorization.HasPermission(app, CoreAppPermissions.SpeechProviders),
         AppManagementAuthorization.HasPermission(app, CoreAppPermissions.Install));
 }
-internal sealed record UiPeer(string AppId, string InstallationId, IReadOnlyList<string> Origins);
+internal sealed record UiPeer(string AppId, string InstallationId, IReadOnlyList<string> Origins,
+    string? DisplayName = null, string? IconUrl = null);
 internal sealed record UiBootstrap(int Version, string CoreOrigin, string UserId, UiPeer App,
     bool CanHost, bool PinnedOpen, UiPeer? Peer = null);
 internal sealed record UiPanel(UiPanelRef Panel, string Label, string AppName, string? Icon,
-    string Endpoint, string Route, string? Origin, bool Available, string State, bool CanStart, UiFramePolicy FramePolicy);
+    string Endpoint, string Route, string? Origin, bool Available, string State, bool CanStart, UiFramePolicy FramePolicy, bool FeedbackComposer = false, string? AssistantKey = null);
 internal sealed record UiPanelCatalog(IReadOnlyList<UiPanel> Panels);
 internal sealed record UiFrameSurface(string AppId, string InstallationId, string Endpoint, string Route,
-    string Origin, UiFramePolicy FramePolicy);
+    string Origin, UiFramePolicy FramePolicy, bool FeedbackComposer = false);
 internal sealed record UiResolvedPanel(UiPanelTarget Target, UiFrameSurface? Surface, bool Available,
     string State, string? StandaloneHref);
 
@@ -55,7 +56,10 @@ internal sealed partial class UiPanelService(AppRegistryStore apps, AppIdentityS
             RequireHost(parent);
             peer = Peer(parent);
         }
-        return new(1, Origin(coreOrigins.Effective)!, userId, Peer(caller), CanHost(caller), true, peer);
+        var icon = AppSummary.From(caller).IconUrl;
+        var app = Peer(caller) with { DisplayName = caller.DisplayName,
+            IconUrl = icon is null ? null : new Uri(new Uri(coreOrigins.Effective), icon).AbsoluteUri };
+        return new(1, Origin(coreOrigins.Effective)!, userId, app, CanHost(caller), true, peer);
     }
 
     public async Task<UiPanelCatalog> ListAsync(AppRecord caller, string userId, CancellationToken ct)
@@ -77,7 +81,7 @@ internal sealed partial class UiPanelService(AppRegistryStore apps, AppIdentityS
                 result.Add(new(new(app.Id, PanelIdentity.Installation(app), panel.PanelId), panel.Label ?? app.DisplayName,
                     app.DisplayName, panel.Icon, panel.Endpoint, panel.Path, Origin(panel.EmbeddedUrl), available,
                     SurfaceState(app, panel),
-                    canStart, UiFramePolicy.From(app)));
+                    canStart, UiFramePolicy.From(app), panel.FeedbackComposer, panel.AssistantKey));
             }
         }
         return new(result);
@@ -118,7 +122,7 @@ internal sealed partial class UiPanelService(AppRegistryStore apps, AppIdentityS
         var origin = Origin(panel.EmbeddedUrl);
         var available = Available(app, panel);
         return new(new(target.Panel, route), origin is null ? null : new(app.Id, PanelIdentity.Installation(app),
-            panel.Endpoint, route, origin, UiFramePolicy.From(app)), available,
+            panel.Endpoint, route, origin, UiFramePolicy.From(app), panel.FeedbackComposer), available,
             SurfaceState(app, panel),
             BuildOpenUrl(coreOrigins.Effective, app.Id, target.Panel.InstallationId, panel.Endpoint, route));
     }
@@ -204,6 +208,10 @@ internal static class UiPanelEndpoints
             ProviderAccessService access, AppIdentityService identity, UiPanelService ui) =>
             await Handle(context, appId, access, identity, async (caller, userId) =>
                 CoreJson.Json(await ui.BootstrapAsync(caller, userId, parentOrigin, context.RequestAborted))));
+        app.MapGet(root + "/icon", async (string appId, HttpContext context,
+            ProviderAccessService access, AppIdentityService identity, CoreDataPaths paths, DevelopmentWorkspaceService workspaces) =>
+            await Handle(context, appId, access, identity, (caller, _) =>
+                AppAssetEndpoints.ServeOwnIconAsync(caller, context, paths, workspaces)));
         app.MapGet(root + "/panels", async (string appId, HttpContext context,
             ProviderAccessService access, AppIdentityService identity, UiPanelService ui) =>
             await Handle(context, appId, access, identity, async (caller, userId) =>

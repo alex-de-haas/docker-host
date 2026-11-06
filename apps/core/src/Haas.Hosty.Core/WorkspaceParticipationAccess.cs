@@ -4,11 +4,12 @@ internal sealed partial class DevelopmentWorkspaceService
 {
     private async Task<SourceReadGrant?> ActingSourceGrantAsync(DevelopmentWorkspace tree, WorkspaceOwner? actor, string? connectionId, CancellationToken ct)
     {
-        var grant = await WorkspaceGrantAsync(tree, ct, localOnly: actor is not null && actor.UserId != tree.Owner.UserId);
-        if (actor is null || actor.UserId == tree.Owner.UserId) return grant;
-        if (connectionId is not null)
+        if (actor is not null && connectionId is not null)
             return await RemoteGit.BindAsync(actor.UserId, connectionId, tree.Repository, false, ct);
-        if (grant is not null) throw Error("connection_required", "Select your own Git connection before fetching this private repository.");
+        if (actor is null || actor.UserId == tree.Owner.UserId) return await WorkspaceGrantAsync(tree, ct);
+        if (tree.SourceGrant is not null || (await apps.ListAppRecordsAsync(ct)).Any(a =>
+            a.PrivateSources?.Git is not null && tree.Apps.Any(b => b.AppId == a.Id && b.Installation == a.InstalledAt)))
+            throw Error("connection_required", "Select your own Git connection before fetching this private repository.");
         return null;
     }
 
@@ -18,62 +19,32 @@ internal sealed partial class DevelopmentWorkspaceService
         catch (AppLifecycleException ex) when (ex.Code is "workspace_forbidden" or "workspace_membership_revoked") { return false; }
     }
 
-    internal async Task RequireSessionAccessAsync(DevelopmentWorkspace tree, WorkspaceOwner actor, CancellationToken ct)
+    // API adapters establish application authority. Retained source is a Core-wide collection;
+    // allocation, chat association and credentials identify activity, never a second access grant.
+    internal Task RequireSessionAccessAsync(DevelopmentWorkspace tree, WorkspaceOwner actor, CancellationToken ct)
+        => RequireWorkspaceUserAsync(actor.UserId, ct);
+
+    internal async Task RequireWorkspaceUserAsync(string userId, CancellationToken ct)
     {
-        if (actor.IsExternal || tree.Owner.IsExternal)
-        {
-            if (!tree.Owner.SameIdentity(actor)) throw Error("forbidden", "This workspace belongs to another external grant or session.");
-            return;
-        }
-        var participation = await ReadParticipationAsync(tree.WorkspaceId, ct);
-        if (participation is null)
-        {
-            if (!tree.Owner.SameIdentity(actor)) throw Error("forbidden", "Attach this session to the workspace before reading its source.");
-            return;
-        }
-        if (!participation.Sessions.Any(s => s.DetachedAt is null && s.Session.SameIdentity(actor)))
-            throw Error("forbidden", "This session is not attached to the workspace.");
-        await RequireParticipationSourceAsync(tree, actor.UserId, ct);
+        if (participantUsers is not null && !(await participantUsers.ReadAsync(ct)).Users.Any(u =>
+            u.Id == userId && !u.Disabled && AppAccessPolicy.IsAdmin(u)))
+            throw Error("forbidden", "The initiating user no longer has workspace authority.");
     }
 
     internal async Task<bool> RequireParticipationSourceAsync(DevelopmentWorkspace tree, string userId, CancellationToken ct)
     {
-        var participation = await ReadParticipationAsync(tree.WorkspaceId, ct);
-        if (participation is null) return false;
-        var member = RequireMember(participation, userId);
-        if (participantUsers is not null)
-        {
-            var directory = (await participantUsers.ReadAsync(ct)).Users;
-            if (!directory.Any(u => u.Id == userId && !u.Disabled && AppAccessPolicy.IsAdmin(u)) ||
-                !directory.Any(u => u.Id == tree.Owner.UserId && !u.Disabled && AppAccessPolicy.IsAdmin(u)))
-                throw Error("forbidden", "The participant or sharing owner is no longer an enabled administrator.");
-        }
-        if (member.Role != "owner" && !member.WorktreeIds.Contains(tree.Id, StringComparer.Ordinal))
-            throw Error("forbidden", "This repository is outside the shared workspace grant.");
-        if (member.Role != "owner")
-        {
-            var grantedTrees = (await ListAsync(null, true, ct)).Workspaces.Where(t => t.WorkspaceId == tree.WorkspaceId && member.WorktreeIds.Contains(t.Id)).ToArray();
-            if (grantedTrees.Length != member.WorktreeIds.Length || member.SourceRevision is null ||
-                member.SourceRevision != await SharingSourceRevisionAsync(grantedTrees, ct))
-                throw Error("forbidden", "The shared repository authorization changed. The owner must review sharing again.");
-        }
-        await RequireCoreSourceAsync(tree, tree.Owner.UserId, ct, localOnly: true);
-        var repository = LogicalRepositoryIdentity(tree.Repository);
-        if (tree.SourceGrant is not null)
-        {
-            var effective = await WorkspaceGrantAsync(tree, ct, localOnly: true);
-            if (effective is null || effective.OwnerId != tree.Owner.UserId || effective.Repository != repository)
-                throw Error("forbidden", "The shared source authorization is no longer available.");
-        }
-        foreach (var app in (await apps.ListAppRecordsAsync(ct)).Where(a => a.PrivateSources?.Git is not null &&
-            tree.Apps.Any(b => b.AppId == a.Id && b.Installation == a.InstalledAt)))
-        {
-            var grant = app.PrivateSources!.Git!;
-            if (grant.OwnerId != tree.Owner.UserId || grant.Repository != repository)
-                throw Error("forbidden", "The underlying private source owner changed.");
-            await (privateSources ?? throw PrivateSourceService.Denied()).ValidateLocalAsync(new(Git: grant), ct);
-        }
+        await RequireWorkspaceUserAsync(userId, ct);
         return true;
+    }
+
+    // Context selection is independent of collection access. Never expand a session's working
+    // set merely because its caller can read every workspace.
+    private async Task<bool> IsSessionWorkspaceAsync(DevelopmentWorkspace tree, WorkspaceOwner actor, CancellationToken ct)
+    {
+        var participation = await SessionParticipationAsync(actor, ct);
+        if (participation is not null) return participation.Id == tree.WorkspaceId;
+        return tree.Owner.SameIdentity(actor) &&
+            (await ReadParticipationAsync(tree.WorkspaceId, ct))?.Sessions.Any(s => s.Session.SameIdentity(actor) && s.DetachedAt is not null) != true;
     }
 
     private async Task<string> SharingSourceRevisionAsync(IEnumerable<DevelopmentWorkspace> trees, CancellationToken ct)
@@ -123,7 +94,7 @@ internal sealed partial class DevelopmentWorkspaceService
                 throw Error("session_detached", "This session is detached from its former workspace.");
             return actor;
         }
-        RequireMember(participation, actor.UserId, ownerOnly);
+        await RequireWorkspaceUserAsync(actor.UserId, ct);
         return participation.AllocationOwner;
     }
 
@@ -131,7 +102,6 @@ internal sealed partial class DevelopmentWorkspaceService
     {
         if (actor is null) return; // Explicit administrator recovery retains its separate authorization.
         await RequireSessionAccessAsync(tree, actor, ct);
-        if (tree.Owner.UserId != actor.UserId) throw Error("forbidden", "Only the workspace owner can change its lifecycle.");
     }
 
     private async Task<DevelopmentWorkspace?> PrepareAssociatedAsync(WorkspaceOwner actor, WorkspacePrepare input, CancellationToken ct)
@@ -144,7 +114,7 @@ internal sealed partial class DevelopmentWorkspaceService
             if (history is { RetiredAt: null }) throw Error("session_detached", "Attach a workspace explicitly before preparing source again.");
             return null;
         }
-        RequireMember(participation, actor.UserId);
+        await RequireWorkspaceUserAsync(actor.UserId, ct);
         if (participation.AllocationOwner.SameIdentity(actor)) return null;
         RequestId(input.RequestId);
         if (input.SessionId != actor.SessionId) throw Error("session_invalid", "Preparation must use the authenticated session.");
@@ -152,8 +122,8 @@ internal sealed partial class DevelopmentWorkspaceService
         var source = app.SourceState ?? throw Error("source_missing", "The app has no source repository.");
         var repository = await CanonicalRepository(source.Repository, source.LocalOverridePath, ct);
         var all = (await ListAsync(null, true, ct)).Workspaces;
-        var tree = all.FirstOrDefault(t => t.WorkspaceId == participation.Id && t.Repository == repository)
-            ?? throw Error("sharing_scope_invalid", "The workspace owner must add and share this repository first.");
+        var tree = all.FirstOrDefault(t => t.WorkspaceId == participation.Id && t.Repository == repository);
+        if (tree is null) return await PrepareCoreAsync(participation.AllocationOwner, input, ct, actor: actor);
         return await Locked(Hash(OwnerIdentity(tree.Owner)), async () =>
         {
             tree = await Read(tree.Id, actor, ct);
@@ -161,7 +131,7 @@ internal sealed partial class DevelopmentWorkspaceService
             if (tree.State != "active") throw Error("not_active", "This workspace no longer has active source.");
             if (input.TargetBranch is not null && input.TargetBranch != tree.TargetBranch) throw Error("base_conflict", "The shared worktree has a different target branch.");
             if (!tree.Apps.Any(a => a.AppId == app.Id && a.Installation == app.InstalledAt))
-                throw Error("sharing_scope_invalid", "The workspace owner must associate this application first.");
+                tree = Attach(tree, app, null);
             var fingerprint = Hash(OwnerIdentity(actor) + "\n" + CoreJson.Text(input));
             var previous = tree.Operations.FirstOrDefault(o => o.Id == input.RequestId);
             if (previous is not null)

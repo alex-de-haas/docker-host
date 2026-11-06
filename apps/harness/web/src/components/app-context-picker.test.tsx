@@ -116,3 +116,22 @@ it("opens an empty compact picker from the shared plus and restores focus to tha
   expect(document.activeElement).toBe(opener.current);
   expect(setSessionApps).not.toHaveBeenCalled();
 });
+
+it("preserves pending removals and additions when an agent changes context while the picker is open", async () => {
+  const current = { ...session, appIds: ["media", "other"], appContextRevision: 3 };
+  const onChange = vi.fn();
+  await act(async () => root.render(<AppContextPicker session={session} busy={false} running onChange={onChange} />));
+  await openPicker(); await removeMedia();
+  await act(async () => root.render(<AppContextPicker session={current} busy={false} running onChange={onChange} />));
+  expect(document.querySelector('[aria-label="Remove Media Server from context"]')).toBeNull();
+  vi.mocked(setSessionApps).mockRejectedValueOnce(new AssistantApiError("app_context_conflict", "Context changed"));
+  vi.mocked(getSession).mockResolvedValue(current);
+  await apply();
+  expect(setSessionApps).toHaveBeenLastCalledWith("s", [], 2);
+  expect(document.body.textContent).toContain("Your pending edits were kept");
+  expect(document.querySelector('[aria-label="Remove other from context"]')).not.toBeNull();
+  expect(document.querySelector('[aria-label="Remove Media Server from context"]')).toBeNull();
+  vi.mocked(setSessionApps).mockResolvedValue({ ...current, appIds: ["other"], appContextRevision: 4 });
+  await apply();
+  expect(setSessionApps).toHaveBeenLastCalledWith("s", ["other"], 3);
+});

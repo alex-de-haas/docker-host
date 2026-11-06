@@ -21,6 +21,13 @@ export type CoreUpdateStatus = {
   currentVersion: string;
   updateAvailable: boolean;
   releaseTag: string;
+  feedId?: string | null;
+  releaseId?: string | null;
+  offerId?: string | null;
+  operationId?: string | null;
+  readiness?: string | null;
+  sourceRevision?: string | null;
+  errorCode?: string | null;
   checkedAt: string;
   lastSuccessfulCheckAt?: string | null;
   error?: string | null;
@@ -696,7 +703,7 @@ export type AppAction = "start" | "stop" | "restart" | "backup" | "autostart";
 export type DetailView = "backups" | "settings" | "update" | "remove" | "logs";
 
 // Tabs inside the consolidated Settings dialog. Hidden when the app has no matching data.
-export type SettingsTab = "app" | "parameters" | "permissions" | "publicOrigins" | "mounts" | "source" | "backups" | "logs";
+export type SettingsTab = "app" | "parameters" | "permissions" | "publicOrigins" | "mounts" | "source" | "backups" | "logs" | "services" | "metrics";
 // Home is a neutral entry: administrators resolve to Dashboard; ordinary users open apps from
 // navigation. Legacy catalog URLs no longer render a second app list.
 export type ShellView =

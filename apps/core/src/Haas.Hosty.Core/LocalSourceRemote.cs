@@ -13,7 +13,7 @@ internal sealed partial class DevelopmentWorkspaceService
 {
     private ISourceGitAccess RemoteGit => privateSources ?? throw PrivateSourceService.Denied();
 
-    private async Task<AppRecord> RequireLocalRemoteApp(DevelopmentWorkspace w, string appId, CancellationToken ct, bool validateGrant = true)
+    private async Task<AppRecord> RequireLocalRemoteApp(DevelopmentWorkspace w, string appId, CancellationToken ct, bool validateGrant = true, bool localOnly = false)
     {
         var app = await apps.GetAppAsync(appId, ct);
         if (app is null || !w.Apps.Any(a => a.AppId == appId && a.Installation == app.InstalledAt) ||
@@ -26,7 +26,7 @@ internal sealed partial class DevelopmentWorkspaceService
         if (source.Remote is { } remote)
         {
             if (remote.Grant.OwnerId != w.Owner.UserId) throw Error("forbidden", "This source connection belongs to another user.");
-            if (validateGrant) await RemoteGit.ValidateAsync(new(Git: remote.Grant), ct);
+            if (validateGrant) await ValidateSourceGrantAsync(remote.Grant, ct, heldConnection: null, localOnly: localOnly);
         }
         return app;
     }
@@ -47,7 +47,7 @@ internal sealed partial class DevelopmentWorkspaceService
         }, ct), ct);
     }
 
-    public async Task<LocalRemoteStatus> RemoteCommandAsync(string id, WorkspaceOwner owner, string kind, LocalRemoteCommand input, CancellationToken ct)
+    public async Task<LocalRemoteStatus> RemoteCommandAsync(string id, WorkspaceOwner owner, string kind, LocalRemoteCommand input, CancellationToken ct, Func<CancellationToken, Task>? validateCaller = null)
     {
         RequestId(input.RequestId);
         if (kind is not ("connect" or "fetch" or "push-base") || string.IsNullOrWhiteSpace(input.AppId) || input.AppId.Length > 63)
@@ -58,10 +58,10 @@ internal sealed partial class DevelopmentWorkspaceService
         var grant = kind == "connect"
             ? await RemoteGit.BindAsync(owner.UserId, input.ConnectionId ?? "", input.Repository ?? "", false, ct)
             : app.SourceState!.Remote?.Grant ?? throw Error("remote_required", "Connect an existing repository first.");
-        return await RemoteCommandLocked(id, owner, kind, input, grant, ct);
+        return await RemoteCommandLocked(id, owner, kind, input, grant, ct, validateCaller);
     }
 
-    private async Task<LocalRemoteStatus> RemoteCommandLocked(string id, WorkspaceOwner owner, string kind, LocalRemoteCommand input, SourceReadGrant admittedGrant, CancellationToken ct)
+    private async Task<LocalRemoteStatus> RemoteCommandLocked(string id, WorkspaceOwner owner, string kind, LocalRemoteCommand input, SourceReadGrant admittedGrant, CancellationToken ct, Func<CancellationToken, Task>? validateCaller = null)
     {
         RequestId(input.RequestId);
         if (kind is not ("connect" or "fetch" or "push-base") || string.IsNullOrWhiteSpace(input.AppId) || input.AppId.Length > 63)
@@ -77,6 +77,7 @@ internal sealed partial class DevelopmentWorkspaceService
                 () => Locked("repository-admission:" + tree.RepositoryId,
                 () => RemoteGit.WithConnectionAsync(admittedGrant, async connection =>
             {
+                if (validateCaller is not null) await validateCaller(ct);
                 var w = await Read(id, owner, ct);
                 var app = await RequireLocalRemoteApp(w, input.AppId, ct, validateGrant: false);
                 if (app.SourceState!.Remote is { } selected && (selected.Grant.ConnectionId != connection.Id || selected.Grant.OwnerId != connection.UserId))
@@ -126,12 +127,14 @@ internal sealed partial class DevelopmentWorkspaceService
                         if (head is not null && head != accepted)
                             throw Error("remote_exists", "The remote target already exists with different history. Fetch and reconcile it explicitly; it will not be overwritten.");
                         op = op with { ResultHead = accepted }; w = Put(w, op); await Save(w);
+                        if (validateCaller is not null) await validateCaller(ct);
                         if (head is null)
                             // An absence lease is create-only: even a concurrent creator cannot be overwritten.
                             await RemoteGit.GitWithConnectionAsync(binding.Grant, binding.Repository, w.Path,
                                 ["push", "--no-verify", "--force-with-lease=refs/heads/" + binding.TargetBranch + ":", binding.Repository, accepted + ":refs/heads/" + binding.TargetBranch], connection, ct);
                     }
                     var observation = await FetchRemote(w, binding, ct, connection);
+                    if (validateCaller is not null) await validateCaller(ct);
                     if (kind == "connect")
                     {
                         await apps.UpdateAppAsync(app.Id, current => current with { SourceState = current.SourceState! with { Remote = binding } }, ct);
@@ -141,7 +144,7 @@ internal sealed partial class DevelopmentWorkspaceService
                     await Save(w);
                     return RemoteStatus(w, app, w.Operations.Single(o => o.Id == op.Id));
                 }
-                catch (Exception ex) when (ex is AppLifecycleException or UserConnectionException or IOException or OperationCanceledException or HttpRequestException)
+                catch (Exception ex) when (ex is AppLifecycleException or AppIdentityException or SandboxException or UserConnectionException or IOException or OperationCanceledException or HttpRequestException)
                 {
                     // Keep the exact request available for reconciliation; never infer a failed push
                     // from a lost response or delete the user's source to recover connectivity.
@@ -202,13 +205,13 @@ internal sealed partial class DevelopmentWorkspaceService
         return observed.Head;
     }
 
-    internal async Task<LocalSourceRemote?> PublicationRemoteAsync(DevelopmentWorkspace w, CancellationToken ct, bool validateGrant = true)
+    internal async Task<LocalSourceRemote?> PublicationRemoteAsync(DevelopmentWorkspace w, CancellationToken ct, bool validateGrant = true, bool localOnly = false)
     {
         foreach (var attached in w.Apps)
         {
             var app = await apps.GetAppAsync(attached.AppId, ct);
             if (app?.SourceState?.Type != "local-git" && w.Repository != Path.Combine(paths.ResolveManagedCheckoutPath(attached.AppId), ".git")) continue;
-            app = await RequireLocalRemoteApp(w, attached.AppId, ct, validateGrant);
+            app = await RequireLocalRemoteApp(w, attached.AppId, ct, validateGrant, localOnly);
             return app.SourceState!.Remote ?? throw Error("remote_required", "Connect an existing repository before configuring publication.");
         }
         return null;

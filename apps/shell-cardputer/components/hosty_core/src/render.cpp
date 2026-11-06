@@ -405,10 +405,10 @@ void Renderer::dashboard(Canvas& canvas, const ClientState& state, const UiState
     else if (unread > 999) std::snprintf(line, sizeof(line), "Alerts 999+ [ENT]");
     else std::snprintf(line, sizeof(line), "Alerts %lu%s", static_cast<unsigned long>(unread), unread ? " [ENT]" : "");
     canvas.text(8, 108, line, unread && ui.alerts_loaded ? palette.accent : palette.muted, palette.background);
-    const std::string_view update = core_update.available ? "Core update [U]" : !core_update.error.empty() ?
+    const std::string_view update = core_update.can_apply() ? "Core update [U]" : !core_update.error.empty() ?
         "Core check failed" : !core_update.known ? "Core ..." : "";
     const int update_x = canvas.width() - static_cast<int>(update.size()) * 6 - 8;
-    canvas.text(update_x, 108, update, core_update.available ? palette.accent : palette.muted, palette.background);
+    canvas.text(update_x, 108, update, core_update.can_apply() ? palette.accent : palette.muted, palette.background);
 }
 
 void Renderer::apps(Canvas& canvas, const ClientState& state, const UiState& ui,

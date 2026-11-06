@@ -29,7 +29,7 @@ vi.mock("../src/components/ui/sonner", () => ({ Toaster: () => null }));
 vi.mock("../src/app/shell/sidebar/shell-sidebar", () => ({ ShellSidebar: () => null }));
 vi.mock("../src/app/shell/chrome/shell-mobile-tabs", () => ({ ShellMobileTabs: () => null }));
 vi.mock("../src/app/shell/chrome/shell-top-strip", () => ({ ShellTopStrip: () => null }));
-vi.mock("@hosty-sdk/app/ui/react", () => ({ useHostyUiHost: () => null }));
+vi.mock("@hosty-sdk/app/ui/react", () => ({ useHostyUiHost: () => null, HostyFeedbackWorkspace: ({children}: {children: ReactNode}) => children }));
 vi.mock("../src/app/shell/chrome/shell-panel-workspace", () => ({ ShellPanelWorkspace: ({ children }: { children: ReactNode }) => children }));
 
 let root: Root, container: HTMLDivElement, actions: ShellActionsContextValue;
@@ -64,7 +64,6 @@ beforeEach(() => {
     if (path === "/api/global-mounts") return Response.json({ mounts: [] });
     if (path === "/api/development/activation-workspaces") return Response.json({ workspaces: [] });
     if (path === "/api/core-environments") return Response.json({ environments: [] });
-    if (path === "/api/sandbox-instances") return Response.json({ instances: [] });
     if (path === "/api/core/development") return Response.json({ message: "No development target" }, { status: 404 });
     if (path === "/api/installations") return prepareError
       ? Response.json({ message: "Target changed", code: "removal_stale" }, { status: 409 }) : Response.json(draft);

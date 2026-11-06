@@ -50,7 +50,7 @@ public sealed partial class CoreLifecycleServiceTests
     [InlineData("unbound-app")]
     [InlineData("nondev")]
     [InlineData("invalid")]
-    public async Task WorkspaceRecipe_RejectsUnownedUnboundOrInvalidRecipes(string failure)
+    public async Task WorkspaceRecipe_IsSharedButRejectsUnboundOrInvalidRecipes(string failure)
     {
         var (f, owner, _, tree, _, _) = await LocalHandoffFixture();
         await AddManifestPackageRuntime(f, tree);
@@ -69,6 +69,13 @@ public sealed partial class CoreLifecycleServiceTests
         }
         if (failure == "nondev") request = request with { Runtime = "docker" };
         if (failure == "invalid") request = request with { Runtime = "missing" };
+        if (failure is "wrong-user" or "wrong-principal")
+        {
+            await f.Service.ConfigureWorkspaceRecipeAsync(workspace, request, user, principal, default);
+            Assert.Equal(0, f.Adapter.StartCount);
+            Assert.Equal(0, f.Adapter.StopCount);
+            return;
+        }
         if (failure == "invalid")
             await Assert.ThrowsAsync<AppManifestException>(() => f.Service.ConfigureWorkspaceRecipeAsync(workspace, request, user, principal, default));
         else

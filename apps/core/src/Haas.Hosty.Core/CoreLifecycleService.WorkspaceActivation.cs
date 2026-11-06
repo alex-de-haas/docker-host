@@ -205,7 +205,10 @@ internal sealed partial class CoreLifecycleService
     {
         async Task<T> Next(int index) => index == ids.Length ? await action() :
             await WithAppLockAsync(ids[index], () => Next(index + 1), ct, developmentOperation: true);
-        return await Next(0);
+        var previous = dependencyActivationSelection.Value;
+        dependencyActivationSelection.Value = ids;
+        try { return await Next(0); }
+        finally { dependencyActivationSelection.Value = previous; }
     }
 
     internal async Task<string> ActivationReviewStampAsync(string appId, CancellationToken ct)

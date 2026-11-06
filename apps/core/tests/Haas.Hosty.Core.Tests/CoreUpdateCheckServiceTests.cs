@@ -34,13 +34,14 @@ public sealed class CoreUpdateCheckServiceTests
         => Assert.Null(CoreUpdateCheckService.SanitizeVersion(body));
 
     [Fact]
-    public void FailedCheckKeepsLastSuccessfulResultUntilRecovery()
+    public void FailedCheckKeepsOnlyHistoricalSuccessUntilRecovery()
     {
         var checkedAt = DateTimeOffset.Parse("2026-09-10T10:00:00Z");
         var success = CoreUpdateCheckService.MergeStatus(null, new("0.99.0", true, "main", checkedAt, Error: null, AvailableVersion: "0.100.0"));
         var failed = CoreUpdateCheckService.MergeStatus(success, new("0.99.0", false, "main", checkedAt.AddMinutes(5), Error: "Offline"));
-        Assert.True(failed.UpdateAvailable);
-        Assert.Equal("0.100.0", failed.AvailableVersion);
+        Assert.False(failed.UpdateAvailable);
+        Assert.Null(failed.OfferId);
+        Assert.Null(failed.AvailableVersion);
         Assert.Equal(checkedAt, failed.LastSuccessfulCheckAt);
         Assert.Equal("Offline", failed.Error);
         var recovered = CoreUpdateCheckService.MergeStatus(failed, new("0.99.0", false, "main", checkedAt.AddMinutes(10), Error: null));

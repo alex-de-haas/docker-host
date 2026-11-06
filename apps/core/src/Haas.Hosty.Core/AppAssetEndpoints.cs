@@ -70,6 +70,15 @@ internal static class AppAssetEndpoints
                 cancellationToken: cancellationToken));
     }
 
+    internal static Task<IResult> ServeOwnIconAsync(AppRecord app, HttpContext context,
+        CoreDataPaths paths, DevelopmentWorkspaceService workspaces)
+    {
+        var icon = CoreDataPaths.NormalizeRelativeAssetPath("", app.CatalogMetadata?.Icon);
+        return icon is null || !ContentTypes.TryGetValue(Path.GetExtension(icon), out var type) || !type.StartsWith("image/", StringComparison.Ordinal)
+            ? Task.FromResult<IResult>(Results.NotFound())
+            : ServeAsync(app, icon, context.Request, context.Response, paths, workspaces, context.RequestAborted);
+    }
+
     private static async Task<IResult> ServeAsync(
         AppRecord app,
         string assetPath,
@@ -79,10 +88,11 @@ internal static class AppAssetEndpoints
         DevelopmentWorkspaceService workspaces,
         CancellationToken ct)
     {
-        // Only the admitted app icon is public from a workspace. The repository can contain private
-        // images and documents that were never declared as display assets by this installation.
+        // Only admitted app and navigation icons are public from a workspace. Private repository
+        // images and documents were never declared as display assets by this installation.
         var icon = CoreDataPaths.NormalizeRelativeAssetPath("", app.CatalogMetadata?.Icon);
-        var isIconRequest = assetPath == icon;
+        var isIconRequest = assetPath == icon || app.Ui?.Navigation.Any(item =>
+            assetPath == CoreDataPaths.NormalizeRelativeAssetPath("", item.IconAsset)) == true;
         if (isIconRequest && ContentTypes.TryGetValue(Path.GetExtension(assetPath), out var iconType) &&
             iconType.StartsWith("image/", StringComparison.Ordinal))
         {

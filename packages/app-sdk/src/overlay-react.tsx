@@ -8,16 +8,16 @@ import { APP_SESSION_ENDED, APP_SESSION_RESTORED, APP_ACTIVITY_RENEWED, acceptAp
 import { buildCoreOpenUrl, readRecoveryParams } from "./index";
 import { permissionReviewUrl, requestPermissionReview, type PermissionNoticeState } from "./permissions";
 import type { UiChromeOverrides, UiRouterAdapter } from "./ui-types";
-import { SdkBrand, SdkChromeStyles, SdkLoader } from "./sdk-chrome";
+import { SdkBrand, SdkChromeStyles, SdkIcon, SdkLoader } from "./sdk-chrome";
 import { HostyUiRoot } from "./ui-react";
 
 type Setup = "ready" | "missing" | "unsupported" | "unavailable" | "incompatible";
 type Snapshot = {
-  userId: string; setup: Setup; notice?: PermissionNoticeState;
+  userId: string; setup: Setup; notice?: PermissionNoticeState; permissionWarning: boolean;
   activityRequired: boolean; activeUntil: string | null; recoveryReady: boolean;
 };
 function snapshot(body: unknown): Snapshot | null {
-  const value = body as { status?: unknown; userId?: unknown; activityRequired?: unknown; activeUntil?: unknown; hosty?: { version?: unknown; setup?: unknown; notice?: PermissionNoticeState } } | null;
+  const value = body as { status?: unknown; userId?: unknown; activityRequired?: unknown; activeUntil?: unknown; hosty?: { version?: unknown; setup?: unknown; permissionWarning?: unknown; notice?: PermissionNoticeState } } | null;
   if (value?.status !== "active" || typeof value.userId !== "string" || !value.userId) return null;
   const setup = value.hosty?.version === 1 && ["ready", "missing", "unsupported", "unavailable", "incompatible"].includes(String(value.hosty.setup))
     ? value.hosty.setup as Setup : "incompatible";
@@ -25,6 +25,7 @@ function snapshot(body: unknown): Snapshot | null {
   const openUrl = recovery.appId ? buildCoreOpenUrl(recovery.corePublicOrigin, recovery.appId, window.location) : null;
   // The activity policy remains authoritative even when renewal discovery fails.
   return { userId: value.userId, setup, notice: value.hosty?.notice,
+    permissionWarning: value.hosty?.permissionWarning === "unsupported",
     activityRequired: value.activityRequired === true,
     activeUntil: typeof value.activeUntil === "string" ? value.activeUntil : null,
     recoveryReady: !!openUrl && !!acceptAppAuthProtocol(new URL(openUrl).origin, recovery.appAuthProtocol) };
@@ -172,6 +173,9 @@ export function HostyOverlay({ children, probePath = "/api/hosty/session", appCo
   const localOffline = (identity.ui.kind === "unavailable" || (identity.ui.kind === "active" && session?.setup === "unavailable"))
     && localContent !== undefined;
   return <>
+    {ready && session?.permissionWarning && <div data-hosty-sdk role="status" className="hosty-overlay-offline">
+      <SdkChromeStyles /><style>{styles}</style><SdkIcon name="warning" /><span>This Core does not support some permissions requested by this app. Update the app or Core. These permissions are not granted; some app features may not work.{session.notice?.permissions?.unsupportedRequired?.length ? ` (${session.notice.permissions.unsupportedRequired.join(", ")})` : ""}</span>
+    </div>}
     {localOffline && <div data-hosty-local-content><div data-hosty-sdk className="hosty-overlay-offline" role="status"><SdkChromeStyles /><style>{styles}</style><SdkBrand /><span>Hosty is unavailable. Local content remains available.</span><button type="button" className="hosty-sdk-button" onClick={() => { void refreshRef.current(); }}>Retry</button></div>{localContent}</div>}
     <div data-hosty-content hidden={!ready} inert={!ready} style={ready ? { display: "contents" } : { display: "none" }}>
       <HostyUiRoot chrome={chrome} navigation={navigation} uiPath={uiPath} panelLayout={panelLayout} active={ready}>{mounted.current ? children : null}</HostyUiRoot>

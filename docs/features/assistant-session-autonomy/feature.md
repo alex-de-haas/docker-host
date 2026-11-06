@@ -1,18 +1,21 @@
 ---
 created: 2026-10-05
-updated: 2026-10-11
+updated: 2026-11-03
 summary: A per-chat Normal or Autonomous mode that controls whether native commands and file changes ask for approval.
 components: [apps/core, apps/harness]
 ---
 
 # Assistant Session Autonomy
 
-Harness exposes **Normal** and **Autonomous** beneath the message composer, beside the provider
-selector. The choice belongs to the chat and survives reopening and Harness restarts. Missing values
-in older records mean Normal. Selecting a mode does not send a message or start a model.
+Harness exposes **Normal** and **Autonomous** through an icon-only button beneath the message
+composer, beside the provider selector. Normal uses a shield; Autonomous uses a shield with an
+exclamation mark. The menu repeats each icon before its mode name. The button retains the current
+mode in its accessible label and tooltip. The choice belongs to the chat and survives reopening and
+Harness restarts. Missing values in older records mean Normal. Selecting a mode does not send a
+message or start a model.
 
 Normal retains the existing native provider approval behavior and per-tool MCP rules. Autonomous
-runs native commands and file changes without approval and treats Ask as unprompted for enabled,
+runs native commands and file changes without approval and treats default Ask as unprompted for enabled,
 discovered MCP tools in that chat. Disabled tools remain unavailable; dispatch still rechecks tool
 identity, definition, policy, cancellation, target grants and Core authorization. The setting is not
 a repository sandbox: native access follows the Harness process permissions. Core API permissions
@@ -36,6 +39,11 @@ Closing a tab does not stop a run. Stop interrupts the provider before a mode ca
 change governs subsequent dispatch. Neither control promises termination of host processes that
 have detached from the provider. Restoring Normal does not undo completed changes.
 
+Agent context tools use the same Ask / Run unprompted / Disabled policy in both modes.
+Autonomous runs enabled context operations without an extra attachment confirmation; current
+user identity and session ownership are still checked. Source preparation is independent of
+context selection and continues to use Core's source and participant authority.
+
 ## Core Tool Authority
 
 Native approval mode and Core authorization are separate. MCP and workspace calls use the
@@ -45,6 +53,9 @@ user access, installation identity and existing grants. Continuous sessions have
 hourly deadline. Normal and Autonomous neither add permissions nor extend principal lifetime.
 Standard app recovery updates all live conversations of that actor while preserving runs and drafts.
 
+Explicit per-tool Ask rules remain approval requirements in Autonomous mode. Run unprompted and
+Disabled retain their selected behavior; autonomy does not override an explicit MCP approval choice.
+
 ## Testing Expectations
 
 - Session/API tests cover Normal defaults, persistence, ownership, busy rejection, restart/resume,
@@ -52,7 +63,7 @@ Standard app recovery updates all live conversations of that actor while preserv
 - Protocol fixtures check actual Codex start/resume/turn parameters and Claude SDK options/callbacks;
   Normal is restored after Autonomous. These deterministic tests use no paid model calls and do not
   prove live provider command execution or cross-platform process termination.
-- MCP tests cover unprompted Ask in the selected chat, unaffected other chats, Disabled and policy
+- MCP tests cover unprompted default Ask and preserved explicit Ask in the selected chat, unaffected other chats, Disabled and policy
   revocation between authorization and dispatch.
 - Component tests cover the selector, process-access description, running states, save failures and
   composer blocking during persistence.

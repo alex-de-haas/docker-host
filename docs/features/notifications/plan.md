@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-06-16
-updated: 2026-10-10
+updated: 2026-11-03
 summary: Expose notifications to non-browser clients and add delivery channels that reach users outside any client.
 components: [apps/core]
 ---
@@ -15,6 +15,63 @@ at all.
 
 Nothing here changes the consumer contract: it was shaped so each surface below is a thin wrapper over
 the existing service rather than a redesign.
+
+## Composable Work Coordination (2026-10-26)
+
+D6 remains the shared durable-event owner for [tasks](../basic-tasks/feature.md),
+[decisions](../shared-decisions/feature.md) and [job execution](../durable-agent-jobs/plan.md).
+Their owners define domain transitions and consistency with their state; D6 defines authorized
+producer/consumer registration, versioned delivery, retention and cursor/gap recovery. Resolve
+app-produced facts without trusting an app's claimed user, executor option or resource access.
+Do not build a second bus in the orchestration application.
+
+UI consumers may reconcile current state after reconnect; transition-dependent automation needs
+durable delivery and idempotent consumption. A human notification is a separate consumer, not an
+execution command or proof that a decision was answered. D7 retains its external-channel scope;
+the first Harness task journey does not require shipping every notification channel or D6 itself.
+Under [vision decision 63](../../vision.md), Ready persists a direct execution command with its task
+state; request receipts and reconciliation provide its reliability. HTTP reads and SSE refresh with
+state reload handle the initial UI. D6 remains necessary for later transition-driven subscriptions;
+this narrower dispatch record is not a second general-purpose event bus.
+
+## Assistant Event Consumer (2026-10-29)
+
+[Assistant Events And Session Continuation](../assistant-events-and-continuation/plan.md) adds a
+consumer contract for activity events and delegated-task results. D6 here retains shared transport,
+authorization, retention and replay; the assistant plan owns bindings to private conversations,
+receipt interpretation and event-to-session admission. Domain producers keep state/publication
+consistency. Delivery is not permission to run a model or proof of continuation.
+
+Keep bounded domain facts and protected result references separate from arbitrary agent messages
+or private transcripts, which remain direct authorized consumer/provider exchanges. The existing
+human inbox and ephemeral SSE hints do not acquire machine-trigger semantics. This link neither
+completes D6 nor makes unrelated notification channels prerequisites for the assistant contract.
+
+## Independent Domain Sources (2026-10-29)
+
+The owner clarifies that D6 must accept unrelated compatible domain sources; a PR change is one
+example alongside activity changes, application jobs and decisions. Source-owned versioned schemas
+and authorized subscriptions must not require GitHub, a PR number or a first-party assistant.
+Unknown types/versions need explicit compatibility behavior. Generic event identity/replay and
+access remain shared; domain predicates and routine activation belong to their consumers.
+
+[Harness Pull Request Inbox](../harness-pull-request-inbox/feature.md) owns repository discovery and
+its standalone browsing surface. Its ordinary reads/UI convergence do not require D6. A future live
+PR event producer must be explicitly scoped with that owner; no priority, subscription or event-bus
+implementation is selected by creating the inbox Draft.
+
+## Decisions-First Compatibility Boundary (2026-11-03)
+
+The [Shared Decisions implementation](../shared-decisions/feature.md#api-and-sdk) uses an
+atomic answer record and fixed-recipient command receipt for its first Harness continuation. Like
+Basic Tasks direct dispatch, this deliberately bounded handoff is not a second subscription bus.
+The decision remains queryable when notifications are lost; a banner or read acknowledgement is
+not an answer or proof of resumed work.
+
+D6 still owns arbitrary producer/consumer subscriptions, authorized retention/cursor/gap recovery
+and app-produced domain events. A later resolution event must preserve the original decision and
+command identity and must not independently resume work already delivered through the direct path.
+D7 channels and the other notification surfaces remain separate unfinished deliverables.
 
 ## Deliverables
 
@@ -46,7 +103,7 @@ the existing service rather than a redesign.
       retry and failure posture, which is why it is a seam rather than an inline call.
 - [ ] D5. Docs: fold each shipped surface into [feature.md](feature.md) and regenerate the index.
 
-- [ ] D6. Design and implement bounded durable domain-event retention and app-facing cursor subscriptions for authorized consumers; persist replay positions, version events, define retention-gap recovery and use at-least-once delivery with idempotent consumption. This is separate from the ephemeral Core event bus.
+- [ ] D6. Design and implement bounded durable domain-event retention and app-facing cursor subscriptions with authorized producer/consumer boundaries, including app-produced task/decision facts and consistency with the owning state; persist replay positions, version events, define retention-gap recovery and use at-least-once delivery with idempotent consumption. This is separate from the ephemeral Core event bus.
 - [ ] D7. Deliver the first external notification-channel app (for example Telegram) using D6 and D4; define explicit subscription permissions, per-user visibility, retry/backoff and observable failures. Verify reconnects, duplicate handling and stopped/slow consumers without blocking Core.
 
 D6–D7 receive Core Extension Model D3. Transport, retention and the first delivery provider remain

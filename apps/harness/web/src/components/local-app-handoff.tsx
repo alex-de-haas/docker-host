@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogBody, DialogTitle, DialogDescription, DialogFooter, DialogHeader } from "@/components/ui/dialog";
 import { workspaceAction } from "@/lib/assistant-api";
 
 type Status = { sourceHead: string; targetHead: string; sourceClean: boolean; targetClean: boolean;
@@ -59,12 +59,14 @@ export function LocalAppHandoff({ sessionId, appId, workspaceId, observation, di
         <Button size="sm" variant="ghost" disabled={busy} onClick={() => { localStorage.removeItem(key); setPending(null); setConfirm(null); refresh(); }}>Dismiss request</Button></div></div>}
     {error && <p role="alert" className="text-destructive-foreground">{error}</p>}
     <Dialog open={!!confirm} onOpenChange={open => { if (!open) setConfirm(null); }}><DialogContent>
-      <DialogTitle>{confirm === "app-local-accept" ? "Accept committed work locally?" : "Use this app locally?"}</DialogTitle>
+      <DialogHeader><DialogTitle>{confirm === "app-local-accept" ? "Accept committed work locally?" : "Use this app locally?"}</DialogTitle>
       <DialogDescription>{confirm === "app-local-accept"
         ? "Fast-forward local main to the reviewed workspace commit. No commit, remote, push or publication is created. This is not a remote backup."
-        : "Start the accepted local source with this installation’s ordinary data and caches. Sandbox users, data and secrets stay separate. Autostart stays unchanged."}</DialogDescription>
-      <p className="break-all text-sm">{appId}<br />Main: {status?.targetHead}<br />Workspace: {status?.sourceHead}</p>
-      {error && <p role="alert" className="text-sm text-destructive-foreground">{error}</p>}
+        : "Start the accepted local source with this installation’s ordinary data and caches. Sandbox users, data and secrets stay separate. Autostart stays unchanged."}</DialogDescription></DialogHeader>
+      <DialogBody>
+        <p className="break-all text-sm">{appId}<br />Main: {status?.targetHead}<br />Workspace: {status?.sourceHead}</p>
+        {error && <p role="alert" className="text-sm text-destructive-foreground">{error}</p>}
+      </DialogBody>
       <DialogFooter><Button variant="outline" onClick={() => setConfirm(null)}>Cancel</Button><Button disabled={disabled || busy || !!pending} onClick={() => confirm && void run(confirm)}>{busy ? "Working…" : confirm === "app-local-accept" ? "Accept locally" : "Start with ordinary data"}</Button></DialogFooter>
     </DialogContent></Dialog>
   </div>;

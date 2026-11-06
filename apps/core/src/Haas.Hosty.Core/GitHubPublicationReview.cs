@@ -21,6 +21,16 @@ internal sealed partial class GitHubPublicationProvider
         var mergeBase = Text(comparison["merge_base_commit"], "sha");
         if (!ReviewOid(mergeBase) || Text(comparison["base_commit"], "sha") != basis)
             throw new PublicationException("review_unavailable", "GitHub did not verify the selected comparison base.");
+        var files = ReadComparisonFiles(comparison);
+        var final = await ObserveAsync(connection, record, ct);
+        if (final.Head != head || final.BaseHead != basis || final.Base != observation.Base)
+            throw new PublicationException("review_stale", "The PR changed while reading its diff. Refresh the review.");
+        return new(record.Url ?? PullRequestUrl(record.Repository, record.Number!.Value), record.Repository,
+            observation.Base ?? record.TargetBranch, basis, mergeBase, head, final, files);
+    }
+
+    internal static PublicationReviewFile[] ReadComparisonFiles(JsonNode comparison)
+    {
         var nodes = comparison["files"]?.AsArray()
             ?? throw new PublicationException("review_unavailable", "GitHub did not return the PR file list.");
         // GitHub compare caps the file list at 300 and provides no proof that exactly 300 is complete.
@@ -51,11 +61,7 @@ internal sealed partial class GitHubPublicationProvider
             // preview; one binary/large file must not disable replies on every other thread.
             files.Add(new(path, status, previous.Length == 0 ? null : previous, patch, additions, deletions));
         }
-        var final = await ObserveAsync(connection, record, ct);
-        if (final.Head != head || final.BaseHead != basis || final.Base != observation.Base)
-            throw new PublicationException("review_stale", "The PR changed while reading its diff. Refresh the review.");
-        return new(record.Url ?? PullRequestUrl(record.Repository, record.Number!.Value), record.Repository,
-            observation.Base ?? record.TargetBranch, basis, mergeBase, head, final, files.ToArray());
+        return files.ToArray();
     }
 
     private static bool ReviewOid(string? value) => value is { Length: 40 or 64 } && value.All(char.IsAsciiHexDigit);

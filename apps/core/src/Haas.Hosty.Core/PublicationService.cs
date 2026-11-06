@@ -16,6 +16,12 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
     private async Task Save(PublicationRecord r)
         => await workspaces.WritePublicationAsync(r.WorkspaceId,
             () => JsonStorage.WriteAsync(FilePath(r.WorkspaceId), r, restrictToOwner: true), default);
+    private readonly WorkspaceRecordCache inspectionRecords = new();
+    internal async Task<PublicationRecord?> ReadInspectionRecordAsync(string id, CancellationToken ct)
+    {
+        try { return await inspectionRecords.ReadAsync<PublicationRecord>(FilePath(id), ct); }
+        catch (Exception ex) when (ex is JsonException or IOException) { return null; }
+    }
     private Task<PublicationRecord?> Read(string id, CancellationToken ct) => JsonStorage.ReadAsync<PublicationRecord>(FilePath(id), ct);
     private async Task<T> Locked<T>(Func<Task<T>> action, CancellationToken ct)
     {
@@ -26,7 +32,7 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
     {
         var app = await apps.GetAppAsync(owner.AppId, ct);
         var user = (await users.ReadAsync(ct)).Users.FirstOrDefault(u => u.Id == owner.UserId && !u.Disabled);
-        if (app?.InstalledAt != owner.Installation || app.GrantedCorePermissions?.Contains(CoreAppPermissions.Sources) != true || user is null || !AppAccessPolicy.IsAdmin(user))
+        if ((!owner.IsExternal && (app?.InstalledAt != owner.Installation || app.GrantedCorePermissions?.Contains(CoreAppPermissions.Sources) != true)) || user is null || !AppAccessPolicy.IsAdmin(user))
             throw new PublicationException("forbidden", "The assistant installation or administrator publication grant is no longer valid.");
     }
     public async Task<PublicationConnections> ConnectionsAsync(WorkspaceOwner owner, CancellationToken ct)
@@ -34,7 +40,7 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
         await RequireOwner(owner, ct);
         return new((await connections.ProfileAsync(owner.UserId, ct)).Connections.Where(c => connections.Providers.Contains(c.Provider) && connections.Providers.Resolve(c.Provider).Publication is not null).ToArray());
     }
-    public Task<PublicationList> ListAsync(WorkspaceOwner? owner, CancellationToken ct) => Locked(async () =>
+    public Task<PublicationList> ListAsync(WorkspaceOwner? owner, CancellationToken ct, bool canonical = false) => Locked(async () =>
     {
         if (owner is not null) await RequireOwner(owner, ct);
         var list = new List<PublicationRecord>();
@@ -43,7 +49,7 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
             try
             {
                 var record = await Read(Path.GetFileNameWithoutExtension(file), ct);
-                if (record is not null && (owner is null || record.Owner.UserId == owner.UserId && record.Owner.AppId == owner.AppId && record.Owner.Installation == owner.Installation))
+                if (record is not null && (owner is null || record.Owner.UserId == owner.UserId && (canonical || record.Owner.AppId == owner.AppId && record.Owner.Installation == owner.Installation)))
                 {
                     if (owner is not null)
                     {
@@ -69,27 +75,27 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
         // A pause may have been admitted during the provider request.
         await CleanupAsync(id, ct, background: true);
     }
-    public Task<PublicationRecord> ObserveAsync(string id, WorkspaceOwner? owner, CancellationToken ct) => Locked(async () =>
+    public Task<PublicationRecord> ObserveAsync(string id, WorkspaceOwner? owner, CancellationToken ct, bool canonical = false) => Locked(async () =>
     {
         var r = await Read(id, ct) ?? throw new PublicationException("not_found", "Publication not found.");
         if (owner is not null)
         {
             await workspaces.Read(id, owner, ct);
-            if (r.Owner.UserId != owner.UserId || r.Owner.AppId != owner.AppId || r.Owner.Installation != owner.Installation)
+            if (r.Owner.UserId != owner.UserId || !canonical && (r.Owner.AppId != owner.AppId || r.Owner.Installation != owner.Installation))
                 throw new PublicationException("connection_required", "This publication uses another user's private connection.");
         }
-        var result = await Observe(r, ct);
+        var result = await Observe(r, ct, canonical ? owner : null);
         return owner is null ? result : ProjectSession(result, owner);
     }, ct);
     private static PublicationRecord ProjectSession(PublicationRecord record, WorkspaceOwner actor)
         => record with { Operations = record.Operations.Where(o => o.Actor?.SameIdentity(actor) == true || o.Actor is null && record.Owner.SameIdentity(actor)).ToArray() };
 
-    private async Task<PublicationRecord> Observe(PublicationRecord r, CancellationToken ct)
+    private async Task<PublicationRecord> Observe(PublicationRecord r, CancellationToken ct, WorkspaceOwner? actor = null)
     {
         if (!await workspaces.CanObservePublicationAsync(r.WorkspaceId, ct)) return r;
         try
         {
-            await RequireOwner(r.Owner, ct);
+            await RequireOwner(actor ?? r.Owner, ct);
             await workspaces.RequireParticipationSourceAsync(await workspaces.Read(r.WorkspaceId, null, ct), r.Owner.UserId, ct);
             r = await connections.UseForSourceAsync(r.Owner.UserId, r.ConnectionId, async c =>
             {
@@ -168,18 +174,20 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
         }
         await Dependencies(current, ct, input.Outcome == "merged");
     }
-    public Task<PublicationRecord> CommandAsync(string id, WorkspaceOwner owner, string kind, PublicationCommand input, CancellationToken ct)
+    public Task<PublicationRecord> CommandAsync(string id, WorkspaceOwner owner, string kind, PublicationCommand input, CancellationToken ct, bool canonical = false, Func<CancellationToken, Task>? validateCaller = null)
         => Locked(async () =>
     {
         if (!Guid.TryParse(input.RequestId, out _) || kind is not ("resolve-review" or "commit" or "configure" or "push" or "publish" or "link" or "ready" or "merge" or "complete" or "corrective"))
             throw new PublicationException("request_invalid", "Supply a UUID requestId and a supported publication operation.");
+        if (input.PolicyAmendment is not null && kind != "configure")
+            throw new PublicationException("policy_amendment_invalid", "Policy amendments belong to configure only.");
         await RequireOwner(owner, ct);
         var w = await workspaces.ObserveAsync(id, owner, ct);
         var remote = await workspaces.PublicationRemoteAsync(w, ct, validateGrant: owner.UserId == w.Owner.UserId);
         var r = await Read(id, ct);
         if (input.Cleanup && await workspaces.ReadParticipationAsync(w.WorkspaceId, ct) is { } shared && (shared.Members.Length > 1 || shared.Sessions.Length > 1))
             throw new PublicationException("workspace_cleanup_required", "Complete publication without source cleanup. Delete the shared workspace explicitly after all participants finish.");
-        if (r is not null && (r.Owner.UserId != owner.UserId || r.Owner.AppId != owner.AppId || r.Owner.Installation != owner.Installation))
+        if (r is not null && (r.Owner.UserId != owner.UserId || !canonical && (r.Owner.AppId != owner.AppId || r.Owner.Installation != owner.Installation)))
             throw new PublicationException("connection_required", "This publication uses another user's connection. Its credential and operation receipts are private.");
         if (remote is not null && r is not null && (Publication(r.Provider).NormalizeRepository(remote.Repository) != r.Repository ||
             remote.TargetBranch != r.TargetBranch || remote.Grant.ConnectionId != r.ConnectionId))
@@ -216,7 +224,7 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
         if (kind == "configure")
         {
             ValidatePolicy(input.Policy ?? new([], [], []));
-            await Dependencies(record with { Dependencies = input.Dependencies ?? [] }, ct, false);
+            await Dependencies(record with { Dependencies = input.PolicyAmendment is null ? input.Dependencies ?? [] : record.Dependencies }, ct, false);
         }
         if (kind is "publish" or "merge") await Dependencies(record, ct, true);
         if (kind == "complete" && input.Outcome != "abandoned") await RequireSessionCompletion(record, input, ct);
@@ -227,6 +235,7 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
         Task<T> UseConnection<T>(Func<UserProviderConnection, Task<T>> action)
             => connections.UseForSourceAsync(owner.UserId, record.ConnectionId, async connection =>
             {
+                if (validateCaller is not null) await validateCaller(ct);
                 if (connection.Provider != record.Provider)
                     throw new PublicationException("provider_mismatch", "Choose a connection for this repository provider.");
                 return await action(connection);
@@ -239,8 +248,9 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
             var provider = Publication(record.Provider);
             var op = previous is null ? new PublicationOperation(input.RequestId, kind, fingerprint, "pending", input, Actor: owner) : previous with { State = "pending", Error = null };
             record = record with { Operations = [.. record.Operations.Where(o => o.Id != op.Id), op] };
-            await workspaces.WithPublicationAdmissionAsync(owner, async current =>
+            await workspaces.WithPublicationAdmissionAsync(canonical ? w.Owner : owner, async current =>
             {
+                if (validateCaller is not null) await validateCaller(ct);
                 if (current.Closure is not null && previous is null)
                     throw new PublicationException("workspace_closed", "Resume retained workspace source before starting a new publication operation.");
                 await Save(record);
@@ -248,11 +258,26 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
             journaled = true;
             if (kind == "configure")
             {
-                if (record.Number is not null || record.PublishedHead is not null) throw new PublicationException("policy_locked", "Configure completion policy before publication.");
-                var policy = input.Policy ?? new PublicationPolicy([], [], []); ValidatePolicy(policy);
-                if ((input.Dependencies?.Length ?? 0) > 20) throw new PublicationException("dependency_limit", "At most twenty publication dependencies are supported.");
-                record = record with { Policy = policy, Dependencies = input.Dependencies ?? [] };
-                record = record with { HeadRepository = await UseConnection(c => provider.DestinationAsync(c, record.Repository, input.Fork, ct)) };
+                if (input.PolicyAmendment is { } amendment)
+                {
+                    ValidatePolicyAmendment(record, input, amendment);
+                    RequireHead(w, input);
+                    var observation = await UseConnection(c => provider.ObserveAsync(c, record, ct));
+                    if (observation.State != "merged" || observation.Head != input.ExpectedHead ||
+                        observation.Base != record.TargetBranch || string.IsNullOrWhiteSpace(observation.MergeCommit))
+                        throw new PublicationException("policy_amendment_invalid", "Refresh the exact merged PR before amending its policy.");
+                    RequireHead(await workspaces.ObserveAsync(id, owner, ct), input);
+                    record = record with { Policy = input.Policy!, Observation = null };
+                }
+                else
+                {
+                    if (record.Number is not null || record.PublishedHead is not null)
+                        throw new PublicationException("policy_locked", "Configure completion policy before publication, or explicitly amend an unfinished merged publication with its previousPolicy, reason and exact expectedHead.");
+                    var policy = input.Policy ?? new PublicationPolicy([], [], []); ValidatePolicy(policy);
+                    if ((input.Dependencies?.Length ?? 0) > 20) throw new PublicationException("dependency_limit", "At most twenty publication dependencies are supported.");
+                    record = record with { Policy = policy, Dependencies = input.Dependencies ?? [] };
+                    record = record with { HeadRepository = await UseConnection(c => provider.DestinationAsync(c, record.Repository, input.Fork, ct)) };
+                }
             }
             else if (kind == "commit")
             {
@@ -364,17 +389,29 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
                     if (record.Observation.Head != input.ExpectedHead || record.PublishedHead != input.ExpectedHead) throw new PublicationException("unpublished", "The current workspace head is not the published PR head.");
                     if (input.Outcome == "merged" && record.Observation is not { State: "merged", Complete: true } ||
                         input.Outcome == "submitted" && record.Observation.State != "open" || input.Outcome is not ("merged" or "submitted" or "abandoned"))
-                        throw new PublicationException("completion_blocked", "Choose an outcome supported by current PR and configured release evidence.");
+                        throw new PublicationException("completion_blocked", record.Observation.Error ?? "Choose an outcome supported by current PR and configured release evidence.");
                     record = record with { Outcome = input.Outcome, CompletedAt = clock.UtcNow, CleanupRequested = input.Cleanup };
                 }
             }
             record = record with { Operations = record.Operations.Select(o => o.Id == input.RequestId ? o with { State = "succeeded", Error = null } : o).ToArray() };
-            await Save(record);
+            if (input.PolicyAmendment is not null)
+                await workspaces.WithPublicationAdmissionAsync(canonical ? w.Owner : owner, async current =>
+                {
+                    if (current.Closure is not null || current.State is "deferred" or "deleting" or "deleted" ||
+                        !await workspaces.CanObservePublicationAsync(id, ct))
+                        throw new PublicationException("workspace_closed", "Resume retained workspace source before amending publication policy.");
+                    if (validateCaller is not null) await validateCaller(ct);
+                    await RequireOwner(owner, ct);
+                    await Save(record);
+                }, ct);
+            else await Save(record);
         }
         catch (Exception ex) when (ex is PublicationException or UserConnectionException or HttpRequestException or IOException or OperationCanceledException or AppLifecycleException)
         {
             // Rejected admission must not create a receipt through error recovery.
             if (!journaled) throw;
+            // An amendment has no remote side effect. A refused/local-failed write retains the old policy.
+            if (input.PolicyAmendment is not null) record = record with { Policy = r.Policy, Observation = r.Observation };
             // Preserve pending intent: an HTTP error may follow a successful push, fork or PR mutation.
             record = record with { Operations = record.Operations.Select(o => o.Id == input.RequestId ? o with { State = ex is PublicationException pe && pe.Code is not ("publication_provider_unavailable" or "publication_push_uncertain" or "publication_merge_uncertain" or "publication_fork_unavailable" or "publication_commit_uncertain") ? "failed" : "pending", Error = "Operation did not complete. Inspect state before retrying; retain the request ID for an uncertain outcome." } : o).ToArray() };
             await Save(record); throw;
@@ -382,7 +419,9 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
         if (record.Url is not null) await workspaces.AddPublicationReferenceAsync(id, owner, record.Url, ct);
         await audit.AppendAsync(new("audit_" + Guid.NewGuid().ToString("N"), "development.publication." + kind, "workspace", id, "succeeded", owner.UserId, clock.UtcNow,
             new Dictionary<string, string> { ["requestId"] = input.RequestId }), ct);
-        return ProjectSession(await Observe(record, ct), owner);
+        var observed = await Observe(record, ct, canonical ? owner : null);
+        if (validateCaller is not null) await validateCaller(ct);
+        return ProjectSession(observed, owner);
     }, ct);
     private static void RequireHead(DevelopmentWorkspace w, PublicationCommand input)
     {
@@ -406,26 +445,5 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
             if (w.State != "released") await workspaces.ReleasePublishedAsync(id, r.Owner, r.PublishedHead!, ct);
             await Save(r with { CleanupRequested = false }); return true;
         }, ct);
-    }
-}
-
-internal sealed class PublicationObserver(PublicationService service, ILogger<PublicationObserver> logger) : BackgroundService
-{
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
-        do
-        {
-            try
-            {
-                foreach (var r in (await service.ListAsync(null, stoppingToken)).Publications)
-                {
-                    try { await service.ObserveInBackgroundAsync(r.WorkspaceId, stoppingToken); }
-                    catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogWarning("Cannot observe publication {WorkspaceId}: {ErrorType}", r.WorkspaceId, ex.GetType().Name); }
-                }
-                await service.RefreshExternalReferencesAsync(stoppingToken);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogWarning("Cannot list publications: {ErrorType}", ex.GetType().Name); }
-        } while (await timer.WaitForNextTickAsync(stoppingToken));
     }
 }

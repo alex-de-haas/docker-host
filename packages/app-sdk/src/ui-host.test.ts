@@ -677,6 +677,15 @@ describe("embedded panel discovery", () => {
     f.send({ ...f.offer, type: "hosty:ui:connected", coreOrigin: metadata.coreOrigin, userId: metadata.userId, appId: "host", installationId: "host-1" });
     return f;
   }
+  it("retains a pending source selection across same-document metadata refresh",async()=>{
+    const f=await connect();
+    f.send({...f.offer,type:'hosty:ui:connected',coreOrigin:metadata.coreOrigin,userId:metadata.userId,appId:'host',installationId:'host-1',capabilities:['feedback.capture.v2']});
+    const capabilities={version:1 as const,coreId:'core',appId:'plans',installation:'plans-1',userId:'alice',maxAnnotations:20,maxImageBytes:2097152,maxTotalImageBytes:8388608};
+    let resolve!:(v:unknown)=>void;const invoke=()=>new Promise(r=>{resolve=r;});child!.registerFeedbackSource(capabilities,invoke);
+    const requestId=createPresentationRequestId();f.send({...f.offer,type:'hosty:ui:feedback-invoke',requestId,operation:{action:'pick',mode:'element'}});
+    child!.registerFeedbackSource({...capabilities},invoke);resolve({id:'selected'});
+    await vi.waitFor(()=>expect(f.parent.postMessage.mock.calls.some(([m])=>m.type==='hosty:ui:feedback-source-result'&&m.requestId===requestId&&m.value?.id==='selected')).toBe(true));
+  });
   async function reconnect(f: ReturnType<typeof begin>) {
     child!.setActive(true);
     const probe = f.parent.postMessage.mock.calls.at(-1)![0];
@@ -1390,4 +1399,103 @@ describe("explicit main navigation", () => {
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(main).not.toHaveBeenCalled(); expect(f.element.getAttribute("src")).toBeNull();
   });
+});
+
+
+describe("feedback channel binding", () => {
+  const value={version:1,coreId:'core',appId:'assistant',installation:'install-1',userId:'alice',maxAnnotations:20,maxImageBytes:2097152,maxTotalImageBytes:8388608};
+  it("accepts only the registered actor/document and retires state on navigation",async()=>{
+    const h=await start(),f=frame();vi.spyOn(f.element,'getBoundingClientRect').mockReturnValue(new DOMRect(0,0,500,500));
+    const p=h.feedback.connect('test',{workspaceId:'default',visible:()=>true,receive:vi.fn()});
+    f.send({...f.offer,type:'hosty:ui:feedback-source',value},'https://foreign.test');
+    f.send({...f.offer,type:'hosty:ui:feedback-source',value,childNonce:createPresentationRequestId()});
+    f.send({...f.offer,type:'hosty:ui:feedback-source',value:{...value,appId:'other'}});
+    expect(await p.request({action:'sources'})).toHaveLength(0);
+    f.send({...f.offer,type:'hosty:ui:feedback-source',value});expect(await p.request({action:'sources'})).toHaveLength(1);
+    f.element.dispatchEvent(new Event('load'));expect(await p.request({action:'sources'})).toHaveLength(0);
+    f.send({...f.offer,type:'hosty:ui:feedback-source',value});expect(await p.request({action:'sources'})).toHaveLength(0);
+  });
+  it("connects a retained composer loaded while hidden and exposes sources only when shown", async () => {
+    const h=await start(),f=frame({...resolved.surface!,feedbackComposer:true});
+    vi.spyOn(f.element,'getBoundingClientRect').mockReturnValue(new DOMRect(0,0,500,500));
+    f.element.hidden=true;
+    f.send({...f.offer,type:'hosty:ui:feedback-source',value});
+    f.send({...f.offer,type:'hosty:ui:feedback-connect'});
+    const requestId=createPresentationRequestId();
+    f.send({...f.offer,type:'hosty:ui:feedback-request',requestId,operation:{action:'page',sourceId:'unknown'}});
+    await vi.waitFor(()=>expect(f.post.mock.calls.some(([m])=>m.type==='hosty:ui:feedback-result'&&m.error)).toBe(true));
+    expect(f.post.mock.calls.filter(([m])=>m.type==='hosty:ui:feedback-event').every(([m])=>m.value.sources?.length===0)).toBe(true);
+    f.element.hidden=false;h.feedback.refresh();
+    expect(f.post.mock.calls.findLast(([m])=>m.type==='hosty:ui:feedback-event')?.[0].value.sources).toHaveLength(1);
+  });
+  it("retains the composer subscription across its source capability refresh", async () => {
+    await start();const f=frame({...resolved.surface!,feedbackComposer:true});
+    vi.spyOn(f.element,'getBoundingClientRect').mockReturnValue(new DOMRect(0,0,500,500));
+    f.send({...f.offer,type:'hosty:ui:feedback-source',value});
+    f.send({...f.offer,type:'hosty:ui:feedback-connect'});
+    f.send({...f.offer,type:'hosty:ui:feedback-source-close'});
+    expect(f.post.mock.calls.findLast(([m])=>m.type==='hosty:ui:feedback-event')?.[0].value.sources).toEqual([]);
+    f.send({...f.offer,type:'hosty:ui:feedback-source',value});
+    expect(f.post.mock.calls.findLast(([m])=>m.type==='hosty:ui:feedback-event')?.[0].value.sources).toHaveLength(1);
+  });
+  it.each([false,true])('requires declared composer authority (%s)',async declared=>{
+    await start();const f=frame({...resolved.surface!,feedbackComposer:declared});vi.spyOn(f.element,'getBoundingClientRect').mockReturnValue(new DOMRect(0,0,500,500));
+    f.send({...f.offer,type:'hosty:ui:feedback-connect'});const requestId=createPresentationRequestId();f.send({...f.offer,type:'hosty:ui:feedback-request',requestId,operation:{action:'sources'}});
+    await vi.waitFor(()=>expect(f.post.mock.calls.some(([m])=>m.type==='hosty:ui:feedback-result')).toBe(true));
+    const result=f.post.mock.calls.find(([m])=>m.type==='hosty:ui:feedback-result')![0];
+    if(declared)expect(result.value).toEqual([]);else expect(result.error).toContain('not a declared');
+  });
+});
+
+describe("workspace visible presentations", () => {
+  it.each([false, true])("keeps focus separate from visible panels with multiple=%s", async multiple => {
+    host = createUiHost(); const h = host, focus = vi.fn();
+    h.registerWorkspace({ workspaceId: "default", multiple, renderer: {
+      present: async () => "accepted", focus, collapse() {}, release() {}, showToolPicker: async () => "accepted",
+    } });
+    await h.refresh();
+    for (let i = 0; i < 2; i++) expect(await h.openSurface(target, { placement: "side", reuse: "new", requestId: createPresentationRequestId() })).toMatchObject({ status: "opened" });
+    const [first, second] = h.getSnapshot().tools.map(t => t.presentationId);
+    const slot = () => h.getSnapshot().workspaces!.find(w => w.workspaceId === "default")!;
+    expect(slot()).toMatchObject({ selectedId: second, visibleIds: multiple ? [first, second] : [second] });
+    focus.mockClear(); h.focusPresentation(first, { focus: false });
+    expect(focus).not.toHaveBeenCalled(); expect(slot().selectedId).toBe(first);
+    expect(slot().visibleIds).toEqual(multiple ? [first, second] : [first]);
+    h.collapseWorkspace("default"); h.setExpanded(true);
+    expect(slot()).toMatchObject({ expanded: true, selectedId: first, visibleIds: multiple ? [first, second] : [first] });
+    h.hidePresentation(first);
+    expect(slot()).toMatchObject({ expanded: multiple, selectedId: multiple ? second : null, visibleIds: multiple ? [second] : [] });
+    expect(h.getSnapshot().tools.map(t => t.presentationId)).toEqual([first, second]);
+    h.focusPresentation(first); h.closePresentation(first);
+    expect(slot().visibleIds).toEqual(multiple ? [second] : []);
+    expect(h.getSnapshot().tools.map(t => t.presentationId)).toEqual([second]);
+    metadata = { ...metadata, userId: "replacement-user" }; await h.refresh();
+    expect(slot().visibleIds).toEqual([]); expect(h.getSnapshot().tools).toEqual([]);
+  });
+});
+
+it("reports bounded app-owned window labels only from the bound ready route", async () => {
+  await start(); const report = vi.fn();
+  const f = frame(resolved.surface!, { viewId: "main-one", workspaceId: "default", onSurfaceState: report });
+  const message = { ...f.offer, type: "hosty:ui:surface-state", route: target.route, state: "ready", title: "PR #12" };
+  f.send(message, "https://foreign.test"); f.send({ ...message, route: "/other" }); f.send({ ...message, state: "blocked" });
+  expect(report).not.toHaveBeenCalled();
+  f.send({ ...message, route: target.route + "&hosty_launch=embedded&hosty_theme=dark" }); expect(report).toHaveBeenLastCalledWith({ route: target.route, title: "PR #12" });
+  f.send({ ...message, title: "x".repeat(201) }); expect(report).toHaveBeenLastCalledWith({ route: target.route });
+  f.release(); report.mockClear(); f.send(message); expect(report).not.toHaveBeenCalled();
+});
+
+it("tracks main document route changes without remounting and rejects unverified route roots", async () => {
+  await start(); const report = vi.fn();
+  const f = frame(resolved.surface!, { viewId: "main-one", workspaceId: "default", onSurfaceState: report });
+  f.send({ type: "hosty:ui:probe", childNonce: f.offer.childNonce, versions: [1], capabilities: ["ui.composition.v1"] });
+  f.send({ ...f.offer, type: "hosty:ui:accept", coreOrigin: metadata.coreOrigin, userId: metadata.userId, appId: panel.appId, installationId: panel.installationId });
+  const changed = "/assistant?session=another";
+  f.send({ ...f.offer, type: "hosty:ui:route", route: changed });
+  f.send({ ...f.offer, type: "hosty:ui:surface-state", route: changed, state: "ready", title: "Another chat" });
+  expect(report).toHaveBeenLastCalledWith({ route: changed, title: "Another chat" });
+  report.mockClear();
+  f.send({ ...f.offer, type: "hosty:ui:route", route: "/unverified" });
+  f.send({ ...f.offer, type: "hosty:ui:surface-state", route: "/unverified", state: "ready", title: "Spoof" });
+  expect(report).not.toHaveBeenCalled(); expect(f.element.getAttribute("src")).toBeNull();
 });

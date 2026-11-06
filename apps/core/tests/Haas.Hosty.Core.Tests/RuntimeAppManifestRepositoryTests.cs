@@ -7,6 +7,27 @@ namespace Haas.Hosty.Core.Tests;
 public sealed class RuntimeAppManifestRepositoryTests
 {
     [Fact]
+    public async Task Opus_ExposesLocalTranslationWithoutCoreGrants()
+    {
+        var path = Path.Combine(FindRepositoryRoot(), "apps", "opus", "manifest.json");
+        var manifests = new AppManifestService();
+        var local = await manifests.LoadAsync(path, validateAllProfiles: true);
+        Assert.Equal("hosty.opus", local.Manifest.Id);
+        Assert.Equal("local", local.RuntimeProfile.Key);
+        Assert.Equal("localCommand", local.RuntimeProfile.Type);
+        Assert.False(local.RuntimeProfile.Development);
+        Assert.Empty(local.Manifest.CorePermissions);
+        Assert.True(local.Manifest.Cache!.Enabled);
+        Assert.Contains("translation", local.Manifest.Provides);
+        var contract = Assert.Single(local.Manifest.Interfaces["translation"]);
+        Assert.Equal("default", contract.Key);
+        Assert.Equal("/api/translation/v1", contract.Path);
+        Assert.NotNull(contract.Capabilities);
+        Assert.Contains("markdown", contract.Capabilities);
+        Assert.True((await manifests.LoadAsync(path, "dev")).RuntimeProfile.Development);
+    }
+
+    [Fact]
     public async Task Harness_DefaultsToDockerAndPreservesExplicitLocalSelection()
     {
         var path = Path.Combine(FindRepositoryRoot(), "apps", "harness", "manifest.json");

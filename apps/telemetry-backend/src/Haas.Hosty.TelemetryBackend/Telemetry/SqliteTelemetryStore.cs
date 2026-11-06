@@ -27,7 +27,7 @@ internal readonly record struct TableSizeEstimate(string Table, long Rows, long 
 // ingest tick and reads are occasional admin queries, so contention is negligible at homelab scale.
 // Retention (per-signal age caps + a global size ceiling) keeps the file bounded, which is what lets an
 // embedded SQLite stand in for a TSDB. See docs/features/observability/feature.md.
-internal sealed class SqliteTelemetryStore : IDisposable
+internal sealed partial class SqliteTelemetryStore : IDisposable
 {
     private readonly TelemetryBackendOptions options;
     private readonly SqliteConnection connection;
@@ -49,6 +49,7 @@ internal sealed class SqliteTelemetryStore : IDisposable
         }.ToString());
         connection.Open();
         Initialize();
+        InitializeCoreTraces();
     }
 
     private void Initialize()
@@ -353,7 +354,7 @@ internal sealed class SqliteTelemetryStore : IDisposable
     // chronological order (newest last), capped globally to `limit`. Equivalent to Core's per-app
     // merge: the newest `limit` across apps are the same set. Records are attributed (AppId carried).
     public IReadOnlyList<ParsedOtlpLog> QueryFleetLogs(
-        long sinceMs, int? minSeverity, int limit, IReadOnlyCollection<string>? appFilter, string? query)
+        long sinceMs, int? minSeverity, int limit, IReadOnlyCollection<string>? appFilter, string? query, string? callerAppId = null, string? traceId = null)
     {
         if (limit <= 0)
         {
@@ -368,6 +369,12 @@ internal sealed class SqliteTelemetryStore : IDisposable
                 "WHERE ts_ms >= $since AND ($minSev IS NULL OR severity >= $minSev) " +
                 "AND ($q IS NULL OR instr(lower(body), lower($q)) > 0)";
             sql += BuildAppFilter(cmd, appFilter);
+            if (!string.IsNullOrWhiteSpace(callerAppId))
+            {
+                sql += " AND app_id = 'hosty.core' AND json_extract(attrs_json, '$.\"hosty.caller.app.id\"') = $caller";
+                AddParam(cmd, "$caller", callerAppId.Trim());
+            }
+            if (!string.IsNullOrWhiteSpace(traceId)) { sql += " AND trace_id = $trace"; AddParam(cmd, "$trace", traceId.Trim().ToLowerInvariant()); }
             sql += " ORDER BY ts_ms DESC LIMIT $limit;";
             cmd.CommandText = sql;
             AddParam(cmd, "$since", sinceMs);
@@ -391,7 +398,7 @@ internal sealed class SqliteTelemetryStore : IDisposable
     // In-window spans (start >= sinceNano), optionally app-filtered, newest-start first, capped to
     // `scanCap`. The query service groups these by trace id into fleet summaries (like Core's per-app
     // Query feeding TraceAccumulator). Spans are attributed (AppId carried).
-    public IReadOnlyList<ParsedOtlpSpan> QueryInWindowSpans(long sinceNano, IReadOnlyCollection<string>? appFilter, int scanCap)
+    public IReadOnlyList<ParsedOtlpSpan> QueryInWindowSpans(long sinceNano, IReadOnlyCollection<string>? appFilter, int scanCap, string? callerAppId = null)
     {
         if (scanCap <= 0)
         {
@@ -402,8 +409,13 @@ internal sealed class SqliteTelemetryStore : IDisposable
         {
             using var cmd = connection.CreateCommand();
             var sql = "SELECT app_id, trace_id, span_id, parent_span_id, name, kind, start_nano, end_nano, status_code, status_message, attrs_json " +
-                      "FROM spans WHERE start_nano >= $since";
+                      "FROM spans WHERE start_nano >= $since AND (app_id != 'hosty.core' OR core_run_id IS NOT NULL)";
             sql += BuildAppFilter(cmd, appFilter);
+            if (!string.IsNullOrWhiteSpace(callerAppId))
+            {
+                sql += " AND app_id = 'hosty.core' AND json_extract(attrs_json, '$.\"hosty.caller.app.id\"') = $caller";
+                AddParam(cmd, "$caller", callerAppId.Trim());
+            }
             sql += " ORDER BY start_nano DESC LIMIT $limit;";
             cmd.CommandText = sql;
             AddParam(cmd, "$since", sinceNano);
@@ -427,7 +439,7 @@ internal sealed class SqliteTelemetryStore : IDisposable
             using var cmd = connection.CreateCommand();
             cmd.CommandText =
                 "SELECT app_id, trace_id, span_id, parent_span_id, name, kind, start_nano, end_nano, status_code, status_message, attrs_json " +
-                "FROM spans WHERE trace_id = $trace;";
+                "FROM spans WHERE trace_id = $trace AND (app_id != 'hosty.core' OR core_run_id IS NOT NULL);";
             // Trace ids are stored lowercase, so match on the lowercased input via the binary index.
             AddParam(cmd, "$trace", traceId.Trim().ToLowerInvariant());
             return ReadSpans(cmd);

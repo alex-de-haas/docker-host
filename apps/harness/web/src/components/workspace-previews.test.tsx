@@ -8,7 +8,7 @@ vi.mock("@/lib/development-api", () => ({ developmentRequest: vi.fn() }));
 let root: Root, container: HTMLDivElement;
 beforeEach(() => { vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); container = document.createElement("div"); document.body.append(container); root = createRoot(container); });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); vi.clearAllMocks(); vi.useRealTimers(); });
-function reply(app: object) { return { environments: [{ id: "child", label: "Retained preview", state: "running", previewUrl: "http://core.test" }], instances: [], applications: { child: { state: "ready", apps: [{ id: "demo", displayName: "Demo App", runtimeState: "running", previewUrl: "http://core.test/open", ...app }] } } }; }
+function reply(app: object) { return { environments: [{ id: "child", label: "Retained preview", state: "running", previewUrl: "http://core.test" }], applications: { child: { state: "ready", apps: [{ id: "demo", displayName: "Demo App", runtimeState: "running", previewUrl: "http://core.test/open", ...app }] } } }; }
 it("replaces old service observations with the reviewed topology and reports degraded siblings", async () => {
   vi.useFakeTimers(); vi.mocked(developmentRequest).mockResolvedValue(reply({ services: [{ service: "placeholder", status: "running", health: "healthy" }] }));
   await act(async () => root.render(<WorkspacePreviews workspaceId="work" />));
@@ -50,16 +50,34 @@ it("clears restart notice after restart and preserves the same preview URL", asy
 });
 
 
-it("shows only supplied process start and test-user facts, and preserves sandbox preview query parameters", async () => {
-  vi.mocked(developmentRequest).mockResolvedValue({ ...reply({ restartRequired: true }), environments: [{ id: "child", label: "Retained preview", state: "running", previewUrl: "http://core.test", process: { pid: 123, startedAt: "2026-10-21T12:00:00Z" } }], instances: [{ id: "app", appId: "demo", state: "ready", revision: 1, users: [{ id: "one" }], previewUrl: "http://app.test/view?mode=preview#section" }] });
+it("shows the observed child process and preserves ordinary application preview query parameters", async () => {
+  vi.mocked(developmentRequest).mockResolvedValue({ ...reply({ restartRequired: true, previewUrl: "http://app.test/view?mode=preview#section" }), environments: [{ id: "child", label: "Retained preview", state: "running", previewUrl: "http://core.test", process: { pid: 123, startedAt: "2026-10-21T12:00:00Z" } }] });
   await act(async () => root.render(<WorkspacePreviews workspaceId="work" />));
   expect(container.querySelector('time[datetime="2026-10-21T12:00:00Z"]')).not.toBeNull();
-  expect(container.textContent).toContain("1 test user · Separate sandbox data");
   expect(container.textContent).not.toContain("time to ready");
-  expect(container.querySelector('a[href="http://core.test/login"]')?.textContent).toContain("Open test Core");
-  expect(container.querySelector('a[href="http://app.test/view?mode=preview&hosty_sandbox_persona=core#section"]')).not.toBeNull();
+  const core = container.querySelector<HTMLAnchorElement>('a[aria-label="Open test Core"]')!;
+  expect(core.href).toBe("http://core.test/login"); expect(core.target).toBe("_blank"); expect(core.rel.split(/\s+/)).toContain("noreferrer");
+  expect(core.textContent).toBe(""); expect(core.querySelector('svg[aria-hidden="true"]')).not.toBeNull();
+  expect(container.querySelector('a[href="http://app.test/view?mode=preview#section"]')).not.toBeNull();
   const warning = [...container.querySelectorAll('[role="status"]')].find(node => node.textContent?.startsWith("Restart required"))!;
   expect(warning.closest("details")).toBeNull();
+});
+
+it.each(["stopped", "starting", "failed"])("keeps the child %s state visible without an active test Core link", async state => {
+  vi.mocked(developmentRequest).mockResolvedValue({ environments: [{ id: "child", label: "Retained preview", state, previewUrl: "https://core.test" }], applications: {} });
+  await act(async () => root.render(<WorkspacePreviews workspaceId="work" />));
+  const badge = container.querySelector('[data-slot="badge"]')!;
+  expect(badge.textContent).toBe(state); expect(badge.closest("details, [hidden]")).toBeNull();
+  expect(container.textContent).toContain("Separate Core and test data");
+  expect(container.querySelector('a[aria-label="Open test Core"]')).toBeNull();
+});
+
+it.each([undefined, "javascript:alert(1)", "https://user:password@core.test"])("omits the test Core link for unavailable or unsafe preview URL %s", async previewUrl => {
+  vi.mocked(developmentRequest).mockResolvedValue({ ...reply({}), environments: [{ id: "child", label: "Retained preview", state: "running", previewUrl }] });
+  await act(async () => root.render(<WorkspacePreviews workspaceId="work" />));
+  expect(container.querySelector('[data-slot="badge"]')?.textContent).toBe("running");
+  expect(container.querySelector('a[aria-label="Open test Core"]')).toBeNull();
+  expect(container.querySelector('a[href="http://core.test/open"]')).not.toBeNull();
 });
 
 function deferred<T>() {
@@ -68,22 +86,22 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-it("shows loading, hides empty previews and retains later inventory observations", async () => {
+it("keeps previews absent during the first read and reveals only nonempty or failed observations", async () => {
   vi.useFakeTimers();
   const read = deferred<unknown>();
   vi.mocked(developmentRequest).mockReturnValue(read.promise);
   await act(async () => root.render(<WorkspacePreviews workspaceId="work" />));
-  expect(container.querySelector('[role="status"]')?.textContent).toBe("Loading sandbox previews…");
-  expect(container.querySelector(".hosty-grid-loader")).not.toBeNull();
+  expect(container.querySelector('[aria-label="Sandbox previews"]')).toBeNull();
+  expect(container.textContent).toBe("");
   expect(container.textContent).not.toContain("No sandbox previews");
-  await act(async () => read.resolve({ environments: [], instances: [], applications: {} }));
+  await act(async () => read.resolve({ environments: [], applications: {} }));
   expect(container.querySelector('[aria-label="Sandbox previews"]')).toBeNull();
   expect(container.textContent).not.toContain("Loading sandbox previews");
   vi.mocked(developmentRequest).mockResolvedValue(reply({}));
   await act(async () => { await vi.advanceTimersByTimeAsync(10000); });
   expect(container.querySelector('[aria-label="Sandbox previews"]')).not.toBeNull();
   expect(container.textContent).toContain("Retained preview");
-  vi.mocked(developmentRequest).mockResolvedValue({ environments: [], instances: [], applications: {} });
+  vi.mocked(developmentRequest).mockResolvedValue({ environments: [], applications: {} });
   await act(async () => { await vi.advanceTimersByTimeAsync(10000); });
   expect(container.querySelector('[aria-label="Sandbox previews"]')).toBeNull();
   vi.mocked(developmentRequest).mockRejectedValue(new Error("Preview access unavailable"));
@@ -103,7 +121,7 @@ it("distinguishes failed inventory from empty and shows loading during an explic
   expect(container.querySelector('[role="status"]')?.textContent).toBe("Loading sandbox previews…");
   expect(container.querySelector('[role="alert"]')).toBeNull();
   expect(vi.mocked(developmentRequest).mock.calls.every(([path, body]) => path === "/work/previews" && body === undefined)).toBe(true);
-  await act(async () => retry.resolve({ environments: [], instances: [{ id: "gone", state: "disposed" }], applications: {} }));
+  await act(async () => retry.resolve({ environments: [], applications: {} }));
   expect(container.querySelector('[aria-label="Sandbox previews"]')).toBeNull();
 });
 
@@ -158,4 +176,25 @@ it.each(["ready", "running", "stopped", "unknown"])("keeps %s as a steady labell
   expect(badge.textContent).toBe(state);
   expect(badge.querySelector("svg")).toBeNull();
   expect(badge.querySelector('[class*="animate-spin"]')).toBeNull();
+});
+
+
+it("keeps confirmed preview cards mounted during refresh and excludes late reads after a workspace switch", async () => {
+  vi.useFakeTimers();
+  vi.mocked(developmentRequest).mockResolvedValue(reply({}));
+  await act(async () => root.render(<WorkspacePreviews key="first" workspaceId="first" />));
+  const section = container.querySelector('[aria-label="Sandbox previews"]');
+  const refresh = deferred<unknown>();
+  vi.mocked(developmentRequest).mockReturnValue(refresh.promise);
+  await act(async () => { await vi.advanceTimersByTimeAsync(10000); });
+  expect(container.querySelector('[aria-label="Sandbox previews"]')).toBe(section);
+  expect(container.textContent).toContain("Retained preview");
+  const next = deferred<unknown>();
+  vi.mocked(developmentRequest).mockReturnValue(next.promise);
+  await act(async () => root.render(<WorkspacePreviews key="second" workspaceId="second" />));
+  expect(container.textContent).toBe("");
+  await act(async () => refresh.resolve(reply({})));
+  expect(container.textContent).toBe("");
+  await act(async () => next.resolve({ environments: [], applications: {} }));
+  expect(container.textContent).toBe("");
 });

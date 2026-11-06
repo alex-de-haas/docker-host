@@ -60,6 +60,7 @@ if (argv[0] === "login" && argv[1] === "--with-api-key") {
 function runAppServer() {
 let buffer = "";
 let pendingApprovalId = null;
+let pendingQuestion = false;
 let pendingApprovalScope = { itemId: "exec-1", turnId: "turn-1" };
 let currentTurnText = "";
 let activeThreadId = "thread-fake-1";
@@ -90,8 +91,23 @@ function handle(msg) {
     if ((msg.method === "turn/start" ? msg.params?.sandboxPolicy?.type : msg.params?.sandbox) !== expected ||
         msg.params?.approvalPolicy !== (autonomous ? "never" : "untrusted")) fail("incorrect explicit autonomy policy");
   }
+  if (msg.method === "account/rateLimits/read") {
+    send({ id: msg.id, result: { rateLimitsByLimitId: { codex: { limitId: "codex", primary: { usedPercent: 12, windowDurationMins: 300, resetsAt: 2000000000 }, secondary: { usedPercent: 25, windowDurationMins: 10080, resetsAt: 2000100000 } } } } });
+    return;
+  }
   if (msg.method === "account/read") {
     send({ jsonrpc: "2.0", id: msg.id, result: { account: null } });
+    return;
+  }
+  if (msg.id === "question-input" && pendingQuestion) {
+    pendingQuestion = false;
+    if (currentTurnText === "question-secret") {
+      if (msg.result || !msg.error) fail("secret question received an answer");
+    } else if (msg.error?.code !== -32800) {
+      if (!Array.isArray(msg.result?.answers?.first?.answers) || !Array.isArray(msg.result?.answers?.second?.answers)) fail("question answer does not use native IDs and arrays");
+      send({ method: "item/completed", params: { threadId: activeThreadId, item: { type: "agentMessage", id: "question-result", text: JSON.stringify(msg.result.answers) } } });
+    }
+    send({ method: "turn/completed", params: { threadId: activeThreadId, turn: { id: "question-turn", status: "completed" } } });
     return;
   }
   // Reply to an approval we raised.
@@ -129,16 +145,38 @@ function handle(msg) {
   }
 
   if (msg.method === "initialize") {
-    send({ jsonrpc: "2.0", id: msg.id, result: { userAgent: "fake-codex" } });
+    send({ jsonrpc: "2.0", id: msg.id, result: { userAgent: process.env.HOSTY_TEST_PREDICTION_VERSION ? `fake-codex/${process.env.HOSTY_TEST_PREDICTION_VERSION}` : "fake-codex" } });
     return;
   }
   if (msg.method === "initialized") return;
+  if (msg.method === "thread/prediction/request") {
+    if (currentTurnText === "suggestion-unsupported") { send({ id: msg.id, error: { code: -32601, message: "Method not found" } }); return; }
+    if (msg.params.sourceTurnId !== "prediction-source" || msg.params.threadId !== activeThreadId) fail("prediction identity mismatch");
+    send({ id: msg.id, result: {} });
+    const notification = (threadId, sourceTurnId, result) => send({ method: "thread/prediction/updated", params: { threadId, sourceTurnId, result } });
+    notification("wrong-thread", "prediction-source", { type: "completed", text: "wrong" });
+    notification(activeThreadId, "wrong-turn", { type: "completed", text: "wrong" });
+    notification(activeThreadId, "prediction-source", currentTurnText === "suggestion-failed" ? { type: "failed" }
+      : { type: "completed", text: currentTurnText === "suggestion-null" ? null : "Review the changes" });
+    notification(activeThreadId, "prediction-source", { type: "completed", text: "duplicate" }); return;
+  }
 
   if (msg.method === "config/read") { send({ id: msg.id, result: { config: {} } }); return; }
   if (msg.method === "model/list") { send({ id: msg.id, result: { data: [
     { model: "fixture-default", displayName: "Default model", isDefault: true, defaultReasoningEffort: "medium", supportedReasoningEfforts: [{ reasoningEffort: "medium" }, { reasoningEffort: "high" }] },
     { model: "fixture-other", displayName: "Other model", isDefault: false, defaultReasoningEffort: "low", supportedReasoningEfforts: [{ reasoningEffort: "low" }, { reasoningEffort: "xhigh" }] },
   ], nextCursor: null } }); return; }
+
+  if (msg.method === "mcpServerStatus/list") {
+    if (!msg.params.threadId || msg.params.detail !== "toolsAndAuthOnly") fail("catalog must be thread scoped");
+    const mode = process.env.HOSTY_TEST_CONTEXT_CATALOG;
+    if (mode === "timeout") return;
+    if (mode === "failed") { send({ id: msg.id, error: { code: -32601, message: "unsupported" } }); return; }
+    const tool = { name: "inspect", description: "private definition", inputSchema: { type: "object" } };
+    const respond = () => send({ id: msg.id, result: { data: [{ name: msg.params.cursor ? "second" : "first", tools: { native_alias: tool }, runtimeStatus: "connected" }], nextCursor: msg.params.cursor ? null : "page2" } });
+    if (mode === "delayed") setTimeout(respond, 120); else respond();
+    return;
+  }
 
   if (msg.method === "thread/start") {
     if (typeof msg.params?.sandbox !== "string") {
@@ -177,12 +215,70 @@ function handle(msg) {
     }
     if (process.env.HOSTY_TEST_EXTERNAL_SANDBOX && policy.networkAccess !== "enabled") fail("missing external network policy");
     currentTurnText = String(msg.params?.input?.[0]?.text ?? "");
+    if (currentTurnText.includes("FEEDBACK_ACCEPTANCE:")) {
+      send({ jsonrpc: "2.0", id: msg.id, result: {} });
+      if (currentTurnText.includes("FEEDBACK_ACCEPTANCE:WAIT")) return;
+      void feedbackOutcome(currentTurnText).then(() => {
+        send({ method: "item/completed", params: { threadId: activeThreadId, item: { type: "agentMessage", id: "feedback-result", text: "Scripted feedback acceptance completed." } } });
+        send({ method: "turn/completed", params: { threadId: activeThreadId, turn: { id: "feedback-turn", status: "completed" } } });
+      }).catch(error => send({ method: "turn/completed", params: { threadId: activeThreadId,
+        turn: { id: "feedback-turn", status: "failed", error: { message: "Feedback acceptance fixture failed: " + error.message } } } }));
+      return;
+    }
+    if (currentTurnText.includes("DECISIONS_ACCEPTANCE:LIVE")) currentTurnText = "question-native";
+    if (currentTurnText.includes("TASK_ACCEPTANCE:QUESTION")) currentTurnText = "question-task";
+    if (currentTurnText.includes("Continue the same task in its selected workspace.")) currentTurnText = "TASK_ACCEPTANCE:RESULT";
+    if (currentTurnText.includes("Continue the same task after its child wait.")) currentTurnText = "TASK_ACCEPTANCE:REVIEW_CHILDREN";
+    if (currentTurnText.includes("TASK_ACCEPTANCE:")) {
+      send({ id: msg.id, result: {} });
+      send({ method: "turn/started", params: { threadId: activeThreadId, turn: { id: "task-turn" } } });
+      if (currentTurnText.includes("TASK_ACCEPTANCE:WAIT")) return;
+      void taskOutcome(currentTurnText, (method, item) => send({ method, params: { threadId: activeThreadId, turnId: "task-turn", item } })).then(parked => {
+        if (parked) return;
+        send({ method: "item/completed", params: { threadId: activeThreadId, item: { type: "agentMessage", id: "task-result", text: "Scripted task fixture completed." } } });
+        send({ method: "turn/completed", params: { threadId: activeThreadId, turn: { id: "task-turn", status: "completed" } } });
+      }).catch(error => fail(error.message));
+      return;
+    }
     if (currentTurnText.startsWith("[Hosty operator instructions]")) currentTurnText = currentTurnText.slice(currentTurnText.lastIndexOf("\n\n") + 2);
     send({ jsonrpc: "2.0", id: msg.id, result: {} });
 
+    if (currentTurnText.startsWith("question-")) {
+      if (!argv.includes("features.default_mode_request_user_input=true")) fail("missing ordinary-mode question feature");
+      if (msg.params.collaborationMode?.mode === "plan") fail("questions switched the session into plan mode");
+      send({ method: "turn/started", params: { threadId: activeThreadId, turn: { id: "question-turn" } } });
+      pendingQuestion = true;
+      send({ id: "question-input", method: "item/tool/requestUserInput", params: { threadId: activeThreadId, turnId: "question-turn", itemId: "native-question",
+        isBlocking: currentTurnText !== "question-nonblocking", questions: [
+          { id: "first", header: "First", question: "Same wording", options: [{ label: "Same label", description: "First option" }, { label: "Same label", description: "Second option" }], isOther: true, isSecret: currentTurnText === "question-secret" },
+          { id: "second", header: "Second", question: "Same wording", options: null, isOther: false, isSecret: false },
+        ] } });
+      if (currentTurnText === "question-nonblocking") send({ method: "item/completed", params: { threadId: activeThreadId, item: { type: "agentMessage", id: "independent", text: "Independent work continued." } } });
+      return;
+    }
+    if (currentTurnText.startsWith("suggestion-")) {
+      send({ method: "turn/started", params: { threadId: activeThreadId, turn: { id: "prediction-source" } } });
+      send({ method: "item/completed", params: { item: { type: "agentMessage", id: "answer", text: "Primary answer" } } });
+      send({ method: "turn/completed", params: { threadId: activeThreadId, turn: { id: "prediction-source", status: "completed" } } });
+      return;
+    }
     if (currentTurnText === "model-selection") {
       send({ method: "item/completed", params: { item: { type: "agentMessage", id: "selection", text: JSON.stringify({ model: msg.params.model, effort: msg.params.effort, thread: msg.params.threadId }) } } });
       send({ method: "turn/completed", params: { threadId: activeThreadId, turn: { id: "selected", status: "completed" } } }); return;
+    }
+    if (currentTurnText === "provider-usage") {
+      send({ method: "account/rateLimits/updated", params: { rateLimits: { limitId: "codex", primary: { usedPercent: 40, windowDurationMins: 300 } } } });
+    }
+    if (currentTurnText.endsWith("local-context")) {
+      send({ method: "turn/started", params: { threadId: activeThreadId, turn: { id: "context" } } });
+      send({ method: "thread/tokenUsage/updated", params: { threadId: activeThreadId, tokenUsage: { last: { totalTokens: 123 }, modelContextWindow: 1000 } } });
+      send({ method: "turn/completed", params: { threadId: activeThreadId, turn: { id: "old-context", status: "completed" } } });
+      send({ method: "turn/completed", params: { threadId: activeThreadId, turn: { id: "context", status: "completed" } } }); return;
+    }
+    if (currentTurnText.endsWith("compact-context")) {
+      send({ method: "thread/tokenUsage/updated", params: { threadId: activeThreadId, tokenUsage: { last: { totalTokens: 123 }, modelContextWindow: 1000 } } });
+      send({ method: "thread/compacted", params: { threadId: activeThreadId } });
+      send({ method: "turn/completed", params: { threadId: activeThreadId, turn: { id: "context", status: "completed" } } }); return;
     }
     if (currentTurnText === "context-usage") {
       send({ method: "turn/started", params: { threadId: activeThreadId, turn: { id: "current" } } });
@@ -273,6 +369,20 @@ function handle(msg) {
       return;
     }
 
+    if (currentTurnText.startsWith("startup-notices")) {
+      const event = (name, status, error = null) => send({ method: "mcpServer/startupStatus/updated", params: { name, status, error, threadId: activeThreadId } });
+      event("telemetry", "starting");
+      event("telemetry", "failed", "HTTP 401");
+      event("telemetry", "starting");
+      event("telemetry", "failed", "HTTP 401");
+      event("other", "failed", "HTTP 401");
+      if (currentTurnText.includes("recover")) {
+        event("telemetry", "ready");
+        event("telemetry", "failed", "HTTP 401");
+        event("telemetry", "failed", "HTTP 503");
+      }
+    }
+
     if (currentTurnText.includes("mcp")) {
       // Shape verified with `app-server generate-ts` on Codex 0.153.4 (2026-09-16).
       const failed = currentTurnText.includes("failed");
@@ -349,4 +459,107 @@ function handle(msg) {
     send({ jsonrpc: "2.0", id: msg.id, result: {} });
   }
 }
+}
+
+// Exercise the real session MCP transport and approval gate; never write task/session state.
+async function taskOutcome(text, emitItem) {
+  if (text.includes("TASK_ACCEPTANCE:NO_OUTCOME")) return;
+  const config = Object.fromEntries(argv.filter(a => a.startsWith("mcp_servers.")).map(a => {
+    const split = a.indexOf("="); return [a.slice(0, split), JSON.parse(a.slice(split + 1))];
+  }));
+  const key = Object.keys(config).find(k => k.endsWith(".url") && k.includes("hosty-workspaces"));
+  if (!key) throw new Error("Task fixture did not receive the session MCP server");
+  const token = process.env[config[key.replace(/url$/, "bearer_token_env_var")]];
+  const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+  const { StreamableHTTPClientTransport } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
+  const client = new Client({ name: "task-acceptance-fixture", version: "1" });
+  await client.connect(new StreamableHTTPClientTransport(new URL(config[key]), { requestInit: { headers: { Authorization: `Bearer ${token}` } } }));
+  const tools = await client.listTools();
+  if (!tools.tools.some(t => t.name === "task_result")) throw new Error("Task result tool missing");
+  const invoke = async (name, args) => {
+    const id = crypto.randomUUID();
+    emitItem("item/started", { type: "mcpToolCall", id, status: "inProgress", server: "hosty-workspaces", tool: name, arguments: args });
+    const result = await client.callTool({ name, arguments: args });
+    emitItem("item/completed", { type: "mcpToolCall", id, status: result.isError ? "failed" : "completed", server: "hosty-workspaces", tool: name, arguments: args, result });
+    if (result.isError) throw new Error(name + " refused: " + JSON.stringify(result.content));
+    return JSON.parse(result.content.find(item => item.type === "text").text);
+  };
+  if (text.includes("TASK_ACCEPTANCE:REQUIRED")) {
+    const wait = await invoke("task_request_input", { requestId: crypto.randomUUID(), reason: "The isolated setup prerequisite is missing.",
+      questions: [{ id: "setup", header: "Setup", question: "Confirm setup, then the task must recheck it.", isOther: true, options: [{ label: "Configured", description: "Recheck the prerequisite" }] }] });
+    if (!wait.barrier) throw new Error("Required input did not retain a boundary");
+    await client.close(); return true;
+  }
+  if (text.includes("TASK_ACCEPTANCE:FAIL")) {
+    await invoke("task_fail", { requestId: crypto.randomUUID(), result: { markdown: "The fixture could not complete its work.", resources: [] } });
+    await client.close(); return;
+  }
+  if (text.includes("TASK_ACCEPTANCE:DELEGATE")) {
+    const summary = await invoke("task_execution_get", {});
+    const directory = await invoke("task_executor_options", {});
+    const option = directory.options.find(option => option.name === "Acceptance writer");
+    if (!option) throw new Error("The saved child profile is absent");
+    const selected = await invoke("task_prepare_executor", { requestId: crypto.randomUUID(), directoryRevision: directory.revision, option: { id: option.id, revision: option.revision } });
+    const child = await invoke("task_delegate", { requestId: crypto.randomUUID(), expectedGraphRevision: summary.task.graphRevision,
+      title: "Delegated fixture child", markdown: "TASK_ACCEPTANCE:RESULT", resources: [], selection: selected.selection,
+      rationale: "The installed writer profile matches this child task.", writeScope: { mode: "read", paths: [] } });
+    const wait = await invoke("task_wait", { requestId: crypto.randomUUID(), children: [child.ref], mode: "all" });
+    if (wait.state === "pending") { await client.close(); return true; }
+    text = "TASK_ACCEPTANCE:REVIEW_CHILDREN";
+  }
+  if (text.includes("TASK_ACCEPTANCE:REVIEW_CHILDREN")) {
+    const summary = await invoke("task_execution_get", {});
+    const children = summary.tasks.filter(task => task.parentTaskRef?.id === summary.task.ref.id);
+    if (children.length !== 1) throw new Error("Expected exactly one retained child");
+    for (const child of children) {
+      if (child.status !== "Blocked" || child.blocked?.reason !== "needs_review" || !child.resultRef) throw new Error("Child result is not reviewable: " + JSON.stringify(child));
+      await invoke("task_action", { requestId: crypto.randomUUID(), expectedRevision: child.revision, taskId: child.ref.id, action: "accept", resultRef: child.resultRef });
+    }
+  }
+  const source = text.match(/TASK_ACCEPTANCE:SOURCE:([a-f0-9]{64})/);
+  if (source) {
+    const id = crypto.randomUUID(), arguments_ = { requestId: crypto.randomUUID(), expectedRevision: 0, workspaceId: source[1] };
+    emitItem("item/started", { type: "mcpToolCall", id, status: "inProgress", server: "hosty-workspaces", tool: "task_bind_workspace", arguments: arguments_ });
+    const result = await client.callTool({ name: "task_bind_workspace", arguments: arguments_ });
+    if (result.isError) throw new Error("Source selection refused: " + JSON.stringify(result.content));
+    emitItem("item/completed", { type: "mcpToolCall", id, status: "completed", server: "hosty-workspaces", tool: "task_bind_workspace", result });
+    await client.close(); return true;
+  }
+  const result = await client.callTool({ name: "task_result", arguments: { requestId: crypto.randomUUID(), completed: true, result: { markdown: "Verified explicit task outcome from the scripted native adapter.", resources: [] } } });
+  if (result.isError) throw new Error("Task result tool refused: " + JSON.stringify(result.content));
+  await client.close();
+}
+
+// Verify the production feedback tools through their session-scoped transport and approval gate.
+async function feedbackOutcome(text) {
+  const config = Object.fromEntries(argv.filter(a => a.startsWith("mcp_servers.")).map(a => {
+    const split = a.indexOf("="); return [a.slice(0, split), JSON.parse(a.slice(split + 1))];
+  }));
+  const key = Object.keys(config).find(k => k.endsWith(".url") && k.includes("hosty-workspaces"));
+  if (!key) throw new Error("Feedback fixture did not receive the session MCP server");
+  const token = process.env[config[key.replace(/url$/, "bearer_token_env_var")]];
+  const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+  const { StreamableHTTPClientTransport } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
+  const client = new Client({ name: "feedback-acceptance-fixture", version: "1" });
+  await client.connect(new StreamableHTTPClientTransport(new URL(config[key]), { requestInit: { headers: { Authorization: `Bearer ${token}` } } }));
+  const call = async (name, args) => {
+    const result = await client.callTool({ name, arguments: args });
+    if (result.isError) throw new Error("Feedback tool refused: " + JSON.stringify(result.content));
+    return result;
+  };
+  try {
+    const current = await call("feedback_current", {});
+    const batch = JSON.parse(current.content.find(c => c.type === "text").text);
+    if (!batch.reports.every(r => r.workspaceId)) await call("prepare", { appId: batch.reports[0].context.appId, requestId: crypto.randomUUID(), name: "Feedback acceptance" });
+    for (const report of batch.reports) {
+      const note = report.annotations.find(n => n.mediaType);
+      if (note) {
+        const image = await call("feedback_image", { reportId: report.id, annotationId: note.id });
+        if (!image.content.some(c => c.type === "image" && c.data)) throw new Error("Feedback image unavailable");
+      }
+    }
+    const handled = !text.includes("FEEDBACK_ACCEPTANCE:PARTIAL");
+    await call("feedback_result", { outcomes: batch.reports.map(r => ({ reportId: r.id, summary: handled ? "All requested changes verified by the fixture" : "More work remains", handled,
+      handledAnnotationIds: handled ? r.annotations.map(n => n.id) : [] })) });
+  } finally { await client.close(); }
 }

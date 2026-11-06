@@ -8,6 +8,38 @@ namespace Haas.Hosty.Core.Tests.Http;
 public sealed partial class UiPanelHttpTests
 {
     [Fact]
+    public async Task AssistantBindingIsProjectedPerPanelForAnUnrelatedApp()
+    {
+        await using var host = await Setup();
+        var apps = host.Services.GetRequiredService<AppRegistryStore>();
+        await apps.UpdateAppAsync("target", a => a with { Ui = a.Ui! with { Panels = [
+            new("/conversation", "web", "Discussion", "message-circle", "tool", AssistantKey: "conversation"),
+            new("/reviews", "web", "Reviews", "git-pull-request", "reviews") ] } });
+        using var client = await Client(host);
+        var catalog = (await client.GetFromJsonAsync<UiPanelCatalog>("/api/internal/apps/consumer/ui/panels"))!;
+        Assert.Equal("conversation", catalog.Panels.Single(p => p.Panel.PanelId == "tool").AssistantKey);
+        Assert.Null(catalog.Panels.Single(p => p.Panel.PanelId == "reviews").AssistantKey);
+    }
+
+    [Fact]
+    public async Task ComposerCapabilityFollowsDeclaredPanelAndResolvedInstallation()
+    {
+        await using var host = await Setup();
+        var apps = host.Services.GetRequiredService<AppRegistryStore>();
+        await apps.UpdateAppAsync("target", a => a with { Ui = a.Ui! with { Panels = [
+            new("/reports", "web", "Reports", "message-square", "reports", FeedbackComposer: true),
+            new("/normal", "web", "Normal", "star", "normal") ] } });
+        using var client = await Client(host);
+        var catalog = (await client.GetFromJsonAsync<UiPanelCatalog>("/api/internal/apps/consumer/ui/panels"))!;
+        var composer = Assert.Single(catalog.Panels, p => p.FeedbackComposer);
+        Assert.Equal("target", composer.Panel.AppId);
+        using var response = await client.PostAsJsonAsync("/api/internal/apps/consumer/ui/panels/resolve", new UiPanelTarget(composer.Panel));
+        response.EnsureSuccessStatusCode();
+        Assert.True((await response.Content.ReadFromJsonAsync<UiResolvedPanel>())!.Surface!.FeedbackComposer);
+        Assert.False(catalog.Panels.Single(p => p.Panel.PanelId == "normal").FeedbackComposer);
+    }
+
+    [Fact]
     public async Task OwnNavigationNeedsNoCatalogGrant_AndKeepsStableKeysAcrossLabels()
     {
         await using var host = await Setup();
@@ -109,12 +141,69 @@ public sealed partial class UiPanelHttpTests
         var origin = UiPanelService.Peer(consumer).Origins.First();
         var bootstrap = await client.GetFromJsonAsync<JsonElement>("/api/internal/apps/target/ui/bootstrap?parentOrigin=" + Uri.EscapeDataString(origin));
         Assert.False(bootstrap.GetProperty("canHost").GetBoolean());
+        Assert.Equal((await apps.GetAppAsync("target"))!.DisplayName,
+            bootstrap.GetProperty("app").GetProperty("displayName").GetString());
+        Assert.Equal("target", bootstrap.GetProperty("app").GetProperty("appId").GetString());
         Assert.Equal("consumer", bootstrap.GetProperty("peer").GetProperty("appId").GetString());
         Assert.Equal("member", bootstrap.GetProperty("userId").GetString());
         Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync("/api/internal/apps/target/ui/panels")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync("/api/internal/apps/target/ui/bootstrap?parentOrigin=https%3A%2F%2Fforeign.test")).StatusCode);
         await apps.UpsertAppAsync(consumer with { Id = "collision" });
         Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync("/api/internal/apps/target/ui/bootstrap?parentOrigin=" + Uri.EscapeDataString(origin))).StatusCode);
+    }
+
+    [Theory]
+    [InlineData("assets/app.svg", "/api/apps/target/assets/assets/app.svg")]
+    [InlineData("https://cdn.example.test/icon.svg", "https://cdn.example.test/icon.svg")]
+    [InlineData(null, null)]
+    public async Task BootstrapProjectsOnlyCallerDisplayMetadataWithoutCatalogAuthority(string? icon, string? expected)
+    {
+        await using var host = await Setup();
+        var apps = host.Services.GetRequiredService<AppRegistryStore>();
+        await apps.UpdateAppAsync("target", app => app with {
+            DisplayName = "Independent Application",
+            CatalogMetadata = new(null, null, [], icon, [], null, null, null, null, null, null)
+        });
+        using var client = await Client(host, "target");
+        var bootstrap = (await client.GetFromJsonAsync<UiBootstrap>("/api/internal/apps/target/ui/bootstrap"))!;
+        Assert.Equal("Independent Application", bootstrap.App.DisplayName);
+        Assert.Equal("target", bootstrap.App.AppId);
+        if (expected is null) Assert.Null(bootstrap.App.IconUrl);
+        else
+        {
+            var actual = new Uri(bootstrap.App.IconUrl!);
+            if (expected.StartsWith("/", StringComparison.Ordinal))
+            {
+                Assert.Equal(bootstrap.CoreOrigin, actual.GetLeftPart(UriPartial.Authority));
+                Assert.Equal(expected, actual.AbsolutePath);
+            }
+            else Assert.Equal(expected, actual.AbsoluteUri);
+        }
+        Assert.False(bootstrap.CanHost);
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync("/api/internal/apps/target/ui/panels")).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/internal/apps/consumer/ui/bootstrap")).StatusCode);
+    }
+
+    [Fact]
+    public async Task OwnIconRequiresServiceAndCurrentUserWithoutCoreBrowserCookie()
+    {
+        await using var host = await Setup();
+        var apps = host.Services.GetRequiredService<AppRegistryStore>();
+        var paths = host.Services.GetRequiredService<CoreDataPaths>();
+        await apps.UpdateAppAsync("target", a => a with { CatalogMetadata = new(null, null, [], "assets/icon.svg", [], null, null, null, null, null, null) });
+        var icon = Path.Combine(paths.AppsRoot, "target", "assets", "icon.svg");
+        Directory.CreateDirectory(Path.GetDirectoryName(icon)!);
+        await File.WriteAllTextAsync(icon, "<svg xmlns=\"http://www.w3.org/2000/svg\"/>");
+        using var client = await Client(host, "target");
+        using var response = await client.GetAsync("/api/internal/apps/target/ui/icon");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("image/svg+xml", response.Content.Headers.ContentType!.MediaType);
+        Assert.Contains("sandbox", response.Headers.GetValues("Content-Security-Policy").Single());
+        Assert.Equal(await File.ReadAllTextAsync(icon), await response.Content.ReadAsStringAsync());
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/apps/target/assets/assets/icon.svg")).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/internal/apps/consumer/ui/icon")).StatusCode);
+        await host.Services.GetRequiredService<UserDirectoryStore>().UpdateAsync(s => s with { Assignments = s.Assignments.Where(a => a.AppId != "target").ToArray() });
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync("/api/internal/apps/target/ui/icon")).StatusCode);
     }
 
     [Fact]

@@ -144,7 +144,7 @@ internal sealed class CoreEnvironmentRuntime(HostyCoreRuntimeConfig config, IDoc
             if (!Version.TryParse(versionText, out var parsed) || parsed < new Version(0, 133, 0))
                 throw new SandboxException("environment_core_version", "Child Core 0.133.0 or newer is required for resource limits and resumable cleanup. Finish or upgrade this environment.", 409);
             using var process = Process.GetProcessById(discovery.ProcessId);
-            return new(process.Id, process.StartTime.ToUniversalTime());
+            return new(process.Id, process.StartTime.ToUniversalTime(), version.GetString());
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or ArgumentException or InvalidOperationException) { return null; }
     }

@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-26
-updated: 2026-10-13
+updated: 2026-10-30
 summary: Use agents as bounded exploratory app testers whose findings are reproduced and triaged independently.
 components: [apps/harness]
 ---
@@ -16,7 +16,7 @@ This feature remains Draft and requires its own Ready approval; it is not a prer
 
 Use agents as bounded exploratory app testers and feedback producers, followed by independent
 reproduction/triage and controlled comparisons. This is later work over
-[sandbox runtimes](../app-sandbox-runtimes/plan.md), [feedback intake](../app-feedback-inbox/plan.md)
+[sandbox runtimes](../app-sandbox-runtimes/plan.md), [feedback intake](../app-feedback-inbox/feature.md)
 and the shared invocation stream. It does not gate deterministic browser testing or sandbox launch.
 An evaluation can test a pinned app version without code edits, a worktree or an active conversation.
 Core owns instance authorization/lifecycle and temporary users/data; the evaluator owns scenarios,

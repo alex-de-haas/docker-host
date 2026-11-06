@@ -1,25 +1,28 @@
 "use client";
+import { ProviderUsageIndicator } from "@/components/provider-usage";
 import { ContextUsageIndicator } from "@/components/context-usage";
 import { applyContextUsage, emptyContextUsage } from "@/lib/context-usage";
 import { HostyNavigationBoundary } from "@hosty-sdk/app/react";
-import { SessionModel } from "@/components/session-model";
+import { SessionAgentSettings, type AgentSettingsNotice } from "@/components/session-agent-settings";
 import { SessionAutonomy } from "@/components/session-autonomy";
+import { SessionExecutionRecovery } from "@/components/session-execution-recovery";
 import { SessionExecutionIndicator } from "@/components/session-execution-indicator";
 import { useHostyUi } from "@hosty-sdk/app/ui/react";
 import { AssistantActivity } from "@/components/assistant-activity";
 import type { SessionActivity } from "../../../src/harness/activity";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { cn } from "@/lib/utils";
 import { SpeechInput } from "@/components/speech-input";
 import { SessionCredentials } from "@/components/session-credentials";
 import { SessionSandboxes } from "@/components/session-sandboxes";
 import { SessionWorkspaces } from "@/components/session-workspaces";
-import { SessionProvider } from "@/components/session-provider";
+import { usePromptSuggestions } from "@/lib/prompt-suggestions";
+import { PromptSuggestionCard } from "@/components/prompt-suggestion";
 import { AppMentionInput, type AppMentionInputHandle } from "@/components/app-mention-input";
-import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuCheckboxItem } from "@/components/ui/dropdown-menu";
 import { AppContextPicker, type AppContextPickerHandle } from "@/components/app-context-picker";
-import { ArrowLeft, History, Loader2, MessageSquarePlus, Paperclip, Plus, Blocks, Send, Sparkles, Square, PanelRight, Diamond, Pencil } from "lucide-react";
+import { ArrowLeft, History, Loader2, MessageSquarePlus, Paperclip, Plus, Blocks, Send, Sparkles, Square, PanelRight, PanelLeft, Diamond, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Alert, InlineError, StatusBadge } from "@/components/status";
@@ -30,14 +33,15 @@ import {
   MessageScrollerItem, MessageScrollerProvider, MessageScrollerViewport,
 } from "@/components/ui/message-scroller";
 import { transcriptItems } from "@/lib/transcript-items";
+import { feedbackCardForEvent, useFeedbackTranscript } from "@/lib/feedback-transcript";
 import { resolveTranscriptReview, type TranscriptReviewReference } from "@/lib/transcript-edits";
 import { InputGroup, InputGroupAddon } from "@/components/ui/input-group";
-import { WorkspaceSessionTabs } from "./workspace-session-tabs";
 import { useWorkspaceSessionActions } from "@/lib/use-workspace-session-actions";
 import { rememberWorkspaceSession, rememberedWorkspaceSession, workspaceSessionIds } from "@/lib/workspace-navigation";
+import { ColumnResizeHandle } from "@/components/column-resize-handle";
+import { COLUMN_DEFAULTS, COLUMN_MIN, useConversationColumns } from "@/lib/use-conversation-columns";
 import { DevelopmentNavigation } from "@/components/development-navigation";
 import { CreateApp } from "@/components/create-app";
-import { SessionRetention } from "@/components/session-retention";
 import { RetainedWorkspacePane, useNarrowWorkspace } from "@/components/retained-workspace-pane";
 import { WorkspaceReview, type ReviewChoice } from "@/components/workspace-review";
 import type { DevelopmentWorkspace, Worktree } from "@/lib/development-api";
@@ -86,7 +90,7 @@ const HISTORY_STORAGE_KEY = "hosty.assistant.history";
 const MAX_ASK_CHARS = 4_000;
 
 
-export function AssistantConversation({ fullPage = false }: { fullPage?: boolean }) {
+export function AssistantConversation({ fullPage = false, navigation = "workspaces" }: { fullPage?: boolean; navigation?: "workspaces" | "chats" }) {
   const ui = useHostyUi();
   const [health, setHealth] = useState<HarnessHealth | null>(null);
   const [sessions, setSessions] = useState<AssistantSession[]>([]);
@@ -108,8 +112,12 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   }, [ui, session?.id, surfaceSessionId]);
   const [status, setStatus] = useState("idle");
   const [contextUsage, setContextUsage] = useState(() => emptyContextUsage(""));
+  const [agentNotice, setAgentNotice] = useState<AgentSettingsNotice | null>(null);
+  const [autonomyNotice, setAutonomyNotice] = useState<AgentSettingsNotice | null>(null);
   const [activity, setActivity] = useState<SessionActivity | null>(null);
   const [connection, setConnection] = useState<StreamConnection>("connecting");
+  const [historyReadyFor, setHistoryReadyFor] = useState<string | null>(null);
+  const historyLoading = !!session && historyReadyFor !== session.id && connection !== "disconnected";
   const [events, setEvents] = useState<AssistantEvent[]>([]);
   const [streamed, setStreamed] = useState("");
   const [input, setInput] = useState("");
@@ -137,10 +145,14 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const openContextAfterMenu = useRef(false);
   const onSessionChange = useCallback((record: AssistantSession) => {
     const merge = (current: AssistantSession) => current.id !== record.id ? current : {
-      ...((record.appContextRevision ?? 0) >= (current.appContextRevision ?? 0) && activityTime(record) >= activityTime(current)
+      ...((record.appContextRevision ?? 0) >= (current.appContextRevision ?? 0)
+        && (record.selectionRevision ?? 0) >= (current.selectionRevision ?? 0) && activityTime(record) >= activityTime(current)
         && (record.lastEventSeq === undefined || current.lastEventSeq === undefined || record.lastEventSeq >= current.lastEventSeq) ? record : current),
       lastEventSeq: Math.max(record.lastEventSeq ?? 0, current.lastEventSeq ?? 0) || undefined,
       updatedAt: activityTime(record) >= activityTime(current) ? record.updatedAt : current.updatedAt,
+      // Admission is permanent even if a pre-admission mutation reply arrives before its status event.
+      ...(current.profileLocked === true ? { profileLocked: true } : {}),
+      ...(current.providerLocked === true ? { providerLocked: true } : {}),
     };
     setSession(current => current ? merge(current) : current);
     setSessions(current => current.map(merge));
@@ -163,6 +175,9 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [historyOpen, setShowSessions] = useState(false);
   const showSessions = !fullPage && historyOpen;
+  const sessionStorageKey = fullPage ? `hosty.harness.${navigation}.session` : SESSION_STORAGE_KEY;
+  const navigationTitle = navigation === "workspaces" ? "Workspaces" : "Chats";
+  const [openAppCreation, setOpenAppCreation] = useState(false);
   const setHistoryOpen = useCallback((open: boolean) => {
     setShowSessions(open);
     try {
@@ -180,8 +195,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const decisionCard = useRef<HTMLDivElement | null>(null);
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   const [mobileDetails, setMobileDetails] = useState(false);
-  const narrowWorkspace = useNarrowWorkspace();
-  const workspaceModal = narrowWorkspace && mobileDetails;
+  const narrowViewport = useNarrowWorkspace();
   const [mobileSessions, setMobileSessions] = useState(fullPage && !requestedSessionId);
   const [review, setReview] = useState<{ workspaceId: string; tree: Worktree; sessionId?: string; transcriptChoice?: ReviewChoice } | null>(null);
   const [reviewChoices, setReviewChoices] = useState<Record<string, ReviewChoice>>({});
@@ -208,7 +222,11 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const sessionWorkspace = inventory.workspaces.find(w => w.participation ? w.participation.sessions.some(binding => binding.attached && binding.canOpen && binding.sessionId === session?.id) : w.owner.kind === "assistant" && w.owner.appId === "hosty.harness" && w.owner.reference === session?.id);
   const selectedWorkspace = selectedWorkspaceId ? inventory.workspaces.find(w => w.id === selectedWorkspaceId) : sessionWorkspace;
   const workspace = selectedWorkspace?.workflow.state === "deleted" ? undefined : selectedWorkspace;
-  const chatVisible = !fullPage || !selectedWorkspaceId || !!workspace && workspace.owner.kind !== "external" && !!session && workspaceSessionIds(workspace).includes(session.id);
+  const columnsRef = useRef<HTMLDivElement>(null);
+  const columns = useConversationColumns(fullPage && !!workspace && workspaceVisible && !narrowViewport, columnsRef);
+  const narrowWorkspace = narrowViewport || columns.narrow;
+  const workspaceModal = narrowWorkspace && mobileDetails;
+  const chatVisible = !fullPage || !selectedWorkspaceId || !!workspace && !!session && workspaceSessionIds(workspace).includes(session.id);
   useEffect(() => {
     if (workspace && session && chatVisible) rememberWorkspaceSession(workspace, session.id);
   }, [workspace, session, chatVisible]);
@@ -235,6 +253,15 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
 
   const mentionInputRef = useRef<AppMentionInputHandle>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
+  const suggestions = usePromptSuggestions(session, ready, !!input || pending.length > 0 || uploaded.length > 0);
+  const suggestionsReceive = suggestions.receive;
+  const visibleSuggestion = !running && !sending && !pendingSend && !contextSaving && !mentionSaving && !providerSaving
+    && !composerBlocked && connection === "connected" ? suggestions.suggestion : null;
+  const acceptSuggestion = () => {
+    if (!visibleSuggestion || composerRef.current?.value) return;
+    mentionInputRef.current?.insertPlainText(visibleSuggestion.text!);
+    suggestions.interact();
+  };
 
   /** Attaches to one session and follows its log. Shared by reattach, switch and new. */
   const attach = useCallback((record: AssistantSession) => {
@@ -254,6 +281,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     setStatus(record.status);
     setActivity(null);
     setConnection("connecting");
+    setHistoryReadyFor(null);
     setEvents([]);
     setStreamed("");
     // Whatever was left unsent in this session, put back in the box. Per session, so switching away
@@ -269,17 +297,29 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     setFailedUpload(null);
     try {
       window.localStorage.setItem(SESSION_STORAGE_KEY, record.id);
+      if (fullPage) window.localStorage.setItem(sessionStorageKey, record.id);
     } catch {
       // Private-mode storage refusal costs reattachment across reloads, nothing else.
     }
 
     const abort = new AbortController();
     let settingsRefresh = 0;
+    let settingsPending = false;
+    let latestModelRevision = record.selectionRevision ?? 0;
+    const refreshSettings = () => {
+      const revision = ++settingsRefresh;
+      settingsPending = true;
+      void getSession(record.id).then(value => {
+        if (!abort.signal.aborted && revision === settingsRefresh && activeSessionId.current === record.id) onSessionChange(value);
+      }).catch(() => {}).finally(() => { if (revision === settingsRefresh) settingsPending = false; });
+    };
     streamAbortRef.current = abort;
     void streamEvents(
       record.id,
       (event) => {
         if (abort.signal.aborted) return;
+        suggestionsReceive(event);
+        if (event.type === "session_suggestion") return;
         if (event.type === "context_usage") {
           setContextUsage(current => applyContextUsage(current, record.id, event));
           return;
@@ -289,7 +329,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
           setActivity(current => current?.epoch === update.epoch && current.revision >= update.revision ? current : update);
           return;
         }
-        if (event.type === "session_provider_changed" || event.type === "session_autonomy_changed") {
+        if (event.type === "session_profile_changed" || event.type === "session_provider_changed" || event.type === "session_autonomy_changed") {
           const settings: Partial<AssistantSession> = event.type === "session_autonomy_changed"
             ? (event.autonomy === "normal" || event.autonomy === "autonomous" ? { autonomy: event.autonomy } : {})
             : typeof event.connectionId === "string" && typeof event.connectionRevision === "number"
@@ -297,10 +337,13 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
               ? { connectionId: event.connectionId, connectionRevision: event.connectionRevision, harnessKind: event.harnessKind, providerLocked: event.providerLocked } : {};
           const applySettings = (current: AssistantSession) => current.id === record.id && event.seq >= (current.lastEventSeq ?? 0) && activityTime({ updatedAt: event.ts }) >= activityTime(current)
             ? { ...current, ...settings, updatedAt: event.ts, lastEventSeq: event.seq } : current;
-          setSessions(current => current.map(applySettings));
-          setSession(current => current ? applySettings(current) : current);
-          const revision = ++settingsRefresh;
-          void getSession(record.id).then(value => { if (!abort.signal.aborted && revision === settingsRefresh && activeSessionId.current === record.id) onSessionChange(value); }).catch(() => {});
+          // Profile notifications carry only a revision. Apply the fetched configuration atomically;
+          // their later event timestamp must not make the saved record appear stale.
+          if (event.type !== "session_profile_changed") {
+            setSessions(current => current.map(applySettings));
+            setSession(current => current ? applySettings(current) : current);
+          }
+          refreshSettings();
           void getHealth(record.id).then(value => { if (activeSessionId.current === record.id) setHealth(value); }).catch(() => {});
           return;
         }
@@ -310,9 +353,24 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
           const apply = (current: AssistantSession) => current.id === record.id && revision > (current.selectionRevision ?? 0)
             ? { ...current, executionSelection: selection, selectionRevision: revision } : current;
           setSession(current => current ? apply(current) : current); setSessions(current => current.map(apply));
+          // A model event can overtake a pending profile snapshot. Replace that request so the
+          // complete profile/provider configuration catches up without rolling back the selection.
+          if (revision > latestModelRevision) {
+            latestModelRevision = revision;
+            refreshSettings();
+          }
           return;
         }
-        if (event.type === "user_message") setSession(current => current?.id === record.id ? { ...current, ...(current.providerLocked !== undefined ? { providerLocked: true } : {}) } : current);
+        // A status/context update can make an in-flight settings snapshot too old to merge.
+        // Replace only pending reads; ordinary conversation activity does not poll settings.
+        if (settingsPending && (event.type === "user_message" || event.type === "app_context_changed"
+          || event.type === "session_status" && event.historical !== true)) refreshSettings();
+        if (event.type === "user_message") {
+          const lock = (current: AssistantSession) => current.id === record.id
+            ? { ...current, ...(current.providerLocked !== undefined ? { providerLocked: true } : {}), ...(current.profileLocked !== undefined ? { profileLocked: true } : {}) } : current;
+          setSession(current => current ? lock(current) : current);
+          setSessions(current => current.map(lock));
+        }
         if (event.type === "app_context_changed") {
           const revision = Number(event.appContextRevision);
           setSessions(current => current.map(item => item.id === record.id && revision > (item.appContextRevision ?? 0)
@@ -363,11 +421,14 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
       (state) => {
         if (abort.signal.aborted) return;
         setConnection(state);
+        // The stream reports connected only after its initial historical replay.
+        // Keep this boundary through reconnects so an existing reader is not remounted.
+        if (state === "connected") setHistoryReadyFor(record.id);
         if (state !== "connected") setActivity(null);
         if (state === "disconnected") setStreamed("");
       },
     );
-  }, [onSessionChange]);
+  }, [onSessionChange, suggestionsReceive, fullPage, sessionStorageKey]);
 
   // A full-page selection is also a navigation: Shell must restore that exact session on reload.
   const navigateSelection = useCallback(async (sessionId: string | null, workspaceId?: string | null) => {
@@ -383,9 +444,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     ui.reportSurfaceState({ route: `${route.pathname}${route.search}${route.hash}`, state: "ready" });
   }, [fullPage, ui]);
   const selectedRoute = useRef<string | null>(null);
-  const sessionTabFocus = useRef<string | null>(null);
-  const pickSession = (record: AssistantSession, keepTabFocus = false) => {
-    sessionTabFocus.current = keepTabFocus ? record.id : null;
+  const pickSession = (record: Pick<AssistantSession, "id">) => {
     setSelectedWorkspaceId(null); setWorkspaceToResolve(null);
     selectedRoute.current = fullPage ? record.id : null;
     requestedSessionRef.current = record.id;
@@ -404,7 +463,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const pickWorkspace = (target: DevelopmentWorkspace, matched?: AssistantSession) => {
     const record = matched ?? rememberedWorkspaceSession(target, sessions);
     setMobileSessions(false); setMobileDetails(false); setReview(null); setWorkspaceVisible(true);
-    if (record && target.owner.kind !== "external") pickSession(record);
+    if (record) pickSession(record);
     else {
       clearActiveConversation(); setSelectedWorkspaceId(target.id); setWorkspaceToResolve(null);
       void navigateSelection(null, target.id);
@@ -435,7 +494,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
       if (!target) { setError("This workspace is unavailable."); return; }
       setSessions(records);
       const record = rememberedWorkspaceSession(target, records);
-      if (record && target.owner.kind !== "external") {
+      if (record) {
         requestedSessionRef.current = record.id; setRequestedSessionId(record.id);
       }
       const route = new URL(window.location.href);
@@ -497,7 +556,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
         let stored: string | null = null;
         let restoreHistory = false;
         try {
-          stored = window.localStorage.getItem(SESSION_STORAGE_KEY);
+          stored = window.localStorage.getItem(sessionStorageKey);
           restoreHistory = window.localStorage.getItem(HISTORY_STORAGE_KEY) === "true";
         } catch {
           // Private-mode storage can refuse reads as well as writes; that costs reattachment, and
@@ -542,7 +601,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
       cancelled = true;
       streamAbortRef.current?.abort();
     };
-  }, [attach, fullPage]);
+  }, [attach, fullPage, sessionStorageKey]);
 
   /**
    * An "ask the assistant" handed in by the embedder.
@@ -635,9 +694,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
       setHistoryOpen(false);
       requestedSessionRef.current = null;
       setRequestedSessionId(null);
-      if (sessionTabFocus.current === record.id) {
-        document.getElementById(`workspace-tab-${record.id}`)?.focus(); sessionTabFocus.current = null;
-      } else composerRef.current?.focus();
+      composerRef.current?.focus();
     }).catch(cause => {
       if (!cancelled) { requestedSessionRef.current = null; setError(cause instanceof Error ? cause.message : String(cause)); setRequestedSessionId(null); }
     });
@@ -777,7 +834,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
       // Lock the composer before the HTTP response: SSE may confirm (or finish) the turn first.
       if (activeSessionId.current === session.id) setStatus("running");
       request = { version: 1, clientRequestId: crypto.randomUUID(), sessionId: session.id, text: trimmed, draftText: input,
-        attachments: stored, appContextRevision: session.appContextRevision ?? 0, withoutAppDetails, selectionRevision: session.selectionRevision ?? 0 };
+        attachments: stored, ...(suggestions.preference?.enabled === true ? { promptSuggestions: true } : {}), appContextRevision: session.appContextRevision ?? 0, withoutAppDetails, selectionRevision: session.selectionRevision ?? 0 };
       await claimPendingSend(request);
       if (activeSessionId.current === session.id) setPendingSend(request);
       const receipt = await dispatchPendingSend(request);
@@ -804,7 +861,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
       sendingRef.current = false;
       setSending(false);
     }
-  }, [input, pending, pendingSend, sendRecoveryBlocked, running, status, contextSaving, session, uploaded, withoutAppDetails, health?.available, onSessionChange, acceptSend]);
+  }, [input, pending, pendingSend, sendRecoveryBlocked, running, status, contextSaving, session, uploaded, withoutAppDetails, health?.available, onSessionChange, acceptSend, suggestions.preference?.enabled]);
 
   const stop = useCallback(async () => {
     if (!session || !running || sendingRef.current || providerSavingRef.current || stoppingRef.current) return;
@@ -844,15 +901,17 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     setSurfaceSessionId(null);
     setMobileDetails(false);
     setHistoryOpen(!fullPage);
-    if (workspace) setSelectedWorkspaceId(workspace.id);
+    const retainedWorkspaceId = navigation === "workspaces" ? workspace?.id : undefined;
+    setSelectedWorkspaceId(retainedWorkspaceId ?? null);
     void inventory.refresh();
-    void navigateSelection(null, workspace?.id).catch(cause => setError(cause instanceof Error ? cause.message : String(cause)));
+    void navigateSelection(null, retainedWorkspaceId).catch(cause => setError(cause instanceof Error ? cause.message : String(cause)));
     try {
       window.localStorage.removeItem(SESSION_STORAGE_KEY);
+      window.localStorage.removeItem(sessionStorageKey);
     } catch {
       // An obsolete stored id is harmless: reattachment resolves it through the API.
     }
-  }, [setHistoryOpen, fullPage, navigateSelection, workspace, inventory]);
+  }, [setHistoryOpen, fullPage, navigateSelection, workspace, inventory, sessionStorageKey, navigation]);
 
   const remove = useCallback(async (sessionId: string) => {
     setError(null);
@@ -939,32 +998,55 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   // nowhere else.
   const attachmentIndex = useMemo(() => indexAttachments(events), [events]);
   const items = useMemo(() => transcriptItems(events, attachmentIndex.claimed), [events, attachmentIndex]);
+  const feedbackTranscript = useFeedbackTranscript(session?.id, events, !historyLoading && !showSessions);
 
   const pendingDecision = events.find(event => status === "awaiting_approval" && event.type === "approval_request" && !decidedApprovals.has(String(event.approvalId)) || status === "awaiting_question" && event.type === "question_request" && !cancelledQuestionIds.has(String(event.questionId)) && !answeredQuestions.has(String(event.questionId)));
 
-  const createAppAction = session && !showSessions ? <CreateApp key={`creation-${session.id}`} session={session} busy={running || sending || stopping || providerSaving} onChange={record => { onSessionChange(record); void inventory.refresh(); }} /> : null;
+  const createAppAction = fullPage && navigation === "workspaces" ? session ? (
+    <CreateApp key={`creation-${session.id}`} session={session} openOnMount={openAppCreation}
+      onOpened={() => setOpenAppCreation(false)} busy={running || sending || stopping || providerSaving}
+      onChange={record => { onSessionChange(record); void inventory.refresh(); }} />
+  ) : (
+    <Button variant="ghost" size="icon-sm" aria-label="Create app" title="Create app" disabled={!ready || openAppCreation}
+      onClick={() => {
+        setOpenAppCreation(true);
+        void startNew().then(record => { if (!record) setOpenAppCreation(false); });
+      }}><Plus aria-hidden /></Button>
+  ) : null;
+
+  const navigationToggle = fullPage && <Button className="md:hidden shrink-0" size="icon-sm" variant="ghost"
+    aria-label={`Show ${navigationTitle.toLowerCase()}`} title={`Show ${navigationTitle.toLowerCase()}`}
+    onClick={() => { setMobileSessions(true); setMobileDetails(false); }}><PanelLeft aria-hidden /></Button>;
+  const workspaceToggle = fullPage && workspace && <Button size="icon-sm" variant="ghost" aria-label="Workspace details" title="Workspace details"
+    aria-expanded={narrowWorkspace ? mobileDetails : workspaceVisible}
+    onClick={() => { if (narrowWorkspace) { setMobileDetails(v => !v); setMobileSessions(false); } else setWorkspaceVisible(v => !v); }}><PanelRight aria-hidden /></Button>;
 
   return (
-    <div className={`harness-conversation flex h-dvh min-h-0 min-w-0 flex-col overflow-hidden ${review ? "harness-review-active" : ""}`}>
-      {fullPage && !review && <header inert={workspaceModal} className="flex min-[900px]:hidden shrink-0 items-center gap-2 border-b px-3 py-2">
-        <Button className="md:hidden" size="sm" variant="ghost" onClick={() => { setMobileSessions(v => !v); setMobileDetails(false); }}>Workspaces and chats</Button>
-        {workspace && <Button className="ml-auto" size="sm" variant="outline" onClick={() => { setMobileDetails(v => !v); setMobileSessions(false); }}>Workspace details</Button>}
-      </header>}
+    <div className={`harness-conversation flex h-full min-h-0 min-w-0 flex-col overflow-hidden ${review ? "harness-review-active" : ""}`}>
       {fullPage && inventory.error && <p role="alert" className="border-b px-4 py-2 text-sm text-destructive-foreground">{inventory.error}</p>}
-      <div className="flex min-h-0 flex-1">
-      {fullPage && <div inert={workspaceModal} className={`${review ? "hidden" : mobileSessions ? "block md:block" : "hidden md:block"} w-full shrink-0 border-r md:w-[264px]`}><DevelopmentNavigation sessions={listedSessions} activeId={session?.id} activeWorkspaceId={workspace?.id} workspaces={inventory.workspaces}
-        createAppAction={createAppAction} onWorkspace={pickWorkspace} onNew={() => { setMobileSessions(false); void startNew(); }} onPick={pickSession} onDelete={remove} /></div>}
+      <div ref={columnsRef} className="flex min-h-0 min-w-0 flex-1">
+      {fullPage && <div inert={workspaceModal} style={{ "--navigation-width": `${columns.widths.navigation}px` } as CSSProperties} className={`${review ? "hidden" : mobileSessions ? "block md:block" : "hidden md:block"} relative w-full shrink-0 border-r md:w-[var(--navigation-width)]`}><DevelopmentNavigation view={navigation} sessions={listedSessions} activeId={session?.id} activeWorkspaceId={navigation === "workspaces" ? workspace?.id : undefined} workspaces={inventory.workspaces}
+        createAppAction={createAppAction} onClose={() => setMobileSessions(false)} onWorkspace={pickWorkspace} onNew={() => { setMobileSessions(false); void startNew(); }} onPick={pickSession} onDelete={remove} />
+        <ColumnResizeHandle label={`Resize ${navigationTitle.toLowerCase()} list`} side="right" className="hidden md:block"
+          width={columns.widths.navigation} min={COLUMN_MIN.navigation} max={columns.maximum.navigation} defaultWidth={COLUMN_DEFAULTS.navigation}
+          onResize={width => columns.resize("navigation", width)} />
+      </div>}
       <main ref={conversationRef} tabIndex={-1} inert={workspaceModal} className={`${review ? "hidden" : fullPage && mobileSessions ? "hidden md:flex" : "flex"} min-h-0 min-w-0 flex-1 flex-col`}>
 
-      {fullPage && workspace && <WorkspaceSessionTabs workspace={workspace} sessions={listedSessions} activeId={chatVisible ? session?.id : undefined} onPick={record => pickSession(record, true)} actions={workspaceActions} />}
-      {fullPage && !chatVisible ? <div className="min-h-0 flex-1" aria-label="Workspace center">
-        {workspace && workspace.owner.kind !== "external" && <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-sm text-muted-foreground">
+      {fullPage && (!chatVisible || !session) && <div className={`shrink-0 items-center gap-2 border-b px-3 py-2 ${workspace ? "flex" : "flex md:hidden"}`}>{navigationToggle}<div className="ml-auto">{workspaceToggle}</div></div>}
+      {fullPage && (!chatVisible || !session) ? <div className="min-h-0 flex-1" aria-label="Workspace center">
+        {!workspace && <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-sm text-muted-foreground">
+          <p>{navigation === "workspaces" ? "Choose a workspace, create an app or continue building." : "Choose a chat or start a new one."}</p>
+          {navigation === "chats" && <Button variant="outline" disabled={!ready} onClick={() => void startNew()}>New chat</Button>}
+        </div>}
+        {workspace && <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-sm text-muted-foreground">
           <p>No accessible chats in this workspace.</p>
           <Button variant="outline" disabled={workspaceActions.busy || workspaceActions.retry || !workspace.participation || !workflowIsActive(workspace.workflow)} onClick={() => void workspaceActions.command("new")}>New session in workspace</Button>
         </div>}
         {error && <p role="alert" className="p-3 text-sm text-destructive-foreground">{error}</p>}
-      </div> : <div id="workspace-chat" role={fullPage && workspace ? "tabpanel" : undefined} aria-labelledby={fullPage && workspace && session ? `workspace-tab-${session.id}` : undefined} className="flex min-h-0 flex-1 flex-col">
+      </div> : <div id="workspace-chat" role="region" aria-label={session?.title || "Session conversation"} className="flex min-h-0 flex-1 flex-col">
       <header className="flex flex-wrap shrink-0 items-center gap-2 border-b px-3 py-2">
+        {navigationToggle}
         {showSessions ? (
           <>
             {session && <Button variant="ghost" size="icon-sm" aria-label="Back to conversation" title="Back to conversation" onClick={() => setHistoryOpen(false)}><ArrowLeft /></Button>}
@@ -977,9 +1059,12 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
               {fullPage ? <>{session && renamingSessionId === session.id ? <SessionTitleInput key={session.id} title={session.title ?? ""} onCommit={async title => { setRenamingSessionId(null); await rename(session.id, title); }} onCancel={() => setRenamingSessionId(null)} /> : <><h1 className="min-w-0 truncate text-sm font-medium">{session ? session.title || "Untitled session" : "New session"}</h1>{session && <Button variant="ghost" size="icon-sm" aria-label="Rename session" onClick={() => setRenamingSessionId(session.id)}><Pencil className="size-3.5" /></Button>}</>}</> : <HostyNavigationBoundary><Sparkles className="h-4 w-4 shrink-0" aria-hidden /><span className="text-sm font-medium">Assistant</span></HostyNavigationBoundary>}
             </div>
             <div className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-2">
-              <StatusBadge value={status} />
+              {status !== "idle" && <StatusBadge value={status} />}
+              {composerBlocked && (running || stopping) && <Button type="button" variant="ghost" size="icon-sm" disabled={sending || stopping} onClick={() => void stop()} aria-label="Stop" title="Stop response">
+                {sending || stopping ? <Loader2 className="motion-safe:animate-spin" /> : <Square className="fill-current" />}
+              </Button>}
               {session && <SessionExecutionIndicator executionMode={session.executionMode} />}
-              {fullPage && workspace && <Button variant="ghost" size="icon-sm" className="hidden min-[900px]:inline-flex" aria-label="Toggle workspace" aria-pressed={workspaceVisible} onClick={() => setWorkspaceVisible(value => !value)}><PanelRight /></Button>}
+              {workspaceToggle}
               {session && (
                 <AppContextPicker key={session.id} ref={contextPickerRef} opener={addButtonRef} compact side="bottom" session={session} busy={sending || mentionSaving || providerSaving} onBusyChange={setContextSaving} running={running}
                   onChange={onSessionChange} />
@@ -1000,9 +1085,10 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                     }
                     if (!writeDraftAttachments(session.id, stored)) throw new Error("Browser storage is unavailable. Your draft and attachments remain in this panel.");
                     localStorage.setItem(SESSION_STORAGE_KEY, session.id);
-                    const entry = ui.getNavigation().entries.find(e => e.route === "/development");
+                    const destination = workspace ? "/development" : "/chats";
+                    const entry = ui.getNavigation().entries.find(e => e.route === destination);
                     if (entry) { const result = await ui.navigate(entry.key, { requestId: crypto.randomUUID(), placement: "main", search: `?session=${encodeURIComponent(session.id)}` }); if (result.status === "accepted") return; }
-                    window.open(`/development?session=${encodeURIComponent(session.id)}`, "_blank", "noopener");
+                    window.open(`${destination}?session=${encodeURIComponent(session.id)}`, "_blank", "noopener");
                   } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
                   finally { sendingRef.current = false; setSending(false); }
                 }}>Open in Harness</Button>
@@ -1016,14 +1102,18 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
           </>
         )}
       </header>
-      {!showSessions && pendingDecision && <div className="flex shrink-0 items-center gap-2 border-b border-warning-foreground/25 bg-warning-soft px-3 py-2 text-sm text-warning-foreground"><Diamond className="size-4 shrink-0" /><span className="min-w-0 flex-1">Needs you · {pendingDecision.type === "approval_request" ? "Approval requested" : "Answer requested"}</span><Button size="sm" variant="outline" onClick={() => { decisionCard.current?.scrollIntoView({ block: "center", behavior: "instant" }); decisionCard.current?.focus(); }}>Review</Button></div>}
-      {!showSessions && !pendingDecision && (running || stopping) && <div className="flex shrink-0 items-center border-b bg-info-soft"><div className="min-w-0 flex-1"><AssistantActivity status={status} activity={activity?.activity ?? null} connection={connection} stopping={stopping} appNames={appNames} /></div><Button variant="ghost" size="sm" className="mr-2" disabled={stopping} onClick={() => void stop()}><Square className="size-3" />Stop</Button></div>}
-      {session && !showSessions && <SessionRetention sessionId={session.id} revision={`${status}:${workspace?.workflow.revision ?? ""}`} />}
+      {!showSessions && !historyLoading && pendingDecision && <div className="flex shrink-0 items-center gap-2 border-b border-warning-foreground/25 bg-warning-soft px-3 py-2 text-sm text-warning-foreground"><Diamond className="size-4 shrink-0" /><span className="min-w-0 flex-1">Needs you · {pendingDecision.type === "approval_request" ? "Approval requested" : "Answer requested"}</span><Button size="sm" variant="outline" onClick={() => { decisionCard.current?.scrollIntoView({ block: "center", behavior: "instant" }); decisionCard.current?.focus(); }}>Review</Button></div>}
 
       {!showSessions && session && <SessionCredentials key={`credentials-${session.id}`} sessionId={session.id} />}
       {!fullPage && !showSessions && session && <SessionSandboxes key={`sandbox-${session.id}`} sessionId={session.id} />}
       {!fullPage && !showSessions && session && <SessionWorkspaces key={`workspaces-${session.id}`} session={session} running={running} />}
       {error && <div className="shrink-0 p-3" role="alert"><InlineError message={error} /></div>}
+      {session && (session.workerRun || session.workerRecovery?.state === "pending") && <SessionExecutionRecovery key={session.id}
+        sessionId={session.id} refreshKey={`${session.workerRun?.id ?? ""}:${status}:${error ?? ""}`} onRecovered={async () => {
+          const current = await getSession(session.id);
+          if (activeSessionId.current === session.id) { onSessionChange(current); setStatus(current.status); setError(null); }
+        }} />}
+
       {pendingSend && <div className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-warning-soft px-3 py-2 text-sm" role="status">
         <span className="min-w-0 flex-1">Send not confirmed. Your draft is retained; Retry checks the original request.</span>
         <Button type="button" variant="outline" size="sm" disabled={sending} onClick={() => void recoverSend()}>{sending ? "Checking send…" : "Retry send"}</Button>
@@ -1039,7 +1129,10 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
         />
       ) : (
         <>
-          <MessageScrollerProvider key={session?.id ?? "connecting"} autoScroll>
+          {historyLoading ? <div role="status" aria-label="Loading conversation history" className="flex min-h-0 flex-1 items-center justify-center gap-2 p-4 text-sm text-muted-foreground">
+            <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden />
+            {connection === "reconnecting" ? "Reconnecting to conversation…" : "Loading conversation history…"}
+          </div> : <MessageScrollerProvider key={session?.id ?? "connecting"} autoScroll>
             <MessageScroller className="h-auto flex-1">
               <MessageScrollerViewport aria-label="Assistant conversation">
                 <MessageScrollerContent className="mx-auto w-full max-w-[760px] gap-4 p-3 sm:p-4">
@@ -1064,6 +1157,8 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                       event={item.event}
                       appNames={appNames}
                       attachments={attachmentIndex}
+                      feedbackCard={feedbackCardForEvent(item.event, feedbackTranscript.cards)}
+                      feedbackLoading={feedbackTranscript.loading}
                       reviewContext={transcriptReviewContext}
                       decision={item.event.type === "approval_request" ? decidedApprovals.get(String(item.event.approvalId)) ?? null : null}
                       questionCancelled={item.event.type === "question_request" && cancelledQuestionIds.has(String(item.event.questionId))}
@@ -1095,7 +1190,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
               </MessageScrollerViewport>
               <MessageScrollerButton aria-label="Jump to latest message" />
             </MessageScroller>
-          </MessageScrollerProvider>
+          </MessageScrollerProvider>}
 
           {!composerBlocked && <>
           {contextUnavailable && (
@@ -1119,7 +1214,8 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                 {session.handoffDispatch.state === "queued" && <Button type="button" variant="outline" size="sm" disabled={sending}
                   onClick={() => { setSending(true); void retryHandoff(session.id).then(attach).catch(cause => setError(String(cause))).finally(() => setSending(false)); }}>Retry starting</Button>}
               </div>}
-            <InputGroup aria-label="Message and context">
+            <InputGroup aria-label="Message and context" className="@container/composer">
+              {visibleSuggestion && <PromptSuggestionCard text={visibleSuggestion.text!} onAccept={acceptSuggestion} onDismiss={suggestions.interact} />}
               <AppMentionInput
                 ref={mentionInputRef}
                 key={session?.id ?? "empty"}
@@ -1129,14 +1225,20 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                 onContextChange={onSessionChange}
                 onBusyChange={onMentionSaving}
                 value={input}
-                onChange={setInput}
+                onChange={text => { suggestions.interact(); setInput(text); }}
+                onCompositionStart={suggestions.interact}
                 onPaste={(event) => {
+                  suggestions.interact();
                   // Leave native paste intact for every text flavor, including HTML-only clipboards.
                   const images = takePastedImages(event.clipboardData);
                   if (images.length === 0) return;
                   setPending((current) => [...current, ...images]);
                 }}
                 onKeyDown={(event) => {
+                  if (visibleSuggestion && !event.nativeEvent.isComposing && event.keyCode !== 229) {
+                    if (event.key === "Escape") { event.preventDefault(); suggestions.interact(); return; }
+                    if (event.key === "Tab" && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) { event.preventDefault(); acceptSuggestion(); return; }
+                  }
                   if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) {
                     event.preventDefault();
                     void send();
@@ -1162,7 +1264,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                   setPending((current) => [...current, ...chosen]);
                 }}
               />
-              <InputGroupAddon align="block-end" className="flex-col items-stretch gap-2">
+              <InputGroupAddon align="block-end" className="flex-col items-stretch gap-2 px-2">
                 {(pending.length > 0 || uploaded.length > 0) && (
                   <div className="flex max-h-48 shrink-0 flex-col gap-2 overflow-y-auto pb-2" aria-label="Attachments to send">
                     {uploaded.map((attachment) => (
@@ -1182,11 +1284,18 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                     ))}
                   </div>
                 )}
-                <div className="flex items-end gap-2" role="group" aria-label="Message actions">
-                  <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
+                <div className={cn("flex items-center gap-0.5",
+                  "@max-[640px]/composer:[&_:is([data-slot=provider-usage],[data-slot=context-usage])]:h-6 @max-[640px]/composer:[&_:is([data-slot=provider-usage],[data-slot=context-usage])]:min-w-6",
+                  "@max-[640px]/composer:[&_:is([data-slot=provider-usage],[data-slot=context-usage])]:gap-0.5 @max-[640px]/composer:[&_:is([data-slot=provider-usage],[data-slot=context-usage])]:px-0",
+                  "@max-[640px]/composer:[&_[data-slot=usage-ring]]:size-5 @max-[640px]/composer:[&_[data-slot=usage-ring]>svg]:size-5 @max-[640px]/composer:[&_.font-mono]:text-[11px]",
+                  "@max-[640px]/composer:[&_[data-slot=speech-input]]:gap-0.5 @max-[640px]/composer:[&_[data-speech-control]]:size-6 @max-[640px]/composer:[&_[data-speech-control]]:p-0",
+                  "@max-[640px]/composer:[&_[data-slot=speech-input]_[data-speech-provider]]:size-6 @max-[640px]/composer:[&_[data-speech-provider]]:justify-center @max-[640px]/composer:[&_[data-speech-provider]]:gap-0 @max-[640px]/composer:[&_[data-speech-provider]]:px-0 @max-[640px]/composer:[&_[data-speech-provider]_[data-slot=select-value]]:sr-only",
+                  "@max-[640px]/composer:[&_[data-slot=speech-status]]:h-6 @max-[640px]/composer:[&_[data-slot=speech-status]]:w-4 @max-[640px]/composer:[&_[data-speech-meter]]:gap-[1.5px] @max-[640px]/composer:[&_[data-speech-bar]]:w-0.5")}
+                  role="group" aria-label="Message actions">
+                  <div className="flex min-w-0 flex-1 items-center gap-0.5">
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <Button ref={addButtonRef} type="button" size="icon" variant="ghost" disabled={!session || sending || !!pendingSend || sendRecoveryBlocked || mentionSaving || providerSaving} aria-label="Add to message"><Plus /></Button>
+                        <Button ref={addButtonRef} type="button" size="icon" variant="ghost" className="@max-[640px]/composer:size-6" disabled={!session || sending || !!pendingSend || sendRecoveryBlocked || mentionSaving || providerSaving} aria-label="Add to message"><Plus /></Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent side="top" align="start" onCloseAutoFocus={event => {
                         if (openContextAfterMenu.current) {
@@ -1196,31 +1305,41 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                       }}>
                         <DropdownMenuGroup>
                           <DropdownMenuItem disabled={contextSaving} onSelect={() => { openContextAfterMenu.current = true; }}><Blocks />Add app context</DropdownMenuItem>
-                          <DropdownMenuItem onSelect={() => fileInputRef.current?.click()}><Paperclip />Attach files</DropdownMenuItem>
+                          <DropdownMenuItem onSelect={() => { suggestions.interact(); fileInputRef.current?.click(); }}><Paperclip />Attach files</DropdownMenuItem>
+                          <DropdownMenuCheckboxItem checked={suggestions.preference?.enabled ?? false} disabled={!suggestions.preference || suggestions.saving}
+                            onCheckedChange={() => void suggestions.toggle()}>Prompt suggestions</DropdownMenuCheckboxItem>
+                          {(suggestions.error || suggestions.availability === "unsupported" || suggestions.availability === "unavailable") &&
+                            <p className="max-w-64 px-2 py-1 text-xs text-muted-foreground">{suggestions.error ?? (suggestions.availability === "unsupported"
+                              ? "This provider version does not support suggestions." : "No suggestion is available for this connection and turn.")}</p>}
                         </DropdownMenuGroup>
                       </DropdownMenuContent>
                     </DropdownMenu>
-                    {session?.connectionId && <SessionModel key={`${session.id}:${session.connectionId}:${session.connectionRevision}`} session={{ ...session, status }} busy={sending || stopping || mentionSaving || contextSaving || providerSaving}
-                      onSavingChange={onProviderSaving} onChange={onSessionChange} />}
-                    {session && <SessionAutonomy key={session.id} session={{ ...session, status }} busy={sending || stopping || mentionSaving || contextSaving || providerSaving}
-                      onSavingChange={onProviderSaving} onChange={onSessionChange} />}
-                    {session && session.providerLocked !== undefined && <SessionProvider key={`${session.id}:${session.connectionId}:${session.connectionRevision}`} session={session} busy={sending || mentionSaving || contextSaving || providerSaving} onSavingChange={onProviderSaving} onChange={record => {
-                      onSessionChange(record);
-                      void getHealth(record.id).then(value => { if (activeSessionId.current === record.id) setHealth(value); }).catch(() => {});
-                    }} />}
+                    <div className="contents @max-[640px]/composer:[&_button]:size-6 @max-[640px]/composer:[&_button]:min-w-6 @max-[640px]/composer:[&_button]:p-0 @max-[640px]/composer:[&_button>span:not(.sr-only)]:hidden">
+                    {session && <SessionAgentSettings key={`agent:${session.id}`}
+                      session={{ ...session, status }} busy={sending || stopping || !!pendingSend || sendRecoveryBlocked || mentionSaving || contextSaving || providerSaving}
+                      onSavingChange={onProviderSaving} onNoticeChange={setAgentNotice} onChange={record => {
+                        onSessionChange(record);
+                        void getHealth(record.id).then(value => { if (activeSessionId.current === record.id) setHealth(value); }).catch(() => {});
+                      }} />}
+                    {session && <SessionAutonomy key={`autonomy:${session.id}`} session={{ ...session, status }} busy={sending || stopping || mentionSaving || contextSaving || providerSaving}
+                      onSavingChange={onProviderSaving} onChange={onSessionChange} onErrorChange={setAutonomyNotice} />}
+                    </div>
+                    {session?.connectionId && <ProviderUsageIndicator key={session.connectionId + ":" + session.connectionRevision} connectionId={session.connectionId} revision={session.connectionRevision} model={session.executionSelection?.model} />}
                     {session && <ContextUsageIndicator usage={contextUsage.sessionId === session.id ? contextUsage.usage : null} connected={connection === "connected"} />}
                   </div>
-                  {session && <SpeechInput key={session.id} disabled={sending || !!pendingSend || sendRecoveryBlocked} onText={text => setInput(current => current ? `${current}${/\s$/.test(current) ? "" : " "}${text}` : text)} />}
+                  {session && <SpeechInput key={session.id} onStart={suggestions.interact} disabled={sending || !!pendingSend || sendRecoveryBlocked} onText={text => setInput(current => current ? `${current}${/\s$/.test(current) ? "" : " "}${text}` : text)} />}
                   {running || stopping ? (
-                    <Button type="button" size="icon" className="shrink-0" disabled={sending || stopping} onClick={() => void stop()} aria-label="Stop" title="Stop response">
+                    <Button type="button" size="icon" className="shrink-0 @max-[640px]/composer:size-8" disabled={sending || stopping} onClick={() => void stop()} aria-label="Stop" title="Stop response">
                       {sending || stopping ? <Loader2 className="motion-safe:animate-spin" /> : <Square className="fill-current" />}
                     </Button>
                   ) : (
-                    <Button type="submit" size="icon" className="shrink-0" disabled={!session || sending || !!pendingSend || sendRecoveryBlocked || providerSaving || contextSaving || mentionSaving || !health?.available || !hasMessageContent(input, pending.length, uploaded.length)} aria-label="Send">
+                    <Button type="submit" size="icon" className="shrink-0 @max-[640px]/composer:size-8" disabled={!session || sending || !!pendingSend || sendRecoveryBlocked || providerSaving || contextSaving || mentionSaving || !health?.available || !hasMessageContent(input, pending.length, uploaded.length)} aria-label="Send">
                       {sending ? <Loader2 className="motion-safe:animate-spin" /> : <Send />}
                     </Button>
                   )}
                 </div>
+                {agentNotice?.sessionId === session?.id && agentNotice?.text && <p role="alert" className="text-xs text-destructive-foreground wrap-anywhere">{agentNotice.text}</p>}
+                {autonomyNotice?.sessionId === session?.id && autonomyNotice?.text && <p role="alert" className="text-xs text-destructive-foreground wrap-anywhere">{autonomyNotice.text}</p>}
               </InputGroupAddon>
             </InputGroup>
           </form>
@@ -1229,8 +1348,8 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
       )}
       </div>}
       </main>
-      {fullPage && workspace && <RetainedWorkspacePane open={mobileDetails} visible={workspaceVisible} reviewing={!!review} onClose={() => setMobileDetails(false)}>
-        <WorkspaceDetails sessionActions={workspaceActions} key={workspace.id} workspace={workspace} onSessionSelected={record => { setSessions(current => [record, ...current.filter(s => s.id !== record.id)]); pickSession(record); }} appMetadata={appIconMetadata} title={workspace.name || session?.title || "Workspace"} sessionId={session?.id} running={running} refresh={inventory.refresh} deleteConversation={session ? () => remove(session.id) : undefined} onReview={(tree, choice) => openReview(workspace.id, tree, session?.id, choice)} />
+      {fullPage && workspace && <RetainedWorkspacePane narrow={narrowWorkspace} width={columns.widths.details} resizeHandle={<ColumnResizeHandle label="Resize workspace details" side="left" width={columns.widths.details} min={COLUMN_MIN.details} max={columns.maximum.details} defaultWidth={COLUMN_DEFAULTS.details} onResize={width => columns.resize("details", width)} />} open={mobileDetails} visible={workspaceVisible} reviewing={!!review} onClose={() => setMobileDetails(false)}>
+        <WorkspaceDetails onSessionPicked={id => pickSession({ id })} onDeleteSession={remove} sessionActions={workspaceActions} key={workspace.id} workspace={workspace} onSessionSelected={record => { setSessions(current => [record, ...current.filter(s => s.id !== record.id)]); pickSession(record); }} appMetadata={appIconMetadata} title={workspace.name || session?.title || "Workspace"} sessionId={session?.id} running={running} refresh={inventory.refresh} deleteConversation={session ? () => remove(session.id) : undefined} onReview={(tree, choice) => openReview(workspace.id, tree, session?.id, choice)} />
       </RetainedWorkspacePane>}
       {review && <WorkspaceReview key={`${review.workspaceId}:${review.tree.id}`} workspaceId={review.workspaceId} tree={review.tree}
         choice={review.transcriptChoice ?? reviewChoices[review.tree.id] ?? { view: "session", path: "" }} onChoice={choice => {

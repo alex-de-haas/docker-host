@@ -33,7 +33,7 @@ public sealed class WorkspaceReviewHttpTests
         Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync(diff)).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync(basis + "/reviews/resolve", command, CoreJson.TypeInfo<PublicationReviewCommand>())).StatusCode);
         await apps.UpsertAppAsync(record with { GrantedCorePermissions = [CoreAppPermissions.Sources] });
-        Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync(read)).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync(read)).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await client.PostAsJsonAsync(basis + "/reviews/resolve", command, CoreJson.TypeInfo<PublicationReviewCommand>())).StatusCode);
         await apps.UpsertAppAsync(record with { GrantedCorePermissions = [CoreAppPermissions.WorkspacesRead, CoreAppPermissions.Sources] });
         client.DefaultRequestHeaders.Add("Cookie", "hosty_session=browser-session");

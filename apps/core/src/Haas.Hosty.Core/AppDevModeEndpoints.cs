@@ -118,8 +118,7 @@ internal sealed class AppDevModeMcpTools
         {
             var external = await authorization.RequireAsync(accessor.HttpContext, ct);
             var tree = await workspaces.Read(id, null, ct);
-            if (!external.Owns(tree.Owner)) throw new AppIdentityException("workspace_forbidden", "This credential does not own the worktree.");
-            owner = tree.Owner;
+            owner = external.Owner(tree.Owner.SessionId);
         }
         return new(caller.ActorUserId, "direct-mcp", owner);
     }

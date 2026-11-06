@@ -5,7 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Haas.Hosty.Core.Tests.Http;
 
-public sealed class AppManagementHttpTests
+public sealed partial class AppManagementHttpTests
 {
     [Theory]
     [InlineData("example.console")]
@@ -101,7 +101,7 @@ public sealed class AppManagementHttpTests
     public async Task DocumentationReadGrant_DoesNotPermitFullSourceOperations(string route)
     {
         await using var host = await CoreHttpHarness.StartAsync();
-        using var client = await CreateAppClient(host, "hosty.plans", [CoreAppPermissions.SourcesRead]);
+        using var client = await CreateAppClient(host, "hosty.documents", [CoreAppPermissions.SourcesRead]);
         await AssertError(await client.GetAsync(route), HttpStatusCode.Forbidden, "app_permission_required");
     }
 
@@ -125,6 +125,9 @@ public sealed class AppManagementHttpTests
     [InlineData("GET", "/api/core/agents", "core.configure")]
     [InlineData("GET", "/api/core/public-origin", "core.configure")]
     [InlineData("GET", "/api/core/development", "core.read")]
+    [InlineData("GET", "/api/apps/update-source/suggestions", "apps.read")]
+    [InlineData("GET", "/api/core/updates/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "core.read")]
+    [InlineData("PUT", "/api/core/update-feed", "core.configure")]
     [InlineData("GET", "/api/auth/invitations", "users.read")]
     [InlineData("PATCH", "/api/auth/users/missing", "users.manage")]
     public async Task OperationMapping_DeniesMissingGrant_AndRoutesAuthorizedRequests(string method, string route, string permission)

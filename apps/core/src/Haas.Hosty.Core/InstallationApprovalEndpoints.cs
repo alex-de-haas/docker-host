@@ -236,6 +236,8 @@ internal sealed class InstallationApprovalService(
 
     public async Task SubmitAsync(InstallationApproval entry, InstallationSubmit input, CancellationToken ct)
     {
+        if (entry.UpdatePlan?.Error is { } error)
+            throw new AppLifecycleException(entry.UpdatePlan.ErrorCode ?? "update_not_ready", error);
         var reviewed = entry.InstallPlan is { } plan
             ? await lifecycle.GetReviewedInstallReadinessAsync(plan, input.Settings, ct) : null;
         approvals.Submit(entry, input, reviewed);
@@ -577,7 +579,7 @@ internal static class InstallationApprovalEndpoints
     internal static void ProtectPage(HttpResponse response, bool closeWindow = false)
     {
         response.Headers.CacheControl = "no-store";
-        response.Headers["Content-Security-Policy"] = "default-src 'none'; font-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'none'; form-action 'self'; base-uri 'none'";
+        response.Headers["Content-Security-Policy"] = "default-src 'none'; img-src 'self'; font-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'none'; form-action 'self'; base-uri 'none'";
         if (closeWindow)
             response.Headers["Content-Security-Policy"] += $"; script-src 'sha256-{CloseWindowScriptHash}'";
         response.Headers["X-Frame-Options"] = "DENY";
@@ -618,8 +620,10 @@ internal static class InstallationApprovalEndpoints
                 ? $"<p>Unsupported optional permission (not granted): <code>{E(p)}</code></p>"
                 : $"<p class=permission-choice><label><input type=checkbox name=optionalPermission value=\"{E(p)}\"{(optionalDefaults.Contains(p, StringComparer.Ordinal) ? " checked" : "")}><span>{E(CoreAppPermissions.Describe(p))}<code>{E(p)}</code>{DeclarationChange(p, false)}</span></label></p>")) + "</fieldset>";
         var rights = permissions.Count == 0 ? "<li>No Core permissions requested</li>" : string.Join("", permissions.Select(p =>
-            $"<li>{E(CoreAppPermissions.Describe(p))}<code>{E(p)}</code>{DeclarationChange(p, true)}{(!installing && !before.Contains(p, StringComparer.Ordinal) ? " <span class=muted>(currently not granted; approval grants access)</span>" : "")}</li>"));
-        var removed = before.Concat(entry.PermissionPlan?.AcceptedRequired ?? entry.UpdatePlan?.PreviousRequiredCorePermissions ?? []).Concat(entry.PermissionPlan?.AcceptedOptional ?? entry.UpdatePlan?.PreviousOptionalCorePermissions ?? []).Distinct(StringComparer.Ordinal).Except(permissions.Concat(optional), StringComparer.Ordinal).Select(p => $"<li>Removed: {E(CoreAppPermissions.Describe(p))}</li>");
+            !CoreAppPermissions.Known.Contains(p, StringComparer.Ordinal)
+                ? $"<li>Unknown required permission (not granted): <code>{E(p)}</code>{DeclarationChange(p, true)}</li>"
+                : $"<li>{E(CoreAppPermissions.Describe(p))}<code>{E(p)}</code>{DeclarationChange(p, true)}{(!installing && !before.Contains(p, StringComparer.Ordinal) ? " <span class=muted>(currently not granted; approval grants access)</span>" : "")}</li>"));
+        var removed = before.Concat(entry.PermissionPlan?.AcceptedRequired ?? entry.UpdatePlan?.PreviousRequiredCorePermissions ?? []).Concat(entry.PermissionPlan?.AcceptedOptional ?? entry.UpdatePlan?.PreviousOptionalCorePermissions ?? []).Distinct(StringComparer.Ordinal).Except(permissions.Concat(optional), StringComparer.Ordinal).Select(p => $"<li>Removed{(CoreAppPermissions.Known.Contains(p, StringComparer.Ordinal) ? "" : " unknown permission")}: {E(CoreAppPermissions.Describe(p))}</li>");
         var roles = entry.InstallPlan?.RequestedRoles ?? entry.UpdatePlan?.TargetRoles ?? [];
         var previousRoles = entry.UpdatePlan?.CurrentConfirmedRoles ?? [];
         var roleItems = roles.Count == 0 ? "<li>No provider roles requested</li>" : string.Join("", roles.Select(role =>
@@ -628,6 +632,8 @@ internal static class InstallationApprovalEndpoints
         var source = entry.WorkspaceManifest?.SourcePath ?? entry.FeedsUrl ?? entry.InstallPlan?.ManifestPath ?? entry.UpdatePlan?.ManifestPath;
         var warning = entry.InstallPlan?.TargetRuntimeType is "localCommand" or "mixed"
             ? "<p class=warning>This app runs commands directly on your host, outside a container. Only install code you trust.</p>" : "";
+        if (permissions.Concat(optional).Any(p => !CoreAppPermissions.Known.Contains(p, StringComparer.Ordinal)))
+            warning += "<p class=warning>This Core does not support some requested permissions. Update the app or Core. These permissions are not granted; some app features may not work. If a later Core supports them, access still requires explicit approval.</p>";
         if (entry.InstallPlan is { System: true })
             warning += "<p class=warning><strong>System app.</strong> Administrators have access; other users need an explicit assignment. App permissions still apply.</p>";
         var access = entry.InstallPlan?.PrivateSources ?? entry.UpdatePlan?.PrivateSources;
@@ -664,7 +670,7 @@ internal static class InstallationApprovalEndpoints
         var action = entry.AssistantAccessBatch is not null ? "Save MCP access" : entry.WorkspaceManifest is not null ? "Allow workspace access" : entry.EnvironmentPlan is not null ? "Allow launch" : entry.AssistantAccessPlan is not null ? "Save MCP access" : entry.HostPathPlan is not null ? "Approve change" : entry.RemovalPlan is not null ? "Remove app" : entry.PermissionPlan is not null ? "Save permissions" : installing ? "Install app" : "Apply update";
         var buttonClass = entry.RemovalPlan is null ? "primary" : "danger";
         var body = entry.Status == "pending"
-            ? $"{(notice is null ? "" : $"<p role=status>{E(notice)}</p>")}{review}<form method=post>{installChoices}{removalChoices}{optionalReview}<div class=actions><input type=hidden name=nonce value=\"{E(nonce)}\"><button name=decision value=deny>Cancel</button><button class={buttonClass} name=decision value=approve{(unavailableRuntime || unavailableRemoval ? " disabled" : "")}>{action}</button></div></form>"
+            ? $"{(notice is null ? "" : $"<p role=status>{E(notice)}</p>")}{review}<form method=post>{installChoices}{removalChoices}{optionalReview}<div class=actions><input type=hidden name=nonce value=\"{E(nonce)}\"><button name=decision value=deny>Cancel</button><button class={buttonClass} name=decision value=approve{(unavailableRuntime || unavailableRemoval || entry.UpdatePlan?.Error is not null ? " disabled" : "")}>{action}</button></div></form>"
             : RenderOutcome(entry);
         if (closeWindow) body += $"<script>{CloseWindowScript}</script>";
         return CoreBrowserPages.Approval(title, name, version, entry.CallerName, body);

@@ -1,0 +1,9 @@
+{
+  "indexRef": "https://raw.githubusercontent.com/alex-de-haas/docker-host/app-releases/platform/feeds.json",
+  "legacyRepository": "alex-de-haas/docker-host",
+  "legacyFeedId": "main",
+  "legacyReleaseTag": "cli-dev",
+  "migratedFeedId": "daily",
+  "bridgeRef": "https://raw.githubusercontent.com/alex-de-haas/docker-host/app-releases/platform/bridge.json",
+  "legacyShellManifestPath": "apps/shell/manifest.json"
+}

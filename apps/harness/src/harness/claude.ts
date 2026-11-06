@@ -1,6 +1,9 @@
+import { readNativeQuestions, questionAnswers } from "./questions.js";
+import { UsageReader, absentUsage, claudeUsage, claudeLimitEvent } from "./provider-usage.js";
 import { ContextUsageReader, claudeContextUsage } from "./context-usage.js";
-import { toolResult, shouldRetainToolOutput } from "./tool-result.js";
+import { toolResult, toolDuration, shouldRetainToolOutput } from "./tool-result.js";
 import { randomUUID } from "node:crypto";
+import { suggestionText } from "./prompt-suggestion.js";
 import { claudeCommandResult, commandToolUseId, CommandCallHistory } from "./command-result.js";
 import { ActivityTracker, activeTool, type ActiveTool } from "./activity.js";
 import type {
@@ -56,6 +59,8 @@ interface ApprovalContext {
 export class ClaudeHarnessAdapter implements HarnessAdapter {
   readonly name = "claude-agent-sdk";
   readonly capabilities: HarnessCapabilities = {
+    promptSuggestions: true,
+    usage: { snapshots: true, events: true, kinds: ["quota", "credits"] },
     questions: true,
     appMcp: true,
     liveReconfigure: true,
@@ -86,6 +91,20 @@ export class ClaudeHarnessAdapter implements HarnessAdapter {
     return { available: true };
   }
 
+  async readUsage() {
+    if (!this.environment.CLAUDE_CODE_OAUTH_TOKEN) return absentUsage("unsupported", "unsupported_auth");
+    const { query } = await import("@anthropic-ai/claude-agent-sdk");
+    const controller = new AbortController();
+    const input = (async function* () { await new Promise<void>(resolve => controller.signal.addEventListener("abort", () => resolve(), { once: true })); })();
+    const client = query({ prompt: input, options: { env: this.environment, settingSources: [], persistSession: false,
+      abortController: controller, tools: [], mcpServers: {}, strictMcpConfig: true } });
+    const reader = new UsageReader(async () => typeof client.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET === "function"
+      ? claudeUsage(await client.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true }))
+      : absentUsage("unsupported", "unsupported_sdk"));
+    try { return await reader.refresh(); }
+    finally { reader.close(); controller.abort(); client.close(); }
+  }
+
   async models(): Promise<import("../worker/contracts.js").ModelCatalog> {
     const { query } = await import("@anthropic-ai/claude-agent-sdk");
     const { catalog, effortLabel } = await import("../worker/models.js");
@@ -112,6 +131,7 @@ interface PendingApproval {
 }
 
 interface PendingQuestion {
+  questions: HarnessQuestion[];
   /** The tool input as the model sent it; the answers are merged back into a copy of it. */
   input: Record<string, unknown>;
   resolve: (response: unknown) => void;
@@ -127,13 +147,17 @@ class ClaudeRun implements HarnessRun {
     setMcpServers?(servers: Record<string, unknown>): Promise<{ errors?: Record<string, string> }>;
     toggleMcpServer?(name: string, enabled: boolean): Promise<void>;
   } | null = null;
+  private usageReader: UsageReader | null = null;
+  async readUsage() { return this.usageReader?.refresh() ?? absentUsage(); }
   private contextReader: ContextUsageReader | null = null;
   private stopped = false;
   private turnActive = false;
+  private suggestionPending = false;
+  private nativeSessionId: string | null = null;
   private readonly commandRun = randomUUID();
   private commandTurn = 0;
   private readonly commandCalls = new Map<string, { id: string; rawId: string }>();
-  private readonly toolCalls = new Map<string, { id: string; rawId: string; name: string }>();
+  private readonly toolCalls = new Map<string, { id: string; rawId: string; name: string; durationMs?: number; timingConflict?: boolean }>();
   private readonly commandHistory = new CommandCallHistory();
   private readonly deniedToolCalls = new Set<string>();
   private ambiguousCommandDenial = false;
@@ -153,6 +177,7 @@ class ClaudeRun implements HarnessRun {
   }
 
   send(text: string): void {
+    this.suggestionPending = false;
     this.turnActive = true;
     this.commandTurn++;
     this.commandCalls.clear();
@@ -199,8 +224,21 @@ class ClaudeRun implements HarnessRun {
       return false;
     }
 
+    const accepted = questionAnswers(pending.questions, answers);
+    if (!accepted) return false;
+    // Claude keys answers by question text. Qualify duplicate wording in the updated tool input
+    // so two distinct questions cannot overwrite each other at the native boundary.
+    const raw = pending.input.questions as Record<string, unknown>[];
+    const nativeAnswers: Record<string, string> = {};
+    const nativeQuestions = raw.map((question, index) => {
+      const normalized = pending.questions[index]!;
+      const duplicate = pending.questions.filter(q => q.question === normalized.question).length > 1;
+      const key = duplicate ? `${normalized.question} [${normalized.id}]` : normalized.question;
+      nativeAnswers[key] = accepted[normalized.id ?? normalized.question]!;
+      return duplicate ? { ...question, question: key } : question;
+    });
     this.pendingQuestions.delete(questionId);
-    pending.resolve({ behavior: "allow", updatedInput: { ...pending.input, answers } });
+    pending.resolve({ behavior: "allow", updatedInput: { ...pending.input, questions: nativeQuestions, answers: nativeAnswers } });
     return true;
   }
 
@@ -241,6 +279,8 @@ class ClaudeRun implements HarnessRun {
     await this.query?.interrupt().catch(() => undefined);
   }
 
+  async disableSuggestions(): Promise<void> { this.options.promptSuggestions = false; this.suggestionPending = false; }
+
   async stopAndWait(): Promise<void> {
     await this.stop();
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -251,6 +291,7 @@ class ClaudeRun implements HarnessRun {
 
   async stop(): Promise<void> {
     this.stopped = true;
+    this.usageReader?.close();
     this.contextReader?.close();
     // Unblock any approval or question the harness is still paused on, then tear the query down.
     for (const [, pending] of this.pending) {
@@ -288,6 +329,11 @@ class ClaudeRun implements HarnessRun {
           permissionMode: this.options.autonomy === "autonomous" ? "bypassPermissions" : "default",
           allowDangerouslySkipPermissions: this.options.autonomy === "autonomous",
           includePartialMessages: true,
+          promptSuggestions: this.options.promptSuggestions === true,
+          hooks: {
+            PostToolUse: [{ hooks: [async (input: Record<string, unknown>) => this.recordToolDuration(input)] }],
+            PostToolUseFailure: [{ hooks: [async (input: Record<string, unknown>) => this.recordToolDuration(input)] }],
+          },
           // The preset is named explicitly rather than left to the SDK default, because the operator
           // profile is defined as behaving like the admin running Claude Code by hand — that is the
           // Claude Code prompt, and relying on a default to supply it would make the behavior depend
@@ -301,15 +347,22 @@ class ClaudeRun implements HarnessRun {
           // Host operator context: the harness reads the operator's own user+project settings
           // (CLAUDE.md, skills), exactly like an admin running Claude Code by hand.
           settingSources: ["user", "project"],
-          env: this.environment,
+          env: { ...this.environment, ...(this.options.nativeHome ? { HOME: this.options.nativeHome, CLAUDE_CONFIG_DIR: this.options.nativeHome } : {}) },
           ...(this.options.mcpServers ? { mcpServers: this.options.mcpServers } : {}),
           canUseTool: (toolName: string, input: Record<string, unknown>, context?: ApprovalContext) =>
             this.requestApproval(toolName, input, context),
         },
       } as never) as AsyncIterable<Record<string, never>> & { interrupt(): Promise<unknown>; close(): void;
+        usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET?(options: { skipBehaviors: boolean }): Promise<unknown>;
         getContextUsage?(options: { detail: "summary" }): Promise<unknown>;
         applyFlagSettings(settings: { model: string | null; effortLevel: string | null }): Promise<unknown> };
       this.query = query;
+      this.usageReader = new UsageReader(async () => this.environment.ANTHROPIC_API_KEY
+        ? absentUsage("unsupported", "unsupported_auth")
+        : typeof query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET === "function"
+          ? claudeUsage(await query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true }))
+          : absentUsage("unsupported", "unsupported_sdk"));
+      void this.readUsage().then(usage => { if (!this.stopped) this.options.onEvent({ type: "provider_usage", usage }); });
       if (query.getContextUsage) this.contextReader = new ContextUsageReader(
         async () => claudeContextUsage(await query.getContextUsage!({ detail: "summary" })),
         usage => this.options.onEvent({ type: "context_usage", usage }),
@@ -336,6 +389,9 @@ class ClaudeRun implements HarnessRun {
             void this.contextReader?.refresh();
           }
         }
+        if (value.type === "rate_limit_event") this.options.onEvent({ type: "provider_usage", usage: claudeLimitEvent(value.rate_limit_info) });
+        if (value.type === "assistant" && value.usage_report) this.options.onEvent({ type: "provider_usage", usage: claudeUsage(value.usage_report) });
+        if (value.type === "result") this.options.onEvent({ type: "provider_usage", usage: await this.readUsage() });
         this.dispatch(value);
       }
     } catch (error) {
@@ -346,6 +402,7 @@ class ClaudeRun implements HarnessRun {
         });
       }
     } finally {
+      this.usageReader?.close();
       this.contextReader?.close();
     }
   }
@@ -356,19 +413,15 @@ class ClaudeRun implements HarnessRun {
     context?: ApprovalContext,
   ): Promise<unknown> {
     if (toolName === ASK_USER_QUESTION) {
-      const questions = readQuestions(input);
-      // A malformed question set is answered rather than parked: parking it would hang the run on a
-      // card the UI cannot render, and the model can recover from being told the call was wrong.
-      return questions.length === 0
-        ? Promise.resolve({
-            behavior: "deny",
-            message: "AskUserQuestion was called with no usable questions; ask in plain text instead.",
-          })
-        : new Promise((resolve) => {
-            const questionId = randomUUID();
-            this.pendingQuestions.set(questionId, { input, resolve });
-            this.options.onEvent({ type: "question_request", questionId, questions });
-          });
+      let questions: HarnessQuestion[];
+      try { questions = readNativeQuestions(input, "claude"); }
+      catch (error) { return Promise.resolve({ behavior: "deny", message: error instanceof Error ? error.message : "Unsupported question." }); }
+      return new Promise((resolve) => {
+        const questionId = randomUUID();
+        this.pendingQuestions.set(questionId, { input, questions, resolve });
+        this.options.onEvent({ type: "question_request", questionId, questions, blocking: true,
+          ...(context?.toolUseID ? { native: { itemId: context.toolUseID } } : {}) });
+      });
     }
 
     // Two different grounds, kept apart on purpose. The set above is read-only because the gateway
@@ -396,9 +449,32 @@ class ClaudeRun implements HarnessRun {
     });
   }
 
+  private recordToolDuration(input: Record<string, unknown>): Record<string, never> {
+    const durationMs = toolDuration(input.duration_ms);
+    if (!this.turnActive || this.stopped || durationMs === undefined || input.agent_id !== undefined) return {};
+    // Subagent hook IDs do not identify the parent tool in the transcript; do not guess that join.
+    const matches = [...this.toolCalls.values()].filter(tool => tool.rawId === input.tool_use_id && tool.name === input.tool_name);
+    const main = this.toolCalls.get(JSON.stringify(["main", input.tool_use_id]));
+    const tool = matches.length === 1 && matches[0] === main ? main : undefined;
+    if (tool && !tool.timingConflict) {
+      if (tool.durationMs !== undefined && tool.durationMs !== durationMs) {
+        delete tool.durationMs;
+        tool.timingConflict = true;
+      } else tool.durationMs = durationMs;
+    }
+    return {};
+  }
+
   private dispatch(message: Record<string, unknown>): void {
     if (this.stopped) return;
     const type = message.type;
+    if (type === "prompt_suggestion") {
+      if (this.suggestionPending && message.session_id === this.nativeSessionId) {
+        this.suggestionPending = false;
+        this.options.onEvent({ type: "prompt_suggestion", text: suggestionText(message.suggestion) });
+      }
+      return;
+    }
     if (type === "tool_progress" && this.turnActive && typeof message.tool_use_id === "string") {
       if (this.completedTools.has(message.tool_use_id)) return;
       if (message.tool_name !== ASK_USER_QUESTION) {
@@ -414,6 +490,12 @@ class ClaudeRun implements HarnessRun {
       if (Array.isArray(content)) for (const block of content) {
         if (block.type === "tool_result" && typeof block.tool_use_id === "string") {
           const key = JSON.stringify([message.parent_tool_use_id ?? "main", block.tool_use_id]);
+          const effectId = commandToolUseId(this.commandRun, this.commandTurn, block.tool_use_id, typeof message.parent_tool_use_id === "string" ? message.parent_tool_use_id : "main");
+          if (this.turnActive && !message.isReplay && effectId) {
+            const structured = resultBlocks.length === 1 && message.tool_use_result && typeof message.tool_use_result === "object" ? message.tool_use_result as Record<string, unknown> : {};
+            this.options.onEvent({ type: "native_effect", id: effectId,
+              state: structured.detachedToolCall === true || structured.backgroundedByUser === true || typeof structured.backgroundTaskId === "string" ? "unknown" : "settled" });
+          }
           const command = this.commandCalls.get(key);
           if (this.turnActive && !message.isReplay && command && !this.deniedToolCalls.has(command.rawId)) {
             const result = claudeCommandResult(command.id, block,
@@ -433,7 +515,7 @@ class ClaudeRun implements HarnessRun {
               ? claudeCommandResult(command.id, block, resultBlocks.length === 1 ? message.tool_use_result : undefined)?.status ?? "unknown"
               : block.is_error === true ? "failed" : deferred ? "unknown"
                 : block.is_error === false || block.is_error === undefined ? "completed" : "unknown";
-            this.options.onEvent(toolResult(tool.id, status, block.content));
+            this.options.onEvent(toolResult(tool.id, status, block.content, deferred ? undefined : tool.durationMs));
           }
           this.commandCalls.delete(key);
           this.toolCalls.delete(key);
@@ -447,6 +529,7 @@ class ClaudeRun implements HarnessRun {
       return;
     }
     if (type === "system" && message.subtype === "init" && typeof message.session_id === "string") {
+      this.nativeSessionId = message.session_id;
       if (this.options.resumeHarnessSessionId && message.session_id !== this.options.resumeHarnessSessionId) {
         this.options.onEvent({ type: "error", message: "Claude did not resume the requested native session; existing history is preserved." });
         void this.stop(); return;
@@ -485,6 +568,10 @@ class ClaudeRun implements HarnessRun {
           if (block.type === "text" && typeof block.text === "string" && block.text) {
             this.options.onEvent({ type: "assistant_text", text: block.text });
           } else if (block.type === "tool_use") {
+            if (this.turnActive && !message.isReplay) {
+              const effectId = commandToolUseId(this.commandRun, this.commandTurn, block.id, typeof message.parent_tool_use_id === "string" ? message.parent_tool_use_id : "main");
+              if (effectId) this.options.onEvent({ type: "native_effect", id: effectId, state: "started" });
+            }
             if (typeof block.id === "string") this.proposedTools.set(block.id, activeTool(String(block.name ?? "Tool"), block.input));
             // The question card is already the transcript record for an ask, so the raw tool_use
             // block would render a second, redundant entry carrying the same options as JSON.
@@ -515,6 +602,7 @@ class ClaudeRun implements HarnessRun {
     }
 
     if (type === "result") {
+      this.suggestionPending = this.options.promptSuggestions === true && message.subtype === "success" && message.is_error !== true;
       this.activity.reset();
       this.turnActive = false;
       this.commandCalls.clear();
@@ -526,7 +614,7 @@ class ClaudeRun implements HarnessRun {
       }
       this.options.onEvent({
         type: "result",
-        status: String(message.subtype ?? "success"),
+        status: message.is_error === true ? "failed" : String(message.subtype ?? "success"),
         costUsd: typeof message.total_cost_usd === "number" ? message.total_cost_usd : undefined,
         usage: usage
           ? {
@@ -543,42 +631,6 @@ class ClaudeRun implements HarnessRun {
 // Validated rather than cast: the input is model output, so a missing options array or a
 // non-string label is a live possibility, and a card built from it would break the panel for a
 // pause nobody could then resolve.
-function readQuestions(input: Record<string, unknown>): HarnessQuestion[] {
-  const raw = Array.isArray(input.questions) ? input.questions : [];
-  const questions: HarnessQuestion[] = [];
-  for (const entry of raw as Array<Record<string, unknown>>) {
-    if (typeof entry?.question !== "string" || !entry.question.trim()) {
-      continue;
-    }
-
-    const options: HarnessQuestion["options"] = [];
-    for (const option of (Array.isArray(entry.options) ? entry.options : []) as Array<Record<string, unknown>>) {
-      if (typeof option?.label === "string" && option.label.trim()) {
-        options.push({
-          label: option.label,
-          description: typeof option.description === "string" ? option.description : "",
-          preview: typeof option.preview === "string" ? option.preview : undefined,
-        });
-      }
-    }
-
-    // An option-less question cannot be rendered as a choice; dropping it is better than showing a
-    // card with nothing to click.
-    if (options.length === 0) {
-      continue;
-    }
-
-    questions.push({
-      question: entry.question,
-      header: typeof entry.header === "string" ? entry.header : "",
-      multiSelect: entry.multiSelect === true,
-      options,
-    });
-  }
-
-  return questions;
-}
-
 // Minimal pushable async iterable: query() consumes it as the streaming prompt, so the session
 // stays open across user turns until end() is called.
 class PushableStream<T> implements AsyncIterable<T> {

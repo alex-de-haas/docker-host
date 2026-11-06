@@ -22,7 +22,7 @@ internal interface IRegistryDigestResolver
     Task<string?> TryResolveDigestAsync(RuntimeDockerImage image, CancellationToken cancellationToken = default);
 }
 
-internal sealed class RegistryDigestResolver(
+internal sealed partial class RegistryDigestResolver(
     IHttpClientFactory httpClientFactory,
     ILogger<RegistryDigestResolver> logger) : IRegistryDigestResolver
 {
@@ -52,7 +52,7 @@ internal sealed class RegistryDigestResolver(
         try
         {
             var client = httpClientFactory.CreateClient(HttpClientName);
-            var manifestUrl = $"https://{registry}/v2/{repository}/manifests/{Uri.EscapeDataString(image.Tag)}";
+            var manifestUrl = $"https://{registry}/v2/{repository}/manifests/{Uri.EscapeDataString(image.Digest ?? image.Tag)}";
             var scope = $"repository:{repository}:pull";
 
             var response = await SendManifestProbeAsync(client, manifestUrl, registry, scope, useCachedToken: true, cancellationToken);

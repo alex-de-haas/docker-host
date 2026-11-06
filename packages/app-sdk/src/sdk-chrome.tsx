@@ -55,8 +55,13 @@ export function SdkLoader() {
       <rect key={index} x={x} y={y} width="18" height="18" style={{ "--hosty-cell-delay": `${index * .16}s` } as CSSProperties} />)}
   </svg>;
 }
-type Icon = "close" | "external" | "menu" | "plus" | "minus" | "check" | "warning" | "error";
+type Icon = "sidebar" | "app" | "tools" | "pin" | "chevron" | "close" | "external" | "menu" | "plus" | "minus" | "check" | "warning" | "error";
 const paths: Record<Icon,string> = {
+  sidebar: "M9 3v18M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z",
+  app: "M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2ZM3 9h18M7 6h.01M10 6h.01",
+  tools: "M3 3h18v18H3ZM3 9h18M15 9v12", chevron: "m6 9 6 6 6-6",
+  pin: "M16 3H8l1 7-4 4v2h14v-2l-4-4 1-7ZM12 16v6",
+
   close: "m18 6-12 12M6 6l12 12", external: "M15 3h6v6m0-6L10 14m8-1v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6",
   menu: "M4 6h16M4 12h16M4 18h16", plus: "M12 5v14M5 12h14", minus: "M5 12h14", check: "m20 6-11 11-5-5",
   warning: "m12 3 9 9-9 9-9-9 9-9Zm0 4v6m0 3v.01", error: "M12 8v4m0 4v.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z",

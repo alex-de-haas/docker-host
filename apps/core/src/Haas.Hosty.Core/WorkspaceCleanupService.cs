@@ -5,17 +5,18 @@ namespace Haas.Hosty.Core;
 internal sealed record WorkspaceCleanupResource(string Id, string Kind, string RequestId, long Revision);
 internal sealed record WorkspaceCleanupJob(string WorkspaceId, string UserId, WorkspaceWorkflowCommand Input,
     WorkspaceCleanupResource[] Resources);
-internal sealed record WorkspacePreviews(CoreEnvironmentView[] Environments, SandboxView[] Instances, Dictionary<string, CoreEnvironmentApplications> Applications);
+internal sealed record WorkspacePreviews(CoreEnvironmentView[] Environments, Dictionary<string, CoreEnvironmentApplications> Applications);
 
 // Coordinates existing resource owners. It does not implement another container supervisor.
 internal sealed partial class WorkspaceCleanupService(CoreDataPaths paths, WorkspaceInspectionService inspection,
     DevelopmentWorkspaceService workspaces, PublicationService publications, AppRegistryStore apps,
     CoreEnvironmentStore environments, CoreEnvironmentService environmentService, CoreEnvironmentAccess access,
-    SandboxStore sandboxes, SandboxService sandboxService, SandboxOperations sandboxOperations)
+    CoreLifecycleService? lifecycle = null, IHostApplicationLifetime? hostLifetime = null)
 {
     private readonly ConcurrentDictionary<string, SemaphoreSlim> gates = new(StringComparer.Ordinal);
-    private static bool Belongs(SandboxActor actor, SandboxContext? context, WorkspaceOwner owner, string workspaceId)
-        => actor.UserId == owner.UserId && (context?.WorkspaceId == workspaceId ||
+    internal static bool Belongs(SandboxActor actor, SandboxContext? context, WorkspaceOwner owner, string workspaceId)
+        => context?.WorkspaceId == workspaceId ||
+            actor.UserId == owner.UserId && (
             !owner.IsExternal && context?.SessionId == owner.SessionId && actor.AppId == owner.AppId && actor.Installation == owner.Installation);
     private async Task RequirePermission(string appId, string permission, CancellationToken ct)
     {
@@ -27,9 +28,7 @@ internal sealed partial class WorkspaceCleanupService(CoreDataPaths paths, Works
     {
         var owner = await inspection.ReadOwnerAsync(workspaceId, userId, ct);
         var children = (await environments.ListAsync(ct)).Where(e => Belongs(e.Owner, e.Request.Context, owner with { UserId = userId }, workspaceId) && e.State != "finished").ToArray();
-        var instances = (await sandboxes.ListAsync(ct)).Where(s => Belongs(s.Owner, s.Request.Context, owner with { UserId = userId }, workspaceId) && s.State != "disposed").ToArray();
         if (children.Length > 0) await RequirePermission(appId, CoreAppPermissions.CoreEnvironmentsRead, ct);
-        if (instances.Length > 0) await RequirePermission(appId, CoreAppPermissions.SandboxesRead, ct);
         var applications = new Dictionary<string, CoreEnvironmentApplications>();
         foreach (var child in children.Where(e => e.State == "running"))
         {
@@ -37,12 +36,16 @@ internal sealed partial class WorkspaceCleanupService(CoreDataPaths paths, Works
             catch (Exception ex) when (ex is SandboxException or HttpRequestException or IOException)
             { applications[child.Id] = new("unavailable", [], "Application preview status is unavailable."); }
         }
-        return new(await Task.WhenAll(children.Select(e => environmentService.ReadAsync(new(userId), e.Id, ct))), instances.Select(SandboxService.View).ToArray(), applications);
+        return new(await Task.WhenAll(children.Select(e => environmentService.ReadAsync(new(userId), e.Id, ct))), applications);
     }
-    public Task<WorkspaceWorkflow> DeleteAsync(string workspaceId, string userId, string appId,
+    public async Task<WorkspaceWorkflow> DeleteAsync(string workspaceId, string userId, string appId,
         WorkspaceWorkflowCommand input, CancellationToken ct)
-        => workspaces.WithResourceContextAsync(new(userId), new(WorkspaceId: workspaceId),
-            () => DeleteResourcesAsync(workspaceId, userId, appId, input, ct), ct, cleanup: true);
+    {
+        var result = await ApplyDeleteAsync(workspaceId, userId, appId, new(input.RequestId), ct);
+        return new(result.State == "removed" ? "deleted" : "deleting", input.ExpectedRevision + 1,
+            ChangedBy: userId, Closure: "closed", Operations: [new(result.RequestId, "discard", input.ExpectedRevision,
+                result.State == "removed" ? "succeeded" : "pending", result.Error)]);
+    }
 
     public async Task<CoreEnvironmentApiResponse> PreviewActionAsync(string workspaceId, string userId, string caller,
         string environmentId, string targetApp, string action, PreviewCheckRun? input, CancellationToken ct)
@@ -86,7 +89,7 @@ internal sealed partial class WorkspaceCleanupService(CoreDataPaths paths, Works
                 await FinalizeAsync(owner, ct);
                 return DevelopmentWorkspaceService.DeletedResult(input);
             }
-            var heads = await publications.MergedWorkspaceHeadsAsync(owner, ct);
+            var heads = await publications.MergedWorkspaceHeadsAsync(owner, ct, userId);
             var state = await workspaces.ChangeWorkflowAsync(owner, userId, "delete", input, heads, ct, prepareOnly: true);
             if (state.State == "deleted") return state;
             var path = Path.Combine(paths.CoreRoot, "development", "cleanup", request.ToString("D") + ".json");
@@ -95,20 +98,16 @@ internal sealed partial class WorkspaceCleanupService(CoreDataPaths paths, Works
                 throw DevelopmentWorkspaceService.Error("request_conflict", "This cleanup request belongs to another workspace or revision.");
             job ??= new(workspaceId, userId, input, []);
             var children = (await environments.ListAsync(ct)).Where(e => Belongs(e.Owner, e.Request.Context, owner, workspaceId) && e.State != "finished").ToArray();
-            var instances = (await sandboxes.ListAsync(ct)).Where(s => Belongs(s.Owner, s.Request.Context, owner, workspaceId) && s.State != "disposed").ToArray();
             if (children.Length > 0) await RequirePermission(appId, CoreAppPermissions.CoreEnvironmentsManage, ct);
-            if (instances.Length > 0) await RequirePermission(appId, CoreAppPermissions.SandboxesManage, ct);
             var resources = job.Resources.ToList();
             foreach (var child in children) if (!resources.Any(r => r.Kind == "core" && r.Id == child.Id))
                 resources.Add(new(child.Id, "core", Guid.NewGuid().ToString("D"), child.Revision));
-            foreach (var instance in instances) if (!resources.Any(r => r.Kind == "sandbox" && r.Id == instance.Id))
-                resources.Add(new(instance.Id, "sandbox", Guid.NewGuid().ToString("D"), instance.Revision));
             job = job with { Resources = resources.ToArray() };
             await JsonStorage.WriteAsync(path, job, restrictToOwner: true);
             async Task<WorkspaceCleanupResource> RefreshUnaccepted(WorkspaceCleanupResource resource, long revision, bool recorded)
             {
                 // Revision changes prove the old expected revision cannot be admitted. Replace only
-                // an unjournaled request; accepted Finish/Dispose always retains its replay identity.
+                // an unjournaled request; accepted Finish always retains its replay identity.
                 if (recorded || revision == resource.Revision) return resource;
                 var fresh = resource with { RequestId = Guid.NewGuid().ToString("D"), Revision = revision };
                 resources[resources.FindIndex(r => r.Kind == resource.Kind && r.Id == resource.Id)] = fresh;
@@ -133,20 +132,11 @@ internal sealed partial class WorkspaceCleanupService(CoreDataPaths paths, Works
                     var result = await environmentService.CommandAsync(new(userId), resource.Id, "finish", new(resource.RequestId, resource.Revision), ct);
                     if (result.State != "finished") throw DevelopmentWorkspaceService.Error("cleanup_pending", "Child Core cleanup is not finished. Retry this workspace action.");
                 }
-                else
-                {
-                    var record = await sandboxService.ReadAsync(new(userId), resource.Id, ct);
-                    if (record.State == "disposed") continue;
-                    if (!Belongs(record.Owner, record.Context, owner, workspaceId)) throw DevelopmentWorkspaceService.Error("forbidden", "Sandbox ownership changed.");
-                    await RequirePermission(appId, CoreAppPermissions.SandboxesManage, ct);
-                    resource = await RefreshUnaccepted(resource, record.Revision, record.Operations.Any(o => o.Id == resource.RequestId));
-                    var result = await sandboxOperations.CommandAsync(new(userId), resource.Id, "dispose", new(resource.RequestId, resource.Revision), ct);
-                    if (result.State != "disposed") throw DevelopmentWorkspaceService.Error("cleanup_pending", "Sandbox cleanup is pending. Retry this workspace action.");
-                }
+                else throw DevelopmentWorkspaceService.Error("consumer_unavailable", "Unknown workspace resource kind.");
             }
             // Fresh verification still applies after slow shutdowns. Core preserves released
             // worktree receipts, so a partially successful cleanup can safely resume here.
-            heads = await publications.MergedWorkspaceHeadsAsync(owner, ct);
+            heads = await publications.MergedWorkspaceHeadsAsync(owner, ct, userId);
             state = await workspaces.ChangeWorkflowAsync(owner, userId, "delete", input, heads, ct);
             await FinalizeAsync(owner, ct);
             return state;

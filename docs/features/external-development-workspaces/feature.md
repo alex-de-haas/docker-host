@@ -1,13 +1,13 @@
 ---
 created: 2026-10-07
-updated: 2026-10-25
-summary: Local external agents use authorized Core-owned worktrees, separate plan progress, and read-only pull request tracking through Harness and Core.
-components: [apps/core, apps/plans]
+updated: 2026-11-04
+summary: Authorized external clients use registered Core worktrees, independent test environments, canonical publication and native Git/provider reconciliation.
+components: [apps/core, apps/harness, apps/documents]
 ---
 
 # External Development Workspaces
 
-## Registry And Ownership
+## Registry And Allocation
 
 Core creates registered Git worktrees for local external agents using the same repository store,
 target refs, durable operations and observer as [assistant session workspaces](../assistant-session-workspaces/feature.md).
@@ -23,26 +23,29 @@ identity. Replaying preparation with changed explicit arguments is refused.
 
 The direct Core MCP workspace tools require both `mcp:read` and the separately reviewed
 `mcp:workspaces` permission, including listing, observation and byte-bearing diffs. Every call resolves
-the current credential, administrator, OAuth grant/client and source grant. Browser-only, device,
-app and delegated credentials do not establish this external authority. Other Core operation scopes
-remain independent. Existing Harness session tools keep their installed-app authorization.
+the current credential, administrator, OAuth grant/client and source grant. Browser-only and device credentials do not establish this external allocation authority. Independently
+named applications use the canonical installed-app caller adapter with current user/source permission;
+this does not turn an app credential into an external principal. Other operation scopes remain
+independent. Legacy session endpoints retain their installed-app authorization.
 
-Listing omits individual records that fail current source-access revalidation or cannot be read,
-including released records with revoked private-source grants. Other authorized workspaces remain
-discoverable with their operation IDs and activity leases; records with validated access and an
-explicit unavailable observation remain visible. Omitted records expose no cached source or change
-metadata. Direct reads and operations still require current source authority.
+Listing includes every retained workspace allowed by the application's operation permission and the
+initiating administrator's current rights. Creator, session, credential and source-provider grant do
+not filter retained local source. Invalid records are omitted individually. Allocation identity and
+old operation receipts remain unchanged; a fresh authorized credential can continue an existing tree.
 
 Preparation requires a short purpose-based workspace `name`, separate from the external agent label.
 The `rename_workspace` tool changes that aggregate name with an exact UUID replay receipt; names
 propagate through workspace observation without changing source, ownership or active runtimes.
 
 Preparation selects an installed app's declared repository and optional target branch. It returns
-a Core-owned absolute directory, registered branch, target branch and original base. External
+a Core-owned absolute directory, registered branch, target branch and original base.
+New branches use the [workspace task-name policy](../assistant-session-workspaces/feature.md#workspace-branch-names):
+a bounded readable slug and a short unique suffix. Existing branches retain their original names;
+workspace renaming changes display metadata only. Clients use the returned exact branch and full
+worktree ID independently. External
 preparation requires an explicit activity lease and accepts no assistant session path. Native file
-edits and commits in that directory appear through the existing observer. Private-source reads and
-operations revalidate current reviewed source ownership; cleared, rebound or revoked grants do not
-restore earlier managed access from cached observations.
+edits and commits in that directory appear through the existing observer. Remote source operations revalidate the acting user's provider authority. Retained local source does
+not require the creator's provider connection and never transfers its credentials.
 
 ## Plans Presentation
 
@@ -52,22 +55,37 @@ owners. Tracked-branch progress and each workspace's progress remain independent
 uncommitted plan edits. Observation errors stay visible with their evidence time. Existing assistant
 links and older payloads without external metadata retain their original presentation.
 
-[Harness Development](../harness-development-ui/feature.md) includes external workspaces in its
-unified workspace-and-chat list, with the same workspace icon. Core aggregates repositories sharing one external principal/user/task reference.
+[Harness Development](../harness-development-ui/feature.md) includes external workspaces on its
+Workspaces page, with the same workspace icon. Core aggregates repositories sharing one external principal/user/task reference.
 The legacy worktree ID stays unchanged; `workspaceId` identifies its logical group. The standalone
 [Workspaces app is retired](../workspaces-app/feature.md); Core inspection records and source APIs remain.
 Shell provides ordinary app navigation and has no workspace source access.
 
 ## Pull Request Observation
 
-Core's existing 30-second publication observer excludes deleting/deleted workspaces, handles ordinary
-publications first, then refreshes
-at most ten external PR references within a ten-second provider deadline. A rotating cursor carries
-remaining references into later cycles, including after a slow request. Previously observed facts
-remain available with their original timestamps until their turn; a timeout replaces only that
-reference's facts with an explicit unavailable result.
-The read-only path reuses the source provider's PR/check/review query; it never creates publication
-commands, merges, pushes, resolves review threads or schedules source cleanup.
+Core's [shared PR scheduler](../harness-pull-request-inbox/feature.md#shared-observation) excludes
+inactive and deleting/deleted workspaces. Visible authorized workspace scopes promote active CI to
+the ten-second target and quiet PRs to one minute; without demand, reads use a five-minute baseline.
+The common queue, account pacing and compact observation cache coordinate ordinary publications,
+external references and the installed-app inbox. Provider work has a bounded deadline; failed reads
+retain the prior evidence timestamp and are retried under the shared budget.
+The read-only path never creates publication commands, merges, pushes, resolves review threads or
+schedules source cleanup. Compact facts carry no publication-completion or review-body evidence.
+
+Inspection selects the newest retained observation for each linked PR across the external-reference
+snapshot and its matching publication record, including retained publication history. Both sources
+must match the current workspace owner, repository and selected connection; publication records
+also match the provider, head repository, target branch and canonical PR URL/number. A newer
+publication status read therefore replaces an older external snapshot without a provider call from
+inventory. Equal-time contradictory observations remain unavailable.
+Failed external attempts retain an internal per-reference timestamp. A newer failure keeps the
+summary unavailable instead of exposing an older successful publication status; a newer verified
+success restores it. Untimestamped legacy failures remain unavailable until a live refresh.
+
+Explicit completion verification retains sanitized display observations before background checks
+stop. External batch, compact and completion writers merge under the same guarded publication lock,
+preserving newer observations and other linked PRs. They recheck current bindings and deletion state;
+retained display facts do not authorize completion or recreate deleted workspaces.
 
 Core uses the workspace's reviewed Git connection when present. For public source without a
 selected connection, it uses the owner's sole connected account for that provider. Missing,
@@ -90,7 +108,7 @@ evidence; a linked card's merged state or passing CI never proves the workspace 
 Observations persist under Core's `development/publications/external` directory and survive restart
 while the workspace is retained. Successful workspace Delete removes these snapshots; late provider
 responses cannot recreate them. Startup recovery removes verified legacy deleted workspace records
-and their caches under the [workspace deletion contract](../workspace-lifecycle-controls/feature.md#cleanup-and-recovery).
+and their caches under the [workspace deletion contract](../workspace-lifecycle-controls/feature.md#unified-delete-and-recovery).
 Reads revalidate the current administrator, source access and connection before showing cached facts.
 The projection includes state, draft flag, checks, review decision, unresolved-thread count and
 observation time, but omits credentials and private review comment bodies. Removed references are
@@ -161,10 +179,12 @@ of a tool in that catalog is not proof that the credential may call it.
 A logical task has a stable opaque `taskId`, chosen once for that work context and reused when
 resuming it. Use a nonempty ID of at most 200 characters without surrounding whitespace or control
 characters. OAuth binds ownership to the current administrator and durable grant; token refresh
-retains that binding. A newly authorized grant is a new principal and does not inherit the old
-one's source. Tasks within one grant are separate allocations but share its authority. A task ID,
-agent label or conversation ID is not an authorization boundary. Use separate grants when separate
-authority is required. Core records no imported conversation and provides no external-session URL.
+retains that binding. A newly authorized grant has its own allocation context but can access the same retained source
+through the workspace operation permission. Tasks remain separate allocations. A task ID, agent label,
+conversation ID or original credential is not an authorization boundary. Core records no imported conversation and provides no external-session URL.
+[Harness sessions](../workspace-sessions/feature.md) can attach to the same workspace without
+changing its allocation identity or importing the external transcript. Their private chats and
+activity are tracked separately from the external client and its leases.
 
 1. Read the user's approved scope and select an installed app with declared source. Do not register
    an arbitrary repository, change app source selection or install/start an app merely to obtain
@@ -219,10 +239,62 @@ in the installed app's Core, with recoverable Return. It does not mount ordinary
 Core or imply source/data rollback.
 
 The direct external workspace scope does not itself authorize sandbox or publication operations.
-Clients use their supported, separately authorized Harness/Core adapters; absent adapter support
-is reported explicitly. The [remaining Draft](plan.md) owns broader direct-client integration.
+Clients use the canonical Core API/MCP adapters with separately reviewed environment and publication
+authority. An older Core without those adapters has an explicit capability limitation; its workspace
+grant cannot be repurposed into lifecycle or publication authority.
 Repositories without a registered source binding retain their authorized repository workflow;
 the guidance does not create bindings or permission grants implicitly.
+
+## Canonical Environment, Publication And Work Lifecycle
+
+Direct OAuth/manual callers use Core API/MCP without installing Harness or creating a chat. Application
+callers use the same domain services through their current installation, initiating user and reviewed
+permissions. Creator identity records attribution; authorized same-user access is not limited to the
+client that originally created the resource. Other-user resources and revoked source access remain denied.
+
+Environment discovery uses `mcp:environments-read`; mutations additionally require
+`mcp:environments-manage`. Child API/setup needs the distinct `mcp:environment-api` scope. Registered
+source inputs also require workspace authority. `environment_consent` validates a proposed creation;
+it does not grant authority or start a child. Create, start, stop, restart and Finish retain their
+UUID/revision checks. Status reports observed process identity and readiness. Optional task/conversation
+references do not determine the environment's lifetime. Active or unknown registered consumers block
+Stop, Restart and Finish until their owners provide exact stop evidence; disconnect and elapsed time
+are not evidence. Source cleanup and test-data disposal remain separate operations.
+
+Publication reads require workspace plus `mcp:publication-read`; remote publication mutations also
+require `mcp:publication-write` and a current authorized source-provider connection. `/api/publications/v1`
+and `pr_*` MCP operations compose existing configure, commit, push, publish, link, review, ready, merge,
+completion and corrective-cycle services. They retain selected-file review receipts, expected heads,
+request fingerprints and current actor checks. A read grant never creates remote publication authority.
+Connection discovery and cached observations revalidate the acting user; unavailable or ambiguous
+provider facts do not imply successful publication or cleanup eligibility.
+
+`/api/workflows/v1` and `workflow_*` tools expose status, pause, resume and completion for a registered
+aggregate workspace. Pause first prepares a closure; confirmation follows stopped consumers under the
+same request. Completion consumes fresh publication evidence. Harness retains responsibility for
+stopping its own native writers and releasing leases before a queued handover; it cannot establish
+stop merely by submitting a completion tool call. None of these operations deletes conversations or
+Finishes independent environments.
+
+A normal external workflow prepares source, edits/builds/tests it, creates and starts a separate test
+Core, verifies readiness and normal password identity, exports useful evidence and Finishes that test
+Core. Publication then uses the authorized provider with exact-head review and retained request IDs.
+After a lost reply, observe or repeat the original request and arguments. Do not invent a replacement
+UUID, copy another application's credentials or switch the ordinary Core to bypass unavailable support.
+
+## Native Git And Provider Reconciliation
+
+Core observes native edits and commits from Git, including the current branch, HEAD, dirty files and
+ancestry. An interrupted managed merge can be reconciled when native Git has completed the exact
+recorded merge: both expected parents must be ancestors and no merge remains in progress. Dirty
+source is preserved. Uncertain or incompatible state stays explicit rather than being marked complete.
+
+Authorized provider observation can discover an externally created PR on the exact repository and
+branch. Discovery does not fabricate a Core push/publication receipt or automatically set a reviewed
+published head. Explicit `pr_link` verifies the selected repository, branch and head before adoption;
+multiple candidates, foreign forks, unrelated refs and unavailable authority retain their refusal or
+unknown outcome. The canonical adapter preserves the original creator and records the current actor.
+An existing PR or native push never bypasses exact-head completion, active-consumer or cleanup checks.
 
 ## Workspace Tools And Recovery
 
@@ -234,18 +306,15 @@ Revocation stops future Core calls; it does not remove the external program's ex
 system access to a directory it already received. These instructions coordinate trusted local work
 and do not create a Hosty filesystem sandbox.
 
-An administrator can dispose of unwanted external work without reconnecting the old client.
-Harness's separate [confirmed physical discard](../workspace-lifecycle-controls/feature.md#confirmed-physical-discard)
-reviews and removes registered worktrees/private branches, unfinished files, owned temporary test
-data and workspace metadata. Pause and explicit stopped-process/lease recovery resolve abandoned
-activity first; live or unknown consumers remain blockers. Discard is an operator inspection action,
-not additional authority granted to an external credential. Normal `cleanup_workspace`, Complete,
-Delete and retention still refuse unfinished work.
+An authorized administrator can delete unwanted work through the same [Delete operation](../workspace-lifecycle-controls/feature.md#unified-delete-and-recovery)
+from Harness or MCP. Dirty/unmerged source and retained leases are warnings, not permission gates.
+The UI confirms once; MCP Ask/Run/Disabled is the broker's approval point. Core requires no second
+review, typed name, prior inspection, completion or pause.
 
 | Core tool | Purpose |
 | --- | --- |
 | `prepare_workspace(requestId, taskId, appId, leaseId, targetBranch?, label?)` | Prepare or reuse this task's installed-app source binding |
-| `list_workspaces(taskId?, includeReleased?)` | List this principal's workspaces, including released records by default |
+| `list_workspaces(taskId?, includeReleased?)` | List all authorized Core workspaces, including released records by default |
 | `get_workspace(workspaceId)` | Observe the binding and inspect durable `operations` and leases |
 | `get_workspace_diff(workspaceId, path, view?)` | Preview a repository-relative path; `session` is the default view |
 | `refresh_workspace(workspaceId, requestId)` | Fetch the target without changing the workspace branch |
@@ -255,7 +324,7 @@ Delete and retention still refuse unfinished work.
 | `acquire_workspace_lease(workspaceId, requestId, leaseId)` | Record durable activity before native work |
 | `release_workspace_lease(workspaceId, requestId, leaseId)` | Release known stopped activity |
 | `record_workspace_pull_requests(workspaceId, requestId, pullRequests)` | Associate existing HTTPS PR URLs for read-only provider observation; never publish or prove merge |
-| `cleanup_workspace(workspaceId, requestId, expectedHead)` | Explicitly request conservative source cleanup |
+| `delete_workspace(requestId, workspaceId?, workspaceIds?, all?)` | Delete one logical workspace or a fixed collection without a Core confirmation |
 
 Generate a new request UUID for each intentional managed mutation. Retain its original arguments.
 After a lost response, retry the same operation with that same UUID and arguments; do not guess that
@@ -272,15 +341,12 @@ Use a regular merge commit for repository PRs. Push, PR publication, merge and a
 selection remain separate workflows with their own authority; this workspace scope grants none of
 them implicitly.
 
-Cleanup is an explicit operation after the user/repository has authorized it. Core refuses dirty,
-unavailable, conflicted, leased, unmerged or runtime-consumed source. Ordinary cleanup freshly checks
-that the workspace HEAD is included in the target; a recorded PR URL or a reported merge is not
-proof. Never force removal or manually delete Core's tree or shared bare repository to bypass a
-refusal. Durable leases do not expire with time; an administrator releases abandoned activity only
-after checking that its native consumer stopped. Released metadata remains available for inspection.
-
-The [PR #590 acceptance report](../../reviews/2026-10-14-external-workspace-pr-observation.md)
-records real provider, browser, connection-loss and remote-head verification.
+Deletion is explicit and follows the user's requested selection. If the task says to remove only
+completed and merged work, verify those predicates before selecting targets. An unconditional Delete
+removes unfinished source too. Never delete Core's shared repository/cache or unrelated directories
+manually. Keep request IDs after a timeout; bulk retries retain the original target allocations.
+The legacy `cleanup_workspace` MCP entry is retired; accepted old cleanup/discard operations retain
+recovery compatibility. See [workspace authority](../external-workspace-access-continuity/feature.md).
 
 ## Workspace Runtime Activation
 
@@ -305,15 +371,20 @@ Return preserves current data and live source edits.
   original bases and Harness session bindings through upgrade/restart.
 - Exercise real OAuth consent and PKCE redemption, token refresh, same-grant tasks, independent grants,
   manual credentials, expiry/revocation, client deletion, current administrator role and Core-only scopes.
-  Read-only, browser, device, app and delegated credentials cannot call workspace tools or read diffs.
-- Keep healthy workspace listings available when another owned active or released record loses its
-  private-source authority; omit failed records and refuse direct reads and operations on them.
-- Check same-request replay, conflicting arguments, owner isolation, native commits and uncommitted
-  plan edits, effective private-source ownership, clearing/rebinding/revocation and interrupted recovery.
-- Keep activity leases through disconnect/restart; refuse dirty, conflicted, unmerged, unavailable,
-  leased and runtime-consumed cleanup. Never infer deletion authority from elapsed time or a PR URL.
+  Read-only/browser/device credentials cannot create external allocations or read workspace diffs.
+  Independently named applications require the canonical source permission and current initiating user.
+- Retain local workspace access after provider authorization changes; omit malformed records
+  individually and require current user/app permission on every read or operation.
+- Check same-request replay, conflicting arguments, cross-actor access, native commits and uncommitted
+  plan edits, acting-user provider authority, clearing/rebinding/revocation and interrupted recovery.
+- Keep activity leases through disconnect/restart; explicit Delete accepts dirty, conflicted,
+  unmerged and leased source. Never infer deletion authority from elapsed time or a PR URL.
 - Verify a real local client against a Core-managed instance with ordinary password login and OAuth
   consent. Use the returned directory, verify distinct target/workspace progress and two logical tasks,
   inspect the Core/Plans responses and UI, revoke authority and preserve source until authorized cleanup.
+- Exercise canonical source/publication callers, cross-creator same-user access, revoked admission, native
+  commits, discovered-but-unlinked PRs and exact-head linking without fabricating remote mutations.
+- Run managed sessions/tasks/pull-requests integration with independent users, same-repository apps, an
+  additional dependency repository, reconnect/replay and owner-confirmed test-resource removal.
 - Run affected Core/MCP and Plans tests, exact Core build, Native AOT publish, lint/production app build,
   version consistency, canonical documentation validation and repository diff checks.

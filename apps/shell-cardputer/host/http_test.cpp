@@ -86,6 +86,27 @@ int main() {
  CHECK(restart.body.find(R"("sourceRevision":"revision")") != std::string::npos);
  CHECK(requests.back().url.ends_with("/api/core/operations/12345678123456781234567812345678"));
  CHECK(replies.empty());
+
+ constexpr std::string_view offer="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+ constexpr std::string_view operation="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+ replies.push_back({0,"",ESP_ERR_TIMEOUT});
+ CHECK(!client.update_core(offer,{}).ok());
+ const auto uncertain_body=requests.back().body;
+ CHECK(uncertain_body == R"({"offerId":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","requestId":"12345678123456781234567812345678"})");
+ replies.push_back({202,R"({"status":"accepted"})"});
+ CHECK(client.update_core(offer,{}).ok());
+ CHECK(requests.back().body == uncertain_body);
+ CHECK(requests.back().url.ends_with("/api/core/update"));
+ CHECK(requests.back().headers.at("Content-Type") == "application/json");
+ HostyClient resumed;
+ CHECK(resumed.configure("https://core.example.test","token-two"));
+ replies.push_back({202,R"({"status":"accepted"})"});
+ CHECK(resumed.update_core(offer,operation).ok());
+ CHECK(requests.back().body == R"({"offerId":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","requestId":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"})");
+ const auto request_count=requests.size();
+ CHECK(!resumed.update_core("invalid",{}).ok());
+ CHECK(requests.size() == request_count);
+ resumed.release();
  client.release(); CHECK(created == destroyed);
  std::cout << "Cardputer HTTP reuse, isolation, failures and Core restart tests passed\n";
 }

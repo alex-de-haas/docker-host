@@ -2,7 +2,7 @@
 """Native Core activation/Return acceptance with isolated users, Git source and data.
 
 Build Core and CLI in Debug first, then run with repository path and optional scenario:
-return (default), stop-failure, auto, cancel, direct, catalog. The catalog scenario verifies
+return (default), stop-failure, auto, cancel, direct, catalog, documents, sessions, desktop. The catalog scenario verifies
 read-only Core workspace discovery without an activation or runtime switch. The direct scenario verifies
 workspace-to-workspace handover, same-workspace restart continuity and baseline Return. --managed runs inside a parent-owned child
 Core and requires the local Docker engine for the supported child environment lifecycle.
@@ -279,7 +279,20 @@ try:
     csrf=request('/api/auth/csrf')['token']
     if managed:
         parent = (root, origin, jar, browser, csrf)
-        child = request('/api/core-environments', {'requestId':str(uuid.uuid4()), 'label':'Workspace activation acceptance', 'mode':'source', 'projectPath':str(workspace/project)})
+        environment_request = {'requestId':str(uuid.uuid4()), 'label':'Workspace activation acceptance', 'mode':'source', 'projectPath':str(workspace/project)}
+        if scenario == 'pull-requests':
+            environment_request['projectPath'] = str(workspace/'apps/core/tests/Haas.Hosty.PrAcceptance/Haas.Hosty.PrAcceptance.csproj')
+        if scenario == 'documents':
+            child_mode = os.environ.get('HOSTY_DOCUMENTS_CHILD_MODE', 'source')
+            assert child_mode in ('source', 'current'), 'Documents comparison supports source or current Core only'
+            if child_mode == 'current':
+                environment_request.update(mode='current', projectPath=None)
+        if scenario == 'observability' and os.environ.get('HOSTY_OBSERVABILITY_AOT') == '1':
+            assert os.environ.get('HOSTY_ACTIVATION_CORE'), 'AOT smoke requires an explicitly published Core executable'
+            environment_request.update(mode='current', projectPath=None)
+        if scenario == 'observability':
+            environment_request['limits'] = {'memoryBytes':8589934592, 'cpus':4, 'pids':1024}
+        child = request('/api/core-environments', environment_request)
         child_id = child['id']
         child = request(f'/api/core-environments/{child_id}/operations/start', {'requestId':str(uuid.uuid4()), 'expectedRevision':child['revision']})
         assert child['state'] == 'running', child
@@ -292,6 +305,68 @@ try:
         csrf = request('/api/auth/csrf')['token']
         initial = request('/control/v1/core/status',control=True)
         say('Started a parent-managed child Core and logged in with its separate test account')
+    if scenario == 'skills':
+        assert managed, 'Skills acceptance requires a managed child Core'
+        sys.dont_write_bytecode = True
+        from skills_acceptance import check
+        check(globals())
+        success = True
+        sys.exit(0)
+    if scenario == 'pull-requests':
+        assert managed, 'PR acceptance requires a managed child Core'
+        sys.dont_write_bytecode = True
+        from pull_requests_acceptance import check
+        check(globals())
+        success = True
+        sys.exit(0)
+    if scenario == 'shell':
+        assert managed, 'Shell acceptance requires a managed child Core'
+        import importlib.util
+        sys.dont_write_bytecode = True
+        spec = importlib.util.spec_from_file_location('shell_runtime_acceptance', workspace/'apps/shell/test/runtime_acceptance.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        module.check(globals())
+        success = True
+        sys.exit(0)
+    if scenario == 'observability':
+        assert managed, 'Observability acceptance requires a managed child Core'
+        sys.dont_write_bytecode = True
+        from observability_acceptance import check
+        check(globals())
+        success = True
+        sys.exit(0)
+    if scenario in ('harness-local', 'feedback'):
+        assert managed, 'Harness local acceptance requires a managed child Core'
+        import importlib.util
+        sys.dont_write_bytecode = True
+        spec = importlib.util.spec_from_file_location('harness_local_acceptance', workspace/'apps/harness/test/local_runtime_acceptance.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        module.check(globals())
+        success = True
+        sys.exit(0)
+    if scenario == 'desktop':
+        assert managed, 'Desktop acceptance requires a managed child Core'
+        sys.dont_write_bytecode = True
+        from desktop_acceptance import check
+        check(globals())
+        success = True
+        sys.exit(0)
+    if scenario == 'documents':
+        assert managed, 'Documents acceptance requires a managed child Core'
+        sys.dont_write_bytecode = True
+        from documents_acceptance import check
+        check(globals())
+        success = True
+        sys.exit(0)
+    if scenario == 'tasks':
+        assert managed, 'Task acceptance requires a managed child Core'
+        sys.dont_write_bytecode = True
+        from tasks_acceptance import check
+        check(globals())
+        success = True
+        sys.exit(0)
     if scenario == 'sessions':
         assert managed, 'Session acceptance requires a managed child Core'
         sys.dont_write_bytecode = True
@@ -526,9 +601,14 @@ finally:
         if child_id:
             try:
                 child = request(f'/api/core-environments/{child_id}')
-                child = request(f'/api/core-environments/{child_id}/operations/finish', {'requestId':str(uuid.uuid4()), 'expectedRevision':child['revision']})
+                finish_path = base/'finish-request.json'
+                if not finish_path.exists():
+                    finish_path.write_text(json.dumps({'requestId':str(uuid.uuid4()), 'expectedRevision':child['revision']}))
+                child = request(f'/api/core-environments/{child_id}/operations/finish', json.loads(finish_path.read_text()))
                 assert child['state'] == 'finished', child
                 say('Parent Finish confirmed child resource removal')
+                for fixture_image in [globals().get('desktop_fixture_image'), globals().get('task_fixture_image')]:
+                    if fixture_image: run(['docker', 'image', 'rm', fixture_image])
             except Exception as error:
                 cleanup_error = error
                 success = False

@@ -28,7 +28,6 @@ WORKDIR /repo
 COPY --from=dependencies /repo/node_modules ./node_modules
 COPY apps/harness ./apps/harness
 COPY packages/app-sdk ./packages/app-sdk
-COPY shared ./shared
 RUN mkdir -p /opt/hosty-worker /control /work /run/hosty-execution \
     && chmod 700 /control && chmod 711 /run/hosty-execution \
     && ln -s /repo/node_modules/.bin/codex /opt/hosty-worker/codex \

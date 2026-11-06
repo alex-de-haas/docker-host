@@ -20,5 +20,6 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="../../../../shared/*.cs" Link="%(Filename)%(Extension)" />
+    <EmbeddedResource Include="../../../../distribution/platform-release.json" LogicalName="Hosty.PlatformDistribution.json" />
   </ItemGroup>
 </Project>

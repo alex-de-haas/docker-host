@@ -34,16 +34,18 @@ jobs:
     timeout-minutes: 5
     outputs:
       shell: ${{ steps.filter.outputs.shell }}
+      desktop: ${{ steps.filter.outputs.desktop }}
       app_sdk: ${{ steps.filter.outputs.app_sdk }}
       app_sdk_dotnet: ${{ steps.filter.outputs.app_sdk_dotnet }}
       whisper: ${{ steps.filter.outputs.whisper }}
+      opus: ${{ steps.filter.outputs.opus }}
       demo_app: ${{ steps.filter.outputs.demo_app }}
       core: ${{ steps.filter.outputs.core }}
       core_aot: ${{ steps.filter.outputs.core_aot }}
       cli: ${{ steps.filter.outputs.cli }}
       telemetry_backend: ${{ steps.filter.outputs.telemetry_backend }}
       marketplace: ${{ steps.filter.outputs.marketplace }}
-      plans: ${{ steps.filter.outputs.plans }}
+      documents: ${{ steps.filter.outputs.documents }}
       harness: ${{ steps.filter.outputs.harness }}
       telemetry_ui: ${{ steps.filter.outputs.telemetry_ui }}
       swift_shell: ${{ steps.filter.outputs.swift_shell }}
@@ -85,7 +87,7 @@ jobs:
         with:
           node-version: 24
       - name: Test selection, required gate and publication denial
-        run: node --test scripts/ci*.test.mjs scripts/test-integration.test.mjs .github/actions/ci-validation-gate/*.test.mjs
+        run: node --test scripts/ci*.test.mjs scripts/releases/*.test.mjs scripts/test-integration.test.mjs .github/actions/ci-validation-gate/*.test.mjs
 
   # Ungated on purpose: it reads version fields out of every manifest and package.json in the repo, so
   # any filter narrow enough to be useful would also be wrong. It needs no `npm ci` and finishes in
@@ -121,6 +123,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           ref: ${{ needs.changes.outputs.sha }}
+          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -128,9 +131,12 @@ jobs:
           node-version: 24
 
       - name: Test the docs validator
-        run: node --test scripts/docs-index.test.mjs
+        run: node --test scripts/docs-index.test.mjs scripts/docs-format.test.mjs scripts/docs-git.test.mjs
 
       - name: Check docs index and frontmatter
+        env:
+          DOCS_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
+          DOCS_HEAD_REF: ${{ github.event.pull_request.head.sha || github.sha }}
         run: node scripts/docs-index.mjs --check
 
   # Type-checks the workflows themselves: expression syntax, `needs`/`outputs` references, action input
@@ -199,6 +205,35 @@ jobs:
 
       - name: Build Shell
         run: npm run shell:build
+
+  desktop:
+    name: Desktop
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: changes
+    if: needs.changes.outputs.desktop == 'true'
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.changes.outputs.sha }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Lint and test Desktop
+        run: |
+          npm run desktop:lint
+          npm run desktop:test
+
+      - name: Build Desktop
+        run: npm run desktop:build
 
   app-sdk:
     name: App SDK
@@ -313,24 +348,39 @@ jobs:
         run: npm run core:test
 
   core-aot:
-    name: Core NativeAOT
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+    name: Core NativeAOT (${{ matrix.rid }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     needs: changes
     if: needs.changes.outputs.core_aot == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            rid: osx-arm64
+          - os: ubuntu-24.04-arm
+            rid: linux-arm64
+          - os: ubuntu-latest
+            rid: linux-x64
+          - os: windows-latest
+            rid: win-x64
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.changes.outputs.sha }}
       - uses: ./.github/actions/setup-dotnet
       - name: Ensure NativeAOT prerequisites
+        if: runner.os == 'Linux'
         run: |
           if ! command -v clang >/dev/null || ! dpkg-query -W -f='${Status}' zlib1g-dev 2>/dev/null | grep -q 'install ok installed'; then
             sudo apt-get update
             sudo apt-get install -y clang zlib1g-dev
           fi
-      - name: Publish Core and reject new trim/AOT warnings
-        run: npm run core:aot
+      - name: Publish Core and verify native paired updates
+        env:
+          HOSTY_VERIFY_PLATFORM_UPDATE: '1'
+        run: npm run core:aot -- ${{ matrix.rid }}
 
   cli:
     name: CLI
@@ -409,12 +459,32 @@ jobs:
       - name: Build Marketplace
         run: npm run marketplace:build
 
-  plans:
-    name: Plans
+  opus:
+    name: OPUS Translate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: changes
+    if: needs.changes.outputs.opus == 'true'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.changes.outputs.sha }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run opus:build
+      - run: npm run opus:test
+      - name: Verify model cache boundaries without downloading weights
+        run: python3 -m unittest discover -s apps/opus/runtime -p 'test_*.py'
+
+  documents:
+    name: Documents
     runs-on: ubuntu-latest
     timeout-minutes: 20
     needs: changes
-    if: needs.changes.outputs.plans == 'true'
+    if: needs.changes.outputs.documents == 'true'
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -430,14 +500,14 @@ jobs:
       - name: Install Node dependencies
         run: npm ci
 
-      - name: Lint Plans
-        run: npm run plans:lint
+      - name: Lint Documents
+        run: npm run documents:lint
 
-      - name: Test Plans
-        run: npm run plans:test
+      - name: Test Documents
+        run: npm run documents:test
 
-      - name: Build Plans
-        run: npm run plans:build
+      - name: Build Documents
+        run: npm run documents:build
 
   harness:
     name: Hosty Harness
@@ -607,7 +677,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     if: always()
-    needs: [changes, versions, docs, ci-policy, actionlint, shell, app-sdk, app-sdk-dotnet, whisper, demo-app, core, core-aot, cli, telemetry-backend, marketplace, plans, harness, telemetry-ui, swift-shell, cardputer-shell]
+    needs: [changes, versions, docs, ci-policy, actionlint, shell, desktop, app-sdk, app-sdk-dotnet, whisper, opus, demo-app, core, core-aot, cli, telemetry-backend, marketplace, documents, harness, telemetry-ui, swift-shell, cardputer-shell]
     steps:
       - uses: actions/checkout@v7
         with:

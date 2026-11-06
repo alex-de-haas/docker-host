@@ -46,7 +46,12 @@ function gatewayProblem(gateway: AssistantGateway) {
 /** Select the requested assistant before expansion can trigger a default tool. */
 export async function toggleAssistantPanel(host: UiHost, appId: string) {
   const state = host.getSnapshot();
-  if (state.expanded && state.selected?.appId === appId) { host.setExpanded(false); return; }
+  if (state.expanded && state.selected?.appId === appId) {
+    const workspace = state.workspaces?.find(item => item.workspaceId === "default");
+    if (workspace?.multiple && workspace.selectedId) host.hidePresentation(workspace.selectedId);
+    else host.setExpanded(false);
+    return;
+  }
   await host.refresh();
   const panel = host.getSnapshot().catalog.find(item => item.panel.appId === appId);
   if (panel) await host.selectPanel(panel.panel);

@@ -15,7 +15,7 @@ public sealed class AssistantSettingsHttpTests
         var assistant = AssistantMcpAccessHttpTests.Record("example.assistant", now) with {
             ConfirmedRoles = ["assistant"], GrantedCorePermissions = [CoreAppPermissions.ReadApps, CoreAppPermissions.RequestMcpAccess],
             Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> { ["assistant"] = [new("default", null, "/assistant")] } };
-        var target = AssistantMcpAccessHttpTests.Record("example.target", now) with { AgentSkillFile = "agent.md",
+        var target = AssistantMcpAccessHttpTests.Record("example.target", now) with {
             Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> { ["mcp"] = [new("default", null, "/mcp")] } };
         await apps.UpsertAppAsync(assistant); await apps.UpsertAppAsync(target);
         var paths = host.Services.GetRequiredService<CoreDataPaths>();
@@ -49,18 +49,18 @@ public sealed class AssistantSettingsHttpTests
         var location = opened.Headers.Location!.ToString();
         var html = await client.GetStringAsync(location);
         Assert.Contains("Review assistant MCP access", html);
-        Assert.Contains("Reviewed &lt;script&gt;instructions&lt;/script&gt;", html);
+        Assert.DoesNotContain("Reviewed &lt;script&gt;instructions&lt;/script&gt;", html);
         Assert.DoesNotContain("value=true checked", html);
         Assert.DoesNotContain("name=agentSkill value=\"agent\" checked", html);
         var nonce = Regex.Match(html, "name=nonce value=\"([^\"]+)\"").Groups[1].Value;
         Assert.NotEmpty(nonce);
         if (decision == "stale")
-            await File.WriteAllTextAsync(Path.Combine(host.Services.GetRequiredService<CoreDataPaths>().AppsRoot, target.Id, "agent.md"), "Different instructions");
+            await policies.ChangeAsync(target.Id, (await policies.ReadAsync()).Targets[target.Id] with { Offered = false });
         if (decision == "reinstall") await apps.UpsertAppAsync(assistant with { InstalledAt = assistant.InstalledAt.AddSeconds(1) });
         async Task<HttpResponseMessage> Submit() {
             var request = new HttpRequestMessage(HttpMethod.Post, location) {
                 Content = new FormUrlEncodedContent(new Dictionary<string, string> {
-                    ["nonce"] = nonce, ["decision"] = decision == "deny" ? "deny" : "approve", ["agentEnabled"] = "true", ["agentSkill"] = "agent" }) };
+                    ["nonce"] = nonce, ["decision"] = decision == "deny" ? "deny" : "approve", ["agentEnabled"] = "true" }) };
             request.Headers.Add("Origin", "http://localhost");
             return await client.SendAsync(request);
         }
@@ -71,7 +71,7 @@ public sealed class AssistantSettingsHttpTests
         var policy = (await policies.ReadAsync()).Targets[target.Id];
         Assert.Equal("preserved", policy.Assistants![other.Id].Revision);
         Assert.Equal(decision == "approve", policy.Assistants.ContainsKey(assistant.Id));
-        Assert.Equal(decision == "approve", policy.ApprovedSkills.ContainsKey("agent"));
+        Assert.Empty(policy.ApprovedSkills);
         Assert.Equal(HttpStatusCode.Conflict, (await Submit()).StatusCode);
     }
 

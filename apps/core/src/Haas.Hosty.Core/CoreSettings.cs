@@ -40,6 +40,8 @@ internal sealed class CoreSettingsDocument
     // service exists, and can only ever apply on the next start; the public origin is read live.
     public IReadOnlyDictionary<string, string> Server { get => field ?? EmptyServer; init; } = EmptyServer;
 
+    public IReadOnlyDictionary<string, string> Diagnostics { get => field ?? EmptyServer; init; } = EmptyServer;
+
     private static readonly IReadOnlyDictionary<string, double> EmptyAuth =
         new Dictionary<string, double>(StringComparer.Ordinal);
 
@@ -623,7 +625,7 @@ internal sealed record CoreIngressSettingRow(CoreIngressSettingDefinition Defini
 // AuthLifetimes (env baseline overlaid with persisted overrides) so grant/session issuance reads the
 // live value rather than a startup snapshot. Writes go through UpdateAsync, which persists and
 // recomputes atomically; the cached record is swapped by reference, so readers are lock-free.
-internal sealed class CoreSettingsService
+internal sealed partial class CoreSettingsService
 {
     private readonly CoreSettingsStore store;
     private readonly SemaphoreSlim gate = new(1, 1);
@@ -663,6 +665,8 @@ internal sealed class CoreSettingsService
         currentUpdateCheck = ComputeUpdateCheck(updateCheckOverrides);
         currentUserRetention = ComputeUserRetention(userRetentionOverrides);
         currentOAuth = ComputeOAuth(oauthOverrides);
+        diagnosticOverrides = CoreDiagnosticSettings.Load(document);
+        diagnostics = CoreDiagnosticSettings.Compute(diagnosticOverrides);
     }
 
     // The live auth lifetimes: env-or-default baseline with persisted overrides applied.
@@ -766,6 +770,7 @@ internal sealed class CoreSettingsService
         var userRetentionChanges = new Dictionary<string, string?>(StringComparer.Ordinal);
         var oauthChanges = new Dictionary<string, string?>(StringComparer.Ordinal);
         var serverChanges = new Dictionary<string, string?>(StringComparer.Ordinal);
+        var diagnosticChanges = new Dictionary<string, string?>(StringComparer.Ordinal);
         foreach (var (key, raw) in input)
         {
             if (CoreAuthSettings.IsKnown(key))
@@ -787,6 +792,10 @@ internal sealed class CoreSettingsService
             else if (CoreOAuthSettings.IsKnown(key))
             {
                 oauthChanges[key] = NormalizeOAuthValue(key, raw);
+            }
+            else if (CoreDiagnosticSettings.IsKnown(key))
+            {
+                diagnosticChanges[key] = CoreDiagnosticSettings.Normalize(key, raw);
             }
             else if (CoreServerSettings.IsKnown(key))
             {
@@ -817,6 +826,8 @@ internal sealed class CoreSettingsService
             var mergedUserRetention = Apply(LoadUserRetentionOverrides(persisted), userRetentionChanges);
             var mergedOAuth = Apply(LoadOAuthOverrides(persisted), oauthChanges);
             var mergedServer = Apply(LoadServerOverrides(persisted), serverChanges);
+            var mergedDiagnostics = Apply(CoreDiagnosticSettings.Load(persisted), diagnosticChanges);
+            CoreDiagnosticSettings.Validate(mergedDiagnostics);
 
             await store.SaveAsync(
                 new CoreSettingsDocument
@@ -828,6 +839,7 @@ internal sealed class CoreSettingsService
                     Users = mergedUserRetention,
                     OAuth = mergedOAuth,
                     Server = mergedServer,
+                    Diagnostics = mergedDiagnostics,
                 },
                 cancellationToken);
             overrides = mergedAuth;
@@ -841,6 +853,8 @@ internal sealed class CoreSettingsService
             currentUpdateCheck = ComputeUpdateCheck(mergedUpdateCheck);
             currentUserRetention = ComputeUserRetention(mergedUserRetention);
             currentOAuth = ComputeOAuth(mergedOAuth);
+            diagnosticOverrides = mergedDiagnostics;
+            diagnostics = CoreDiagnosticSettings.Compute(mergedDiagnostics);
         }
         finally
         {

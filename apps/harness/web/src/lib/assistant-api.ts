@@ -3,6 +3,7 @@
 import type { AgentConnection } from "@/components/agent-providers";
 import { appFetch, APP_SESSION_RESTORED } from "@hosty-sdk/app/browser-auth";
 import { openEventStream } from "./event-stream";
+import { loadBrowserAgentDefaults, type BrowserAgentDefaults } from "./browser-agent-preferences";
 
 // App-local requests carry this document's app grant or same-origin cookie.
 // MCP delegation requires separate authority on the server.
@@ -16,13 +17,22 @@ export type AssistantEvent = {
 };
 
 export type AssistantQuestion = {
+  id?: string;
+  allowText?: boolean;
   question: string;
   header: string;
   multiSelect: boolean;
-  options: Array<{ label: string; description: string; preview?: string }>;
+  options: Array<{ id?: string; label: string; description: string; preview?: string }>;
 };
 
 export type AssistantSession = {
+  workerRun?: { id: string; sequence: number; generation?: string };
+  workerRecovery?: { state: "pending" | "completed" };
+  agentProfile?: import("../../../src/profiles/types").AgentProfile | null;
+  profileLocked?: boolean;
+  taskExecutionId?: string;
+  workspaceAssociation?: { id: string; revision: number } | null;
+  developmentWorkspaces?: { state: string; workspaceId?: string | null }[];
   executionSelection?: { model: string | null; reasoningEffort: string | null };
   selectionRevision?: number;
   appCreations?: { input: Record<string, unknown>; state: "pending" | "observed" | "rejected"; prompt?: string }[];
@@ -33,7 +43,7 @@ export type AssistantSession = {
   id: string;
   connectionId?: string;
   connectionRevision?: number;
-  harnessKind?: "claude" | "codex";
+  harnessKind?: "claude" | "codex" | "ollama";
   providerLocked?: boolean;
   title: string | null;
   status: string;
@@ -61,9 +71,9 @@ export class AssistantApiError extends Error {
 export async function listContextApps(search = "", offset = 0): Promise<{ apps: ContextApp[]; nextOffset: number | null }> {
   return (await call(`/session-apps?search=${encodeURIComponent(search)}&offset=${offset}`)).json();
 }
-export async function selectedContextApps(ids: string[]): Promise<ContextApp[]> {
+export async function selectedContextApps(ids: string[], signal?: AbortSignal): Promise<ContextApp[]> {
   if (!ids.length) return [];
-  return ((await (await call(`/session-apps?ids=${encodeURIComponent(ids.join(","))}`)).json()) as { apps: ContextApp[] }).apps;
+  return ((await (await call(`/session-apps?ids=${encodeURIComponent(ids.join(","))}`, { signal })).json()) as { apps: ContextApp[] }).apps;
 }
 export async function setSessionApps(id: string, appIds: string[], expectedRevision: number): Promise<AssistantSession> {
   return (await call(`/sessions/${encodeURIComponent(id)}/apps`, { method: "PUT", body: JSON.stringify({ appIds, expectedRevision }) })).json();
@@ -103,14 +113,15 @@ export async function listSessions(): Promise<AssistantSession[]> {
 }
 
 export async function createWorkspaceSession(input: { workspaceId: string; requestId: string; expectedRevision: number }): Promise<AssistantSession> {
-  return (await call("/workspace-sessions", { method: "POST", body: JSON.stringify(input) })).json();
+  return (await call("/workspace-sessions", { method: "POST", body: JSON.stringify({ ...input, browserDefaults: await loadBrowserAgentDefaults() }) })).json();
 }
-export async function createSession(input: { connectionId?: string; title?: string; context?: Record<string, string>; appIds?: string[]; clientRequestId?: string } = {}): Promise<AssistantSession> {
-  return (await call("/sessions", { method: "POST", body: JSON.stringify(input) })).json() as Promise<AssistantSession>;
+export async function createSession(input: { profileId?: string | null; profileRevision?: number; connectionId?: string; title?: string; context?: Record<string, string>; appIds?: string[]; clientRequestId?: string;
+  executionSelection?: NonNullable<AssistantSession["executionSelection"]>; autonomy?: "normal" | "autonomous"; browserDefaults?: BrowserAgentDefaults } = {}): Promise<AssistantSession> {
+  return (await call("/sessions", { method: "POST", body: JSON.stringify({ ...input, browserDefaults: input.browserDefaults ?? await loadBrowserAgentDefaults() }) })).json() as Promise<AssistantSession>;
 }
 
 export async function newBuildingSession(input: { appId: string; requestId: string; expectedLocalHead: string }): Promise<AssistantSession> {
-  return (await call("/building-sessions", { method: "POST", body: JSON.stringify(input) })).json();
+  return (await call("/building-sessions", { method: "POST", body: JSON.stringify({ ...input, browserDefaults: await loadBrowserAgentDefaults() }) })).json();
 }
 
 /** Renames a session. An empty title clears the name, and the next message derives one again. */
@@ -142,12 +153,19 @@ function readMessageReceipt(value: unknown, requestId: string): MessageReceipt {
 export async function getMessageReceipt(sessionId: string, requestId: string): Promise<MessageReceipt> {
   return readMessageReceipt(await (await call(`/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(requestId)}`, { cache: "no-store" })).json(), requestId);
 }
-export async function postMessage(sessionId: string, text: string, attachments: string[] = [], appContextRevision = 0, withoutAppDetails = false, selectionRevision = 0, clientRequestId?: string): Promise<MessageReceipt | void> {
+export async function postMessage(sessionId: string, text: string, attachments: string[] = [], appContextRevision = 0, withoutAppDetails = false, selectionRevision = 0, clientRequestId?: string, promptSuggestions?: boolean): Promise<MessageReceipt | void> {
   const response = await call(`/sessions/${encodeURIComponent(sessionId)}/messages`, {
     method: "POST",
-    body: JSON.stringify({ text, attachments, appContextRevision, withoutAppDetails, selectionRevision, ...(clientRequestId ? { clientRequestId } : {}) }),
+    body: JSON.stringify({ text, attachments, appContextRevision, withoutAppDetails, selectionRevision, ...(promptSuggestions === true ? { promptSuggestions: true } : {}), ...(clientRequestId ? { clientRequestId } : {}) }),
   });
   if (clientRequestId) return readMessageReceipt(await response.json(), clientRequestId);
+}
+
+export async function getSuggestionPreference(): Promise<{ enabled: boolean; revision: number }> {
+  return (await call("/preferences/prompt-suggestions", { cache: "no-store" })).json();
+}
+export async function setSuggestionPreference(enabled: boolean, revision: number): Promise<{ enabled: boolean; revision: number }> {
+  return (await call("/preferences/prompt-suggestions", { method: "PUT", body: JSON.stringify({ enabled, revision }) })).json();
 }
 
 export type StoredAttachment = { name: string; size: number };
@@ -388,10 +406,19 @@ export async function dispatchAppCreation(sessionId: string, requestId: string, 
   })).json() as Promise<AssistantSession>;
 }
 
-export type ModelCatalog = { revision: string; defaultModel?: string; models: { id: string; label: string; efforts: { id: string; label: string }[] }[] };
+export type ModelCatalog = { revision: string; defaultModel?: string; models: { id: string; label: string; unavailableReason?: string; defaultEffort?: string; efforts: { id: string; label: string }[] }[] };
 export async function getSessionModels(id: string): Promise<ModelCatalog> {
   return (await call(`/sessions/${encodeURIComponent(id)}/models`)).json() as Promise<ModelCatalog>;
 }
 export async function setSessionModel(id: string, selection: NonNullable<AssistantSession["executionSelection"]>, expectedRevision: number): Promise<AssistantSession> {
   return (await call(`/sessions/${encodeURIComponent(id)}/model`, { method: "PUT", body: JSON.stringify({ selection, expectedRevision }) })).json() as Promise<AssistantSession>;
+}
+
+export type ExecutionRecoveryRequest = { requestId: string; runId: string; generation: string; expectedRevision: number; consumerExitConfirmed: true };
+export type ExecutionRecoveryReview = { runId: string; generation: string; expectedRevision: number; recoverable: boolean; pending?: ExecutionRecoveryRequest };
+export async function getExecutionRecovery(id: string): Promise<ExecutionRecoveryReview | null> {
+  return (await call(`/sessions/${encodeURIComponent(id)}/execution-recovery`)).json();
+}
+export async function recoverExecution(id: string, input: ExecutionRecoveryRequest): Promise<void> {
+  await call(`/sessions/${encodeURIComponent(id)}/execution-recovery`, { method: "POST", body: JSON.stringify(input) });
 }

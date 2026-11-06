@@ -96,6 +96,45 @@ public sealed class AssistantMcpAccessHttpTests
         }
     }
 
+    [Theory]
+    [InlineData("revoke")]
+    [InlineData("logout")]
+    [InlineData("deny-tool")]
+    public async Task RetainedTaskOriginOutlivesTransportExpiryButNotCurrentAuthority(string change)
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        var now = DateTimeOffset.UtcNow;
+        var apps = host.Services.GetRequiredService<AppRegistryStore>();
+        await apps.UpsertAppAsync(Record("source", now));
+        var caller = Record("independent.runner", now) with { ConfirmedRoles = ["assistant"],
+            Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> { ["assistant"] = [new("default", null, "/agent")] } };
+        await apps.UpsertAppAsync(caller);
+        var users = host.Services.GetRequiredService<UserDirectoryStore>();
+        await users.WriteAsync(new(1, [new("admin", "admin@example.test", "Admin", "host.admin", false, now, now)], [], [], []));
+        var userToken = await BrowserAuthorityFixture.Grant(host, caller.Id, "admin");
+        var policy = host.Services.GetRequiredService<AgentPolicyStore>();
+        var link = new AgentTargetPolicy(null, true, new Dictionary<string, string>(),
+            new Dictionary<string, AssistantTargetGrant> { [caller.Id] = new(now, "grant") });
+        await policy.ChangeAsync("hosty:core", link);
+        var access = host.Services.GetRequiredService<AssistantMcpAccess>();
+        var issued = await access.IssueAsync(caller.Id, "hosty:core", host.Services.GetRequiredService<AppServiceTokenService>().CreateToken(caller.Id), userToken.AccessToken, default, "session-one");
+        // A persisted receipt holds verified provenance, never this transport bearer. Simulate
+        // its transport expiry without expiring the independently validated browser grant.
+        var claims = access.ReadVerifiedClaims(issued.Token)! with { Expires = now.AddMinutes(-1).ToUnixTimeSeconds() };
+        Assert.Null(await access.ValidateClaimsAsync(claims, "hosty:core", default));
+        var origin = new CoreCallerAuthority("assistant", AppId: caller.Id, Installation: caller.InstalledAt,
+            PermissionRevision: caller.PermissionRevision, Mcp: claims, InvokedTool: "task_action");
+        var authorization = host.Services.GetRequiredService<CoreCapabilityAuthorization>();
+        var principal = CoreCapabilityAuthorization.AppPrincipal(caller);
+        await Assert.ThrowsAsync<AppIdentityException>(() => authorization.RevalidateAsync(origin, "admin", principal, "tasks", "source", "custom", "task_action", default));
+        Assert.Equal("admin", (await authorization.RevalidateAsync(origin, "admin", principal, "tasks", "source", "custom", "task_action", default, retainedTask: true)).User.Id);
+        if (change == "revoke") await policy.ChangeAsync("hosty:core", link with { Assistants = null });
+        else if (change == "logout") await host.Services.GetRequiredService<AppSessionGrantStore>().RevokeByAuthorizingSessionAsync("browser-session", now, default);
+        else await policy.ChangeAsync("hosty:core", link with { Assistants = new Dictionary<string, AssistantTargetGrant> {
+            [caller.Id] = new(now, "grant", DeniedTools: ["task_action"]) } });
+        await Assert.ThrowsAsync<AppIdentityException>(() => authorization.RevalidateAsync(origin, "admin", principal, "tasks", "source", "custom", "task_action", default, retainedTask: true));
+    }
+
     [Fact]
     public async Task CoreMcpRequiresTheCallersOperationPermissionAndCurrentAdmin()
     {

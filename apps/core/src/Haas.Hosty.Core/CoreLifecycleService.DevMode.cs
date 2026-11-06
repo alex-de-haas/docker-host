@@ -397,7 +397,10 @@ internal sealed partial class CoreLifecycleService
         // Stop uses the last launched admitted contract, even when live source is invalid or
         // an execution refresh changed its service topology before an interrupted restart.
         var operation = await AppDevStore.ReadAsync(paths, app, ct);
+        // An entry journal can own the app before its source and manifest are bound. Its
+        // candidate mounts cannot describe the previous runtime being stopped at that point.
         var selection = operation is { Active: true } && app.SelectedRuntime == operation.TargetRuntime &&
+            app.SourceState?.LocalOverridePath == operation.SourcePath &&
             !operation.Phase.StartsWith("return-", StringComparison.Ordinal)
             ? await LoadDevExecutionSelectionAsync(operation, ct, running: true)
             : await manifests.LoadAsync(app.ManifestPath!, app.SelectedRuntime, ct);

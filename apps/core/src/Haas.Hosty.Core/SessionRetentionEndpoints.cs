@@ -1,7 +1,7 @@
 namespace Haas.Hosty.Core;
 
 internal sealed record SessionRetentionRequest(string UserId, WorkspaceWorkflowCommand? Cleanup = null);
-internal sealed record SessionRetentionSnapshot(string Kind, WorkspaceWorkflow? Workflow, bool ResourcesFinished, bool WorkspaceAbsent = false, bool SessionDetached = false);
+internal sealed record SessionRetentionSnapshot(string Kind, WorkspaceWorkflow? Workflow, bool ResourcesFinished, bool WorkspaceAbsent = false, bool SessionDetached = false, bool IndependentEnvironments = false);
 
 internal static class SessionRetentionEndpoints
 {
@@ -10,7 +10,7 @@ internal static class SessionRetentionEndpoints
         app.MapPost("/api/internal/apps/{appId}/sessions/{sessionId}/retention", async (string appId, string sessionId,
             SessionRetentionRequest input, HttpRequest request, AppServiceTokenService tokens, AppRegistryStore apps,
             UserDirectoryStore users, DevelopmentWorkspaceService workspaces, CoreEnvironmentStore environments,
-            SandboxStore sandboxes, WorkspaceCleanupService cleanup, CancellationToken ct) =>
+            WorkspaceCleanupService cleanup, CancellationToken ct) =>
         {
             request.HttpContext.Response.Headers.CacheControl = "no-store";
             try
@@ -37,7 +37,6 @@ internal static class SessionRetentionEndpoints
                     actor.Installation == owner.Installation && actor.UserId == owner.UserId &&
                     (context?.SessionId == sessionId || context?.WorkspaceId == DevelopmentWorkspaceService.WorkspaceIdFor(owner));
                 var children = (await environments.ListAsync(ct)).Where(e => Owns(e.Owner, e.Request.Context)).ToArray();
-                var instances = (await sandboxes.ListAsync(ct)).Where(s => Owns(s.Owner, s.Request.Context)).ToArray();
                 if (input.Cleanup is not null)
                 {
                     if (!AppManagementAuthorization.HasPermission(caller, CoreAppPermissions.WorkspacesCleanup) ||
@@ -49,12 +48,11 @@ internal static class SessionRetentionEndpoints
                     // Finish and release, and rejects unfinished work. No arbitrary workspace ID input.
                     workflow = await cleanup.DeleteAsync(DevelopmentWorkspaceService.WorkspaceIdFor(owner), owner.UserId, appId, input.Cleanup, ct);
                     children = (await environments.ListAsync(ct)).Where(e => Owns(e.Owner, e.Request.Context)).ToArray();
-                    instances = (await sandboxes.ListAsync(ct)).Where(s => Owns(s.Owner, s.Request.Context)).ToArray();
                 }
                 return CoreJson.Json(new SessionRetentionSnapshot(trees.Length > 0 || workflow?.State == "deleted" ? "workspace" :
-                    children.Length + instances.Length > 0 ? "sandbox" : "chat", workflow,
-                    children.All(e => e.State == "finished") && instances.All(s => s.State == "disposed"),
-                    await workspaces.SessionWorkspaceAbsentAsync(owner, ct), detached));
+                    children.Length > 0 ? "sandbox" : "chat", workflow,
+                    children.All(e => e.State == "finished"),
+                    await workspaces.SessionWorkspaceAbsentAsync(owner, ct), detached, IndependentEnvironments: true));
             }
             catch (AppIdentityException ex) { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), AuthEndpoints.MapIdentityErrorStatus(ex.Code)); }
             catch (AppLifecycleException ex) { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), 409); }

@@ -167,7 +167,7 @@ public sealed partial class CoreLifecycleServiceTests
     [InlineData("foreign-user")]
     [InlineData("foreign-principal")]
     [InlineData("reinstalled")]
-    public async Task WorkspaceRecipe_AggregateSetupRejectsForeignAuthorityAndReinstalledBinding(string failure)
+    public async Task WorkspaceRecipe_AggregateSetupIsSharedButRejectsReinstalledBinding(string failure)
     {
         var (f, owner, _, first, second) = await MultipleRecipeTrees();
         var command = new WorkspaceRecipeRequest(Guid.NewGuid().ToString(), "test.created", second.Id, "dev");
@@ -175,9 +175,11 @@ public sealed partial class CoreLifecycleServiceTests
         var before = await File.ReadAllTextAsync(AggregateRecipePath(f, first));
         if (failure == "reinstalled")
             await f.Apps.UpdateAppAsync("test.created", app => app with { InstalledAt = app.InstalledAt.AddSeconds(1) });
-        await Assert.ThrowsAsync<AppLifecycleException>(() => f.Service.ConfigureWorkspaceRecipeAsync(first.WorkspaceId,
+        Task Configure() => f.Service.ConfigureWorkspaceRecipeAsync(first.WorkspaceId,
             command, failure == "foreign-user" ? "other-admin" : owner.UserId,
-            failure == "foreign-principal" ? "oauth:other" : null, default));
+            failure == "foreign-principal" ? "oauth:other" : null, default);
+        if (failure == "reinstalled") await Assert.ThrowsAsync<AppLifecycleException>(Configure);
+        else await Configure();
         Assert.Equal(before, await File.ReadAllTextAsync(AggregateRecipePath(f, first)));
         Assert.Equal(0, f.Adapter.StartCount); Assert.Equal(0, f.Adapter.StopCount);
     }

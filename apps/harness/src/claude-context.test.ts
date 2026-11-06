@@ -10,7 +10,7 @@ const gate = () => { let release!: () => void; const promise = new Promise<void>
 
 it("samples main-session summaries, ignores subagents, and emits a final context measurement before result", async () => {
   const events: HarnessEvent[] = [], assistant = gate(), done = gate(), subagent = gate();
-  const getContextUsage = vi.fn().mockResolvedValue({ totalTokens: 20, maxTokens: 100 });
+  const getContextUsage = vi.fn().mockResolvedValue({ totalTokens: 20, maxTokens: 100, mcpTools: [{ serverName: "fixture", name: "read", tokens: 4, isLoaded: true }] });
   queryMock.mockReturnValue(Object.assign((async function* () {
     yield { type: "system", subtype: "init", session_id: "native" };
     await subagent.promise;
@@ -25,6 +25,7 @@ it("samples main-session summaries, ignores subagents, and emits a final context
   run = new ClaudeHarnessAdapter().start({ sessionId: "chat", cwd: "/tmp", onEvent: event => events.push(event) });
   run.send("hi");
   await vi.waitFor(() => expect(events.some(e => e.type === "context_usage")).toBe(true));
+  expect(events.find(e => e.type === "context_usage")).toMatchObject({ usage: { mcp: { tools: [{ server: "fixture", name: "read", tokens: 4, inclusion: "loaded" }] } } });
   subagent.release(); await new Promise(r => setTimeout(r, 10));
   expect(getContextUsage).toHaveBeenCalledTimes(1);
   assistant.release();

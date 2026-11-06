@@ -33,6 +33,22 @@ public sealed class CoreEnvironmentRetentionTests : IDisposable
     }
 
     [Fact]
+    public async Task ReleasePreparation_RequiresInstalledBinaryAndKeepsItsIndependentCopy()
+    {
+        var runtime = Runtime;
+        var record = Record();
+        var missing = await Assert.ThrowsAsync<SandboxException>(() => runtime.PrepareAsync(record, root, default));
+        Assert.Equal("environment_binary_missing", missing.Code);
+        var binary = Path.Combine(root, "core", "bin", OperatingSystem.IsWindows() ? "hosty-core.exe" : "hosty-core");
+        Directory.CreateDirectory(Path.GetDirectoryName(binary)!);
+        await File.WriteAllTextAsync(binary, "installed production build");
+        var prepared = await runtime.PrepareAsync(record, root, default);
+        Assert.Equal("installed production build", await File.ReadAllTextAsync(prepared));
+        await File.WriteAllTextAsync(binary, "updated production build");
+        Assert.Equal("installed production build", await File.ReadAllTextAsync(prepared));
+    }
+
+    [Fact]
     public async Task Cleanup_PreservesLiveAndRunnerReferencedGenerations_AndBoundsReplacementsAndUnusedPreparations()
     {
         var binary = OperatingSystem.IsWindows() ? "hosty-core.exe" : "hosty-core";

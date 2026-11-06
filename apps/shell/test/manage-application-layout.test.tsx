@@ -1,9 +1,12 @@
 import { act, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { watchResources } from "../src/app/shell/resources/resource-stream";
 import { AppDetailsDialog } from "../src/app/shell/dialogs/app-details-dialog";
 import type { CoreApp } from "../src/app/shell/types";
 
+const resourceStop = vi.hoisted(() => vi.fn());
+vi.mock("../src/app/shell/resources/resource-stream", () => ({ watchResources: vi.fn(() => resourceStop) }));
 vi.mock("../src/app/shell/dialogs/app-permissions", () => ({ AppPermissions: () => <p>Existing permissions control</p> }));
 vi.mock("../src/app/shell/dialogs/private-source-connections", () => ({ PrivateSourceConnections: () => null }));
 vi.mock("../src/app/shell/shell-context", () => ({
@@ -14,6 +17,7 @@ let root: Root, container: HTMLDivElement, props: ComponentProps<typeof AppDetai
 const app: CoreApp = {
   id: "example.media", displayName: "Media", version: "1.0.0", kind: "runtime", system: false,
   source: "manifest", operationStatus: "started", runtimeState: "running", selectedRuntime: "dev", live: true,
+  requiredCorePermissions: ["apps.read"],
   capabilities: ["backup", "logs"], autostart: true, supportsSource: true,
   settings: [{ key: "MODE", type: "string", value: "normal", secret: false }, { key: "HOSTY_PUBLIC_ORIGIN_UI", type: "string", value: "https://media.test", secret: false }],
   mounts: [{ key: "library", mode: "ro", required: false, multiple: false, bindings: [{ source: "local", label: "Library", hostPath: "/media", containerPath: "/external/library" }] }],
@@ -24,6 +28,7 @@ beforeEach(() => {
   HTMLElement.prototype.scrollIntoView = vi.fn();
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ feeds: [] })));
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
+  vi.mocked(watchResources).mockClear(); resourceStop.mockClear();
   props = { app, page: true, view: "settings", coreOrigin: "https://core.test", globalMounts: [], canManageApps: true, isShell: false, busyAction: null,
     detail: { loading: false, error: null, backups: [], backupCleanupPlan: null, updatePlan: null }, onClose: vi.fn(), onRefreshBackups: vi.fn(), onCreateBackup: vi.fn(),
     onRestoreBackup: vi.fn(), onDeleteBackup: vi.fn(), onPreviewBackupCleanup: vi.fn(), onApplyBackupCleanup: vi.fn(), onConfigure: vi.fn(),
@@ -40,7 +45,7 @@ const click = (label: string) => act(async () => [...container.querySelectorAll<
 
 it("keeps Manage actions and approved tab order without changing source or runtime on entry", async () => {
   await render();
-  expect([...container.querySelectorAll('[role="tab"]')].map(item => item.textContent)).toEqual(["Launch", "Logs", "Parameters", "Folders", "Network", "Permissions", "Updates", "Backups"]);
+  expect([...container.querySelectorAll('[role="tab"]')].map(item => item.textContent)).toEqual(["Launch", "Logs", "Services", "Metrics", "Parameters", "Folders", "Network", "Permissions", "Updates", "Backups"]);
   expect(container.querySelector('nav[aria-label="Breadcrumb"]')?.textContent).toBe("DashboardMedia");
   expect(container.querySelector('nav[aria-label="Breadcrumb"] a')?.getAttribute("href")).toBe("/dashboard");
   expect(container.querySelector("h1")?.textContent).toBe("Media");
@@ -66,7 +71,7 @@ it("preserves parameter and folder drafts across all presentation tabs and saves
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "/new-media");
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
-  for (const label of ["Permissions", "Network", "Backups", "Logs", "Launch", "Parameters"]) await tab(label);
+  for (const label of ["Permissions", "Network", "Backups", "Logs", "Services", "Metrics", "Launch", "Parameters"]) await tab(label);
   expect(container.querySelector<HTMLInputElement>("#setting-MODE")!.value).toBe("quiet");
   expect(props.onConfigure).not.toHaveBeenCalled(); expect(props.onConfigureMounts).not.toHaveBeenCalled();
   await click("Save settings");
@@ -175,8 +180,8 @@ it("reveals the selected Manage tab on selection and width changes without scrol
   [...strip.querySelectorAll<HTMLElement>('[role="tab"]')].forEach((trigger, index) => {
     trigger.getBoundingClientRect = () => ({ left: index * 100 - strip.scrollLeft, right: (index + 1) * 100 - strip.scrollLeft, width: 100 } as DOMRect);
   });
-  await tab("Updates"); expect(strip.scrollLeft).toBe(440);
-  width = 180; await act(async () => resized()); expect(strip.scrollLeft).toBe(520);
+  await tab("Updates"); expect(strip.scrollLeft).toBe(640);
+  width = 180; await act(async () => resized()); expect(strip.scrollLeft).toBe(720);
   await tab("Launch"); expect(strip.scrollLeft).toBe(0); expect(pageScroll).not.toHaveBeenCalled();
   pageScroll.mockRestore();
 });
@@ -245,4 +250,51 @@ it("falls back from Logs when the capability is withdrawn, aborting its read and
   await tab("Parameters");
   expect(container.querySelector<HTMLInputElement>("#setting-MODE")!.value).toBe("quiet");
   expect(props.onConfigure).not.toHaveBeenCalled();
+});
+
+it("limits metrics subscriptions and service reads to their selected tabs", async () => {
+  await render();
+  const serviceReads = () => vi.mocked(fetch).mock.calls.filter(([url]) => /\/(health|update-status)$/.test(String(url)));
+  expect(serviceReads()).toHaveLength(0);
+  expect(watchResources).not.toHaveBeenCalled();
+  expect(container.querySelector('[aria-label="Core API activity"]')).toBeNull();
+  await tab("Metrics");
+  expect(watchResources).toHaveBeenCalledOnce();
+  expect(container.querySelector('[aria-label="Core API activity"]')).not.toBeNull();
+  expect(container.querySelector('[aria-label="Service resources"]')).not.toBeNull();
+  expect(serviceReads()).toHaveLength(0);
+  expect(props.onTabChange).toHaveBeenLastCalledWith("metrics");
+  await tab("Services");
+  expect(resourceStop).toHaveBeenCalledOnce();
+  expect(serviceReads()).toHaveLength(2);
+  expect(container.querySelector('[aria-label="Core API activity"]')).toBeNull();
+  expect(container.querySelector('[aria-labelledby="app-services-example.media"]')).not.toBeNull();
+  const signals = serviceReads().map(([, options]) => options?.signal);
+  await tab("Launch");
+  expect(signals.every(signal => signal?.aborted)).toBe(true);
+  expect(container.querySelector('[aria-labelledby="app-services-example.media"]')).toBeNull();
+});
+
+it.each(["services", "metrics"] as const)("opens %s directly and retains section changes from browser navigation", async settingsTab => {
+  props.settingsTab = settingsTab; await render();
+  expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent?.toLowerCase()).toBe(settingsTab);
+  props.settingsTab = "app"; await render();
+  expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe("Launch");
+});
+
+
+it("treats a missing feed binding as a normal state and offers this app's reviewed migration", async () => {
+  props.settingsTab = "source";
+  props.app = { ...app, live: false, selectedRuntime: "docker", installationId: "feed-install" };
+  vi.mocked(fetch).mockImplementation(async input => String(input).endsWith("/feeds")
+    ? Response.json({ code: "app_feeds_not_configured", message: "Runtime app is not bound to a feeds document." }, { status: 409 })
+    : Response.json({ suggestions: [{ migration: { migrationId: "media-migration", appId: app.id,
+      from: { manifestUrl: "https://publisher.test/main.json", feedsUrl: null, feedId: null },
+      to: { manifestUrl: null, feedsUrl: "https://publisher.test/feeds.json", feedId: "daily" } }, revision: "current" }] }));
+  await render();
+  expect(container.textContent).toContain("No update feed is configured");
+  expect(container.textContent).toContain("Review daily feed");
+  expect(container.textContent).not.toContain("Runtime app is not bound");
+  expect(container.textContent).not.toContain("Retry feeds");
+  expect(props.onSetFeed).not.toHaveBeenCalled(); expect(props.onManageAction).not.toHaveBeenCalled();
 });

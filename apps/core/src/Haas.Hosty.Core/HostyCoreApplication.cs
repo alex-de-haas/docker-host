@@ -41,6 +41,7 @@ internal static class HostyCoreApplication
 
         builder.Services.AddSingleton<CoreSettingsStore>();
         builder.Services.AddSingleton<CoreSettingsService>();
+        CoreTracing.Configure(builder.Services);
         // AuthLifetimes resolves live from the settings service (edited from the Shell platform panel),
         // so a TTL change applies without a restart: idle windows immediately, absolute windows for
         // grants/sessions issued afterward. Transient so each per-request injection re-reads the current
@@ -61,8 +62,40 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<AppIdentityTokenService>();
         // Core MCP: the protocol server plus the tool type it reflects over. The tools resolve Core's
         // own services per call, so the MCP layer holds no state of its own.
-        builder.Services.AddMcpServer().WithHttpTransport().WithTools<HostyCoreTools>().WithTools<ExternalWorkspaceMcpTools>().WithTools<AppDevModeMcpTools>().WithTools<WorkspaceActivationMcpTools>(CoreJsonSerializerContext.Default.Options).WithTools<AppExecutionTargetMcpTools>(CoreJsonSerializerContext.Default.Options);
+        builder.Services.AddMcpServer().WithHttpTransport().WithTools<HostyCoreTools>().WithTools<ExternalWorkspaceMcpTools>(CoreJsonSerializerContext.Default.Options).WithTools<AppDevModeMcpTools>().WithTools<WorkspaceActivationMcpTools>(CoreJsonSerializerContext.Default.Options).WithTools<AppExecutionTargetMcpTools>(CoreJsonSerializerContext.Default.Options)
+            .WithTools<AppUpdateSourceMcpTools>(CoreJsonSerializerContext.Default.Options)
+            .WithTools<CoreEnvironmentMcpTools>(CoreJsonSerializerContext.Default.Options)
+            .WithTools<CoreWorkflowMcpTools>(CoreJsonSerializerContext.Default.Options)
+            .WithTools<CoreAppCreationMcpTools>(CoreJsonSerializerContext.Default.Options)
+            .WithTools<CorePublicationMcpTools>(CoreJsonSerializerContext.Default.Options)
+            .WithTools<CoreProviderMcpTools>(CoreJsonSerializerContext.Default.Options)
+            .WithTools<CoreDecisionMcpTools>(CoreJsonSerializerContext.Default.Options)
+            .WithTools<CoreHistoryMcpTools>(CoreJsonSerializerContext.Default.Options)
+            .WithTools<CoreHistoryExportMcpTools>(CoreJsonSerializerContext.Default.Options)
+            .WithRequestFilters(CoreMcpCatalog.ConfigureFilters);
         builder.Services.AddSingleton<ExternalWorkspaceMcpAuthorization>();
+        builder.Services.AddSingleton<CoreCapabilityAuthorization>();
+        builder.Services.AddSingleton<CoreProviderOperationStore>();
+        builder.Services.AddSingleton<CoreDecisionStore>();
+        builder.Services.AddSingleton<CoreDecisionService>();
+        builder.Services.AddHostedService<CoreDecisionRetention>();
+        builder.Services.AddSingleton<CoreTaskAdapter>();
+        builder.Services.AddSingleton<CoreTaskWorkflow>();
+        builder.Services.AddSingleton<CoreTaskSources>();
+        builder.Services.AddSingleton<CoreTaskMcp>();
+        builder.Services.AddSingleton<CoreTaskWorkspace>();
+        builder.Services.AddSingleton<CoreHistoryAdapter>();
+        builder.Services.AddSingleton<CoreHistorySubscriptions>();
+        builder.Services.AddSingleton<CoreAgentRunSubscriptions>();
+        builder.Services.AddSingleton<CoreHistoryCursorStore>();
+        builder.Services.AddSingleton<CoreHistoryExportStore>();
+        builder.Services.AddSingleton<CoreHistoryExports>();
+        builder.Services.AddSingleton<CoreHistoryAttachmentHandles>();
+        builder.Services.AddSingleton<CoreAgentSessionAdapter>();
+        builder.Services.AddSingleton<ICoreAgentRunAccess>(sp => sp.GetRequiredService<CoreAgentSessionAdapter>());
+        builder.Services.AddSingleton<CoreProviderMediation>();
+        builder.Services.AddHttpClient(CoreProviderMediation.ClientName, client => client.Timeout = TimeSpan.FromSeconds(30))
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false });
         // The MCP mutation tools read the caller's grants out of HttpContext.Items, where the
         // endpoint filter put them; the accessor is how a static tool method reaches the request.
         builder.Services.AddHttpContextAccessor();
@@ -99,6 +132,8 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<UserConnectionService>();
         builder.Services.AddSingleton(sp => new PrivateSourceService(sp.GetRequiredService<UserConnectionService>(),
             new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false }) { Timeout = TimeSpan.FromSeconds(30) }));
+        builder.Services.AddSingleton<PullRequestProviderBudget>();
+        builder.Services.AddSingleton<PullRequestObservationCache>();
         builder.Services.AddHttpClient<GitHubSourceProvider>(client => client.Timeout = TimeSpan.FromSeconds(30))
             .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false });
         builder.Services.AddSingleton(sp => new AppManifestService(AppManifestService.CreateDefaultHttpClient(), sp.GetRequiredService<PrivateSourceService>()));
@@ -112,6 +147,10 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<CoreEventHub>();
         builder.Services.AddSingleton<NotificationService>();
         builder.Services.AddSingleton<AppSourceService>();
+        builder.Services.AddSingleton<IAgentSkillGit, AgentSkillGit>();
+        builder.Services.AddSingleton<AgentSkillLibrary>();
+        builder.Services.AddSingleton<AppSkillPackages>();
+        builder.Services.AddHostedService<AgentSkillRecovery>();
         builder.Services.AddSingleton<ISourceGitAccess>(sp => sp.GetRequiredService<PrivateSourceService>());
         builder.Services.AddSingleton<WorkspaceObservationState>();
         builder.Services.AddSingleton<DevelopmentWorkspaceService>();
@@ -123,8 +162,13 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<SourceDocumentAuthorization>();
         builder.Services.AddSingleton<WorkspaceAuthorization>();
         builder.Services.AddSingleton<PublicationService>();
+        builder.Services.AddSingleton<CorePublicationAdapter>();
+        builder.Services.AddSingleton<CoreAppCreationAdapter>();
+        builder.Services.AddSingleton<CoreWorkflowAdapter>();
+        builder.Services.AddSingleton<InstalledPullRequestRepositories>();
+        builder.Services.AddSingleton<PullRequestService>();
+        builder.Services.AddHostedService<PullRequestObserver>();
         builder.Services.AddHostedService<WorkspaceDeletionRecovery>();
-        builder.Services.AddHostedService<PublicationObserver>();
         builder.Services.AddHostedService<DevelopmentWorkspaceObserver>();
         // Shared flag the control-plane stop endpoint sets and the runtime-app supervisor reads at
         // shutdown to decide whether a stop leaves app containers running (keep-apps light restart).
@@ -134,6 +178,7 @@ internal static class HostyCoreApplication
         // client. Singleton so its TTL cache survives across requests.
         builder.Services.AddHttpClient(CoreUpdateCheckService.HttpClientName, client => client.Timeout = TimeSpan.FromSeconds(20));
         builder.Services.AddSingleton<CoreUpdateCheckService>();
+        builder.Services.AddSingleton<CorePlatformFeedService>();
         // One-click Cloudflare ingress (phase 1): a named client for the Cloudflare API, the read-only
         // discovery client, and the private token store.
         builder.Services.AddHttpClient(CloudflareApiClient.HttpClientName, client => client.Timeout = TimeSpan.FromSeconds(20));
@@ -149,6 +194,7 @@ internal static class HostyCoreApplication
         // guard reads it, so it must be registered for that guard to exist at all.
         builder.Services.AddSingleton<PublicOriginOwnership>();
         builder.Services.AddSingleton<RuntimePortAllocator>();
+        builder.Services.AddSingleton<DependencyStartAuthorization>();
         builder.Services.AddSingleton<CoreLifecycleService>();
         builder.Services.AddSingleton<LocalCommandProcessRegistry>();
         builder.Services.AddSingleton<CoreDevelopmentService>();
@@ -175,17 +221,6 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<CoreEnvironmentConsentService>();
         builder.Services.AddSingleton<CoreEnvironmentAuthorization>();
         builder.Services.AddSingleton<CoreEnvironmentAccess>();
-        builder.Services.AddSingleton<SandboxStore>();
-        builder.Services.AddSingleton<ISandboxInputs, SandboxInputs>();
-        builder.Services.AddSingleton<SandboxServiceCredentials>();
-        builder.Services.AddSingleton<SandboxDockerRuntime>();
-        builder.Services.AddSingleton<ISandboxRuntime>(sp => sp.GetRequiredService<SandboxDockerRuntime>());
-        builder.Services.AddSingleton<SandboxBrowser>();
-        builder.Services.AddSingleton<SandboxService>();
-        builder.Services.AddSingleton<SandboxOperations>();
-        builder.Services.AddSingleton<SandboxAuthorization>();
-        builder.Services.AddSingleton<SandboxRealm>();
-        builder.Services.AddHostedService<SandboxSupervisor>();
         // Fast path for the reviewed-update plan's registry digest lookups: a direct registry HTTP
         // probe, roughly 7x quicker than the `docker buildx imagetools inspect` it fronts. Redirects
         // are not followed — a manifest probe must not be bounced to an unvetted host — and anything
@@ -237,6 +272,7 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<ToolActivityService>();
         builder.Services.AddHostedService(sp => sp.GetRequiredService<ToolActivityService>());
         builder.Services.AddSingleton<UiPanelService>();
+        builder.Services.AddSingleton<FeedbackStore>();
         builder.Services.AddSingleton<InstallationApprovalStore>();
         builder.Services.AddSingleton<ProtectedSettingsChanges>();
         builder.Services.AddSingleton<HostPathApprovalService>();
@@ -258,6 +294,7 @@ internal static class HostyCoreApplication
         app.UseForwardedHeaders();
         app.Use(LocalBrowserNavigation.InvokeAsync);
         app.UseRouting();
+        app.Use(CoreApiRequest.InvokeAsync);
         app.UseCors();
         app.Use(LifecycleAuditFilter.RecordEarlyRefusalAsync);
         app.Use(AppManagementAuthorization.InvokeAsync);
@@ -265,12 +302,21 @@ internal static class HostyCoreApplication
         ProtectedSettingsChanges.Map(app);
         InstallationApprovalEndpoints.Map(app);
         ProviderEndpoints.Map(app);
+        CoreProviderApi.Map(app);
+        CoreSourceApi.Map(app);
+        CorePublicationApi.Map(app);
+        CoreAppCreationApi.Map(app);
+        CoreWorkflowApi.Map(app);
+        CoreDecisionEndpoints.Map(app);
+        CoreHistoryEndpoints.Map(app);
+        CoreHistorySubscriptions.Map(app);
+        CoreAgentRunSubscriptions.Map(app);
+        CoreHistoryExportEndpoints.Map(app);
         CoreEnvironmentEndpoints.Map(app);
-        SandboxEndpoints.Map(app);
-        SandboxAuthEndpoints.Map(app);
         UiPanelEndpoints.Map(app);
+        FeedbackEndpoints.Map(app);
 
-        app.MapGet("/healthz", () => CoreJson.Json(new HealthResponse("ok")));
+        app.MapGet("/healthz", () => CoreJson.Json(new HealthResponse("ok"))).WithMetadata(new CoreDiagnosticsTransport());
         app.MapGet("/api/core/status", async (
             HttpRequest request,
             HostyCoreRuntimeConfig config,
@@ -410,6 +456,7 @@ internal static class HostyCoreApplication
             await shellOrigins.ResolveAsync(cancellationToken)), "text/html"));
 
         DomainEndpoints.Map(app);
+        AgentSkillEndpoints.Map(app);
         AgentMcpEndpoints.Map(app);
         AuthEndpoints.Map(app);
         AppContinuityEndpoints.Map(app);
@@ -426,6 +473,7 @@ internal static class HostyCoreApplication
         HostInitializationEndpoints.Map(app);
         CoreSettingsEndpoints.Map(app);
         CoreLogEndpoints.Map(app);
+        CoreTracing.Map(app);
         RuntimeResourceEndpoints.Map(app);
         CoreRestartEndpoints.Map(app);
         CoreWorkspaceEndpoints.Map(app);
@@ -440,6 +488,7 @@ internal static class HostyCoreApplication
         SourceDocumentEndpoints.Map(app);
         WorkspaceInspectionEndpoints.Map(app);
         PublicationEndpoints.Map(app);
+        PullRequestEndpoints.Map(app);
         ControlIdentityEndpoints.Map(app);
         AppDirectoryEndpoints.Map(app);
         AppAssetEndpoints.Map(app);
@@ -478,6 +527,7 @@ internal static class HostyCoreApplication
             return CoreJson.Json(new ErrorResponse("control_unauthorized", "Local control secret is missing or invalid."), statusCode: StatusCodes.Status401Unauthorized);
         }
 
+        CoreApiRequest.OperatorAuthenticated();
         return action();
     }
 
@@ -489,6 +539,7 @@ internal static class HostyCoreApplication
             return CoreJson.Json(new ErrorResponse("control_unauthorized", "Local control secret is missing or invalid."), statusCode: StatusCodes.Status401Unauthorized);
         }
 
+        CoreApiRequest.OperatorAuthenticated();
         return await action();
     }
 
@@ -544,6 +595,7 @@ internal static class HostyCoreApplication
           <!doctype html>
           <html lang="en">
           <head>
+            {{CoreBrowserPages.Favicon}}
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1">
             <title>{{encodedTitle}}</title>
@@ -598,6 +650,7 @@ internal static class HostyCoreApplication
           <!doctype html>
           <html lang="en">
           <head>
+            {{CoreBrowserPages.Favicon}}
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1">
             <title>Hosty Login</title>
@@ -660,6 +713,7 @@ internal static class HostyCoreApplication
           <!doctype html>
           <html lang="en">
           <head>
+            {{CoreBrowserPages.Favicon}}
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1">
             <title>Hosty Core Setup</title>
@@ -750,6 +804,7 @@ internal static class HostyCoreApplication
           <!doctype html>
           <html lang="en">
           <head>
+            {{CoreBrowserPages.Favicon}}
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1">
             <title>Hosty Core Recovery</title>
@@ -836,6 +891,7 @@ internal static class HostyCoreApplication
           <!doctype html>
           <html lang="en">
           <head>
+            {{CoreBrowserPages.Favicon}}
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1">
             <title>Hosty Core Invitation</title>
@@ -1132,7 +1188,10 @@ internal sealed record HostyCoreRuntimeConfig(
 
     private static bool IsLoopbackHost(string host)
     {
-        if (string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase))
+        // Named localhost browser origins are local too, including a DNS root dot.
+        host = host.TrimEnd('.');
+        if (string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase) ||
+            host.EndsWith(".localhost", StringComparison.OrdinalIgnoreCase))
         {
             return true;
         }

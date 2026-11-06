@@ -170,7 +170,7 @@ export function readLegacySystemAppId(pathname: string): string | null {
 }
 
 const APP_DETAILS_SECTIONS = new Set<SettingsTab>([
-  "app", "parameters", "permissions", "publicOrigins", "mounts", "source", "backups", "logs",
+  "app", "parameters", "permissions", "publicOrigins", "mounts", "source", "backups", "logs", "services", "metrics",
 ]);
 
 function readAppDetailsSection(value: string | null | undefined): SettingsTab {

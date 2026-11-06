@@ -1,9 +1,18 @@
+import { estimateInstructionSources, readCodexMcpContext } from "./codex-context.js";
+import { LOCAL_BPE_ESTIMATOR, type LocalContextSources } from "./context-sources.js";
+import type { ContextUsage } from "./context-usage.js";
+import type { McpContextDetail } from "./context-mcp.js";
+
+import { readNativeQuestions, questionAnswers } from "./questions.js";
+import { UsageReader, absentUsage, codexUsage } from "./provider-usage.js";
 import { cleanAgentEnvironment } from "../connections/codex-login.js";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { toCodexMcpConfig } from "./codex-mcp.js";
 import { codexContextUsage } from "./context-usage.js";
 import { toolResult, shouldRetainToolOutput } from "./tool-result.js";
 import { randomUUID } from "node:crypto";
+import { codexPredictionSupport } from "./prediction-support.js";
+import { suggestionText } from "./prompt-suggestion.js";
 import { codexCommandResult, commandToolUseId } from "./command-result.js";
 import { ActivityTracker, activeTool } from "./activity.js";
 import path from "node:path";
@@ -16,6 +25,7 @@ import type {
   HarnessStartOptions,
 } from "./adapter.js";
 import {
+  REQUEST_USER_INPUT_METHOD,
   APPROVAL_METHODS,
   APPROVAL_POLICY,
   approvalDecision,
@@ -44,16 +54,18 @@ function spawnTarget(args: string[]): { command: string; args: string[] } {
 
 export class CodexHarnessAdapter implements HarnessAdapter {
   readonly name = "codex-app-server";
-  // No questions: the mechanism exists but is experimental, off by default, and its shape is only
-  // inferable from binary symbols — see REQUEST_USER_INPUT_METHOD in codex-protocol.ts. No live
-  // mid-turn reconfiguration either: the wrapper prepares a resumed process between turns.
+  // Pinned 0.162.1 supports structured questions in default mode with the explicit feature flag.
+  // No live mid-turn reconfiguration: the wrapper prepares a resumed process between turns.
   // autoAllow is false because nothing here consults the gateway's predicate: Codex raises approvals
   // by its own sandbox rules (below), and an app tool call never passes through this adapter's hands.
   // denyReason is false because the current `item/*` approval reply is a bare "decline" — only the
   // legacy methods carry a rejection text — and a capability that held for some requests and not
   // others would have the card promising delivery it cannot keep.
   readonly capabilities: HarnessCapabilities = {
-    questions: false,
+    // Protocol integration exists; actual availability is learned from a native response.
+    promptSuggestions: true,
+    usage: { snapshots: true, events: true, kinds: ["quota", "credits"] },
+    questions: true,
     appMcp: true,
     liveReconfigure: false,
     autoAllow: false,
@@ -98,6 +110,19 @@ export class CodexHarnessAdapter implements HarnessAdapter {
     return { available: true };
   }
 
+  async readUsage() {
+    if (this.auth.apiKey) return absentUsage("unsupported", "unsupported_auth");
+    const { CodexLogin } = await import("../connections/codex-login.js");
+    const client = new CodexLogin(this.auth.managedHome ?? this.auth.codexHome ?? path.join(this.auth.dataDir, "codex-home"));
+    const reader = new UsageReader(async () => {
+      await client.initialize();
+      const account = await client.request("account/read", { refreshToken: false });
+      if ((account.account as { type?: string } | null)?.type === "apiKey") return absentUsage("unsupported", "unsupported_auth");
+      return codexUsage(await client.request("account/rateLimits/read", {}));
+    });
+    try { return await reader.refresh(); } finally { reader.close(); await client.closeAndWait(); }
+  }
+
   async models(): Promise<import("../worker/contracts.js").ModelCatalog> {
     const { CodexLogin } = await import("../connections/codex-login.js");
     const { catalog, effortLabel } = await import("../worker/models.js");
@@ -135,12 +160,14 @@ class ReconfigurableCodexRun implements HarnessRun {
   private stopped = false;
   private replacing = false;
   constructor(private readonly options: HarnessStartOptions, private readonly auth: CodexAuthConfig) {
-    this.active = new CodexRun(options, auth);
+    this.active = new CodexRun(options, auth, options.requireNativeResume === true);
   }
+  readUsage() { return this.active.readUsage(); }
   send(text: string): void { this.active.send(text); }
   resolveApproval(id: string, decision: "allow" | "deny", message?: string): boolean { return this.active.resolveApproval(id, decision, message); }
-  resolveQuestion(): boolean { return false; }
+  resolveQuestion(questionId: string, answers: Record<string, string>): boolean { return this.active.resolveQuestion(questionId, answers); }
   interrupt(): Promise<void> { return this.active.interrupt(); }
+  async disableSuggestions(): Promise<void> { this.options.promptSuggestions = false; await this.active.disableSuggestions(); }
   async stop(): Promise<void> { this.stopped = true; await this.active.stop(); }
   async stopAndWait(): Promise<void> { this.stopped = true; await this.active.stopAndWait(); }
   async setMcpServers(servers: Record<string, unknown>): Promise<boolean> {
@@ -148,11 +175,12 @@ class ReconfigurableCodexRun implements HarnessRun {
     this.replacing = true;
     const buffered: HarnessEvent[] = [];
     let committed = false;
-    const candidate = new CodexRun({ ...this.options, systemPrompt: undefined,
+    const candidate = new CodexRun({ ...this.options, systemPrompt: undefined, instructionSources: undefined,
       resumeHarnessSessionId: this.active.resumableThread, mcpServers: servers,
       onEvent: event => { if (committed) this.options.onEvent(event); else buffered.push(event); },
     }, this.auth, true);
     try {
+      candidate.inheritInstructionEstimates(this.active);
       await candidate.waitUntilReady();
       if (this.stopped || !this.active.resumableThread || !candidate.resumableThread) return false;
       await this.active.stop();
@@ -174,18 +202,26 @@ interface PendingApproval {
 }
 
 class CodexRun implements HarnessRun {
+  private readonly usageReader = new UsageReader(async () => this.auth.apiKey ? absentUsage("unsupported", "unsupported_auth")
+    : codexUsage(await this.request("account/rateLimits/read", {})));
+  readUsage() { return this.usageReader.refresh(); }
   private readonly child: ChildProcessWithoutNullStreams;
   private readonly pendingRequests = new Map<number | string, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
   private readonly approvals = new Map<string, PendingApproval>();
+  private readonly questions = new Map<string, { requestId: number | string; questions: import("./adapter.js").HarnessQuestion[]; turnId: string }>();
   // Items whose approval the operator refused. Codex still emits item/completed for them, so
   // without this the transcript would claim a refused command ran.
   private readonly deniedItems = new Set<string>();
+  private readonly mcpStartupFailures = new Map<string, string>();
   private readonly queue: string[] = [];
   private nextId = 1;
   private buffer = "";
   private threadId: string | null = null;
   private ready: Promise<void>;
   private turnActive = false;
+  private predictionTurn: string | null = null;
+  private predictionRuntime: string | null = null;
+  private predictedTurns = new Set<string>();
   private activityTurnId: string | null = null;
   private readonly commandRun = randomUUID();
   private commandTurn = 0;
@@ -202,6 +238,13 @@ class CodexRun implements HarnessRun {
   private failed = false;
   /** The operator prompt rides on the first message only; later turns must not repeat it. */
   private systemPromptSent = false;
+  private context: ContextUsage | null = null;
+  private contextMcp?: McpContextDetail;
+  private contextSources: LocalContextSources = { version: 1, method: "local-estimate", estimator: LOCAL_BPE_ESTIMATOR,
+    instructions: [], omittedInstructions: 0, catalog: { state: "pending", observedAt: new Date().toISOString() } };
+  private catalogDeadline = 0;
+  private contextCatalogRead?: Promise<void>;
+  private completingContextTurn = false;
 
   constructor(
     private readonly options: HarnessStartOptions,
@@ -220,12 +263,12 @@ class CodexRun implements HarnessRun {
     // the environment. Nothing is written to the operator's ~/.codex — these servers belong to one
     // session of one gateway, not to the machine.
     const mcp = toCodexMcpConfig(options.mcpServers);
-    const providerArgs = ["app-server", ...(auth.managedHome ? ["-c", 'cli_auth_credentials_store="file"'] : []), ...mcp.args];
+    const providerArgs = ["app-server", "-c", "features.default_mode_request_user_input=true", ...(auth.managedHome ? ["-c", 'cli_auth_credentials_store="file"'] : []), ...mcp.args];
     const target = spawnTarget(providerArgs);
     const spawnOptions = {
       stdio: ["pipe", "pipe", "pipe"] as const,
       cwd: options.cwd,
-      env: { ...(auth.isolated ? cleanAgentEnvironment() : process.env), ...env, ...mcp.env },
+      env: { ...(auth.isolated ? cleanAgentEnvironment() : process.env), ...env, ...mcp.env, ...(options.nativeHome ? { HOME: options.nativeHome } : {}) },
     };
     this.child = options.processTransport
       ? options.processTransport.spawn("codex", providerArgs, spawnOptions)
@@ -263,6 +306,11 @@ class CodexRun implements HarnessRun {
     void this.ready.catch(() => {});
   }
 
+  inheritInstructionEstimates(previous: CodexRun): void {
+    this.contextSources.instructions = previous.contextSources.instructions;
+    this.contextSources.omittedInstructions = previous.contextSources.omittedInstructions;
+  }
+
   get resumableThread(): string | null { return !this.turnActive && !this.stopped && !this.failed ? this.threadId : null; }
   async waitUntilReady(): Promise<void> {
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -281,6 +329,7 @@ class CodexRun implements HarnessRun {
     const prompt = this.options.systemPrompt?.trim();
     if (prompt && !this.systemPromptSent) {
       this.systemPromptSent = true;
+      Object.assign(this.contextSources, estimateInstructionSources(prompt, this.options.instructionSources));
       this.queue.push(`[Hosty operator instructions]\n${prompt}\n\n${text}`);
     } else {
       this.queue.push(text);
@@ -312,8 +361,20 @@ class CodexRun implements HarnessRun {
 
   // Never any pending question: this adapter reports questions: false, so the manager will not route
   // one here. Present because the contract requires it, and returning false is the correct answer.
-  resolveQuestion(): boolean {
-    return false;
+  resolveQuestion(questionId: string, answers: Record<string, string>): boolean {
+    const pending = this.questions.get(questionId);
+    if (!pending || this.stopped || this.failed) return false;
+    const accepted = questionAnswers(pending.questions, answers);
+    if (!accepted) return false;
+    this.respond(pending.requestId, { answers: Object.fromEntries(Object.entries(accepted).map(([id, answer]) => [id, { answers: [answer] }])) });
+    this.questions.delete(questionId);
+    return true;
+  }
+  private cancelQuestions(turnId?: string): void {
+    for (const [id, pending] of this.questions) if (!turnId || pending.turnId === turnId) {
+      this.write({ jsonrpc: "2.0", id: pending.requestId, error: { code: -32800, message: "The question is no longer live. No answer was supplied." } });
+      this.questions.delete(id);
+    }
   }
 
   // The wrapper replaces idle processes and resumes their threads. A single process still takes
@@ -329,6 +390,8 @@ class CodexRun implements HarnessRun {
       await this.request(CODEX_METHODS.turnInterrupt, { threadId: this.threadId }).catch(() => undefined);
     }
   }
+
+  async disableSuggestions(): Promise<void> { this.options.promptSuggestions = false; this.predictionTurn = null; }
 
   async stopAndWait(): Promise<void> {
     if (this.child.exitCode !== null || this.child.signalCode !== null) return;
@@ -350,18 +413,22 @@ class CodexRun implements HarnessRun {
       });
     }
     this.approvals.clear();
+    this.cancelQuestions();
     this.clearFileChangeProposals();
+    this.usageReader.close();
     this.child.kill("SIGTERM");
   }
 
   private selectedModel: string | null = null;
   private selectedEffort: string | null = null;
   private async handshake(): Promise<void> {
-    await this.request(CODEX_METHODS.initialize, {
+    const initialized = await this.request(CODEX_METHODS.initialize, {
       clientInfo: { name: "hosty-harness", version: "1" },
-      capabilities: null,
+      capabilities: { experimentalApi: true },
     });
+    this.predictionRuntime = codexPredictionSupport.key(resolveCodexCommand(), (initialized as { userAgent?: unknown })?.userAgent);
     this.notify(CODEX_METHODS.initialized, {});
+    void this.readUsage().then(usage => { if (!this.stopped) this.emit({ type: "provider_usage", usage }); });
     this.selectedModel = this.options.model ?? null;
     this.selectedEffort = this.options.reasoningEffort ?? null;
     // Null turn overrides keep a resumed thread's old values. Resolve native defaults explicitly
@@ -413,7 +480,24 @@ class CodexRun implements HarnessRun {
 
     if (this.threadId) {
       this.emit({ type: "harness_session", harnessSessionId: this.threadId });
+      this.contextCatalogRead = this.collectContextCatalog();
     }
+  }
+
+  private async collectContextCatalog(): Promise<void> {
+    this.catalogDeadline = Date.now() + 5_000;
+    const result = await readCodexMcpContext(params => this.request("mcpServerStatus/list",
+      { ...params, threadId: this.threadId }, Math.max(1, this.catalogDeadline - Date.now())),
+    () => !this.stopped && !this.failed && Date.now() < this.catalogDeadline);
+    if (this.stopped || this.failed) return;
+    this.contextSources.catalog = result.catalog;
+    this.contextMcp = result.mcp;
+    if (this.context) this.emitContext();
+  }
+
+  private emitContext(): void {
+    this.emit({ type: "context_usage", usage: this.context ? { ...this.context,
+      sources: { ...this.contextSources }, ...(this.contextMcp ? { mcp: this.contextMcp } : {}) } : null });
   }
 
   private reportSelection(value: object): void {
@@ -497,7 +581,7 @@ class CodexRun implements HarnessRun {
       const pending = this.pendingRequests.get(message.id)!;
       this.pendingRequests.delete(message.id);
       if (message.error) {
-        pending.reject(new Error(message.error.message ?? "Codex returned an error."));
+        pending.reject(Object.assign(new Error(message.error.message ?? "Codex returned an error."), { code: message.error.code }));
       } else {
         pending.resolve(message.result);
       }
@@ -507,7 +591,23 @@ class CodexRun implements HarnessRun {
     // Server→client request. Approvals block until answered; anything else gets a minimal reply so
     // the harness never wedges on an unimplemented capability.
     if (message.id !== undefined && message.method) {
-      if (APPROVAL_METHODS.has(message.method)) {
+      if (message.method === REQUEST_USER_INPUT_METHOD) {
+        try {
+          const params = message.params ?? {};
+          if (typeof params.threadId !== "string" || params.threadId !== this.threadId || typeof params.turnId !== "string"
+            || typeof params.itemId !== "string" || typeof params.isBlocking !== "boolean"
+            || this.activityTurnId && params.turnId !== this.activityTurnId) throw new Error("The question does not belong to this live turn.");
+          const questions = readNativeQuestions(params, "codex");
+          const questionId = randomUUID();
+          this.questions.set(questionId, { requestId: message.id, questions, turnId: params.turnId });
+          this.emit({ type: "question_request", questionId, questions, blocking: params.isBlocking,
+            native: { threadId: params.threadId, turnId: params.turnId, itemId: params.itemId } });
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : "Unsupported question.";
+          this.write({ jsonrpc: "2.0", id: message.id, error: { code: -32602, message: reason } });
+          this.emit({ type: "notice", message: "Codex question rejected: " + reason });
+        }
+      } else if (APPROVAL_METHODS.has(message.method)) {
         const approvalId = randomUUID();
         const params = message.params ?? {};
         this.approvals.set(approvalId, {
@@ -538,6 +638,12 @@ class CodexRun implements HarnessRun {
     }
 
     const params = message.params ?? {};
+    if (message.method === "account/rateLimits/updated") {
+      this.emit({ type: "provider_usage", usage: codexUsage(params, true) }); return;
+    }
+    if (message.method === "account/updated") {
+      this.emit({ type: "provider_usage", usage: { ...absentUsage(), invalidated: true } }); return;
+    }
     if (typeof params.threadId === "string" && this.threadId && params.threadId !== this.threadId) return;
     if (message.method === "model/rerouted") {
       this.emit({ type: "notice", message: `Codex reported a model change: ${String(params.fromModel ?? "unknown")} → ${String(params.toModel ?? "unknown")}.` });
@@ -550,17 +656,24 @@ class CodexRun implements HarnessRun {
     }
     if (typeof params.turnId === "string" && this.activityTurnId && params.turnId !== this.activityTurnId) return;
     if (message.method === "thread/tokenUsage/updated") {
-      this.emit({ type: "context_usage", usage: codexContextUsage(params.tokenUsage) });
+      this.context = codexContextUsage(params.tokenUsage);
+      this.emitContext();
       return;
     }
     if (message.method === "thread/compacted" || (message.method === "item/completed"
       && (params.item as { type?: string } | undefined)?.type === "contextCompaction")) {
-      this.emit({ type: "context_usage", usage: null });
+      this.context = null;
+      this.emitContext();
     }
     // Item lifecycle shapes are verified from the installed app-server's generated v2 types.
     if (message.method === "item/started") {
       const item = (params.item ?? {}) as Record<string, unknown>;
       if (!this.turnActive || typeof item.id !== "string" || this.deniedItems.has(item.id)) return;
+      if (["mcpToolCall", "dynamicToolCall", "commandExecution", "fileChange", "webSearch"].includes(String(item.type))
+        && params.threadId === this.threadId && typeof params.turnId === "string" && params.turnId === this.activityTurnId) {
+        const effectId = commandToolUseId(this.commandRun, this.commandTurn, item.id, params.turnId);
+        if (effectId) this.emit({ type: "native_effect", id: effectId, state: "started" });
+      }
       if (item.type === "fileChange") this.rememberFileChangeProposal(params, item);
       if (item.type === "commandExecution" && item.status === "inProgress" && params.threadId === this.threadId &&
           typeof params.turnId === "string" && params.turnId === this.activityTurnId && this.commandCalls.size < 2048 &&
@@ -589,13 +702,18 @@ class CodexRun implements HarnessRun {
     if (message.method === "mcpServer/startupStatus/updated") {
       const params = message.params as { name?: unknown; status?: unknown; error?: unknown; failureReason?: unknown } | undefined;
       const status = typeof params?.status === "string" ? params.status : "";
+      const name = typeof params?.name === "string" ? params.name : "an app";
+      if (status === "ready") this.mcpStartupFailures.delete(name);
       if (status && status !== "starting" && status !== "ready") {
-        const name = typeof params?.name === "string" ? params.name : "an app";
         const reason = typeof params?.failureReason === "string" && params.failureReason
           ? params.failureReason
           : typeof params?.error === "string" && params.error
             ? params.error
             : status;
+        // Repeated startup attempts can report the same unavailable provider. Keep one notice
+        // until it recovers or the reason changes; a new process has its own startup state.
+        if (this.mcpStartupFailures.get(name) === reason) return;
+        this.mcpStartupFailures.set(name, reason);
         // A notice, not an error: this provider is optional, and the session keeps whatever else
         // started. Reporting it as an error would drop the run and fail the session over one app.
         this.emit({ type: "notice", message: `MCP server "${name}" did not start (${reason}). Its tools are unavailable for this session.` });
@@ -616,6 +734,12 @@ class CodexRun implements HarnessRun {
       this.activity.finish(String(item.id ?? "response"));
       this.activity.finish("response");
       const type = String(item.type ?? "");
+      if (["mcpToolCall", "dynamicToolCall", "commandExecution", "fileChange", "webSearch"].includes(type)
+        && params.threadId === this.threadId && typeof params.turnId === "string" && params.turnId === this.activityTurnId && typeof item.id === "string") {
+        const effectId = commandToolUseId(this.commandRun, this.commandTurn, item.id, params.turnId);
+        if (effectId) this.emit({ type: "native_effect", id: effectId,
+          state: this.deniedItems.has(item.id) || ["completed", "failed", "declined", "cancelled"].includes(String(item.status)) || type === "webSearch" ? "settled" : "unknown" });
+      }
       if (type === "fileChange" && params.threadId === this.threadId && params.turnId === this.activityTurnId && typeof item.id === "string")
         this.closeFileChangeProposal(item.id);
       const scopedTool = (type === "mcpToolCall" || type === "dynamicToolCall")
@@ -659,7 +783,7 @@ class CodexRun implements HarnessRun {
             : item.status === "completed" && hasResult ? "completed" : "unknown";
           // Project public tool content only. Provider _meta, app identity and configuration stay private.
           this.emit(toolResult(toolUseId, status, typeof error.message === "string" ? error.message
-            : hasResult ? { content: result.content, structuredContent: result.structuredContent } : undefined));
+            : hasResult ? { content: result.content, structuredContent: result.structuredContent } : undefined, item.durationMs));
         }
       } else if (type === "dynamicToolCall") {
         const toolName = typeof item.namespace === "string" && item.namespace ? `${item.namespace}: ${String(item.tool ?? "Tool")}` : String(item.tool ?? "Tool");
@@ -672,7 +796,7 @@ class CodexRun implements HarnessRun {
           }) : undefined;
           const status = item.status === "failed" || item.success === false ? "failed"
             : item.status === "completed" && item.success === true && content !== undefined ? "completed" : "unknown";
-          this.emit(toolResult(toolUseId, status, content));
+          this.emit(toolResult(toolUseId, status, content, item.durationMs));
         }
       } else if (type === "commandExecution" || type === "fileChange") {
         // Codex reports a refused item as completed too; reporting it as a tool use would tell the
@@ -716,9 +840,31 @@ class CodexRun implements HarnessRun {
     // Read live on 0.150.1 (2026-09-07) by driving a turn with an empty CODEX_HOME, which fails on
     // auth; the turn status vocabulary is `inProgress | completed | failed | declined`, read out of
     // the binary's variant table.
+    if (message.method === "thread/prediction/updated") {
+      if (this.predictionTurn && params.threadId === this.threadId && params.sourceTurnId === this.predictionTurn) {
+        this.predictionTurn = null;
+        const result = params.result as { type?: string; text?: unknown } | undefined;
+        this.emit({ type: "prompt_suggestion", text: result?.type === "completed" ? suggestionText(result.text) : null,
+          ...(result?.type === "failed" ? { reason: "unavailable" as const } : {}) });
+      }
+      return;
+    }
     if (message.method === "turn/completed") {
       const completedTurn = params.turn as { id?: string } | undefined;
       if (this.activityTurnId && completedTurn?.id && completedTurn.id !== this.activityTurnId) return;
+      // Worker completion closes the native run. Persist the bounded optional diagnostic before
+      // that terminal event, including its unavailable state, instead of stranding "pending".
+      if (this.context && this.contextSources.catalog.state === "pending" && this.contextCatalogRead) {
+        if (!this.completingContextTurn) {
+          this.completingContextTurn = true;
+          void this.contextCatalogRead.then(() => {
+            this.completingContextTurn = false;
+            if (!this.stopped && !this.failed) this.dispatch(message);
+          });
+        }
+        return;
+      }
+      this.cancelQuestions(this.activityTurnId ?? undefined);
       this.turnActive = false;
       this.commandCalls.clear();
       this.clearFileChangeProposals();
@@ -751,6 +897,19 @@ class CodexRun implements HarnessRun {
             }
           : undefined,
       });
+      if (!failed && this.options.promptSuggestions && typeof completedTurn?.id === "string" && params.threadId === this.threadId && !this.predictedTurns.has(completedTurn.id)) {
+        const turnId = this.predictionTurn = completedTurn.id;
+        this.predictedTurns.add(turnId);
+        if (!codexPredictionSupport.shouldRequest(this.predictionRuntime)) {
+          this.predictionTurn = null;
+          this.emit({ type: "prompt_suggestion", text: null, reason: "unsupported" });
+        } else void this.request("thread/prediction/request", { threadId: this.threadId, sourceTurnId: turnId }).catch((error: Error) => {
+          const unsupported = codexPredictionSupport.observeFailure(this.predictionRuntime, error);
+          if (this.stopped || this.predictionTurn !== turnId) return;
+          this.predictionTurn = null;
+          this.emit({ type: "prompt_suggestion", text: null, reason: unsupported ? "unsupported" : "unavailable" });
+        });
+      }
       void this.pump();
       return;
     }
@@ -814,10 +973,18 @@ class CodexRun implements HarnessRun {
     this.closedFileChangeItems.clear();
   }
 
-  private request(method: string, params: Record<string, unknown>): Promise<unknown> {
+  private request(method: string, params: Record<string, unknown>, timeoutMs?: number): Promise<unknown> {
     const id = this.nextId++;
-    this.write({ jsonrpc: "2.0", id, method, params });
-    return new Promise((resolve, reject) => this.pendingRequests.set(id, { resolve, reject }));
+    return new Promise((resolve, reject) => {
+      const timer = timeoutMs === undefined ? undefined : setTimeout(() => {
+        this.pendingRequests.delete(id); reject(new Error("Codex diagnostic timed out"));
+      }, timeoutMs);
+      this.pendingRequests.set(id, {
+        resolve: value => { clearTimeout(timer); resolve(value); },
+        reject: error => { clearTimeout(timer); reject(error); },
+      });
+      this.write({ jsonrpc: "2.0", id, method, params });
+    });
   }
 
   private respond(id: number | string, result: unknown): void {
