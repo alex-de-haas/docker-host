@@ -218,8 +218,9 @@ function handle(msg) {
     if (currentTurnText.includes("FEEDBACK_ACCEPTANCE:")) {
       send({ jsonrpc: "2.0", id: msg.id, result: {} });
       if (currentTurnText.includes("FEEDBACK_ACCEPTANCE:WAIT")) return;
-      void feedbackOutcome(currentTurnText).then(() => {
-        send({ method: "item/completed", params: { threadId: activeThreadId, item: { type: "agentMessage", id: "feedback-result", text: "Scripted feedback acceptance completed." } } });
+      const feedbackText = currentTurnText;
+      void feedbackOutcome(feedbackText).then(() => {
+        send({ method: "item/completed", params: { threadId: activeThreadId, item: { type: "agentMessage", id: "feedback-result", text: feedbackText.includes("FEEDBACK_ACCEPTANCE:HISTORICAL:") ? "Scripted historical feedback acceptance completed." : "Scripted feedback acceptance completed." } } });
         send({ method: "turn/completed", params: { threadId: activeThreadId, turn: { id: "feedback-turn", status: "completed" } } });
       }).catch(error => send({ method: "turn/completed", params: { threadId: activeThreadId,
         turn: { id: "feedback-turn", status: "failed", error: { message: "Feedback acceptance fixture failed: " + error.message } } } }));
@@ -550,16 +551,30 @@ async function feedbackOutcome(text) {
   try {
     const current = await call("feedback_current", {});
     const batch = JSON.parse(current.content.find(c => c.type === "text").text);
-    if (!batch.reports.every(r => r.workspaceId)) await call("prepare", { appId: batch.reports[0].context.appId, requestId: crypto.randomUUID(), name: "Feedback acceptance" });
+    const historical = text.match(/FEEDBACK_ACCEPTANCE:HISTORICAL:([0-9a-f-]{36})/);
+    if (historical) {
+      if (batch.readOnly !== true || batch.attemptId !== historical[1]) throw new Error("Historical feedback did not retain the exact admitted batch as read-only context");
+    } else {
+      if (batch.readOnly !== false) throw new Error("The current feedback prompt is not writable");
+      if (!batch.reports.every(r => r.workspaceId)) await call("prepare", { appId: batch.reports[0].context.appId, requestId: crypto.randomUUID(), name: "Feedback acceptance" });
+    }
+    let images = 0;
     for (const report of batch.reports) {
       const note = report.annotations.find(n => n.mediaType);
       if (note) {
         const image = await call("feedback_image", { reportId: report.id, annotationId: note.id });
-        if (!image.content.some(c => c.type === "image" && c.data)) throw new Error("Feedback image unavailable");
+        if (!image.content.some(c => c.type === "image" && c.mimeType === "image/png" && Buffer.from(c.data, "base64").subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])))) throw new Error("Feedback PNG evidence unavailable");
+        images++;
       }
     }
+    if (historical && !images) throw new Error("Historical feedback supplied no screenshot evidence");
     const handled = !text.includes("FEEDBACK_ACCEPTANCE:PARTIAL");
-    await call("feedback_result", { outcomes: batch.reports.map(r => ({ reportId: r.id, summary: handled ? "All requested changes verified by the fixture" : "More work remains", handled,
-      handledAnnotationIds: handled ? r.annotations.map(n => n.id) : [] })) });
+    const outcomes = batch.reports.map(r => ({ reportId: r.id, summary: handled ? "All requested changes verified by the fixture" : "More work remains", handled,
+      handledAnnotationIds: handled ? r.annotations.map(n => n.id) : [] }));
+    if (historical) {
+      const denied = await client.callTool({ name: "feedback_result", arguments: { outcomes } });
+      const message = denied.content.filter(c => c.type === "text").map(c => c.text).join("\n");
+      if (denied.isError !== true || !message.startsWith("This exact prompt has no active feedback batch.") || !message.includes("Ordinary continuation messages do not restore the writable feedback binding.")) throw new Error("Historical feedback result was not refused with exact-prompt recovery guidance");
+    } else await call("feedback_result", { outcomes });
   } finally { await client.close(); }
 }

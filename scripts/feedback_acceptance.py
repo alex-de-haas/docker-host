@@ -139,7 +139,36 @@ def check(context, app_origin, link):
         workspace_id = report(first)['workspaceId']; assert workspace_id and report(second)['workspaceId']==workspace_id
         assert attempt['messageSequence'] > 0 and len(attempt['outcomes'])==2
         say('PASS: one global batch, new chat/source workspace, screenshot tool, exact prompt and explicit per-report outcomes')
-        followup = settle(dispatch([first], 'FEEDBACK_ACCEPTANCE:PARTIAL', attempt['input']['sessionId'], workspace_id))
+        session_id = attempt['input']['sessionId']
+        wait_for(lambda: not h('/sessions/'+session_id).get('workerRun'), 90)
+        retained = h('/feedback')
+        context['run']([context['cli'], '--data-root', context['root'], 'apps', 'restart', caps['appId']])
+        wait_for(lambda: context['request']('/api/apps/'+caps['appId']+'/health')['status']=='healthy', 180)
+        assert h('/auth/identity')['status']=='active'
+        continuation = h('/sessions/'+session_id+'/messages', {
+            'text':'FEEDBACK_ACCEPTANCE:HISTORICAL:'+attempt['id'], 'clientRequestId':str(uuid.uuid4())}, expected=202)
+        assert continuation['state']=='accepted' and continuation['eventSeq']>attempt['messageSequence']
+        events = []
+        deadline = time.monotonic()+180
+        with client.open(app_origin+'/api/sessions/'+session_id+'/events?after='+str(continuation['eventSeq']), timeout=180) as response:
+            for raw in response:
+                assert time.monotonic()<deadline, 'Historical feedback continuation did not finish'
+                if not raw.startswith(b'data: '): continue
+                envelope = json.loads(raw[6:])
+                event = envelope.get('event', envelope); events.append(event)
+                assert event.get('type')!='error', event
+                if event.get('type')=='approval_request':
+                    assert event['toolName'].split(': ')[-1] in ['feedback_current','feedback_image','feedback_result'], event
+                    h('/sessions/'+session_id+'/approvals/'+event['approvalId'], {'decision':'allow'})
+                if event.get('type')=='result':
+                    assert event['status']=='success', event
+                    break
+        assert any(e.get('type')=='result' for e in events), 'Historical feedback continuation has no terminal result'
+        assert any(e.get('type')=='assistant_text' and e.get('text')=='Scripted historical feedback acceptance completed.' for e in events)
+        wait_for(lambda: not h('/sessions/'+session_id).get('workerRun'), 90)
+        assert h('/feedback')==retained, 'Read-only continuation must preserve reports, dispatches and outcomes'
+        say('PASS: after native restart, ordinary continuation reads the exact admitted batch and PNG evidence, refuses result writes, and preserves feedback state')
+        followup = settle(dispatch([first], 'FEEDBACK_ACCEPTANCE:PARTIAL', session_id, workspace_id))
         assert report(first)['status']=='partial' and report(first)['currentAttemptId']==followup['id']
         third, _ = submit('Acceptance: unprocessed removed with workspace')
         h('/feedback/'+third, {'expectedRevision':report(third)['revision'], 'workspaceId':workspace_id})

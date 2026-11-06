@@ -122,13 +122,17 @@ def check(context):
 
     if review := os.environ.get('HOSTY_HARNESS_BROWSER_REVIEW'):
         shell_manifest = json.loads((workspace/'apps/shell/manifest.json').read_text())
-        shell_manifest['source']['repository'] = context['repository']
-        shell_source = base/'shell-manifest.json'
-        shell_source.write_text(json.dumps(shell_manifest))
-        run([cli, '--data-root', root, 'apps', 'install', shell_source, '--runtime', 'dev', '--no-autostart'])
-        run([cli, '--data-root', root, 'apps', 'start', 'hosty.shell'])
-        wait_for(lambda: request('/api/apps/hosty.shell/health')['status'] == 'healthy', 180)
-        shell_summary = next(item for item in request('/api/apps')['apps'] if item['id'] == 'hosty.shell')
+        shell_id = shell_manifest['id']
+        shell_summary = next((item for item in request('/api/apps')['apps'] if item['id'] == shell_id), None)
+        if shell_summary is None:
+            shell_manifest['source']['repository'] = context['repository']
+            shell_source = base/'shell-manifest.json'
+            shell_source.write_text(json.dumps(shell_manifest))
+            run([cli, '--data-root', root, 'apps', 'install', shell_source, '--runtime', 'dev', '--no-autostart'])
+        if shell_summary is None or shell_summary['runtimeState'] not in ('running', 'starting'):
+            run([cli, '--data-root', root, 'apps', 'start', shell_id])
+        wait_for(lambda: request('/api/apps/'+shell_id+'/health')['status'] == 'healthy', 180)
+        shell_summary = next(item for item in request('/api/apps')['apps'] if item['id'] == shell_id)
         shell_endpoint = next(item for item in shell_summary['endpoints'] if item['key'] == 'web')
         shell_url = shell_endpoint.get('browserOrigin') or shell_endpoint.get('publicOrigin') or shell_endpoint['url']
         development = request('/api/core/development')

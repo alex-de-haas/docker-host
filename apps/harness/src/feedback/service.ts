@@ -204,14 +204,18 @@ export class FeedbackService {
     const events = await this.manager.store.readEvents(sessionId);
     const current = events.filter(e => e.type === "user_message").at(-1);
     const [collection, scope] = await Promise.all([client.list(token!), client.capabilities(token!)]);
-    let dispatch: FeedbackDispatch | undefined;
-    for (const d of collection.dispatches.filter(d => d.input.sessionId === sessionId && d.actorId === session!.createdBy && active(d) && owned(d, scope))) {
+    let dispatch: FeedbackDispatch | undefined, selectedSequence = -1;
+    const writing = action === "feedback-result";
+    for (const d of collection.dispatches.filter(d => d.input.sessionId === sessionId && d.actorId === session!.createdBy && owned(d, scope))) {
       const receipt = await this.manager.messageReceipt(sessionId, d.id, session!.createdBy).catch(() => null);
-      if (receipt?.eventSeq && receipt.eventSeq === current?.seq && !feedbackTurn(events, receipt.eventSeq)) { dispatch = d; break; }
+      const sequence = receipt?.eventSeq;
+      if (!sequence || receipt?.state !== "accepted" || !events.some(e => e.seq === sequence && e.type === "user_message")) continue;
+      if (writing && (!active(d) || sequence !== current?.seq || feedbackTurn(events, sequence))) continue;
+      if (sequence > selectedSequence) { dispatch = d; selectedSequence = sequence; }
     }
     if (!dispatch) fail("feedback_prompt_unbound", "This exact prompt has no active feedback batch. " + feedbackRecoveryHint);
     const watch = this.watches.get(dispatch!.id); if (watch) watch.token = token!;
-    if (action === "feedback-current") return { attemptId: dispatch!.id, reports: dispatch!.snapshot, instruction: dispatch!.input.instruction };
+    if (action === "feedback-current") return { attemptId: dispatch!.id, reports: dispatch!.snapshot, instruction: dispatch!.input.instruction, readOnly: !active(dispatch!) || selectedSequence !== current?.seq || !!feedbackTurn(events, selectedSequence) };
     if (action === "feedback-result") return client.outcomes(dispatch!.id, input.outcomes as FeedbackOutcome[], token!);
     if (action !== "feedback-image") fail("feedback_action_invalid", "Unknown feedback action.", 400);
     const report = dispatch!.snapshot.find(r => r.id === input.reportId), note = report?.annotations.find(n => n.id === input.annotationId);

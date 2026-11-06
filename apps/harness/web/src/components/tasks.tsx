@@ -140,7 +140,7 @@ export function Tasks() {
   const active = selectedTask?.attempts.at(-1);
   const running = active && (!active.receipt || !active.receipt.stopConfirmed || !["completed", "failed", "cancelled", "interrupted"].includes(active.receipt.state));
   const disabled = busy || uncertain || dirty;
-  return <main className="mx-auto flex min-h-screen max-w-7xl flex-col gap-5 p-5 md:p-8">
+  return <main className="mx-auto flex min-h-full max-w-7xl flex-col gap-5 p-5 md:p-8">
     <header className="flex items-center justify-between gap-4"><div><h1 className="text-2xl font-semibold tracking-tight">Tasks</h1><p className="text-sm text-muted-foreground">Assign work, follow execution and review results.</p></div><Button onClick={() => choose()} disabled={busy || uncertain}>New task</Button></header>
     {directory?.warning && <p role="status" className="text-sm text-muted-foreground">{directory.warning}</p>}
     {error && <div role="alert" className="rounded-md border border-destructive/40 p-3 text-sm">{error}{uncertain && <Button variant="outline" className="ml-3" disabled={busy} onClick={() => void send()}>Retry original request</Button>}</div>}
