@@ -2,7 +2,7 @@
 // Hosty brand asset generator.
 //
 // Generates the seven-cell Hosty mark from the shared SDK geometry. Writes the SVG
-// masters (assets/hosty-brand/svg/), the browser Shell assets, and the native
+// masters (assets/hosty-brand/svg/), the browser app assets, and the native
 // Swift app icons. It rasterizes every PNG + the multi-size favicon.ico from
 // those SVGs so the whole library stays in sync with the canonical grid.
 //
@@ -19,9 +19,10 @@ import { CORE_MARK } from "../../packages/app-sdk/src/core-mark-geometry.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const BRAND = __dirname; // assets/hosty-brand
-const webOnly = process.argv.includes("--web-only");
-if (process.argv.slice(2).some((argument) => argument !== "--web-only")) {
-  throw new Error("Usage: node assets/hosty-brand/build-assets.mjs [--web-only]");
+const faviconsOnly = process.argv.includes("--favicons-only");
+const webOnly = process.argv.includes("--web-only") || faviconsOnly;
+if (process.argv.slice(2).some((argument) => !["--web-only", "--favicons-only"].includes(argument))) {
+  throw new Error("Usage: node assets/hosty-brand/build-assets.mjs [--web-only | --favicons-only]");
 }
 const REPO = join(BRAND, "..", "..");
 const SHELL_PUBLIC = join(REPO, "apps", "shell", "public");
@@ -86,7 +87,7 @@ const platformTile = (bg, color, scale = 1) =>
 // light-theme look, so the rasterized .ico/PNG fallbacks (which can't honor the
 // media query) render a dark mark on transparent. Fixed light/dark SVGs let
 // Shell follow a saved app theme without depending on browser media preferences.
-const favicon = (theme = "system", scale = 1.16) =>
+const favicon = (theme = "system", scale = 1.16, renderMark = markBody) =>
   svg(
     "0 0 100 100",
     (theme === "system" ? `<style>` +
@@ -94,7 +95,7 @@ const favicon = (theme = "system", scale = 1.16) =>
       `@media(prefers-color-scheme:dark){.hosty-mark{fill:${C.white}}}` +
       `</style>` : "") +
       `<g transform="translate(50 50) scale(${scale}) translate(-50 -50)">` +
-      markBody(theme === "dark" ? C.white : C.ink, false, theme === "system" ? "hosty-mark" : undefined) +
+      renderMark(theme === "dark" ? C.white : C.ink, false, theme === "system" ? "hosty-mark" : undefined) +
       `</g>`,
   );
 
@@ -208,7 +209,44 @@ const MAC_APP_ICON_SLOTS = [
 const pngH = (svgStr, h) =>
   sharp(Buffer.from(svgStr)).resize({ height: h }).png().toBuffer();
 
+// App tile SVGs are the source of each app's cells and accent. Convert their
+// reviewed tile grid to the same enlarged, transparent cut as the Core favicon.
+function appMark(icon) {
+  const cells = [...icon.matchAll(/<rect x="([\d.]+)" y="([\d.]+)" width="16" height="16" fill="(#[A-Fa-f0-9]{6})"\s*\/>/g)];
+  if (cells.length === 0) throw new Error("App icon has no cell mark");
+  return (color, _tiled, cls) => cells.map(([, x, y, fill]) => {
+    const col = (Number(x) - CORE_MARK.tile.inset) / (CORE_MARK.tile.size + CORE_MARK.tile.gap);
+    const row = (Number(y) - CORE_MARK.tile.inset) / (CORE_MARK.tile.size + CORE_MARK.tile.gap);
+    if (![col, row].every(value => Number.isInteger(value) && value >= 0 && value <= 2)) {
+      throw new Error("App icon cell is outside the canonical grid");
+    }
+    const { inset, size, gap } = CORE_MARK.plain;
+    const neutral = fill.toUpperCase() === C.white;
+    return `<rect x="${inset + col * (size + gap)}" y="${inset + row * (size + gap)}" width="${size}" height="${size}" fill="${neutral ? color : fill}"${neutral && cls ? ` class="${cls}"` : ""}/>`;
+  }).join("");
+}
+
+async function buildBrowserFavicons() {
+  for (const [app, web] of [["shell", "shell"], ["desktop", "desktop"],
+    ["documents", "documents"], ["harness", "harness/web"],
+    ["marketplace", "marketplace"], ["telemetry", "telemetry-ui"]]) {
+    const icon = readFileSync(join(REPO, "apps", app, "assets/icon.svg"), "utf8");
+    const renderMark = appMark(icon);
+    const publicDir = join(REPO, "apps", web, "public");
+    mkdirSync(publicDir, { recursive: true });
+    for (const theme of ["system", "light", "dark"]) {
+      writeFileSync(join(publicDir, `favicon${theme === "system" ? "" : `-${theme}`}.svg`), favicon(theme, 1.16, renderMark));
+    }
+    const entries = [];
+    for (const size of FAVICON_SIZES) entries.push({ size, buffer: await png(favicon("light", 1.16, renderMark), size) });
+    writeFileSync(join(publicDir, "favicon.ico"), buildIco(entries));
+    if (app === "shell") writeFileSync(join(SHELL_PUBLIC, "apple-touch-icon.png"), await png(icon, 180));
+  }
+}
+
 async function run() {
+  await buildBrowserFavicons();
+  if (faviconsOnly) return;
   const masters = buildMasters();
   mkdirSync(SVG_DIR, { recursive: true });
   for (const [name, content] of Object.entries(masters)) {
@@ -249,14 +287,6 @@ async function run() {
   writeFileSync(join(logos, "hosty-logo-horizontal-light.png"), await pngH(masters["hosty-logo-horizontal-light.svg"], 300));
   writeFileSync(join(logos, "hosty-logo-horizontal-dark.png"), await pngH(masters["hosty-logo-horizontal-dark.svg"], 300));
   writeFileSync(join(logos, "hosty-logo-horizontal-on-white.png"), await pngH(masters["hosty-logo-horizontal-on-white.svg"], 300));
-
-  // App-facing assets in the shell.
-  mkdirSync(SHELL_PUBLIC, { recursive: true });
-  writeFileSync(join(SHELL_PUBLIC, "favicon.svg"), favSvg);
-  writeFileSync(join(SHELL_PUBLIC, "favicon-light.svg"), masters["hosty-favicon-light.svg"]);
-  writeFileSync(join(SHELL_PUBLIC, "favicon-dark.svg"), masters["hosty-favicon-dark.svg"]);
-  writeFileSync(join(SHELL_PUBLIC, "favicon.ico"), ico);
-  writeFileSync(join(SHELL_PUBLIC, "apple-touch-icon.png"), await png(masters["hosty-icon-brand.svg"], 180));
 
   if (!webOnly) {
     // Native app icons. iOS gets explicit light, dark, and tinted variants; macOS gets the existing

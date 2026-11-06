@@ -7,8 +7,8 @@ COPY packages/app-sdk/package.json packages/app-sdk/package.json
 RUN npm ci --no-audit --no-fund --workspace @haas/hosty-harness --workspace @haas/hosty-harness-web --workspace @hosty-sdk/app
 COPY apps/harness apps/harness
 COPY packages/app-sdk packages/app-sdk
-COPY shared shared
-RUN npm run harness:build-web \
+COPY shared/web shared/web
+RUN npm run build --workspace @haas/hosty-harness-web \
     && rm -rf node_modules/@openai/codex* node_modules/@anthropic-ai/claude-agent-sdk* \
     && rm -f node_modules/.bin/codex
 

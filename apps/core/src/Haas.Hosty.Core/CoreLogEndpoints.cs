@@ -95,7 +95,7 @@ internal static class CoreLogEndpoints
                 buffer.RunId,
                 records.Count > 0 ? records[^1].Sequence : cursor,
                 records));
-        });
+        }).WithMetadata(new CoreDiagnosticsTransport());
     }
 
     // Absent means the ring an operator wants first: Core's own decisions, not the request trail.

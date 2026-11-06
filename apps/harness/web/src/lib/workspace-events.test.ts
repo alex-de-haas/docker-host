@@ -40,7 +40,44 @@ describe("shared workspace event stream", () => {
     await vi.advanceTimersByTimeAsync(0); emit("stream.ready"); await vi.advanceTimersByTimeAsync(200);
     emit("workspace.changed"); emit("workspace.changed"); await vi.advanceTimersByTimeAsync(200);
     expect(sync).toHaveBeenCalledTimes(1); finish(); await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(4999); expect(sync).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1); expect(sync).toHaveBeenCalledTimes(2);
+  });
+
+  it("bounds sustained hints, retains the trailing change and stops when quiet", async () => {
+    const sync = vi.fn(async () => {});
+    cleanup.push(subscribeWorkspaceEvents("/burst", sync, vi.fn()));
+    await vi.advanceTimersByTimeAsync(0); emit("stream.ready"); await vi.advanceTimersByTimeAsync(0);
+    for (let i = 0; i < 120; i++) { emit("workspace.changed"); await vi.advanceTimersByTimeAsync(250); }
+    expect(sync).toHaveBeenCalledTimes(7);
+    // A change after the last snapshot remains pending, even if no further event arrives.
+    emit("workspace.changed"); await vi.advanceTimersByTimeAsync(5000);
+    expect(sync).toHaveBeenCalledTimes(8);
+    emit("stream.ping"); await vi.advanceTimersByTimeAsync(10_000);
+    expect(sync).toHaveBeenCalledTimes(8);
+  });
+
+  it("does not let hints bypass failure backoff or retain work after unsubscribe", async () => {
+    const sync = vi.fn(async () => false), unavailable = vi.fn();
+    const dispose = subscribeWorkspaceEvents("/failed-burst", sync, unavailable); cleanup.push(dispose);
+    await vi.advanceTimersByTimeAsync(0); emit("stream.ready"); await vi.advanceTimersByTimeAsync(0);
+    for (let i = 0; i < 24; i++) { emit("workspace.changed"); await vi.advanceTimersByTimeAsync(250); }
+    expect(sync).toHaveBeenCalledTimes(3); // 0, 1, 3 seconds; next retry is at 7.
+    dispose(); await vi.advanceTimersByTimeAsync(60_000);
+    expect(sync).toHaveBeenCalledTimes(3);
+  });
+
+  it("drops a hidden page's queued work and immediately resynchronizes on return", async () => {
+    const sync = vi.fn(async () => {});
+    cleanup.push(subscribeWorkspaceEvents("/hidden-burst", sync, vi.fn()));
+    await vi.advanceTimersByTimeAsync(0); emit("stream.ready"); await vi.advanceTimersByTimeAsync(0);
+    emit("workspace.changed"); await vi.advanceTimersByTimeAsync(200);
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" }); document.dispatchEvent(new Event("visibilitychange"));
+    await vi.advanceTimersByTimeAsync(1000); expect(sync).toHaveBeenCalledTimes(1);
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" }); document.dispatchEvent(new Event("visibilitychange"));
+    await vi.advanceTimersByTimeAsync(0); emit("stream.ready"); await vi.advanceTimersByTimeAsync(0);
     expect(sync).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(5000); expect(sync).toHaveBeenCalledTimes(2);
   });
 
   it("clears data on a lost stream and resynchronizes after reconnect and visibility return", async () => {
@@ -134,7 +171,7 @@ describe("shared workspace event stream", () => {
     expect(unavailable).toHaveBeenCalledTimes(1); expect(sync).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(1000);
     expect(sync).toHaveBeenCalledTimes(2); expect(mock.fetch).toHaveBeenCalledTimes(1);
-    sync.mockRejectedValue(new Error("temporary failure")); emit("workspace.changed"); await vi.advanceTimersByTimeAsync(200);
+    sync.mockRejectedValue(new Error("temporary failure")); emit("workspace.changed"); await vi.advanceTimersByTimeAsync(5000);
     expect(sync).toHaveBeenCalledTimes(3);
     dispose(); await vi.advanceTimersByTimeAsync(5000); expect(sync).toHaveBeenCalledTimes(3);
   });

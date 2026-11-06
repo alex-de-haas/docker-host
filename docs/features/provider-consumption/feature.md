@@ -1,7 +1,7 @@
 ---
 created: 2026-09-29
-updated: 2026-10-21
-summary: Apps discover and call confirmed speech, translation and assistant providers with short-lived Core credentials.
+updated: 2026-11-03
+summary: Apps discover and call confirmed speech, translation, assistant, task and execution providers with short-lived Core credentials.
 components: [apps/core, packages/app-sdk, packages/app-sdk-dotnet, apps/whisper, apps/harness]
 ---
 
@@ -57,7 +57,7 @@ Core 0.125.0 also includes `uiSurfaces` for assistants: declared panel, navigati
 endpoint identities, paths and resolved browser URLs. Consumers validate handoff destinations
 against these surfaces without an additional `apps.read` grant or an assumption that API and UI
 share an origin. SDK 0.24.0 exposes this additive field; older Core omits it. Plans 0.4.0 uses it
-for [document discussions](../plan-tracking/feature.md#discuss-a-document).
+for [document discussions](../documents-app/feature.md#discuss-a-document).
 Stopped providers remain discoverable but cannot receive a new credential. A running speech process
 can still be loading its model; its capabilities response distinguishes inference readiness.
 
@@ -77,6 +77,17 @@ settings, MCP, agent connections or general Core APIs. Finalization always uses 
 draft-only policy for provider-originated handoffs, regardless of the immediate-handoff setting.
 Only Harness's own operator clients can dispatch immediately. Provider credentials never become
 general delegation.
+
+## Task Providers And Executors
+
+Core 0.159.0 adds independent `tasks` / `task-executor` roles and
+`providers.tasks` / `providers.task-executor` consumer permissions. Both declarations use version 1
+and the existing reviewed installation registry. Attributed calls check user access to both apps at
+issuance and introspection. Applications own task data and execution; Core has no task database.
+The [basic task contract](../basic-tasks/feature.md) defines numbering, lifecycle, replay and stop
+confirmation. TypeScript SDK 0.36.0 and .NET SDK 0.11.0 provide typed task/execution clients. Harness
+keeps profiles private and preserves its administrator boundary. Provider tokens are valid only on
+the corresponding task/executor routes.
 
 ## SDKs
 
@@ -154,7 +165,8 @@ changing that grant remounts the frame to release the prior document's microphon
 Recognized text is appended to the current editable draft, preserving text and attachments and never
 sending a message automatically. Cancellation, sending, unmount and switching conversations invalidate
 late results and stop microphone tracks. Permission/provider errors retain the draft. An absent grant
-leaves dictation disabled. When Core advertises permission review, the tooltip
+leaves dictation disabled. The composer opens provider selection, capture controls and status from one
+[Dictation settings button](../harness-composer-controls/feature.md#dictation). When Core advertises permission review, the tooltip
 points to Dashboard → Harness → Settings → Permissions → Review changes, including legacy declarations.
 Older Core versions retain guidance based on their stored optional declarations. Source observation
 alone never grants access.

@@ -6,11 +6,23 @@ namespace Haas.Hosty.Core.Tests.Http;
 
 public sealed class CoreEnvironmentHttpTests
 {
+    [Theory]
+    [InlineData("/api/sandbox-instances")]
+    [InlineData("/api/sandbox-runtime/test/protocol")]
+    [InlineData("/api/sandbox-instances/test/authorize")]
+    public async Task RemovedRuntimeRoutesHaveNoEndpoint(string path)
+    {
+        await using var host = await StartHostAsync();
+        using var client = host.CreateClient();
+        using var response = await client.GetAsync(path);
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
     [Fact]
     public async Task EnvironmentApi_RequiresSeparatePermissionAndCurrentOwner()
     {
         await using var host = await StartHostAsync();
-        using var caller = await Client(host, "qa.client", [CoreAppPermissions.SandboxesRead, CoreAppPermissions.SandboxesManage]);
+        using var caller = await Client(host, "qa.client", ["apps.sandboxes.read", "apps.sandboxes.manage"]);
         const string root = "/api/internal/apps/qa.client/core-environments";
         Assert.Equal(HttpStatusCode.Forbidden, (await caller.GetAsync(root)).StatusCode);
         var apps = host.Services.GetRequiredService<AppRegistryStore>();
@@ -80,6 +92,31 @@ public sealed class CoreEnvironmentHttpTests
         await apps.UpsertAppAsync(record with { GrantedCorePermissions = [] });
         Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync("/api/core-environments")).StatusCode);
     }
+    [Fact]
+    public async Task AccessLink_RequiresSeparateApiAuthorityAndCurrentOwner()
+    {
+        await using var host = await StartHostAsync();
+        var service = host.Services.GetRequiredService<CoreEnvironmentService>();
+        var child = await service.CreateAsync(new("actor"), new(Guid.NewGuid().ToString(), "Owned"), default, operatorApproved: true);
+        using var client = await AppManagementHttpTests.CreateAppClient(host, "independent.operator",
+            [CoreAppPermissions.CoreEnvironmentsInspect, CoreAppPermissions.CoreEnvironmentsOperate]);
+        var path = "/api/core-environments/" + child.Id + "/access-link";
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync(path, new { })).StatusCode);
+        var apps = host.Services.GetRequiredService<AppRegistryStore>();
+        var app = (await apps.GetAppAsync("independent.operator"))!;
+        await apps.UpsertAppAsync(app with { GrantedCorePermissions = [.. app.GrantedCorePermissions!, CoreAppPermissions.CoreEnvironmentsApi] });
+        using var stopped = await client.PostAsJsonAsync(path, new { });
+        Assert.Equal(HttpStatusCode.Conflict, stopped.StatusCode);
+        Assert.Contains("environment_not_running", await stopped.Content.ReadAsStringAsync());
+        Assert.Equal("no-store", stopped.Headers.CacheControl?.ToString());
+        var store = host.Services.GetRequiredService<CoreEnvironmentStore>();
+        var record = (await store.ReadAsync(child.Id, default))!;
+        await store.WriteAsync(record with { Owner = new("another-owner") }, default);
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync(path, new { })).StatusCode);
+        using var anonymous = host.CreateClient();
+        Assert.Equal(HttpStatusCode.Forbidden, (await anonymous.PostAsJsonAsync(path, new { })).StatusCode);
+    }
+
     internal static Task<CoreHttpHarness> StartHostAsync() => CoreHttpHarness.StartAsync(configure: services =>
         services.AddSingleton<IDockerCommandRunner>(new EmptyDockerInventory()));
     // These HTTP authorization tests never create runtime containers. Do not depend on a host

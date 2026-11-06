@@ -204,7 +204,15 @@ public sealed class PasswordLoginHttpTests
         client.DefaultRequestHeaders.Add("Cookie", cookie.Split(';')[0]);
         using var page = await client.GetAsync(path);
         page.EnsureSuccessStatusCode();
-        Assert.Contains("core-frame", await page.Content.ReadAsStringAsync());
+        var html = await page.Content.ReadAsStringAsync();
+        Assert.Contains("core-frame", html);
+        // Account layout ships inside the allowed inline style block, including on OAuth pages.
+        var style = html[(html.IndexOf("<style>", StringComparison.Ordinal) + 7)..html.IndexOf("</style>", StringComparison.Ordinal)];
+        Assert.Contains(".account-field", style);
+        Assert.Contains(".account-choice", style);
+        Assert.Contains(".account-content .actions", style);
+        Assert.Contains("class=account-content", html);
+        Assert.Contains("style-src 'unsafe-inline'", Assert.Single(page.Headers.GetValues("Content-Security-Policy")));
         Assert.Equal("DENY", Assert.Single(page.Headers.GetValues("X-Frame-Options")));
         Assert.Contains("frame-ancestors 'none'", Assert.Single(page.Headers.GetValues("Content-Security-Policy")));
         Assert.False(page.Headers.Contains("Access-Control-Allow-Origin"));

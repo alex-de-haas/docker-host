@@ -249,7 +249,7 @@ def runtime_fixture(base, workspace, app_name, runtime, environment=None):
     destination = base / "runtime-manifests" / app_name
     destination.mkdir(parents=True)
     metadata = manifest.get("catalogMetadata", {})
-    for reference in (metadata.get("icon"), metadata.get("descriptionFile"), manifest.get("agent", {}).get("skillFile")):
+    for reference in (metadata.get("icon"), metadata.get("descriptionFile")):
         if not reference or urllib.parse.urlsplit(reference).scheme:
             continue
         source = (original / reference).resolve()
@@ -258,6 +258,12 @@ def runtime_fixture(base, workspace, app_name, runtime, environment=None):
             raise RuntimeError("Fixture asset escapes the app manifest directory.")
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, target)
+    for skill in manifest.get("agent", {}).get("skills", []):
+        source = (original / skill["path"]).resolve()
+        target = (destination / skill["path"]).resolve()
+        if not source.is_relative_to(original.resolve()) or not target.is_relative_to(destination.resolve()):
+            raise RuntimeError("Fixture skill escapes the app manifest directory.")
+        shutil.copytree(source, target)
     path = destination / "manifest.json"
     private_json(path, manifest)
     return path

@@ -1,6 +1,6 @@
 ---
 created: 2026-09-18
-updated: 2026-10-23
+updated: 2026-10-29
 summary: A shared install dialog for Marketplace and Shell, with final authorization on a separate Core-origin confirmation page.
 components: [packages/app-sdk, apps/marketplace, apps/shell, apps/core]
 ---
@@ -71,8 +71,9 @@ The legacy manifest name `apps.sources` aliases `apps.sources.full`. Core normal
 grants before unsupported-grant cleanup at startup, preserving accepted authority without a new review.
 The read permission conveys no workspace mutation, connection selection or source-file authority.
 
-New installs and updates reject unknown and duplicate entries. Installed manifests retain unsupported
-names for compatibility diagnostics. Core removes unsupported persisted grants at startup and on
+New installs and updates retain unknown names as compatibility warnings without granting them.
+Empty, whitespace-padded and duplicate entries remain invalid. Core review explains that the app
+or Core may need updating and that some features may not work. Core removes unsupported persisted grants at startup and on
 registry writes, preserves their declarations and changes the permission revision when removing grants.
 The catalogue also recognizes `apps.read`, `apps.logs`, `apps.notifications`, `apps.lifecycle`,
 `apps.configure`, `core.read`, `core.update`, `core.lifecycle`, `core.configure`, `core.logs`,

@@ -1,6 +1,6 @@
 ---
 created: 2026-06-03
-updated: 2026-10-24
+updated: 2026-10-29
 summary: The repository-local reference app used to validate lifecycle, identity, directory access and app roles.
 components: [apps/demo-app]
 ---
@@ -142,8 +142,9 @@ container port 3000. Read-only source mounts share the selected worktree; depend
 output directories use isolated caches. `next-env.d.ts` is an explicitly declared generated-file
 overlay, independent for each service. The development image initializes empty Docker cache
 volume roots and drops to UID/GID 1000 with no-new-privileges before dependency setup and Next.
-The offline sandbox's existing non-root user override skips that initialization. Dependency
-preparation accepts both the offline sandbox generation and ordinary Core service caches.
+Dependency preparation uses ordinary Core service caches and per-service preparation locks.
+The app uses normal Core identity, its directory and app-owned roles in child environments;
+there is no separate sandbox manifest recipe or synthetic role branch.
 
 ## Testing Expectations
 

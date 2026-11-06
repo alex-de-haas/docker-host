@@ -5,15 +5,17 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import AssistantPage from "./page";
 import { AssistantConversation } from "@/components/assistant-conversation";
 import * as api from "@/lib/assistant-api";
+import * as profilesApi from "@/lib/profiles-api";
 
 const ui = vi.hoisted(() => ({ reportSurfaceState: vi.fn(), getNavigation: vi.fn(), navigate: vi.fn() }));
 vi.mock("@hosty-sdk/app/ui/react", () => ({ useHostyUi: () => ui }));
 
 vi.mock("@/lib/assistant-api", async original => ({
   ...await original<typeof api>(),
-  getHealth: vi.fn(), listSessions: vi.fn(), getSession: vi.fn(), createSession: vi.fn(), deleteSession: vi.fn(),
-  listAppNames: vi.fn(), listContextApps: vi.fn(), setSessionApps: vi.fn(), postMessage: vi.fn(), stopSession: vi.fn(), streamEvents: vi.fn(), setSessionAutonomy: vi.fn(), listAgentConnections: vi.fn(), renameSession: vi.fn(),
+  workspaceAction: vi.fn().mockResolvedValue({}), getSuggestionPreference: vi.fn(), setSuggestionPreference: vi.fn(), getHealth: vi.fn(), listSessions: vi.fn(), getSession: vi.fn(), createSession: vi.fn(), deleteSession: vi.fn(),
+  listAppNames: vi.fn(), listContextApps: vi.fn(), setSessionApps: vi.fn(), postMessage: vi.fn(), stopSession: vi.fn(), streamEvents: vi.fn(), setSessionAutonomy: vi.fn(), listAgentConnections: vi.fn(), getSessionModels: vi.fn(), renameSession: vi.fn(),
 }));
+vi.mock("@/lib/profiles-api", () => ({ listProfiles: vi.fn(), selectSessionProfile: vi.fn() }));
 vi.mock("@/lib/development-api", async original => ({ ...await original<typeof import("@/lib/development-api")>(), useDevelopmentInventory: () => ({ workspaces: [], error: "", refresh: () => {} }) }));
 vi.mock("@/components/speech-input", () => ({ SpeechInput: () => null }));
 vi.mock("@/components/session-credentials", () => ({ SessionCredentials: () => null }));
@@ -34,12 +36,15 @@ beforeEach(() => {
   localStorage.clear();
   window.history.replaceState({}, "", "/assistant");
   record = { id: "session-one", title: "Conversation", status: "idle", createdAt: "" };
+  vi.mocked(api.getSuggestionPreference).mockResolvedValue({ enabled: false, revision: 0 });
   vi.mocked(api.getHealth).mockResolvedValue({ name: "fake", available: true });
   vi.mocked(api.listSessions).mockResolvedValue([record]);
   vi.mocked(api.getSession).mockImplementation(async () => ({ ...record }));
   vi.mocked(api.createSession).mockResolvedValue(record);
   vi.mocked(api.listAppNames).mockResolvedValue({});
   vi.mocked(api.listAgentConnections).mockResolvedValue({ connections: [], defaultId: null });
+  vi.mocked(api.getSessionModels).mockResolvedValue({ revision: "catalog", models: [] });
+  vi.mocked(profilesApi.listProfiles).mockResolvedValue({ revision: 1, defaultId: null, profiles: [] });
   vi.mocked(api.streamEvents).mockImplementation(async (_id, listener, _signal, onConnection) => {
     emit = listener; connection = onConnection!; connection("connected");
   });
@@ -53,7 +58,14 @@ afterEach(async () => {
   container.remove(); vi.resetAllMocks(); vi.unstubAllGlobals();
 });
 const render = () => act(async () => root.render(<AssistantPage />));
-const button = (name: string) => container.querySelector<HTMLButtonElement>(`button[aria-label="${name}"]`);
+const button = (name: string) => document.querySelector<HTMLButtonElement>(`button[aria-label="${name}"]`);
+const openSettings = async () => {
+  const trigger = container.querySelector<HTMLButtonElement>('button[aria-label^="Agent settings:"]')!;
+  if (trigger.getAttribute("aria-expanded") !== "true") await act(async () => trigger.click());
+};
+const currentProfile = () => document.querySelector('[aria-label="Current agent profile"]') ?? button("Agent profile");
+const currentProvider = () => document.querySelector('[aria-label="Current provider"]') ?? document.querySelector('[aria-label^="Provider:"]');
+const effortLabel = () => document.querySelector('[aria-label="Selected reasoning effort"]');
 const input = () => container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message"]')!;
 const type = (text: string) => act(async () => {
   Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(input(), text);
@@ -367,12 +379,12 @@ it("clears the previous activity when opening a different session", async () => 
 
 it("promotes the exact session to the host main area without sending or creating a conversation", async () => {
   await render(); await type("Keep my draft");
-  ui.getNavigation.mockReturnValue({ entries: [{ key: "development", route: "/development" }] });
+  ui.getNavigation.mockReturnValue({ entries: [{ key: "chats", route: "/chats" }] });
   ui.navigate.mockResolvedValue({ status: "accepted" });
   vi.mocked(api.createSession).mockClear();
   const open = [...container.querySelectorAll("button")].find(b => b.textContent === "Open in Harness")!;
   await act(async () => open.click());
-  expect(ui.navigate).toHaveBeenCalledWith("development", { requestId: expect.any(String), placement: "main", search: "?session=session-one" });
+  expect(ui.navigate).toHaveBeenCalledWith("chats", { requestId: expect.any(String), placement: "main", search: "?session=session-one" });
   expect(localStorage.getItem("hosty.assistant.draft.session-one")).toBe("Keep my draft");
   expect(api.postMessage).not.toHaveBeenCalled(); expect(api.createSession).not.toHaveBeenCalled();
 });
@@ -383,9 +395,9 @@ it("updates the host destination when selecting another full-page session and pr
   localStorage.setItem("hosty.assistant.draft.next-session", "Keep next draft");
   vi.mocked(api.listSessions).mockResolvedValue([record, next]);
   vi.mocked(api.getSession).mockImplementation(async id => id === next.id ? next : record);
-  ui.getNavigation.mockReturnValue({ entries: [{ key: "development", route: "/development" }] });
+  ui.getNavigation.mockReturnValue({ entries: [{ key: "chats", route: "/chats" }] });
   ui.navigate.mockResolvedValue({ status: "accepted" });
-  await act(async () => root.render(<AssistantConversation fullPage />));
+  await act(async () => root.render(<AssistantConversation fullPage navigation="chats" />));
   const pick = [...container.querySelectorAll("button")].find(b => b.textContent?.startsWith("Other conversation"))!;
   await act(async () => pick.click());
   expect(ui.navigate).not.toHaveBeenCalled();
@@ -399,7 +411,7 @@ it("updates standalone selection URLs when the host has no main destination", as
   vi.mocked(api.listSessions).mockResolvedValue([record, next]);
   vi.mocked(api.getSession).mockImplementation(async id => id === next.id ? next : record);
   ui.getNavigation.mockReturnValue({ entries: [] });
-  await act(async () => root.render(<AssistantConversation fullPage />));
+  await act(async () => root.render(<AssistantConversation fullPage navigation="chats" />));
   await act(async () => [...container.querySelectorAll("button")].find(b => b.textContent?.startsWith("Standalone next"))!.click());
   expect(window.location.search).toBe("?session=standalone-next");
   expect(localStorage.getItem("hosty.assistant.session")).toBe(next.id);
@@ -438,7 +450,7 @@ const openDelete = async (title = "Conversation") => {
 const renderDeletion = async () => {
   window.history.replaceState({}, "", "/development?session=session-one");
   ui.getNavigation.mockReturnValue({ entries: [] });
-  await act(async () => root.render(<AssistantConversation fullPage />));
+  await act(async () => root.render(<AssistantConversation fullPage navigation="chats" />));
   await type("My retained draft");
 };
 it("detaches on a local deletion event even if the HTTP response is lost", async () => {
@@ -516,7 +528,7 @@ it.each(["deleted", "retained", "unavailable"])("reconciles a lost non-active de
   }
 });
 
-const navigationTitles = () => [...container.querySelectorAll('nav[aria-label="Workspaces and chats"] button span.block[title]')].map(node => node.textContent);
+const navigationTitles = () => [...container.querySelectorAll('nav[aria-label="Chats"] button span.block[title]')].map(node => node.textContent);
 const renderActivityOrder = async () => {
   record = { ...record, appIds: ["one"], appContextRevision: 1, updatedAt: "2026-10-18T10:00:00Z" };
   const newer = { ...record, id: "newer", title: "Newer conversation", updatedAt: "2026-10-18T11:00:00Z" };
@@ -552,9 +564,11 @@ it.each(["session_autonomy_changed", "session_provider_changed"])("uses %s activ
     : { connectionId: "new-provider", connectionRevision: 2, harnessKind: "claude", providerLocked: false };
   await act(async () => emit({ type, seq: 3, ts: "2026-10-18T12:00:00Z", ...settings }));
   expect(navigationTitles()).toEqual(["Conversation", "Newer conversation"]);
-  expect(button(type === "session_autonomy_changed" ? "Autonomy: Autonomous" : "Provider: claude")).not.toBeNull();
+  await openSettings();
+  expect(type === "session_autonomy_changed" ? button("Autonomy: Autonomous") : button("Provider: claude")).not.toBeNull();
   await act(async () => emit({ type, seq: 1, ts: "2026-10-18T10:30:00Z", autonomy: "normal", connectionId: "old-provider", connectionRevision: 1, harnessKind: "codex", providerLocked: false }));
-  expect(button(type === "session_autonomy_changed" ? "Autonomy: Autonomous" : "Provider: claude")).not.toBeNull();
+  await openSettings();
+  expect(type === "session_autonomy_changed" ? button("Autonomy: Autonomous") : button("Provider: claude")).not.toBeNull();
   expect(input().value).toBe("My retained draft");
 });
 
@@ -686,4 +700,281 @@ it("keeps current busy controls while historical status chunks replay", async ()
     connection("connected");
   });
   expect(button("Stop")).not.toBeNull();
+});
+
+it("preserves an unsent draft and attachments while agent context changes replay after reconnect", async () => {
+  record = { ...record, appIds: [], appContextRevision: 0,
+    handoffDraft: { text: "Inspect image", attachments: [{ name: "image.png", size: 8 }] } };
+  window.history.replaceState({}, "", "/assistant?session=session-one");
+  await render(); await type("My unsent draft");
+  await act(async () => connection("reconnecting"));
+  record = { ...record, appIds: ["notes"], appContextRevision: 1 };
+  await act(async () => {
+    emit({ type: "app_context_changed", seq: 4, ts: "2026-10-26T12:00:00Z",
+      origin: "agent", actor: "admin", appIds: ["notes"], appContextRevision: 1 });
+    connection("connected");
+  });
+  expect(input().value).toBe("My unsent draft");
+  expect(container.textContent).toContain("image.png");
+  expect(container.textContent).toContain("Assistant updated app context: notes");
+  expect(api.postMessage).not.toHaveBeenCalled();
+  await act(async () => emit({ type: "app_context_changed", seq: 3, ts: "2026-10-26T11:00:00Z",
+    origin: "agent", appIds: [], appContextRevision: 0 }));
+  expect(input().value).toBe("My unsent draft");
+  expect(localStorage.getItem("hosty.assistant.draft.session-one")).toBe("My unsent draft");
+});
+
+
+it("keeps one set of execution controls when creating consecutive profile-enabled sessions", async () => {
+  record.profileLocked = false;
+  record.providerLocked = false;
+  record.connectionId = "codex";
+  record.connectionRevision = 1;
+  await render();
+  for (const id of ["second-session", "third-session"]) {
+    vi.mocked(api.createSession).mockResolvedValue({ ...record, id });
+    await act(async () => button("New session")!.click());
+    expect(container.querySelectorAll('button[aria-label^="Agent settings:"]')).toHaveLength(1);
+    expect(container.querySelectorAll('button[aria-label="Model"], button[aria-label="Agent profile"]')).toHaveLength(0);
+    await openSettings();
+    expect(document.querySelectorAll('button[aria-label="Model"]')).toHaveLength(1);
+    expect(document.querySelectorAll('[aria-label="Chat provider"]')).toHaveLength(1);
+  }
+});
+
+
+it("applies a profile refresh whose saved timestamp precedes its notification", async () => {
+  record.profileLocked = false;
+  record.selectionRevision = 0;
+  record.updatedAt = "2026-10-26T12:00:00.000Z";
+  await render();
+  const profile = { id: "reviewer", revision: 1, name: "Reviewer", description: "Reviews code", instructions: "Review only",
+    connectionId: "codex", model: "review-model", reasoningEffort: "high", skillIds: ["code-review"] };
+  vi.mocked(api.getSessionModels).mockResolvedValue({ revision: "catalog", models: [
+    { id: "review-model", label: "Review model", efforts: [{ id: "high", label: "High" }] },
+  ] });
+  vi.mocked(api.getSession).mockResolvedValue({ ...record, agentProfile: profile, connectionId: "codex", connectionRevision: 1,
+    executionSelection: { model: profile.model, reasoningEffort: profile.reasoningEffort }, selectionRevision: 1,
+    lastEventSeq: 2, updatedAt: "2026-10-26T12:00:01.000Z" });
+  await act(async () => emit({ type: "session_profile_changed", profileId: profile.id, revision: 1, seq: 2, ts: "2026-10-26T12:00:01.005Z" }));
+  await openSettings();
+  expect(currentProfile()?.textContent).toBe("Reviewer");
+  await openSettings();
+  expect(button("Model")?.textContent).toBe("Review model");
+  expect(effortLabel()?.textContent).toBe("High");
+  await type("Review this snippet"); await submit();
+  expect(api.postMessage).toHaveBeenCalledWith(record.id, "Review this snippet", [], 0, false, 1, expect.any(String));
+});
+
+
+it.each(["before", "after"])("retains the newer model when a delayed profile snapshot arrives %s its replacement", async order => {
+  record.profileLocked = false;
+  record.connectionId = "codex";
+  record.selectionRevision = 0;
+  record.updatedAt = "2026-10-26T12:00:00.000Z";
+  vi.mocked(api.getSessionModels).mockResolvedValue({ revision: "catalog", models: [
+    { id: "old-model", label: "Old model", efforts: [] },
+    { id: "new-model", label: "New model", efforts: [{ id: "high", label: "High" }] },
+  ] });
+  await render(); await type("Retained review request");
+  const profile = { id: "reviewer", revision: 1, name: "Reviewer", description: "Reviews code", instructions: "Review only",
+    connectionId: "codex", model: "old-model", reasoningEffort: null, skillIds: ["code-review"] };
+  const stale = { ...record, agentProfile: profile, selectionRevision: 1, lastEventSeq: 2,
+    updatedAt: "2026-10-26T12:00:01.000Z", executionSelection: { model: "old-model", reasoningEffort: null } };
+  const latest = { ...stale, selectionRevision: 2, lastEventSeq: 3, updatedAt: "2026-10-26T12:00:02.000Z",
+    executionSelection: { model: "new-model", reasoningEffort: "high" } };
+  let releaseStale!: (value: api.AssistantSession) => void;
+  let releaseLatest: ((value: api.AssistantSession) => void) | undefined;
+  vi.mocked(api.getSession).mockImplementationOnce(() => new Promise(resolve => { releaseStale = resolve; }))
+    .mockImplementationOnce(() => new Promise(resolve => { releaseLatest = resolve; }));
+  await act(async () => emit({ type: "session_profile_changed", profileId: profile.id, revision: 1, seq: 2, ts: "2026-10-26T12:00:01.005Z" }));
+  await act(async () => emit({ type: "model_selection_changed", revision: 2, selection: latest.executionSelection, seq: 3, ts: latest.updatedAt }));
+  await openSettings();
+  expect(button("Model")?.textContent).toBe("New model");
+  if (order === "before") await act(async () => releaseStale(stale));
+  await act(async () => releaseLatest?.(latest));
+  if (order === "after") await act(async () => releaseStale(stale));
+  await openSettings();
+  expect(button("Model")?.textContent).toBe("New model");
+  expect(effortLabel()?.textContent).toBe("High");
+  await openSettings();
+  expect(currentProfile()?.textContent).toBe("Reviewer");
+  expect(input().value).toBe("Retained review request");
+  await submit();
+  expect(api.postMessage).toHaveBeenCalledWith(record.id, "Retained review request", [], 0, false, 2, expect.any(String));
+});
+
+
+it("does not let a delayed profile mutation response replace a newer model event", async () => {
+  record.profileLocked = false;
+  record.connectionId = "codex";
+  record.selectionRevision = 0;
+  record.updatedAt = "2026-10-26T12:00:00.000Z";
+  const profile = { id: "reviewer", revision: 1, name: "Reviewer", description: "Reviews code", instructions: "Review only",
+    connectionId: "codex", model: "old-model", reasoningEffort: null, skillIds: [] };
+  vi.mocked(profilesApi.listProfiles).mockResolvedValue({ revision: 1, defaultId: null, profiles: [profile] });
+  vi.mocked(api.getSessionModels).mockResolvedValue({ revision: "catalog", models: [
+    { id: "old-model", label: "Old model", efforts: [] }, { id: "new-model", label: "New model", efforts: [] },
+  ] });
+  await render();
+  let finishSave!: (value: api.AssistantSession) => void;
+  let finishRefresh!: (value: api.AssistantSession) => void;
+  vi.mocked(profilesApi.selectSessionProfile).mockImplementation(() => new Promise(resolve => { finishSave = resolve; }));
+  vi.mocked(api.getSession).mockImplementationOnce(() => new Promise(resolve => { finishRefresh = resolve; }));
+  await openSettings();
+  await act(async () => button("Agent profile")!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })));
+  await act(async () => [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find(item => item.textContent?.startsWith("Reviewer"))!.click());
+  const saved = { ...record, agentProfile: profile, selectionRevision: 1, lastEventSeq: 2,
+    updatedAt: "2026-10-26T12:00:01.000Z", executionSelection: { model: "old-model", reasoningEffort: null } };
+  const latest = { ...saved, selectionRevision: 2, lastEventSeq: 3, updatedAt: "2026-10-26T12:00:02.000Z",
+    executionSelection: { model: "new-model", reasoningEffort: null } };
+  await act(async () => emit({ type: "model_selection_changed", revision: 2, selection: latest.executionSelection, seq: 3, ts: latest.updatedAt }));
+  await act(async () => finishSave(saved));
+  await openSettings();
+  expect(button("Model")?.textContent).toBe("New model");
+  await act(async () => finishRefresh(latest));
+  await openSettings();
+  expect(currentProfile()?.textContent).toBe("Reviewer");
+  await openSettings();
+  expect(button("Model")?.textContent).toBe("New model");
+  await type("Review after the concurrent update"); await submit();
+  expect(api.postMessage).toHaveBeenCalledWith(record.id, "Review after the concurrent update", [], 0, false, 2, expect.any(String));
+});
+
+
+it.each(["session_status", "app_context_changed"])("refreshes complete settings when %s overtakes a profile read", async eventType => {
+  record.profileLocked = false;
+  record.providerLocked = false;
+  record.connectionId = "old-account";
+  record.selectionRevision = 0;
+  record.updatedAt = "2026-10-26T12:00:00.000Z";
+  vi.mocked(api.getSessionModels).mockResolvedValue({ revision: "catalog", models: [
+    { id: "new-model", label: "New model", efforts: [{ id: "high", label: "High" }] },
+  ] });
+  await render(); await type("Retained review request");
+  const profile = { id: "reviewer", revision: 1, name: "Reviewer", description: "Reviews code", instructions: "Review only",
+    connectionId: "codex", model: "new-model", reasoningEffort: "high", skillIds: [] };
+  const snapshot = { ...record, agentProfile: profile, connectionId: "codex", connectionRevision: 1, harnessKind: "codex" as const,
+    selectionRevision: 2, lastEventSeq: 3, updatedAt: "2026-10-26T12:00:02.000Z",
+    executionSelection: { model: "new-model", reasoningEffort: "high" } };
+  const responses: Array<(value: api.AssistantSession) => void> = [];
+  vi.mocked(api.getSession).mockImplementation(() => new Promise(resolve => { responses.push(resolve); }));
+  await act(async () => emit({ type: "session_profile_changed", revision: 1, seq: 2, ts: "2026-10-26T12:00:01.000Z" }));
+  await act(async () => emit({ type: "model_selection_changed", revision: 2, selection: snapshot.executionSelection, seq: 3, ts: snapshot.updatedAt }));
+  if (eventType === "session_status") {
+    await act(async () => emit({ type: "user_message", text: "Sent from the other tab", seq: 4, ts: "2026-10-26T12:00:03.000Z" }));
+  }
+  await act(async () => emit({ type: eventType, status: "running", appIds: ["notes"], appContextRevision: 1,
+    seq: 5, ts: "2026-10-26T12:00:04.000Z" }));
+  const refreshed = { ...snapshot, lastEventSeq: 5, updatedAt: "2026-10-26T12:00:04.000Z",
+    ...(eventType === "session_status" ? { status: "running", profileLocked: true, providerLocked: true }
+      : { appIds: ["notes"], appContextRevision: 1 }) };
+  // All requests started before the overtaking event carry the obsolete lifecycle/context snapshot.
+  const currentRead = responses.length > 2 ? responses.pop() : undefined;
+  await act(async () => { for (const resolve of responses) resolve(snapshot); });
+  await act(async () => currentRead?.(refreshed));
+  await openSettings();
+  expect(currentProfile()?.textContent).toBe("Reviewer");
+  expect(currentProvider()).not.toBeNull();
+  await openSettings();
+  expect(button("Model")?.textContent).toBe("New model");
+  expect(input().value).toBe("Retained review request");
+  if (eventType === "session_status") {
+    expect(button("Agent profile")).toBeNull();
+    expect(currentProfile()).not.toBeNull();
+    expect(button("Model")?.disabled).toBe(true);
+  } else {
+    await submit();
+    expect(api.postMessage).toHaveBeenCalledWith(record.id, "Retained review request", [], 1, false, 2, expect.any(String));
+  }
+  const readsAfterSettlement = vi.mocked(api.getSession).mock.calls.length;
+  await act(async () => emit({ type: "session_status", status: "idle", seq: 6, ts: "2026-10-26T12:00:05.000Z" }));
+  expect(api.getSession).toHaveBeenCalledTimes(readsAfterSettlement);
+});
+
+
+it("keeps admission locks when a delayed profile save arrives before the status event", async () => {
+  record.profileLocked = false;
+  record.providerLocked = false;
+  record.connectionId = "codex";
+  record.selectionRevision = 0;
+  const profile = { id: "reviewer", revision: 1, name: "Reviewer", description: "Reviews code", instructions: "Review only",
+    connectionId: "codex", model: null, reasoningEffort: null, skillIds: [] };
+  vi.mocked(profilesApi.listProfiles).mockResolvedValue({ revision: 1, defaultId: null, profiles: [profile] });
+  await render();
+  let finishSave!: (value: api.AssistantSession) => void;
+  vi.mocked(profilesApi.selectSessionProfile).mockImplementation(() => new Promise(resolve => { finishSave = resolve; }));
+  await openSettings();
+  await act(async () => button("Agent profile")!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })));
+  await act(async () => [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find(item => item.textContent?.startsWith("Reviewer"))!.click());
+  await act(async () => emit({ type: "user_message", text: "Sent from the other tab", seq: 3, ts: "2026-10-26T12:00:02.000Z" }));
+  await act(async () => finishSave({ ...record, agentProfile: profile, selectionRevision: 1, lastEventSeq: 2,
+    updatedAt: "2026-10-26T12:00:01.000Z" }));
+  await openSettings();
+  expect(currentProfile()?.textContent).toBe("Reviewer");
+  expect(button("Agent profile")).toBeNull();
+    expect(currentProfile()).not.toBeNull();
+  expect(document.querySelector('[aria-label="Chat provider"] button')).toBeNull();
+  expect(currentProvider()).not.toBeNull();
+});
+
+const suggestionEvent = (extra: Partial<api.AssistantEvent> = {}): api.AssistantEvent => ({ type: "session_suggestion", seq: -2, ts: "", epoch: "server1", revision: 2,
+  sessionId: "session-one", userId: "owner", attemptId: "attempt1", state: "available", text: "Review @app literally", expiresAt: Date.now() + 60_000, ...extra });
+const enableSuggestions = () => { record.createdBy = "owner"; vi.mocked(api.getSuggestionPreference).mockResolvedValue({ enabled: true, revision: 0 }); };
+it("accepts a suggestion as plain editable text with Tab, supports undo and never sends automatically", async () => {
+  enableSuggestions(); await render(); await act(async () => emit(suggestionEvent()));
+  expect(container.textContent).toContain("Use suggestion"); expect(input().value).toBe("");
+  await act(async () => input().dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true })));
+  expect(input().value).toBe("");
+  await act(async () => input().dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true })));
+  expect(input().value).toBe("Review @app literally"); expect(api.postMessage).not.toHaveBeenCalled(); expect(api.setSessionApps).not.toHaveBeenCalled();
+  await act(async () => input().dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true, cancelable: true })));
+  expect(input().value).toBe(""); expect(container.textContent).not.toContain("Use suggestion");
+  await act(async () => emit(suggestionEvent({ revision: 3 })));
+  expect(container.textContent).not.toContain("Use suggestion");
+});
+it.each(["typing", "escape", "composition"])("%s wins over a suggestion and prevents resurrection after reconnect", async action => {
+  enableSuggestions(); await render(); await act(async () => emit(suggestionEvent()));
+  if (action === "typing") { await type("My draft"); await type(""); }
+  if (action === "escape") await act(async () => input().dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
+  if (action === "composition") await act(async () => input().dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true })));
+  await act(async () => { emit({ type: "user_message", seq: 1, ts: "", text: "replayed" }); emit(suggestionEvent({ revision: 3 })); });
+  expect(container.textContent).not.toContain("Use suggestion"); expect(api.postMessage).not.toHaveBeenCalled();
+});
+it("refuses foreign, expired and out-of-order projections and keeps literal text out of messages", async () => {
+  enableSuggestions(); await render();
+  await act(async () => emit(suggestionEvent({ userId: "another-user" })));
+  expect(container.textContent).not.toContain("Use suggestion");
+  await act(async () => emit(suggestionEvent({ revision: 3, expiresAt: Date.now() - 1 })));
+  expect(container.textContent).not.toContain("Use suggestion");
+  await act(async () => emit(suggestionEvent({ revision: 4, text: "<script>test</script>" })));
+  expect(container.textContent).toContain("<script>test</script>"); expect(container.querySelector("script")).toBeNull();
+  await act(async () => emit(suggestionEvent({ revision: 2, text: "stale" })));
+  expect(container.textContent).not.toContain("stale");
+  expect(container.querySelector('[aria-label="Conversation messages"]')?.textContent ?? "").not.toContain("<script>");
+});
+
+
+it("keeps page selection separate and exposes app creation before a workspace or chat is selected", async () => {
+  localStorage.setItem("hosty.assistant.session", record.id);
+  window.history.replaceState({}, "", "/development");
+  await act(async () => root.render(<AssistantConversation fullPage />));
+  expect(api.createSession).not.toHaveBeenCalled();
+  expect(container.textContent).toContain("Choose a workspace, create an app or continue building.");
+  expect(button("Create app")?.disabled).toBe(false);
+  expect(button("New session")).toBeNull();
+  expect(container.querySelector('[aria-label="Message composer"]')).toBeNull();
+  await act(async () => button("Create app")!.click());
+  expect(api.createSession).toHaveBeenCalledOnce();
+  expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+  expect(api.postMessage).not.toHaveBeenCalled();
+});
+
+it("shows Chats without development actions and restores its own selected conversation", async () => {
+  localStorage.setItem("hosty.harness.chats.session", record.id);
+  window.history.replaceState({}, "", "/chats");
+  await act(async () => root.render(<AssistantConversation fullPage navigation="chats" />));
+  expect(input()).not.toBeNull(); expect(button("Create app")).toBeNull();
+  expect(button("Continue building")).toBeNull(); expect(button("New session")).not.toBeNull();
+  expect(api.createSession).not.toHaveBeenCalled();
 });

@@ -28,7 +28,6 @@ it("enforces Core's switch, per-interface readiness and approved skill bytes", a
   expect(await directory.resolveOffered("hosty:core")).toBeNull();
   expect(await directory.resolveOffered("notes")).toBe("http://notes/ready");
   expect(await directory.resolveOffered("notes", "http://notes/stopped")).toBeNull();
-  expect(directory.approvedSkills()).toEqual({});
 });
 it("does not interpret a legacy Core roster as an offer", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async () => Response.json({ apps: [entry("notes", true)] }));

@@ -35,5 +35,11 @@ export async function fetchCore(url, init) {
     response = await send();
     if (response.ok || response.status === 409 || response.status === 403) reviews.delete(key);
     return response;
-  } catch (cause) { if (!approved) reviews.delete(key); throw cause; }
+  } catch (cause) {
+    if (!approved) {
+      reviews.delete(key);
+      throw Object.assign(new Error(cause instanceof Error ? cause.message : "The settings review was not completed.", { cause }), { code: "settings_review_not_applied" });
+    }
+    throw cause;
+  }
 }

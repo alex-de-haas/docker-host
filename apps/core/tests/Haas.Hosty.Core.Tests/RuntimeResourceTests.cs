@@ -133,5 +133,62 @@ public sealed class RuntimeResourceTests
         reader.Reset();
         Assert.Null(Assert.Single(await reader.ReadAsync(CancellationToken.None)).CpuPercent);
     }
+    [Fact]
+    public void ChildHistoryRequiresOwnerAndPermissionAndResetsForAReplacementOrMissingProcess()
+    {
+        var clock = new FakeClock(DateTimeOffset.UtcNow);
+        var hub = new CoreEventHub();
+        var sampler = new RuntimeResourceSampler(null!, null!, null!, hub, clock,
+            NullLogger<RuntimeResourceSampler>.Instance, new AppManifestService());
+        using var owner = hub.Subscribe("owner", true, resources: true, sandboxes: true);
+        using var foreign = hub.Subscribe("other", true, resources: true, sandboxes: true);
+        using var unscoped = hub.Subscribe("owner", true, resources: true);
+        var child = new RuntimeResourceSample("core-environment:child", "core", "core", clock.UtcNow,
+            12, 100, EnvironmentId: "child", ProcessIdentity: "12:123", OwnerUserId: "owner");
+        sampler.Record(new(clock.UtcNow, [child]));
+        Assert.Single(sampler.Read(userId: "owner", environments: true).History[0].Services);
+        Assert.Empty(sampler.Read(userId: "other", environments: true).History[0].Services);
+        Assert.Empty(sampler.Read(userId: "owner").History[0].Services);
+        Assert.True(owner.Reader.TryRead(out var owned));
+        Assert.Contains("core-environment:child", owned.Data);
+        Assert.DoesNotContain("ownerUserId", owned.Data);
+        foreach (var subscriber in new[] { foreign, unscoped })
+        {
+            Assert.True(subscriber.Reader.TryRead(out var hidden));
+            Assert.DoesNotContain("core-environment:child", hidden.Data);
+        }
+        sampler.Record(new(clock.UtcNow.AddSeconds(3), [child with { ProcessIdentity = "12:456", CpuPercent = null }]));
+        var restarted = sampler.Read(userId: "owner", environments: true);
+        Assert.Empty(restarted.History[0].Services);
+        Assert.Null(Assert.Single(restarted.History[1].Services).CpuPercent);
+        sampler.Record(new(clock.UtcNow.AddSeconds(6), []));
+        Assert.All(sampler.Read(userId: "owner", environments: true).History, frame => Assert.Empty(frame.Services));
+    }
+
+    [Fact]
+    public async Task ChildProcessReadingsRequireTheRecordedStartIdentityAndAnActiveEnvironment()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "hosty-resource-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var paths = CoreDataPaths.FromConfig(new(root, root, "", 7070, "http://localhost:7070", null, "localhost", null, false));
+            var store = new CoreEnvironmentStore(paths);
+            var clock = new FakeClock(DateTimeOffset.UtcNow);
+            using var process = System.Diagnostics.Process.GetCurrentProcess();
+            var child = new CoreEnvironmentRecord(Guid.NewGuid().ToString("N"), new("owner"),
+                new(Guid.NewGuid().ToString(), "Test"), "hash", 7071, 1, "running", clock.UtcNow,
+                Process: new(process.Id, process.StartTime.ToUniversalTime()));
+            await store.WriteAsync(child, default);
+            var reader = new LocalResourceReader(new LocalCommandProcessRegistry(), clock, store);
+            var sample = Assert.Single((await reader.ReadAsync(default)).Where(s => s.EnvironmentId == child.Id));
+            Assert.True(sample.MemoryBytes > 0); Assert.Null(sample.CpuPercent);
+            Assert.Equal("owner", sample.OwnerUserId);
+            await store.WriteAsync(child with { Process = child.Process! with { StartedAt = clock.UtcNow.AddDays(-1) } }, default);
+            Assert.DoesNotContain(await reader.ReadAsync(default), s => s.EnvironmentId is not null);
+            await store.WriteAsync(child with { State = "finished" }, default);
+            Assert.DoesNotContain(await reader.ReadAsync(default), s => s.EnvironmentId is not null);
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
     private sealed class FakeClock(DateTimeOffset now) : IClock { public DateTimeOffset UtcNow { get; set; } = now; }
 }

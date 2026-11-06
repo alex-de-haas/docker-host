@@ -1,6 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import { McpToolPolicy } from "./policy.js";
 import { McpProxy, type MintedToken } from "./proxy.js";
 
 // The proxy is driven over real sockets against a real upstream, because the properties that matter
@@ -97,6 +98,65 @@ describe("per-session MCP proxy", () => {
   afterEach(async () => {
     await new Promise((resolve) => upstream.close(resolve));
     await new Promise((resolve) => proxyServer.close(resolve));
+  });
+
+  it.each(["unoffered", "url", "identity", "denied"])("retains current provider checks after a reviewed Core call disconnects (%s)", async change => {
+    let offered: string | null = upstreamUrl + "/api/mcp", identity = "core-installation", denied: string[] = [];
+    proxy = new McpProxy(async () => ({ token: "fixture-only", expiresAtMs: Date.now() + 60_000 }), undefined, async () => offered);
+    proxy.identity = async () => identity; proxy.deniedTools = async () => denied;
+    const policy = new McpToolPolicy(null, async () => {}, async () => {}, 200, () => true);
+    proxy.policy = policy;
+    vi.spyOn(policy, "discover").mockImplementation(async (provider, observedIdentity) => policy.catalog(provider, observedIdentity,
+      [{ name: "workspace_activation", inputSchema: { type: "object" } }]));
+    let retained: (() => Promise<void>) | undefined;
+    proxy.platformCall = async (_id, _name, _input, guard) => { retained = guard; return { result: { state: "queued" } }; };
+    register([{ appId: "hosty:core", url: offered }]);
+    const route = `/internal/mcp/${SESSION}/hosty%3Acore`;
+    const response = await call(route, { body: JSON.stringify({ jsonrpc: "2.0", id: "reviewed-return", method: "tools/call",
+      params: { name: "workspace_activation", arguments: { kind: "return" } } }) });
+    expect(await response.json()).toMatchObject({ result: { content: [{ type: "text", text: JSON.stringify({ state: "queued" }) }] } });
+    expect(retained).toBeDefined(); proxy.disconnect(SESSION, retained);
+    await retained!(); // The completed native HTTP response does not cancel the handed-off review.
+    expect((await call(route)).status).toBe(401);
+    if (change === "unoffered") offered = null;
+    if (change === "url") offered = upstreamUrl + "/replacement";
+    if (change === "identity") identity = "replacement-installation";
+    if (change === "denied") denied = ["workspace_activation"];
+    await expect(retained!()).rejects.toThrow(change === "denied" ? "disabled this tool" : "Provider changed");
+    policy.cancel(SESSION); policy.close();
+  });
+
+  it.each(["hosty:core", APP])("coordinates only the reserved Core resource after current dispatch authorization (%s)", async appId => {
+    register([{ appId, url: upstreamUrl+"/api/mcp" }]);
+    const guard = vi.fn().mockResolvedValue(undefined);
+    proxy.policy = { discover: async () => [], authorize: async () => guard } as unknown as McpToolPolicy;
+    proxy.platformCall = vi.fn(async (_id, _name, _input, retained) => {
+      expect(mintCalls).toHaveLength(2);
+      expect(guard).toHaveBeenCalledOnce();
+      expect(retained).toBe(guard);
+      return { result: { state: "queued", requestId: "unchanged" } };
+    });
+    const response = await call(`/internal/mcp/${SESSION}/${encodeURIComponent(appId)}`, { body: JSON.stringify({ jsonrpc: "2.0", id: 8,
+      method: "tools/call", params: { name: "select_app_execution_target", arguments: { input: { requestId: "unchanged" } } } }) });
+    const value = await response.json() as { result: { content: { text: string }[] } };
+    expect(response.status).toBe(200);
+    if (appId === "hosty:core") {
+      expect(proxy.platformCall).toHaveBeenCalledOnce();
+      expect(JSON.parse(value.result.content[0]!.text)).toEqual({ state: "queued", requestId: "unchanged" });
+      expect(calls).toHaveLength(0);
+    } else {
+      expect(proxy.platformCall).not.toHaveBeenCalled(); expect(calls).toHaveLength(1);
+    }
+  });
+
+  it("does not admit client source coordination after the reviewed tool is revoked", async () => {
+    register([{ appId: "hosty:core", url: upstreamUrl+"/api/mcp" }]);
+    proxy.policy = { discover: async () => [], authorize: async () => async () => { throw new Error("Tool disabled"); } } as unknown as McpToolPolicy;
+    proxy.platformCall = vi.fn();
+    const response = await call(`/internal/mcp/${SESSION}/hosty%3Acore`, { body: JSON.stringify({ jsonrpc: "2.0", id: 8,
+      method: "tools/call", params: { name: "prepare_workspace", arguments: {} } }) });
+    expect((await response.json() as { error: { message: string } }).error.message).toBe("Tool disabled");
+    expect(proxy.platformCall).not.toHaveBeenCalled(); expect(calls).toHaveLength(0);
   });
 
   it("keeps the same harness route after a transient token mint failure without forwarding the interrupted mutation", async () => {

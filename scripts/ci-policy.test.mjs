@@ -22,8 +22,8 @@ function assertSelection(paths, components, profiles = [], extra = []) {
   return plan;
 }
 
-test("documentation validates its actual Plans parser dependency without native workloads", () => {
-  assertSelection(["docs/features/example/feature.md", "scripts/docs-index.test.mjs"], ["plans"]);
+test("documentation validates its actual Documents parser dependency without native workloads", () => {
+  assertSelection(["docs/features/example/feature.md", "scripts/docs-index.test.mjs"], ["documents"]);
   assertSelection(["README.md", "AGENTS.md"], []);
 });
 
@@ -52,6 +52,7 @@ test("local integration fixtures select their bounded component checks", () => {
   assertSelection([core("DockerCoreListener.cs")], ["core"], ["core-aot"]);
   assertSelection(["scripts/check-docker-core-transport.py"], ["core"], []);
   assertSelection(["scripts/check-core-aot.mjs"], ["core"], ["core-aot"]);
+  assertSelection(["scripts/check-platform-native-update.py"], ["core", "cli"], ["core-aot"]);
   assertSelection(["scripts/check-workspace-activation.py"], ["core", "cli"], []);
 });
 
@@ -67,8 +68,13 @@ test("worker and speech inputs retain component tests without native acceptance"
   assertSelection(["apps/whisper/Hosty.Whisper.Tests/WaveAudioTests.cs"], ["whisper"]);
 });
 
+test("OPUS source and native fixtures retain offline component checks", () => {
+  for (const path of ["apps/opus/runtime/worker.py", "apps/opus/test/native.integration.ts", "apps/opus/manifest.json"])
+    assertSelection([path], ["opus"]);
+});
+
 test("Node dependency changes fan out only to Node consumers", () => {
-  const node = ["shell", "app-sdk", "demo-app", "marketplace", "plans", "harness", "telemetry-ui"];
+  const node = ["opus", "shell", "desktop", "app-sdk", "demo-app", "marketplace", "documents", "harness", "telemetry-ui"];
   assertSelection(["package-lock.json"], node);
   assertSelection(["packages/app-sdk/src/session.ts"], node);
   assertSelection([".npmrc"], node);
@@ -88,11 +94,12 @@ test("workflow scheduling edits do not rebuild unrelated clients, artifact workf
   assertSelection([".github/workflows/cardputer-release.yml"], ["cardputer-shell"], [], ["actionlint"]);
   assertSelection([".github/workflows/harness-worker-image.yml"], ["harness"], [], ["actionlint"]);
   assertSelection([".github/workflows/cli-release.yml"], ["core", "cli"], ["core-aot"], ["actionlint"]);
+  assertSelection(["scripts/observability_acceptance.py"], ["core", "cli", "shell", "telemetry-backend", "telemetry-ui"]);
   assertSelection([".github/actions/publish-guard/guard.sh"], [], [], ["actionlint"]);
 });
 
 test("all first-party component roots and joint telemetry manifests have explicit ownership", () => {
-  for (const [path, component] of [["marketplace", "marketplace"], ["plans", "plans"], ["telemetry-ui", "telemetry-ui"], ["demo-app", "demo-app"], ["shell-swift", "swift-shell"], ["shell-cardputer", "cardputer-shell"], ["telemetry-backend", "telemetry-backend"]]) {
+  for (const [path, component] of [["desktop", "desktop"], ["marketplace", "marketplace"], ["documents", "documents"], ["telemetry-ui", "telemetry-ui"], ["demo-app", "demo-app"], ["shell-swift", "swift-shell"], ["shell-cardputer", "cardputer-shell"], ["telemetry-backend", "telemetry-backend"]]) {
     assertSelection([`apps/${path}/new-input`], [component]);
   }
   assertSelection(["apps/telemetry/manifest.json"], ["telemetry-backend", "telemetry-ui"]);
@@ -167,7 +174,7 @@ test("aggregate rejects malformed or weakened classification contracts", () => {
 test("output values have fixed keys and exclude hostile filenames", () => {
   const plan = classifyPaths(["docs/features/example/line\nforged_output=true.md"]);
   const outputs = planOutputs(plan);
-  assert.equal(outputs.plans, "true");
+  assert.equal(outputs.documents, "true");
   assert.equal(outputs.core_aot, "false");
   assert.equal(outputs.workflows, "false");
   assert.ok(!outputs.plan.includes("\n"));
@@ -208,7 +215,7 @@ test("CLI uses actual Git deleted and renamed paths, and safely writes GitHub ou
   assert.equal(run.status, 0, run.stderr);
   const plan = JSON.parse(run.stdout);
   assert.ok(plan.components.includes("core"), "removed source must still select its original component");
-  assert.ok(plan.components.includes("plans"), "rename destination must select its new consumer");
+  assert.ok(plan.components.includes("documents"), "rename destination must select its new consumer");
   assert.deepEqual(plan.profiles, ["core-aot"]);
   const lines = readFileSync(output, "utf8").trimEnd().split("\n");
   assert.equal(lines.length, Object.keys(planOutputs(plan)).length);
@@ -315,4 +322,11 @@ test("runtime acceptance cannot be selected even for unknown or shared toolchain
     assert.ok(evaluateGate(plan, results(plan)).some(error => error.includes("Unknown")));
   }
   assertSelection(["scripts/test-integration.mjs", "scripts/test-integration.test.mjs"], []);
+});
+
+test("release publisher protocol changes run their fixture suite independently of app checks", () => {
+  assertSelection(["scripts/releases/prepare.mjs"], [], [], []);
+  assertSelection(["distribution/release-publisher.json"], [], [], []);
+  assertSelection([".github/workflows/promote-release.yml"], [], [], ["actionlint"]);
+  assertSelection([".github/workflows/platform-bridge.yml"], ["core", "cli"], ["core-aot"], ["actionlint"]);
 });

@@ -48,6 +48,7 @@ describe("session attachments", () => {
   let cacheDir: string;
   let store: SessionStore;
   let manager: SessionManager;
+  let adapter: FakeHarnessAdapter;
   let server: Server;
   let origin: string;
   let restoreEnv: () => void;
@@ -61,8 +62,9 @@ describe("session attachments", () => {
     cacheDir = mkdtempSync(path.join(os.tmpdir(), "hosty-att-cache-"));
     store = new SessionStore(dataDir, cacheDir);
     const settings = new SettingsStore(dataDir);
+    adapter = new FakeHarnessAdapter();
     manager = new SessionManager(
-      store, new FakeHarnessAdapter(), new AuditReporter(null, null, "hosty.harness"), dataDir, settings);
+      store, adapter, new AuditReporter(null, null, "hosty.harness"), dataDir, settings);
     server = createGatewayServer(manager, new FakeHarnessAdapter(), settings);
     await new Promise<void>((resolve) => server.listen(0, resolve));
     origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -78,6 +80,31 @@ describe("session attachments", () => {
     // are process-wide, and a file that sets them without restoring them leaves the next one
     // running against a key it did not choose. This file set them and restored nothing.
     restoreEnv();
+  });
+
+
+  it("delivers Ollama text attachments as turn data and refuses images before dispatch", async () => {
+    Object.defineProperty(adapter, "name", { value: "ollama" });
+    const id = await session();
+    await upload(id, "notes.txt", "Ollama attachment content");
+    const sent = await fetch(origin + "/api/sessions/" + id + "/messages", {
+      method:"POST", headers:{authorization:"Bearer "+adminToken(),"content-type":"application/json"},
+      body:JSON.stringify({text:"Read this", attachments:["notes.txt"]}),
+    });
+    expect(sent.status).toBe(202);
+    await vi.waitFor(async()=>expect((await store.readEvents(id)).some(e=>e.type==="assistant_text")).toBe(true));
+    const events=await store.readEvents(id), echoed=String(events.find(e=>e.type==="assistant_text")?.text);
+    expect(echoed).toContain("Ollama attachment content");
+    expect(echoed).not.toContain(cacheDir);
+    await vi.waitFor(async()=>expect((await manager.getSession(id))?.status).toBe("idle"));
+    await upload(id,"picture.png","image bytes");
+    const rejected=await fetch(origin + "/api/sessions/" + id + "/messages", {
+      method:"POST", headers:{authorization:"Bearer "+adminToken(),"content-type":"application/json"},
+      body:JSON.stringify({text:"See this",attachments:["picture.png"]}),
+    });
+    expect(rejected.status).toBe(400);
+    expect(await rejected.json()).toMatchObject({code:"attachment_unsupported"});
+    expect((await store.readEvents(id)).filter(e=>e.type==="user_message")).toHaveLength(1);
   });
 
   it("lands in the session's workspace and is recorded in the transcript", async () => {

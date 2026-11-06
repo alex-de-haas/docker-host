@@ -21,6 +21,7 @@ public sealed class CorePageMarkupHttpTests
         using var response = await client.GetAsync(url);
         var html = await response.Content.ReadAsStringAsync();
 
+        Assert.Contains(CoreBrowserPages.Favicon, html, StringComparison.Ordinal);
         Assert.Contains("box-sizing: border-box", html, StringComparison.Ordinal);
         Assert.DoesNotContain("calc(100vw - 2rem)", html, StringComparison.Ordinal);
     }
@@ -56,6 +57,33 @@ public sealed class CorePageMarkupHttpTests
         Assert.Equal("nosniff", response.Headers.GetValues("X-Content-Type-Options").Single());
         var bytes = await response.Content.ReadAsByteArrayAsync();
         Assert.Equal("wOF2"u8.ToArray(), bytes[..4]);
+    }
+
+    [Theory]
+    [InlineData("/core-assets/favicon.svg", "image/svg+xml")]
+    [InlineData("/core-assets/favicon-light.svg", "image/svg+xml")]
+    [InlineData("/core-assets/favicon-dark.svg", "image/svg+xml")]
+    [InlineData("/favicon.ico", "image/x-icon")]
+    public async Task CoreIcon_IsAvailableBeforeLoginWithoutInstalledApps(string path, string mediaType)
+    {
+        await using var harness = await CoreHttpHarness.StartAsync();
+        using var client = harness.CreateClient();
+        using var response = await client.GetAsync(path);
+        response.EnsureSuccessStatusCode();
+        Assert.Equal(mediaType, response.Content.Headers.ContentType?.MediaType);
+        Assert.Equal("nosniff", response.Headers.GetValues("X-Content-Type-Options").Single());
+        if (mediaType == "image/svg+xml")
+        {
+            var svg = await response.Content.ReadAsStringAsync();
+            Assert.Contains("#A3E635", svg, StringComparison.Ordinal);
+            Assert.Contains("<svg", svg, StringComparison.Ordinal);
+            Assert.DoesNotContain("rx=", svg, StringComparison.Ordinal);
+        }
+        else
+        {
+            var bytes = await response.Content.ReadAsByteArrayAsync();
+            Assert.Equal(new byte[] { 0, 0, 1, 0 }, bytes[..4]);
+        }
     }
 
     [Fact]

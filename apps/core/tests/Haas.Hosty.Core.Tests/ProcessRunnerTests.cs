@@ -99,6 +99,28 @@ public sealed class ProcessRunnerTests
         Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(15), $"expected a prompt kill, took {stopwatch.Elapsed}");
     }
 
+    [Fact]
+    public async Task RunAsync_WritesUtf8InputWhileDrainingOutputAndClosesStdin()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var input = string.Concat(Enumerable.Repeat("café вход\n", 20000));
+        var result = await ProcessRunner.RunAsync(Shell("cat"), TimeSpan.FromSeconds(15), standardInput: input);
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal(input, result.StandardOutput);
+    }
+
+    [Fact]
+    public async Task RunAsync_BlockedInputHonorsDeadlineAndEarlyExit()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var input = new string('x', 4 * 1024 * 1024);
+        var timedOut = await ProcessRunner.RunAsync(Shell("sleep 30"), TimeSpan.FromMilliseconds(300), standardInput: input);
+        Assert.True(timedOut.TimedOut);
+        var exited = await ProcessRunner.RunAsync(Shell("exit 7"), TimeSpan.FromSeconds(5), standardInput: input);
+        Assert.False(exited.TimedOut);
+        Assert.Equal(7, exited.ExitCode);
+    }
+
     private static ProcessStartInfo Shell(string command)
     {
         var startInfo = new ProcessStartInfo("/bin/sh");

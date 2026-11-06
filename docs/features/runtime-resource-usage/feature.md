@@ -1,6 +1,6 @@
 ---
 created: 2026-09-25
-updated: 2026-10-22
+updated: 2026-10-29
 summary: One Core resource sampler for containers, local process trees and Core itself, shared by Dashboard and Telemetry.
 components: [apps/core, apps/shell, apps/telemetry-ui]
 ---
@@ -8,9 +8,19 @@ components: [apps/core, apps/shell, apps/telemetry-ui]
 # Unified runtime resource usage
 
 Core owns one resource sampler for Docker containers, Local Command service process trees, and
-Core itself. Dashboard and Telemetry consume the same observations. Dashboard needs no Telemetry
+Core itself and owned child Core processes. Dashboard and Telemetry consume the same observations. Dashboard needs no Telemetry
 installation, no application instrumentation, and no database. Telemetry's existing SQLite
 retention remains unchanged; no new persistence is introduced in Core or Shell.
+
+## Core API activity
+
+[Core API counters](../core-api-observability/feature.md) are independent of resource acquisition.
+The additive app-level `apiActivity` field in snapshots and history/SSE frames carries exact totals,
+rolling counts and warning state. No per-service replication occurs. A current activity snapshot
+is available without CPU/RAM history. Visible resource consumers receive activity frames even when
+Docker acquisition stalls; copied CPU/RAM samples retain their original timestamps and freshness.
+Dashboard and the app Details Metrics tab use the shared resource provider for calls/minute, warnings
+and history. Metrics combines app-level API activity with inline CPU/RAM charts for each service.
 
 ## Acquisition and ownership
 
@@ -52,6 +62,22 @@ zero readings for each service declared by the selected reviewed manifest, even 
 state is cleared by Stop. Starting, stopping and partially unavailable apps retain measured services, with
 unknown placeholders for expected services without samples. Unknown data is never presented as
 zero or silently omitted from a total.
+
+## Child Core processes
+
+The same native sampler reads directly owned child Core processes from the environment registry.
+Each sample uses core-environment:<id>, the environment ID and a PID/start-time identity. Only the
+recorded live process is measured; child app containers are not folded into its CPU/RAM. A reused
+PID is refused and a new process warms up its CPU delta. Missing/stopped/finished processes have
+no live sample. Replacement or missing identities remove the old process series from retained
+history; Shell also filters merged history by the latest process identity.
+
+Child samples in HTTP history require the current owner plus core.environments.inspect for a
+delegated caller. Stream delivery uses the same owner and the authorized sandboxes topic.
+Owner metadata is not serialized. Parent Core and app readings retain their existing permissions.
+Dashboard excludes child Core samples from Apps totals and uses the same resource widget and
+connection without per-row polling. Container reservations and the existing 15-second quota
+observation remain separate from these process readings.
 
 ## History and delivery
 
@@ -106,13 +132,20 @@ App rows show separate CPU and RAM values and sparklines beside status only whil
 is running and no update is in progress. Degraded health keeps the display because the runtime is
 still running. Starting, stopping, stopped, unknown and updating apps show a dash,
 preserving column alignment without a resource button or historical popover. App service details
-live in Manage rather than an expanded Dashboard panel. Manage shows service resources only for
-an observed active service while the app is up and not updating, and hides stopped, exited or
-unknown service readings. Core and the all-app total remain
+live in Manage rather than an expanded Dashboard panel. Manage places service resources on Metrics.
+Current values require fresh samples while the app is up and not updating; stopped, exited or unknown service observations suppress live values.
+Retained per-service history stays visible with an explicit historical label when live readings
+are unavailable. Core and the all-app total remain
 visible, and resource sampling and history retention are independent of these display rules.
 
-Manage retains service names, health/runtime statuses and stacked CPU/RAM readings. Per-service
-totals include all owned child processes. The apps Frame header shows the
+Manage separates health/runtime statuses and image observations on Services from resources on
+Metrics. Below the shared Core API activity, nested service tabs select one CPU/RAM panel at a
+time, including workers without endpoints. A single service needs no tab strip. Selection survives
+new samples and falls back when that service disappears; changing apps resets it. The charts retain
+the same five-minute history, scales and average CPU as the resource popover. Switching services
+keeps the shared subscription and history; only the selected service charts are mounted.
+Launch and Services create no resource demand. Per-service totals include all owned child processes.
+The apps Frame header shows the
 all-app total, excluding Core, aligned above the per-app resource column, while Core has its own resource cell. Clicking any cell opens
 CPU/RAM history and recent average CPU in a popover using ReUI Frame and the shadcn Chart/Popover
 primitives recommended by the ReUI registry. Frame owns the single outer border; the popover
@@ -149,9 +182,12 @@ Responsive rows retain values and actions without horizontal scrolling.
   merging, common CPU scaling and sustained-activity thresholds.
 - Dashboard verification covers empty resource cells for starting, stopping, stopped, unknown and
   updating apps, including retained samples. Running apps retain their displays with healthy or
-  degraded health; Manage hides stopped/exited service readings. Core and fleet totals retain their
-  displays. Resource popovers act independently of app-row navigation to Manage; no app service
+  degraded health; Metrics hides stopped/exited live readings while retaining labeled history. Core
+  and fleet totals retain their displays. Resource popovers act independently of app-row navigation to Manage; no app service
   expander is required to inspect per-service resources.
+- App Details tests cover Services/Metrics deep links, retained configuration drafts, service reads
+  and resource subscription cleanup on tab exit, nested service selection through sample/inventory
+  changes, separate per-service charts and stale readings.
 - Build Core, Shell and Telemetry; run their affected tests. Live macOS verification covers source
   Core restart/adoption, local and Docker values, SSE changes, service totals, chart popovers,
   narrow Dashboard containers, and arrival of the same metrics in Telemetry. Windows/Linux native

@@ -98,7 +98,7 @@ internal sealed partial class CoreLifecycleService
         if (Uri.TryCreate(path, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https")
             throw new AppLifecycleException("permission_manifest_unavailable", "Review the installed manifest locally; remote releases require an app update review.");
         // Never use a remote update/feed or the last-good fallback for a broken live manifest.
-        var selection = await manifests.LoadAsync(path, app.SelectedRuntime, ct, validateAllProfiles: true, forceRead: forceRead, allowUnsupportedPermissions: true);
+        var selection = await manifests.LoadAsync(path, app.SelectedRuntime, ct, validateAllProfiles: true, forceRead: forceRead);
         if (selection.Manifest.Id != app.Id)
             throw new AppLifecycleException("permission_manifest_invalid", "The source manifest describes a different app.");
         return new(selection.ManifestPath, selection.RuntimeProfile.Key, selection.ManifestDigest,

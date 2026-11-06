@@ -1,6 +1,6 @@
 ---
 created: 2026-08-24
-updated: 2026-10-20
+updated: 2026-10-26
 summary: A Harness MCP endpoint that exposes Core and every enabled app's tools through one remote entry.
 components: [apps/harness]
 ---
@@ -8,8 +8,8 @@ components: [apps/harness]
 # MCP Facade — One Remote Endpoint For The Whole Fleet
 
 `POST /mcp` on the `hosty.harness` app is an MCP server that is the whole host: one entry in an
-external agent client's configuration yields Core's control-plane tools, every enabled app's tools,
-and those apps' skills, over HTTP with no CLI or SSH anywhere on the path.
+external agent client's configuration yields Core's control-plane tools and every enabled app's tools
+over HTTP with no CLI or SSH anywhere on the path.
 
 That last clause is the gap it closes. [`hosty mcp`](../hosty-mcp-connector/feature.md) already
 aggregates the fleet, but it is a *process* and the CLI is local-only, so it must run on the host —
@@ -105,15 +105,9 @@ the cache but cannot authorize a call or bypass external credential introspectio
 
 ## Skills
 
-Delivered through `initialize`'s `instructions`, as the connector does — only for apps whose tools
-this client actually received, because instructions for tools a client does not have read as a
-capability rather than as an absence.
-
-The facade and connector both honor Core's app/skill digest approvals, reviewed in Shell Settings →
-Agents. A changed digest withholds instructions without disabling the app's tools.
-
-The host's own text comes first and unwrapped, and app text is fenced and attributed by the shared
-`composeSystemPrompt` — an app must not be able to appear above the text that describes the surface.
+The facade and CLI connector expose their own surface instructions without app skill bodies.
+Complete packages require separate native provisioning through the
+[shared Core skill library](../agent-skills/feature.md); MCP tool access does not select them.
 
 ## The Perimeter
 

@@ -1,6 +1,6 @@
 ---
 created: 2026-10-20
-updated: 2026-10-25
+updated: 2026-11-04
 summary: Affected component CI, explicit local integration checks and publication of verified main revisions.
 components: [.github, scripts]
 ---
@@ -39,7 +39,7 @@ bounded gate contract: version, selected components/profiles, required jobs and 
 object. This keeps both `CI_PLAN` and the copied `needs` environment small for large changesets,
 while the aggregate still validates every required result and rejects failed unexpected jobs.
 
-Core's managed build/unit suite and NativeAOT publication are independent jobs. A production Core source/configuration/dependency change selects NativeAOT; isolated unit-test edits do not require it. The AOT script retains its cold Release compile and zero-new-warning check.
+Core's managed build/unit suite and NativeAOT publication are independent jobs. A production Core source/configuration/dependency change selects NativeAOT; isolated unit-test edits do not require it. The AOT script retains its cold Release compile and zero-new-warning check. CI checks the same four native targets as Core/CLI release publication: macOS ARM64, Linux ARM64/x64 and Windows x64. macOS Intel (`osx-x64`) has no CI build or published build.
 
 ## Local Integration Checks
 
@@ -62,8 +62,18 @@ npm run test:integration -- windows
 npm run test:integration -- transport
 npm run test:integration -- worker
 npm run test:integration -- sessions
+npm run test:integration -- pull-requests
+npm run test:integration -- tasks
+npm run test:integration -- harness-local
+npm run test:integration -- feedback
 npm run test:integration -- whisper
+npm run test:integration -- opus
+npm run test:integration -- desktop
+npm run test:integration -- shell
+npm run test:integration -- skills
 ```
+
+The `desktop` suite builds Desktop and exercises normal password login, role-based app access, assignment revocation and lifecycle authorization in the existing parent-managed child Core. `HOSTY_DESKTOP_BROWSER=1` retains that same sandbox for manual UI acceptance until its completion marker is written; the owner then Finishes the environment and verifies removal.
 
 Each command runs only its named suite. No argument prints help and runs nothing; there is
 no implicit all-suite mode. Add `--dry-run` to inspect commands without executing them.
@@ -74,11 +84,18 @@ GitHub Actions. Its small command-construction tests remain in the CI policy job
 | Suite | Preparation and local behavior |
 | --- | --- |
 | activation | Requires .NET, Git, Python and Docker; builds Core/CLI and runs Return plus detached-helper recovery in parent-owned isolated Core environments. |
-| windows | Requires Windows, Git and .NET; runs the focused process/path/document/storage Core tests and CLI shared-receipt tests. Other operating systems receive an explicit refusal. |
+| windows | Requires Windows, Git and .NET; runs the focused process/path/document/storage Core tests, workspace deletion regressions and CLI shared-receipt tests. Other operating systems receive an explicit refusal. |
 | dependencies | Requires .NET, Python and Docker; builds Core/CLI and checks dependency waits, recovery, cancellation and boot in a parent-owned isolated Core. |
+| skills | Requires .NET, Git, Python and Docker; builds Core/CLI, verifies selected public Git imports, table/JSON output, exports and atomic failures in a parent-owned child Core, then probes the requested awesome-copilot package and Finishes the child. |
 | transport | Requires .NET, Python and Docker; builds Core and runs its isolated real-Docker listener/transport fixture. |
 | worker | Requires Docker; builds the worker image named by the current manifest and runs its process/mount/control fixtures. |
+| shell | Requires .NET, Git, Python and Docker; builds Shell and verifies password identity and workspace inventory in a managed child Core. `HOSTY_SHELL_BROWSER_REVIEW` names a private temporary browser checkpoint; its `.continue` marker resumes Finish cleanup. |
+| harness-local | Requires Node/npm, .NET, Git, Python and Docker for the parent-managed child Core; verifies native production cold/warm startup, password/app identity, compiled assets, recovery and Finish cleanup. |
+| feedback | Requires the harness-local prerequisites and Playwright Chromium; verifies annotated capture/drafts, one reviewed batch, exact-prompt outcomes, partial repeat, workspace retention and Finish cleanup. See [feedback acceptance](../app-feedback-inbox/feature.md#testing-expectations). |
+| tasks | Requires .NET, Git, Python and Docker; builds Core/CLI and Harness images, verifies human/profile/independent-provider tasks, explicit MCP results, cancellation, existing workspaces and restart in a managed child Core. `HOSTY_TASKS_BROWSER=1` adds the Playwright browser journey. |
+| pull-requests | Requires .NET, Git, Python and Docker; uses a test-only provider executable in a parent-managed child Core to verify installed repositories, PR reads, scoped SSE, access isolation and Finish cleanup. |
 | sessions | Requires .NET, Git, Python and Docker; builds Core/CLI and both Harness images, then runs multi-user workspace acceptance in a parent-managed child Core with separate password-authenticated users and data. |
+| opus | Requires Node 24 and uv; builds the app, verifies real OPUS-MT Big inference, cancellation and model-cache reuse/recovery. `HOSTY_OPUS_TEST_CACHE` reuses a dedicated cache. |
 | whisper | Requires .NET; explicitly enables only NativeSpeechTests, including pinned-model download and real CPU inference. `HOSTY_WHISPER_TEST_CACHE` can reuse a verified cache. |
 
 The launcher uses `python3` on Unix and `python` on Windows. Existing fixture entry points
@@ -99,15 +116,44 @@ integration uses isolated data, normal setup/login and the supported Core-manage
 
 ## Publication
 
-Image and native-release workflows react to completed main push CI and validate its exact source identity before selecting an affected artifact from that CI run's saved selection manifest. Retained format-1 manifests from before local integration separation remain readable: only the five known retired profiles are accepted, with consistent required membership and no duplicates; current CI still rejects those profiles. Publication does not recompute a smaller last-commit diff that could omit earlier changes in a multi-commit push. Failed, cancelled and non-push runs cannot authorize automatic publication. Unrelated completed runs are short no-ops, avoiding idle publication runners during ordinary CI. The two SDK workflows retain their path-filtered push triggers and wait for the exact main result: their trusted-publisher execution and automatic provenance stay tied to the package source revision.
+`ready-releases.yml` qualifies the exact successful trusted main CI revision, then selects image
+and Core/CLI artifact builds independently of the validation component selection. Input fingerprints
+and verified original provenance allow unchanged artifacts to be reused by digest. Complete release
+metadata is appended before a feed pointer advances. Automatic publication advances daily; the
+manual promotion workflow selects an exact retained release for stable without rebuilding it.
+The metadata branch serves every configured feed. See the
+[release model](../repository-release-model/feature.md) and
+[platform release feeds](../platform-release-feeds/feature.md).
 
-Manual recovery remains restricted to main and requires successful push CI for that exact SHA. Artifact-specific production builds and tests remain where CI output is not a complete reusable artifact. A host Next.js build is not a multi-platform OCI image, and a managed Core build is not a five-RID production release.
+PR, failed and cancelled CI runs cannot authorize publication. The two SDK workflows retain their
+path-filtered push triggers and wait for the exact main result: their trusted-publisher execution and
+automatic provenance stay tied to the package source revision. Cardputer keeps its separate
+validated firmware publication workflow.
+
+The publication gate allows up to two minutes, within its existing overall deadline, for a
+successful run's exact-attempt `ci-required` job to appear or finish in GitHub's jobs API.
+Each retry revalidates the run and attempt; it never publishes from the workflow conclusion alone.
+Duplicate required jobs, terminal non-success results, malformed responses and API errors fail
+immediately. Automatic publication also rejects a concurrent CI rerun instead of waiting for a
+different attempt. Pending and timeout messages include the observed job count/status/conclusion.
+
+Core/CLI publication builds complete paired bundles for macOS ARM64, Linux ARM64, Linux x64 and
+Windows x64. Retained input records and immutable completion metadata drive reuse and recovery;
+a mutable release tag or a component check selection does not establish publication completion.
+The one-time `platform-bridge.yml` workflow freezes the legacy cli-dev bridge after the new
+reader-capable platform is qualified. Normal publication no longer replaces rolling cli-dev assets.
 
 Cardputer CI uploads all four firmware/recovery binaries, exact checksums and source metadata. Normal publication downloads from the validated CI run, verifies source, completeness, regular files, checksums and OTA size, then publishes those bytes. Manual recovery builds and verifies the same source when recovering a release. Missing or corrupt normal artifacts fail publication.
 
-Image metadata reads the validated Git checkout. Publishers attach an ephemeral local branch to that exact commit because Docker metadata cannot infer a ref from an unnamed detached SHA checkout. Image revision labels and SHA tags therefore describe the validated source; mutable tags still require the independent main-tip guard.
+Ready release artifacts use the `https://hosty.dev/attestations/release-artifact/v1` predicate.
+It binds the original build source, canonical input fingerprint, artifact identity, supported
+platforms and successful validation run. Reuse verifies the signing repository/workflow/main ref
+and those claims. OCI verification reads bundles from the registry. Native verification downloads
+bundles without a predicate query, then applies the custom predicate during signature verification;
+temporary bundles are removed after either success or failure. This follows the
+[GitHub CLI bundle verification contract](https://cli.github.com/manual/gh_attestation_verify).
 
-Signed image/native provenance records the validated code revision separately from the publishing workflow's execution revision. GitHub's automatic provenance uses the [OIDC workflow SHA](https://github.com/actions/toolkit/blob/main/packages/attest/src/provenance.ts), so a completion-triggered build uses an explicit source-bound predicate rather than attributing old source bytes to newer main. SDK trusted publishing keeps its [automatic npm provenance](https://docs.npmjs.com/trusted-publishers/).
+The following older provenance format remains applicable to the separate Cardputer publisher.
 
 ### Publication Provenance v1
 
@@ -123,20 +169,11 @@ gh attestation verify ./hosty-cardputer.bin --bundle BUNDLE_PATH \
   --signer-workflow alex-de-haas/docker-host/.github/workflows/cardputer-release.yml
 ```
 
-For an image, the `oci://` prefix and `--bundle-from-oci` fetch the signature from the registry and apply the custom-type filter locally. The command uses the registry's existing authentication:
-
-```bash
-gh attestation verify oci://ghcr.io/alex-de-haas/hosty-telemetry-backend:latest \
-  --bundle-from-oci --repo alex-de-haas/docker-host \
-  --predicate-type https://github.com/alex-de-haas/docker-host/blob/main/docs/features/ci-feedback-loop/feature.md#publication-provenance-v1 \
-  --signer-workflow alex-de-haas/docker-host/.github/workflows/telemetry-backend-image.yml
-```
-
 The required external parameters are `workflow` (repository URL, main ref and workflow path), `source` (repository URL and validated full commit), `validation` (CI workflow path and successful run ID), and `operation` (`build-image`, `build-native-release`, `publish-verified-ci-firmware` or `build-firmware-for-manual-publication`). The operation distinguishes a firmware artifact consumed from CI from a manual rebuild. The actual trigger remains `workflow_run` or `workflow_dispatch`.
 
 The internal GitHub parameters record the actual trigger, stable numeric repository and owner IDs, runner environment and execution SHA. Missing or invalid identities stop publication before signing. Resolved dependencies bind the publishing repository's main ref to the workflow SHA, the separate source commit to the validated code SHA, and the successful CI run to validation or firmware production. The builder is the signing workflow URL; the invocation identifies the publishing run and attempt. Consumers verify the signed workflow identity and source dependency separately rather than assuming the workflow revision is the artifact's code revision.
 
-The [existing release model](../repository-release-model/feature.md) still governs immutable versions, per-artifact concurrency, mutable-tag freshness and SDK trusted publication. A completed old main CI run cannot move a rolling tag over newer main. PR merge artifacts never qualify a different main SHA.
+The [release model](../repository-release-model/feature.md) governs immutable versions, conflict-safe feed promotion and SDK trusted publication. PR merge artifacts never qualify a different main SHA.
 
 ## Feature Readiness And Review
 
@@ -168,6 +205,7 @@ three invited/password-authenticated users in a parent-managed child Core. See
 - Policy tests cover affected/shared/unknown inputs, semantic version metadata, deleted/renamed paths, exact source resolution and exclusion of local runtime suites from every CI selection.
 - Local launcher tests cover explicit selection, prerequisite and command failures, unsupported platforms, shell-free arguments, native inference opt-in and side-effect-free previews.
 - Gate tests cover failed classification, missing/cancelled/failed/required-skipped jobs, workflow coverage and bounded process startup for large changesets without weakening required results.
-- Publication tests cover exact main identity, stale source, current run attempts, failed or missing CI, complete verified artifact consumption, and required signing identity/source/workflow fields.
+- Publication tests cover exact main identity, stale source, current run attempts, delayed required-job evidence and its bounded timeout, failed or missing CI, complete verified artifact consumption, and required signing identity/source/workflow fields.
+- Native recovery tests cover cumulative unpublished changes, legacy/missing receipts, unchanged releases, renamed/shared paths, truncated comparisons, API failures and failure before the completion receipt is written.
 - GitHub Actions syntax and composite shell scripts are linted; docs/index and version checks run on every PR.
 - Hosted operating-system and publication results are reported separately from local static/unit validation. Branch protection migrates only after a successful hosted aggregate.

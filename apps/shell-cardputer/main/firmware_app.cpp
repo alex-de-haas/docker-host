@@ -727,7 +727,7 @@ void FirmwareApp::handle_key(const cardputer::KeyInput& key) {
     if (ui_.view == hosty::View::Apps) execute_shortcut(MenuContext::App, character);
     else if (ui_.view == hosty::View::Updates) execute_shortcut(MenuContext::Updates, character);
     else if (ui_.view == hosty::View::Dashboard && character == 'u' &&
-             state_.core().core_update.available) {
+             state_.core().core_update.can_apply()) {
         execute_shortcut(MenuContext::Core, character);
     }
     else if (ui_.view == hosty::View::Device) {
@@ -939,8 +939,16 @@ void FirmwareApp::begin_confirmation(PendingAction action, std::string_view titl
         show_overlay("Operation in progress", "Wait for the current Core operation");
         return;
     }
+    if (action == PendingAction::UpdateCore && !state_.core().core_update.can_apply()) {
+        show_error("Refresh Core update availability first");
+        return;
+    }
     confirmation_ = {};
     confirmation_.action = action;
+    if (action == PendingAction::UpdateCore) {
+        confirmation_.digest.assign_truncated(state_.core().core_update.offer_id.view());
+        confirmation_.operation_id.assign_truncated(state_.core().core_update.operation_id.view());
+    }
     confirmation_.presses_remaining = presses;
     if (app != nullptr) {
         confirmation_.app_id.assign_truncated(app->id.view());
@@ -1062,7 +1070,7 @@ void FirmwareApp::command_task() {
             }
             break;
         case PendingAction::RestartCore: result = client_.restart_core(); break;
-        case PendingAction::UpdateCore: result = client_.update_core(); break;
+        case PendingAction::UpdateCore: result = client_.update_core(command.digest.view(), command.operation_id.view()); break;
         case PendingAction::Revoke: result = client_.logout(); break;
         case PendingAction::MarkAlertsRead: result = client_.mark_notifications_read(); break;
         case PendingAction::CheckUpdates: result = client_.start_update_check(); break;

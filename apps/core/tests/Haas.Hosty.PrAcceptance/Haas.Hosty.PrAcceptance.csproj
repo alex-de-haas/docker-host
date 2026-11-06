@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>Haas.Hosty.PrAcceptance</AssemblyName>
+    <DefineConstants>$(DefineConstants);HOSTY_PR_ACCEPTANCE</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/Haas.Hosty.Core/Haas.Hosty.Core.csproj" />
+    <Compile Include="../../src/Haas.Hosty.Core/Program.cs" Link="Program.cs" />
+  </ItemGroup>
+  <!-- Managed Core environments launch hosty-core. Point only this test output's apphost
+       at the acceptance entry point; the referenced shipping assembly stays unchanged. -->
+  <Target Name="AcceptanceAppHost" AfterTargets="Build">
+    <Copy SourceFiles="$(TargetDir)$(AssemblyName)" DestinationFiles="$(TargetDir)hosty-core" Condition="Exists('$(TargetDir)$(AssemblyName)')" />
+    <Copy SourceFiles="$(TargetDir)$(AssemblyName).exe" DestinationFiles="$(TargetDir)hosty-core.exe" Condition="Exists('$(TargetDir)$(AssemblyName).exe')" />
+  </Target>
+</Project>

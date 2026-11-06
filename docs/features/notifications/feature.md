@@ -1,6 +1,6 @@
 ---
 created: 2026-06-16
-updated: 2026-10-21
+updated: 2026-10-26
 summary: A Core-owned per-user notification inbox with app and Core producers and live delivery to any client.
 components: [apps/core, apps/shell]
 ---
@@ -24,7 +24,7 @@ flowchart LR
 This is the concrete realization of the `notifications` platform interface reserved in the
 [AI Agent Bridge interface registry](../ai-agent-bridge/feature.md#manifest-interfaces-and-registry),
 and the delivery surface its
-[durable-jobs step](../ai-agent-bridge/plan.md#step-11--durable-jobs-and-notifications) builds on.
+[Durable Agent Jobs](../durable-agent-jobs/plan.md) builds on.
 
 ## Scope: Notifications vs In-App Toasts
 

@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogBody, DialogTitle, DialogDescription, DialogFooter, DialogHeader } from "@/components/ui/dialog";
 import { AssistantApiError, workspaceAction } from "@/lib/assistant-api";
 
 type Request = { requestId: string; action: "enter" | "restart" | "return"; targetRuntime?: string; worktreeId?: string; planDigest?: string; acceptDataChanges?: boolean };
@@ -87,13 +87,15 @@ export function AppDevMode({ sessionId, appId, worktreeId, observation, disabled
     {notice && <p role="status" className="text-muted-foreground">{notice}</p>}
     {(error || status?.error || status?.app.lastError) && <p role="alert" className="text-destructive-foreground">{error || status?.error || status?.app.lastError}</p>}
     {logs !== null && <div className="space-y-2"><Button size="sm" variant="ghost" onClick={() => setLogs(null)}>Hide logs</Button><pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all text-xs">{logs}</pre></div>}
-    <Dialog open={!!review} onOpenChange={open => { if (!open && !busy) setReview(null); }}><DialogContent className="max-h-[85vh] overflow-y-auto">
-      <DialogTitle>{review?.request.action === "return" ? "Return and keep current data?" : "Use ordinary application data?"}</DialogTitle>
-      <DialogDescription>Changes apply to the installed application in this Core. Its data and users are separate from sandbox preview.</DialogDescription>
-      <ul className="space-y-2 text-sm">{review?.plan.changes.map((s, i) => <li key={i}>{s}</li>)}</ul>
-      <div className="space-y-1 text-xs text-muted-foreground">{review?.plan.outsideBackup.map((s, i) => <p key={i}>{s}</p>)}</div>
-      {review?.request.action === "return" && <p className="text-sm">Confirm only after checking that current data is compatible with the previous runtime. This action does not restore a backup.</p>}
-      {error && <p role="alert" className="text-sm text-destructive-foreground">{error}</p>}
+    <Dialog open={!!review} onOpenChange={open => { if (!open && !busy) setReview(null); }}><DialogContent>
+      <DialogHeader><DialogTitle>{review?.request.action === "return" ? "Return and keep current data?" : "Use ordinary application data?"}</DialogTitle>
+      <DialogDescription>Changes apply to the installed application in this Core. Its data and users are separate from sandbox preview.</DialogDescription></DialogHeader>
+      <DialogBody>
+        <ul className="space-y-2 text-sm">{review?.plan.changes.map((s, i) => <li key={i}>{s}</li>)}</ul>
+        <div className="space-y-1 text-xs text-muted-foreground">{review?.plan.outsideBackup.map((s, i) => <p key={i}>{s}</p>)}</div>
+        {review?.request.action === "return" && <p className="text-sm">Confirm only after checking that current data is compatible with the previous runtime. This action does not restore a backup.</p>}
+        {error && <p role="alert" className="text-sm text-destructive-foreground">{error}</p>}
+      </DialogBody>
       <DialogFooter><Button variant="outline" disabled={busy} onClick={() => setReview(null)}>Cancel</Button>
         <Button disabled={busy || disabled} onClick={() => review && void apply(review.request)}>{busy ? "Working…" : "Apply"}</Button></DialogFooter>
     </DialogContent></Dialog>

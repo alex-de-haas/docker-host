@@ -1,6 +1,6 @@
 ---
 created: 2026-08-15
-updated: 2026-09-26
+updated: 2026-10-26
 summary: hosty mcp, a stdio MCP server in the CLI that presents every app on one host as a single server.
 components: [apps/cli, packages/hosty-claude-plugin]
 ---
@@ -9,7 +9,7 @@ components: [apps/cli, packages/hosty-claude-plugin]
 
 `hosty mcp` is a stdio MCP server inside the CLI, spawned by an agent client on the operator's own
 machine, presenting every app on one Hosty host as a single server. It is step 7 of the
-[AI Agent Bridge](../ai-agent-bridge/plan.md) rollout.
+[AI Agent Bridge](../ai-agent-bridge/feature.md) rollout.
 
 It exists because a static client config can follow neither of two moving things. **A fleet**: MCP
 clients fix their server list at session start, so per-app entries go stale the moment an app is

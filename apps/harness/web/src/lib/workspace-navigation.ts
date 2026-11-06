@@ -11,7 +11,6 @@ export function countStatus(counts: ActivityCounts, status: string) {
   else if (["unknown", "stopping"].includes(status)) counts.unknown++;
 }
 export function workspaceSessionIds(workspace: DevelopmentWorkspace): string[] {
-  if (workspace.owner.kind === "external") return [];
   return workspace.participation ? workspace.participation.sessions.filter(s => s.attached && s.canOpen).map(s => s.sessionId)
     : workspace.owner.kind === "assistant" && workspace.owner.appId === "hosty.harness" ? [workspace.owner.reference] : [];
 }
@@ -21,7 +20,6 @@ export function workspaceChats(workspace: DevelopmentWorkspace, sessions: readon
 }
 export function workspaceCounts(workspace: DevelopmentWorkspace, sessions: readonly AssistantSession[], now = Date.now()): ActivityCounts {
   const counts = emptyCounts();
-  if (workspace.owner.kind === "external") return counts;
   if (!workspace.participation) {
     workspaceChats(workspace, sessions).forEach(s => countStatus(counts, s.status));
     return counts;
@@ -38,16 +36,15 @@ export function workspaceCounts(workspace: DevelopmentWorkspace, sessions: reado
   return counts;
 }
 export type NavigationItem = { key: string; label: string; at: number; counts: ActivityCounts; workspace?: DevelopmentWorkspace; session?: AssistantSession; matches: AssistantSession[]; search: string };
-export function navigationItems(workspaces: readonly DevelopmentWorkspace[], sessions: readonly AssistantSession[], now = Date.now()): NavigationItem[] {
-  const attached = new Set(workspaces.filter(w => w.workflow.state !== "deleted").flatMap(workspaceSessionIds));
-  const items: NavigationItem[] = workspaces.filter(w => w.workflow.state !== "deleted").map(workspace => {
+export function navigationItems(workspaces: readonly DevelopmentWorkspace[], sessions: readonly AssistantSession[], now = Date.now(), view: "workspaces" | "chats" = "workspaces"): NavigationItem[] {
+  const items: NavigationItem[] = (view === "workspaces" ? workspaces : []).filter(w => w.workflow.state !== "deleted").map(workspace => {
     const chats = workspaceChats(workspace, sessions);
     const label = workspace.name?.trim() || workspace.owner.label?.trim() || "Workspace";
     return { key: `workspace:${workspace.id}`, label, workspace, matches: chats, counts: workspaceCounts(workspace, sessions, now),
       at: Math.max(activityTime(workspace), ...chats.map(activityTime), ...(workspace.participation?.sessions.filter(s => s.attached).map(s => Date.parse(s.changedAt ?? "") || 0) ?? [])),
       search: [label, ...workspace.participation?.sessions.filter(s => s.attached).map(s => s.title) ?? [], ...chats.flatMap(s => [s.title, ...s.contextApps?.map(a => a.displayName) ?? [], ...s.appIds ?? []])].join(" ").toLowerCase() };
   });
-  for (const session of sessions.filter(s => !attached.has(s.id))) {
+  for (const session of view === "chats" ? sessions : []) {
     const counts = emptyCounts(); countStatus(counts, session.status);
     const label = session.title?.trim() || "Untitled session";
     items.push({ key: `session:${session.id}`, label, session, counts, at: activityTime(session), matches: [],

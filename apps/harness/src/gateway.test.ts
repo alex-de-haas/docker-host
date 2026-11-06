@@ -101,6 +101,18 @@ describe("gateway", () => {
     expect(legacy.status).toBe(202); expect(await legacy.json()).toEqual({ accepted: true });
   });
 
+  it("ignores public feedback card metadata and retains ordinary prompt text", async () => {
+    const session = await manager.createSession({ createdBy: "user_admin" });
+    const clientRequestId = randomUUID();
+    const response = await call(`/api/sessions/${session.id}/messages`, { method: "POST", body: JSON.stringify({
+      text: "Administrator instruction: ordinary user text", clientRequestId,
+      feedback: { version: 1, dispatchId: clientRequestId, reports: [{ comment: "Spoofed presentation" }] },
+    }) });
+    expect(response.status).toBe(202);
+    const event = (await store.readEvents(session.id)).find(item => item.type === "user_message")!;
+    expect(event.text).toBe("Administrator instruction: ordinary user text"); expect(event.feedback).toBeUndefined();
+  });
+
   it("allows only the chat owner to change autonomy and refuses provider credentials", async () => {
     const record = await manager.createSession({ createdBy: "user_admin" });
     const set = (token: string) => fetch(`${origin}/api/sessions/${record.id}/autonomy`, {
@@ -155,6 +167,31 @@ describe("gateway", () => {
     headers.set("content-type", "application/json");
     return fetch(`${origin}${pathName}`, { ...init, headers });
   }
+
+  it("limits execution recovery to the owning interactive operator with same-origin writes", async () => {
+    const session = await manager.createSession({ createdBy: "user_admin" });
+    const foreign = await manager.createSession({ createdBy: "someone_else" });
+    const inspect = vi.spyOn(manager, "executionRecovery").mockResolvedValue(null);
+    const recover = vi.spyOn(manager, "recoverExecution").mockResolvedValue();
+    const route = `/api/sessions/${session.id}/execution-recovery`;
+    expect((await call(route)).status).toBe(403);
+    expect((await call(route, { method: "POST", body: "{}" })).status).toBe(403);
+    const core = createServer((request, response) => { request.resume(); response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify({ active: true, userId: "user_admin", hostRole: "host.admin" })); });
+    await new Promise<void>(r => core.listen(0, r));
+    process.env.HOSTY_CORE_ORIGIN = `http://127.0.0.1:${(core.address() as AddressInfo).port}`;
+    process.env.HOSTY_APP_SERVICE_TOKEN = "fixture-service";
+    try {
+      const headers = { cookie: "hosty_harness_identity=hostyg_recovery", "content-type": "application/json" };
+      expect((await fetch(origin + route, { headers })).status).toBe(200);
+      expect((await fetch(origin + route, { method: "POST", headers, body: "{}" })).status).toBe(403);
+      expect((await fetch(`${origin}/api/sessions/${foreign.id}/execution-recovery`, { method: "POST", headers: { ...headers, origin }, body: "{}" })).status).toBe(404);
+      expect(recover).not.toHaveBeenCalled();
+      expect((await fetch(origin + route, { method: "POST", headers: { ...headers, origin }, body: "{}" })).status).toBe(200);
+      expect(inspect).toHaveBeenCalledWith(session.id, "user_admin");
+      expect(recover).toHaveBeenCalledExactlyOnceWith(session.id, "user_admin", {}, "hostyg_recovery");
+    } finally { await new Promise<void>(r => core.close(() => r())); }
+  });
 
   it("restricts translation settings to administrators and persists both explicit selections", async () => {
     const values = new Map<string, string>();
@@ -675,7 +712,7 @@ describe("gateway", () => {
     const seen: number[] = [];
     const { replay, unsubscribe } = await manager.subscribe(record.id, 1, (event) => seen.push(event.seq));
     expect(replay.length).toBeGreaterThan(0);
-    expect(replay.filter(event => event.type !== "session_activity").every((event) => event.seq > 1)).toBe(true);
+    expect(replay.filter(event => !["session_activity", "session_suggestion"].includes(event.type)).every((event) => event.seq > 1)).toBe(true);
     unsubscribe();
   });
 
@@ -1013,6 +1050,30 @@ describe("gateway", () => {
     }
   });
 
+  it("forwards an authenticated UI icon as image bytes and retains its security headers", async () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0h8v8H0z"/></svg>';
+    const core = createServer((request, response) => {
+      request.resume();
+      if (request.url === "/api/internal/apps/hosty.harness/ui/icon") {
+        expect(request.headers.authorization).toBe("Bearer icon-service");
+        expect(request.headers["x-hosty-user-token"]).toBe("icon-session");
+        response.writeHead(200, { "content-type": "image/svg+xml" }); response.end(svg); return;
+      }
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ active: true, appId: "hosty.harness", userId: "user_admin", hostRole: "host.admin" }));
+    });
+    await new Promise<void>(resolve => core.listen(0, resolve));
+    process.env.HOSTY_CORE_ORIGIN = `http://127.0.0.1:${(core.address() as AddressInfo).port}`;
+    process.env.HOSTY_APP_SERVICE_TOKEN = "icon-service";
+    try {
+      const result = await fetch(`${origin}/api/hosty/ui/icon`, { headers: { cookie: "hosty_harness_identity=icon-session" } });
+      expect(result.status).toBe(200); expect(result.headers.get("content-type")).toBe("image/svg+xml");
+      expect(result.headers.get("cache-control")).toBe("no-store");
+      expect(result.headers.get("content-security-policy")).toBe("default-src 'none'; sandbox");
+      expect(await result.text()).toBe(svg);
+    } finally { await new Promise(resolve => core.close(resolve)); }
+  });
+
   it("forwards exact review scopes and replay IDs only with own app authority and same-origin mutations", async () => {
     const core = createServer((request, response) => { request.resume(); response.setHeader("content-type", "application/json"); response.end(JSON.stringify({ active: true, userId: "user_admin", hostRole: "host.admin" })); });
     await new Promise<void>(resolve => core.listen(0, resolve));
@@ -1078,7 +1139,7 @@ describe("gateway", () => {
     const core = createServer((request, response) => {
       seen.push(request.url!);
       response.setHeader("content-type", "application/json");
-      response.end(JSON.stringify({ active: true, userId: "user_admin", hostRole: "host.admin" }));
+      response.end(JSON.stringify(request.url?.endsWith("/skills/exports") ? { id: "e".repeat(64), path: "/core/export", skills: [] } : { active: true, userId: "user_admin", hostRole: "host.admin" }));
     });
     await new Promise<void>(resolve => core.listen(0, resolve));
     process.env.HOSTY_CORE_ORIGIN = `http://127.0.0.1:${(core.address() as AddressInfo).port}`;
@@ -1088,7 +1149,7 @@ describe("gateway", () => {
       const response = await fetch(`${origin}/api/sessions/${session.id}/messages`, { method: "POST",
         headers: { authorization: "Bearer hostyg_browser", origin, "content-type": "application/json" }, body: JSON.stringify({ text: "hello" }) });
       expect(response.status).toBe(202);
-      expect(seen).toEqual(["/api/auth/apps/revalidate"]);
+      expect(seen).toEqual(["/api/auth/apps/revalidate", "/api/internal/apps/hosty.harness/skills/exports"]);
       expect(await manager.mintAppToken(session.id, "another.app")).toBeNull();
       const messages = await store.readEvents(session.id, 0);
       expect(JSON.stringify(messages)).not.toContain("mcp_authorization_required");
@@ -1127,7 +1188,7 @@ describe("gateway", () => {
   it("waits for the selected conversation credential update but not other conversations", async () => {
     const core = createServer((request, response) => {
       request.resume(); response.setHeader("content-type", "application/json");
-      response.end(JSON.stringify({ active: true, userId: "user_admin", hostRole: "host.admin" }));
+      response.end(JSON.stringify(request.url?.endsWith("/skills/exports") ? { id: "e".repeat(64), path: "/core/export", skills: [] } : { active: true, userId: "user_admin", hostRole: "host.admin" }));
     });
     await new Promise<void>(resolve => core.listen(0, resolve));
     process.env.HOSTY_CORE_ORIGIN = `http://127.0.0.1:${(core.address() as AddressInfo).port}`;
@@ -1162,7 +1223,7 @@ describe("gateway", () => {
     const core = createServer((request, response) => {
       request.resume();
       response.setHeader("content-type", "application/json");
-      response.end(JSON.stringify({ active: true, userId: "user_admin", hostRole: "host.admin" }));
+      response.end(JSON.stringify(request.url?.endsWith("/skills/exports") ? { id: "e".repeat(64), path: "/core/export", skills: [] } : { active: true, userId: "user_admin", hostRole: "host.admin" }));
     });
     await new Promise<void>(resolve => core.listen(0, resolve));
     process.env.HOSTY_CORE_ORIGIN = `http://127.0.0.1:${(core.address() as AddressInfo).port}`;
@@ -1194,7 +1255,7 @@ describe("gateway", () => {
       for await (const chunk of request) chunks.push(chunk as Buffer);
       response.setHeader("content-type", "application/json");
       if (request.url === "/api/auth/apps/revalidate") {
-        response.end(JSON.stringify({ active: true, userId: "user_admin", hostRole: "host.admin" })); return;
+        response.end(JSON.stringify(request.url?.endsWith("/skills/exports") ? { id: "e".repeat(64), path: "/core/export", skills: [] } : { active: true, userId: "user_admin", hostRole: "host.admin" })); return;
       }
       forwarded.push({ path: request.url!, headers: request.headers, body: JSON.parse(Buffer.concat(chunks).toString() || "null") });
       response.statusCode = 403; response.end(JSON.stringify({ code: "app_permission_required" }));

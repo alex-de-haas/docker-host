@@ -492,10 +492,52 @@ struct CoreClientTests {
             #expect(String(decoding: try #require(posted.body), as: UTF8.self).contains("codeChallenge"))
         }
 
+
+        private func coreUpdateAttempt() throws -> CoreUpdateAttempt {
+            try CoreUpdateAttempt(status: CoreUpdateStatus(currentVersion: "0.172.0", updateAvailable: true,
+                releaseTag: "daily", checkedAt: Date(), error: nil, offerId: String(repeating: "a", count: 32),
+                operationId: nil, readiness: "ready"), requestID: UUID(uuidString: "12345678-1234-5678-1234-567812345678")!)
+        }
+
+        @Test("A dropped Core update reply reuses the exact request and offer")
+        func coreUpdateRetryIdentity() async throws {
+            let attempt = try coreUpdateAttempt()
+            let api = try client()
+            StubURLProtocol.install([
+                StubURLProtocol.Stub(error: URLError(.networkConnectionLost)),
+                StubURLProtocol.stub(status: 202, json: #"{"id":"12345678123456781234567812345678","status":"accepted","releaseId":"r"}"#),
+                StubURLProtocol.stub(json: #"{"id":"12345678123456781234567812345678","status":"completed","releaseId":"r"}"#),
+            ])
+            await #expect(throws: CoreError.self) { try await api.applyCoreUpdate(attempt) }
+            let accepted = try await api.applyCoreUpdate(attempt)
+            #expect(accepted.status == "accepted")
+            #expect(StubURLProtocol.requests[0].body == StubURLProtocol.requests[1].body)
+            let body = try #require(StubURLProtocol.requests[1].body)
+            let fields = try #require(JSONSerialization.jsonObject(with: body) as? [String: String])
+            #expect(fields == ["offerId": String(repeating: "a", count: 32), "requestId": "12345678123456781234567812345678"])
+            #expect(StubURLProtocol.requests[1].request.value(forHTTPHeaderField: "Content-Type") == "application/json")
+            #expect(try await api.coreUpdateOperation(requestID: attempt.requestId).status == "completed")
+            #expect(StubURLProtocol.requests.last?.request.url?.path == "/api/core/updates/12345678123456781234567812345678")
+        }
+
+        @Test("Recovery uses Core's durable request, and legacy or malformed offers cannot apply")
+        func coreUpdateRecoveryIdentity() throws {
+            let recovery = CoreUpdateStatus(currentVersion: "0.172.0", updateAvailable: false, releaseTag: "daily",
+                checkedAt: Date(), error: "Download interrupted", offerId: String(repeating: "a", count: 32),
+                operationId: String(repeating: "b", count: 32), readiness: "recovery-required")
+            #expect(recovery.canApply)
+            #expect(try CoreUpdateAttempt(status: recovery).requestId == String(repeating: "b", count: 32))
+            for offer in [nil, "invalid"] as [String?] {
+                let legacy = CoreUpdateStatus(currentVersion: "0.171.0", updateAvailable: true, releaseTag: "main",
+                    checkedAt: Date(), error: nil, offerId: offer, operationId: nil, readiness: nil)
+                #expect(!legacy.canApply)
+                #expect(throws: CoreError.self) { try CoreUpdateAttempt(status: legacy) }
+            }
+        }
         @Test("The Core update check reads the same refresh contract as the app one")
         func coreUpdateStatusRefresh() async throws {
             let status = #"""
-            {"currentVersion":"0.70.1","updateAvailable":true,"releaseTag":"v0.71.0","checkedAt":"2026-07-30T14:00:00Z","error":null}
+            {"currentVersion":"0.70.1","updateAvailable":true,"releaseTag":"v0.71.0","checkedAt":"2026-07-30T14:00:00Z","offerId":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","readiness":"ready","error":null}
             """#
 
             StubURLProtocol.install(json: status)
@@ -529,7 +571,7 @@ struct CoreClientTests {
         func applyCoreUpdateAccepted() async throws {
             StubURLProtocol.install(status: 202, json: #"{"status":"updating","logFile":"core-update.log"}"#)
 
-            let acknowledgement = try await client().applyCoreUpdate()
+            let acknowledgement = try await client().applyCoreUpdate(try coreUpdateAttempt())
 
             #expect(acknowledgement.status == "updating")
             #expect(acknowledgement.logFile == "core-update.log")
@@ -543,10 +585,10 @@ struct CoreClientTests {
         @Test("A Core update that never starts reports a refusal, not a restart")
         func applyCoreUpdateRefused() async throws {
             StubURLProtocol.install(status: 503, json: #"{"code":"cli_not_found","message":"The Hosty CLI could not be located."}"#)
-            await #expect(throws: CoreError.self) { try await client().applyCoreUpdate() }
+            await #expect(throws: CoreError.self) { try await client().applyCoreUpdate(try coreUpdateAttempt()) }
 
             StubURLProtocol.install(status: 500, json: #"{"code":"spawn_failed","message":"The updater could not be started."}"#)
-            await #expect(throws: CoreError.self) { try await client().applyCoreUpdate() }
+            await #expect(throws: CoreError.self) { try await client().applyCoreUpdate(try coreUpdateAttempt()) }
         }
     }
 

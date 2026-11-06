@@ -3,7 +3,7 @@
   "id": "hosty.harness",
   "name": "Hosty Harness",
   "description": "Hosty assistant with Docker and Local production runtimes, managed Claude and Codex connections, chat and settings.",
-  "version": "0.69.0",
+  "version": "0.94.0",
   "role": "system",
   "source": {
     "type": "git",
@@ -34,7 +34,7 @@
         "local": {
           "type": "localCommand",
           "workingDirectory": "apps/harness",
-          "command": "npm run start",
+          "command": "node scripts/local-runtime.mjs start api",
           "ports": [
             {
               "key": "http",
@@ -50,7 +50,8 @@
             "timeoutSeconds": 5
           },
           "environment": {
-            "HOSTY_HARNESS_RUNTIME": "native"
+            "HOSTY_HARNESS_RUNTIME": "native",
+            "NODE_ENV": "production"
           }
         },
         "dev": {
@@ -77,7 +78,7 @@
         },
         "docker": {
           "type": "docker",
-          "image": "ghcr.io/alex-de-haas/hosty-harness:0.69.0",
+          "image": "ghcr.io/alex-de-haas/hosty-harness:0.94.0",
           "environment": {
             "HOSTY_HARNESS_RUNTIME": "docker",
             "PORT": "3400"
@@ -118,8 +119,8 @@
         "local": {
           "type": "localCommand",
           "workingDirectory": "apps/harness",
-          "setup": "npm --prefix ../.. ci && npm run build:web",
-          "command": "npm run worker",
+          "setup": "node scripts/local-runtime.mjs prepare",
+          "command": "node scripts/local-runtime.mjs start worker",
           "ports": [
             {
               "key": "worker",
@@ -135,7 +136,8 @@
             "timeoutSeconds": 5
           },
           "environment": {
-            "HOSTY_HARNESS_RUNTIME": "native"
+            "HOSTY_HARNESS_RUNTIME": "native",
+            "NODE_ENV": "production"
           }
         },
         "dev": {
@@ -163,7 +165,7 @@
         },
         "docker": {
           "type": "docker",
-          "image": "ghcr.io/alex-de-haas/hosty-harness-worker:0.69.0",
+          "image": "ghcr.io/alex-de-haas/hosty-harness-worker:0.94.0",
           "environment": {
             "HOSTY_HARNESS_RUNTIME": "docker",
             "PORT": "3401"
@@ -351,6 +353,69 @@
           "markdown"
         ]
       }
+    ],
+    "tasks": [
+      {
+        "key": "default",
+        "endpoint": "http",
+        "path": "/api/tasks/v1",
+        "version": 1,
+        "capabilities": [
+          "markdown",
+          "review",
+          "resources",
+          "events",
+          "removal",
+          "parent-child",
+          "prerequisites",
+          "delegated-review"
+        ]
+      }
+    ],
+    "task-executor": [
+      {
+        "key": "default",
+        "endpoint": "http",
+        "path": "/api/task-executor/v1",
+        "version": 1,
+        "capabilities": [
+          "markdown",
+          "options",
+          "cancellation",
+          "configuration-ref"
+        ]
+      }
+    ],
+    "conversation-history": [
+      {
+        "key": "default",
+        "endpoint": "http",
+        "path": "/api/history/v1",
+        "version": 1,
+        "capabilities": [
+          "history.read",
+          "history.search.text",
+          "history.sharing",
+          "history.attachments",
+          "history.changes",
+          "history.tool-events",
+          "history.usage"
+        ]
+      }
+    ],
+    "agent-sessions": [
+      {
+        "key": "default",
+        "endpoint": "http",
+        "path": "/api/agent-sessions/v1",
+        "version": 1,
+        "capabilities": [
+          "session.read",
+          "session.list",
+          "run.cancel",
+          "run.events"
+        ]
+      }
     ]
   },
   "capabilities": [
@@ -363,7 +428,7 @@
   "ui": {
     "entrypoint": {
       "endpoint": "http",
-      "path": "/development"
+      "path": "/chats"
     },
     "settings": {
       "endpoint": "http",
@@ -371,31 +436,88 @@
     },
     "navigation": [
       {
-        "label": "Harness",
+        "label": "Chats",
         "endpoint": "http",
-        "path": "/development"
+        "path": "/chats",
+        "iconAsset": "assets/nav/message-square.svg"
+      },
+      {
+        "label": "Workspaces",
+        "endpoint": "http",
+        "path": "/development",
+        "iconAsset": "assets/nav/hammer.svg"
+      },
+      {
+        "label": "Tasks",
+        "endpoint": "http",
+        "path": "/tasks",
+        "iconAsset": "assets/nav/clipboard-check.svg"
+      },
+      {
+        "label": "Decisions",
+        "endpoint": "http",
+        "path": "/decisions",
+        "iconAsset": "assets/nav/list-todo.svg"
+      },
+      {
+        "label": "Feedback",
+        "endpoint": "http",
+        "path": "/feedback",
+        "feedbackReview": true,
+        "iconAsset": "assets/nav/message-square-warning.svg"
+      },
+      {
+        "label": "Pull requests",
+        "endpoint": "http",
+        "path": "/pull-requests",
+        "iconAsset": "assets/nav/git-pull-request.svg"
       }
     ],
     "panels": [
       {
         "id": "assistant",
+        "assistantKey": "default",
         "label": "Assistant",
         "endpoint": "http",
         "path": "/assistant",
         "icon": "bot"
+      },
+      {
+        "id": "pull-requests",
+        "label": "Pull requests",
+        "endpoint": "http",
+        "path": "/pull-requests-panel",
+        "icon": "git-pull-request"
+      },
+      {
+        "id": "feedback",
+        "label": "Feedback",
+        "endpoint": "http",
+        "path": "/feedback-panel",
+        "icon": "message-square",
+        "feedbackComposer": true
       }
     ]
   },
   "provides": [
     "assistant",
-    "translation"
+    "translation",
+    "tasks",
+    "task-executor",
+    "conversation-history",
+    "agent-sessions"
   ],
   "corePermissions": [
     "apps.read",
     "apps.workspaces.read",
     "apps.skills.read",
     "apps.sources.full",
-    "apps.mcp.access.request"
+    "apps.mcp.access.request",
+    "skills.manage",
+    "apps.feedback.manage",
+    "decisions.request",
+    "decisions.read",
+    "decisions.respond"
   ],
   "optionalCorePermissions": [
     "apps.workspaces.cleanup",
@@ -406,11 +528,25 @@
     "apps.lifecycle",
     "apps.install",
     "core.lifecycle",
-    "apps.sandboxes.read",
-    "apps.sandboxes.manage",
     "core.environments.read",
     "core.environments.manage",
-    "core.workspace.activate"
+    "core.workspace.activate",
+    "providers.task-executor",
+    "providers.tasks",
+    "core.environments.inspect",
+    "core.environments.operate",
+    "core.environments.api",
+    "core.publications.write",
+    "core.tasks.read",
+    "core.tasks.write",
+    "core.tasks.execute",
+    "providers.conversation-history",
+    "core.history.read",
+    "core.history.share",
+    "core.history.export",
+    "providers.agent-sessions",
+    "core.agent-sessions.read",
+    "core.agent-sessions.control"
   ],
   "externalMounts": {
     "development": {
@@ -418,6 +554,13 @@
       "scope": "instance",
       "service": "worker",
       "mode": "rw",
+      "required": true
+    },
+    "skills": {
+      "kind": "agent-skills",
+      "scope": "instance",
+      "service": "worker",
+      "mode": "ro",
       "required": true
     }
   }

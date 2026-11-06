@@ -52,8 +52,7 @@ public sealed partial class CoreLifecycleServiceTests
         if (scenario == "different-repository") f.Provider.RepositoryOverride = "different/repo";
         if (scenario == "different-user")
         {
-            var denied = await Assert.ThrowsAsync<AppLifecycleException>(() => inspection.ReadAsync(f.W.WorkspaceId, f.W.Id, "another-admin", default));
-            Assert.Equal("workspace_forbidden", denied.Code);
+            Assert.Empty((await inspection.ReadAsync(f.W.WorkspaceId, f.W.Id, "another-admin", default)).PullRequests);
             return;
         }
         var detail = await inspection.ReadAsync(f.W.WorkspaceId, f.W.Id, "admin", default);

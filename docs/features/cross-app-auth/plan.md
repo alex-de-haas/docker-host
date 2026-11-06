@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-07-20
-updated: 2026-10-11
+updated: 2026-10-26
 summary: Providers learn which installed app is calling their control API by introspecting the caller's service token against Core.
 components: [apps/core, packages/app-sdk-dotnet]
 ---
@@ -153,8 +153,16 @@ Each step ships independently.
       anonymous calls, then require identification once the consumer handler has shipped. The
       default becomes require.
 
-- [ ] D7. Design any remaining general cross-app user delegation around explicit app grants, acting-user rights and target-app access. Audit the legacy exchange and on-behalf-of gates against the shipped assistant MCP credential; preserve denial until a reviewed replacement exists. The [MCP facade](../mcp-facade/plan.md) owns adopting this contract for its bridge.
+- [ ] D7. Design any remaining general cross-app user delegation around explicit app grants, acting-user rights and target-app access. Audit the legacy exchange and on-behalf-of gates against the shipped assistant MCP credential; resolve the transferred Bridge audit-visibility question for locally validated delegated app calls and direct connector calls, distinguishing credential issuance, dispatch and observed action results; preserve denial until a reviewed replacement exists. The [MCP facade](../mcp-facade/plan.md) owns adopting this contract for its bridge.
 - [ ] D9. Reconcile app permission identifiers and external token scopes by enforcement semantics; document their mapping and choose whether aliases are useful. Preserve shipped spellings and distinct authority boundaries; cosmetic dotted/colon unification is not a reason for a breaking rename.
+
+On 2026-10-26 D7 also receives the remaining Bridge audit-visibility question. Scoped-token
+introspection is already audited; locally validated delegated calls and direct connector-to-app
+actions are not thereby observable in Core. Decide whether receiver-owned evidence or a reporting
+contract is needed for the selected delegation paths, without importing tokens or private payloads
+into logs. [Durable Jobs](../durable-agent-jobs/plan.md) retains its own job/attempt correlation;
+it does not close this general delegation question. No implementation or new write authority follows
+from the transfer.
 
 D8 remains retired by transfer on 2026-10-11; its ID is not reused or checked off here.
 [Continuous app access](../continuous-app-access/feature.md) implements the common app-session

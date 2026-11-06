@@ -164,7 +164,48 @@ it("keeps Changes independent and stable as edits arrive between other calls", a
   expect(container.querySelector('[data-slot="transcript-changes"]')?.parentElement).toBe(container.querySelector('[data-slot="tool-activity"]')?.parentElement);
   await click(button("4 tool calls")); expect(changes.getAttribute("aria-expanded")).toBe("true");
   await render([command, edit(2, 3), mcp, edit(4, 2), edit(5)]);
-  expect(changes.textContent).toContain("Line totals unavailable"); expect(changes.textContent).not.toContain("+5"); expect(changes.textContent).not.toContain("+0");
+  expect(changes.textContent).toContain("Partial line totals"); expect(changes.textContent).toContain("≥5 added"); expect(changes.textContent).not.toContain("+0");
+  expect(changes.querySelector('[aria-label="5 recorded additions"]')).toBeNull();
+  expect(changes.querySelector('[aria-label="At least 5 recorded additions"]')?.getAttribute("title")).toContain("Repeated edits are counted");
+  expect(container.querySelector('button[aria-label="Review README.md"] [aria-label="At least 5 recorded additions"]')).not.toBeNull();
+});
+
+it("shows late reported counts as lower bounds while keeping the independently complete direction exact", async () => {
+  const ref = { sessionId: "session", workspaceId: "workspace", worktreeId: "tree", repository: "repo", path: "file.ts" };
+  const edits = [event(1, "tool_use", { toolName: "Edit", fileEdits: [{ path: ref.path, deletions: 1, review: ref }] }),
+    event(2, "tool_use", { toolName: "Edit", fileEdits: [{ path: ref.path, additions: 8, deletions: 2, review: ref }] })];
+  await act(async () => root.render(<ToolActivity events={edits} />));
+  const changes = button("Changes · 1 file");
+  expect(changes.querySelector('[aria-label="At least 8 recorded additions"]')?.textContent).toBe("≥8 added");
+  expect(changes.querySelector('[aria-label="3 recorded deletions"]')?.textContent).toBe("−3");
+  expect(changes.textContent).toContain("Partial line totals");
+  await click(changes);
+  const row = container.querySelector('button[aria-label="Review file.ts"]')!;
+  expect(row.textContent).toContain("≥8 added"); expect(row.textContent).toContain("−3");
+  expect(row.querySelector('[aria-label="At least 8 recorded additions"]')?.getAttribute("title")).toContain("Some edit operations did not report additions");
+});
+
+it("retains known file evidence in a partial summary and keeps an unreported file unavailable", async () => {
+  const base = { sessionId: "session", workspaceId: "workspace", worktreeId: "tree", repository: "repo" };
+  const edits = [event(1, "tool_use", { toolName: "Edit", fileEdits: [{ path: "known.ts", additions: 3, deletions: 2, review: { ...base, path: "known.ts" } }] }),
+    event(2, "tool_use", { toolName: "Edit", fileEdits: [{ path: "unknown.ts", review: { ...base, path: "unknown.ts" } }] })];
+  await act(async () => root.render(<ToolActivity events={edits} />));
+  const changes = button("Changes · 2 files");
+  expect(changes.textContent).toContain("≥3 added"); expect(changes.textContent).toContain("≥2 removed");
+  await click(changes);
+  const known = container.querySelector('button[aria-label="Review known.ts"]')!, unknown = container.querySelector('button[aria-label="Review unknown.ts"]')!;
+  expect(known.textContent).toContain("+3"); expect(known.textContent).not.toContain("≥");
+  expect(unknown.textContent).not.toMatch(/[+−≥]/); expect(unknown.parentElement?.textContent).toContain("Recorded line totals unavailable");
+});
+
+it("does not show a wrapped or revived subtotal after safe-integer overflow", async () => {
+  const ref = { sessionId: "session", workspaceId: "workspace", worktreeId: "tree", repository: "repo", path: "file.ts" };
+  const edits = [Number.MAX_SAFE_INTEGER, 1, 2].map((additions, index) => event(index + 1, "tool_use", { toolName: "Edit", fileEdits: [{ path: ref.path, additions, review: ref }] }));
+  await act(async () => root.render(<ToolActivity events={edits} />));
+  const changes = button("Changes · 1 file");
+  expect(changes.textContent).toContain("Line totals unavailable"); expect(changes.textContent).not.toMatch(/[+−≥]/);
+  await click(changes);
+  expect(container.querySelector('button[aria-label="Review file.ts"]')?.textContent).not.toMatch(/[+−≥]/);
 });
 it("keeps unbound legacy file entries separate and makes unavailable Review explanations accessible", async () => {
   const edit = (seq: number) => event(seq, "tool_use", { toolName: "Edit", input: { file_path: "README.md", old_string: "a", new_string: "b" } });
@@ -235,4 +276,36 @@ it("keeps a recorded repository group unavailable when its exact workspace bindi
   expect(hint?.textContent).toContain("recorded workspace is unavailable");
   expect(container.textContent).toContain("Recorded line totals unavailable");
   await click(row); expect(open).not.toHaveBeenCalled();
+});
+
+it("shows MCP failure and separate execution-time badges alongside command results", async () => {
+  const calls = [
+    event(1, "tool_use", { toolName: "Command", toolUseId: "cmd", input: { command: "npm test" } }),
+    event(2, "tool_use", { toolName: "mcp__core__check", toolUseId: "mcp", input: {} }),
+    event(3, "tool_use", { toolName: "Bash", toolUseId: "claude", input: { description: "Claude check", command: "true" } }),
+  ];
+  await act(async () => root.render(<ToolActivity events={calls}
+    commandResults={{ 1: { status: "failed", exitCode: 1, durationMs: 1250 }, 3: { status: "completed" } }}
+    toolResults={{ 2: { status: "failed", output: "Denied", durationMs: 0 }, 3: { status: "completed", output: "", durationMs: 250 } }} />));
+  await click(button("3 tool calls"));
+  const command = button("npm test"), mcp = button("core · check"), claude = button("Claude check");
+  expect(mcp.textContent).toContain("Failed"); expect(mcp.textContent).not.toContain("Exit");
+  for (const [row, text] of [[command, "1.3 s"], [mcp, "0 ms"], [claude, "250 ms"]] as const) {
+    const duration = row.querySelector('[aria-label="Execution time: ' + text + '"]');
+    expect(duration?.getAttribute("data-slot")).toBe("badge");
+    expect(duration?.textContent).toBe(text);
+  }
+  expect(command.parentElement?.className).toBe(mcp.parentElement?.className);
+  expect(command.className).toBe(mcp.className);
+  expect(mcp.getAttribute("aria-expanded")).toBe("false");
+  await click(mcp); expect(container.textContent).toContain("Denied");
+});
+it("does not show duration for legacy or conflicting outcomes", async () => {
+  const calls = [event(1, "tool_use", { toolName: "mcp__core__old", toolUseId: "old" }), event(2, "tool_use", { toolName: "Command", toolUseId: "conflict", input: { command: "check" } })];
+  await act(async () => root.render(<ToolActivity events={calls}
+    commandResults={{ 2: { status: "unknown", conflict: true } }}
+    toolResults={{ 1: { status: "failed", output: "" }, 2: { status: "completed", output: "", durationMs: 20 } }} />));
+  await click(button("2 tool calls"));
+  expect(button("core · old").textContent).toContain("Failed");
+  expect(container.querySelector('[aria-label^="Execution time:"]')).toBeNull();
 });

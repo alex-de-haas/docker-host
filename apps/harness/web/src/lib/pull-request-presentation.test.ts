@@ -35,3 +35,10 @@ it.each([
   const base = pr([...states]);
   expect(ciPresentation({ ...base, observation: { ...base.observation!, complete: false } }, false)).toMatchObject({ kind, label });
 });
+
+it.each(["merged", "closed"])("labels retained %s CI as last observed without inventing current success", state => {
+  const value = { ...pr(["SUCCESS", "FAILURE"]), observation: { ...pr(["SUCCESS", "FAILURE"]).observation!, state } };
+  expect(ciPresentation(value, true)).toMatchObject({ label: "CI last observed", kind: "unknown", counts: { passed: 1, failed: 1 } });
+  expect(ciPresentation(value, false)).toMatchObject({ label: "CI 1 failed", kind: "failed" });
+  expect(ciPresentation({ ...value, unavailable: "Access changed" }, true).label).toBe("CI unknown");
+});

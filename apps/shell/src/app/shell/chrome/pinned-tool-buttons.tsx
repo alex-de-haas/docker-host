@@ -13,8 +13,8 @@ export function fitPinnedTools(available: number, labelled: number, count: numbe
   return { compact, visible: compact ? Math.min(count, Math.max(0, Math.floor((available + 4) / 36))) : count };
 }
 
-export function PinnedToolButtons({ panels, selectedKey, onSelect }: {
-  panels: UiPanel[]; selectedKey?: string; onSelect: (panel: UiPanel) => void;
+export function PinnedToolButtons({ panels, selectedKey, selectedKeys, onSelect }: {
+  panels: UiPanel[]; selectedKey?: string; selectedKeys?: string[]; onSelect: (panel: UiPanel) => void;
 }) {
   const activity = useToolActivity();
   const root = useRef<HTMLDivElement>(null), measure = useRef<HTMLDivElement>(null);
@@ -35,11 +35,14 @@ export function PinnedToolButtons({ panels, selectedKey, onSelect }: {
       {panels.map(item => <span key={panelKey(item.panel)} className="inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 text-sm font-medium"><span className="size-4" />{item.label}</span>)}
     </div>
     <div className="flex items-center justify-end gap-1">
-      {panels.slice(0, layout.visible).map(item => <Button key={panelKey(item.panel)} type="button" variant="ghost" size={layout.compact ? "icon-sm" : "sm"}
-        className={cn("relative shrink-0 gap-1.5 px-2.5", layout.compact && "size-8 p-0", selectedKey === panelKey(item.panel) && "bg-background text-foreground")} onClick={() => onSelect(item)}
-        title={`${item.appName} — ${item.label}: ${activityNames[activity.read(item).state]}`} aria-label={`Open ${item.appName} — ${item.label}`} aria-pressed={selectedKey === panelKey(item.panel)}>
+      {panels.slice(0, layout.visible).map(item => {
+        const selected = selectedKeys?.includes(panelKey(item.panel)) ?? selectedKey === panelKey(item.panel);
+        const action = `${selected ? "Hide" : "Open"} ${item.appName} — ${item.label}`;
+        return <Button key={panelKey(item.panel)} type="button" variant="ghost" size={layout.compact ? "icon-sm" : "sm"}
+        className={cn("relative shrink-0 gap-1.5 px-2.5", layout.compact && "size-8 p-0", selected && "bg-brand-soft text-foreground ring-1 ring-inset ring-brand/40 hover:bg-brand-soft dark:hover:bg-brand-soft")} onClick={() => onSelect(item)}
+        title={`${action}: ${activityNames[activity.read(item).state]}`} aria-label={action} aria-pressed={selected}>
         <AppIcon src={null} name={item.icon} fallback={PanelsTopLeft} className="size-4" /><span className="absolute top-0.5 right-0.5"><ToolActivityMark compact activity={activity.read(item)} /></span>{!layout.compact && <span>{item.label}</span>}
-      </Button>)}
+      </Button>; })}
     </div>
   </div>;
 }

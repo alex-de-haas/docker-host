@@ -1,8 +1,8 @@
 ---
 created: 2026-10-11
-updated: 2026-10-25
+updated: 2026-11-03
 summary: Explicit navigation and tool policy, manifest navigation, and retained tool instances shared by Shell, desktop hosts and standalone apps.
-components: [packages/app-sdk, apps/core, apps/shell, apps/plans, apps/demo-app, apps/harness, apps/marketplace, apps/telemetry-ui, apps/shell-swift]
+components: [packages/app-sdk, apps/core, apps/shell, apps/documents, apps/demo-app, apps/harness, apps/marketplace, apps/telemetry-ui, apps/shell-swift]
 ---
 
 # SDK UI Composition
@@ -50,11 +50,40 @@ and app-owned typography, palette and focus are preserved. These changes keep th
 DOM, retained iframe placement and public composition/authentication contracts; they do not select
 the architecture left open by the style-isolation Draft.
 
+## Standalone Application Header
+
+Declared local app icons load through the authenticated same-origin UI adapter. Core serves only
+the calling application’s declared icon after service and current-user authorization; the browser
+needs no cross-site Core session cookie. External icon URLs retain their declared origin.
+
+The automatic standalone layout has a 44-pixel top bar. Its left side contains a standard
+navigation visibility toggle, the declared application icon and its display name. Its right side
+contains pinned tools and a Tools dropdown listing the authorized catalog with independent pin
+controls. A pin changes only the launcher; it neither opens nor closes a tool. Explicit SDK host
+renderers retain their rail by default. Embedded Shell/Desktop documents use their host's chrome.
+
+Core's bootstrap includes optional caller `displayName` and `iconUrl` metadata. Relative manifest
+icons use absolute Core asset URLs; declared remote icons retain their URL. The caller needs no
+catalog permission for its own display metadata. Older Core responses use the app ID and a generic
+icon; an image load failure also uses the generic icon. Labels and icons confer no authority.
+
+Navigation visibility and pin order persist in browser storage scoped by Core origin, user, app ID
+and installation. Missing or malformed preferences use defaults. Unavailable storage keeps changes
+in memory and reports that persistence failed. Catalog changes hide absent pins without inventing
+new grants or resolving tools. Actor and installation changes select their own preferences.
+
+On wide screens the toggle hides navigation while retaining the app document. Below 900 pixels it
+opens the existing navigation dialog from the header. Narrow headers truncate the app name and
+keep tool actions accessible. Navigation, chooser and panel dismissal restore focus; the Tools
+chooser supports Tab, arrow, Home/End and Escape keys. Pinning, navigation visibility and responsive
+layout changes preserve retained tool frames. Explicit navigation/tool chrome policy takes priority
+over the local preference. Unsupported legacy adapters retain their document-only panel layout.
+
 ## Policy And Defaults
 
 | Context | App navigation | Tool launcher | Tool owner |
 | --- | --- | --- | --- |
-| Plain standalone | Show | Local rail and chooser | Local coordinator |
+| Plain standalone | Show, with a header toggle | Pinned tools and Tools menu in the header | Local coordinator |
 | Current Shell child | Hide | Hidden in child; Shell rail available | Shell |
 | Desktop fixture app window | Show | Hidden in child; shared desktop controls | Desktop host |
 | Tool frame | Hide | Hide | Existing top-level host |
@@ -309,6 +338,14 @@ assistant link is pending; only expansion transitions persist the preference.
 
 ## Testing Expectations
 
+- Standalone preferences cover Core/user/installation scope, malformed storage, write failures and
+  cross-tab changes. Header tests cover app metadata/fallbacks, pin/open separation, persistence,
+  actor changes, retained document/iframe identity, policy overrides and narrow navigation focus.
+- Core bootstrap tests cover relative, remote and absent icons for an unrelated application without
+  catalog authority, plus cross-app and parent-origin rejection. Managed browser acceptance covers
+  header geometry, no global scroll, image loading, persisted pins/visibility, retained frames,
+  keyboard dismissal and unchanged embedded Shell/Desktop behavior.
+
 - Verify packaged SDK fonts and licenses through the published build and unchanged-consumer upgrade
   check. Browser bundles emit local WOFF2 URLs without server filesystem URLs. Exercise access,
   notices, install progress, panel/navigation and sandbox controls in both themes and reduced motion.
@@ -384,6 +421,21 @@ assistant link is pending; only expansion transitions persist the preference.
 - Failure checks covered real optional permission denial, a stopped Harness, local routing while
   the isolated Core was stopped, and a browser-intercepted empty catalog. Empty-catalog evidence
   is a UI fixture, not a server authorization test. Core/SDK tests cover its server/model behavior.
+
+Standalone header verification on 2026-11-02 (macOS arm64):
+
+- `npm run sdk:test`: 755 passed. `npm run harness:test`: 2,020 passed.
+- `dotnet test apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj --filter FullyQualifiedName~UiPanelHttpTests --artifacts-path /tmp/hosty-standalone-core --verbosity quiet`: 45 passed.
+- Core/CLI builds, `npm run build --workspace @hosty-sdk/app`,
+  `node packages/app-sdk/scripts/check-overlay-upgrade.mjs`, and the isolated Harness web build
+  passed. `npm run harness:lint` passed with one existing tasks effect-cleanup warning.
+- `HOSTY_FEEDBACK_BROWSER_ONLY=1 HOSTY_FEEDBACK_DESKTOP=1 npm run test:integration -- feedback`
+  passed with the configured Chrome/Playwright acceptance fixture. It exercised the standalone
+  header, Shell, Desktop and real feedback screenshots. The first Desktop browser entry reported
+  an unavailable connection; repeating the browser flow in the same child Core passed. Parent
+  Finish verified removal of child resources, fixture identity/data and build snapshots.
+- Live Core restarted from the registered worktree and reported a new process identity;
+  Harness's managed restart completed with both API and worker healthy.
 
 Verification recorded on 2026-10-11:
 

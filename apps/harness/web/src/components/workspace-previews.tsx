@@ -5,11 +5,11 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { HostyLoader } from "../../../../../shared/web/hosty-states";
-import type { CoreEnvironment, SandboxInstance } from "@hosty-sdk/app/sandbox/server";
+import type { CoreEnvironment } from "@hosty-sdk/app/sandbox/server";
 import { developmentRequest } from "@/lib/development-api";
 import { WorkspaceResourceActions } from "./workspace-resource-actions";
 import { PreviewChecks } from "./preview-checks";
-type Previews = { environments: CoreEnvironment[]; instances: SandboxInstance[]; applications: Record<string, { state: string; error?: string;
+type Previews = { environments: CoreEnvironment[]; applications: Record<string, { state: string; error?: string;
   apps: PreviewApp[] }> };
 type PreviewApp = { id: string; displayName: string; runtimeState: string; previewUrl?: string; health?: string;
   services?: { service: string; status: string; health?: string | null }[] | null;
@@ -21,7 +21,7 @@ export function WorkspacePreviews({ workspaceId, canStart = true, disabled = fal
   workspaceId: string; canStart?: boolean; disabled?: boolean; refresh?: () => void;
 }) {
   const [value, setValue] = useState<Previews | null>(null), [error, setError] = useState("");
-  const [revision, setRevision] = useState(0);
+  const [revision, setRevision] = useState(0), [loaded, setLoaded] = useState(false);
   useEffect(() => {
     const abort = new AbortController(); let loading = false;
     const load = async () => {
@@ -29,28 +29,27 @@ export function WorkspacePreviews({ workspaceId, canStart = true, disabled = fal
       try { const next = await developmentRequest<Previews>(`/${workspaceId}/previews`, undefined, abort.signal);
         if (!abort.signal.aborted) { setValue(next); setError(""); } }
       catch (e) { if (!abort.signal.aborted) { setValue(null); setError(e instanceof Error ? e.message : String(e)); } }
-      finally { loading = false; }
+      finally { loading = false; if (!abort.signal.aborted) setLoaded(true); }
     };
     void load(); const timer = setInterval(() => { if (document.visibilityState === "visible") void load(); },10000);
     return () => { abort.abort(); clearInterval(timer); };
   }, [workspaceId, revision]);
   const changed = () => { setRevision(n => n + 1); refresh?.(); };
-  const instances = value?.instances.filter(item => item.state !== "disposed") ?? [];
-  if (value && !value.environments.length && !instances.length) return null;
-  return <section className="space-y-3 border-t pt-4" aria-label="Sandbox previews"><h3 className="text-xs font-semibold text-muted-foreground">Previews</h3>
+  if (!loaded || value && !value.environments.length) return null;
+  return <section data-workspace-section className="space-y-3" aria-label="Sandbox previews"><h3 className="text-xs font-semibold text-muted-foreground">Previews</h3>
     {!value && !error && <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><HostyLoader label={null} className="size-4" />Loading sandbox previews…</p>}
     {error && <Alert variant="destructive"><AlertTitle>Preview status unavailable</AlertTitle><AlertDescription>
       <p>{error}</p><Button variant="outline" size="sm" onClick={() => { setError(""); setRevision(n => n + 1); }}>Retry previews</Button>
     </AlertDescription></Alert>}
-    {value?.environments.map(item => <div key={item.id} className="min-w-0 space-y-3 rounded-xl border bg-card p-3 text-xs">
-      <div className="flex min-w-0 items-start gap-2"><FlaskConical className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden /><p className="min-w-0 flex-1 break-words text-sm font-semibold">{item.label}</p><PreviewState state={item.state} /></div>
-      <p className="text-muted-foreground">Separate Core and test data</p>
+    {value?.environments.map(item => <div key={item.id} className="relative min-w-0 space-y-3 rounded-xl border bg-card p-3 text-xs">
+      <div className="flex min-h-8 min-w-0 items-start gap-2 pr-10"><FlaskConical className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden /><p className="min-w-0 flex-1 break-words text-sm font-semibold">{item.label}</p></div>
+      <div className="flex min-w-0 items-center gap-2"><p className="min-w-0 flex-1 text-muted-foreground">Separate Core and test data</p><PreviewState state={item.state} /></div>
       {item.process?.startedAt && Number.isFinite(Date.parse(item.process.startedAt)) && <p className="tabular-nums text-muted-foreground">Process started <time dateTime={item.process.startedAt}>{new Date(item.process.startedAt).toLocaleString()}</time></p>}
-      {safeLink(item.previewUrl) && <p className="truncate rounded-md border bg-muted/40 px-2 py-1.5 font-mono text-xs text-muted-foreground" title={safeLink(item.previewUrl)}>{safeLink(item.previewUrl)}</p>}
-      <div className="flex flex-wrap items-center gap-2">
-        {item.state === "running" && safeLink(item.previewUrl) && <Button asChild variant="outline" size="sm"><a target="_blank" rel="noreferrer" href={new URL("/login", safeLink(item.previewUrl)).href}>Open test Core<ExternalLink className="size-3" /></a></Button>}
-        <WorkspaceResourceActions compact key={item.id} workspaceId={workspaceId} kind="environments" resource={item} label={item.label} canStart={canStart} disabled={disabled} refresh={changed} />
-      </div>
+      {safeLink(item.previewUrl) && <div role="group" aria-label={`${item.label} test Core URL`} className="flex min-w-0 items-center rounded-md border bg-muted/40">
+        <p className="min-w-0 flex-1 truncate px-2 py-1.5 font-mono text-xs text-muted-foreground" title={safeLink(item.previewUrl)}>{safeLink(item.previewUrl)}</p>
+        {item.state === "running" && <Button asChild variant="ghost" size="icon-sm" className="mr-0.5 shrink-0"><a target="_blank" rel="noreferrer" aria-label="Open test Core" title="Open test Core" href={new URL("/login", safeLink(item.previewUrl)).href}><ExternalLink className="size-3.5" aria-hidden="true" /></a></Button>}
+      </div>}
+      <WorkspaceResourceActions compact key={item.id} menuTriggerClassName="absolute right-3 top-3" workspaceId={workspaceId} kind="environments" resource={item} label={item.label} canStart={canStart} disabled={disabled} refresh={changed} />
       {value.applications[item.id]?.apps.map(app => <div key={app.id} className="space-y-2 border-t pt-3"><ApplicationPreview app={app} />
         {item.state === "running" && canStart && !disabled && <PreviewChecks compact workspaceId={workspaceId} environmentId={item.id} appId={app.id} refresh={() => setRevision(n => n + 1)} />}
       </div>)}
@@ -61,19 +60,8 @@ export function WorkspacePreviews({ workspaceId, canStart = true, disabled = fal
       </p>}
       {(item.error || value.applications[item.id]?.error) && <p role="status" className="text-destructive-foreground">{item.error || value.applications[item.id]?.error}</p>}
     </div>)}
-    {instances.map(item => <div key={item.id} className="min-w-0 space-y-3 rounded-xl border bg-card p-3 text-xs">
-      <div className="flex min-w-0 items-start gap-2"><FlaskConical className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden /><p className="min-w-0 flex-1 break-all font-mono text-xs font-normal">{item.appId}</p><PreviewState state={item.state} /></div>
-      <p className="tabular-nums text-muted-foreground">{item.users.length} test {item.users.length === 1 ? "user" : "users"} · Separate sandbox data</p>
-      {safeLink(item.previewUrl) && <p className="truncate rounded-md border bg-muted/40 px-2 py-1.5 font-mono text-xs text-muted-foreground" title={safeLink(item.previewUrl)}>{safeLink(item.previewUrl)}</p>}
-      <div className="flex flex-wrap items-center gap-2">
-        {item.state === "ready" && safeLink(item.previewUrl) && <Button asChild variant="outline" size="sm"><a target="_blank" rel="noreferrer" href={personaLink(item.previewUrl!)}>Open preview<ExternalLink className="size-3" /></a></Button>}
-        <WorkspaceResourceActions compact key={item.id} workspaceId={workspaceId} kind="sandboxes" resource={item} label={item.appId} canStart={canStart} disabled={disabled} refresh={changed} />
-      </div>
-      {item.errorCode && <p role="status" className="text-destructive-foreground">{item.errorCode}</p>}
-    </div>)}
   </section>;
 }
-function personaLink(value: string) { const url = new URL(safeLink(value)!); url.searchParams.set("hosty_sandbox_persona", "core"); return url.href; }
 function PreviewState({ state }: { state: string }) {
   const working = ["starting", "preparing", "finishing", "stopping"].includes(state);
   const failed = ["failed", "cleanup-failed"].includes(state);

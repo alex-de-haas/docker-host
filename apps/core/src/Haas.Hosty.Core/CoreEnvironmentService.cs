@@ -4,7 +4,7 @@ using System.Net.Sockets;
 
 namespace Haas.Hosty.Core;
 
-internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEnvironmentRuntime runtime, IClock clock, DevelopmentWorkspaceService? workspaces = null, WorkspaceInspectionService? inspection = null, CoreEnvironmentConsentService? consent = null)
+internal sealed partial class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEnvironmentRuntime runtime, IClock clock, DevelopmentWorkspaceService? workspaces = null, WorkspaceInspectionService? inspection = null, CoreEnvironmentConsentService? consent = null, ICoreAgentRunAccess? agentRuns = null)
 {
     private readonly SemaphoreSlim allocation = new(1, 1);
     private readonly ConcurrentDictionary<string, SemaphoreSlim> gates = new(StringComparer.Ordinal);
@@ -17,7 +17,8 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
     internal CoreEnvironmentView View(CoreEnvironmentRecord record) => new(record.Id, record.Request.Label,
         record.Request.Mode, record.Request.ProjectPath, record.Request.Context, record.State, record.Revision, record.Port,
         record.State == "finished" ? null : store.Root(record.Id), $"http://core.i-{record.Id}.hosty.localhost:{record.Port}",
-        record.Process, record.Error, record.Operations ?? [], CoreEnvironmentResources.Limits(record), record.State == "finished" ? null : record.Usage, InitializationRequested: record.Request.Initialization is not null);
+        record.Process, record.Error, record.Operations ?? [], CoreEnvironmentResources.Limits(record), record.State == "finished" ? null : record.Usage,
+        InitializationRequested: record.Request.Initialization is not null, CoreVersion: record.Process?.Version ?? record.ObservedCoreVersion, Consumers: record.Consumers ?? []);
     private async Task<CoreEnvironmentView> ViewAsync(CoreEnvironmentRecord record, CancellationToken ct, Dictionary<string, Task<string>>? digests = null)
         => View(record) with { Access = consent is null ? null : await consent.AccessAsync(record, ct, digests) };
     internal Task RequireConsentAsync(SandboxActor actor, CoreEnvironmentRecord record, bool launch, CancellationToken ct)
@@ -25,18 +26,24 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
     internal async Task<CoreEnvironmentRecord> RequireAsync(SandboxActor actor, string id, CancellationToken ct)
     {
         var record = await store.ReadAsync(id, ct) ?? throw new SandboxException("environment_not_found", "Environment not found.", 404);
+        if (actor.CanDeleteResource(record.Owner, record.Request.Context))
+        {
+            if (workspaces is not null) await workspaces.RequireWorkspaceUserAsync(actor.UserId, ct);
+            return record;
+        }
         if (record.Owner.UserId != actor.UserId || actor.AppId is not null && (!record.Owner.SameOwner(actor) || actor.GrantId is not null &&
                 (record.Consent?.GrantId != actor.GrantId || record.Consent.ScopeId != actor.ScopeId)))
             throw new SandboxException("environment_forbidden", "The environment belongs to another caller.", 403);
         return record;
     }
-    public async Task<CoreEnvironmentList> ListAsync(SandboxActor actor, CancellationToken ct)
+    public async Task<CoreEnvironmentList> ListAsync(SandboxActor actor, CancellationToken ct, bool observe = true)
     {
         var records = await store.ListAsync(ct);
         var observed = new List<CoreEnvironmentView>();
         var digests = new Dictionary<string, Task<string>>(StringComparer.Ordinal);
         foreach (var record in records.Where(r => r.Owner.UserId == actor.UserId && (actor.AppId is null || r.Owner.SameOwner(actor) && (actor.GrantId is null || r.Consent?.GrantId == actor.GrantId && r.Consent.ScopeId == actor.ScopeId))))
         {
+            if (!observe) { observed.Add(await ViewAsync(record, ct, digests)); continue; }
             var gate = Gate(record.Id);
             if (!await gate.WaitAsync(0, ct)) { observed.Add(await ViewAsync((await store.ReadAsync(record.Id, ct))!, ct, digests)); continue; }
             try
@@ -48,7 +55,7 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
             }
             finally { gate.Release(); }
         }
-        return new(observed, consent is null ? [] : await consent.ListAsync(actor, ct, digests));
+        return new(observed, !observe || consent is null ? [] : await consent.ListAsync(actor, ct, digests));
     }
     public async Task<CoreEnvironmentView> ReadAsync(SandboxActor actor, string id, CancellationToken ct)
     {
@@ -69,7 +76,8 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
         var state = process is not null ? "running" : record.State == "running" ? "stopped" : record.State;
         if (process is null && CoreEnvironmentRuntime.Alive(record.Process)) { process = record.Process; state = "unready"; }
         if (process == record.Process && state == record.State) return record;
-        record = record with { Process = process, State = state, Revision = record.Revision + 1 };
+        record = record with { Process = process, State = state, Revision = record.Revision + 1,
+            ObservedCoreVersion = process?.Version ?? record.Process?.Version ?? record.ObservedCoreVersion };
         await store.WriteAsync(record, ct); return record;
     }
     public async Task<CoreEnvironmentView> CreateFromWorkspaceAsync(SandboxActor actor, CoreEnvironmentWorkspaceCreate input, CancellationToken ct)
@@ -211,6 +219,8 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
     }
     private async Task ValidateWorktreesAsync(SandboxActor actor, CoreEnvironmentCreate input, CancellationToken ct)
     {
+        if (input.Mode == "source" || input.WorktreeIds?.Length > 0)
+            actor.Capability?.Require(AccessTokenScopes.McpWorkspaces, CoreAppPermissions.Sources);
         var trees = new List<DevelopmentWorkspace>();
         foreach (var treeId in input.WorktreeIds ?? [])
         {
@@ -226,7 +236,7 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
             if (tree.State != "active") throw new SandboxException("environment_worktree_unavailable", "The worktree is not active.", 409);
             trees.Add(tree);
         }
-        if (actor.AppId is not null && input.Mode == "source"
+        if ((actor.AppId is not null || actor.PrincipalId is not null || actor.Capability?.App is not null) && input.Mode == "source"
             && !trees.Any(tree => !CoreDataPaths.ContainsSymbolicLink(tree.Path, input.ProjectPath!)))
             throw new SandboxException("environment_project_forbidden", "Select a Core project inside an attached worktree owned by this session, without symlinks.", 403);
     }
@@ -269,6 +279,8 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
     public async Task<CoreEnvironmentView> CommandAsync(SandboxActor actor, string id, string kind,
         CoreEnvironmentCommand input, CancellationToken ct)
     {
+        if (actor.DeletingWorkspace is not null && kind != "finish")
+            throw new SandboxException("environment_forbidden", "Workspace deletion only authorizes finishing its resources.", 403);
         if (kind is not ("start" or "stop" or "restart" or "finish"))
             throw new SandboxException("environment_operation_invalid", "Unknown environment operation.", 400);
         var requestId = RequestId(input.RequestId);
@@ -284,6 +296,9 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
                 if (prior.Fingerprint != fingerprint) throw ReplayConflict();
                 if (prior.State == "succeeded" || operations.Last().Id != requestId || record.State == "finished") return await ViewAsync(record, ct);
             }
+            if (kind is "stop" or "restart" or "finish") RequireStoppedConsumers(record);
+            if (kind is "start" or "restart" && (record.Request.Mode == "source" || record.Request.WorktreeIds?.Length > 0))
+                actor.Capability?.Require(AccessTokenScopes.McpWorkspaces, CoreAppPermissions.Sources);
             // Exact terminal replays do not launch anything. New and retryable operations still
             // require live consent before changing the journal or preparing the child.
             if (kind is "start" or "restart") await RequireConsentAsync(actor, record, true, ct);
@@ -337,7 +352,8 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
                         CleanupOwners = kind == "finish" ? record.CleanupOwners ?? await store.CleanupOwnersAsync(record, deadline.Token) : record.CleanupOwners };
                     await store.WriteAsync(record, deadline.Token);
                     await runtime.StopAsync(record, root, kind == "finish", deadline.Token);
-                    record = record with { Process = null, State = kind == "finish" ? "finishing" : "stopped" };
+                    record = record with { Process = null, State = kind == "finish" ? "finishing" : "stopped",
+                        ObservedCoreVersion = record.Process?.Version ?? record.ObservedCoreVersion };
                 }
                 if (kind is "start" or "restart")
                 {
@@ -350,7 +366,7 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
                         {
                             await runtime.StartAsync(record, root, async process =>
                             {
-                                record = record with { Process = process };
+                                record = record with { Process = process, ObservedCoreVersion = process.Version ?? record.ObservedCoreVersion };
                                 await store.WriteAsync(record, deadline.Token);
                             }, deadline.Token);
                             break;
@@ -493,6 +509,8 @@ internal sealed class CoreEnvironmentService(CoreEnvironmentStore store, ICoreEn
                 if (record.State is "finished" or "finishing" or "cleanup-failed" || record.RootDeletionStarted) continue;
                 try
                 {
+                    // Runtime state must remain current without a browser reading the inventory.
+                    record = await ObserveAsync(record, ct);
                     var usage = await runtime.InspectResourcesAsync(record, store.Root(record.Id), ct);
                     if (usage is null) continue;
                     record = record with { Usage = usage };

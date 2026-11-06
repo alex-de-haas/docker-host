@@ -70,3 +70,16 @@ it("retries output delivery before acknowledging its durable cursor", async () =
   await client().events("run-1", event => { if (++attempts === 1) throw new Error("temporary persistence failure"); persisted.push(event); }, AbortSignal.timeout(3000));
   expect(attempts).toBe(2); expect(persisted).toEqual([frame(1, result())]); expect(fetch.mock.calls[1]?.[0]).toContain("after=0");
 });
+
+it("preserves producer timing through durable journal reload and client replay", async () => {
+  const f = await fixture();
+  const timed = result({ status: "failed", durationMs: 1234 });
+  const written = await f.journal.append("run-1", timed);
+  expect(written?.event).toEqual(timed);
+  const loaded = await new WorkerJournal(f.directory).load("run-1");
+  expect(loaded.events[0]?.event).toEqual(timed);
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(sse("run", loaded.events[0]) + sse("state", receipt({ generation: loaded.receipt.generation })))));
+  const events: WorkerEvent[] = [];
+  await client().events("run-1", event => { events.push(event); }, AbortSignal.timeout(2000));
+  expect(events[0]?.event).toEqual(timed);
+});

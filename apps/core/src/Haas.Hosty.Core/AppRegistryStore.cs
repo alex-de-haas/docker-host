@@ -91,7 +91,9 @@ internal sealed class AppRegistryStore(CoreDataPaths paths, CoreEventHub? events
             return null;
         }
 
-        return await ReadRecordAsync(appId, appRoot, cancellationToken);
+        var record = await ReadRecordAsync(appId, appRoot, cancellationToken);
+        CoreApiRequest.AppObserved(record);
+        return record;
     }
 
     // A racing write can leave a fresh record under a stale stamp here (stamp read before the file);
@@ -210,7 +212,7 @@ internal sealed class AppRegistryStore(CoreDataPaths paths, CoreEventHub? events
             return app;
         return app with
         {
-            // Declarations remain intact: an unknown required name is a compatibility error.
+            // Declarations remain intact for compatibility warnings and later explicit review.
             RequiredCorePermissions = app.RequiredCorePermissions ?? grants.ToArray(),
             GrantedCorePermissions = grants.Where(p => CoreAppPermissions.Known.Contains(p, StringComparer.Ordinal)).ToArray(),
             PermissionRevision = Guid.NewGuid().ToString("N"),
@@ -423,7 +425,6 @@ internal sealed record AppRecord(
     // same moments. Unlike the metadata above it is **not** display-only — it is prose an agent acts
     // on — which is why its path is validated at install rather than resolved leniently at read time.
     // Storing only the declaration: whether it reaches a model is a separate, operator-owned decision.
-    string? AgentSkillFile = null,
     // App-owned feeds.json used by generic feed lifecycle operations. Null for direct manifest/folder
     // installs. Stored independently of any discovery provider so updates keep working without it.
     string? FeedsUrl = null,
@@ -476,7 +477,11 @@ internal sealed record AppRecord(
     IReadOnlyList<string>? ActiveSourcePaths = null,
     AppLaunchProgress? LaunchProgress = null,
     string? AppliedSourceManifestDigest = null,
-    string? DevModeId = null)
+    string? DevModeId = null,
+    DependencyStartIntent? DependencyStart = null,
+    string? DependencyStopVersion = null,
+    bool DependencyBorrowedStart = false,
+    string? UpdateSourceRevision = null)
 {
     [System.Text.Json.Serialization.JsonIgnore]
     public string BrowserOriginScope { get; init; } = "";
@@ -740,7 +745,7 @@ internal sealed record AppUiContract(
                 var path = NormalizePath(string.IsNullOrWhiteSpace(item.Path) ? entry.Path : item.Path);
                 var label = string.IsNullOrWhiteSpace(item.Label) ? path : item.Label.Trim();
                 var endpointKey = FirstNonBlank(item.Endpoint, item.PortKey, entry.EndpointKey);
-                return new AppNavigationContract(label, path, endpointKey, NullIfBlank(item.IconAsset));
+                return new AppNavigationContract(label, path, endpointKey, NullIfBlank(item.IconAsset), item.FeedbackReview);
             })
             .ToArray();
 
@@ -766,7 +771,7 @@ internal sealed record AppUiContract(
                 EndpointKey: FirstNonBlank(surface.Endpoint, surface.PortKey, entry.EndpointKey),
                 Label: NullIfBlank(surface.Label),
                 Icon: NullIfBlank(surface.Icon),
-                Id: surface.Id);
+                Id: surface.Id, FeedbackComposer: surface.FeedbackComposer, AssistantKey: surface.AssistantKey);
 
     // Raw declared entrypoint (endpoint key + un-normalized path) shared with the strict system-app
     // manifest validation, which must see exactly what the author wrote before any normalization.
@@ -821,10 +826,10 @@ internal sealed record AppUiContract(
     private sealed record UiEntrypoint(string? EndpointKey, string Path);
 }
 
-internal sealed record AppNavigationContract(string Label, string Path, string? EndpointKey, string? IconAsset = null);
+internal sealed record AppNavigationContract(string Label, string Path, string? EndpointKey, string? IconAsset = null, bool FeedbackReview = false);
 
 /// <summary>A settings or panel surface as declared, before its endpoint is resolved to a URL.</summary>
-internal sealed record AppSurfaceContract(string Path, string? EndpointKey, string? Label, string? Icon = null, string? Id = null);
+internal sealed record AppSurfaceContract(string Path, string? EndpointKey, string? Label, string? Icon = null, string? Id = null, bool FeedbackComposer = false, string? AssistantKey = null);
 
 // Normalized platform-interface declarations (top-level `interfaces`), denormalized onto the app
 // record and projected onto the summary so clients discover interface providers from the registry
@@ -1077,7 +1082,6 @@ internal sealed record AppSummary(
     // The app's declared agent skill, resolved to the same asset endpoint. Non-null means *declared*,
     // never *enabled*: whether it reaches a model is the operator's per-app decision, and a client
     // must not read a URL here as permission. Additive/nullable.
-    string? AgentSkillUrl = null,
     // Generic app-owned feed source and selected feed. Null for direct installs.
     string? FeedsUrl = null,
     string? FollowedFeedId = null,
@@ -1167,7 +1171,7 @@ internal sealed record AppSummary(
             .Select(panel =>
             {
                 var surface = Surface(panel, app.DisplayName)!;
-                return surface with { PanelId = PanelIdentity.Resolve(panel, surface.Endpoint) };
+                return surface with { PanelId = PanelIdentity.Resolve(panel, surface.Endpoint), FeedbackComposer = panel.FeedbackComposer, AssistantKey = panel.AssistantKey };
             })
             .DistinctBy(panel => panel.PanelId, StringComparer.Ordinal)
             .ToArray();
@@ -1213,7 +1217,6 @@ internal sealed record AppSummary(
             app.CatalogMetadata,
             ResolveIconUrl(app.CatalogMetadata?.Icon, app.Id, assetVersion),
             ResolveAssetUrl(app.CatalogMetadata?.DescriptionFile, app.Id, assetVersion),
-            ResolveAssetUrl(app.AgentSkillFile, app.Id, assetVersion),
             app.FeedsUrl,
             app.FollowedFeedId,
             Interfaces: BuildInterfaceSummaries(app.Interfaces, endpoints),
@@ -1461,7 +1464,7 @@ internal sealed record AppNavigationSummary(string Label, string Path, string? E
 
 /// <summary>A placed surface as a client consumes it: what to call the tab, and what to embed.</summary>
 // `Service` as on AppNavigationSummary: which service's health gates embedding this surface.
-internal sealed record AppSurfaceSummary(string? Label, string Path, string? EmbeddedUrl, string? Service = null, string? Icon = null, string? Endpoint = null, string? PanelId = null);
+internal sealed record AppSurfaceSummary(string? Label, string Path, string? EmbeddedUrl, string? Service = null, string? Icon = null, string? Endpoint = null, string? PanelId = null, bool FeedbackComposer = false, string? AssistantKey = null);
 
 internal sealed record AppMountSummary(
     string Key,

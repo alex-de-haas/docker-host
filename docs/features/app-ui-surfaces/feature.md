@@ -1,6 +1,6 @@
 ---
 created: 2026-08-19
-updated: 2026-10-25
+updated: 2026-10-30
 summary: Apps declare where their pages belong, such as settings, panels or navigation, and Shell places them.
 components: [apps/shell, apps/core]
 ---
@@ -53,6 +53,15 @@ unknown or loading icons, with the full app and panel label in the tooltip.
 Update checks accept a candidate whose digest exactly matches the reviewed installed
 manifest, so unchanged legacy panels do not create update warnings. Changed candidates
 and new installations still require icons.
+
+## Feedback Review Intent
+
+A navigation item can declare `feedbackReview: true`. For an administrator, Core discovers accessible
+installed clients with this declaration and a granted `apps.feedback.manage` permission. It resolves
+the declared endpoint/path through normal app launch and adds `feedback=<report-id>`. The receiving
+client opens explicit review of that submitted report; it does not automatically start work. Core
+needs no knowledge of that client's internal routes or application identity. The declaration itself
+grants neither feedback access nor agent authority. See [App Feedback Inbox](../app-feedback-inbox/feature.md).
 
 ## Settings Navigation
 

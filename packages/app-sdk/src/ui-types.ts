@@ -3,7 +3,7 @@ export type PanelRef = { appId: string; installationId: string; panelId: string 
 export type PanelTarget = { panel: PanelRef; route?: string };
 export type AppSurfaceRef = { appId: string; installationId: string; endpoint: string; route: string };
 export type UiFramePolicy = { microphone: boolean; popupEscape: boolean };
-export type UiPeer = { appId: string; installationId: string; origins: string[] };
+export type UiPeer = { appId: string; installationId: string; origins: string[]; displayName?: string; iconUrl?: string | null };
 export type UiBootstrap = {
   version: 1; coreOrigin: string; userId: string; app: UiPeer; canHost: boolean;
   pinnedOpen: boolean; peer?: UiPeer | null;
@@ -11,9 +11,9 @@ export type UiBootstrap = {
 export type UiPanel = {
   panel: PanelRef; label: string; appName: string; icon: string | null;
   endpoint: string; route: string; origin: string | null;
-  available: boolean; state: string; canStart: boolean; framePolicy: UiFramePolicy;
+  available: boolean; state: string; canStart: boolean; framePolicy: UiFramePolicy; feedbackComposer?: boolean; assistantKey?: string | null;
 };
-export type UiFrameSurface = AppSurfaceRef & { origin: string; framePolicy: UiFramePolicy; panelId?: string };
+export type UiFrameSurface = AppSurfaceRef & { origin: string; framePolicy: UiFramePolicy; feedbackComposer?: boolean; panelId?: string };
 export type UiResolvedPanel = {
   target: PanelTarget; surface: UiFrameSurface | null;
   available: boolean; state: string; standaloneHref: string | null;

@@ -1,6 +1,7 @@
 using System.Net.Http;
 using System.Net.Security;
 using System.Net.Sockets;
+using OpenTelemetry;
 
 namespace Haas.Hosty.Core;
 
@@ -72,6 +73,8 @@ internal sealed class NetworkHealthProbe : IHealthProbe
     {
         var uri = new UriBuilder(target.Type, target.Host, target.Port, target.Path).Uri;
         var client = string.Equals(target.Type, "https", StringComparison.Ordinal) ? insecureHttpsClient : httpClient;
+        // Routine readiness/health traffic must not fill the diagnostic trace buffer.
+        using var suppression = SuppressInstrumentationScope.Begin();
         using var response = await client.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         return target.AnyResponse || (int)response.StatusCode is >= 200 and < 400;
     }

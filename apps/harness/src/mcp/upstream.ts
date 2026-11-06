@@ -24,6 +24,7 @@ export interface UpstreamTool {
   name: string;
   description?: string;
   inputSchema?: unknown;
+  _meta?: Record<string, unknown>;
   annotations?: { readOnlyHint?: unknown };
 }
 

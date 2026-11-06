@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
+using ModelContextProtocol.Server;
 
 namespace Haas.Hosty.Core.Tests.Http;
 
@@ -33,11 +34,30 @@ public sealed class McpHttpTests
             .ToArray();
         Assert.Equal(
             [
-                "abort_workspace_merge", "acquire_workspace_lease", "apply_app_dev_mode", "apply_app_update", "cleanup_workspace", "commit_workspace", "configure_workspace_runtime",
-                "get_app", "get_app_dev_mode", "get_app_development_guide", "get_app_execution_selection", "get_app_execution_targets", "get_core_development", "get_core_operation", "get_host_status", "get_workspace", "get_workspace_diff", "get_workspace_execution_selection",
-                "list_apps", "list_workspaces", "merge_workspace_target", "plan_app_dev_mode", "plan_app_update", "prepare_workspace",
-                "record_workspace_pull_requests", "refresh_workspace", "release_workspace_lease", "rename_workspace", "restart_app", "restart_core",
-                "search_audit", "select_app_execution_target", "select_workspace_execution", "start_app", "stop_app", "tail_app_logs", "workspace_activation",
+                "abort_workspace_merge", "acquire_workspace_lease", "agent_run_cancel", "agent_run_get", "agent_session_get",
+                "agent_session_list", "agent_session_providers", "app_create", "app_creation_capabilities", "app_creation_guide",
+                "app_creation_status", "app_local_status", "apply_app_dev_mode", "apply_app_update", "apply_app_update_source", "apply_app_update_sources", "commit_workspace",
+                "configure_workspace_runtime", "conversation_get", "conversation_list",
+                "decision_acknowledge", "decision_continuation", "decision_create", "decision_get", "decision_invalidate",
+                "decision_list", "decision_resolve", "decision_responses", "decision_withdraw", "delete_workspace", "environment_api",
+                "environment_consent", "environment_consumer_reconcile", "environment_consumer_register", "environment_consumer_release", "environment_create",
+                "environment_finish", "environment_list", "environment_restart", "environment_setup", "environment_start",
+                "environment_status", "environment_stop", "get_app", "get_app_dev_mode", "get_app_development_guide",
+                "get_app_execution_selection", "get_app_execution_targets", "get_app_update_source_operation", "get_core_development", "get_core_operation", "get_host_status",
+                "get_workspace", "get_workspace_commit_review", "get_workspace_diff", "get_workspace_execution_selection", "get_workspace_participants",
+                "history_attachment_get", "history_capabilities", "history_entry_get", "history_export_acknowledge", "history_export_changes",
+                "history_export_create", "history_export_get", "history_export_revoke", "history_export_snapshot", "history_operation_get",
+                "history_providers", "history_read", "history_search", "history_share_create", "history_share_list",
+                "history_share_revoke", "list_app_source_migrations", "list_apps", "list_workspaces", "merge_workspace_target", "merge_workspace_upstream",
+                "plan_app_dev_mode", "plan_app_update", "plan_app_update_source", "pr_commit", "pr_complete", "pr_configure",
+                "pr_connections", "pr_corrective", "pr_link", "pr_list", "pr_merge",
+                "pr_publish", "pr_push", "pr_ready", "pr_resolve_review", "pr_status",
+                "prepare_workspace", "record_workspace_pull_requests", "refresh_workspace", "release_workspace_lease", "remote_connect",
+                "remote_fetch", "remote_push_base", "remote_status", "rename_workspace", "restart_app",
+                "restart_core", "search_audit", "select_app_execution_target", "select_workspace_execution", "start_app",
+                "stop_app", "tail_app_logs", "task_action", "task_create", "task_edit",
+                "task_get", "task_list", "task_options", "task_providers", "workflow_complete",
+                "workflow_pause", "workflow_resume", "workflow_status", "workspace_activation",
             ],
             names);
 
@@ -69,6 +89,175 @@ public sealed class McpHttpTests
         Assert.Equal(1, status.GetProperty("notRunning").GetInt32());
         Assert.Equal(1, status.GetProperty("withErrors").GetInt32());
         Assert.False(string.IsNullOrWhiteSpace(status.GetProperty("coreVersion").GetString()));
+    }
+
+    [Fact]
+    public async Task CatalogMetadataIsCompleteOnAnEmptyCoreAndRetainsSensitiveReadScopes()
+    {
+        await using var harness = await CoreHttpHarness.StartAsync();
+        var admin = await SeedSessionAsync(harness, "host.admin");
+        using var client = harness.CreateClient();
+        await InitializeAsync(client, admin);
+        var result = await CallAsync(client, admin, "tools/list", new { });
+        var tools = result.GetProperty("tools").EnumerateArray().ToArray();
+        Assert.Equal(CoreMcpCatalog.Tools.Keys.Order(StringComparer.Ordinal),
+            tools.Select(tool => tool.GetProperty("name").GetString()!).Order(StringComparer.Ordinal));
+
+        foreach (var tool in tools)
+        {
+            var name = tool.GetProperty("name").GetString()!;
+            var metadata = tool.GetProperty("_meta").GetProperty(CoreMcpCatalog.MetadataKey);
+            Assert.Equal(1, metadata.GetProperty("schemaVersion").GetInt32());
+            Assert.Equal("hosty:core", metadata.GetProperty("owner").GetString());
+            Assert.Equal(name, metadata.GetProperty("operationId").GetString());
+            Assert.False(string.IsNullOrWhiteSpace(metadata.GetProperty("feature").GetProperty("id").GetString()));
+            Assert.False(string.IsNullOrWhiteSpace(metadata.GetProperty("feature").GetProperty("title").GetString()));
+        }
+        var publicationSchema = tools.Single(tool => tool.GetProperty("name").GetString() == "pr_configure").GetProperty("inputSchema").GetRawText();
+        Assert.Contains("policyAmendment", publicationSchema);
+        Assert.Contains("previousPolicy", publicationSchema);
+        Assert.Contains("reason", publicationSchema);
+        var workspace = tools.Single(tool => tool.GetProperty("name").GetString() == "get_workspace");
+        Assert.True(workspace.GetProperty("annotations").GetProperty("readOnlyHint").GetBoolean());
+        var authority = workspace.GetProperty("_meta").GetProperty(CoreMcpCatalog.MetadataKey).GetProperty("authority");
+        Assert.False(authority.GetProperty("directOnly").GetBoolean());
+        Assert.Equal(CoreAppPermissions.Sources, authority.GetProperty("appPermission").GetString());
+        Assert.Contains(authority.GetProperty("directScopes").EnumerateArray(), scope => scope.GetString() == "mcp:workspaces");
+
+        // Metadata remains identical between requests and is not a per-user grant or provider registry.
+        var repeated = await CallAsync(client, admin, "tools/list", new { });
+        Assert.Equal(result.GetRawText(), repeated.GetRawText());
+    }
+
+    [Theory]
+    [InlineData("get_workspace")]
+    [InlineData("get_workspace_participants")]
+    public async Task MissingRequiredWorkspaceArgumentsNameTheArgumentAndKeepTheSchemaRequired(string name)
+    {
+        await using var harness = await CoreHttpHarness.StartAsync();
+        var admin = await SeedSessionAsync(harness, "host.admin");
+        using var client = harness.CreateClient();
+        await InitializeAsync(client, admin);
+
+        var catalog = await CallAsync(client, admin, "tools/list", new { });
+        var schema = catalog.GetProperty("tools").EnumerateArray().Single(tool =>
+            tool.GetProperty("name").GetString() == name).GetProperty("inputSchema");
+        Assert.Contains(schema.GetProperty("required").EnumerateArray(), argument => argument.GetString() == "workspaceId");
+
+        foreach (var parameters in new object[] { new { name }, new { name, arguments = new { } } })
+        {
+            var error = ReadToolError(await CallAsync(client, admin, "tools/call", parameters));
+            Assert.Equal("mcp_argument_required", error.GetProperty("code").GetString());
+            Assert.Equal("Required argument 'workspaceId' is missing.", error.GetProperty("message").GetString());
+        }
+
+        foreach (var json in new[] { "null", "25", "true", "[]", "{\"private\":\"input-canary\"}" })
+        {
+            var arguments = JsonSerializer.Deserialize<JsonElement>($$"""{"workspaceId":{{json}}}""");
+            var error = ReadToolError(await CallAsync(client, admin, "tools/call", new { name, arguments }));
+            Assert.Equal("mcp_argument_invalid", error.GetProperty("code").GetString());
+            Assert.Equal("Argument 'workspaceId' must have JSON type string.", error.GetProperty("message").GetString());
+            Assert.DoesNotContain("input-canary", error.GetRawText());
+        }
+    }
+
+    [Fact]
+    public async Task InvalidOptionalArgumentTypesAreAnsweredWhileDefaultsAndNullableArgumentsStillWork()
+    {
+        await using var harness = await CoreHttpHarness.StartAsync();
+        var admin = await SeedSessionAsync(harness, "host.admin");
+        using var client = harness.CreateClient();
+        await InitializeAsync(client, admin);
+
+        var defaultGuide = await CallToolAsync(client, admin, "get_app_development_guide", new { });
+        var nullableGuide = await CallToolAsync(client, admin, "get_app_development_guide", new { topic = (string?)null });
+        Assert.Equal(defaultGuide.GetRawText(), nullableGuide.GetRawText());
+        var defaultAudit = await CallToolAsync(client, admin, "search_audit", new { });
+        Assert.Equal(50, defaultAudit.GetProperty("window").GetProperty("limit").GetInt32());
+
+        foreach (var limit in new object[] { "input-canary", 1.5 })
+        {
+            var error = ReadToolError(await CallAsync(client, admin, "tools/call",
+                new { name = "search_audit", arguments = new { limit } }));
+            Assert.Equal("mcp_argument_invalid", error.GetProperty("code").GetString());
+            Assert.Equal("Argument 'limit' must have JSON type integer.", error.GetProperty("message").GetString());
+            Assert.DoesNotContain("input-canary", error.GetRawText());
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ArgumentValidationDoesNotExecuteInvalidCallsOrExposeUnexpectedToolExceptions(bool argumentException)
+    {
+        var calls = 0;
+        await using var harness = await CoreHttpHarness.StartAsync(configure: services =>
+        {
+            // Use a reviewed catalog name, with a body that would reveal the exception if the
+            // diagnostic fix simply enabled exception detail or exposed all ArgumentExceptions.
+            services.PostConfigure<McpServerOptions>(options =>
+            {
+                var tools = options.ToolCollection!;
+                tools.Remove(tools["get_app"]);
+                tools.Add(McpServerTool.Create((Func<string, string>)(appId =>
+                {
+                    Interlocked.Increment(ref calls);
+                    if (argumentException) throw new ArgumentException("private-failure-canary");
+                    throw new InvalidOperationException("private-failure-canary");
+                }), new() { Name = "get_app" }));
+            });
+        });
+        var admin = await SeedSessionAsync(harness, "host.admin");
+        using var client = harness.CreateClient();
+        await InitializeAsync(client, admin);
+
+        var invalid = ReadToolError(await CallAsync(client, admin, "tools/call",
+            new { name = "get_app", arguments = new { appId = new { value = "input-canary" } } }));
+        Assert.Equal("mcp_argument_invalid", invalid.GetProperty("code").GetString());
+        Assert.Equal(0, calls);
+
+        var result = await CallAsync(client, admin, "tools/call",
+            new { name = "get_app", arguments = new { appId = "input-canary" } });
+        Assert.True(result.GetProperty("isError").GetBoolean());
+        Assert.Equal("An error occurred invoking 'get_app'.", result.GetProperty("content")[0].GetProperty("text").GetString());
+        Assert.DoesNotContain("private-failure-canary", result.GetRawText());
+        Assert.DoesNotContain("input-canary", result.GetRawText());
+        Assert.Equal(1, calls);
+    }
+
+    private static JsonElement ReadToolError(JsonElement result)
+    {
+        Assert.True(result.GetProperty("isError").GetBoolean());
+        return JsonDocument.Parse(result.GetProperty("content")[0].GetProperty("text").GetString()!).RootElement.Clone();
+    }
+
+    [Fact]
+    public async Task AnUnmappedRegisteredReadToolCannotExecuteEvenForAnAdministrator()
+    {
+        var calls = new UnmappedToolCalls();
+        await using var harness = await CoreHttpHarness.StartAsync(configure: services =>
+        {
+            services.AddSingleton(calls);
+            services.AddMcpServer().WithTools<UnmappedTools>();
+        });
+        var admin = await SeedSessionAsync(harness, "host.admin");
+        using var client = harness.CreateClient();
+        await InitializeAsync(client, admin);
+
+        var result = await CallAsync(client, admin, "tools/call", new { name = "unmapped_read", arguments = new { } });
+        Assert.True(result.GetProperty("isError").GetBoolean());
+        Assert.Contains("mcp_tool_unmapped", result.GetProperty("content")[0].GetProperty("text").GetString());
+        Assert.Equal(0, calls.Count);
+    }
+
+    public sealed class UnmappedToolCalls { public int Count { get; set; } }
+
+    [ModelContextProtocol.Server.McpServerToolType]
+    public sealed class UnmappedTools(UnmappedToolCalls calls)
+    {
+        [ModelContextProtocol.Server.McpServerTool(Name = "unmapped_read", ReadOnly = true)]
+        [System.ComponentModel.Description("Read a test-only value without a reviewed Core catalog entry.")]
+        public string Read() { calls.Count++; return "must-not-execute"; }
     }
 
     [Fact]
@@ -161,9 +350,9 @@ public sealed class McpHttpTests
 
         // plan_app_update is here too: it changes nothing, but it reaches the app's source and reports
         // what is available, which is not the "safe to call unattended" promise readOnlyHint makes.
-        string[] mutations = ["workspace_activation", "apply_app_dev_mode", "start_app", "stop_app", "restart_app", "restart_core", "plan_app_update", "apply_app_update",
+        string[] mutations = ["decision_acknowledge", "decision_continuation", "decision_create", "decision_invalidate", "decision_resolve", "decision_withdraw", "workflow_complete", "workflow_pause", "workflow_resume", "app_create", "pr_resolve_review", "pr_commit", "pr_configure", "pr_push", "pr_publish", "pr_link", "pr_ready", "pr_merge", "pr_complete", "pr_corrective", "remote_connect", "remote_fetch", "remote_push_base", "get_workspace_commit_review", "merge_workspace_upstream", "history_export_create", "history_export_acknowledge", "history_export_revoke", "history_share_create", "history_share_revoke", "task_create", "task_edit", "task_action", "agent_run_cancel", "environment_consumer_reconcile", "environment_consumer_register", "environment_consumer_release", "environment_api", "environment_create", "environment_finish", "environment_restart", "environment_setup", "environment_start", "environment_stop", "workspace_activation", "apply_app_dev_mode", "start_app", "stop_app", "restart_app", "restart_core", "plan_app_update", "apply_app_update", "plan_app_update_source", "apply_app_update_source", "apply_app_update_sources",
             "prepare_workspace", "refresh_workspace", "commit_workspace", "merge_workspace_target", "abort_workspace_merge",
-            "acquire_workspace_lease", "release_workspace_lease", "record_workspace_pull_requests", "rename_workspace", "cleanup_workspace",
+            "acquire_workspace_lease", "release_workspace_lease", "record_workspace_pull_requests", "rename_workspace", "delete_workspace",
             "select_app_execution_target", "select_workspace_execution", "configure_workspace_runtime"];
         var tools = await CallAsync(client, admin, "tools/list", new { });
         foreach (var tool in tools.GetProperty("tools").EnumerateArray())

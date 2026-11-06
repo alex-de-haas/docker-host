@@ -9,6 +9,7 @@ import type { UiHost, UiHostSnapshot } from "@hosty-sdk/app/ui/host";
 const toolUi = vi.hoisted(() => ({ host: null as Pick<UiHost, "getSnapshot" | "subscribeSnapshot" | "collapseWorkspace"> | null }));
 vi.mock("@hosty-sdk/app/ui/react", () => ({
   useHostyUiHost: () => toolUi.host,
+  HostyFeedbackLauncher: () => null,
   useHostyChrome: () => ({ tools: { enabled: false, launcher: "hide" } }),
 }));
 
@@ -111,4 +112,30 @@ it("collapses the tool sheet before opening the phone app sidebar without releas
   expect(onNavigate).not.toHaveBeenCalled();
   expect(snapshot.tools).toBe(tools);
   expect(snapshot.workspaces?.[0].selectedId).toBe("retained-discussion");
+});
+
+it("launches the first page from a compact multi-page icon and keeps keyboard menu access", async () => {
+  const multi = { ...running, navigation: [...running.navigation!, { label: "Search", path: "/search", service: "web", embeddedUrl: "https://example.notes.test/search" }] };
+  const props = { ...sidebarProps(), compact: true, uiApps: [multi] };
+  await act(async () => root.render(<ShellSidebar {...props} />));
+  await act(async () => button("Notes").dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0 })));
+  await act(async () => button("Notes").click());
+  expect(props.onLaunchApp).toHaveBeenCalledExactlyOnceWith(multi, expect.objectContaining({ path: "/library" }), "workspace");
+  expect(document.querySelector('[role="menu"]')).toBeNull();
+  await act(async () => button("Notes").dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" })));
+  expect(document.querySelector('[role="menu"]')?.textContent).toContain("Search");
+});
+
+it("opens compact app pages on mouse hover and launches from an already open menu", async () => {
+  const multi = { ...running, navigation: [...running.navigation!, { label: "Search", path: "/search", service: "web", embeddedUrl: "https://example.notes.test/search" }] };
+  const props = { ...sidebarProps(), compact: true, uiApps: [multi] };
+  await act(async () => root.render(<ShellSidebar {...props} />));
+  const enter = new MouseEvent("pointerover", { bubbles: true });
+  Object.defineProperty(enter, "pointerType", { value: "mouse" });
+  await act(async () => { button("Notes").dispatchEvent(enter); await new Promise(resolve => setTimeout(resolve, 300)); });
+  expect(document.querySelector('[role="menu"]')?.textContent).toContain("Search");
+  expect(props.onLaunchApp).not.toHaveBeenCalled();
+  await act(async () => button("Notes").click());
+  expect(document.querySelector('[role="menu"]')).toBeNull();
+  expect(props.onLaunchApp).toHaveBeenCalledExactlyOnceWith(multi, expect.objectContaining({ path: "/library" }), "workspace");
 });

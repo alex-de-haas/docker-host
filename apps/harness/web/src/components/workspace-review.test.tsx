@@ -57,6 +57,93 @@ it("uses the published source and exact cross-side coordinates in a structured A
   expect(JSON.parse(ask.mock.calls[1][0].split("\n").slice(1).join("\n"))).toMatchObject({ threadId: "thread-one", headRevision: "published-head", pullRequest: prUrl });
   expect(vi.mocked(developmentRequest).mock.calls.every(([, body]) => body === undefined)).toBe(true);
 });
+it("renders previously loaded files immediately without another diff request or loading state", async () => {
+  const value = inventory();
+  vi.mocked(developmentRequest).mockImplementation(async path => path?.includes("/review/diff?")
+    ? makeDiff(value, new URLSearchParams(path.split("?")[1]).get("path")!, `Cached patch: ${path}`) as never : value as never);
+  await act(async () => root.render(<Harness value={tree()} />));
+  await vi.waitFor(() => expect(container.querySelector('[data-preview="one.txt"]')).not.toBeNull());
+  await act(async () => pick("two.txt").click());
+  await vi.waitFor(() => expect(container.querySelector('[data-preview="two.txt"]')).not.toBeNull());
+  const reads = vi.mocked(developmentRequest).mock.calls.length;
+  await act(async () => pick("one.txt").click());
+  expect(container.querySelector('[data-preview="one.txt"]')).not.toBeNull();
+  expect(container.textContent).not.toContain("Loading diff");
+  await act(async () => button("Split").click());
+  await act(async () => button("Wrap lines").click());
+  await act(async () => pick("two.txt").click());
+  expect(container.querySelector('[data-preview="two.txt"]')).not.toBeNull();
+  expect(vi.mocked(developmentRequest).mock.calls).toHaveLength(reads);
+});
+
+it.each(["source observation", "source observation after manual refresh", "workspace", "worktree", "scope", "manual refresh"])("loads fresh diffs after changing %s", async boundary => {
+  let current = inventory();
+  let currentTree = tree();
+  vi.mocked(developmentRequest).mockImplementation(async path => {
+    if (path?.endsWith("refresh=true")) return currentTree as never;
+    return path?.includes("/review/diff?") ? makeDiff(current, new URLSearchParams(path.split("?")[1]).get("path")!, current.source.label) as never : current as never;
+  });
+  let workspaceId = "workspace", view = `pr:${prUrl}`;
+  const render = () => act(async () => root.render(<WorkspaceReview workspaceId={workspaceId} tree={currentTree}
+    choice={{ view, path: "one.txt" }} onChoice={vi.fn()} onBack={back} />));
+  await render();
+  await vi.waitFor(() => expect(container.querySelector('[data-preview]')).not.toBeNull());
+  if (boundary === "source observation after manual refresh") {
+    await act(async () => button("Refresh files").click());
+    await vi.waitFor(() => expect(container.querySelector('[data-preview]')).not.toBeNull());
+  }
+  const reads = vi.mocked(developmentRequest).mock.calls.filter(([path]) => path?.includes("/review/diff?")).length;
+  current = { ...inventory("new-revision"), source: { ...inventory("new-revision").source, label: "Fresh patch" } };
+  if (boundary.startsWith("source observation")) currentTree = { ...currentTree, observationRevision: "new-observation" };
+  if (boundary === "workspace") workspaceId = "another-workspace";
+  if (boundary === "worktree") currentTree = { ...currentTree, id: "another-tree" };
+  if (boundary === "scope") view = "local";
+  if (boundary === "manual refresh") await act(async () => button("Refresh files").click());
+  else await render();
+  await vi.waitFor(() => expect(container.querySelector('[data-preview]')?.textContent).toContain("Fresh patch"));
+  expect(vi.mocked(developmentRequest).mock.calls.filter(([path]) => path?.includes("/review/diff?")).length).toBe(reads + 1);
+});
+
+it("does not cache failed diff reads when returning to a file", async () => {
+  const value = inventory(); let fail = true;
+  vi.mocked(developmentRequest).mockImplementation(async path => {
+    if (!path?.includes("/review/diff?")) return value as never;
+    const selected = new URLSearchParams(path.split("?")[1]).get("path")!;
+    if (selected === "one.txt" && fail) throw new Error("Temporary read failure");
+    return makeDiff(value, selected) as never;
+  });
+  await act(async () => root.render(<Harness value={tree()} />));
+  expect(container.textContent).toContain("Temporary read failure");
+  await act(async () => pick("two.txt").click());
+  await vi.waitFor(() => expect(container.querySelector('[data-preview="two.txt"]')).not.toBeNull());
+  fail = false;
+  await act(async () => pick("one.txt").click());
+  await vi.waitFor(() => expect(container.querySelector('[data-preview="one.txt"]')).not.toBeNull());
+  expect(container.textContent).not.toContain("Temporary read failure");
+  expect(vi.mocked(developmentRequest).mock.calls.filter(([path]) => path?.includes("/review/diff?")).length).toBe(3);
+});
+
+it("does not let a late manual refresh replace a different parent worktree", async () => {
+  let finishRefresh!: (value: Worktree) => void;
+  let current = inventory(); const originalTree = tree();
+  vi.mocked(developmentRequest).mockImplementation(async path => {
+    if (path?.endsWith("refresh=true")) return await new Promise<Worktree>(resolve => { finishRefresh = resolve; }) as never;
+    return path?.includes("/review/diff?") ? makeDiff(current, "one.txt", current.source.label) as never : current as never;
+  });
+  const render = (value: Worktree) => act(async () => root.render(<WorkspaceReview workspaceId="workspace" tree={value}
+    choice={{ view: `pr:${prUrl}`, path: "one.txt" }} onChoice={vi.fn()} onBack={back} />));
+  await render(originalTree);
+  await vi.waitFor(() => expect(container.querySelector('[data-preview]')).not.toBeNull());
+  await act(async () => button("Refresh files").click());
+  current = { ...inventory("new-target"), source: { ...inventory("new-target").source, label: "New target patch" } };
+  await render({ ...originalTree, id: "new-tree", observationRevision: "new-observation" });
+  await vi.waitFor(() => expect(container.querySelector('[data-preview]')?.textContent).toContain("New target patch"));
+  const before = vi.mocked(developmentRequest).mock.calls.length;
+  await act(async () => finishRefresh(originalTree));
+  await vi.waitFor(() => expect(container.querySelector('[data-preview]')?.textContent).toContain("New target patch"));
+  expect(vi.mocked(developmentRequest).mock.calls.slice(before).every(([path]) => path?.includes("/worktrees/new-tree/"))).toBe(true);
+});
+
 it("aborts a superseded file response and invalidates viewed marks when the source revision changes", async () => {
   let resolveOld!: (value: ReviewDiff) => void; let current = inventory();
   const value = tree();
@@ -72,6 +159,12 @@ it("aborts a superseded file response and invalidates viewed marks when the sour
   await act(async () => root.render(<Harness value={value} />));
   await act(async () => pick("two.txt").click()); await vi.waitFor(() => expect(container.textContent).toContain("latest"));
   await act(async () => resolveOld(makeDiff(inventory(), "one.txt", "stale"))); expect(container.textContent).not.toContain("stale");
+  const reads = vi.mocked(developmentRequest).mock.calls.filter(([path]) => path?.includes("/review/diff?")).length;
+  await act(async () => pick("one.txt").click());
+  await vi.waitFor(() => expect(container.querySelector('[data-preview="one.txt"]')?.textContent).toContain("latest"));
+  expect(container.textContent).not.toContain("stale");
+  expect(vi.mocked(developmentRequest).mock.calls.filter(([path]) => path?.includes("/review/diff?")).length).toBe(reads + 1);
+  await act(async () => pick("two.txt").click());
   await act(async () => container.querySelector<HTMLButtonElement>('[role="checkbox"]')!.click()); expect(container.textContent).toContain("1 of 2 viewed");
   await act(async () => button("Refresh files").click()); expect(container.textContent).toContain("0 of 2 viewed");
   expect(container.querySelector('[aria-current="true"]')?.textContent).toContain("two.txt");

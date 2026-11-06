@@ -26,6 +26,16 @@ function Fixture({ behavior, cancel = false }: { behavior?: ScrollBehavior; canc
     </MessageScroller>
   </MessageScrollerProvider>;
 }
+function LiveFixture({ count }: { count: number }) {
+  return <MessageScrollerProvider autoScroll defaultScrollPosition="end">
+    <MessageScroller>
+      <MessageScrollerViewport data-test-scroll-height={count * 100}><MessageScrollerContent>
+        {Array.from({ length: count }, (_, index) => <MessageScrollerItem key={index} messageId={`message-${index}`} data-test-message-index={index}>Message {index + 1}</MessageScrollerItem>)}
+      </MessageScrollerContent></MessageScrollerViewport>
+      <MessageScrollerButton aria-label="Jump to latest message" />
+    </MessageScroller>
+  </MessageScrollerProvider>;
+}
 function viewport() { return node.querySelector<HTMLElement>('[data-slot="message-scroller-viewport"]')!; }
 function jump() { return node.querySelector<HTMLButtonElement>('button[aria-label="Jump to latest message"]')!; }
 async function readOlderMessages() {
@@ -45,8 +55,13 @@ beforeEach(() => {
   query.mockImplementation(() => ({ get matches() { return reduced; }, addEventListener(_event: string, listener: () => void) { listeners.add(listener); }, removeEventListener(_event: string, listener: () => void) { listeners.delete(listener); } }));
   vi.stubGlobal("matchMedia", query);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockImplementation(function (this: HTMLElement) { return this.dataset.slot === "message-scroller-viewport" ? 100 : 0; });
-  vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(function (this: HTMLElement) { return this.dataset.slot === "message-scroller-viewport" ? 1000 : 0; });
+  vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(function (this: HTMLElement) { return this.dataset.slot === "message-scroller-viewport" ? Number(this.dataset.testScrollHeight ?? 1000) : 0; });
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+    if (this.dataset.testMessageIndex !== undefined) {
+      const parent = this.closest<HTMLElement>('[data-slot="message-scroller-viewport"]');
+      const top = Number(this.dataset.testMessageIndex) * 100 - (parent?.scrollTop ?? 0);
+      return { x: 0, y: top, top, left: 0, right: 300, bottom: top + 100, width: 300, height: 100, toJSON() {} };
+    }
     const height = this.dataset.slot === "message-scroller-item" ? 1000 : 100;
     return { x: 0, y: 0, top: 0, left: 0, right: 300, bottom: height, width: 300, height, toJSON() {} };
   });
@@ -100,4 +115,40 @@ it("hydrates a reduced-motion browser without querying browser preferences durin
   expect(node.querySelector("textarea")).toBe(draft);
   await act(async () => jump().click());
   expect(scrollTo).toHaveBeenLastCalledWith({ top: 900, behavior: "instant" });
+});
+
+it("opens populated history at the end and follows new messages until the reader scrolls away", async () => {
+  root = createRoot(node);
+  await act(async () => root!.render(<LiveFixture count={10} />)); await settle();
+  expect(viewport().scrollTop).toBe(900);
+  expect(scrollTo).toHaveBeenCalledWith({ top: 900, behavior: "auto" });
+  expect(scrollTo.mock.calls.every(([options]) => options.behavior === "auto")).toBe(true);
+  expect(viewport().hasAttribute("data-pending-scroll")).toBe(false);
+  expect(jump().getAttribute("data-active")).toBe("false");
+
+  await act(async () => root!.render(<LiveFixture count={11} />)); await settle();
+  expect(viewport().scrollTop).toBe(1000);
+  expect(scrollTo).toHaveBeenLastCalledWith({ top: 1000, behavior: "auto" });
+  expect(jump().getAttribute("data-active")).toBe("false");
+
+  await act(async () => {
+    viewport().dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -400 }));
+    viewport().scrollTop = 600;
+    viewport().dispatchEvent(new Event("scroll", { bubbles: true }));
+  }); await settle();
+  expect(jump().getAttribute("data-active")).toBe("true");
+  scrollTo.mockClear();
+  await act(async () => root!.render(<LiveFixture count={12} />)); await settle();
+  expect(viewport().scrollTop).toBe(600);
+  expect(scrollTo).not.toHaveBeenCalled();
+  expect(jump().getAttribute("data-active")).toBe("true");
+
+  await act(async () => jump().click()); await settle();
+  expect(viewport().scrollTop).toBe(1100);
+  expect(scrollTo).toHaveBeenLastCalledWith({ top: 1100, behavior: "smooth" });
+  expect(jump().getAttribute("data-active")).toBe("false");
+  await act(async () => root!.render(<LiveFixture count={13} />)); await settle();
+  expect(viewport().scrollTop).toBe(1200);
+  expect(scrollTo).toHaveBeenLastCalledWith({ top: 1200, behavior: "auto" });
+  expect(jump().getAttribute("data-active")).toBe("false");
 });

@@ -4,20 +4,23 @@
 #
 # Base pinned by digest for reproducible builds. To update: re-pin with
 #   docker buildx imagetools inspect node:24-bookworm-slim --format '{{.Manifest.Digest}}'
-FROM node:24-bookworm-slim@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5 AS base
+FROM node:24-bookworm-slim@sha256:c86ecead9e55a5210ac1727de38a4ca840bf03dcaf34dc9749addbf383b1920c AS base
 WORKDIR /repo
 
 FROM base AS deps
 COPY package.json package-lock.json ./
 COPY apps/marketplace/package.json apps/marketplace/package.json
 COPY packages/app-sdk/package.json packages/app-sdk/package.json
-RUN npm ci --workspace @haas/hosty-marketplace
+RUN npm ci --ignore-scripts --workspace @haas/hosty-marketplace
 
 FROM base AS builder
+COPY package.json package-lock.json ./
 ENV NODE_ENV=production
 COPY --from=deps /repo/node_modules ./node_modules
-COPY . .
-RUN npm run marketplace:build
+COPY apps/marketplace apps/marketplace
+COPY shared/web shared/web
+COPY packages/app-sdk packages/app-sdk
+RUN --network=none npm rebuild && npm run build --workspace @haas/hosty-marketplace
 
 FROM base AS runner
 WORKDIR /app

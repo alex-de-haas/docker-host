@@ -1,6 +1,6 @@
 ---
 created: 2026-07-30
-updated: 2026-10-25
+updated: 2026-11-04
 summary: Shell routes, role-specific home, sidebar app launchers and phone navigation.
 components: [apps/shell]
 ---
@@ -107,14 +107,10 @@ It first collapses the tool workspace so the full-width tool sheet cannot cover 
 The current document, app workspace and retained tool frames stay mounted; selecting an app closes
 the sidebar and uses the existing launch flow.
 
-Collapsed, an app row is only its icon, so a running app with more than one page makes that icon a
-flyout trigger instead of a direct launcher: a menu beside the rail lists the app's pages and the
-standalone-open link — both of which the expanded sidebar shows inline and the rail has no room
-for. The menu opens on click (which also covers keyboard and touch) and, for a mouse, on hover
-after a short delay; it is non-modal so sliding along the rail previews one app after another. A
-hover open never takes focus and a hover close never returns it to the trigger — pointing at the
-rail must not pull focus out of the embedded app. A single-page app and an app that is not running
-keep the plain icon behavior: direct launch, or the disabled state tooltip.
+Collapsed, an app icon launches its first page, matching the expanded sidebar. For multi-page
+apps, mouse hover opens a non-modal menu listing pages and the standalone link. ArrowDown opens
+the same menu with keyboard focus; Enter, Space and touch activate the first page. Hover never
+takes focus or returns it on close. Stopped apps retain their disabled state tooltip.
 
 Settings has a single direct navigation button in compact and expanded modes. Expanded app page lists place their vertical guide beneath the parent app icon.
 
@@ -539,8 +535,8 @@ disabled optional permissions are not a problem. See [App permission management]
   fields together without submitting fields owned by other groups.
 - Visual verification covers the two icon tiers — row icons against the page links nested under an
   expanded app row — and that every collapsed rail control is announced by name.
-- Visual verification of the collapsed rail covers the multi-page app flyout: opening by click and
-  by hover, page navigation and the standalone link from it, and that hovering the rail does not
+- Visual verification of the collapsed rail covers the multi-page app flyout: launching the first page by click and opening the menu
+  by hover or ArrowDown, page navigation and the standalone link from it, and that hovering the rail does not
   steal focus from an embedded workspace.
 
 - Dashboard filter coverage includes running, transitional, stopped, unknown, failed, and missing

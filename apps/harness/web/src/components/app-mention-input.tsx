@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
 import { AssistantApiError, getSession, listContextApps, setSessionApps, type AssistantSession, type ContextApp } from "@/lib/assistant-api";
 import { editMentionDraft, insertMention, mentionQuery, readMentionDraft, writeMentionDraft, serializeMentions, type MentionDraft } from "@/lib/app-mentions";
 
-export type AppMentionInputHandle = { serialize: () => string };
+export type AppMentionInputHandle = { serialize: () => string; insertPlainText: (text: string) => void };
 
 type Props = Omit<ComponentProps<"textarea">, "value" | "onChange" | "ref"> & {
   ref?: Ref<AppMentionInputHandle>;
@@ -26,7 +26,6 @@ export function AppMentionInput({ ref, value, onChange, session, inputRef, conte
   const [draft, setDraft] = useState<MentionDraft>(() => readMentionDraft(session?.id ?? "", value));
   const current = draft.text === value ? draft : editMentionDraft(draft, value);
   if (draft.text !== value) setDraft(current);
-  useImperativeHandle(ref, () => ({ serialize: () => serializeMentions(current) }));
   const history = useRef<MentionDraft[]>([current]);
   const historyIndex = useRef(0);
   const [caret, setCaret] = useState({ start: 0, end: 0 });
@@ -96,6 +95,11 @@ export function AppMentionInput({ ref, value, onChange, session, inputRef, conte
     historyIndex.current = history.current.length - 1;
     setDraft(nextDraft); onChange(nextDraft.text);
   };
+  useImperativeHandle(ref, () => ({ serialize: () => serializeMentions(current), insertPlainText: text => {
+    if (value || composing || disabled || saving || pending.current) return;
+    record({ text, mentions: [] });
+    requestAnimationFrame(() => { if (mounted.current) { inputRef.current?.focus(); inputRef.current?.setSelectionRange(text.length, text.length); } });
+  } }));
   const undo = (redo: boolean) => {
     if (!redo && history.current[historyIndex.current].text !== current.text) {
       history.current = [...history.current.slice(0, historyIndex.current + 1), current].slice(-100);

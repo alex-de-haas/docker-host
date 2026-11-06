@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-26
-updated: 2026-09-26
+updated: 2026-11-03
 summary: A session timeline for analysing how agents work and which MCP tools would help them.
 components: [apps/harness]
 ---
@@ -52,6 +52,18 @@ Evaluate proposed changes on comparable tasks using correctness, checks passed, 
 retries as well as call count; a before/after chart is not proof that instructions caused a change.
 Reuse the session event stream and existing telemetry/audit references instead of a conflicting
 second execution log. Timing coverage, aggregation scope, retention and UI remain open design work.
+
+## Accounting Foundation (Owner Direction, Updated 2026-11-03)
+
+Collect tokens, elapsed time and cache observations for each observable LLM call now, with tool
+correlation, while keeping this detailed timeline a separately approved feature. The
+[Context Token Accounting plan](../harness-context-usage/plan.md) owns that measurement layer and
+its bounded durable records. D1-D2 here consume them alongside the existing journal; they do not
+create another collector, invent per-call data from a turn total or allocate one LLM request's
+entire usage to every linked tool. Retain aggregate inclusion, retry identity, auxiliary calls,
+clock/scope uncertainty and missing-data reasons. Action Summary D4 retains general invocation
+event normalization; accounting owns its additional measurement fields. Existing history access
+and retention apply; no universal retention duration is selected by this plan.
 
 ## Deliverables
 

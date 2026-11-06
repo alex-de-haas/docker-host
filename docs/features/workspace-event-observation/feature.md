@@ -1,6 +1,6 @@
 ---
 created: 2026-10-19
-updated: 2026-10-21
+updated: 2026-11-04
 summary: Core observes workspace changes through filesystem and mutation events, while Harness consumes authorized SSE updates.
 components: [apps/core, apps/harness]
 ---
@@ -21,6 +21,14 @@ directory contains no tracked files. Index/ref and ignore-rule changes invalidat
 Objects, reflogs and transient lock-file writes do not themselves invalidate source. Git inspection
 disables optional index writes, preventing an observation from triggering its own next scan.
 
+Each successful source observation retains per-file and aggregate additions/deletions alongside the
+changed-file list. Counts compare HEAD to the working tree, including staged changes once. The
+shared bounded source-statistics reader uses one Git numstat result for tracked files and bounded
+reads for untracked text; binary files contribute no text lines. Unsupported or oversized files keep
+their line counts unknown and omit the aggregate rather than hiding the file list or reporting zero.
+The workspace inventory and existing event stream deliver these cached totals without per-row
+requests, full diff previews or additional timer-driven scans.
+
 Generations retain changes arriving during a scan or owner-lock contention. Watcher errors and
 missing/replaced roots expose `recovering`; reattachment triggers fresh reconciliation. A 15-second
 health check reads directory metadata and retries failed registrations, without walking healthy Git
@@ -31,15 +39,33 @@ so ordinary directory writes do not trigger recovery scans.
 
 ## Inspection And Authority
 
-Inventory reads retained observations. Worktree detail reads reuse cached commits, original-base
+Inventory reads retained observations. Parsed workspace, name, workflow and participation records
+share a bounded cache (512 entries, 16 MiB weighted budget). On Linux and macOS each read checks
+native device/inode identity, size and nanosecond mtime/ctime; atomic replacement, deletion and
+same-size edits with restored mtime invalidate the parsed value. Unsupported platforms and files
+retain uncached reads. Errors and missing records never become cached authorization. Inventory
+operations resolve the development root once within that read, without retaining resolved paths
+across requests. Source grants, membership and lifecycle admission remain current checks.
+
+Documents workspace inventories reuse document-change summaries only for a healthy, settled
+observation generation and the same tracked target commit. Concurrent readers share the scan;
+source/target changes invalidate it. Documentation filesystem hints also invalidate summaries for
+ignored Markdown without forcing a Git scan for an ignored file. Paused, recovering and unobserved
+worktrees retain fresh checks, and direct content reads and mutations keep their path/Git validation. Each authorized
+repository resolves its current target once per response rather than once per worktree. Summary
+reuse does not skip current source authorization before and after inspection. Publication writes
+advance a separate UI revision, so Harness refreshes PR check, review and merge facts without
+invalidating the retained Git inspection or scheduling another source scan.
+
+Worktree detail reads reuse cached commits, original-base
 file changes and line statistics until the observed source/generation changes. Identical observations
 preserve timestamps and do not rewrite records. Consumer and recorded PR facts remain independently
 refreshed. Cache reads revalidate current source authority before and after inspection; cached data
 does not grant access. Manual detail refresh accepts `refresh=true`.
 
 Resume, Complete, Delete, source mutations and file diff requests keep their fresh ownership,
-path and Git checks. Local observation never fetches remote Git. The separate provider PR observer
-continues its existing schedule and signals changes to the same UI stream.
+path and Git checks. Local observation never fetches remote Git. The [shared provider PR scheduler](../harness-pull-request-inbox/feature.md#shared-observation)
+uses scoped live demand and signals publication changes to the same UI stream.
 
 ## Delivery And Recovery
 
@@ -103,6 +129,13 @@ cancellation failure does not suppress stream recovery or older-Core compatibili
 ## Testing Expectations
 
 - Quiet observation and repeated detail reads perform no scan or record rewrite.
+- Tracked, staged, untracked and binary changes retain accurate cached line totals in workspace
+  inventory; event-driven edits refresh those totals, while oversized files keep unknown totals
+  without changing the Git index or hiding known per-file observations.
+- Workspace record reuse remains bounded and detects rename, replacement, deletion, corruption,
+  ownership/membership changes and same-size edits with restored mtime.
+- Repeated settled Documents inventories share their Git/document scan; local edits, target advances
+  and unavailable observation invalidate it, while current access checks remain in force.
 - External writes, atomic replacement, rename/delete, staging, commits and target refs invalidate
   the correct worktree; ignored bursts cannot conceal tracked changes.
 - Busy owner locks, events during scans, missing roots, watcher failure and restart retain recovery.

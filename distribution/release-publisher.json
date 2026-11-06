@@ -1,0 +1,426 @@
+{
+  "schemaVersion": "hosty-publisher.0.1",
+  "metadataBranch": "app-releases",
+  "sourceBranch": "main",
+  "feeds": [
+    {
+      "id": "daily",
+      "label": "Daily",
+      "policy": "validated-source"
+    },
+    {
+      "id": "stable",
+      "label": "Stable",
+      "policy": "manual-promotion",
+      "default": true
+    }
+  ],
+  "apps": [
+    {
+      "id": "hosty.shell",
+      "manifest": "apps/shell/manifest.json",
+      "profiles": [
+        "docker"
+      ],
+      "sourceInputs": [
+        "apps/shell"
+      ]
+    },
+    {
+      "id": "hosty.desktop",
+      "manifest": "apps/desktop/manifest.json",
+      "profiles": [
+        "docker"
+      ],
+      "sourceInputs": [
+        "apps/desktop"
+      ]
+    },
+    {
+      "id": "hosty.documents",
+      "manifest": "apps/documents/manifest.json",
+      "profiles": [
+        "docker"
+      ],
+      "sourceInputs": [
+        "apps/documents"
+      ]
+    },
+    {
+      "id": "hosty.marketplace",
+      "manifest": "apps/marketplace/manifest.json",
+      "profiles": [
+        "docker"
+      ],
+      "sourceInputs": [
+        "apps/marketplace"
+      ]
+    },
+    {
+      "id": "com.haas.demo-app",
+      "manifest": "apps/demo-app/manifest.json",
+      "profiles": [
+        "docker"
+      ],
+      "sourceInputs": [
+        "apps/demo-app"
+      ]
+    },
+    {
+      "id": "hosty.harness",
+      "manifest": "apps/harness/manifest.json",
+      "profiles": [
+        "docker",
+        "local"
+      ],
+      "sourceInputs": [
+        "apps/harness",
+        "packages/app-sdk",
+        "shared/web",
+        "package.json",
+        "package-lock.json",
+        "Directory.Build.targets"
+      ],
+      "sourceReusable": false,
+      "sourceReuseConstraint": "Host-side setup includes machine toolchains or network dependencies; qualify a new full source revision for each changed release."
+    },
+    {
+      "id": "hosty.telemetry",
+      "manifest": "apps/telemetry/manifest.json",
+      "profiles": [
+        "docker"
+      ],
+      "sourceInputs": [
+        "apps/telemetry"
+      ]
+    },
+    {
+      "id": "hosty.whisper",
+      "manifest": "apps/whisper/manifest.json",
+      "profiles": [
+        "local"
+      ],
+      "sourceInputs": [
+        "apps/whisper",
+        "packages/app-sdk-dotnet",
+        "apps/core/src/Haas.Hosty.Core/SharedDecisionContract.cs",
+        "apps/core/src/Haas.Hosty.Core/SharedTaskContract.cs",
+        "apps/core/src/Haas.Hosty.Core/SharedAgentSessionContract.cs",
+        "apps/core/src/Haas.Hosty.Core/SharedConversationHistoryContract.cs",
+        "Directory.Build.props",
+        "global.json",
+        "Directory.Build.targets"
+      ],
+      "sourceReusable": false,
+      "sourceReuseConstraint": "Host-side setup includes machine toolchains or network dependencies; qualify a new full source revision for each changed release."
+    },
+    {
+      "id": "hosty.opus",
+      "manifest": "apps/opus/manifest.json",
+      "profiles": [
+        "local"
+      ],
+      "sourceInputs": [
+        "apps/opus",
+        "packages/app-sdk",
+        "package.json",
+        "package-lock.json",
+        "Directory.Build.targets"
+      ],
+      "sourceReusable": false,
+      "sourceReuseConstraint": "Host-side setup includes machine toolchains or network dependencies; qualify a new full source revision for each changed release."
+    }
+  ],
+  "images": [
+    {
+      "id": "hosty-shell",
+      "appId": "hosty.shell",
+      "services": [
+        "web"
+      ],
+      "repository": "ghcr.io/alex-de-haas/hosty-shell",
+      "dockerfile": "apps/shell/Dockerfile",
+      "inputs": [
+        "apps/shell",
+        "shared/web"
+      ],
+      "workspaces": [
+        "apps/shell",
+        "packages/app-sdk"
+      ],
+      "platforms": [
+        "linux/amd64",
+        "linux/arm64"
+      ],
+      "reusable": true,
+      "toolchain": {
+        "buildkit": "docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc",
+        "contextFormat": "hosty-build-inputs.0.1"
+      },
+      "reuseConstraint": "Immutable base and archive-integrity dependency closure; offline lifecycle/build steps."
+    },
+    {
+      "id": "hosty-desktop",
+      "appId": "hosty.desktop",
+      "services": [
+        "web"
+      ],
+      "repository": "ghcr.io/alex-de-haas/hosty-desktop",
+      "dockerfile": "apps/desktop/Dockerfile",
+      "inputs": [
+        "apps/desktop",
+        "shared/web"
+      ],
+      "workspaces": [
+        "apps/desktop",
+        "packages/app-sdk"
+      ],
+      "platforms": [
+        "linux/amd64",
+        "linux/arm64"
+      ],
+      "reusable": true,
+      "toolchain": {
+        "buildkit": "docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc",
+        "contextFormat": "hosty-build-inputs.0.1"
+      },
+      "reuseConstraint": "Immutable base and archive-integrity dependency closure; offline lifecycle/build steps."
+    },
+    {
+      "id": "hosty-documents",
+      "appId": "hosty.documents",
+      "services": [
+        "api"
+      ],
+      "repository": "ghcr.io/alex-de-haas/hosty-documents",
+      "dockerfile": "apps/documents/Dockerfile",
+      "inputs": [
+        "apps/documents",
+        "shared/web",
+        "scripts/docs-format.mjs",
+        "LICENSE"
+      ],
+      "workspaces": [
+        "apps/documents",
+        "packages/app-sdk"
+      ],
+      "platforms": [
+        "linux/amd64",
+        "linux/arm64"
+      ],
+      "reusable": false,
+      "toolchain": {
+        "buildkit": "docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc",
+        "contextFormat": "hosty-build-inputs.0.1"
+      },
+      "reuseConstraint": "Conservative rebuild until all operating-system/package inputs are pinned."
+    },
+    {
+      "id": "hosty-marketplace",
+      "appId": "hosty.marketplace",
+      "services": [
+        "api"
+      ],
+      "repository": "ghcr.io/alex-de-haas/hosty-marketplace",
+      "dockerfile": "apps/marketplace/Dockerfile",
+      "inputs": [
+        "apps/marketplace",
+        "shared/web"
+      ],
+      "workspaces": [
+        "apps/marketplace",
+        "packages/app-sdk"
+      ],
+      "platforms": [
+        "linux/amd64",
+        "linux/arm64"
+      ],
+      "reusable": false,
+      "toolchain": {
+        "buildkit": "docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc",
+        "contextFormat": "hosty-build-inputs.0.1"
+      },
+      "reuseConstraint": "Conservative rebuild until all operating-system/package inputs are pinned."
+    },
+    {
+      "id": "demo-app",
+      "appId": "com.haas.demo-app",
+      "services": [
+        "backend",
+        "frontend"
+      ],
+      "repository": "ghcr.io/alex-de-haas/demo-app",
+      "dockerfile": "apps/demo-app/Dockerfile",
+      "inputs": [
+        "apps/demo-app",
+        "shared/web"
+      ],
+      "workspaces": [
+        "apps/demo-app",
+        "packages/app-sdk"
+      ],
+      "platforms": [
+        "linux/amd64",
+        "linux/arm64"
+      ],
+      "reusable": false,
+      "toolchain": {
+        "buildkit": "docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc",
+        "contextFormat": "hosty-build-inputs.0.1"
+      },
+      "reuseConstraint": "Conservative rebuild until all operating-system/package inputs are pinned."
+    },
+    {
+      "id": "hosty-harness",
+      "appId": "hosty.harness",
+      "services": [
+        "api"
+      ],
+      "repository": "ghcr.io/alex-de-haas/hosty-harness",
+      "dockerfile": "apps/harness/Dockerfile",
+      "inputs": [
+        "apps/harness",
+        "shared/web"
+      ],
+      "workspaces": [
+        "apps/harness",
+        "packages/app-sdk",
+        "apps/harness/web"
+      ],
+      "platforms": [
+        "linux/amd64",
+        "linux/arm64"
+      ],
+      "reusable": false,
+      "toolchain": {
+        "buildkit": "docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc",
+        "contextFormat": "hosty-build-inputs.0.1"
+      },
+      "reuseConstraint": "Conservative rebuild until all operating-system/package inputs are pinned."
+    },
+    {
+      "id": "hosty-harness-worker",
+      "appId": "hosty.harness",
+      "services": [
+        "worker"
+      ],
+      "repository": "ghcr.io/alex-de-haas/hosty-harness-worker",
+      "dockerfile": "apps/harness/worker/Dockerfile",
+      "inputs": [
+        "apps/harness"
+      ],
+      "workspaces": [
+        "apps/harness",
+        "packages/app-sdk",
+        "apps/harness/web"
+      ],
+      "platforms": [
+        "linux/amd64",
+        "linux/arm64"
+      ],
+      "reusable": false,
+      "toolchain": {
+        "buildkit": "docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc",
+        "contextFormat": "hosty-build-inputs.0.1"
+      },
+      "reuseConstraint": "Conservative rebuild until all operating-system/package inputs are pinned."
+    },
+    {
+      "id": "hosty-telemetry-backend",
+      "appId": "hosty.telemetry",
+      "services": [
+        "backend"
+      ],
+      "repository": "ghcr.io/alex-de-haas/hosty-telemetry-backend",
+      "dockerfile": "apps/telemetry-backend/Dockerfile",
+      "inputs": [
+        "apps/telemetry-backend",
+        "packages/app-sdk-dotnet/HostySdk.App",
+        "apps/core/src/Haas.Hosty.Core/SharedDecisionContract.cs",
+        "apps/core/src/Haas.Hosty.Core/SharedTaskContract.cs",
+        "apps/core/src/Haas.Hosty.Core/SharedAgentSessionContract.cs",
+        "apps/core/src/Haas.Hosty.Core/SharedConversationHistoryContract.cs",
+        "Directory.Build.props",
+        "global.json"
+      ],
+      "workspaces": [],
+      "platforms": [
+        "linux/amd64",
+        "linux/arm64"
+      ],
+      "reusable": true,
+      "toolchain": {
+        "buildkit": "docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc",
+        "contextFormat": "hosty-build-inputs.0.1"
+      },
+      "reuseConstraint": "Pinned base image digests, locked NuGet graph and offline compilation.",
+      "resolveBases": {
+        "SDK_IMAGE": {
+          "repository": "mcr.microsoft.com/dotnet/sdk",
+          "tag": "10.0"
+        },
+        "RUNTIME_IMAGE": {
+          "repository": "mcr.microsoft.com/dotnet/aspnet",
+          "tag": "10.0"
+        }
+      }
+    },
+    {
+      "id": "hosty-telemetry-ui",
+      "appId": "hosty.telemetry",
+      "services": [
+        "ui"
+      ],
+      "repository": "ghcr.io/alex-de-haas/hosty-telemetry-ui",
+      "dockerfile": "apps/telemetry-ui/Dockerfile",
+      "inputs": [
+        "apps/telemetry-ui",
+        "shared/web"
+      ],
+      "workspaces": [
+        "apps/telemetry-ui",
+        "packages/app-sdk"
+      ],
+      "platforms": [
+        "linux/amd64",
+        "linux/arm64"
+      ],
+      "reusable": true,
+      "toolchain": {
+        "buildkit": "docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc",
+        "contextFormat": "hosty-build-inputs.0.1"
+      },
+      "reuseConstraint": "Immutable base and archive-integrity dependency closure; offline lifecycle/build steps."
+    }
+  ],
+  "platform": {
+    "rids": [
+      "osx-arm64",
+      "linux-arm64",
+      "linux-x64",
+      "win-x64"
+    ],
+    "inputs": [
+      "apps/core/src",
+      "apps/cli/src",
+      "shared/*.cs",
+      "Directory.Build.props",
+      "Directory.Build.targets",
+      "global.json",
+      "scripts/HostyBuildIdentity.cs",
+      "distribution-apps.json",
+      "distribution/platform-release.json",
+      "scripts/install.sh",
+      "scripts/install.ps1",
+      "distribution/app-source-migrations.json",
+      "assets/hosty-brand",
+      "skills/hosty-platform",
+      "skills/hosty-app-skill",
+      ".github/actions/setup-dotnet",
+      ".github/workflows/ready-releases.yml",
+      "scripts/releases/artifacts.mjs",
+      "scripts/releases/evidence.mjs",
+      "scripts/releases/native-toolchain.mjs"
+    ]
+  }
+}

@@ -8,13 +8,16 @@ FROM base AS deps
 COPY package.json package-lock.json ./
 COPY apps/demo-app/package.json apps/demo-app/package.json
 COPY packages/app-sdk/package.json packages/app-sdk/package.json
-RUN npm ci --workspace @haas/hosty-demo-app
+RUN npm ci --ignore-scripts --workspace @haas/hosty-demo-app
 
 FROM base AS builder
+COPY package.json package-lock.json ./
 ENV NODE_ENV=production
 COPY --from=deps /repo/node_modules ./node_modules
-COPY . .
-RUN npm run demo-app:build
+COPY apps/demo-app apps/demo-app
+COPY shared/web shared/web
+COPY packages/app-sdk packages/app-sdk
+RUN --network=none npm rebuild && npm run build --workspace @haas/hosty-demo-app
 
 FROM base AS runner
 WORKDIR /app
@@ -23,7 +26,7 @@ ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
 ENV HOSTY_APP_ID=com.haas.demo-app
 # Keep in step with apps/demo-app/manifest.json + package.json (enforced by scripts/check-versions.mjs).
-ENV HOSTY_APP_VERSION=0.18.1
+ENV HOSTY_APP_VERSION=0.21.0
 # gosu lets the entrypoint drop from root to the unprivileged `node` user after fixing data-dir
 # ownership (see docker-entrypoint.sh).
 RUN apt-get update \

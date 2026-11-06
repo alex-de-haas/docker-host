@@ -66,7 +66,7 @@ internal static class OtlpLogsJsonParser
             foreach (var resourceLog in resourceLogs.EnumerateArray())
             {
                 var appId = OtlpJsonParsing.ResolveAppId(resourceLog);
-                if (string.IsNullOrWhiteSpace(appId))
+                if (string.IsNullOrWhiteSpace(appId) || string.Equals(appId, CoreLogPullParser.CoreAppId, StringComparison.Ordinal))
                 {
                     continue;
                 }

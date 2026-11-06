@@ -59,3 +59,33 @@ describe("translation providers", () => {
     await expect(client().translate(selected, input, controller.signal)).rejects.toMatchObject({ name: "AbortError" });
   });
 });
+
+it("binds mediated introspection to the actual operation, route and bytes without fabricating a caller app", async () => {
+  const invocation = { version: 2, callerAppId: null, callerInstallation: null, userId: "owner", hostRole: "host.admin",
+    principalId: "manual:opaque", kind: "conversation-history", key: "archive", operation: "entries.query", resourceIds: ["chat"] };
+  const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify(invocation), { status: 200 }));
+  vi.stubGlobal("fetch", fetcher);
+  const request = { operation: "entries.query", method: "POST", path: "/entries/query", body: '{"conversation":{"id":"chat"}}' };
+  expect(await client().validateMediated("hosty_provider.2.signed", "conversation-history", request, "archive")).toEqual(invocation);
+  const [url, init] = fetcher.mock.calls[0]!;
+  expect(String(url)).toBe("http://core.test/api/internal/apps/ordinary/provider/introspect-v2");
+  expect(JSON.parse(init.body)).toMatchObject({ operation: "entries.query", method: "POST", path: "/entries/query", kind: "conversation-history", key: "archive" });
+  expect(JSON.parse(init.body).bodyHash).toMatch(/^[a-f0-9]{64}$/);
+  expect(init.headers.authorization).toBe("Bearer private-service");
+  expect(init.redirect).toBe("error");
+  await expect(client().validateMediated("hosty_provider.1.legacy", "conversation-history", request)).rejects.toMatchObject({ code: "token_invalid" });
+  expect(fetcher).toHaveBeenCalledTimes(1);
+});
+
+it("keeps task workspace recovery bound to the original receipt without a user token", async () => {
+  const fetch = vi.fn().mockResolvedValue(Response.json({ stopRequested: false, state: "idle" })); vi.stubGlobal("fetch", fetch);
+  const input = { dispatch: { userId: "owner", principalId: "manual:original", requestId: "action-id" }, executionId: "execution-id", sessionId: "native-session", leaseId: "lease-id", kind: "activity" as const,
+    activity: { status: "idle", leaseId: "lease-id", stopped: true, sequence: 2 } };
+  expect(await client().taskWorkspace(input)).toEqual({ stopRequested: false, state: "idle" });
+  expect(String(fetch.mock.calls[0]![0])).toBe("http://core.test/api/internal/apps/ordinary/task-workspace");
+  const request = fetch.mock.calls[0]![1];
+  expect(request.headers.authorization).toBe("Bearer private-service");
+  expect(request.headers["X-Hosty-User-Token"]).toBeUndefined();
+  expect(JSON.parse(request.body)).toEqual(input);
+  expect(request.body).not.toContain("private-service");
+});

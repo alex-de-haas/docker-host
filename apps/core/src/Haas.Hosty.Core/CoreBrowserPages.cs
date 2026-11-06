@@ -6,8 +6,25 @@ namespace Haas.Hosty.Core;
 // authentication, CSP and the exact fields/decisions in the reviewed form.
 internal static class CoreBrowserPages
 {
+    public const string Favicon = "<link rel=\"icon\" href=\"/core-assets/favicon.svg\" type=\"image/svg+xml\" sizes=\"any\">";
+
     public static void MapAssets(WebApplication app)
     {
+        foreach (var name in new[] { "favicon.svg", "favicon-light.svg", "favicon-dark.svg", "favicon.ico" })
+        {
+            var resourceName = name.EndsWith(".svg", StringComparison.Ordinal) ? "hosty-" + name : name;
+            var contentType = name.EndsWith(".svg", StringComparison.Ordinal) ? "image/svg+xml" : "image/x-icon";
+            IResult Icon(HttpResponse response)
+            {
+                response.Headers["X-Content-Type-Options"] = "nosniff";
+                response.Headers.CacheControl = "public, max-age=3600";
+                var resource = typeof(CoreBrowserPages).Assembly.GetManifestResourceStream($"Haas.Hosty.Core.Browser.{resourceName}")
+                    ?? throw new InvalidOperationException($"Missing Core favicon: {name}");
+                return Results.Stream(resource, contentType);
+            }
+            app.MapGet("/core-assets/" + name, Icon);
+            if (name == "favicon.ico") app.MapGet("/favicon.ico", Icon);
+        }
         foreach (var name in new[] { "plex-sans-latin.woff2", "plex-sans-latin-ext.woff2",
             "plex-sans-cyrillic.woff2", "jetbrains-mono-latin.woff2",
             "jetbrains-mono-latin-ext.woff2", "jetbrains-mono-cyrillic.woff2" })
@@ -32,7 +49,7 @@ internal static class CoreBrowserPages
 
     public const string Brand = "<header class=\"core-brand\">" + Mark + "<span>Hosty Core</span></header>";
 
-    public static string Approval(string title, string? name, string? version, string caller, string body)
+    public static string Approval(string title, string? name, string? version, string caller, string body, string styles = "")
     {
         static string E(string? value) => WebUtility.HtmlEncode(value ?? "");
         var versionLine = version is null ? "" : $"<p class=\"version\">{E(version)}</p>";
@@ -42,8 +59,9 @@ internal static class CoreBrowserPages
             <head>
               <meta charset="utf-8">
               <meta name="viewport" content="width=device-width, initial-scale=1">
+              {{Favicon}}
               <title>{{E(title)}} — Hosty Core</title>
-              <style>{{CommonStyles}}{{ApprovalStyles}}</style>
+              <style>{{CommonStyles}}{{ApprovalStyles}}{{styles}}</style>
             </head>
             <body class="approval-page">
               <div class="core-frame">

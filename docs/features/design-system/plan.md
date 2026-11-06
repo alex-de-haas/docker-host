@@ -1,9 +1,9 @@
 ---
 status: In Progress
 created: 2026-10-12
-updated: 2026-10-24
+updated: 2026-10-26
 summary: Remaining Hosty design implementation, acceptance gates and separately reviewed Core/SDK contracts, with stable deliverable IDs.
-components: [apps/shell, apps/shell-swift, packages/app-sdk, apps/core, apps/harness, assets/hosty-brand, apps/plans, apps/telemetry, apps/telemetry-ui, apps/demo-app, apps/marketplace, apps/whisper]
+components: [apps/shell, apps/shell-swift, packages/app-sdk, apps/core, apps/harness, assets/hosty-brand, apps/documents, apps/telemetry, apps/telemetry-ui, apps/demo-app, apps/marketplace, apps/whisper]
 ---
 
 # Design System
@@ -1056,7 +1056,7 @@ Remaining design work is tracked by D32:
 | --- | --- | --- |
 | Demo creation journey | Parent Dashboard creation entry/dialog and environment rows: name and app selection, progress/failure/resume, setup/open and expired-link recovery; clear child-versus-main identity. Map these to the shipped journey before adding screens. | `EnvSetup` depicts the child first-run experience, not the parent creation dialog. Reuse its components and the Dashboard. Administrator credentials stay on the child's Core page. |
 | Demo acceptance | Loading, empty/no-results, access-denied, disconnected and failed-operation states for the new Marketplace/Settings/AppManage pages; unsaved and conflicting settings; dark and narrow variants. | Reuse the existing Core forms, SDK access overlays and Shell phone/tool layouts. Test representative demo settings while preserving all supported controls. |
-| After the core demo path | Shared log viewer and destructive/recovery dialogs; Plans list/document/version/discussion surfaces; Telemetry logs, metrics and traces. | Reuse the data-grid, typography, chart and dialog patterns. These are remaining app references, not new platform behavior or mandatory demo gates. |
+| After the core demo path | Shared log viewer and destructive/recovery dialogs; Telemetry logs, metrics and traces. Documents list/reader/version/discussion references are owned by the Documents App plan below. | Reuse the data-grid, typography, chart and dialog patterns. These are remaining app references, not new platform behavior or mandatory demo gates. |
 
 Harness already has desktop sessions/conversation/workspace, review and phone references; it does
 not need another overall design. Core authentication and install/update/permission confirmations
@@ -1064,6 +1064,26 @@ also have references. SDK access cards/banners and installation use their suppli
 
 D32 owns design preparation and review only. Existing token adoption uses D1/D19; any additional
 page-layout implementation needs concrete scope after review. D20 applies to all adopted mockups.
+
+## Documents App Coordination (2026-10-26)
+
+The owner's updated Hosty Style Guide adds four Documents references: home with index/attention/
+activity, feature/plan/workspace changes, a plans board, and phone reading. The separate
+approved [Documents App](../documents-app/feature.md) owns current documentation navigation/search,
+source-derived workspace/deliverable progress, existing workspace PR references and attention actions.
+Its implementation owns those supplied screens and the Ideas and state variants. The owner's
+scope clarification excludes a Documents database, explicit-association registry and History screen.
+Reference examples and proposed actions do not authorize implementation.
+
+Shared theme/font/control adoption remains in this plan's D19, app artwork/accent work in D4,
+and cross-app functional parity in D20. Documents consumes those foundations and owns its focused
+acceptance; this does not complete or duplicate these deliverables. D32 retains the other shared
+and missing references, while Documents-specific screen work is tracked in its own Ready plan.
+
+The owner accepts replacing Plans with `hosty.documents` in `apps/documents`, including catalog
+and feed changes, through normal uninstall/install. Documents D13/D16 own that replacement and
+its distribution checks; coordinate shared design references and app-owned icon assets here.
+This changes no live installation and authorizes no per-app identity handling in Core.
 
 ## Principles
 
@@ -2138,7 +2158,7 @@ current redesign version outcomes; this documentation-only cleanup changes no ar
 
 ### Remaining Design References
 
-- [ ] D32. Complete and review the missing parent environment creation/inventory, responsive/failure/unsaved-draft variants for demo pages, then shared operational dialogs and Plans/Telemetry references. Reuse the existing Core/SDK/Harness/Marketplace/Settings/AppManage/EnvSetup references and functional contracts. This item prepares designs only; additional layout implementation requires concrete scope.
+- [ ] D32. Complete and review the missing parent environment creation/inventory, responsive/failure/unsaved-draft variants for demo pages, then shared operational dialogs and Telemetry references. Documents-specific references and missing variants are owned by [Documents App](../documents-app/feature.md#navigation-and-reading). Reuse the existing Core/SDK/Harness/Marketplace/Settings/AppManage/EnvSetup references and functional contracts. This item prepares designs only; additional layout implementation requires concrete scope.
 
 ### Completed Deliverables
 

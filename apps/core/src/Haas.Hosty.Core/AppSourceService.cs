@@ -114,13 +114,8 @@ internal sealed partial class AppSourceService(CoreDataPaths paths, AppRegistryS
             _ = await FetchAsync(checkoutPath, app.PrivateSources?.Git, cancellationToken);
             if (!await CommitExistsAsync(checkoutPath, pinnedCommit, cancellationToken))
             {
-                // The repository does not contain the recorded commit at all, and failing here would wedge
-                // every start of the app. It is reachable through no fault of the operator: a record written
-                // before OverrideCommit existed may carry an override folder's commit (another repository's
-                // object) in the pin, and a force-pushed branch can drop a commit upstream. Fall back to the
-                // reviewed ref — what the app would have pinned with no recorded commit at all — and let the
-                // record self-heal on the write below.
-                pinnedCommit = await ResolveCommitAsync(checkoutPath, new AppSourceResolveRequest(), source.ResolvedRef ?? "HEAD", cancellationToken);
+                throw new AppLifecycleException("source_commit_unavailable",
+                    "The recorded source commit is unavailable. Review an explicit source change; the pin was not replaced by a branch tip.");
             }
         }
 
@@ -456,6 +451,25 @@ internal sealed partial class AppSourceService(CoreDataPaths paths, AppRegistryS
         => grant is null ? RunGitAsync(checkoutPath, FetchArgs, ct)
             : (privateSources ?? throw PrivateSourceService.Denied()).GitAsync(grant, grant.Repository, checkoutPath,
                 ["fetch", "--tags", "--prune", "--force", "--", grant.Repository, "+refs/heads/*:refs/remotes/origin/*"], ct);
+
+    internal async Task PrefetchUpdateAsync(AppRecord app, string repository, string commit, SourceReadGrant? grant, CancellationToken ct)
+    {
+        ValidateManagedRepository(repository);
+        if (!Haas.Hosty.Releases.ArtifactIdentity.IsCommit(commit))
+            throw new AppLifecycleException("source_commit_invalid", "An update requires the reviewed full source commit.");
+        var path = ResolveManagedCheckoutPath(app);
+        await EnsureCheckoutAsync(repository, path, ct, grant);
+        if (!await CommitExistsAsync(path, commit, ct))
+        {
+            // Fetch only the reviewed repository/object; never move the running checkout's HEAD.
+            if (grant is null) await RunGitAsync(path, ["fetch", "--", repository, commit], ct);
+            else await (privateSources ?? throw PrivateSourceService.Denied()).GitAsync(grant, repository, path,
+                ["fetch", "--", grant.Repository, commit], ct);
+        }
+        if (!await CommitExistsAsync(path, commit, ct))
+            throw new AppLifecycleException("source_commit_unavailable", "The exact reviewed source commit is unavailable; the current app was not stopped.");
+        await RunGitAsync(path, ["cat-file", "-e", commit + "^{tree}"], ct);
+    }
 
     internal async Task PrefetchPrivateAsync(AppRecord app, SourceReadGrant grant, string commit, CancellationToken ct)
     {

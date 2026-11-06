@@ -3,12 +3,14 @@ using System.Text.Json.Serialization;
 namespace Haas.Hosty.Core;
 
 internal sealed record PublicationPolicy(string[] RequiredChecks, long[] RequiredWorkflows, PublicationArtifact[] Artifacts);
+internal sealed record PublicationPolicyAmendment(PublicationPolicy PreviousPolicy, string Reason);
 internal sealed record PublicationArtifact(string? Tag = null, string? Asset = null, string Kind = "release", string? Package = null, string? Version = null);
 internal sealed record PublicationCommand(string RequestId, string? ExpectedHead = null, string? ConnectionId = null,
     string? Title = null, string? Body = null, bool Draft = true, bool Fork = false, int? Number = null,
     string? MergeMethod = null, string? Outcome = null, bool Cleanup = false,
     PublicationPolicy? Policy = null, string[]? Dependencies = null, string? Message = null, string[]? Paths = null, string[]? Contributors = null, string? ThreadId = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ReviewId = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ReviewId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] PublicationPolicyAmendment? PolicyAmendment = null);
 internal sealed record PublicationReviewComment(string Id, string Body, string? AuthorLogin = null,
     string? AuthorKind = null, DateTimeOffset? CreatedAt = null, string? Url = null, long? DatabaseId = null);
 internal sealed record PublicationReview(string Id, string? Path, int? Line, bool Resolved, string[] Comments,
@@ -35,11 +37,13 @@ internal sealed record PublicationReviewSnapshot(string Url, string Repository, 
     string Base, string MergeBase, string Head, PublicationObservation Observation,
     PublicationReviewFile[] Files, bool Truncated = false);
 internal sealed record PublicationCheck(string Name, string State);
+internal sealed record PublicationCompletionIssue(string Kind, string Requirement, string State, string MergeCommit);
 internal sealed record PublicationObservation(DateTimeOffset At, string State, string? Head = null,
     string? Base = null, string? MergeCommit = null, bool Draft = false, string? MergeState = null,
     string? ReviewDecision = null, int UnresolvedThreads = 0, bool Complete = false,
     PublicationCheck[]? Checks = null, string? Error = null, PublicationReview[]? Reviews = null,
-    string? Title = null, int? CommentCount = null, string? BaseHead = null, DateTimeOffset? MergedAt = null);
+    string? Title = null, int? CommentCount = null, string? BaseHead = null, DateTimeOffset? MergedAt = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] PublicationCompletionIssue? CompletionIssue = null);
 internal sealed record PublicationOperation(string Id, string Kind, string Fingerprint, string State,
     PublicationCommand Input, string? Error = null, PublicationIdentity? Author = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] WorkspaceOwner? Actor = null);

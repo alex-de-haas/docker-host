@@ -7,12 +7,11 @@ internal sealed partial class DevelopmentWorkspaceService
         if (tree.State != "active" || tree.Operations.Any(o => o.State is "pending" or "unknown") ||
             !tree.Apps.Any(a => a.AppId == app.Id && a.Installation == app.InstalledAt))
             throw Error("source_changed", "The worktree must be active, attached to this installation and free of uncertain Git operations.");
-        if (actor is not null && !tree.Owner.SameIdentity(actor)) throw Error("forbidden", "Use the current session's own worktree.");
+        if (actor is not null) await RequireSessionAccessAsync(tree, actor, ct);
         if (actor is null && tree.Leases.Length > 0) throw Error("in_use", "Pause active workspace writers before a manual source transition.");
         await RequireOpenWorkflow(tree.Owner, ct);
         await RequireSourceInstallationAsync(tree, ct);
         await ValidateTree(tree, ct);
-        await WorkspaceGrantAsync(tree, ct);
     }
 
     internal async Task<T> WithDevAdmissionAsync<T>(string id, AppRecord app, WorkspaceOwner? actor, Func<Task<T>> action, CancellationToken ct, bool returning = false)
@@ -21,7 +20,7 @@ internal sealed partial class DevelopmentWorkspaceService
         await Locked(Hash(OwnerIdentity(tree.Owner)), () => Locked("repository-admission:" + tree.RepositoryId, async () =>
         {
             tree = await Read(id, returning ? null : actor, ct);
-            if (actor is not null && !tree.Owner.SameIdentity(actor)) throw Error("forbidden", "Use the current session's own worktree.");
+            if (actor is not null) await RequireSessionAccessAsync(tree, actor, ct);
             if (returning)
             {
                 if (actor is null && tree.Leases.Length > 0) throw Error("in_use", "Pause workspace writers before a manual Return.");
@@ -57,8 +56,7 @@ internal sealed partial class DevelopmentWorkspaceService
             if (tree.Leases.Length > 0 || tree.State != "active" || tree.Operations.Any(o => o.State is "pending" or "unknown"))
                 throw Error("in_use", "Pause workspace writers before reserving Core source.");
             await RequireOpenWorkflow(tree.Owner, ct);
-            await WorkspaceGrantAsync(tree, ct);
-            Haas.Hosty.Launch.WorkspaceRuntimeFiles.Save(paths.DataRoot, activation);
+                Haas.Hosty.Launch.WorkspaceRuntimeFiles.Save(paths.DataRoot, activation);
             return true;
         }, ct), ct);
     }

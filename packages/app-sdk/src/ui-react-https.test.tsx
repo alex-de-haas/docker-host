@@ -5,7 +5,7 @@ import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vitest";
 import { HostyPanelWorkspace, HostyUiRoot, useHostyUiHost } from "./ui-react";
 import type { UiHost } from "./ui-host";
-vi.mock("./browser-auth", () => ({ appFetch: (...args: Parameters<typeof fetch>) => fetch(...args) }));
+vi.mock("./browser-auth", () => ({ APP_SESSION_RESTORED: "hosty:app-session-restored", appFetch: (...args: Parameters<typeof fetch>) => fetch(...args) }));
 
 it.each(["catalog", "opened"] as const)("retains a pinned recovery link for an HTTP panel in the HTTPS %s workspace", async railMode => {
   const panel = { appId: "assistant", installationId: "assistant-1", panelId: "chat" };

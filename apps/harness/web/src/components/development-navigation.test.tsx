@@ -87,7 +87,7 @@ it("combines search and state filters without changing session identity or order
   expect(container.textContent).not.toContain("Working task");
   const rows = [...container.querySelectorAll<HTMLButtonElement>('button')].filter(button => button.textContent?.includes("task") && !button.getAttribute("aria-label")?.startsWith("Delete"));
   expect(rows.map(button => button.querySelector("span.block")?.textContent)).toEqual(["Newer task", "Older task"]);
-  const search = container.querySelector<HTMLInputElement>('[aria-label="Search workspaces and chats"]')!;
+  const search = container.querySelector<HTMLInputElement>('[aria-label="Search chats"]')!;
   await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(search, "Older"); search.dispatchEvent(new Event("input", { bubbles: true })); });
   expect(container.textContent).not.toContain("Newer task");
   await act(async () => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent?.startsWith("Older task"))!.click());
@@ -95,26 +95,27 @@ it("combines search and state filters without changing session identity or order
 
 });
 
-it("groups attached chats under their workspace and keeps external and sessionless workspaces in the same list", async () => {
+it("lists only workspaces, retaining external and sessionless entries and matching attached chat titles", async () => {
   const session = { ...disposable, id: "attached", title: "Implementation" };
   const workspace = { id: "workspace", name: "Shared project", state: "active", owner: { kind: "assistant", appId: "hosty.harness", reference: session.id, label: "Owned" }, workflow: { state: "in-progress", revision: 0 }, worktrees: [] } as DevelopmentWorkspace;
   const external = { ...workspace, id: "external", name: "External checkout", owner: { kind: "external", reference: "task", label: "Codex" } };
   const empty = { ...workspace, id: "empty", name: "Retained source", owner: { ...workspace.owner, reference: "deleted" } };
   const pick = vi.fn();
-  const render = (spaces = [workspace, external, empty]) => act(async () => root.render(<DevelopmentNavigation sessions={[session, disposable]} workspaces={spaces} activeId={session.id} onWorkspace={pick} onPick={vi.fn()} onNew={vi.fn()} onDelete={vi.fn()} />));
+  const render = (spaces = [workspace, external, empty]) => act(async () => root.render(<DevelopmentNavigation view="workspaces" sessions={[session, disposable]} workspaces={spaces} activeId={session.id} onWorkspace={pick} onPick={vi.fn()} onNew={vi.fn()} onDelete={vi.fn()} />));
   await render();
   expect(container.textContent).toContain("Shared project"); expect(container.textContent).toContain("External checkout"); expect(container.textContent).toContain("Retained source");
+  expect(container.textContent).not.toContain("Disposable chat");
   expect(container.textContent).not.toContain("Implementation");
   expect(container.querySelector('[aria-label="Delete Implementation"]')).toBeNull();
   await act(async () => container.querySelector<HTMLButtonElement>('[aria-current="page"]')!.click());
   expect(pick).toHaveBeenCalledWith(workspace, undefined);
-  const search = container.querySelector<HTMLInputElement>('[aria-label="Search workspaces and chats"]')!;
+  const search = container.querySelector<HTMLInputElement>('[aria-label="Search workspaces"]')!;
   await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(search, "Implementation"); search.dispatchEvent(new Event("input", { bubbles: true })); });
   await act(async () => container.querySelector<HTMLButtonElement>('[aria-current="page"]')!.click());
   expect(pick).toHaveBeenLastCalledWith(workspace, session);
   await render([{ ...workspace, workflow: { state: "deleted", revision: 1 } }]);
-  expect(container.textContent).toContain("Implementation");
-  expect(container.querySelector('[aria-label="Delete Implementation"]')).not.toBeNull();
+  expect(container.textContent).not.toContain("Implementation");
+  expect(container.querySelector('[aria-label="Delete Implementation"]')).toBeNull();
 });
 
 it("keeps decorative status shapes, factual chip counts and each filter's existing session projection", async () => {
@@ -141,6 +142,87 @@ it("keeps decorative status shapes, factual chip counts and each filter's existi
   await render(sessions.slice(0, -1));
   expect(filters().map(node => node.textContent)).toEqual(["All5", "Needs attention2", "Working1", "Failed0"]);
   expect(filters()[3].getAttribute("aria-pressed")).toBe("true");
-  expect(container.textContent).toContain("No workspaces or chats match this search and filter.");
+  expect(container.textContent).toContain("No chats match this search and filter.");
   expect(pick).not.toHaveBeenCalled();
+});
+
+
+it("shows every accessible chat separately and reserves development actions for Workspaces", async () => {
+  const session = { ...disposable, id: "attached", title: "Implementation" };
+  const workspace = { id: "workspace", name: "Shared project", state: "active", owner: { kind: "assistant", appId: "hosty.harness", reference: session.id, label: "Owned" }, workflow: { state: "in-progress", revision: 0 }, worktrees: [] } as DevelopmentWorkspace;
+  const render = (view: "chats" | "workspaces") => act(async () => root.render(<DevelopmentNavigation view={view} sessions={[session, disposable]} workspaces={[workspace]} activeId={session.id} onPick={vi.fn()} onNew={vi.fn()} onDelete={vi.fn()} createAppAction={<button>Create app</button>} />));
+  await render("chats");
+  expect(container.textContent).toContain("Implementation"); expect(container.textContent).toContain("Disposable chat");
+  expect(container.textContent).not.toContain("Shared project"); expect(container.textContent).not.toContain("Create app");
+  expect(container.querySelector('[aria-label="Continue building"]')).toBeNull();
+  expect(container.querySelector('[aria-label="New session"]')).not.toBeNull();
+  expect(container.querySelector('[aria-current="page"]')?.textContent).toContain("Implementation");
+  await render("workspaces");
+  expect(container.textContent).toContain("Shared project"); expect(container.textContent).toContain("Create app");
+  expect(container.querySelector('[aria-label="Continue building"]')).not.toBeNull();
+  expect(container.querySelector('[aria-label="New session"]')).toBeNull();
+});
+
+it("adds workspace-only lifecycle and source/PR summaries without per-row fetches", async () => {
+  const fetch = vi.fn(); vi.stubGlobal("fetch", fetch);
+  const onWorkspace = vi.fn();
+  const workspaces: DevelopmentWorkspace[] = [{ id: "completed", name: "Finished feature", state: "active", owner: { kind: "external", reference: "task", label: "Agent" },
+    workflow: { state: "completed", revision: 1 }, worktrees: [], pullRequestSummary: { count: 2, state: "merged", checks: "none", observedAt: "2026-11-01T10:00:00Z", partial: false } }];
+  await act(async () => root.render(<DevelopmentNavigation view="workspaces" sessions={[]} workspaces={workspaces} onPick={vi.fn()} onWorkspace={onWorkspace} onNew={vi.fn()} onDelete={vi.fn()} />));
+  expect(container.textContent).toContain("Completed"); expect(container.textContent).toContain("Merged");
+  const row = [...container.querySelectorAll("button")].find(b => b.textContent?.includes("Finished feature"))!;
+  expect(row.querySelector("[title*='Workspace: Completed']")).not.toBeNull();
+  await act(async () => row.click()); expect(onWorkspace).toHaveBeenCalledWith(workspaces[0], undefined);
+  expect(fetch).not.toHaveBeenCalled();
+  await act(async () => root.render(<DevelopmentNavigation view="chats" sessions={[disposable]} workspaces={workspaces} onPick={vi.fn()} onNew={vi.fn()} onDelete={vi.fn()} />));
+  expect(container.textContent).not.toContain("Completed"); expect(container.textContent).not.toContain("Merged");
+});
+
+it("shows active unmerged PRs beside clean source and successful CI without fetching row details", async () => {
+  const fetch = vi.fn(); vi.stubGlobal("fetch", fetch);
+  const workspace: DevelopmentWorkspace = { id: "clean-with-pr", name: "Awaiting merge", state: "active", owner: { kind: "external", reference: "task", label: "Agent" },
+    workflow: { state: "in-progress", revision: 1 }, worktrees: [{ id: "tree", workspaceId: "clean-with-pr", repository: "repo", branch: "work/review", state: "active", apps: [], leases: [], pullRequests: [], observationHealth: "watching",
+      observation: { at: "2026-11-04T10:00:00Z", state: "ok", local: { files: [], truncated: false } } }],
+    pullRequestSummary: { count: 5, openCount: 2, draftCount: 1, state: "open", checks: "passed", observedAt: new Date().toISOString(), partial: false } };
+  await act(async () => root.render(<DevelopmentNavigation view="workspaces" sessions={[]} workspaces={[workspace]} onPick={vi.fn()} onWorkspace={vi.fn()} onNew={vi.fn()} onDelete={vi.fn()} />));
+  const summary = container.querySelector('[title*="2 observed open pull requests"]')!;
+  expect(summary.textContent).toContain("Clean");
+  expect(summary.textContent).toContain("2 open PRs");
+  expect(summary.textContent).toContain("CI passed");
+  expect(summary.textContent).not.toContain("Merged");
+  expect(summary.getAttribute("title")).toContain("including 1 draft");
+  expect(summary.getAttribute("title")).toContain("5 linked pull requests");
+  expect(summary.querySelector(".sr-only")?.textContent).toContain("2 observed open pull requests");
+  expect(fetch).not.toHaveBeenCalled();
+});
+
+it("shows observed added and deleted line counts alongside the workspace file count", async () => {
+  const fetch = vi.fn(); vi.stubGlobal("fetch", fetch);
+  const workspace: DevelopmentWorkspace = { id: "dirty", name: "Current changes", state: "active", owner: { kind: "external", reference: "task", label: "Agent" },
+    workflow: { state: "in-progress", revision: 1 }, worktrees: [{ id: "tree", workspaceId: "dirty", repository: "repo", branch: "work/changes", state: "active", apps: [], leases: [], pullRequests: [], observationHealth: "watching",
+      observation: { at: "2026-11-04T10:00:00Z", state: "ok", local: { files: [{ path: "code", status: "M" }, { path: "tests", status: "A" }], truncated: false, lineStats: { additions: 12, deletions: 4 } } } }] };
+  const render = (value = workspace) => act(async () => root.render(<DevelopmentNavigation view="workspaces" sessions={[]} workspaces={[value]} onPick={vi.fn()} onWorkspace={vi.fn()} onNew={vi.fn()} onDelete={vi.fn()} />));
+  await render();
+  const summary = container.querySelector('[title*="2 uncommitted files"]')!;
+  expect(summary.textContent).toContain("2 files");
+  expect(summary.querySelector(".text-success-foreground")?.textContent).toBe("+12");
+  expect(summary.querySelector(".text-destructive-foreground")?.textContent).toBe("−4");
+  expect(summary.getAttribute("title")).toContain("12 added and 4 deleted lines in uncommitted changes");
+  expect(fetch).not.toHaveBeenCalled();
+  await render({ ...workspace, worktrees: [{ ...workspace.worktrees[0], observationHealth: "pending" }] });
+  expect(summary.textContent).toContain("2 files");
+  expect(summary.querySelector(".text-success-foreground")?.textContent).toBe("+12");
+  expect(summary.querySelector(".text-destructive-foreground")?.textContent).toBe("−4");
+  expect(summary.textContent).not.toContain("Changes unknown");
+  expect(summary.querySelectorAll(".animate-spin, .motion-safe\\:animate-spin")).toHaveLength(1);
+  expect(summary.getAttribute("title")).toContain("last successful source observation while checking for updates");
+  expect(summary.querySelector(".sr-only")?.textContent).toContain("while checking for updates");
+  await render();
+  expect(summary.querySelector("svg")).toBeNull();
+  expect(summary.textContent).toContain("2 files");
+  await render({ ...workspace, worktrees: [{ ...workspace.worktrees[0], observation: { ...workspace.worktrees[0].observation!, local: { ...workspace.worktrees[0].observation!.local!, truncated: true } } }] });
+  expect(container.textContent).toContain("2+ files");
+  const partialSummary = container.querySelector('[title*="At least 2 uncommitted files"]')!;
+  expect(partialSummary.querySelector(".text-success-foreground")).toBeNull();
+  expect(partialSummary.querySelector(".text-destructive-foreground")).toBeNull();
 });

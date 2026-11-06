@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+import { CoreTraceCoverageNote } from "@/components/observability/core-trace-coverage";
 import { appFetch } from "@hosty-sdk/app/browser-auth";
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -30,14 +32,14 @@ const RANGES: { label: string; seconds: number }[] = [
   { label: "1h", seconds: 3600 },
 ];
 
-type LoadedLogsQuery = { appId: string; severity: number; range: number; text: string };
+type LoadedLogsQuery = { appId: string; severity: number; range: number; text: string; caller: string; traceId: string };
 type LogsState = { loading: boolean; error: string | null; response: FleetOtlpLogsResponse | null; loadedQuery: LoadedLogsQuery | null };
 
 // Cross-resource Structured logs view, modelled on the .NET Aspire "Structured logs" page: OTLP log
 // records merged across every resource into one searchable, severity-filterable stream. Backed by the
 // Core fleet endpoint (GET /api/observability/logs) which does the cross-app merge + global ordering.
 // This is the structured OTLP stream — never interleaved with the console (docker logs) view.
-export function ObservabilityStructuredLogsPage({ apps: roster }: { apps: TelemetryApp[] }) {
+export function ObservabilityStructuredLogsPage({ apps: roster, initialTraceId = "", initialCaller = "" }: { apps: TelemetryApp[]; initialTraceId?: string; initialCaller?: string }) {
   // Hosty Core is a source without an installed app behind it, so the roster alone would leave its
   // records visible under "All resources" and impossible to isolate.
   const apps = withCoreSource(roster);
@@ -45,6 +47,8 @@ export function ObservabilityStructuredLogsPage({ apps: roster }: { apps: Teleme
   const [severityFloor, setSeverityFloor] = useState(0);
   const [rangeSeconds, setRangeSeconds] = useState(900);
   const [query, setQuery] = useState("");
+  const [caller, setCaller] = useState(initialCaller);
+  const [traceId, setTraceId] = useState(initialTraceId);
   const [state, setState] = useState<LogsState>({ loading: true, error: null, response: null, loadedQuery: null });
 
   // Keep the selection valid as the app set changes (adjust during render, not in an effect).
@@ -61,11 +65,13 @@ export function ObservabilityStructuredLogsPage({ apps: roster }: { apps: Teleme
   // request updates state, so a slower earlier response can't overwrite newer results or errors.
   const requestRef = useRef(0);
   const loadLogs = useCallback(
-    async (appId: string, severity: number, range: number, text: string) => {
+    async (appId: string, severity: number, range: number, text: string, caller: string, traceId: string) => {
       const token = ++requestRef.current;
       setState((current) => ({ ...current, loading: true, error: null }));
       try {
         const params = new URLSearchParams({ range: String(range), limit: "500" });
+        if (caller.trim()) params.set("callerAppId", caller.trim());
+        if (traceId.trim()) params.set("traceId", traceId.trim());
         if (severity > 0) {
           params.set("severity", String(severity));
         }
@@ -85,7 +91,7 @@ export function ObservabilityStructuredLogsPage({ apps: roster }: { apps: Teleme
         if (token !== requestRef.current) {
           return;
         }
-        setState({ loading: false, error: null, response: payload, loadedQuery: { appId, severity, range, text: trimmed } });
+        setState({ loading: false, error: null, response: payload, loadedQuery: { appId, severity, range, text: trimmed, caller, traceId } });
       } catch (error) {
         if (isAuthRequiredError(error) || token !== requestRef.current) {
           return;
@@ -104,14 +110,14 @@ export function ObservabilityStructuredLogsPage({ apps: roster }: { apps: Teleme
 
   // Refetch on any filter change; debounce so typing in the search box does not hammer Core.
   useEffect(() => {
-    const handle = setTimeout(() => void loadLogs(selectedAppId, severityFloor, rangeSeconds, query), 300);
+    const handle = setTimeout(() => void loadLogs(selectedAppId, severityFloor, rangeSeconds, query, caller, traceId), 300);
     return () => clearTimeout(handle);
-  }, [loadLogs, selectedAppId, severityFloor, rangeSeconds, query]);
+  }, [loadLogs, selectedAppId, severityFloor, rangeSeconds, query, caller, traceId]);
 
   const records = state.response?.records ?? [];
   const loadedQuery = state.loadedQuery;
   const showingPrevious = loadedQuery !== null && (state.loading || state.error !== null
-    || loadedQuery.appId !== selectedAppId || loadedQuery.severity !== severityFloor
+    || loadedQuery.caller !== caller || loadedQuery.traceId !== traceId || loadedQuery.appId !== selectedAppId || loadedQuery.severity !== severityFloor
     || loadedQuery.range !== rangeSeconds || loadedQuery.text !== query.trim());
   const showSource = selectedAppId === ALL || loadedQuery?.appId === ALL
     || (showingPrevious && loadedQuery?.appId !== selectedAppId);
@@ -132,7 +138,7 @@ export function ObservabilityStructuredLogsPage({ apps: roster }: { apps: Teleme
           <Button
             variant="outline"
             size="sm"
-            onClick={() => void loadLogs(selectedAppId, severityFloor, rangeSeconds, query)}
+            onClick={() => void loadLogs(selectedAppId, severityFloor, rangeSeconds, query, caller, traceId)}
             disabled={state.loading}
           >
             <RefreshCw className={cn("h-4 w-4", state.loading && "animate-spin text-info")} />
@@ -205,6 +211,14 @@ export function ObservabilityStructuredLogsPage({ apps: roster }: { apps: Teleme
         </div>
       </div>
 
+      <div className="flex flex-wrap items-center gap-2">
+        <Input value={caller} onChange={event => setCaller(event.target.value)} placeholder="Calling app ID (Core)" aria-label="Calling app ID" className="w-56" />
+        <Input value={traceId} onChange={event => setTraceId(event.target.value)} placeholder="Trace ID" aria-label="Trace ID filter" className="w-72 font-mono" />
+        {traceId && <><Button asChild size="sm" variant="outline"><Link href={`/traces?traceId=${encodeURIComponent(traceId)}`}>Open trace</Link></Button>
+          <span className="text-xs text-muted-foreground">Searching all retained logs for this trace.</span></>}
+      </div>
+      <CoreTraceCoverageNote coverage={state.response?.coreTracing} />
+
       {state.error && (
         <RequestError>{state.error}</RequestError>
       )}
@@ -225,7 +239,7 @@ export function ObservabilityStructuredLogsPage({ apps: roster }: { apps: Teleme
         <EmptyState
           icon={ScrollText}
           title={displayedSearch ? "No matching logs" : "No structured logs"}
-          description={displayedSearch
+          description={traceId ? "No retained logs match this trace and the selected filters. Logs may have expired or no log was emitted." : displayedSearch
             ? "Try a different search or adjust the filters."
             : "Records appear for apps that opt into telemetry and export the OpenTelemetry logs signal, with the Telemetry app enabled on the host (Shell platform panel or hosty setup --with hosty.telemetry)."}
         />

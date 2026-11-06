@@ -16,7 +16,7 @@ it("uses target frame policy and exact peer review routing, retaining a link whe
   try {
     await act(async () => root.render(<UiHostContext.Provider value={host}><HostyAppFrame surface={surface} title="Tool" onAttention={attention} /></UiHostContext.Provider>));
     const frame = element.querySelector("iframe")!;
-    expect(frame.getAttribute("allow")).toBe("clipboard-write; microphone 'src'");
+    expect(frame.getAttribute("allow")).toBe("clipboard-write; display-capture 'src'; microphone 'src'");
     expect(frame.getAttribute("sandbox")).not.toContain("allow-popups-to-escape-sandbox");
     const send = (data: object, origin = surface.origin, source: Window | null = frame.contentWindow) => window.dispatchEvent(new MessageEvent("message", { origin, source, data }));
     await act(async () => {
@@ -30,6 +30,16 @@ it("uses target frame policy and exact peer review routing, retaining a link whe
     await act(async () => send({ type: "hosty:request-permission-review", appId: "victim", url: "https://evil.test" }));
     expect(open).toHaveBeenLastCalledWith("https://core.test/install/permissions/tool", "_blank", "noopener,noreferrer");
     expect(element.querySelector("a")!.href).toBe("https://core.test/install/permissions/tool");
+    open.mockClear();
+    await act(async () => {
+      send({ type: "hosty:request-installation-confirmation", requestId: "a".repeat(48) }, "https://foreign.test");
+      send({ type: "hosty:request-installation-confirmation", requestId: "a".repeat(48) }, surface.origin, window);
+      send({ type: "hosty:request-installation-confirmation", requestId: "../permissions/victim" });
+    });
+    expect(open).not.toHaveBeenCalled();
+    await act(async () => send({ type: "hosty:request-installation-confirmation", requestId: "a".repeat(48), url: "https://evil.test", appId: "victim" }));
+    expect(open).toHaveBeenCalledExactlyOnceWith("https://core.test/install/confirm/" + "a".repeat(48), "_blank", "noopener,noreferrer");
+    expect(frame.getAttribute("sandbox")).not.toContain("allow-popups-to-escape-sandbox");
     const post = vi.spyOn(frame.contentWindow!, "postMessage");
     await act(async () => send({ type: "hosty:request-token", audience: "hosty:core" }));
     expect(post).not.toHaveBeenCalled();
@@ -47,7 +57,7 @@ it("delivers theme changes without navigating the tool and grants popup escape o
     await act(async () => frame.dispatchEvent(new Event("load")));
     await act(async () => root.render(<HostyAppFrame surface={surface} title="Tool" theme="dark" themePreference="dark" />));
     expect(element.querySelector("iframe")).toBe(frame); expect(frame.src).toBe(src);
-    expect(frame.getAttribute("allow")).toBe("clipboard-write"); expect(frame.getAttribute("sandbox")).toContain("allow-popups-to-escape-sandbox");
+    expect(frame.getAttribute("allow")).toBe("clipboard-write; display-capture 'src'"); expect(frame.getAttribute("sandbox")).toContain("allow-popups-to-escape-sandbox");
     expect(post).toHaveBeenLastCalledWith({ type: "hosty:shell-theme", theme: "dark", preference: "dark" }, surface.origin);
   } finally { await act(async () => root.unmount()); element.remove(); }
 });

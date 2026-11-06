@@ -1,0 +1,45 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, expect, it, vi } from "vitest";
+import { ConnectionUsage } from "./usage.js";
+import { codexUsage, absentUsage } from "../harness/provider-usage.js";
+import { UsageSubscriptions } from "./usage-subscriptions.js";
+const directories: string[] = [];
+afterEach(async () => { vi.useRealTimers(); for (const directory of directories.splice(0)) await rm(directory, { recursive: true, force: true }); });
+const cache = async () => { const directory = await mkdtemp(path.join(os.tmpdir(), "usage-test-")); directories.push(directory); return { directory, store: new ConnectionUsage(directory) }; };
+const sample = () => codexUsage({ rateLimits: { primary: { usedPercent: 25 } } });
+it("coalesces refreshes, retains latest state across restart, and isolates revisions/accounts", async () => {
+  const { directory, store } = await cache(), fetch = vi.fn(async () => sample());
+  const values = await Promise.all([store.read("id", "key", true, fetch, async () => true), store.read("id", "key", true, fetch, async () => true)]);
+  expect(fetch).toHaveBeenCalledTimes(1); expect(values[0]).toEqual(values[1]);
+  await store.read("id", "key", true, fetch, async () => true); expect(fetch).toHaveBeenCalledTimes(1);
+  await store.close();
+  const restarted = new ConnectionUsage(directory);
+  expect(await restarted.cached("id", "key")).toMatchObject({ stale: true, rows: sample().rows.map(row => expect.objectContaining({ id: row.id, used: 25 })) });
+  expect((await restarted.cached("id", "replacement")).rows).toEqual([]);
+  await restarted.read("id", "replacement", true, fetch, async () => false);
+  expect((await restarted.cached("id", "replacement")).rows).toEqual([]);
+  await restarted.close();
+});
+it("does not infer quota recovery when a reset passes or an empty refresh arrives", async () => {
+  const { store } = await cache();
+  const usage = sample(); usage.observedAt = "2000-01-01T00:00:00Z";
+  store.accept("id", "key", usage);
+  expect(await store.cached("id", "key")).toMatchObject({ stale: true, rows: usage.rows });
+  store.accept("id", "key", absentUsage());
+  expect(await store.cached("id", "key")).toMatchObject({ state: "unavailable", stale: true, rows: usage.rows });
+  await store.close();
+});
+it("shares snapshot sampling and stops work at the last unsubscribe without refreshing a provider", async () => {
+  vi.useFakeTimers();
+  const usage = vi.fn(async () => sample());
+  const subscriptions = new UsageSubscriptions({ usage });
+  const one = vi.fn(), two = vi.fn();
+  const stopOne = subscriptions.subscribe("id", one), stopTwo = subscriptions.subscribe("id", two);
+  await vi.advanceTimersByTimeAsync(10);
+  expect(usage).toHaveBeenCalledTimes(1); expect(one).toHaveBeenCalledOnce(); expect(two).toHaveBeenCalledOnce();
+  expect(usage).toHaveBeenLastCalledWith("id", false);
+  stopOne(); stopTwo(); await vi.advanceTimersByTimeAsync(3000);
+  expect(usage).toHaveBeenCalledTimes(1); subscriptions.close();
+});

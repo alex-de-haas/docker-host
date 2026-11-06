@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+
 import { Fragment, useMemo, useState } from "react";
 import { ChevronRight, Sparkles } from "lucide-react";
 import { askAssistant } from "@hosty-sdk/app";
@@ -188,7 +190,7 @@ function LogDetails({ record }: { record: OtlpLogRow }) {
         <LogField label="Timestamp" value={new Date(record.timestampUnixMs).toLocaleString()} />
         <LogField label="Severity" value={`${record.severityText || "LOG"} · ${record.severityNumber}`} mono={false} />
         {source && <LogField label="Service" value={source} mono={false} />}
-        {record.traceId && <LogField label="Trace ID" value={record.traceId} />}
+        {record.traceId && <div className="space-y-1"><LogField label="Trace ID" value={record.traceId} /><Link className="text-xs text-primary underline" href={`/traces?traceId=${encodeURIComponent(record.traceId)}`}>Open trace</Link></div>}
         {record.spanId && <LogField label="Span ID" value={record.spanId} />}
       </dl>
       {attributes.length > 0 ? (

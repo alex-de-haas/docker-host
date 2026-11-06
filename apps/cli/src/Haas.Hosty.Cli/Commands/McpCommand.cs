@@ -183,9 +183,6 @@ internal sealed partial class McpCommand(CommandContext context)
 
         private readonly SemaphoreSlim gate = new(1, 1);
         private IReadOnlyList<ExportedTool> current = [];
-        // The skills of the apps that actually contributed tools, refreshed with them. A skill for an
-        // app whose tools did not make it would describe a surface the client cannot see.
-        private IReadOnlyList<AppSkill> skills = [];
         private AgentDirectoryResponse? directory;
 
         public event Action? Changed;
@@ -260,61 +257,6 @@ internal sealed partial class McpCommand(CommandContext context)
             }
         }
 
-        /// <summary>
-        /// One skill per app still represented in the catalog.
-        /// </summary>
-        /// <remarks>
-        /// Read after the catalog rather than beside it, and keyed off what the catalog kept: an app
-        /// whose tools were all filtered out (nothing declared read-only) contributes no skill, because
-        /// instructions for a surface the client cannot see are worse than silence.
-        /// <para>
-        /// A skill that cannot be read is skipped rather than fatal — the connector's job is tools, and
-        /// losing prose must not cost the session its catalog.
-        /// </para>
-        /// </remarks>
-        private async Task<IReadOnlyList<AppSkill>> ReadSkillsAsync(
-            IReadOnlyList<ExportedTool> tools,
-            CancellationToken cancellationToken)
-        {
-            var appIds = tools.Select(tool => tool.Target.AppId).Where(id => id != "hosty:core").Distinct(StringComparer.Ordinal).ToArray();
-            var found = new List<AppSkill>();
-            foreach (var appId in appIds)
-            {
-                try
-                {
-                    var skill = await control.GetAsync<AppSkill>(
-                        $"apps/{Uri.EscapeDataString(appId)}/agent-skill",
-                        cancellationToken);
-                    if (skill is not null && !string.IsNullOrWhiteSpace(skill.Markdown)
-                        && directory?.Targets.FirstOrDefault(target => target.Id == appId)?.Skills.Any(approval =>
-                            approval.Key == "agent" && approval.ApprovedDigest == SkillDigest(skill.Markdown)) == true)
-                    {
-                        found.Add(skill);
-                    }
-                }
-                catch (CoreControlException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
-                {
-                    // Declaring no skill is the ordinary case, and this runs on every poll: logging it
-                    // would put a line per app per refresh into the operator's diagnostics, which is
-                    // how a useful stream becomes one nobody reads.
-                }
-                catch (Exception ex) when (ex is CoreControlException or CoreControlTimeoutException)
-                {
-                    diagnostics.WriteLine($"[hosty mcp] {appId}: agent skill could not be read ({ex.Message}); continuing without it.");
-                }
-            }
-
-            return found;
-        }
-
-        public async Task<IReadOnlyList<AppSkill>> GetSkillsAsync(CancellationToken cancellationToken)
-        {
-            // Ensures the catalog is built first: the skills are keyed off what it kept, so asking
-            // before it exists would answer empty and stay empty for the session.
-            await GetAsync(cancellationToken);
-            return skills;
-        }
-
         private async Task RefreshAsync(CancellationToken cancellationToken)
         {
             await gate.WaitAsync(cancellationToken);
@@ -334,7 +276,6 @@ internal sealed partial class McpCommand(CommandContext context)
                     .SelectMany(target => target.Interfaces.Where(surface => surface.Readiness == "ready" && !string.IsNullOrWhiteSpace(surface.Url))
                         .Select(surface => new AppMcpTarget(target.Id, target.DisplayName, surface.Key, surface.Url!))).ToArray();
                 current = await catalog.BuildAsync(targets, cancellationToken);
-                skills = await ReadSkillsAsync(current, cancellationToken);
             }
             catch (Exception ex) when (ex is CoreControlException or CoreControlTimeoutException)
             {
@@ -368,7 +309,6 @@ internal sealed partial class McpCommand(CommandContext context)
     [JsonSourceGenerationOptions(
         PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
         PropertyNameCaseInsensitive = true)]
-    [JsonSerializable(typeof(AppSkill))]
     [JsonSerializable(typeof(AgentDirectoryResponse))]
     [JsonSerializable(typeof(McpAppsResponse))]
     [JsonSerializable(typeof(AppHealthSummary))]

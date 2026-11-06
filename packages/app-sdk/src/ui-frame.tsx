@@ -69,6 +69,7 @@ export function HostyAppFrame(props: HostyAppFrameProps) {
     const view = callbacks.current.view;
     return host.registerFrame(frame, surface, ready => setConnection(current => ({ ready, generation: current.generation + (ready ? 1 : 0) })),
       { viewId: defaultViewId, workspaceId: "default", chrome: { navigation: "hide", tools: { launcher: "hide" } }, ...view,
+        onSurfaceState: state => callbacks.current.view?.onSurfaceState?.(state),
         navigate: next => {
           const current = callbacks.current;
           if (current.view?.navigate) return current.view.navigate(next);
@@ -100,10 +101,14 @@ export function HostyAppFrame(props: HostyAppFrameProps) {
       const attention = parseActiveFrameAttention(event, frame, source); if (attention !== null) current.onAttention?.(attention);
       const permission = parseActiveFramePermissionReview(event, frame, source, surface.appId);
       const mcp = parseFrameMcpReview(event, frame, source, surface.appId);
+      const confirmation = event.data?.type === "hosty:request-installation-confirmation"
+        && typeof event.data.requestId === "string" && /^[a-f0-9]{48}$/.test(event.data.requestId) ? event.data.requestId : null;
       const core = host?.getSnapshot().bootstrap?.coreOrigin;
-      if (core && (permission || mcp)) {
-        const url = mcp ? new URL(`/install/agents/${encodeURIComponent(mcp.appId)}/${encodeURIComponent(mcp.targetAppId)}`, core).href : permissionReviewUrl(core, surface.appId);
-        setReview(url); window.open(url, "_blank", "noopener,noreferrer");
+      if (core && (permission || mcp || confirmation)) {
+        const url = confirmation ? new URL(`/install/confirm/${confirmation}`, core).href : mcp ? new URL(`/install/agents/${encodeURIComponent(mcp.appId)}/${encodeURIComponent(mcp.targetAppId)}`, core).href : permissionReviewUrl(core, surface.appId);
+        // The requesting app owns receipt polling and its retry link; the host owns no operation state.
+        if (!confirmation) setReview(url);
+        window.open(url, "_blank", "noopener,noreferrer");
       }
       current.onMessage?.(event, frame);
     };
@@ -127,7 +132,7 @@ export function HostyAppFrame(props: HostyAppFrameProps) {
   return <>
     {review && <><SdkChromeStyles /><a data-hosty-sdk className="hosty-panel-review" href={review} target="_blank" rel="noopener noreferrer">Review access in Core</a></>}
     <iframe ref={ref} className={className} title={title} src={launch} sandbox={frameSandbox(surface.framePolicy)}
-      allow={surface.framePolicy.microphone ? "clipboard-write; microphone 'src'" : "clipboard-write"}
+      allow={surface.framePolicy.microphone ? "clipboard-write; display-capture 'src'; microphone 'src'" : "clipboard-write; display-capture 'src'"}
       style={{ border: 0, height: "100%", width: "100%", colorScheme: resolvedTheme }} onLoad={() => setLoaded(true)} />
   </>;
 }

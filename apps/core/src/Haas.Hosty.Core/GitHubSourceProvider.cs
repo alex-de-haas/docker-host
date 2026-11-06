@@ -4,12 +4,12 @@ using System.Text.Json;
 namespace Haas.Hosty.Core;
 
 // Only fixed provider authorities receive credentials. Redirects are disabled by the registered client.
-internal sealed partial class GitHubSourceProvider(HttpClient client, IConfiguration config, IClock clock, IPublicationProvider? publication = null) : ISourceProvider
+internal sealed partial class GitHubSourceProvider(HttpClient client, IConfiguration config, IClock clock, IPublicationProvider? publication = null, PullRequestProviderBudget? budget = null, PullRequestObservationCache? observationCache = null) : ISourceProvider
 {
     // Public registration identifier for Hosty's device flow; no client secret is distributed.
     internal const string DefaultGitHubClientId = "Ov23liDBHP5MgRKVV30I";
     public SourceProviderDescriptor Descriptor => new("github", "GitHub", ["device", "pat"], ["repositories", "private-sources", "pull-requests"]);
-    public IPublicationProvider Publication { get; } = publication ?? new GitHubPublicationProvider(client, clock);
+    public IPublicationProvider Publication { get; } = publication ?? new GitHubPublicationProvider(client, clock, budget, observationCache);
     public string? ClientId => string.IsNullOrWhiteSpace(config["ProviderConnections:GitHubClientId"])
         ? DefaultGitHubClientId : config["ProviderConnections:GitHubClientId"]!.Trim();
     private const string TokenUrl = "https://github.com/login/oauth/access_token";

@@ -112,7 +112,7 @@ public sealed class WorkspaceDiscardHttpTests
     }
 
     [Fact]
-    public async Task DiscardCannotUseAnotherUsersReviewOrReadTheirRemovalReceipt()
+    public async Task LegacyDiscardKeepsReviewBindingButSharesAcceptedRemovalReceipt()
     {
         await using var f = await CreateAsync();
         var plan = await PlanAsync(f);
@@ -122,11 +122,11 @@ public sealed class WorkspaceDiscardHttpTests
         using var client = f.Host.CreateClient();
         client.DefaultRequestHeaders.Authorization = f.Client.DefaultRequestHeaders.Authorization;
         client.DefaultRequestHeaders.Add("X-Hosty-User-Token", other.AccessToken);
-        Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync(f.Route + "/plan")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync(f.Route + "/plan")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync(f.Route + "/apply", body)).StatusCode);
         Assert.True(Directory.Exists(f.Tree.Path));
         Assert.Equal(HttpStatusCode.OK, (await f.Client.PostAsJsonAsync(f.Route + "/apply", body)).StatusCode);
         var result = await client.GetAsync(f.Route + "/status?requestId=" + requestId);
-        Assert.Contains(result.StatusCode, new[] { HttpStatusCode.NotFound, HttpStatusCode.Forbidden });
+        Assert.Equal(HttpStatusCode.OK, result.StatusCode);
     }
 }

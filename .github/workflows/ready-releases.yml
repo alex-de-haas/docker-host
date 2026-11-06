@@ -1,0 +1,281 @@
+name: Ready releases
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      force-rebuild:
+        description: Explicitly rebuild all candidates instead of reusing verified artifacts
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: read
+      attestations: read
+      packages: read
+    outputs:
+      source: ${{ steps.validation.outputs.source-sha }}
+      run-id: ${{ steps.validation.outputs.run-id }}
+      images: ${{ steps.plan.outputs.images }}
+      has-images: ${{ steps.plan.outputs.has-images }}
+      platform: ${{ steps.plan.outputs.platform }}
+      platform-publish: ${{ steps.plan.outputs.platform-publish }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - uses: ./.github/actions/ci-validation-gate
+        id: validation
+        with:
+          token: ${{ github.token }}
+          components: core,cli,shell,desktop,documents,marketplace,harness,telemetry-backend,telemetry-ui,demo-app,whisper,opus
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.validation.outputs.source-sha }}
+          fetch-depth: 0
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Select artifact builds independently of check selection
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLISH_SOURCE_SHA: ${{ steps.validation.outputs.source-sha }}
+          VALIDATED_CI_RUN_ID: ${{ steps.validation.outputs.run-id }}
+          FORCE_REBUILD: ${{ inputs.force-rebuild || false }}
+        run: node scripts/releases/prepare.mjs
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: release-plan
+          path: |
+            release-plan/release-plan.json
+            release-plan/*.inputs.json
+            release-plan/contexts.tar
+          include-hidden-files: true
+
+  images:
+    needs: prepare
+    if: needs.prepare.outputs.has-images == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.images) }}
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.source }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: release-plan
+          path: release-plan
+      - name: Restore the exact context including executable modes and symlinks
+        run: tar -xf release-plan/contexts.tar -C release-plan
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
+        with:
+          driver-opts: image=${{ matrix.builder }}
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Build only the selected exact context
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc
+        with:
+          context: release-plan/contexts/${{ matrix.id }}
+          file: release-plan/contexts/${{ matrix.id }}/${{ matrix.dockerfile }}
+          platforms: ${{ matrix.platforms }}
+          build-args: ${{ matrix.buildArgs }}
+          push: true
+          tags: ${{ matrix.repository }}:candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          provenance: mode=max
+          sbom: true
+      - name: Record original build inputs and source
+        env:
+          IMAGE_ID: ${{ matrix.id }}
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        run: node scripts/releases/artifacts.mjs image
+      - uses: actions/attest@v4
+        with:
+          predicate-type: https://hosty.dev/attestations/release-artifact/v1
+          predicate-path: release-artifacts/predicate.json
+          subject-name: ${{ matrix.repository }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: image-${{ matrix.id }}
+          path: release-artifacts/${{ matrix.id }}.json
+
+  native:
+    needs: prepare
+    if: needs.prepare.outputs.platform == 'true'
+    timeout-minutes: 90
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-latest, rid: osx-arm64, suffix: darwin-arm64 }
+          - { os: ubuntu-24.04-arm, rid: linux-arm64, suffix: linux-arm64 }
+          - { os: ubuntu-latest, rid: linux-x64, suffix: linux-x64 }
+          - { os: windows-latest, rid: win-x64, suffix: windows-x64.exe }
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    env:
+      HostyBuildRepository: ${{ github.server_url }}/${{ github.repository }}
+      RID: ${{ matrix.rid }}
+      ARTIFACT_SUFFIX: ${{ matrix.suffix }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.source }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - uses: ./.github/actions/setup-dotnet
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: release-plan
+          path: release-plan
+      - name: Install Native AOT toolchain
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang zlib1g-dev
+      - name: Verify the Windows bootstrap feed contract
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./scripts/test-platform-feed-bootstrap.ps1
+      - name: Build the matched native pair
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-artifacts
+          dotnet publish apps/cli/src/Haas.Hosty.Cli/Haas.Hosty.Cli.csproj --configuration Release --runtime "$RID" --self-contained true --output native-cli
+          dotnet publish apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj --configuration Release --runtime "$RID" --self-contained true --output native-core
+          ext=""
+          if [[ "$RID" == win-* ]]; then ext=".exe"; fi
+          cp "native-cli/hosty$ext" "release-artifacts/hosty-$ARTIFACT_SUFFIX"
+          cp "native-core/hosty-core$ext" "release-artifacts/hosty-core-$ARTIFACT_SUFFIX"
+          node scripts/releases/artifacts.mjs native
+      - uses: actions/attest@v4
+        with:
+          predicate-type: https://hosty.dev/attestations/release-artifact/v1
+          predicate-path: release-artifacts/cli-predicate.json
+          subject-path: release-artifacts/hosty-${{ matrix.suffix }}
+      - uses: actions/attest@v4
+        with:
+          predicate-type: https://hosty.dev/attestations/release-artifact/v1
+          predicate-path: release-artifacts/core-predicate.json
+          subject-path: release-artifacts/hosty-core-${{ matrix.suffix }}
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: native-${{ matrix.rid }}
+          path: release-artifacts/hosty-*
+
+  publish-apps:
+    needs: [prepare, images]
+    if: always() && needs.prepare.result == 'success' && needs.images.result != 'cancelled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write
+      packages: write
+      attestations: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.source }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: release-plan
+          path: release-plan
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - uses: actions/download-artifact@v8.0.2
+        continue-on-error: true
+        if: needs.prepare.outputs.has-images == 'true'
+        with:
+          pattern: image-*
+          merge-multiple: true
+          path: release-artifacts
+      - uses: ./.github/actions/setup-dotnet
+      - name: Build the consumer manifest validator
+        run: dotnet build apps/core/tests/Haas.Hosty.ReleaseValidation/Haas.Hosty.ReleaseValidation.csproj --configuration Release
+      - name: Verify complete apps, retain releases, then advance configured automatic feeds
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/releases/publish.mjs
+
+  publish-platform:
+    needs: [prepare, native]
+    if: always() && needs.prepare.result == 'success' && needs.prepare.outputs.platform-publish == 'true' && (needs.native.result == 'success' || needs.native.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write
+      attestations: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.source }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: release-plan
+          path: release-plan
+      - uses: actions/download-artifact@v8.0.2
+        if: needs.native.result == 'success'
+        with:
+          pattern: native-*
+          merge-multiple: true
+          path: release-artifacts
+      - name: Publish immutable native assets and advance the configured automatic feed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/releases/native-publish.mjs

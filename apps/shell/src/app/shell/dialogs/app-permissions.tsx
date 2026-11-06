@@ -24,10 +24,6 @@ const permissionLabels: Record<string, string> = {
   "apps.workspaces.read": "Development workspace information",
   "apps.workspaces.cleanup": "Clean up completed workspaces",
   "apps.mcp.access.request": "Request reviewed MCP access",
-  "apps.sandboxes.read": "Authorized test environments",
-  "apps.sandboxes.manage": "Create and manage test environments",
-  "apps.sandboxes.inspect": "Inspect your test environments across apps",
-  "apps.sandboxes.operate": "Manage your test environments across apps",
   "core.environments.read": "Owned Core environments",
   "core.environments.manage": "Create and manage owned Core environments",
   "core.environments.inspect": "Inspect your Core environments across apps",
@@ -96,6 +92,7 @@ export function AppPermissions({ app, active = true }: { app: CoreApp; active?: 
     setMessage("Change permissions in Core, then return here and refresh.");
   }
   const permissions = state ? [...new Set([...state.required, ...state.optional, ...state.acceptedRequired, ...state.acceptedOptional, ...state.granted])] : [];
+  const unsupportedPermissions = [...(state?.unsupportedRequired ?? []), ...(state?.unsupportedOptional ?? [])];
   return <section className="max-w-[920px] space-y-4 text-sm" aria-label="App permissions" aria-busy={loading}>
     <header className="flex flex-wrap items-start justify-between gap-3">
       <div className="space-y-1"><h3 className="font-medium">Core permissions</h3><p className="text-xs text-muted-foreground">Access confirmed by Core. Expand a permission to read what it allows.</p></div>
@@ -105,7 +102,7 @@ export function AppPermissions({ app, active = true }: { app: CoreApp; active?: 
     {!state && <p role="status" className="flex items-center gap-2 py-3 text-muted-foreground">{loading && <HostyLoader label={null} className="size-5" />}{loading ? "Checking the app manifest…" : "Permission information is unavailable."}</p>}
     {state && state.status !== "known" && !state.error && <p role="status">Permission information is not ready. Refresh to check the current manifest.</p>}
     {state?.error && <p role="alert" className="rounded-xl border border-warning/30 bg-warning-soft p-3 text-warning-foreground">The manifest could not be checked. {state.error}</p>}
-    {state?.status === "known" && !!state.unsupportedRequired?.length && <p role="alert" className="text-destructive-foreground">Core does not support these required permissions: {state.unsupportedRequired.join(", ")}. Install compatible app/Core versions or wait for an app update.</p>}
+    {state?.status === "known" && !!unsupportedPermissions.length && <p role="alert" className="text-warning-foreground">This Core does not support these requested permissions: {unsupportedPermissions.join(", ")}. Update the app or Core. These permissions are not granted; some app features may not work.</p>}
     {state?.status === "known" && state.missingRequired.length > 0 && <p className="rounded-xl border border-destructive/25 bg-destructive-soft p-3 text-destructive-foreground">Required permissions need approval. Operations using these permissions are unavailable until approval.</p>}
     {state?.status === "known" && state.reviewRequired && <p>Manifest declarations have changed and need review.</p>}
     {state?.status === "known" && !permissions.length && <p>This app requests no Core permissions.</p>}
@@ -136,7 +133,7 @@ export function AppPermissions({ app, active = true }: { app: CoreApp; active?: 
               {permissionLabels[permission] ?? permission}
               {change && <span className="mt-0.5 block text-xs text-warning-foreground">{change}</span>}
             </span>
-            <span className={`flex max-w-32 shrink-0 items-center gap-1.5 text-xs ${attention ? "text-destructive-foreground" : granted ? "text-success-foreground" : "text-muted-foreground"}`}>
+            <span className={`flex max-w-32 shrink-0 items-center gap-1.5 text-xs ${unsupported ? "text-warning-foreground" : attention ? "text-destructive-foreground" : granted ? "text-success-foreground" : "text-muted-foreground"}`}>
               <StatusIcon aria-hidden="true" className="size-3.5" />{status}
             </span>
           </summary>
@@ -150,7 +147,7 @@ export function AppPermissions({ app, active = true }: { app: CoreApp; active?: 
     </div>)}
     {!!state?.unconfirmedRoles.length && <p className="rounded-xl border border-warning/30 bg-warning-soft p-3 text-warning-foreground">Provider roles require a separate app update review: {state.unconfirmedRoles.join(", ")}. Saving permissions does not approve these roles.</p>}
     {!!app.confirmedRoles?.length && <section className="space-y-2" aria-label="Confirmed provider roles"><h3 className="text-xs font-medium text-muted-foreground">Provider roles</h3><ul className="divide-y rounded-xl border">{app.confirmedRoles.map(role => <li key={role} className="flex flex-wrap items-center gap-3 px-4 py-3"><ShieldCheck className="size-4 shrink-0 text-muted-foreground" aria-hidden /><span className="min-w-0 flex-1 break-words">{role}</span><Badge variant="secondary">Confirmed role</Badge></li>)}</ul></section>}
-    {state?.status === "known" && <footer className="flex flex-wrap items-center justify-between gap-3 border-t pt-3"><p className="text-xs text-muted-foreground">Changes are reviewed and confirmed in Core.</p><Button type="button" variant="outline" size="sm" disabled={loading || !!error || !!state.unsupportedRequired?.length} onClick={() => void review()}>Review permissions<ExternalLink className="size-3.5" /></Button></footer>}
+    {state?.status === "known" && <footer className="flex flex-wrap items-center justify-between gap-3 border-t pt-3"><p className="text-xs text-muted-foreground">Changes are reviewed and confirmed in Core.</p><Button type="button" variant="outline" size="sm" disabled={loading || !!error} onClick={() => void review()}>Review permissions<ExternalLink className="size-3.5" /></Button></footer>}
     {message && <p><a href={coreReviewUrl} target="_blank" rel="noopener noreferrer" className="underline">Change permissions in Core</a></p>}
     {message && <p role="status">{message}</p>}
   </section>;

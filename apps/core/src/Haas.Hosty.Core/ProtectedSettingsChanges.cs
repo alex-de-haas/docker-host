@@ -51,6 +51,7 @@ internal sealed class ProtectedSettingsChanges(IClock clock, CorePublicOriginRes
         if (path == "/api/auth/invitations/accept") return false;
         if (HttpMethods.IsGet(request.Method) || HttpMethods.IsHead(request.Method) || HttpMethods.IsOptions(request.Method)) return false;
         return path is "/api/core/settings" or "/api/core/source" or "/api/core/cloudflare/connect" or "/api/core/cloudflare/disconnect"
+            or "/api/core/update-feed" or "/api/apps/{appId}/update-source/apply" or "/api/apps/update-source/apply"
             or "/api/core/public-origin/publish" or "/api/core/public-origin/unpublish"
             || path.StartsWith("/api/auth/users/", StringComparison.Ordinal)
             || path is "/api/auth/invitations" || path.StartsWith("/api/auth/invitations/", StringComparison.Ordinal)
@@ -116,7 +117,10 @@ internal sealed class ProtectedSettingsChanges(IClock clock, CorePublicOriginRes
                 context.RequestServices.GetRequiredService<UserDirectoryStore>(), clock, context.RequestAborted);
             if (currentUser is null || currentUser.Id != user.Id || Caller(request) != caller || (!personal && !AppAccessPolicy.IsAdmin(currentUser)))
                 return Error(403, "settings_authority_changed", "Your authority changed. Sign in and review again.");
-            var snapshot = await SnapshotAsync(context, currentUser);
+            (string Revision, JsonObject Before) snapshot;
+            try { snapshot = await SnapshotAsync(context, currentUser, proposed); }
+            catch (AppLifecycleException failure) { return Error(409, failure.Code, failure.Message); }
+            catch (ArgumentException failure) { return Error(400, "settings_change_invalid", failure.Message); }
             var id = request.Headers[Header].ToString();
             ProtectedSettingsChange? entry;
             lock (sync)
@@ -203,7 +207,7 @@ internal sealed class ProtectedSettingsChanges(IClock clock, CorePublicOriginRes
     private SettingsChangeView View(ProtectedSettingsChange entry) => new(entry.Id, entry.Status,
         $"{origins.Effective.TrimEnd('/')}/settings/confirm/{entry.Id}", entry.Error);
 
-    private static async Task<(string Revision, JsonObject Before)> SnapshotAsync(HttpContext context, HostUserRecord actor)
+    private static async Task<(string Revision, JsonObject Before)> SnapshotAsync(HttpContext context, HostUserRecord actor, JsonNode? proposed)
     {
         var services = context.RequestServices; var ct = context.RequestAborted; var path = Route(context.Request);
         var before = new JsonObject(); var version = new List<string>();
@@ -212,6 +216,12 @@ internal sealed class ProtectedSettingsChanges(IClock clock, CorePublicOriginRes
             foreach (var row in CoreSettingsEndpoints.Build(services.GetRequiredService<CoreSettingsService>(), services.GetRequiredService<CorePublicOriginResolver>()).Settings)
                 before[row.Key] = row.Value;
             version.Add(before.ToJsonString());
+            if (path == "/api/core/update-feed")
+            {
+                var source = Haas.Hosty.Releases.PlatformFeedFiles.ReadSource(services.GetRequiredService<HostyCoreRuntimeConfig>().DataRoot);
+                before.Clear(); before["indexRef"] = source?.IndexRef; before["feedId"] = source?.FeedId;
+                version.Add(source?.Revision ?? "unselected");
+            }
             if (path == "/api/core/source")
             {
                 var source = await services.GetRequiredService<CoreDevelopmentService>().SourceSettingsAsync(ct);
@@ -227,6 +237,32 @@ internal sealed class ProtectedSettingsChanges(IClock clock, CorePublicOriginRes
                 version.Add(connection?.UpdatedAt.ToString() ?? ""); version.Add(connection?.Status ?? "");
                 before["connection"] = connection?.Status ?? "Not connected";
             }
+        }
+        else if (path is "/api/apps/{appId}/update-source/apply" or "/api/apps/update-source/apply")
+        {
+            var items = path == "/api/apps/{appId}/update-source/apply"
+                ? new JsonArray(new JsonObject { ["appId"] = Parameter(context.Request, "appId"), ["planDigest"] = proposed?["planDigest"]?.DeepClone() })
+                : proposed?["items"] as JsonArray ?? throw new ArgumentException("Provide the reviewed source changes.");
+            if (items.Count is < 1 or > 100) throw new ArgumentException("Review between one and 100 source changes.");
+            var changes = new JsonArray();
+            foreach (var item in items)
+            {
+                if (item is not JsonObject) throw new ArgumentException("A source change must be an object.");
+                var appId = (item?["appId"] as JsonValue)?.GetValueKind() == JsonValueKind.String ? item!["appId"]!.GetValue<string>() : null;
+                appId = appId ?? throw new ArgumentException("Missing application identity.");
+                var digest = (item?["planDigest"] as JsonValue)?.GetValueKind() == JsonValueKind.String ? item!["planDigest"]!.GetValue<string>() : null;
+                digest = digest ?? throw new ArgumentException("Missing reviewed plan digest.");
+                var plan = services.GetRequiredService<CoreLifecycleService>().ReadUpdateSourcePlan(appId, digest);
+                var app = await services.GetRequiredService<AppRegistryStore>().GetAppAsync(appId, ct)
+                    ?? throw new AppLifecycleException("app_not_found", "The reviewed application is no longer installed.");
+                version.Add(CoreJson.Text(plan));
+                version.Add(CoreJson.Text(new AppUpdateSourceBinding(app.ManifestUrl, app.FeedsUrl, app.FollowedFeedId)));
+                version.Add($"{app.InstalledAt:O}\n{app.Version}\n{app.UpdateSourceRevision}\n{app.DevModeId}");
+                changes.Add((JsonNode)new JsonObject { ["app"] = app.DisplayName ?? app.Id,
+                    ["from"] = SourceDescription(plan.From), ["to"] = SourceDescription(plan.To),
+                    ["version"] = plan.TargetVersion, ["ordering"] = plan.Ordering });
+            }
+            before["sourceChanges"] = changes;
         }
         else
         {
@@ -279,15 +315,24 @@ internal sealed class ProtectedSettingsChanges(IClock clock, CorePublicOriginRes
         return (Hash(string.Join("\n", version)), before);
     }
 
+    private static string SourceDescription(AppUpdateSourceBinding source)
+        => source.FeedsUrl is { } url ? $"{url} · feed {source.FeedId}" : source.ManifestUrl ?? "No source";
+
     private static string Title(HttpRequest request) => Route(request).StartsWith("/api/auth/credentials/", StringComparison.Ordinal) ? "Revoke access"
         : Route(request).StartsWith("/api/auth/", StringComparison.Ordinal) ? "Confirm user access change" : "Confirm host settings";
     private static string Summary(HttpContext context, JsonNode? proposed, JsonObject before)
     {
+        if (before["sourceChanges"] is JsonArray changes)
+        {
+            static string Encode(JsonNode? value) => WebUtility.HtmlEncode(value?.ToString() ?? "");
+            return "<p>Change future update sources. Installed versions, running applications and data stay in place. Updating requires a separate review.</p><dl>"
+                + string.Join("", changes.Select(change => $"<dt>{Encode(change?["app"])}</dt><dd>{Encode(change?["from"])} → {Encode(change?["to"])}</dd><dd>Available version {Encode(change?["version"])} ({Encode(change?["ordering"])})</dd>")) + "</dl>";
+        }
         var labels = CoreSettingsEndpoints.Build(context.RequestServices.GetRequiredService<CoreSettingsService>(),
             context.RequestServices.GetRequiredService<CorePublicOriginResolver>()).Settings.ToDictionary(s => s.Key,
                 s => $"{s.Group} · {s.Label ?? s.Key}{(s.Unit is { } unit ? $" ({unit})" : "")}");
         string Label(string key) => labels.GetValueOrDefault(key) ?? key switch {
-            "role" => "Role", "disabled" => "Account disabled", "appIds" => "Applications", "email" => "Email", "displayName" => "Name",
+            "indexRef" => "Platform feed index", "feedId" => "Feed", "role" => "Role", "disabled" => "Account disabled", "appIds" => "Applications", "email" => "Email", "displayName" => "Name",
             "overridePath" => "Local source folder", "repository" => "Source repository", "apiToken" => "Cloudflare API token", "token" => "Token",
             "zoneId" => "DNS zone", "accountId" => "Cloudflare account", "hostname" => "Public hostname", "credential" => "Credential",
             "fingerprint" => "Fingerprint", "access" => "Access", "owner" => "Owner", "client" => "OAuth client", "effect" => "Effect", "connection" => "Connection", _ => key };

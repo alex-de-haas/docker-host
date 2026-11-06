@@ -29,3 +29,17 @@ it("does not open a different recorded path behind the displayed filename", () =
   const edits = transcriptEdits(event({ fileEdits: [{ path: "expected.ts", review: { ...ref, path: "other.ts" } }] }));
   expect(edits[0]?.path).toBe("expected.ts"); expect(edits[0]?.review).toBeUndefined();
 });
+
+it("resolves an attached external-workspace chat but refuses detached and private associations", () => {
+  const external = { ...workspace("one"), owner: { kind: "external" as const, reference: "external-task", label: "Codex" },
+    participation: { id: "one", revision: 2, role: "operator" as const, viewerUserId: "me", members: [], eligibleUsers: [], sessions: [
+      { appId: "hosty.harness", userId: "me", sessionId: "session", title: "Attached chat", attached: true, canOpen: true,
+        viewerPath: "/development?session=session", status: "idle", activityAt: null },
+    ] } };
+  expect(resolveTranscriptReview(ref, "session", [external])?.tree.id).toBe("tree-one");
+  external.participation.sessions[0].attached = false;
+  expect(resolveTranscriptReview(ref, "session", [external])).toBeUndefined();
+  external.participation.sessions[0].attached = true;
+  external.participation.sessions[0].canOpen = false;
+  expect(resolveTranscriptReview(ref, "session", [external])).toBeUndefined();
+});

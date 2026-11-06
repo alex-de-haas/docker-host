@@ -13,10 +13,11 @@ Documentation-only changes (`docs/`, `README.md`, `AGENTS.md`) are the exception
 Where the version lives:
 
 - **Platform (`apps/core` + `apps/cli`)** share one version in the root `Directory.Build.props`. Bump it there; do not add `<Version>` to individual `.csproj` files.
-- **`apps/shell`**, **`apps/marketplace`**, **`apps/plans`**, and **`apps/demo-app`** are first-party runtime apps: bump `version` in their respective `manifest.json` (the artifact source of truth) and keep their `package.json` in step. They version independently from the platform.
+- **`apps/shell`**, **`apps/desktop`**, **`apps/marketplace`**, **`apps/documents`**, and **`apps/demo-app`** are first-party runtime apps: bump `version` in their respective `manifest.json` (the artifact source of truth) and keep their `package.json` in step. They version independently from the platform.
 - **`apps/harness`** (Hosty Harness, including its web UI) continues the former Gateway release line. Bump `version` in `apps/harness/manifest.json`, `apps/harness/package.json` and `apps/harness/web/package.json` together. It versions independently from Core and Shell.
 - **`apps/telemetry`** (collector + backend + `apps/telemetry-ui`) ships as one app: bump `version` in `apps/telemetry/manifest.json` and keep the first-party service image tags (`backend`, `ui`) and `apps/telemetry-ui/package.json` in step (`scripts/check-versions.mjs` enforces this). The collector is a third-party image and is exempt.
 - **`apps/whisper`** is an independent local speech runtime app: bump `version` in `apps/whisper/manifest.json` and keep `<Version>` in `apps/whisper/Hosty.Whisper/Hosty.Whisper.csproj` in step. `scripts/check-versions.mjs` checks both.
+- **`apps/opus`** is an independent local translation runtime app: bump `version` in `apps/opus/manifest.json` and keep `apps/opus/package.json` in step. `scripts/check-versions.mjs` checks both.
 - **`apps/shell-swift`** is the native Apple client, not a runtime app: it is installed on the operator's own device rather than on a host, so it has no `manifest.json`. Bump `MARKETING_VERSION` in `apps/shell-swift/Config/Version.xcconfig`. It versions independently from the platform and from `apps/shell`.
 - **`apps/shell-cardputer`** is the native M5Stack Cardputer ADV firmware, not a runtime app. Bump its single version source in `apps/shell-cardputer/version.txt`; ESP-IDF reads that file as `PROJECT_VER`, and `scripts/check-versions.mjs` validates it. It versions independently from every other artifact.
 - **SDK packages** (`packages/app-sdk` → npm `@hosty-sdk/app`, `packages/app-sdk-dotnet/HostySdk.App` → NuGet) version independently from the platform and from each other. Every non-documentation change to a package bumps its version in the same commit (patch/minor per the rules above): `version` in `packages/app-sdk/package.json`, `<Version>` in `HostySdk.App.csproj`. Merging to main publishes automatically — the publish workflows skip the run when the version is already in the registry — and dependent repositories pick releases up via Dependabot, or via a hand-written bump inside the PR that needs the new API.
@@ -85,7 +86,11 @@ docs/
   approval. It stays outside the generated status index. Ideas can be revised,
   combined or discarded; once one becomes concrete enough to plan, develop it in
   the owning feature's `plan.md` and link that work. Recording an idea does not
-  change the vision or create a delivery commitment.
+  change the vision or create a delivery commitment. Idea headings retain stable `I<n>` IDs.
+  Keep `<!-- idea-id-high-water: N -->` in `ideas.md` outside frontmatter; allocate above N and
+  never decrease it. Removed IDs go in `<!-- retired-idea-ids: I3, I8 -->` and are never reused.
+  Validate against the integration target with `node scripts/docs-index.mjs --check --base <ref>`;
+  resolve concurrent allocations by renumbering only the unpublished new idea and its references.
 - A feature folder holds only `feature.md` and `plan.md`; images and other
   non-Markdown assets may sit beside them.
 - Beyond that there are no other documentation folders. A large or cross-cutting
@@ -195,7 +200,7 @@ validates frontmatter, deliverable IDs and relative links. Never edit the
 generated block by hand; run `--fix` after changing any document.
 
 `scripts/docs-index.mjs` is shared by every Hosty repository. The canonical copy
-lives in docker-host and the others carry a byte-identical copy, so change it
+lives in docker-host and the others carry byte-identical copies of it and `scripts/docs-format.mjs`, so change them
 there first.
 
 ## Core Platform Boundary
@@ -310,7 +315,9 @@ there first.
   current in the worktree. On completion, export useful summaries, Finish the test sandbox through
   its owner and verify resource removal. Keep raw evidence JSON, logs, credentials and experimental
   patches out of PRs. Release a lease only after its native consumers stop; remove a workspace only
-  with authorization and successful dirty/unmerged/consumer checks. Preserve incomplete work.
+  within the user's authorized selection. Inspect and report dirty/unmerged source and consumer activity;
+  they are warnings for an explicit unconditional Delete, not extra approval gates. Preserve incomplete
+  work unless its deletion is authorized.
 - If this repository is not registered Hosty source, or the client lacks the supported operation,
   state that limitation and use the repository's already-authorized workflow. Do not install an app,
   invent a grant, change source selection or claim sandbox verification just to bypass the gap.

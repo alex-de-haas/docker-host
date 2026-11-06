@@ -2,6 +2,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { validRules, validDefaults, type ToolRule, type ProviderDefault } from "../mcp/policy.js";
+import { validCoreMigration, type CorePolicyMigration } from "../mcp/core-migration.js";
 import { DEFAULT_WORKFLOW_PROMPT } from "./workflow.js";
 import { CORE_PROVIDER_ID } from "./providers.js";
 import type { ConnectionBinding } from "../connections/registry.js";
@@ -24,6 +25,8 @@ export function validRetention(value: unknown): value is RetentionSettings {
 }
 
 export interface AssistantSettings {
+  /** Stable Core package IDs; contents always follow the installed library. */
+  skillIds?: string[];
   workflowPrompt?: string;
   retention?: RetentionSettings;
   executionMode?: "native" | "docker";
@@ -31,6 +34,7 @@ export interface AssistantSettings {
   translationModels?: Partial<Record<"codex" | "claude", string | null>>;
   mcpToolRules?: Record<string, ToolRule>;
   mcpPolicyMigrated?: string[];
+  mcpCoreMigration?: CorePolicyMigration;
   mcpDefaults?: Record<string, ProviderDefault>;
   mcpSkillApprovals?: Record<string, SkillAcceptance>;
   mcpSkillsMigrated?: boolean;
@@ -126,6 +130,7 @@ export class SettingsStore {
     try {
       const parsed = JSON.parse(await readFile(this.file, "utf8")) as Partial<AssistantSettings>;
       this.cached = withCoreDefaults({
+        skillIds: Array.isArray(parsed.skillIds) && parsed.skillIds.every((id: unknown) => typeof id === "string" && /^[a-f0-9]{64}$/.test(id)) ? parsed.skillIds : undefined,
         workflowPrompt: typeof parsed.workflowPrompt === "string" ? parsed.workflowPrompt : DEFAULT_WORKFLOW_PROMPT,
         retention: validRetention(parsed.retention) ? parsed.retention : { ordinaryDays: parsed.retention === undefined ? this.legacyRetentionDays : null, completedWorkspaceDays: null },
         executionMode: parsed.executionMode === "docker" ? "docker" : "native",
@@ -136,6 +141,7 @@ export class SettingsStore {
         mcpSkillApprovals: validSkillAcceptances(parsed.mcpSkillApprovals) ? parsed.mcpSkillApprovals : {},
         mcpSkillsMigrated: parsed.mcpSkillsMigrated === true,
         mcpToolRules: validRules(parsed.mcpToolRules) ? parsed.mcpToolRules : {},
+        mcpCoreMigration: validCoreMigration(parsed.mcpCoreMigration) ? parsed.mcpCoreMigration : undefined,
         mcpPolicyMigrated: Array.isArray(parsed.mcpPolicyMigrated) ? parsed.mcpPolicyMigrated.filter(v => typeof v === "string") : [],
         systemPrompt: typeof parsed.systemPrompt === "string" ? parsed.systemPrompt : "",
         mcpProviders: isBooleanRecord(parsed.mcpProviders) ? parsed.mcpProviders : {},
@@ -190,6 +196,7 @@ export class SettingsStore {
   ): Promise<AssistantSettings> {
     const current = await this.read();
     const next: AssistantSettings = {
+      skillIds: patch.skillIds ?? current.skillIds,
       workflowPrompt: (patch.workflowPrompt ?? current.workflowPrompt ?? DEFAULT_WORKFLOW_PROMPT).slice(0, MAX_SYSTEM_PROMPT_CHARS),
       retention: patch.retention ?? current.retention ?? { ordinaryDays: this.legacyRetentionDays, completedWorkspaceDays: null },
       executionMode: patch.executionMode ?? current.executionMode ?? "native",
@@ -199,6 +206,7 @@ export class SettingsStore {
       mcpSkillApprovals: patch.mcpSkillApprovals ?? current.mcpSkillApprovals ?? {},
       mcpSkillsMigrated: patch.mcpSkillsMigrated ?? current.mcpSkillsMigrated ?? false,
       mcpToolRules: patch.mcpToolRules ?? current.mcpToolRules ?? {},
+      mcpCoreMigration: patch.mcpCoreMigration ?? current.mcpCoreMigration,
       mcpPolicyMigrated: patch.mcpPolicyMigrated ?? current.mcpPolicyMigrated ?? [],
       immediateHandoffs: patch.immediateHandoffs ?? current.immediateHandoffs ?? false,
       systemPrompt: (patch.systemPrompt ?? current.systemPrompt).slice(0, MAX_SYSTEM_PROMPT_CHARS),

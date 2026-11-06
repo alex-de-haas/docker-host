@@ -4,6 +4,7 @@ import { APP_ACTIVITY_RENEWED } from "@hosty-sdk/app/browser-auth";
 // One connection per Core in this browser context. Most events remain refresh hints; resource
 // consumers opt into sequenced data and own their HTTP/buffer reconciliation during synchronization.
 export const CoreEventNames = {
+  sandboxSnapshot: "sandbox.snapshot",
   resourcesChanged: "resources.changed",
   resourcesSample: "resources.sample",
   appChanged: "app.changed",
@@ -22,7 +23,7 @@ export interface CoreEventSubscription {
   onEvent?: (name: CoreEventName, data: unknown) => void;
   syncDebounceMs?: number;
   /** Optional high-volume or source metadata interest exists only while the page is visible. */
-  topic?: "resources" | "workspaces" | "tool-activity";
+  topic?: "resources" | "workspaces" | "tool-activity" | "sandboxes";
   onStreamState?: (state: CoreStreamState) => void;
   /** The consumer buffers/reconciles payloads itself instead of fetching again for every event. */
   receiveWhileSyncing?: boolean;
@@ -36,6 +37,7 @@ interface Subscriber extends CoreEventSubscription {
 interface Connection {
   source: EventSource | null;
   topics: string;
+  capabilities: Record<string, unknown>;
   state: CoreStreamState;
   pageActive: boolean;
   subscribers: Set<Subscriber>;
@@ -76,10 +78,15 @@ function clearAcknowledgement(connection: Connection) {
   if (connection.acknowledgementTimer !== null) clearTimeout(connection.acknowledgementTimer);
   connection.acknowledgementTimer = null;
 }
+function subscriberState(connection: Connection, subscriber: Subscriber): CoreStreamState {
+  if (!active(connection, subscriber)) return "inactive";
+  const capability = subscriber.topic === "tool-activity" ? "toolActivity" : subscriber.topic;
+  return connection.state === "stream" && capability && connection.capabilities[capability] !== 1 ? "legacy" : connection.state;
+}
 function setState(connection: Connection, state: CoreStreamState) {
   connection.state = state;
   for (const subscriber of connection.subscribers) {
-    subscriber.onStreamState?.(active(connection, subscriber) ? state : "inactive");
+    subscriber.onStreamState?.(subscriberState(connection, subscriber));
   }
 }
 function acknowledge(connection: Connection, state: "stream" | "legacy") {
@@ -103,6 +110,7 @@ function reconcile(connection: Connection, force = false): boolean {
   if (!force && connection.source && connection.source.readyState !== EventSource.CLOSED && topics === connection.topics) return false;
   closeConnection(connection);
   connection.topics = topics;
+  connection.capabilities = {};
   if (!subscribers.length) { setState(connection, "inactive"); return true; }
   setState(connection, "connecting");
   let source: EventSource;
@@ -126,8 +134,12 @@ function reconcile(connection: Connection, force = false): boolean {
     if (!current()) return;
     try {
       const capabilities = JSON.parse((event as MessageEvent).data);
-      if (topics.split(",").every(topic => capabilities[topic === "tool-activity" ? "toolActivity" : topic] === 1))
+      if (capabilities && typeof capabilities === "object") {
+        connection.capabilities = capabilities;
+        // Capabilities belong to each consumer: an older Core lacking sandbox data must not
+        // turn supported resource delivery back into polling on this same connection.
         acknowledge(connection, "stream");
+      }
     } catch { /* Ignore malformed capability messages. */ }
   });
   for (const name of Object.values(CoreEventNames)) source.addEventListener(name, event => {
@@ -163,7 +175,7 @@ function reconcile(connection: Connection, force = false): boolean {
 function getConnection(coreOrigin: string): Connection {
   const existing = connections.get(coreOrigin);
   if (existing) return existing;
-  const connection: Connection = { source: null, topics: "", state: "inactive", pageActive: true,
+  const connection: Connection = { source: null, topics: "", capabilities: {}, state: "inactive", pageActive: true,
     subscribers: new Set(), acknowledgementTimer: null, retryTimer: null, retryAttempt: 0, disposeVisibility: () => {} };
   let wasVisible = document.visibilityState === "visible";
   const onVisibility = () => {
@@ -210,7 +222,7 @@ export function subscribeToCoreEvents(coreOrigin: string, subscription: CoreEven
   // consumers instead wait for acknowledgement so subscription precedes their single history read.
   if (!subscriber.topic && active(connection, subscriber)) void runSync(subscriber);
   if (!reopened) {
-    subscriber.onStreamState?.(active(connection, subscriber) ? connection.state : "inactive");
+    subscriber.onStreamState?.(subscriberState(connection, subscriber));
     if (subscriber.topic && active(connection, subscriber) && connection.source?.readyState === EventSource.OPEN &&
       (connection.state === "stream" || connection.state === "legacy")) void runSync(subscriber);
   }

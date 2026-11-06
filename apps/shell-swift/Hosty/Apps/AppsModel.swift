@@ -89,6 +89,7 @@ final class AppsModel {
     private(set) var coreUpdate: CoreUpdateStatus?
     private(set) var coreUpdateError: String?
     private(set) var isApplyingCoreUpdate = false
+    private var pendingCoreUpdate: CoreUpdateAttempt?
 
     /// `refresh` is the operator's explicit "check now" — it bypasses Core's TTL cache.
     func loadCoreUpdateStatus(refresh: Bool = false) async {
@@ -130,11 +131,20 @@ final class AppsModel {
         coreUpdateError = nil
 
         do {
-            _ = try await session.client.applyCoreUpdate()
-            await waitForCoreToReturn()
+            if pendingCoreUpdate == nil {
+                guard let coreUpdate else {
+                    throw CoreError.invalidResponse("Check Core update availability first.")
+                }
+                pendingCoreUpdate = try CoreUpdateAttempt(status: coreUpdate)
+            }
+            guard let attempt = pendingCoreUpdate else { return }
+            _ = try await session.client.applyCoreUpdate(attempt)
+            await waitForCoreToReturn(requestID: attempt.requestId)
         } catch let error as CoreError {
-            // Core refused before starting any work — the CLI could not be found, or the spawn failed.
-            // Nothing is running, so the operator has to hear it rather than watch a spinner.
+            // A transport/spawn error may follow durable acceptance. Keep the request for recovery.
+            if case .http(let status, _) = error, status == 400 || status == 409 {
+                pendingCoreUpdate = nil
+            }
             isApplyingCoreUpdate = false
             coreUpdateError = error.localizedDescription
         } catch {
@@ -146,10 +156,10 @@ final class AppsModel {
     /// Waits out the restart the update causes, then re-reads the host.
     ///
     /// Core answered 202 and is replacing its own binary, so every request until it is back fails —
-    /// that is the update working. Polling ends the "Updating Core" state on the first answer, and
+    /// that is the update working. Polling ends the "Updating Core" state only on a completed operation, and
     /// gives up after a bounded wait rather than leaving it on forever, which is what the operator
     /// would otherwise be left looking at.
-    private func waitForCoreToReturn() async {
+    private func waitForCoreToReturn(requestID: String) async {
         // Long enough for a binary swap and a cold start, short enough to stop claiming progress that
         // is not happening.
         let deadline = Date().addingTimeInterval(120)
@@ -161,7 +171,14 @@ final class AppsModel {
             // it while the app is running.
             await session.refreshAfterCoreRestart()
             guard case .signedIn = session.state else { continue }
-
+            guard let operation = try? await session.client.coreUpdateOperation(requestID: requestID) else { continue }
+            if let error = operation.error, !error.isEmpty {
+                isApplyingCoreUpdate = false
+                coreUpdateError = error
+                return
+            }
+            guard operation.status == "completed" else { continue }
+            pendingCoreUpdate = nil
             isApplyingCoreUpdate = false
             await loadCoreUpdateStatus(refresh: true)
             await reload()
@@ -169,7 +186,7 @@ final class AppsModel {
         }
 
         isApplyingCoreUpdate = false
-        coreUpdateError = "Core did not come back after the update. Check the host, then try again."
+        coreUpdateError = "Core update has not completed. Check the host, then retry the same operation."
     }
 
     /// Refreshes one app's update verdict while preserving the session-level 401 behavior used by the

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import {
   Dialog,
-  DialogContent,
+  DialogContent, DialogBody,
   DialogDescription,
   DialogFooter,
   DialogHeader,
@@ -49,7 +49,7 @@ export function ProviderLoginDialog({
       }}
     >
       <DialogContent
-        className="max-h-[90dvh] overflow-y-auto sm:max-w-md"
+        className="sm:max-w-md"
         showCloseButton={!busy}
       >
         <DialogHeader>
@@ -67,42 +67,65 @@ export function ProviderLoginDialog({
                   "Sign-in cancelled. You can try again from the provider menu.")}
           </DialogDescription>
         </DialogHeader>
-        {pending && (
-          <>
-            <div className="flex items-center justify-between gap-3 rounded-lg border bg-muted/30 px-4 py-3">
-              <code className="select-all font-mono text-xl font-semibold tracking-widest">
-                {login.userCode ?? "Preparing…"}
-              </code>
-              <Button
-                size="icon-sm"
-                variant="ghost"
-                disabled={!login.userCode}
-                title={copied ? "Copied" : "Copy code"}
-                aria-label={copied ? "Code copied" : "Copy code"}
-                onClick={async () => {
-                  try {
-                    await navigator.clipboard.writeText(login.userCode!);
-                    setCopied(true);
-                    setCopyError(null);
-                  } catch {
-                    setCopyError(
-                      "Could not copy automatically. Select the code and copy it manually.",
-                    );
-                  }
-                }}
-              >
-                {copied ? <Check aria-hidden /> : <Copy aria-hidden />}
-              </Button>
-            </div>
-            <span className="sr-only" role="status">
-              {copied ? "Code copied to clipboard" : ""}
-            </span>
-            {copyError && (
-              <Alert variant="destructive">
-                <AlertDescription>{copyError}</AlertDescription>
-              </Alert>
-            )}
-            {login.verificationUrl && (
+      <DialogBody>
+          {pending && (
+            <>
+              <div className="flex items-center justify-between gap-3 rounded-lg border bg-muted/30 px-4 py-3">
+                <code className="select-all font-mono text-xl font-semibold tracking-widest">
+                  {login.userCode ?? "Preparing…"}
+                </code>
+                <Button
+                  size="icon-sm"
+                  variant="ghost"
+                  disabled={!login.userCode}
+                  title={copied ? "Copied" : "Copy code"}
+                  aria-label={copied ? "Code copied" : "Copy code"}
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(login.userCode!);
+                      setCopied(true);
+                      setCopyError(null);
+                    } catch {
+                      setCopyError(
+                        "Could not copy automatically. Select the code and copy it manually.",
+                      );
+                    }
+                  }}
+                >
+                  {copied ? <Check aria-hidden /> : <Copy aria-hidden />}
+                </Button>
+              </div>
+              <span className="sr-only" role="status">
+                {copied ? "Code copied to clipboard" : ""}
+              </span>
+              {copyError && (
+                <Alert variant="destructive">
+                  <AlertDescription>{copyError}</AlertDescription>
+                </Alert>
+              )}
+              <div className="grid gap-2 text-xs text-muted-foreground">
+                <p className="flex items-center gap-2">
+                  <Loader2 className="size-3.5 motion-safe:animate-spin" aria-hidden />
+                  Waiting for confirmation…
+                </p>
+                <p>
+                  Enable device-code login in ChatGPT security settings if
+                  required. This attempt expires after 15 minutes.
+                </p>
+              </div>
+            </>
+          )}
+          {error && (
+            <Alert variant="destructive">
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+      </DialogBody>
+      <DialogFooter>
+          <Button variant="outline" disabled={busy} onClick={onClose}>
+            {busy ? "Please wait…" : pending ? "Cancel sign-in" : "Done"}
+          </Button>
+            {pending && login.verificationUrl && (
               <Button asChild>
                 <a
                   href={login.verificationUrl}
@@ -113,27 +136,6 @@ export function ProviderLoginDialog({
                 </a>
               </Button>
             )}
-            <div className="grid gap-2 text-xs text-muted-foreground">
-              <p className="flex items-center gap-2">
-                <Loader2 className="size-3.5 motion-safe:animate-spin" aria-hidden />
-                Waiting for confirmation…
-              </p>
-              <p>
-                Enable device-code login in ChatGPT security settings if
-                required. This attempt expires after 15 minutes.
-              </p>
-            </div>
-          </>
-        )}
-        {error && (
-          <Alert variant="destructive">
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        )}
-        <DialogFooter>
-          <Button variant="outline" disabled={busy} onClick={onClose}>
-            {busy ? "Please wait…" : pending ? "Cancel sign-in" : "Done"}
-          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

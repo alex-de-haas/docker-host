@@ -1,6 +1,6 @@
 ---
 created: 2026-05-19
-updated: 2026-10-25
+updated: 2026-10-27
 summary: Shell is the Core-managed browser UI app that authenticates users and embeds app pages.
 components: [apps/shell]
 ---
@@ -264,8 +264,11 @@ to another identity. See [Core development mode](../core-dev-target/feature.md) 
 [workspace activation](../workspace-live-activation/feature.md).
 
 A registered workspace alone does not change a package runtime's version display. Dashboard shares
-workspace inventory across rows and refreshes on selection, app/workspace events and visibility
-restoration. Renaming a workspace changes its label without changing its process. Core uses its
+workspace inventory across rows. Selection, stream readiness and visibility restoration refresh
+it immediately. App/workspace event bursts retain one trailing read with a five-second cooldown
+after the previous read finishes; quiet pages do not poll. Failed reads retry with exponential
+backoff capped at thirty seconds, which ordinary hints cannot bypass. Hidden or suspended pages
+stop scheduled reads; unmount also aborts the consumer request. Renaming a workspace changes its label without changing its process. Core uses its
 factual development project for workspace provenance, retaining branch details for unregistered or
 ambiguous paths; configured next-restart source is not treated as the currently running source.
 
@@ -496,3 +499,8 @@ verified against a Core-managed Shell rather than a standalone app without Hosty
   produce a workspace label. Core-only workspaces and rename events retain the shared read.
 - Workspace source matching requires an exact bound path; stale responses, inaccessible inventory,
   released worktrees and packaged runtimes never imply an active workspace.
+
+- Workspace inventory stream checks cover sustained hints, slow reads, retry backoff, visibility,
+  page restoration and reconnect, including optional metadata denial without losing resource events.
+- `npm run test:integration -- shell` checks a Docker Shell in a managed child Core with separate
+  password identity, scoped metadata endpoints and optional browser review.

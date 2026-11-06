@@ -7,7 +7,7 @@ import { createPresentationRequestId, ui } from "./ui";
 import type { UiHost } from "./ui-host";
 import type { UiBootstrap, UiPanel } from "./ui-types";
 import { HostyAppFrame } from "./ui-frame";
-vi.mock("./browser-auth", () => ({ appFetch: (...args: Parameters<typeof fetch>) => fetch(...args) }));
+vi.mock("./browser-auth", () => ({ APP_SESSION_RESTORED: "hosty:app-session-restored", appFetch: (...args: Parameters<typeof fetch>) => fetch(...args) }));
 let root: Root, element: HTMLDivElement, host: UiHost | null;
 let resize: () => void;
 let catalogGate: Promise<void> | null;
@@ -321,7 +321,7 @@ it("removes panel chrome for an older app adapter without remounting the protect
   vi.stubGlobal("fetch", vi.fn(async () => Response.json({}, { status: 404 })));
   await act(async () => host!.refresh());
   expect(element.querySelector("textarea")).toBe(documentDraft);
-  expect((element.querySelector(".hosty-panel-rail") as HTMLElement).style.display).toBe("none");
+  expect(element.querySelector(".hosty-panel-rail")).toBeNull();
   expect((element.querySelector(".hosty-panel-workspace") as HTMLElement).style.display).toBe("contents");
 });
 it("delivers commands only to the exact panel among retained frames from the same app", async () => {
@@ -547,4 +547,23 @@ it.each(["running", "degraded"])("updates degradation warnings without replacing
     expect(element.textContent!.includes("This app’s health check is failing.")).toBe(state === "degraded");
     expect(host!.getSnapshot().tools[0]!.resolved).toMatchObject({ state, available: listedPanels[0]!.available });
   }
+});
+
+it("keeps compact feedback sources interactive without a modal backdrop or focus trap", async () => {
+  listedPanels = [{ ...catalog[0]!, feedbackComposer: true }, catalog[1]!];
+  vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({ width: 700, height: 800 } as DOMRect);
+  await render();
+  await act(async () => { await host!.selectPanel(listedPanels[0]!.panel); });
+  const frame = element.querySelector("iframe"), draft = element.querySelector<HTMLTextAreaElement>("textarea")!;
+  expect(element.querySelector('[data-hosty-panel-layout="stacked"]')).not.toBeNull();
+  expect(element.querySelector('.hosty-panel-document')!.hasAttribute('inert')).toBe(false);
+  expect(element.querySelector('.hosty-panel-backdrop')).toBeNull();
+  expect(element.querySelector('[aria-modal="true"], .hosty-panel-focus-guard')).toBeNull();
+  draft.focus(); expect(document.activeElement).toBe(draft);
+  await act(async () => { host!.setExpanded(false); });
+  expect(element.querySelector('[data-hosty-panel-layout="stacked"]')).toBeNull();
+  await act(async () => { await host!.selectPanel(listedPanels[1]!.panel); });
+  expect(element.querySelector('[data-hosty-panel-layout="drawer"]')).not.toBeNull();
+  expect(element.querySelector('.hosty-panel-document')!.hasAttribute('inert')).toBe(true);
+  expect(frame?.isConnected).toBe(true);
 });

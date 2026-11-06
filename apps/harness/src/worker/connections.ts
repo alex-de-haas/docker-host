@@ -25,6 +25,7 @@ export class RemoteConnections implements ConnectionService {
   startLogin(id: string): ReturnType<AgentConnections["startLogin"]> { return this.call("start-login", [id]); }
   fetchLogin(id: string): ReturnType<AgentConnections["fetchLogin"]> { return this.call("login", [id]); }
   cancelLogin(id: string): Promise<void> { return this.call("cancel-login", [id]); }
+  usage(id: string, refresh = false): ReturnType<AgentConnections["usage"]> { return this.call("usage", [id, refresh]); }
   models(id: string): ReturnType<AgentConnections["models"]> { return this.client.request(`/v1/connections/${encodeURIComponent(id)}/models`); }
   async reserve(binding: ConnectionBinding): Promise<() => void> {
     // Worker atomically claims the actual connection when it accepts execution.
@@ -38,6 +39,7 @@ export class RemoteConnections implements ConnectionService {
     return this.client.adapter(binding, health.capabilities, health.name);
   }
   async withTranslationRuntime<T>(binding: ConnectionBinding, action: (runtime: TranslationRuntime) => Promise<T>): Promise<T> {
+    if (binding.harnessKind === "ollama") throw new ConnectionError(400, "translation_unsupported", "Select Codex or Claude for translation.");
     return action({ kind: binding.harnessKind, home: "", cwd: "", env: {}, execute: async (input, signal, options) => {
       const id = randomUUID();
       const request: WorkerRunRequest = { operation: "translation", conversationId: id, binding,

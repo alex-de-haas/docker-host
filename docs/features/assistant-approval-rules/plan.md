@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-02
-updated: 2026-10-18
+updated: 2026-10-29
 summary: Explicit session and development grants, native command approval rules, revocation controls and permission-decision audit.
 components: [apps/harness]
 ---
@@ -36,6 +36,15 @@ Autonomous remains an explicit administrator choice. Prefix rules are optional c
 this plan does not prohibit broad autonomous execution, force a card for every native write or claim
 that changing confirmation policy creates a sandbox. In an isolated execution, neither a prefix rule
 nor Autonomous can enlarge the boundary enforced by Containment or the authority accepted by Core.
+
+## Workspace Delete Policy Coordination (Owner Clarification, 2026-10-29)
+
+[Workspace Permissions And Deletion](../external-workspace-access-continuity/feature.md#one-delete-operation) documents the implemented
+focused integration for a single workspace deletion tool: explicit Ask asks once, Run unprompted
+dispatches directly and Disabled prevents dispatch. Core adds no UI review or second approval.
+Explicit per-tool Ask takes precedence in Autonomous mode through the shared broker. This plan
+consumes that behavior without adding another deletion gate or duplicating the completed work. General
+native autonomy and the remaining optional permission work here stay independently scoped.
 
 ## Target Behavior
 
@@ -77,8 +86,8 @@ A shell prefix itself is never advertised as source or network containment.
 
 ### Development Grant Model And Controls
 
-Offer distinct **Edit source** and **Run project commands** permissions for source-capable apps in
-session context. Show the effective Core-resolved workspace/worktree scope, primary cwd and capability
+Offer distinct **Edit source** and **Run project commands** permissions through explicit
+development-grant controls for source-capable apps, independently of descriptive session context. Show the effective Core-resolved workspace/worktree scope, primary cwd and capability
 availability. Several apps may be authorized; context selection alone grants nothing. The primary
 cwd is navigation, not the allowed-root boundary. Unsupported source bindings show a reason rather
 than an apparent enforced grant.
@@ -95,12 +104,13 @@ to source. Show all writable roots, declared output/cache locations and separate
 access. Source grants do not authorize global package installation, host administration, writable Git
 metadata, push or PR merge. Core operation owners retain local-commit and remote publication semantics.
 
-Revalidate grants before dispatch/resume. Context removal or revocation invalidates future use and
-pending decisions; re-adding an app does not restore them. Report when a new execution generation is
+Revalidate grants before dispatch/resume. Explicit grant revocation invalidates future use and
+pending decisions. Adding or removing descriptive app context neither grants nor revokes these
+permissions; re-adding an app never restores a revoked grant. Report when a new execution generation is
 required. Revocation is not a claim that already-running commands stopped or that a dispatched remote
 mutation was rolled back; Containment and Lifecycle Controls own that evidence.
 
-[App context](../assistant-app-context/feature.md) supplies selection;
+[App context](../assistant-app-context/feature.md) supplies descriptive metadata only;
 [prototype workspaces](../app-prototype-workspaces/feature.md) consumes these same permission controls.
 Do not make isolated grants a retroactive prerequisite for the shipped instruction-based workspace
 workflow or existing administrator Autonomous mode. If enforced grants are unavailable, show that

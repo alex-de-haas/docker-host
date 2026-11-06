@@ -76,6 +76,9 @@ interface Registration {
 export class McpProxy {
   allowRemoteWorker = false;
   policy?: McpToolPolicy;
+  /** Client-side source binding and native stop coordination; Core still authorizes the invocation. */
+  platformCall?: (sessionId: string, name: string, input: unknown, guard: () => Promise<void>) => Promise<{ result: unknown } | null>;
+  beforeDispatch?: (sessionId: string) => Promise<void>;
   identity?: (appId: string) => Promise<string>;
   deniedTools?: (appId: string) => Promise<readonly string[]>;
   private readonly sessions = new Map<string, Registration>();
@@ -113,6 +116,11 @@ export class McpProxy {
   /** Drops the session's routes. */
   unregister(sessionId: string): void {
     for (const appId of this.sessions.get(sessionId)?.targets.keys() ?? []) this.policy?.cancel(sessionId, appId);
+    this.sessions.delete(sessionId);
+  }
+  /** Remove native routes and retain only the coordinator's reviewed post-exit operation. */
+  disconnect(sessionId: string, retainedGuard?: () => Promise<void>): void {
+    this.policy?.disconnect(sessionId, retainedGuard);
     this.sessions.delete(sessionId);
   }
 
@@ -210,16 +218,24 @@ export class McpProxy {
             if (typeof rpc.params?.name !== "string") throw new Error("A tool name is required.");
             if ((await this.deniedTools?.(appId) ?? []).includes(rpc.params.name)) throw new Error("Core has disabled this tool.");
             await this.policy.discover(appId, identity, target.url, token.token);
+            const toolName = rpc.params.name;
+            const revalidate = async () => {
+              const currentUrl = this.resolveOffered ? await this.resolveOffered(appId) : target.url;
+              if (!currentUrl || currentUrl !== target.url || identity !== (await this.identity?.(appId) ?? target.url)) throw new Error("Provider changed while the call waited. Discover its tools again.");
+              if ((await this.deniedTools?.(appId) ?? []).includes(toolName)) throw new Error("Core has disabled this tool.");
+            };
             const dispatchGuard = await this.policy.authorize(sessionId, appId, identity, JSON.stringify([request.headers["mcp-session-id"] ?? "", rpc.id]),
-              rpc.params.name, rpc.params.arguments ?? {}, abort.signal);
-            const currentUrl = this.resolveOffered ? await this.resolveOffered(appId) : target.url;
-            if (!currentUrl || currentUrl !== target.url || identity !== (await this.identity?.(appId) ?? target.url)) throw new Error("Provider changed while the call waited. Discover its tools again.");
+              toolName, rpc.params.arguments ?? {}, abort.signal, revalidate);
             token = await this.mint(sessionId, appId);
             if (!token) throw new Error("Session delegation expired before dispatch.");
             if (!this.sessions.has(sessionId) || abort.signal.aborted) throw new Error("Session ended before dispatch.");
             if ((await this.deniedTools?.(appId) ?? []).includes(rpc.params.name)) throw new Error("Core has disabled this tool.");
+            await this.beforeDispatch?.(sessionId);
             await dispatchGuard();
-            await this.forward(request, response, target, token.token, body);
+            const coordinated = appId === "hosty:core" ? await this.platformCall?.(sessionId, rpc.params.name, rpc.params.arguments ?? {}, dispatchGuard) : null;
+            if (coordinated) sendJson(response, 200, { jsonrpc: "2.0", id: rpc.id,
+              result: { content: [{ type: "text", text: JSON.stringify(coordinated.result) }] } });
+            else await this.forward(request, response, target, token.token, body);
           }
         } catch (error) { if (!response.headersSent && !response.destroyed) sendJson(response, 200, { jsonrpc: "2.0", id: rpc.id,
           error: { code: -32001, message: error instanceof Error ? error.message : "MCP request refused." } }); }

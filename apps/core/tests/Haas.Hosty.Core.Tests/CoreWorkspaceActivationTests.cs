@@ -43,7 +43,7 @@ public sealed partial class CoreLifecycleServiceTests
         await Assert.ThrowsAsync<AppLifecycleException>(() => service.PrepareCoreSourceAsync(owner,
             input with { SourceRevision = "stale" }, default));
         git.Revoked = true;
-        await Assert.ThrowsAsync<AppLifecycleException>(() => service.ObserveAsync(tree.Id, owner, default));
+        Assert.Equal(tree.Id, (await service.ObserveAsync(tree.Id, owner, default)).Id);
         Assert.True(File.Exists(Path.Combine(tree.Path, "keep.txt")));
     }
 
@@ -76,7 +76,7 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.False(uncheckedCore.Participants.Single(p => p.Kind == "core").Selected);
         Assert.True(uncheckedCore.Participants.Single(p => p.Kind == "app").Selected);
         Assert.Equal(before, await RunGitAsync(tree.Path, ["status", "--porcelain"]));
-        await Assert.ThrowsAsync<AppLifecycleException>(() => planner.PlanAsync(tree.WorkspaceId, "another-user", new(), default));
+        Assert.Equal(tree.WorkspaceId, (await planner.PlanAsync(tree.WorkspaceId, "another-user", new(), default)).WorkspaceId);
         await Assert.ThrowsAsync<ArgumentException>(() => planner.PlanAsync(tree.WorkspaceId, "admin",
             new(Apps: [new("hosty.harness")]), default));
         await core.SaveAsync(new(null, source.Revision, new("https://github.com/other/fork")), default, "admin");

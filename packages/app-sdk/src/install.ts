@@ -40,6 +40,7 @@ export interface InstallationRequest {
   id: string; status: "draft" | "pending" | "executing" | "succeeded" | "denied" | "failed";
   plan: InstallPlan | null;
   updatePlan?: {
+    error?: string | null; errorCode?: string | null; readiness?: string | null;
     appId: string; displayName?: string | null; targetVersion: string; targetRuntime: string; changes: string[];
     previousRequiredCorePermissions?: string[] | null; previousOptionalCorePermissions?: string[] | null;
     feedsUrl?: string | null; feedId?: string | null; targetRuntimeType?: string | null;
@@ -127,6 +128,10 @@ export class InstallationFlow {
   }
   async submit(settings?: Record<string, string | null>, autostart?: boolean): Promise<InstallationRequest | null> {
     if (this.state.busy || this.state.uncertainSubmit || this.state.request?.status !== "draft") return null;
+    if (this.state.request.updatePlan?.error) {
+      this.set({ ...this.state, error: this.state.request.updatePlan.error });
+      return null;
+    }
     const id = this.state.request.id;
     const generation = this.generation;
     this.submitting = true;
@@ -170,6 +175,17 @@ export class InstallationFlow {
   }
 }
 function message(error: unknown) { return error instanceof Error ? error.message : "Installation request failed."; }
+
+/** Open Core confirmation outside an embedded app's sandbox; Core still owns consent. */
+export function presentInstallationConfirmation(request: Pick<InstallationRequest, "id" | "approvalUrl">): void {
+  const url = new URL(request.approvalUrl);
+  if (!["http:", "https:"].includes(url.protocol)) throw new Error("Invalid Core confirmation URL.");
+  if (window.parent !== window) {
+    if (!/^[a-f0-9]{48}$/.test(request.id)) throw new Error("Invalid Core confirmation ID.");
+    // The host derives its own Core origin. No credentials or caller-supplied URL cross the frame.
+    window.parent.postMessage({ type: "hosty:request-installation-confirmation", requestId: request.id }, "*");
+  } else window.open(url.href, "_blank", "popup,width=640,height=720,noopener");
+}
 
 /** Open synchronously in a click handler, before awaiting plan/submit requests. */
 export function openInstallationConfirmation(): Window | null {

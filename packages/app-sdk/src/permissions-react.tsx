@@ -36,9 +36,8 @@ export function MissingPermissionsNotice({ endpoint = "/api/hosty/permissions" }
   if (dismissed || !kind || !state) return null;
   return <section data-hosty-sdk data-hosty-activity-control role="alert" aria-label="Required permissions" className="hosty-permissions-notice">
     <SdkChromeStyles /><style>{styles}</style><header><SdkBrand /><SdkIcon name="warning" /><strong>Permissions needed</strong></header>
-    {kind === "unsupported"
-      ? <p>Core does not support required permissions: {state.permissions!.unsupportedRequired!.join(", ")}. Update the app or Core.</p>
-      : <p>This app needs required permissions. Operations using them are unavailable until approval.</p>}
+    {!!state.permissions?.unsupportedRequired?.length && <p>This Core does not support requested permissions: {state.permissions.unsupportedRequired.join(", ")}. Update the app or Core. These permissions are not granted; some app features may not work.</p>}
+    {kind === "missing" && <p>This app needs required permissions. Operations using them are unavailable until approval.</p>}
     {kind === "missing" && state.permissions?.reviewAvailable !== false && state.corePublicOrigin &&
       <button type="button" className="hosty-sdk-button" onClick={() => { requestPermissionReview(state); setPending(true); }}>Request permissions</button>}
     {pending && <p className="hosty-sdk-status"><SdkSpinner />Review permissions in Core, then return here. You can leave this app installed without approving.</p>}
