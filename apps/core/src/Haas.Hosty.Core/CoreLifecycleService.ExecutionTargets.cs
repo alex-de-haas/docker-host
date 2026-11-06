@@ -26,8 +26,10 @@ internal sealed partial class CoreLifecycleService
     {
         var (installed, defaultRuntime) = await manifests.ReadRuntimeProfilesAndDefaultAsync(app.ManifestPath!, ct);
         var releases = PackageRuntimeProfiles(installed, defaultRuntime);
-        if (releases.Any(p => p.Key == app.SelectedRuntime)) return app.SelectedRuntime;
+        // Validate retained recovery state even when the current package is selectable. Inventory
+        // isolates corrupt per-app state; a direct request must retain its underlying diagnosis.
         var saved = await JsonStorage.ReadAsync<AppPackageBaseline>(Path.Combine(AppExecutionStore.DirectoryFor(paths, app.Id), "package.json"), ct);
+        if (releases.Any(p => p.Key == app.SelectedRuntime)) return app.SelectedRuntime;
         if (saved?.Installation == app.InstalledAt && releases.Any(p => p.Key == saved.Runtime)) return saved.Runtime;
         var active = await AppDevStore.ReadAsync(paths, app, ct);
         if (releases.Any(p => p.Key == active?.PreviousRuntime)) return active!.PreviousRuntime;
