@@ -2,12 +2,17 @@ namespace Haas.Hosty.Core;
 
 internal sealed partial class CoreLifecycleService
 {
+    // Returned journals retain replay evidence, not scoped authority over later package grants.
     private static string[] DevelopmentBaseGrants(AppRecord app, AppDevOperation? operation)
-        => (app.GrantedCorePermissions ?? []).Except((operation?.ExecutionGrantedPermissions ?? [])
-            .Except(operation?.BaseGrantedPermissions ?? [], StringComparer.Ordinal), StringComparer.Ordinal).ToArray();
+        => operation is { Active: true }
+            ? (app.GrantedCorePermissions ?? []).Except((operation.ExecutionGrantedPermissions ?? [])
+                .Except(operation.BaseGrantedPermissions ?? [], StringComparer.Ordinal), StringComparer.Ordinal).ToArray()
+            : (app.GrantedCorePermissions ?? []).ToArray();
     private static string[] DevelopmentBaseRoles(AppRecord app, AppDevOperation? operation)
-        => (app.ConfirmedRoles ?? []).Except((operation?.ExecutionConfirmedRoles ?? [])
-            .Except(operation?.BaseConfirmedRoles ?? [], StringComparer.Ordinal), StringComparer.Ordinal).ToArray();
+        => operation is { Active: true }
+            ? (app.ConfirmedRoles ?? []).Except((operation.ExecutionConfirmedRoles ?? [])
+                .Except(operation.BaseConfirmedRoles ?? [], StringComparer.Ordinal), StringComparer.Ordinal).ToArray()
+            : (app.ConfirmedRoles ?? []).ToArray();
 
     internal async Task<AppDevelopmentCandidate> PrepareExecutionCandidateAsync(AppRecord app, string sourcePath,
         string runtime, AppDevActor actor, CancellationToken ct)

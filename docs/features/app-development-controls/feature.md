@@ -1,6 +1,6 @@
 ---
 created: 2026-10-18
-updated: 2026-11-04
+updated: 2026-11-06
 summary: Core-owned execution selection runs installed packages or registered workspace manifests on ordinary app data, with scoped access review and recoverable lifecycle operations.
 components: [apps/core, apps/cli, apps/harness, apps/shell]
 ---
@@ -64,6 +64,11 @@ Approval records scoped consent; it does not update the installed manifest or im
 permissions to the package. The active workspace receives admitted required rights and explicitly
 selected optional rights through its execution projection. Switching away removes those temporary
 additions. Later revocations are respected rather than restored from a captured grant list.
+
+Returned development journals remain available for recovery and replay, but no longer reduce the
+current package permissions or confirmed provider roles. A right approved for the package after
+Return remains available when selecting the same or another workspace and on the next Return;
+only an active workspace's scoped additions are removed when switching away.
 
 ## Refresh, Stop And Package Return
 
@@ -178,6 +183,9 @@ record substitutes for observed runtime readiness and browser verification.
   authority; require exact review for rights, devices/capabilities, mounts, source writes and exposure.
 - Reject invalid identity/schema and conservatively retain unknown fields. Test stale/denied approval,
   permission revocation, actor binding, preparation failure and replay before runtime replacement.
+- After Return, approve a formerly workspace-only permission or provider role for the package, then
+  select the same or another workspace without repeat review and retain the package grant on Return.
+  Cover service recreation, current revocations and removal of active workspace-only authority.
 - Execute ordinary/system applications with native, Docker and mixed source recipes. Keep the package
   manifest/version unchanged and report simulated-adapter coverage separately from real runtime QA.
 - Refresh a workspace command across service recreation; retain last-launched topology for Stop/logs,
