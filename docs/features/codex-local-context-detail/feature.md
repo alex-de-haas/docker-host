@@ -1,6 +1,6 @@
 ---
 created: 2026-11-04
-updated: 2026-11-04
+updated: 2026-11-06
 summary: Local Codex estimates for Hosty instructions and MCP definitions by server and tool, separate from the native context total.
 components: [apps/harness]
 ---
@@ -21,12 +21,16 @@ prompt and is accepted only when the blocks reproduce it. The UI labels these ro
 provided by Hosty. Wrappers, separators, native instructions and retention after compaction are
 outside the estimate. Reconfiguring MCP retains the estimates of instructions already supplied.
 
-The MCP section groups definitions by native server identity and original tool name. It estimates
+The collapsed MCP catalog groups definitions by native server identity and original tool name. It estimates
 JSON containing name, description and input schema. Generated aliases, endpoints, credentials,
 annotations, server instructions and tool results do not enter this definition count. Servers and
 tools are sorted by estimated size, with a separate subtotal for each server. Every Codex tool row
 says available catalog with inclusion unknown: catalog discovery establishes neither current
 loading nor exclusion. Other providers retain their existing inclusion labels and estimators.
+The dialog prioritizes [recorded MCP call activity](../recorded-mcp-calls/feature.md)
+from transcript events. Those counts do not depend on this bounded catalog. Definition loading is
+unknown for Codex, and actual MCP token attribution is unavailable. The catalog is a comparison of
+available definition sizes rather than a measurement of consumed context or billed usage.
 
 The producer uses pinned js-tiktoken 1.0.21 and bundled o200k_base ranks. It counts bounded chunks
 of at most 1,024 UTF-16 code units without splitting surrogate pairs. This bounds pathological BPE
@@ -60,7 +64,8 @@ Versioned source and MCP metadata use a dependency-free TypeScript contract. Eve
 contain source IDs, server/tool names, counts, method and coverage/time only: no prompt text,
 descriptions, schemas, URL or credential fields. The browser validates and rebuilds the allowlist;
 malformed optional detail does not hide a valid native total. Worker receipts, journal replay and
-session reload retain the optional metadata. Old observations without it retain the simple meter.
+session reload retain the optional metadata. Old observations without it retain the meter and
+recorded-call detail; unavailable source estimates are not reconstructed.
 Core has no tokenizer, provider-specific API or application dependency from this feature.
 
 The owner-approved slice completed D1-D5: local estimator/provenance, native collection/lifecycle,
@@ -81,6 +86,9 @@ editor previews and per-invocation tokens/time/cache. Provider extraction and ti
 - Worker and session tests cover instruction provenance validation, durable events, snapshots and
   replay. UI tests cover old observations, unavailable catalogs, local labels, native meter
   stability, disconnected state, keyboard dismissal and reset.
+- Recorded-call tests cover replay, explicit and legacy identity, turn-scoped result linking,
+  conflicting results, unknown outcomes and calls outside the catalog. UI tests keep catalog
+  estimates collapsed and expose call records without requiring a native context observation.
 - Run `npm run harness:test`, `npm run harness:lint` and `npm run harness:build-web`.
   Run `npm run test:integration -- worker`; its native controls include real pinned Codex and
   disposable stdio MCP discovery without credentials or a model turn. On hosts with constrained
@@ -89,6 +97,6 @@ editor previews and per-invocation tokens/time/cache. Provider extraction and ti
 - Run `HOSTY_CONTEXT_BROWSER=1 npm run test:integration -- harness-local` with Playwright available
   (or its module path in `HOSTY_CONTEXT_PLAYWRIGHT_MODULE`). The parent-managed child Core checks
   normal password login, production API/worker/static assets, keyboard and mobile dark dialog
-  behavior, unavailable catalog and compaction. Only diagnostic SSE is synthetic; this is not
+behavior, unavailable catalog and compaction. Context and tool-event SSE use synthetic fixtures; this is not
   evidence of model-exact token counts or live inference. The suite also checks warm restart and
   missing-output recovery, then confirms parent Finish removes child resources.
