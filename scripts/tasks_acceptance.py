@@ -58,6 +58,16 @@ def check(context):
         h('/auth/app-code',{'code':code,'codeVerifier':verifier})
         context['diagnostic_secrets'].update(cookie.value for cookie in jar)
     login_app()
+    # Browser task-history subscriptions use this same one-use ticket and WebSocket route.
+    # Send only this disposable app session through stdin; no provider dispatch is involved.
+    import subprocess
+    cookie_request = urllib.request.Request(app_origin+'/api/tasks/v1/tasks')
+    jar.add_cookie_header(cookie_request)
+    stream = subprocess.run(['node', str(workspace/'scripts/tasks-websocket-acceptance.mjs')],
+        input=json.dumps({'origin': app_origin, 'cookie': cookie_request.get_header('Cookie'),
+                         'admission': h('/event-stream-tickets', {'path': '/api/tasks/v1/events'})}),
+        text=True, cwd=workspace)
+    assert stream.returncode == 0, 'Task event WebSocket acceptance failed'
     directory=h('/tasks/v1/directory'); provider=directory['provider']
     assert any(u['id']==user for u in directory['users'])
     caps=h('/tasks/v1/capabilities'); assert caps['statuses']==['Draft','Ready','InProgress','Blocked','Done','Cancelled']

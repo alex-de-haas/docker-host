@@ -1,4 +1,5 @@
 import { pullRequestEvents } from "./pull-requests-proxy.js";
+import type { TaskService } from "./tasks/service.js";
 import type { ConnectionService } from "./connections/service.js";
 import { UsageSubscriptions } from "./connections/usage-subscriptions.js";
 import { randomBytes } from "node:crypto";
@@ -17,7 +18,7 @@ const SOCKET_PATH = "/api/event-stream";
 const TICKET_LIFETIME = 30_000;
 const STREAM_LIFETIME = 3_600_000;
 const QUEUE_LIMIT = 1_048_576;
-type Target = { kind: "usage"; connectionId: string } | { kind: "session"; sessionId: string; after: number } | { kind: "decisions" } | { kind: "workspaces" } | { kind: "pullRequests"; subscriptionId: string };
+type Target = { kind: "usage"; connectionId: string } | { kind: "session"; sessionId: string; after: number } | { kind: "decisions" } | { kind: "tasks" } | { kind: "workspaces" } | { kind: "pullRequests"; subscriptionId: string };
 type Ticket = { actor: AdminActor; credential: string; origin: string; target: Target; expires: number; deadline: number };
 const failure = (status: number, code: string, message: string): never => { throw new AppContextError(status, code, message); };
 
@@ -32,7 +33,7 @@ export class EventStreamTransport {
     handleProtocols: protocols => protocols.has(PROTOCOL) ? PROTOCOL : false });
 
   private readonly usageStreams?: UsageSubscriptions;
-  constructor(private readonly manager: SessionManager, private readonly now: () => number = Date.now, private readonly connections?: ConnectionService | null) {
+  constructor(private readonly manager: SessionManager, private readonly now: () => number = Date.now, private readonly connections?: ConnectionService | null, private readonly tasks?: TaskService) {
     if (connections) this.usageStreams = new UsageSubscriptions(connections);
     this.sweep = setInterval(() => this.prune(), 15_000); this.sweep.unref();
   }
@@ -51,6 +52,7 @@ export class EventStreamTransport {
     if (typeof path !== "string" || path.length > 2048) return failure(400, "event_stream_invalid", "Select a supported event stream.");
     const usage = /^\/api\/connections\/([A-Za-z0-9-]{1,128})\/usage\/events$/.exec(path);
     if (usage && this.connections) return { kind: "usage", connectionId: usage[1]! };
+    if (path === "/api/tasks/v1/events" && this.tasks) return { kind: "tasks" };
     if (path === "/api/development-workspaces/events") return { kind: "workspaces" };
     if (path === "/api/decisions/events" && this.manager.decisions) return { kind: "decisions" };
     const pr = /^\/api\/pull-requests\/events\?subscriptionId=([a-f0-9]{32})$/.exec(path);
@@ -78,6 +80,7 @@ export class EventStreamTransport {
     return Number.isFinite(activeUntil) ? Math.min(this.now() + STREAM_LIFETIME, activeUntil) : this.now() + STREAM_LIFETIME;
   }
   private async admitted(target: Target, actor: AdminActor) {
+    if (target.kind === "tasks") return;
     if (target.kind === "usage") { await this.connections!.get(target.connectionId); return; }
     if (target.kind === "workspaces" || target.kind === "pullRequests" || target.kind === "decisions") {
       if (actor.via !== "app-session") failure(401, "reauth_required", "Open Harness through Core to inspect workspaces.");
@@ -176,6 +179,10 @@ export class EventStreamTransport {
     try {
       if (ticket.target.kind === "usage") {
         unsubscribe = this.usageStreams!.subscribe(ticket.target.connectionId, usage => { void send(`data: ${JSON.stringify(usage)}\n\n`); });
+      } else if (ticket.target.kind === "tasks") {
+        const release = await this.tasks!.subscribeEvents(async () => { await this.validate(ticket.actor, ticket.credential, abort.signal); },
+          frame => { void send(frame); }, () => finish());
+        if (stopped) release(); else unsubscribe = release;
       } else if (ticket.target.kind === "session") {
         const queued: StoredEvent[] = []; let queuedBytes = 0, replaying = true, draining = false;
         const frame = (event: StoredEvent) => `data: ${JSON.stringify(event)}\n\n`;

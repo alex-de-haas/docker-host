@@ -4,10 +4,28 @@ namespace Haas.Hosty.Core;
 
 internal sealed partial class CoreLifecycleService
 {
+    private static RuntimeProfileManifest[] PackageRuntimeProfiles(IReadOnlyList<RuntimeProfileManifest> installed, string? defaultRuntime)
+    {
+        var releases = installed.Where(profile => !profile.Development).ToArray();
+        if (releases.Length != 0) return releases;
+        // A source-only installation still has its reviewed installed baseline. Retain only its
+        // resolved default profile for Return; other development recipes require a workspace.
+        var baseline = !string.IsNullOrWhiteSpace(defaultRuntime)
+            ? installed.FirstOrDefault(profile => profile.Key == defaultRuntime)
+            : installed.FirstOrDefault(profile => profile.Default) ?? installed.FirstOrDefault();
+        return baseline is null ? [] : [baseline];
+    }
+
+    private const string ManualPackageSourceMessage = "Clear the manually configured Source override using the supported source controls before selecting this installed package. Current source and data are retained.";
+
+    private bool HasManualPackageSourceOverride(AppRecord app, AppDevOperation? operation)
+        => operation is not { Active: true } && app.SourceState?.LocalOverridePath is { } source &&
+            (app.SourceState.Type != "local-git" || source != paths.ResolveManagedCheckoutPath(app.Id));
+
     internal async Task<string?> PackageRuntimeAsync(AppRecord app, CancellationToken ct)
     {
-        var installed = await manifests.ReadRuntimeProfilesAsync(app.ManifestPath!, ct);
-        var releases = installed.Where(p => !p.Development).ToArray();
+        var (installed, defaultRuntime) = await manifests.ReadRuntimeProfilesAndDefaultAsync(app.ManifestPath!, ct);
+        var releases = PackageRuntimeProfiles(installed, defaultRuntime);
         if (releases.Any(p => p.Key == app.SelectedRuntime)) return app.SelectedRuntime;
         var saved = await JsonStorage.ReadAsync<AppPackageBaseline>(Path.Combine(AppExecutionStore.DirectoryFor(paths, app.Id), "package.json"), ct);
         if (saved?.Installation == app.InstalledAt && releases.Any(p => p.Key == saved.Runtime)) return saved.Runtime;
@@ -20,16 +38,19 @@ internal sealed partial class CoreLifecycleService
         IReadOnlySet<string>? selectableWorktrees = null)
     {
         var app = await RequireAppAsync(appId, ct);
-        var installed = await manifests.ReadRuntimeProfilesAsync(app.ManifestPath!, ct);
-        var choices = installed.Where(p => !p.Development)
-            .Select(p => new AppExecutionChoice("package", p.Key, null, null, p.Key)).ToList();
+        var (installed, defaultRuntime) = await manifests.ReadRuntimeProfilesAndDefaultAsync(app.ManifestPath!, ct);
+        var packages = PackageRuntimeProfiles(installed, defaultRuntime);
         var operation = await AppDevStore.ReadAsync(paths, app, ct);
+        var manualOverride = HasManualPackageSourceOverride(app, operation);
+        var choices = packages
+            .Select(p => new AppExecutionChoice("package", p.Key, null, null, p.Key,
+                !p.Development || !manualOverride, p.Development && manualOverride ? ManualPackageSourceMessage : null)).ToList();
         // The recovery journal remains active before entry binds and while package Return starts.
         // Describe the persisted runtime/source binding, not the unfinished operation's worktree.
-        var currentWorktreeId = operation is { Active: true } && operation.Installation == app.InstalledAt &&
-            app.SelectedRuntime == operation.TargetRuntime && app.SourceState?.LocalOverridePath == operation.SourcePath
-            ? operation.WorktreeId : null;
-        AppExecutionChoice current = new(installed.Any(p => p.Key == app.SelectedRuntime && !p.Development)
+        var workspaceBound = operation is { Active: true } && operation.Installation == app.InstalledAt &&
+            app.SelectedRuntime == operation.TargetRuntime && app.SourceState?.LocalOverridePath == operation.SourcePath;
+        var currentWorktreeId = workspaceBound ? operation!.WorktreeId : null;
+        AppExecutionChoice current = new(!workspaceBound && packages.Any(p => p.Key == app.SelectedRuntime && (!p.Development || !manualOverride))
             ? "package" : "legacy", app.SelectedRuntime, null, null, app.SelectedRuntime ?? "Unknown runtime");
         foreach (var workspace in inventory.Workspaces.Where(w => w.State != "released"))
         {
@@ -125,8 +146,13 @@ internal sealed partial class CoreLifecycleService
         {
             var target = request.Runtime ?? packageRuntime ?? throw DevError("package_unavailable", "This app has no installed release runtime.");
             var selection = await manifests.LoadAsync(app.ManifestPath!, target, ct);
-            if (selection.RuntimeProfile.Development)
+            var (profiles, defaultRuntime) = await manifests.ReadRuntimeProfilesAndDefaultAsync(app.ManifestPath!, ct);
+            if (!PackageRuntimeProfiles(profiles, defaultRuntime).Any(profile => profile.Key == target))
                 throw DevError("package_invalid", "A development recipe is only available through a registered workspace.");
+            // A legacy manual override has no captured transition to Return. Keep its source and
+            // runtime untouched instead of claiming a package switch that still executes that code.
+            if (selection.RuntimeProfile.Development && HasManualPackageSourceOverride(app, active))
+                throw DevError("package_source_override", ManualPackageSourceMessage);
             await ClaimAsync();
             if (active is { Active: true })
             {
