@@ -1,6 +1,6 @@
 ---
 created: 2026-06-04
-updated: 2026-11-04
+updated: 2026-11-06
 summary: Reviewed update plans and their apply behavior, including permission changes and routine updates.
 components: [apps/core, apps/shell]
 ---
@@ -274,8 +274,9 @@ update skips failed verdicts. A fleet check with failures and no offers reports 
 
 Core's detached updater does not expose download percentages or internal stages. Shell shows
 installing, reconnecting and verifying based on live status reads. It confirms completion only when
-Core is running and a fresh release-hash check reports no remaining update, then displays Updated
-briefly. A five-minute deadline yields an unconfirmed result, without claiming success. Failed Core
+Core is running and the accepted update operation reports completion. The progress line then
+disappears immediately, with no terminal label or expiry timer, matching ordinary app rows.
+A five-minute deadline yields an unconfirmed result, without claiming success. Failed Core
 checks retain the previous offer only for the same installed version and release channel.
 
 ## System Apps

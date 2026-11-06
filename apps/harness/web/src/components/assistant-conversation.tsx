@@ -2,6 +2,7 @@
 import { ProviderUsageIndicator } from "@/components/provider-usage";
 import { ContextUsageIndicator } from "@/components/context-usage";
 import { applyContextUsage, emptyContextUsage } from "@/lib/context-usage";
+import { observedMcpActivity, type McpActivity } from "@/lib/mcp-activity";
 import { HostyNavigationBoundary } from "@hosty-sdk/app/react";
 import { SessionAgentSettings, type AgentSettingsNotice } from "@/components/session-agent-settings";
 import { SessionAutonomy } from "@/components/session-autonomy";
@@ -88,6 +89,7 @@ const SESSION_STORAGE_KEY = "hosty.assistant.session";
 const HISTORY_STORAGE_KEY = "hosty.assistant.history";
 /** An ask is a prompt fragment, not a payload: anything longer is a page dumping itself into the draft. */
 const MAX_ASK_CHARS = 4_000;
+const EMPTY_MCP_ACTIVITY: McpActivity = { total: 0, tools: [] };
 
 
 export function AssistantConversation({ fullPage = false, navigation = "workspaces" }: { fullPage?: boolean; navigation?: "workspaces" | "chats" }) {
@@ -112,6 +114,7 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
   }, [ui, session?.id, surfaceSessionId]);
   const [status, setStatus] = useState("idle");
   const [contextUsage, setContextUsage] = useState(() => emptyContextUsage(""));
+  const [contextDetailsOpen, setContextDetailsOpen] = useState(false);
   const [agentNotice, setAgentNotice] = useState<AgentSettingsNotice | null>(null);
   const [autonomyNotice, setAutonomyNotice] = useState<AgentSettingsNotice | null>(null);
   const [activity, setActivity] = useState<SessionActivity | null>(null);
@@ -269,6 +272,7 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
     streamAbortRef.current?.abort();
     activeSessionId.current = record.id;
     setContextUsage(emptyContextUsage(record.id));
+    setContextDetailsOpen(false);
     setSession(record);
     setHealth(null);
     void getHealth(record.id).then(value => { if (activeSessionId.current === record.id) setHealth(value); }).catch(() => {});
@@ -999,6 +1003,7 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
   const attachmentIndex = useMemo(() => indexAttachments(events), [events]);
   const items = useMemo(() => transcriptItems(events, attachmentIndex.claimed), [events, attachmentIndex]);
   const feedbackTranscript = useFeedbackTranscript(session?.id, events, !historyLoading && !showSessions);
+  const mcpActivity = useMemo(() => contextDetailsOpen ? observedMcpActivity(events) : EMPTY_MCP_ACTIVITY, [events, contextDetailsOpen]);
 
   const pendingDecision = events.find(event => status === "awaiting_approval" && event.type === "approval_request" && !decidedApprovals.has(String(event.approvalId)) || status === "awaiting_question" && event.type === "question_request" && !cancelledQuestionIds.has(String(event.questionId)) && !answeredQuestions.has(String(event.questionId)));
 
@@ -1325,7 +1330,7 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
                       onSavingChange={onProviderSaving} onChange={onSessionChange} onErrorChange={setAutonomyNotice} />}
                     </div>
                     {session?.connectionId && <ProviderUsageIndicator key={session.connectionId + ":" + session.connectionRevision} connectionId={session.connectionId} revision={session.connectionRevision} model={session.executionSelection?.model} />}
-                    {session && <ContextUsageIndicator usage={contextUsage.sessionId === session.id ? contextUsage.usage : null} connected={connection === "connected"} />}
+                    {session && <ContextUsageIndicator key={`context:${session.id}`} usage={contextUsage.sessionId === session.id ? contextUsage.usage : null} connected={connection === "connected"} mcpActivity={mcpActivity} onDetailOpenChange={setContextDetailsOpen} />}
                   </div>
                   {session && <SpeechInput key={session.id} onStart={suggestions.interact} disabled={sending || !!pendingSend || sendRecoveryBlocked} onText={text => setInput(current => current ? `${current}${/\s$/.test(current) ? "" : " "}${text}` : text)} />}
                   {running || stopping ? (

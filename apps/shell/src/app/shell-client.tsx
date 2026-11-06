@@ -668,7 +668,8 @@ export function ShellClient({
                 toast.warning("Core update needs attention", { description: operation.error });
                 return;
               }
-              setCoreUpdate({ ...update, clientPhase: completed ? "completed" : status.version !== initialVersion ? "verifying" : "installing" });
+              setCoreUpdate({ ...update, operationId: completed ? undefined : update.operationId,
+                clientPhase: completed ? "completed" : status.version !== initialVersion ? "verifying" : "installing" });
             }
           }
         } catch { /* A restart may interrupt either probe; the next attempt reads fresh state. */ }
@@ -677,10 +678,6 @@ export function ShellClient({
         if (completed) {
           sessionStorage.removeItem(operationKey);
           setCoreUpdating(false);
-          coreUpdateProbeTimer.current = setTimeout(() => {
-            coreUpdateProbeTimer.current = null;
-            setCoreUpdate(previous => previous ? { ...previous, clientPhase: undefined } : previous);
-          }, 30000);
         } else if (Date.now() - startedAt >= 5 * 60_000) {
           setCoreUpdating(false);
           setPhase("unconfirmed");

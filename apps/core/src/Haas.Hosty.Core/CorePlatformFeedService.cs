@@ -29,7 +29,12 @@ internal sealed class CorePlatformFeedService(HostyCoreRuntimeConfig config, IHt
         CoreLaunchFiles.AssertNoPendingOperations(config.DataRoot);
         return PlatformFeedFiles.SaveSource(config.DataRoot, selection.Source, input.ExpectedRevision);
     }
-    public async Task<CorePlatformUpdateResult> ApplyAsync(CorePlatformUpdateRequest input, CancellationToken ct)
+    public Task<CorePlatformUpdateResult> ApplyAsync(CorePlatformUpdateRequest input, CancellationToken ct)
+        => ApplyAsync(input, ct, CoreCliLauncher.ResolveCliPath,
+            (cli, id) => CoreCliLauncher.SpawnDetached(cli, ["update", "--operation-id", id], config, "core-update.log"));
+
+    internal async Task<CorePlatformUpdateResult> ApplyAsync(CorePlatformUpdateRequest input, CancellationToken ct,
+        Func<string?> resolveCliPath, Action<string, string> spawnUpdate)
     {
         var path = PlatformAcceptedUpdates.PathFor(config.DataRoot, input.RequestId);
         using var lease = CoreLaunchFiles.Lock(config.DataRoot);
@@ -38,8 +43,9 @@ internal sealed class CorePlatformFeedService(HostyCoreRuntimeConfig config, IHt
             if (retained.OfferId != input.OfferId) throw new PlatformReleaseException("platform_update_replay_conflict", "Request ID already names another offer.");
             if (retained.Status != "completed")
             {
-                var retryCli = CoreCliLauncher.ResolveCliPath() ?? throw new PlatformReleaseException("cli_not_found", "The installed CLI could not be located.");
-                CoreCliLauncher.SpawnDetached(retryCli, ["update", "--operation-id", retained.Id], config, "core-update.log");
+                var retryCli = resolveCliPath() ?? throw new PlatformReleaseException("cli_not_found", "The installed CLI could not be located.");
+                lease.Dispose();
+                return StartUpdate(retained, retryCli, spawnUpdate);
             }
             return Status(retained);
         }
@@ -52,17 +58,38 @@ internal sealed class CorePlatformFeedService(HostyCoreRuntimeConfig config, IHt
         if (source is null || source.Revision != offer.Selection.Source.Revision)
             throw new PlatformReleaseException("platform_offer_stale", "The selected update source changed. Refresh update availability.");
         await Reader().CheckAssetsAsync(offer.Selection, PlatformFeedSource.CurrentRid, ct);
-        var cli = CoreCliLauncher.ResolveCliPath() ?? throw new PlatformReleaseException("cli_not_found", "The installed CLI could not be located.");
+        var cli = resolveCliPath() ?? throw new PlatformReleaseException("cli_not_found", "The installed CLI could not be located.");
         var accepted = new PlatformUpdateAcceptance(input.RequestId, input.OfferId, config.DataRoot, offer.Selection, DateTimeOffset.UtcNow);
         CoreLaunchFiles.Write(path, accepted, PlatformAcceptanceJson.Default.PlatformUpdateAcceptance);
+        // The durable acceptance fences other operations while the helper takes over launch.lock.
+        // Windows probes the helper before returning, so its launch cannot run under a parent-held lock.
+        lease.Dispose();
+        return StartUpdate(accepted, cli, spawnUpdate);
+    }
+
+    private CorePlatformUpdateResult StartUpdate(PlatformUpdateAcceptance accepted, string cli,
+        Action<string, string> spawnUpdate)
+    {
         // Retry reuses the retained request/selection. The helper reads only this frozen receipt.
-        try { CoreCliLauncher.SpawnDetached(cli, ["update", "--operation-id", input.RequestId], config, "core-update.log"); }
+        try { spawnUpdate(cli, accepted.Id); }
         catch (Exception error)
         {
-            CoreLaunchFiles.Write(path, accepted with { Error = error.Message }, PlatformAcceptanceJson.Default.PlatformUpdateAcceptance);
+            try
+            {
+                using var lease = CoreLaunchFiles.Lock(config.DataRoot);
+                var current = PlatformAcceptedUpdates.Read(config.DataRoot, accepted.Id);
+                var journal = CoreLaunchFiles.Read(PlatformUpdateTransaction.JournalPath(config.DataRoot), PlatformUpdateJson.Default.PlatformUpdateOperation);
+                if (current is { Status: not "completed" } && journal?.Id != accepted.Id)
+                    CoreLaunchFiles.Write(PlatformAcceptedUpdates.PathFor(config.DataRoot, accepted.Id),
+                        current with { Error = error.Message }, PlatformAcceptanceJson.Default.PlatformUpdateAcceptance);
+            }
+            catch (IOException)
+            {
+                // A running helper may already own the lock; preserve its progress and the spawn error.
+            }
             throw;
         }
-        return Status(accepted);
+        return GetOperation(accepted.Id);
     }
     public CorePlatformUpdateResult GetOperation(string id)
         => Status(PlatformAcceptedUpdates.Read(config.DataRoot, id)

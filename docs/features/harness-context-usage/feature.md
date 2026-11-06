@@ -1,7 +1,7 @@
 ---
 created: 2026-10-22
-updated: 2026-11-04
-summary: Current context usage for Claude, Codex and Ollama, with MCP definition detail, durable replay and a compact composer indicator.
+updated: 2026-11-06
+summary: Native context observations, recorded MCP calls and separate definition estimates in the Harness composer.
 components: [apps/harness]
 ---
 
@@ -19,6 +19,14 @@ open a [server/tool detail dialog](../claude-mcp-context-detail/feature.md). Oll
 with explicitly labeled [local estimates and sent/catalog inclusion](../ollama-mcp-context-detail/feature.md).
 Codex adds [local estimates of Hosty instructions and MCP definitions](../codex-local-context-detail/feature.md)
 with explicit unknown inclusion, alongside its unchanged native total. Other context categories have no drill-down.
+
+## Recorded MCP Calls
+
+The dialog leads with [recorded MCP calls](../recorded-mcp-calls/feature.md) grouped by server and
+tool. It separates those historical records from definition loading and token attribution, remains
+available without a native context reading and keeps definition estimates in a collapsed disclosure.
+The diagnostic documents coverage and conservative outcome correlation separately; it adds no
+persistent accounting pipeline or additional provider requests.
 
 ## Provider Measurements
 
@@ -101,6 +109,9 @@ and credits. It does not change this context meter or use billed tokens as accou
 - UI tests cover the stacked-pages circular indicator, used label, warning thresholds, estimates, unknown counts,
   missing limits, percentages above 100%, keyboard tooltip access, replay ordering and exclusion
   from the transcript. Check full-page and embedded composers at desktop and narrow widths.
+- Recorded-call tests cover explicit and legacy MCP identity, duplicate event delivery, turn-scoped
+  correlation, conflicting/unknown outcomes, and calls absent from the bounded catalog. Browser
+  acceptance checks the collapsed catalog, call outcomes and activity without a native reading.
 - Run `npm run harness:test`, `npm run harness:lint`, `npm run harness:build-web`,
   `npm run test:integration -- worker`, `node scripts/check-versions.mjs`,
   `node scripts/docs-index.mjs --check` and `git diff --check`.
