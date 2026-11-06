@@ -1,6 +1,6 @@
 ---
 created: 2026-10-11
-updated: 2026-11-03
+updated: 2026-11-06
 summary: Explicit navigation and tool policy, manifest navigation, and retained tool instances shared by Shell, desktop hosts and standalone apps.
 components: [packages/app-sdk, apps/core, apps/shell, apps/documents, apps/demo-app, apps/harness, apps/marketplace, apps/telemetry-ui, apps/shell-swift]
 ---
@@ -61,6 +61,11 @@ navigation visibility toggle, the declared application icon and its display name
 contains pinned tools and a Tools dropdown listing the authorized catalog with independent pin
 controls. A pin changes only the launcher; it neither opens nor closes a tool. Explicit SDK host
 renderers retain their rail by default. Embedded Shell/Desktop documents use their host's chrome.
+
+Pinned tool buttons render the Lucide name from `ui.panels[].icon`, as Shell does. The SDK accepts
+kebab-case names and legacy component-name spellings. Missing, unknown or loading icons retain a
+generic tools glyph; the button's label and accessible name remain available. Updating icon metadata
+does not replace the retained tool frame. The Tools menu button keeps its generic tools glyph.
 
 Core's bootstrap includes optional caller `displayName` and `iconUrl` metadata. Relative manifest
 icons use absolute Core asset URLs; declared remote icons retain their URL. The caller needs no
@@ -341,6 +346,8 @@ assistant link is pending; only expansion transitions persist the preference.
 - Standalone preferences cover Core/user/installation scope, malformed storage, write failures and
   cross-tab changes. Header tests cover app metadata/fallbacks, pin/open separation, persistence,
   actor changes, retained document/iframe identity, policy overrides and narrow navigation focus.
+  Pin icons cover distinct manifest names, legacy spellings, missing/unknown fallbacks and catalog
+  icon updates without replacing an open frame.
 - Core bootstrap tests cover relative, remote and absent icons for an unrelated application without
   catalog authority, plus cross-app and parent-origin rejection. Managed browser acceptance covers
   header geometry, no global scroll, image loading, persisted pins/visibility, retained frames,

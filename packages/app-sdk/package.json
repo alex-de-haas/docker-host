@@ -1,6 +1,6 @@
 {
   "name": "@hosty-sdk/app",
-  "version": "0.46.0",
+  "version": "0.46.1",
   "description": "Hosty app auth: session state machine, recovery bridge, Core revalidation, and the embedder responder.",
   "license": "AGPL-3.0-only",
   "type": "module",
@@ -53,6 +53,7 @@
   },
   "dependencies": {
     "@noble/hashes": "^2.4.0",
+    "lucide-react": "^1.55.0",
     "server-only": "^0.0.1"
   },
   "peerDependencies": {
