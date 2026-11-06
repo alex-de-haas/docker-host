@@ -152,7 +152,7 @@ export function PullRequests({ compact = false }: { compact?: boolean }) {
   const repositories = inventory?.repositories ?? [];
   const apps = [...new Map(repositories.flatMap(r => r.apps).map(a => [a.id, a])).values()];
   const change = (key: keyof Filters, value: string) => setFilters(current => ({ ...current, [key]: value }));
-  return <main className="flex h-dvh min-h-0 flex-col bg-background">
+  return <main className="flex h-full min-h-0 flex-col bg-background">
     <header className={cn("flex shrink-0 items-center justify-between gap-3 border-b", compact ? "px-3 py-2" : "px-5 py-4")}>
       <div className="flex items-center gap-2"><GitPullRequest className="size-4 text-muted-foreground" /><h1 className={compact ? "text-sm font-semibold" : "text-lg font-semibold"}>Pull requests</h1>
         {page && <Badge variant="secondary">{page.total ?? `${page.loaded}+`}</Badge>}</div>

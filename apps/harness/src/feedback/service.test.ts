@@ -241,13 +241,14 @@ it("explains recovery after cancellation and continuation, then binds a delibera
   await manager.postMessage(session.id, "Продолжай", "grant", [], { clientRequestId: randomUUID(), actorUserId: "owner", promptSuggestions: false });
   const imageInput = { reportId: report.id, annotationId: report.annotations[0]!.id };
   const outcomes = [{ reportId: report.id, summary: "Aligned", handledAnnotationIds: report.annotations.map(n => n.id), handled: true }];
-  for (const [action, input] of [["feedback-current", {}], ["feedback-image", imageInput], ["feedback-result", { outcomes }]] as const) {
-    await expect(manager.feedbackAction!(session.id, action, input, "grant")).rejects.toMatchObject({
-      code: "feedback_prompt_unbound", status: 409,
-      message: expect.stringMatching(/Feedback.*Needs review.*checkbox.*Send selected.*destination workspace and chat.*new attempt.*Ordinary continuation/),
-    });
-  }
-  expect(client.image).not.toHaveBeenCalled(); expect(client.outcomes).not.toHaveBeenCalled();
+  expect(await manager.feedbackAction!(session.id, "feedback-current", {}, "grant")).toMatchObject({ attemptId: original.id, reports: [report], readOnly: true });
+  expect(await manager.feedbackAction!(session.id, "feedback-image", imageInput, "grant")).toEqual({ content: [{ type: "image", mimeType: "image/png", data: "AQID" }] });
+  await expect(manager.feedbackAction!(session.id, "feedback-result", { outcomes }, "grant")).rejects.toMatchObject({
+    code: "feedback_prompt_unbound", status: 409,
+    message: expect.stringMatching(/Feedback.*Needs review.*checkbox.*Send selected.*destination workspace and chat.*new attempt.*Ordinary continuation/),
+  });
+  expect(client.image).toHaveBeenCalledExactlyOnceWith(report.id, report.annotations[0]!.id, "grant");
+  expect(client.outcomes).not.toHaveBeenCalled();
   await manager.cancelSession(session.id);
   const repeated = await service.send(body(session.id), "grant", "owner");
   expect(repeated.id).not.toBe(original.id); expect(repeated.messageSequence).toBeGreaterThan(original.messageSequence!);
@@ -465,4 +466,71 @@ it("ignores browser defaults when feedback targets an existing chat", async () =
   const saved = (await manager.getSession(session.id))!;
   expect(saved.autonomy).toBeUndefined(); expect(saved.executionSelection).toBeUndefined();
   expect(run.autonomy).toBe("normal"); expect(sent).toHaveBeenCalledTimes(1);
+});
+
+it("retains read-only feedback after cancellation, continuation and service restart", async () => {
+  const session = await manager.createSession({ createdBy: "owner" });
+  const attempt = await service.send(body(session.id), "grant", "owner");
+  await manager.cancelSession(session.id);
+  await manager.postMessage(session.id, "Continue", undefined, [], { clientRequestId: randomUUID(), actorUserId: "owner" });
+  await service.close(); service = new FeedbackService(manager, () => client as unknown as FeedbackServerClient, directory);
+  expect(await manager.feedbackAction!(session.id, "feedback-current", {}, "grant")).toMatchObject({ attemptId: attempt.id, readOnly: true, reports: [report] });
+  expect(await manager.feedbackAction!(session.id, "feedback-image", { reportId: report.id, annotationId: report.annotations[0]!.id }, "grant")).toMatchObject({ content: [{ type: "image" }] });
+  await expect(manager.feedbackAction!(session.id, "feedback-result", { outcomes: [] }, "grant")).rejects.toMatchObject({ code: "feedback_prompt_unbound" });
+  expect(client.outcomes).not.toHaveBeenCalled();
+  client.capabilities.mockResolvedValueOnce({ appId: "harness", installation: "one", userId: "foreign" });
+  await expect(manager.feedbackAction!(session.id, "feedback-current", {}, "grant")).rejects.toMatchObject({ code: "feedback_prompt_unbound" });
+});
+
+it("selects only the latest admitted batch, never an unadmitted reservation or another conversation", async () => {
+  const session = await manager.createSession({ createdBy: "owner" });
+  const firstReport = report;
+  const first = await service.send(body(session.id), "grant", "owner"); await manager.cancelSession(session.id);
+  report = { ...report, id: "b".repeat(64), comment: "Inspect the second report",
+    annotations: [{ ...report.annotations[0]!, id: randomUUID(), text: "Inspect the second image" }] };
+  const second = await service.send(body(session.id), "grant", "owner"); await manager.cancelSession(session.id);
+  attempts.push({ ...first, id: randomUUID(), state: "reserved" });
+  await manager.postMessage(session.id, "Continue", undefined, [], { clientRequestId: randomUUID(), actorUserId: "owner" });
+  expect(await manager.feedbackAction!(session.id, "feedback-current", {}, "grant")).toMatchObject({ attemptId: second.id, reports: [report], readOnly: true });
+  for (const image of [{ reportId: firstReport.id, annotationId: firstReport.annotations[0]!.id },
+    { reportId: report.id, annotationId: firstReport.annotations[0]!.id }]) {
+    await expect(manager.feedbackAction!(session.id, "feedback-image", image, "grant")).rejects.toMatchObject({ code: "feedback_image_missing", status: 404 });
+  }
+  expect(client.image).not.toHaveBeenCalled();
+  expect(await manager.feedbackAction!(session.id, "feedback-image", { reportId: report.id, annotationId: report.annotations[0]!.id }, "current-grant"))
+    .toMatchObject({ content: [{ type: "image" }] });
+  expect(client.image).toHaveBeenCalledExactlyOnceWith(report.id, report.annotations[0]!.id, "current-grant");
+  const other = await manager.createSession({ createdBy: "owner" });
+  await expect(manager.feedbackAction!(other.id, "feedback-current", {}, "grant")).rejects.toMatchObject({ code: "feedback_prompt_unbound" });
+});
+
+it.each(["list", "capabilities"] as const)("rechecks current Core %s authority before reading historical feedback", async operation => {
+  const session = await manager.createSession({ createdBy: "owner" });
+  const attempt = await service.send(body(session.id), "grant", "owner");
+  await manager.cancelSession(session.id);
+  await vi.waitFor(() => expect(attempt.state).toBe("cancelled"));
+  await manager.postMessage(session.id, "Continue", undefined, [], { clientRequestId: randomUUID(), actorUserId: "owner" });
+  for (const [action, input] of [["feedback-current", {}],
+    ["feedback-image", { reportId: report.id, annotationId: report.annotations[0]!.id }]] as const) {
+    client[operation].mockRejectedValueOnce(new FeedbackError("admin_required", "The current grant is no longer allowed.", 403));
+    await expect(manager.feedbackAction!(session.id, action, input, "revoked-grant")).rejects.toMatchObject({ code: "admin_required", status: 403 });
+    expect(client.list).toHaveBeenLastCalledWith("revoked-grant");
+    expect(client.capabilities).toHaveBeenLastCalledWith("revoked-grant");
+  }
+  expect(client.image).not.toHaveBeenCalled(); expect(client.outcomes).not.toHaveBeenCalled();
+});
+
+it("propagates current Core image denial for historical feedback without using retained evidence", async () => {
+  const session = await manager.createSession({ createdBy: "owner" });
+  const attempt = await service.send(body(session.id), "grant", "owner");
+  await manager.cancelSession(session.id);
+  await vi.waitFor(() => expect(attempt.state).toBe("cancelled"));
+  await manager.postMessage(session.id, "Continue", undefined, [], { clientRequestId: randomUUID(), actorUserId: "owner" });
+  expect(await manager.feedbackAction!(session.id, "feedback-current", {}, "current-grant"))
+    .toMatchObject({ attemptId: attempt.id, reports: [report], readOnly: true });
+  client.image.mockRejectedValueOnce(new FeedbackError("feedback_forbidden", "This image is no longer available to the current grant.", 403));
+  await expect(manager.feedbackAction!(session.id, "feedback-image", { reportId: report.id, annotationId: report.annotations[0]!.id }, "current-grant"))
+    .rejects.toMatchObject({ code: "feedback_forbidden", status: 403 });
+  expect(client.image).toHaveBeenCalledExactlyOnceWith(report.id, report.annotations[0]!.id, "current-grant");
+  expect(client.outcomes).not.toHaveBeenCalled();
 });

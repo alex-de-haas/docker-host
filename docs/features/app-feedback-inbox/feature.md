@@ -1,6 +1,6 @@
 ---
 created: 2026-10-30
-updated: 2026-11-05
+updated: 2026-11-06
 summary: Core-owned annotated feedback with app-owned local drafts, reviewed Harness chat delivery, exact-prompt outcomes and workspace-aware retention.
 components: [apps/core, apps/harness, apps/shell, apps/desktop, packages/app-sdk]
 ---
@@ -241,10 +241,14 @@ its historical app/version context even after uninstall. Retrying an existing cr
 preserves that chat's app selection.
 
 The accepted prompt carries complete report snapshots and app context, plus scoped tools
-`feedback_current`, `feedback_image` and `feedback_result`. Tools operate only for the current
-accepted feedback prompt and revalidate user/app authority. Images arrive as MCP image content,
-without unmanaged copies. The agent explicitly reports a summary, handled flag and handled
-annotation IDs for every selected report.
+`feedback_current`, `feedback_image` and `feedback_result`. Read tools select the latest durably
+admitted batch in the same owned conversation and current client installation, including after a
+continuation prompt, cancellation or restart. The current-batch response marks historical context
+read-only. Unadmitted attempts and other conversations do not become context. Images still require
+current Core authority and membership in that batch; they arrive as MCP image content without
+unmanaged copies. Result writes remain restricted to the exact active accepted feedback prompt.
+A later continuation cannot complete an old attempt; reports must be explicitly resent to record
+new outcomes. The agent reports a summary, handled flag and handled annotation IDs for each report.
 
 ### Feedback Cards In Chat History
 
@@ -269,11 +273,12 @@ discard stale responses. Missing permission, redacted snapshots and read failure
 original message: a trusted reference shows an unavailable card with its original-request
 disclosure, while an unmatched historical message uses ordinary Markdown.
 
-After interruption, an ordinary continuation message does not restore that prompt's feedback
-binding. All three tools return `feedback_prompt_unbound` with recovery guidance: open Feedback,
-choose Needs review (or All), select the original report's checkbox and choose Send selected, then
-review the destination workspace and chat. The tool descriptions include the same guidance. This starts a new
-attempt with the retained report and screenshots; the interrupted attempt remains in history.
+After interruption, an ordinary continuation message does not restore that prompt's writable
+feedback binding. Read tools retain the latest durably admitted batch as read-only context;
+`feedback_result` returns `feedback_prompt_unbound` with recovery guidance: open Feedback, choose
+Needs review (or All), select the original report's checkbox and choose Send selected, then review
+the destination workspace and chat. The tool descriptions include the same guidance. This starts a
+new attempt with the retained report and screenshots; the interrupted attempt remains in history.
 
 ## Processing And Workspace Retention
 
@@ -333,7 +338,9 @@ without a workspace remain in the global inbox. Retention is independent of PR m
   capture controls, window blur and abandoning an unfinished region at a document boundary.
 - Harness tests cover exact-message admission, lost replies, busy/foreign-chat refusal, scoped agent
   tools, interruption followed by an ordinary continuation and explicit resend, recovery guidance,
-  user/app/installation changes, unrelated terminal events, unprocessed-only bulk review and frozen UI retries.
+  historical read-only batches after restart, latest-batch image membership and current Core read
+  authorization. Result writes remain tied to the exact active prompt. Cover user/app/installation
+  changes, unrelated terminal events, unprocessed-only bulk review and frozen UI retries.
 - Transcript-card tests cover unchanged provider text and receipt replay, ignored public metadata,
   owner/permission checks, current-installation scope, exact historical/live identity and redacted
   snapshots. Component and hook coverage checks compact summaries, Markdown disclosures, inert
@@ -348,7 +355,8 @@ without a workspace remain in the global inbox. Retention is independent of PR m
 - `npm run test:integration -- feedback` builds Core/CLI and uses the existing parent-managed child
   Core/native Harness and Shell acceptance path with separate password-authenticated accounts and synthetic
   agent credentials and explicit administrator review of assistant-to-Core MCP access in the child.
-  It verifies batch handling, source preparation, screenshot tools, repeat partial
+  It verifies batch handling, source preparation, screenshot tools, native restart followed by
+  historical read-only continuation, refused historical result writes, explicit resend, repeat partial
   outcomes, deletion retention and owner Finish cleanup.
 - The browser journey uses Playwright Chromium (`HOSTY_FEEDBACK_BROWSER_CHANNEL` optionally selects
   installed Chrome; `HOSTY_FEEDBACK_PLAYWRIGHT_MODULE` can supply an absolute module path). It checks
@@ -360,7 +368,9 @@ without a workspace remain in the global inbox. Retention is independent of PR m
   `HOSTY_FEEDBACK_CAPTURE_WINDOW_HEIGHT` optionally sets the fixture's native Chromium window height
   before its first capture (960–4096 pixels). Headless installed Chrome can capture a different
   height from its emulated CSS viewport; calibrate this test-only value for the selected browser
-  while retaining exact 1360×960 capture assertions. The macOS installed-Chrome probe uses 1103.
+  while retaining exact 1360×960 capture assertions. When a screenshot prefix is configured, the
+  optional `<prefix>.capture-window-height` sidecar overrides that test value on the next browser
+  retry. It accepts only a decimal integer in the same range; the sidecar stays outside the repository.
   `HOSTY_FEEDBACK_BROWSER_ONLY=1` selects intake/browser verification without scripted-agent dispatch.
   `HOSTY_FEEDBACK_DESKTOP=1` includes a separately installed Desktop. For script iteration,
   `HOSTY_FEEDBACK_RETRY_BROWSER=1` retains the same child after a browser failure until the printed

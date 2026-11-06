@@ -1,6 +1,6 @@
 ---
 created: 2026-10-16
-updated: 2026-11-04
+updated: 2026-11-06
 summary: Harness provides separate Chats and Workspaces pages, multi-repository details, environment previews and verified lifecycle actions.
 components: [apps/harness, apps/core, apps/shell, packages/app-sdk]
 ---
@@ -929,6 +929,12 @@ Verified on macOS on 2026-10-29 for the Harness 0.80.0 release; the initial coun
 - The operator's automatic General default is cleared through Settings. Explicit profile choices
   and existing conversation snapshots remain intact.
 
+Conversation and pull-request pages fill the SDK content area's height, below the standalone
+header or inside the host frame. The document establishes a definite full-height root for embedded
+launches. Tasks use that same available area as their minimum height, while longer page content can
+scroll normally. The header is not added to a second viewport-sized page; conversation lists,
+transcripts and workspace details keep their own scroll regions.
+
 Workspace details contains positioned accessibility labels within its own scroll area. Long
 workspace content scrolls inside the pane without increasing the embedded document height.
 
@@ -1004,6 +1010,10 @@ The managed local suite verifies warm restart, missing-output recovery and owner
 
 - Verify standalone navigation between Chats, Workspaces and Tasks at wide and narrow widths, active-page
   selection and host-controlled navigation hiding without losing conversation/workspace controls.
+
+- Measure short Tasks and Pull requests pages in standalone and actual Shell frames at desktop and
+  phone widths. Their main area fills the available content below host chrome without document
+  overflow. Long Tasks editors retain scrolling inside the content area without stretching the document.
 
 - Cover expired stream admission followed by verified same-actor restoration, durable cursor replay,
   fast recovery races, terminal denial and listener/timer cleanup.
