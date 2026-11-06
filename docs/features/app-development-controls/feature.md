@@ -58,7 +58,12 @@ A denial grants nothing. Edits before admission invalidate the exact review; ret
 execution request UUID. After admission, a restart of the same workspace source and runtime keeps
 only its previously admitted, still-granted and still-requested permissions and roles. Removed
 workspace-only permissions drop out; revoked or newly requested rights require review. Package
-Return retains its separate baseline. A client cannot submit its own approval flag.
+Return retains its separate baseline. Exact admitted host/runtime access remains approved across
+Core-owned permission and role projection for the same contract, source, runtime and actor. Current
+authority and configuration are revalidated; a permission revision change or changed access contract
+cannot reuse that consent. An interrupted Core-owned execution projection accepts only its exact
+retained previous configuration hash while projection is pending; unrelated configuration drift
+still requires review. A client cannot submit its own approval flag.
 
 Approval records scoped consent; it does not update the installed manifest or immediately grant
 permissions to the package. The active workspace receives admitted required rights and explicitly
@@ -84,8 +89,11 @@ restart was interrupted. Core upgrade projection healing also reads the admitted
 instead of overwriting its contract from package metadata.
 
 Selecting a package runtime returns to the **currently installed package** using Core's independent
-package-runtime baseline. Switching workspace A to workspace B does not create a previous-workspace
-stack. Explicitly selecting another package runtime changes the baseline. Package return does not
+package-runtime baseline. A manifest without release profiles retains its manifest-selected default
+runtime as the package baseline, including a development-only bootstrap. This destination stays
+available after failed workspace entry and executes the installed contract from its canonical
+source. When release profiles exist, development recipes remain workspace-only. Switching workspace
+A to workspace B does not create a previous-workspace stack. Explicitly selecting another package runtime changes the baseline. Package return does not
 restore an old manifest, data archive, settings snapshot or revoked grants. Current source edits,
 worktrees, caches and ordinary app data survive. There is no mandatory generic data-compatibility
 acknowledgement in the unified switching contract. Package selection clears captured workspace

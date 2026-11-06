@@ -158,3 +158,21 @@ it.each(["x".repeat(40_000), "   "])("claims a draft using the draft store's nor
   writeDraft(request.sessionId, text); await claimPendingSend(normalized);
   expect(readPendingSend(request.sessionId)).toEqual(normalized); expect(appFetch).not.toHaveBeenCalled();
 });
+
+
+it("settles the exact replay's known workspace fence refusal after a serialized missing receipt", async () => {
+  rememberPendingSend(request);
+  vi.mocked(appFetch).mockResolvedValueOnce(failure(404, "message_request_not_found")).mockResolvedValueOnce(failure(409, "workspace_in_use"));
+  expect(await retryPendingSend(request)).toMatchObject({ clientRequestId: request.clientRequestId, state: "rejected", error: { code: "workspace_in_use" } });
+  const calls = vi.mocked(appFetch).mock.calls;
+  expect(calls).toHaveLength(2);
+  expect(JSON.parse(String(calls[1][1]?.body)).clientRequestId).toBe(request.clientRequestId);
+});
+
+it.each([409, 503])("retains an uncertain original send when only receipt lookup reports a workspace fence (%s)", async status => {
+  rememberPendingSend(request);
+  vi.mocked(appFetch).mockResolvedValueOnce(failure(status, "workspace_in_use"));
+  await expect(retryPendingSend(request)).rejects.toMatchObject({ status, code: "workspace_in_use" });
+  expect(appFetch).toHaveBeenCalledOnce();
+  expect(readPendingSend(request.sessionId)).toEqual(request);
+});

@@ -60,7 +60,10 @@ export function forgetPendingSend(request: PendingSend): void {
   }
 }
 export function isMessageAdmissionRejection(error: unknown): error is AssistantApiError {
-  return error instanceof AssistantApiError && ["app_context_unavailable", "app_context_conflict", "selection_conflict", "provider_required", "workspace_closed", "session_busy", "cleanup_pending", "handoff_pending", "handoff_queued", "worker_recovery_required"].includes(error.code ?? "");
+  // Core's writer fence rejects before message admission or native execution. Keep the draft
+  // editable after that explicit refusal; an uncertain receipt GET still cannot settle a POST.
+  return error instanceof AssistantApiError && (["app_context_unavailable", "app_context_conflict", "selection_conflict", "provider_required", "workspace_closed", "session_busy", "cleanup_pending", "handoff_pending", "handoff_queued", "worker_recovery_required"].includes(error.code ?? "")
+    || error.status === 409 && error.code === "workspace_in_use");
 }
 export function dispatchPendingSend(request: PendingSend): Promise<MessageReceipt | void> {
   return postMessage(request.sessionId, request.text, request.attachments.map(file => file.name), request.appContextRevision,

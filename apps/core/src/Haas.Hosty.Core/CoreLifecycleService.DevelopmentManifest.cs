@@ -43,7 +43,12 @@ internal sealed partial class CoreLifecycleService
             .Intersect(app.ConfirmedRoles ?? [], StringComparer.Ordinal)
             .Intersect(PlatformCapabilities.RequestedRoles(candidate.Manifest.Provides), StringComparer.Ordinal) : [])
             .Distinct(StringComparer.Ordinal).ToArray();
-        var classification = AppDevelopmentManifest.Classify(installed, candidate, effectiveGrants, effectiveRoles, app.Mounts, app.System);
+        // Applying an approved provider role/grant changes effective authority. Preserve the
+        // approved runtime-access baseline across that projection and harmless source edits;
+        // otherwise native execution is repeatedly compared with the original Docker package.
+        var admitted = await ReadAdmittedExecutionConsentAsync(app, operation, sourcePath, runtime, actor, ct);
+        var classification = AppDevelopmentManifest.Classify(admitted?.Selection ?? installed, candidate,
+            effectiveGrants, effectiveRoles, app.Mounts, app.System);
         var stamp = DevelopmentWorkspaceService.Hash(string.Join("\n", app.Id, app.InstalledAt.ToString("O"),
             installed.ManifestDigest, sourcePath, runtime, candidate.ManifestDigest, app.PermissionRevision,
             string.Join(",", grants.Order(StringComparer.Ordinal)), string.Join(",", roles.Order(StringComparer.Ordinal)),
@@ -54,6 +59,44 @@ internal sealed partial class CoreLifecycleService
             candidate.ManifestDigest, stamp, digest, actor.UserId, actor.Via, classification.AdditionalAccess,
             candidate.Manifest.CorePermissions.ToArray(), candidate.Manifest.OptionalCorePermissions.ToArray(), grants, roles);
         return new(candidate, sourcePath, stamp, classification, review, actor, effectiveGrants, effectiveRoles);
+    }
+
+    private async Task<(AppDevelopmentConsent Consent, RuntimeAppManifestSelection Selection)?> ReadAdmittedExecutionConsentAsync(
+        AppRecord app, AppDevOperation? operation, string sourcePath, string runtime, AppDevActor actor, CancellationToken ct)
+    {
+        if (operation is not { Active: true, ExecutionManifest: not null, ExecutionAccessPlan: { } plan } ||
+            operation.Installation != app.InstalledAt || operation.SourcePath != sourcePath || operation.TargetRuntime != runtime ||
+            app.SelectedRuntime != runtime || app.SourceState?.LocalOverridePath != sourcePath ||
+            operation.Actor.UserId != actor.UserId || operation.Actor.Via != actor.Via ||
+            plan.AppId != app.Id || plan.Installation != app.InstalledAt || plan.SourcePath != sourcePath || plan.Runtime != runtime ||
+            plan.UserId != actor.UserId || plan.Via != actor.Via || operation.ExecutionPermissionRevision != app.PermissionRevision ||
+            !plan.BaseGrantedPermissions.ToHashSet(StringComparer.Ordinal).SetEquals(DevelopmentBaseGrants(app, operation)) ||
+            !plan.BaseConfirmedRoles.ToHashSet(StringComparer.Ordinal).SetEquals(DevelopmentBaseRoles(app, operation)) ||
+            (operation.ExecutionGrantedPermissions ?? []).Except(app.GrantedCorePermissions ?? [], StringComparer.Ordinal).Any() ||
+            (operation.ExecutionConfirmedRoles ?? []).Except(app.ConfirmedRoles ?? [], StringComparer.Ordinal).Any())
+            return null;
+        var configuration = await DevConfigurationHashAsync(app, ct);
+        // A journaled projection can precede its registry write. Only that pending checkpoint
+        // retains the exact prior configuration; ordinary operator drift still needs review.
+        if (configuration != operation.ExecutionConfigurationHash &&
+            !(operation.ExecutionProjectionPending && configuration == operation.PriorExecutionConfigurationHash))
+            return null;
+        try
+        {
+            var consent = await JsonStorage.ReadAsync<AppDevelopmentConsent>(DevelopmentConsentPath(app.Id, plan.PlanDigest), ct);
+            if (consent is null || CoreJson.Text(consent.Plan) != CoreJson.Text(plan) ||
+                (operation.ExecutionGrantedPermissions ?? []).Except(consent.GrantedPermissions, StringComparer.Ordinal).Any() ||
+                (operation.ExecutionConfirmedRoles ?? []).Except(consent.ConfirmedRoles, StringComparer.Ordinal).Any())
+                return null;
+            var selection = await manifests.LoadAsync(Path.Combine(AppDevStore.Root(paths, app.Id),
+                "execution-" + plan.CandidateDigest + ".manifest.json"), runtime, ct, forceRead: true);
+            return selection.ManifestDigest == plan.CandidateDigest ? (consent, selection) : null;
+        }
+        catch (Exception error) when (error is AppManifestException or IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+        {
+            // Missing legacy evidence never becomes implicit approval of host access.
+            return null;
+        }
     }
 
     internal Task<InstallationPrepare> CreateExecutionCandidateReviewAsync(AppDevelopmentCandidate candidate,
@@ -125,7 +168,11 @@ internal sealed partial class CoreLifecycleService
         await JsonStorage.WriteTextAsync(file, candidate.Selection.ManifestJson, ct);
         var consent = candidate.ReviewRequired ? await JsonStorage.ReadAsync<AppDevelopmentConsent>(
             DevelopmentConsentPath(app.Id, candidate.Review.PlanDigest), ct) : null;
+        var admitted = consent is null ? await ReadAdmittedExecutionConsentAsync(app,
+            await AppDevStore.ReadAsync(paths, app, ct), candidate.SourcePath, candidate.Selection.RuntimeProfile.Key, candidate.Actor, ct) : null;
         var next = operation with { ExecutionManifest = file, ExecutionManifestDigest = candidate.Selection.ManifestDigest,
+            ExecutionAccessPlan = consent?.Plan ?? admitted?.Consent.Plan,
+            ExecutionPermissionRevision = consent is not null || admitted is not null ? app.PermissionRevision : null,
             BaseGrantedPermissions = candidate.Review.BaseGrantedPermissions,
             ExecutionGrantedPermissions = consent?.GrantedPermissions ?? candidate.GrantedPermissions,
             BaseConfirmedRoles = candidate.Review.BaseConfirmedRoles,
