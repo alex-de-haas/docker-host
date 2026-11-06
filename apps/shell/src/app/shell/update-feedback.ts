@@ -34,8 +34,8 @@ export function isRoutineUpdate(app: Pick<CoreApp, "operationStatus" | "updateCh
 }
 
 /** Terminal observations take precedence over a still-pending request flag. */
-export function coreUpdateFeedback(updating: boolean, phase: CoreUpdateStatus["clientPhase"]): { label: string; tone: "working" | "attention" | "success" } | null {
-  if (phase === "completed") return { label: "Updated", tone: "success" };
+export function coreUpdateFeedback(updating: boolean, phase: CoreUpdateStatus["clientPhase"]): { label: string; tone: "working" | "attention" } | null {
+  if (phase === "completed") return null;
   if (phase === "unconfirmed") return { label: "Update not confirmed", tone: "attention" };
   if (!updating && !phase) return null;
   return { label: phase === "reconnecting" ? "Reconnecting" : phase === "verifying" ? "Verifying update" : "Installing update", tone: "working" };

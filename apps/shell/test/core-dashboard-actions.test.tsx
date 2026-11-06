@@ -97,7 +97,6 @@ it.each([
   ["installing", "Installing update", "text-info-foreground", "loader-circle"],
   ["reconnecting", "Reconnecting", "text-info-foreground", "loader-circle"],
   ["verifying", "Verifying update", "text-info-foreground", "loader-circle"],
-  ["completed", "Updated", "text-success-foreground", "check"],
   ["unconfirmed", "Update not confirmed", "text-warning-foreground", "triangle-alert"],
 ] as const)("uses factual %s update feedback without changing the Core lifecycle", async (phase, label, tone, icon) => {
   development.launch.mode = "release";
@@ -110,13 +109,29 @@ it.each([
   expect(message.querySelector(`.lucide-${icon}[aria-hidden="true"]`)).not.toBeNull();
   expect(!!message.querySelector('.animate-spin')).toBe(icon === "loader-circle");
   expect(!!primary()?.querySelector('.animate-spin')).toBe(icon === "loader-circle");
-  if (phase === "completed" || phase === "unconfirmed") {
+  if (phase === "unconfirmed") {
     expect(container.querySelector('[data-testid="core-row"] .animate-spin')).toBeNull();
-    expect(primary()?.textContent).toBe(phase === "completed" ? "Updated" : "Needs confirmation");
+    expect(primary()?.textContent).toBe("Needs confirmation");
   }
   expect(container.querySelector('.dashboard-status')?.textContent).toContain("Running");
   expect(primary()?.disabled).toBe(true);
   expect(fixture.stop).not.toHaveBeenCalled(); expect(fixture.restart).not.toHaveBeenCalled();
+});
+
+it.each([false, true])("clears completed update feedback and restores normal actions with pending=%s", async pending => {
+  development.launch.mode = "release";
+  coreUpdating = pending;
+  coreUpdate = { currentVersion: "1.0.0", updateAvailable: false, releaseTag: "next", checkedAt: "now", clientPhase: "completed" };
+  await render();
+  const row = container.querySelector('[data-testid="core-row"]')!;
+  expect(row.querySelector('.dashboard-status')?.textContent).toBe("Running");
+  expect(row.querySelector('[role="status"]')).toBeNull();
+  expect(row.querySelector('.animate-spin')).toBeNull();
+  expect(row.textContent).not.toContain("Updated");
+  expect(primary()?.textContent).toBe("Stop");
+  expect(primary()?.disabled).toBe(false);
+  await act(async () => primary()!.click());
+  expect(fixture.stop).toHaveBeenCalledOnce();
 });
 
 it.each(["Waiting for confirmation", "Stop not confirmed"])("keeps %s static and guarded", async phase => {
