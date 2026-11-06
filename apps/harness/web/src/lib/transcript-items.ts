@@ -33,7 +33,7 @@ function commandResults(events: readonly AssistantEvent[]) {
   return { results, matched };
 }
 /** Output is attached only to a unique preceding call within its recorded user turn. */
-function toolResults(events: readonly AssistantEvent[]) {
+export function toolResults(events: readonly AssistantEvent[]) {
   const results: Record<number, ToolOutput> = {}, matched = new Set<number>();
   let calls = new Map<string, AssistantEvent[]>();
   const outcomes = new Map<number, string>(), matchedByCall = new Map<number, number[]>();

@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-23
-updated: 2026-11-04
+updated: 2026-11-06
 summary: Context estimates by source, MCP server and tool, with correlated LLM-call tokens, timing and cache observations.
 components: [apps/harness]
 ---
@@ -44,6 +44,12 @@ All remaining deliverables stay Draft and unchecked: repository instructions, sk
 arguments/results, server instructions, full history, exact model/template tokenization,
 live catalog refresh within a run, editor preview and per-call tokens/time/cache. Provider
 extraction and timeline ownership are unchanged.
+
+The owner approved finishing the separate [recorded MCP call diagnostic](../recorded-mcp-calls/feature.md)
+on 2026-11-06. It exposes counts from already recorded transcript events, keeps definition estimates
+collapsed and states missing schema-loading/token-attribution evidence. This browser projection adds
+no invocation ledger and completes none of D1-D8 below, per-request tokens/time/cache, native nested-call
+coverage or the separate timeline plan. Its scoped verification is tracked in its own feature folder.
 
 ## Refreshed Baseline
 
