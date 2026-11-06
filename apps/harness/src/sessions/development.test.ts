@@ -6,6 +6,19 @@ let server: Server | undefined;
 afterEach(async () => { vi.unstubAllGlobals(); if (server) { server.closeAllConnections(); await new Promise<void>(resolve => server!.close(() => resolve())); server = undefined; } });
 
 describe("Core workspaces transport", () => {
+  it("retains explicit policy amendment evidence through canonical publication transport", async () => {
+    const tool = developmentTools().find(t => t.name === "pr_configure")!;
+    expect(JSON.stringify(tool.inputSchema)).toContain("previousPolicy");
+    expect(tool.description).toContain("merge commit");
+    const client = new DevelopmentClient("http://core.test", "example.assistant", "service");
+    const invoke = vi.fn().mockResolvedValue({ outcome: null });
+    const input = { workspaceId: "tree", requestId: "same-request", expectedHead: "head",
+      policy: { requiredChecks: [], requiredWorkflows: [17], artifacts: [] },
+      policyAmendment: { previousPolicy: { requiredChecks: ["PR Docker"], requiredWorkflows: [], artifacts: [] }, reason: "Verify release workflow" } };
+    await client.withCoreMcp(() => ({ sessionId: "chat" }), invoke, () => client.call("chat", "user", "pr-configure", input));
+    expect(invoke).toHaveBeenCalledWith({ name: "pr_configure", arguments: { input: { worktreeId: "tree", input: expect.objectContaining({ requestId: input.requestId, expectedHead: input.expectedHead, policy: input.policy, policyAmendment: input.policyAmendment }) } } });
+  });
+
   it("retains the legacy publication collection across canonical migration", async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ publications: [{ workspaceId: "allowed" }] })));
     vi.stubGlobal("fetch", fetcher);

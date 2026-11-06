@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, open, unlink } from "node:fs/promises";
 import path from "node:path";
-import { MAX_EVENT_BYTES, REPLAY_MS, WorkerApiError, safeIdentity, terminal, type WorkerEvent, type WorkerReceipt, type WorkerRunRequest } from "./contracts.js";
+import { MAX_EVENT_BYTES, REPLAY_MS, WorkerApiError, safeIdentity, terminal, type WorkerEvent, type WorkerReceipt, type WorkerRecovery, type WorkerRunRequest } from "./contracts.js";
 import type { HarnessEvent } from "../harness/adapter.js";
 import { sanitizeToolResult } from "../harness/tool-result.js";
 import { sanitizeCommandResult } from "../harness/command-result.js";
@@ -14,6 +14,20 @@ export const digest = (value: unknown): string => createHash("sha256").update(JS
 export class WorkerJournal {
   readonly generation = randomUUID();
   private tail: Promise<unknown> = Promise.resolve();
+  private readonly usageClocks = new Map<string, { at: number; active: boolean; carry: number }>();
+  private activeState(state: WorkerReceipt["state"]) { return ["accepted", "running", "parking", "cancelling"].includes(state); }
+  private charge(record: StoredRun, next = record.receipt.state): void {
+    const now = performance.now(), anchor = this.usageClocks.get(record.receipt.runId);
+    const usage = record.receipt.usage ??= { sequence: 0, activeMs: 0, unknown: true };
+    const elapsed = anchor?.active ? Math.max(0, now - anchor.at) + anchor.carry : anchor?.carry ?? 0;
+    const whole = Math.floor(elapsed);
+    usage.activeMs += whole; usage.sequence++;
+    this.usageClocks.set(record.receipt.runId, { at: now, active: this.activeState(next), carry: elapsed - whole });
+  }
+  async sample(id: string): Promise<void> {
+    const record = await this.load(id); if (terminal(record.receipt.state)) return;
+    this.charge(record); await this.save(record);
+  }
   private listeners = new Map<string, Set<() => void>>();
   constructor(private readonly directory: string, private readonly replayMs = REPLAY_MS, private readonly maxBytes = MAX_EVENT_BYTES, private readonly boundary: "container" | "local" = "local") {}
   exclusive<T>(action: () => Promise<T>): Promise<T> {
@@ -57,9 +71,25 @@ export class WorkerJournal {
       if (!file.endsWith(".json")) continue;
       const record = await this.load(file.slice(0, -5));
       if (!terminal(record.receipt.state)) {
+        const usage = record.receipt.usage ??= { sequence: 0, activeMs: 0, unknown: true };
+        if (this.activeState(record.receipt.state)) usage.unknown = true;
+        usage.sequence++;
         record.receipt.exitConfirmed = this.boundary === "container" && record.receipt.boundary === "container";
-        const parked = record.receipt.exitConfirmed && record.receipt.state === "parking"
-          && record.receipt.pending?.length && record.receipt.pending.every(frame => frame.event.type === "question_request" && frame.event.blocking !== false)
+        const calls = new Set<string>(); let unknownCall = false;
+        for (const { event } of record.events) {
+          if (event.type === "native_effect" && event.state === "settled") calls.delete(event.id);
+          if (event.type === "tool_use") {
+            if (event.toolUseId) calls.add(event.toolUseId);
+            else if (event.toolName !== "FileChange") unknownCall = true;
+          }
+          if (event.type === "tool_result" || event.type === "command_result") {
+            if (event.status === "unknown") unknownCall = true;
+            else calls.delete(event.toolUseId);
+          }
+        }
+        const parked = !calls.size && !unknownCall && record.receipt.exitConfirmed && record.receipt.state === "parking"
+          && (record.receipt.barrier && record.receipt.snapshot?.nativeSessionId || record.receipt.pending?.length && record.receipt.pending.every(frame => frame.event.type === "question_request" && frame.event.blocking !== false))
+          && !Object.keys(record.receipt.effects ?? {}).length
           && Object.values(record.controls).every(control => control.applied);
         record.receipt.state = parked ? "parked" : "interrupted";
         record.receipt.error = parked ? undefined : "Worker restarted; the previous run was not repeated.";
@@ -90,17 +120,41 @@ export class WorkerJournal {
     }
     const time = new Date().toISOString();
     const receipt: WorkerReceipt = { runId: id, conversationId: request.conversationId, generation: this.generation,
-      boundary: this.boundary, state: "accepted", revision: 0, selection: request.selection, createdAt: time, updatedAt: time };
+      boundary: this.boundary, usage: { sequence: 1, activeMs: 0, unknown: false }, state: "accepted", revision: 0, selection: request.selection, createdAt: time, updatedAt: time };
+    this.usageClocks.set(id, { at: performance.now(), active: true, carry: 0 });
     // Provider credentials and MCP callback configuration are never retained in the journal.
     await this.save({ version: 1, hash, receipt, events: [], bytes: 0, controls: {} });
     return { receipt, fresh: true };
   }
   async update(id: string, state: WorkerReceipt["state"], error?: string): Promise<WorkerReceipt> {
-    const record = await this.load(id); record.receipt.state = state;
+    const record = await this.load(id); this.charge(record, state); record.receipt.state = state;
     if (terminal(state)) { if (state !== "parked") record.receipt.pending = []; record.receipt.exitConfirmed = state !== "interrupted"; }
     record.receipt.revision++; record.receipt.updatedAt = new Date().toISOString();
     if (error) record.receipt.error = error;
     await this.save(record); return record.receipt;
+  }
+  /** Operator attestation and its replay receipt commit together; no native action is replayed. */
+  async recover(id: string, input: WorkerRecovery): Promise<WorkerReceipt> {
+    if (!input || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.requestId)
+      || !safeIdentity(input.generation) || !Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0
+      || input.consumerExitConfirmed !== true || typeof input.actorId !== "string" || !input.actorId.trim() || input.actorId.length > 512)
+      throw new WorkerApiError(400, "recovery_invalid", "Review the exact run and confirm that its agent and commands have stopped.");
+    const record = await this.load(id), hash = digest({ kind: "recover", ...input }), prior = record.controls[input.requestId];
+    if (prior) {
+      if (prior.hash !== hash || !prior.applied) throw new WorkerApiError(409, "recovery_conflict", "Reuse the original recovery request.");
+      return record.receipt;
+    }
+    if (record.receipt.state !== "interrupted" || record.receipt.exitConfirmed || record.receipt.generation !== input.generation
+      || record.receipt.revision !== input.expectedRevision)
+      throw new WorkerApiError(409, "recovery_stale", "The run changed. Refresh its recovery review.");
+    if (Object.keys(record.controls).length >= 10000) throw new WorkerApiError(413, "control_limit", "Run control limit exceeded.");
+    const now = new Date().toISOString();
+    record.receipt = { ...record.receipt, state: "cancelled", exitConfirmed: true, pending: [],
+      revision: record.receipt.revision + 1, updatedAt: now,
+      recovery: { requestId: input.requestId, actorId: input.actorId, confirmedAt: now } };
+    record.controls[input.requestId] = { hash, applied: true };
+    await this.save(record);
+    return record.receipt;
   }
   async append(id: string, event: HarnessEvent): Promise<WorkerEvent | null> {
     if (event.type === "command_result" || event.type === "tool_result") {
@@ -114,6 +168,7 @@ export class WorkerJournal {
       && event.input && typeof event.input === "object" && !Array.isArray(event.input))
       event = { ...event, input: { ...event.input, password: "[redacted]" } };
     const record = await this.load(id);
+    this.charge(record);
     const frame: WorkerEvent = { runId: id, generation: record.receipt.generation, sequence: record.receipt.revision + 1, event };
     const bytes = Buffer.byteLength(JSON.stringify(frame));
     if (bytes > 1024 * 1024 || record.bytes + bytes > this.maxBytes) throw new WorkerApiError(413, "event_limit", "Run event retention limit exceeded.");
@@ -122,6 +177,10 @@ export class WorkerJournal {
       const text = snapshot.text ? snapshot.text + "\n\n" + event.text : event.text;
       if (Buffer.byteLength(text) > 1024 * 1024) throw new WorkerApiError(413, "result_limit", "Final response exceeds the snapshot limit.");
       snapshot.text = text;
+    }
+    if (event.type === "native_effect") {
+      if (event.state === "settled") delete record.receipt.effects?.[event.id];
+      else (record.receipt.effects ??= {})[event.id] = event.state;
     }
     if (event.type === "context_usage") snapshot.contextUsage = frame;
     if (event.type === "harness_session") snapshot.nativeSessionId = event.harnessSessionId;

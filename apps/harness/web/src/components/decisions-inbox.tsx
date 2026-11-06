@@ -15,13 +15,13 @@ import { Button } from "./ui/button";
 import { Textarea } from "./ui/textarea";
 import { Input } from "./ui/input";
 
-type Item = { id: string; kind: "question" | "permission" | "confirmation" | "review" | "recovery"; title: string; createdAt: string;
+type Item = { id: string; kind: "question" | "permission" | "confirmation" | "review" | "recovery" | "task_mode"; title: string; createdAt: string;
   sessionId?: string; taskId?: string; question?: DecisionRecord; projection?: DecisionProjection; task?: TaskRecord; permission?: PermissionNoticeState };
-const types = { question: "Agent questions", permission: "Tool permissions", confirmation: "Core confirmations", review: "Task reviews", recovery: "Execution recovery" };
+const types = { task_mode: "Autonomous task execution", question: "Agent questions", permission: "Tool permissions", confirmation: "Core confirmations", review: "Task reviews", recovery: "Execution recovery" };
 const selectClass = "w-full rounded-md border bg-background px-3 py-2 text-sm";
 export function DecisionsInbox() {
   const [items, setItems] = useState<Item[]>([]), [history, setHistory] = useState(false), [kind, setKind] = useState("");
-  const [selected, setSelected] = useState<string | null>(null), [session, setSession] = useState(""), [task, setTask] = useState(""), [search, setSearch] = useState("");
+  const [selected, setSelected] = useState<string | null>(null), [session, setSession] = useState(() => typeof window === "undefined" ? "" : new URL(window.location.href).searchParams.get("session") ?? ""), [task, setTask] = useState(""), [search, setSearch] = useState("");
   const [errors, setErrors] = useState<string[]>([]), [loaded, setLoaded] = useState(false), [pending, setPending] = useState<number | null>(null);
   const generation = useRef(0), openedLink = useRef(false);
   const refresh = useCallback(async () => {
@@ -120,11 +120,13 @@ function DecisionDetail({ item, refresh }: { item: Item; refresh: () => Promise<
   if (item.task) return <TaskReview task={item.task} refresh={refresh} />;
   if (item.permission) return <section className="space-y-4 rounded-lg border p-4"><h2 className="font-semibold">{item.title}</h2><p className="text-sm">Core owns this confirmation. Review the exact requested access there.</p><Button disabled={permissionNotice(item.permission) !== "missing" || item.permission.permissions?.reviewAvailable === false} onClick={() => requestPermissionReview(item.permission!)}>Review access in Core</Button>{permissionNotice(item.permission) === "unsupported" && <p role="status" className="text-sm">This Core does not support a required permission. Update compatibility before reviewing.</p>}</section>;
   const projection = item.projection!;
+  if (projection.kind === "task_mode") return <TaskModeProposal proposal={projection} refresh={refresh} />;
   return <div className="space-y-3">{projection.kind === "permission" && projection.event ? <ApprovalCard approvalId={String(projection.event.approvalId)} toolName={String(projection.event.toolName ?? "Action")} input={projection.event.input}
     title={typeof projection.event.title === "string" ? projection.event.title : null} reason={typeof projection.event.reason === "string" ? projection.event.reason : null}
     decision={projection.available ? null : { decision: "cancelled", message: projection.error ?? "The native request is unavailable." }} reasonBox
     onDecide={async (id, decision, message) => { await resolveApproval(projection.sessionId, id, decision, message); await refresh(); }} />
     : <section className="space-y-3 rounded-lg border p-4"><h2 className="font-semibold">{projection.title}</h2><p className="text-sm">{projection.error}</p><p className="text-sm text-muted-foreground">Recovery uses the original chat’s supported controls. An unknown stop must be reconciled there.</p></section>}
+    {projection.taskId && <a className="text-sm text-primary underline" href={`/tasks?task=${encodeURIComponent(projection.taskId)}`}>Open task and recovery actions</a>}
     <a className="text-sm text-primary underline" href={`/development?session=${encodeURIComponent(projection.sessionId)}`}>Open originating chat</a>
   </div>;
 }
@@ -132,7 +134,7 @@ function TaskReview({ task, refresh }: { task: TaskRecord; refresh: () => Promis
   const [feedback, setFeedback] = useState(""), [busy, setBusy] = useState(false), [error, setError] = useState("");
   const [reviewed, setReviewed] = useState(task.revision), [request, setRequest] = useState<TaskAction | null>(null);
   const send = async (action?: "accept" | "request_changes") => {
-    const input = request ?? { requestId: crypto.randomUUID(), expectedRevision: reviewed, resultInputRevision: task.resultInputRevision, action: action!, ...(action === "request_changes" ? { feedback } : {}) };
+    const input = request ?? { requestId: crypto.randomUUID(), expectedRevision: reviewed, resultRef: task.resultRef, action: action!, ...(action === "request_changes" ? { feedback } : {}) };
     setRequest(input); setBusy(true); setError("");
     try {
       await call(`/tasks/v1/tasks/${encodeURIComponent(task.ref.id)}/actions`, { method: "POST", body: JSON.stringify(input) });
@@ -142,12 +144,36 @@ function TaskReview({ task, refresh }: { task: TaskRecord; refresh: () => Promis
       setError(error instanceof Error ? error.message : "Review outcome could not be confirmed.");
     } finally { setBusy(false); }
   };
-  return <section className="space-y-4 rounded-lg border p-4"><h2 className="font-semibold">{task.title}</h2><p className="text-xs text-muted-foreground">Task {task.number} · Revision {task.revision} · Result for input {task.resultInputRevision}</p>
+  return <section className="space-y-4 rounded-lg border p-4"><h2 className="font-semibold">{task.title}</h2><p className="text-xs text-muted-foreground">Task {task.number} · Revision {task.revision} · Result for input {task.resultRef?.inputRevision}</p>
     <Markdown text={task.result?.markdown ?? "No result content is available."} />
     <label className="block space-y-1 text-sm"><span>Changes to request</span><Textarea value={feedback} disabled={busy || !!request} onChange={e => setFeedback(e.target.value)} /></label>
     {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
     {reviewed !== task.revision && !request && <div role="alert" className="space-y-2 text-sm"><p>The task changed. Review its current result before deciding.</p><Button variant="outline" onClick={() => setReviewed(task.revision)}>I reviewed this revision</Button></div>}
     <div className="flex flex-wrap gap-2">{request ? <Button disabled={busy} onClick={() => void send()}>Check original review</Button> : <><Button disabled={busy || reviewed !== task.revision} onClick={() => void send("accept")}>Accept result</Button><Button variant="outline" disabled={busy || reviewed !== task.revision || !feedback.trim()} onClick={() => void send("request_changes")}>Request changes</Button></>}</div>
-    <p className="text-xs text-muted-foreground">This updates the existing task review. Requesting changes does not start another attempt.</p><a className="text-sm text-primary underline" href="/tasks">Open Tasks</a>
+    <p className="text-xs text-muted-foreground">Requesting changes starts a fresh attempt on this task, subject to its execution limits.</p><a className="text-sm text-primary underline" href="/tasks">Open Tasks</a>
+  </section>;
+}
+
+function TaskModeProposal({ proposal, refresh }: { proposal: DecisionProjection; refresh: () => Promise<void> }) {
+  const [request, setRequest] = useState<{ requestId: string; expectedRevision: number; choice: "approve" | "decline" } | null>(null);
+  const [busy, setBusy] = useState(false), [error, setError] = useState("");
+  const answer = async (choice?: "approve" | "decline") => {
+    const input = request ?? { requestId: crypto.randomUUID(), expectedRevision: proposal.revision!, choice: choice! };
+    setRequest(input); setBusy(true); setError("");
+    try {
+      await call(`/task-orchestration/v1/adoptions/${encodeURIComponent(proposal.id)}/consent`, { method: "POST", body: JSON.stringify(input) });
+      setRequest(null); await refresh();
+    } catch (failure) {
+      if (failure instanceof ApiError && failure.status >= 400 && failure.status < 500 && ![408, 429].includes(failure.status)) { setRequest(null); await refresh(); }
+      setError(failure instanceof Error ? failure.message : "The decision could not be confirmed. Check the original response.");
+    } finally { setBusy(false); }
+  };
+  return <section className="space-y-4 rounded-lg border p-4"><h2 className="font-semibold">Run {proposal.title} autonomously?</h2>
+    <p className="text-sm">This switches the originating chat to Autonomous so it can execute this task and delegate subtasks. The chat keeps this mode afterwards. Explicit tool permission rules still apply.</p>
+    {(error || proposal.error) && <p role="alert" className="text-sm text-destructive">{error || proposal.error}</p>}
+    <div className="flex flex-wrap gap-2">{request ? <Button disabled={busy} onClick={() => void answer()}>Check original decision</Button> : <>
+      <Button disabled={busy || !proposal.available} onClick={() => void answer("approve")}>{proposal.approved ? "Retry approved transition" : "Switch to Autonomous"}</Button>
+      {!proposal.approved && <Button variant="outline" disabled={busy || !proposal.available} onClick={() => void answer("decline")}>Keep Normal</Button>}</>}</div>
+    <a className="text-sm text-primary underline" href={`/development?session=${encodeURIComponent(proposal.sessionId)}`}>Open originating chat</a>
   </section>;
 }

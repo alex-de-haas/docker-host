@@ -1,6 +1,6 @@
 ---
 created: 2026-10-15
-updated: 2026-10-28
+updated: 2026-11-03
 summary: Harness runs declared API and Worker services over authenticated HTTP and SSE, with shared Core-owned source access and native model and reasoning-effort selection.
 components: [apps/harness, apps/core, apps/shell]
 ---
@@ -76,7 +76,11 @@ Docker service process can confirm the previous container execution boundary end
 does not assume that an old native child exited. Source leases and occupied claims remain when
 termination cannot be confirmed. Cancellation during startup waits for the terminal receipt within a bounded deadline; timeout
 retains the specific source lease. Ordinary cancellation waits for the known CLI and its process
-group; no UID-wide process scan or per-turn container restart is involved.
+group; no UID-wide process scan or per-turn container restart is involved. A later Stop retries
+cleanup through a retained native handle even after an earlier attempt marked the run interrupted.
+For orphaned Local receipts, the owning signed-in operator can use
+[interrupted session recovery](../harness-session-recovery/feature.md) after verifying process exit.
+The attestation is explicit, exact-run and durable; restart alone never releases source leases.
 
 Opted-in interactive chat runs separate successful answer completion from confirmed native exit.
 The optional `suggesting` phase collects one native next-message suggestion for at most five

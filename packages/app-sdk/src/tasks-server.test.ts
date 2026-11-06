@@ -23,7 +23,9 @@ it("preserves caller-chosen execution and cancellation IDs across lost replies",
     .mockResolvedValueOnce(Response.json({ token: "scoped", provider: descriptor("task-executor") }))
     .mockResolvedValueOnce(Response.json({ executionId: "execution-id", state: "accepted" }));
   vi.stubGlobal("fetch", fetch); const client = new TaskExecutorClient(providers(), ref);
-  const input = { taskRef: { ...ref, id: "task-id" }, taskRevision: 1, input: { title: "work", markdown: "do work", requiresReview: false, resources: [] } };
+  const input: import("./tasks.js").TaskExecutionInput = { version: 1, taskRef: { ...ref, id: "task-id" }, inputRevision: 1,
+    content: { title: "work", markdown: "do work", review: { mode: "none" }, resources: [] },
+    relations: { rootTaskRef: { ...ref, id: "task-id" }, parentTaskRef: null, relationRevision: 1 }, prerequisiteOutcomes: [] };
   await expect(client.accept("execution-id", input)).rejects.toThrow("reply lost");
   expect(fetch).toHaveBeenCalledTimes(2);
   await client.accept("execution-id", input);
@@ -38,4 +40,17 @@ it("rejects another installation and route escape before reaching the provider",
   await expect(providers().taskRequest(ref, "tasks", "/tasks/../admin", "GET")).rejects.toMatchObject({ code: "task_route_invalid" });
   expect(fetch).toHaveBeenCalledTimes(1);
   expect(() => new TaskClient(providers(), ref).get({ ...ref, installationId: "other", id: "x" })).toThrow("another provider");
+});
+
+it("preserves recoverable-removal scope and forwards the explicit trash query in v1", async () => {
+  const fetch = vi.fn().mockResolvedValueOnce(Response.json({ token: "scoped", provider: descriptor("tasks") }))
+    .mockResolvedValueOnce(Response.json({ tasks: [], nextCursor: null }))
+    .mockResolvedValueOnce(Response.json({ token: "scoped", provider: descriptor("tasks") }))
+    .mockResolvedValueOnce(Response.json({ removed: { batchId: "request" } }));
+  vi.stubGlobal("fetch", fetch); const client = new TaskClient(providers(), ref);
+  await client.list({ removed: true });
+  expect(fetch.mock.calls[1]![0]).toContain("removed=true");
+  const taskRef = { ...ref, id: "task" }, command = { requestId: "request", expectedRevision: 4, action: "remove" as const, removalScope: [{ taskRef, revision: 4 }] };
+  await client.action(taskRef, command);
+  expect(JSON.parse(fetch.mock.calls[3]![1].body)).toEqual(command);
 });

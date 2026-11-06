@@ -1,6 +1,6 @@
 ---
 created: 2026-10-29
-updated: 2026-11-03
+updated: 2026-11-05
 summary: Harness PR page, compact panel and manual actions backed by installed-app discovery, shared CI presentation and adaptive GitHub observation.
 components: [apps/core, apps/harness]
 ---
@@ -117,7 +117,7 @@ WebSocket transport; it has no independent GitHub polling loop.
 | Relevant admitted stream demand | Target interval |
 | --- | --- |
 | Repository discovery | 60 seconds |
-| PR with running/pending CI, or a recently seen head with unknown checks | 10 seconds |
+| PR with running/pending CI, pending/missing merge-completion evidence, or a recently seen head with unknown checks | 10 seconds |
 | Quiet PR | 60 seconds |
 | No relevant subscribers | At least 300 seconds |
 
@@ -155,7 +155,12 @@ responses consume pacing but not the charged-read ceiling. Rate/reset/poll heade
 secondary limits and transient failures delay work. Manual refresh and invalidations use this same
 queue and cannot bypass the budget. Sequential requests in the publication verifier wait for account
 pacing, including after a compact observation, while cancellation, automatic allowance reserves and
-provider backoff remain effective. A manual refresh has a ten-second repository cooldown.
+provider backoff remain effective. A manual refresh has a ten-second repository/workspace cooldown. Workspace details' Refresh and
+Check now actions queue authorized active workspace PRs through this same scheduler; refreshing local
+Git alone does not refresh provider evidence. Publication-backed PRs activate workspace subscriptions even when their URLs are absent from the
+worktree's explicit reference list; authorized inventory summaries and loaded details establish demand.
+Opening or returning to a workspace promotes stale observations, and weighted scheduling selects active workspace work before older quiet work in its
+active slots. Provider pacing, backoff and the no-subscriber baseline still apply.
 
 The owner limit is 100 accessible repositories, 1,000 retained PRs per repository and 10,000 per
 owner. The persisted summary cache is bounded to 32 MiB; capacity eviction marks partial coverage.
@@ -187,6 +192,15 @@ workspace cards, inbox rows and expanded check details. Their observation time a
 remain visible with neutral cached styling; age alone does not add an Outdated warning or request
 refresh for a finished PR. Open PRs retain the stale-data warning. Missing or unavailable evidence
 never implies passing CI.
+
+Workspace cards distinguish the PR-head check list from merge-commit completion evidence. Missing
+or pending completion checks display Waiting for post-merge CI; unavailable or unverified evidence
+is neutral. A failed completion check is red only while its observation is fresh. Stale and historical
+completion messages describe the last observation without asserting a current failure. The same
+presentation is used inside check details. Manual refresh reports queued/deferred/unavailable states
+without advancing observation timestamps or hiding the retained card; a new observation removes the
+queued notice and preserves the disclosure state. Empty completion policies need no special check name.
+
 Completed counts do not imply all checks passed. Expanded detail pagination is retained during live
 revalidation, and the diff retains the selected file. An exact head/base diff is not fetched again
 for unrelated CI or review observation hints; changing either revision fetches the new comparison. Keyboard selection and the narrow-screen
@@ -215,7 +229,8 @@ cover in-flight coalesced readers whose app permission is revoked or whose insta
 partial-status retry fairness and stale receipts, and background verifier completion after pacing. Harness tests
 cover proxy restrictions, scoped subscriptions, bounded notification bursts, slow/trailing snapshot
 reads, owner/visibility isolation, immutable diff reuse, explicit CI counts,
-main/fallback navigation, shared row/CI rendering, mixed Markdown/HTML disclosures, unsafe HTML/URL
+workspace manual provider refresh, post-merge waiting/failure/stale transitions, active workspace
+scheduler fairness, refresh cooldown and authority, main/fallback navigation, shared row/CI rendering, mixed Markdown/HTML disclosures, unsafe HTML/URL
 removal, inert remote images, confirmation, changed-head rejection and recovery with the same UUID. Existing publication tests remain required.
 
 Run affected Core tests/build, Harness tests/lint/web build, `npm run check-versions`, documentation

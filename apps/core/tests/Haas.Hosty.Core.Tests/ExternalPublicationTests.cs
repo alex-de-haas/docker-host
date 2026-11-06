@@ -163,6 +163,8 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.Single(results, p => p.Observation is not null);
         Assert.Equal(2, f.Provider.Observed);
         Assert.All(results.Skip(1), p => Assert.NotNull(p.Unavailable));
+        // This fixture timestamps provider observations with the wall clock; align the failure attempt.
+        f.F.Clock.UtcNow = DateTimeOffset.UtcNow.AddSeconds(1);
         f.Provider.FailedNumber = 42;
         await f.Service.RefreshExternalReferencesAsync(default);
         results = await f.Service.ReadExternalReferencesAsync(w, "admin", default);

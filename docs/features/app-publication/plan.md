@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-16
-updated: 2026-11-03
+updated: 2026-11-04
 summary: Repository provisioning, installable releases and feeds, and catalog promotion for apps built in Hosty.
 components: [apps/core, apps/harness]
 ---
@@ -17,13 +17,14 @@ promotion. Reuse their recorded commits, PRs and artifact observations where the
 do not make the session's Publish button imply a release, catalog listing or installation update.
 The two plans retain separate deliverables and approval boundaries.
 
-[Ready releases and update feeds](../runtime-app-update/plan.md) owns the shared release
-contract, separate check/build/publication selection, verified digest reuse, artifact-before-channel
-ordering, defensive consumer checks and migration of existing main-based sources to daily.
-Its D12 defines automatic daily publication after successful main CI and manual stable promotion
-of existing exact releases; fresh-install defaults select stable after its first approved release.
-Its D13-D15 also own Core/CLI native release feeds and platform migration/preparation; this app
-authoring plan does not duplicate that platform work or couple app feeds to the Core feed.
+The implemented [ready-release publisher](../repository-release-model/feature.md) provides the shared
+release contract, separate check/build/publication selection, verified digest reuse and
+artifact-before-feed ordering. [Runtime App Update](../runtime-app-update/feature.md) supplies
+defensive consumer checks and reviewed migration of existing main-based sources to daily.
+Automatic daily publication follows successful main CI; manual stable promotion reuses exact
+completed releases. Fresh-install defaults select stable after its first approved release.
+[Platform feeds](../platform-release-feeds/feature.md) independently cover Core/CLI native releases,
+migration and preparation; this authoring plan does not duplicate that delivered platform work.
 Feed names/counts/defaults and automation policies are publisher-defined. The stock daily/stable
 configuration is not a required pair for authored apps or third-party platform distributions.
 The release milestone and D3/D4 here compose that contract; they retain the authoring, provider and

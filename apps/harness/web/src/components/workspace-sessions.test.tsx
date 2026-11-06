@@ -4,6 +4,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useWorkspaceSessionActions } from "@/lib/use-workspace-session-actions";
 import { WorkspaceSessions } from "./workspace-sessions";
+import { useTaskExecutionSummary, type TaskExecutionSummary } from "@/lib/task-execution-api";
+vi.mock("@/lib/task-execution-api", () => ({ useTaskExecutionSummary: vi.fn() }));
 import { AssistantApiError, createWorkspaceSession, listSessions, workspaceAction, type AssistantSession } from "@/lib/assistant-api";
 import { type DevelopmentWorkspace } from "@/lib/development-api";
 vi.mock("@/lib/development-api", async original => ({ ...await original<object>(), developmentRequest: vi.fn() }));
@@ -22,6 +24,7 @@ function SessionList({ space, select, refresh = () => {} }: { space: Development
 const button = (text: string) => [...(document.querySelector('[role="dialog"]') ?? document).querySelectorAll("button")].find(b => b.textContent === text || b.getAttribute("aria-label") === text)!;
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); sessionStorage.clear();
+  vi.mocked(useTaskExecutionSummary).mockReturnValue({ summary: null, error: "" });
   Element.prototype.scrollIntoView = vi.fn();
   Element.prototype.hasPointerCapture = vi.fn(() => false);
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
@@ -167,7 +170,7 @@ it("keeps empty session controls visible and explains owner names on focus", asy
   expect(container.textContent).not.toContain("My chat");
   expect(button("Attach session")).toBeDefined();
   await act(async () => button("About workspace sessions").focus());
-  expect(document.querySelector('[role="tooltip"]')?.textContent).toContain("Names identify their owners");
+  expect(document.querySelector('[role="tooltip"]')?.textContent).toContain("profile used for that attempt");
 });
 it("attaches only idle unbound chats from the sidebar without creating a new session", async () => {
   const select = vi.fn(), refresh = vi.fn();
@@ -269,4 +272,25 @@ it("cancels deletion without removing or detaching a session", async () => {
   await act(async () => button("Keep session").click());
   expect(remove).not.toHaveBeenCalled();
   expect(workspaceAction).not.toHaveBeenCalled();
+});
+
+it("shows immutable executor labels separately from owners and keeps every retained attempt", async () => {
+  const space = workspace();
+  const row = { appId: "assistant", installationId: "installed", ownerId: "member", sessionId: "second", executionId: "first-attempt", title: "My chat", status: "completed", associationState: "attached" as const, historyPath: "/assistant?session=second", executor: { kind: "option" as const, name: "Backend developer at admission" } };
+  const summary: TaskExecutionSummary = { revision: "one", nextCursor: null,
+    roots: [{ taskRef: { id: "root" }, number: "HRN-1", title: "Build calculator", status: "Running", path: "/tasks?task=root" }],
+    sessions: [row, { ...row, sessionId: "retry", executionId: "retry-attempt", associationState: "pending", title: "Retry analysis", historyPath: "/assistant?session=retry" },
+      { ...row, sessionId: "adopted", executionId: "chat-attempt", executor: { kind: "none", name: "Chat configuration" }, title: "Original chat", associationState: "detached", historyPath: "/assistant?session=adopted" },
+      { ...row, sessionId: "missing", executionId: "deleted-history", executor: { kind: "configuration", name: "One-off QA" }, title: "Review", associationState: "unavailable", historyPath: null }] };
+  vi.mocked(useTaskExecutionSummary).mockReturnValue({ summary, error: "" });
+  await act(async () => root.render(<WorkspaceSessions workspace={space} onPick={() => {}} refresh={() => {}} />));
+  expect(button("Open session My chat").textContent).toBe("Backend developer at admissionMy chatMember · idle");
+  expect(container.querySelector('[aria-label="Workspace root tasks"] a')?.getAttribute("href")).toBe("/tasks?task=root");
+  expect(container.textContent?.match(/Backend developer at admission/g)).toHaveLength(2);
+  expect(container.textContent).toContain("Retry analysis · pending");
+  expect(container.textContent).toContain("No profileOriginal chat · detached");
+  expect(container.textContent).toContain("Task-specific executorReview · unavailable");
+  expect([...container.querySelectorAll("a")].map(a => a.getAttribute("href"))).toEqual(["/tasks?task=root", "/assistant?session=retry", "/assistant?session=adopted"]);
+  expect(button("Open session Private owner chat")).toBeUndefined();
+  expect(container.textContent).toContain("Owner · running");
 });

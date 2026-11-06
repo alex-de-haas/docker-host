@@ -101,10 +101,14 @@ export function HostyAppFrame(props: HostyAppFrameProps) {
       const attention = parseActiveFrameAttention(event, frame, source); if (attention !== null) current.onAttention?.(attention);
       const permission = parseActiveFramePermissionReview(event, frame, source, surface.appId);
       const mcp = parseFrameMcpReview(event, frame, source, surface.appId);
+      const confirmation = event.data?.type === "hosty:request-installation-confirmation"
+        && typeof event.data.requestId === "string" && /^[a-f0-9]{48}$/.test(event.data.requestId) ? event.data.requestId : null;
       const core = host?.getSnapshot().bootstrap?.coreOrigin;
-      if (core && (permission || mcp)) {
-        const url = mcp ? new URL(`/install/agents/${encodeURIComponent(mcp.appId)}/${encodeURIComponent(mcp.targetAppId)}`, core).href : permissionReviewUrl(core, surface.appId);
-        setReview(url); window.open(url, "_blank", "noopener,noreferrer");
+      if (core && (permission || mcp || confirmation)) {
+        const url = confirmation ? new URL(`/install/confirm/${confirmation}`, core).href : mcp ? new URL(`/install/agents/${encodeURIComponent(mcp.appId)}/${encodeURIComponent(mcp.targetAppId)}`, core).href : permissionReviewUrl(core, surface.appId);
+        // The requesting app owns receipt polling and its retry link; the host owns no operation state.
+        if (!confirmation) setReview(url);
+        window.open(url, "_blank", "noopener,noreferrer");
       }
       current.onMessage?.(event, frame);
     };

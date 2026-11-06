@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { call } from "@/lib/api";
 import { recordingWave } from "@/lib/speech-audio";
+import { startSpeechActivity, type SpeechActivityFrame } from "@/lib/speech-activity";
 
 type Roster = { granted: boolean; requestable?: boolean; reviewAvailable?: boolean; providers: ProviderDescriptor[] };
 type Recording = { controller: AbortController; stream?: MediaStream; recorder?: MediaRecorder; timer?: ReturnType<typeof setTimeout> };
@@ -18,6 +19,7 @@ export function SpeechInput({ disabled, onText, onStart }: { disabled: boolean; 
   const [selected, setSelected] = useState("");
   const [phase, setPhase] = useState<"idle" | "starting" | "recording" | "transcribing">("idle");
   const [error, setError] = useState("");
+  const [meterStream, setMeterStream] = useState<MediaStream>();
   const [rosterError, setRosterError] = useState("");
   const active = useRef<Recording | null>(null);
   const onResult = useRef(onText);
@@ -27,7 +29,7 @@ export function SpeechInput({ disabled, onText, onStart }: { disabled: boolean; 
   const [wasDisabled, setWasDisabled] = useState(disabled);
   if (disabled !== wasDisabled) {
     setWasDisabled(disabled);
-    if (disabled) setPhase("idle");
+    if (disabled) { setPhase("idle"); setMeterStream(undefined); }
   }
   useEffect(() => {
     const controller = new AbortController();
@@ -41,7 +43,7 @@ export function SpeechInput({ disabled, onText, onStart }: { disabled: boolean; 
   const provider = roster?.providers.find(p => identity(p) === choice);
   // Every path that ends an operation (finish, cancel, disable) also returns the phase to idle.
   const busy = phase !== "idle";
-  function cancel() { dispose(active.current); active.current = null; setPhase("idle"); }
+  function cancel() { dispose(active.current); active.current = null; setMeterStream(undefined); setPhase("idle"); }
   async function start() {
     if (!provider || !provider.available || blocked.current || active.current) return;
     onStart?.();
@@ -60,7 +62,7 @@ export function SpeechInput({ disabled, onText, onStart }: { disabled: boolean; 
       recorder.onstop = () => {
         clearTimeout(operation.timer); stream.getTracks().forEach(track => track.stop());
         if (!valid()) return;
-        setPhase("transcribing");
+        setMeterStream(undefined); setPhase("transcribing");
         void (async () => {
           try {
             const wave = await recordingWave(new Blob(chunks, { type: recorder.mimeType }));
@@ -74,7 +76,7 @@ export function SpeechInput({ disabled, onText, onStart }: { disabled: boolean; 
           finally { if (active.current === operation) { dispose(operation); active.current = null; setPhase("idle"); } }
         })();
       };
-      recorder.start(1000); setPhase("recording");
+      recorder.start(1000); setMeterStream(stream); setPhase("recording");
       operation.timer = setTimeout(() => { if (recorder.state === "recording") recorder.stop(); }, 119_000);
     } catch (cause) {
       if (valid()) { setError(cause instanceof Error ? cause.message : "Microphone access failed."); cancel(); }
@@ -95,22 +97,25 @@ export function SpeechInput({ disabled, onText, onStart }: { disabled: boolean; 
     : !provider ? "Choose a speech provider to enable dictation."
     : !provider.available ? `${provider.displayName} is unavailable. Check the app's status in Dashboard.`
     : "Dictate into your draft";
-  return <div className="flex flex-wrap items-center gap-1">
-    {roster?.granted && roster.providers.length > 1 && <Select value={JSON.stringify(choice)} disabled={busy || disabled} onValueChange={value => setSelected(JSON.parse(value) as string)}>
-      <SelectTrigger size="sm" aria-label="Speech provider" className="max-w-40"><SelectValue /></SelectTrigger>
+  return <div data-slot="speech-input" role="group" aria-label="Dictation" className="inline-flex max-w-64 shrink-0 flex-wrap items-center gap-1">
+    {!busy && roster?.granted && roster.providers.length > 1 && <Select value={JSON.stringify(choice)} disabled={busy || disabled} onValueChange={value => setSelected(JSON.parse(value) as string)}>
+      <SelectTrigger data-speech-provider size="sm" aria-label="Speech provider" title={provider?.displayName ?? "Choose a speech provider"} className="max-w-40"><SelectValue /></SelectTrigger>
       <SelectContent><SelectGroup>
         <SelectItem value={JSON.stringify("")}>Speech provider…</SelectItem>
         {roster.providers.map(p => <SelectItem key={identity(p)} value={JSON.stringify(identity(p))}>{p.displayName}{p.available ? "" : " (unavailable)"}</SelectItem>)}
       </SelectGroup></SelectContent>
     </Select>}
     {busy ? <>
-      <Button type="button" size="icon" variant="ghost" aria-label={phase === "recording" ? "Stop recording" : "Transcribing"} disabled={phase !== "recording"} onClick={() => active.current?.recorder?.stop()}>{phase === "recording" ? <Square /> : <Loader2 className="motion-safe:animate-spin" />}</Button>
-      <Button type="button" size="icon" variant="ghost" aria-label="Cancel dictation" onClick={cancel}><X /></Button>
-      <span role="status" className="text-xs">{phase === "recording" ? "Recording (up to 120 s)" : phase === "starting" ? "Opening microphone…" : "Transcribing…"}</span>
+      <span data-slot="speech-status" role="status" className="inline-flex size-8 items-center justify-center" title={phase === "recording" ? "Recording dictation" : phase === "starting" ? "Opening microphone…" : "Transcribing…"}>
+        {phase === "recording" ? <SpeechActivityMeter stream={meterStream} /> : <Loader2 aria-hidden className="size-4 motion-safe:animate-spin" />}
+        <span className="sr-only">{phase === "recording" ? "Recording dictation" : phase === "starting" ? "Opening microphone…" : "Transcribing…"}</span>
+      </span>
+      {phase === "recording" && <Button data-speech-control type="button" size="icon-sm" variant="ghost" aria-label="Stop recording" title="Stop and transcribe" onClick={() => { const recorder = active.current?.recorder; if (recorder?.state === "recording") recorder.stop(); }}><Square /></Button>}
+      <Button data-speech-control type="button" size="icon-sm" variant="ghost" aria-label="Cancel dictation" title="Discard dictation" onClick={cancel}><X /></Button>
     </> : <Tooltip.Provider delayDuration={150}><Tooltip.Root>
       <Tooltip.Trigger asChild>
         <span className="inline-flex rounded-md outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-brand focus-visible:ring-0" tabIndex={unavailable ? 0 : undefined} aria-label={unavailable ? `Dictation unavailable. ${hint}` : undefined}>
-          <Button type="button" size="icon" variant="ghost" aria-label="Dictate" disabled={unavailable} onClick={() => void start()}><Mic /></Button>
+          <Button data-speech-control type="button" size="icon-sm" variant="ghost" aria-label="Dictate" disabled={unavailable} onClick={() => void start()}><Mic /></Button>
         </span>
       </Tooltip.Trigger>
       <Tooltip.Portal><Tooltip.Content side="top" sideOffset={6} className="z-50 max-w-64 rounded-md bg-foreground px-3 py-2 text-xs text-background shadow-md">
@@ -120,6 +125,21 @@ export function SpeechInput({ disabled, onText, onStart }: { disabled: boolean; 
     {rosterError && <p role="alert" className="w-full text-xs text-destructive-foreground">Could not check speech providers: {rosterError}</p>}
     {error && <p role="alert" className="w-full text-xs text-destructive-foreground">{error}</p>}
   </div>;
+}
+function SpeechActivityMeter({ stream }: { stream: MediaStream | undefined }) {
+  const [activity, setActivity] = useState<SpeechActivityFrame>({ level: 0, speaking: false });
+  useEffect(() => {
+    if (!stream) return;
+    let current = true;
+    const stop = startSpeechActivity(stream, value => { if (current) setActivity(value); });
+    return () => { current = false; stop(); };
+  }, [stream]);
+  if (activity.available === false) return <Mic aria-hidden data-speech-meter-unavailable className="size-4 text-muted-foreground" />;
+  return <span data-speech-meter data-speaking={activity.speaking} aria-hidden className={`inline-flex h-6 items-center gap-[2px] ${activity.speaking ? "text-success-foreground" : "text-muted-foreground"}`}>
+    {[0.45, 0.75, 1, 0.75, 0.45].map((weight, index) => <span key={index} data-speech-bar
+      className="w-[3px] rounded-full bg-current motion-safe:transition-[height] motion-safe:duration-75"
+      style={{ height: `${2 + Math.max(0, Math.min(1, activity.level)) * weight * 20}px` }} />)}
+  </span>;
 }
 function identity(provider: ProviderDescriptor) { return JSON.stringify([provider.appId, provider.key]); }
 function dispose(operation: Recording | null) {

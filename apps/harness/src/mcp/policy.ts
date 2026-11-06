@@ -23,12 +23,14 @@ export function validRules(value: unknown): value is Record<string, ToolRule> {
       typeof v.identity === "string" && v.identity.length < 3000 && ["ask", "run", "disabled"].includes(v.mode));
 }
 interface Pending { session: string; provider: string; approvalId: string; finish: (allowed: boolean) => void }
+interface IssuedGuard { session: string; scope: string; generation: symbol; signal: AbortSignal }
 /** One approval gate for local development tools and app MCP, independent of the native adapter. */
 export class McpToolPolicy {
   private readonly catalogs = new Map<string, ToolCatalog>();
   private readonly pending = new Map<string, Pending>();
   private readonly dispatched = new Map<string, string>();
   private readonly generations = new Map<string, symbol>();
+  private readonly issuedGuards = new WeakMap<() => Promise<void>, IssuedGuard>();
   constructor(private readonly settings: SettingsStore | null,
     private readonly notify: (session: string, event: { type: "approval_request"; approvalId: string; toolName: string; input: unknown }) => Promise<void>,
     private readonly settled: (session: string, id: string, tool: string, allowed: boolean, automatic: boolean) => Promise<void>,
@@ -150,7 +152,8 @@ export class McpToolPolicy {
     return { defaults, rules: prepared };
   }
 
-  async authorize(session: string, provider: string, identity: string, requestId: string, tool: string, input: unknown, signal: AbortSignal): Promise<() => Promise<void>> {
+  async authorize(session: string, provider: string, identity: string, requestId: string, tool: string, input: unknown, signal: AbortSignal,
+    revalidate?: () => Promise<void>): Promise<() => Promise<void>> {
     const scope = JSON.stringify([session, provider]);
     const generation = this.generations.get(scope) ?? Symbol();
     this.generations.set(scope, generation);
@@ -182,17 +185,21 @@ export class McpToolPolicy {
       return effective === "run" || this.autonomous(session) && !explicitAsk;
     };
     const automatic = await canRunAutomatically(mode);
+    const issued: IssuedGuard = { session, scope, generation, signal };
     const dispatchGuard = async () => {
+      await revalidate?.();
       const currentMode = await this.mode(provider, identity, tool);
+      const currentEffectiveDefinition = await effectiveDefinition();
+      const automaticAllowed = !automatic || await canRunAutomatically(currentMode);
       const current = this.catalogs.get(provider);
       const currentTool = current?.tools.find(t => t.name === tool);
-      if (signal.aborted || this.generations.get(scope) !== generation || current?.identity !== identity || !currentTool || definition(currentTool) !== observedDefinition ||
-          observedEffectiveDefinition !== await effectiveDefinition() ||
-          currentMode === "disabled" || automatic && !await canRunAutomatically(currentMode))
+      if (signal.aborted || this.generations.get(scope) !== issued.generation || current?.identity !== identity || !currentTool || definition(currentTool) !== observedDefinition ||
+          observedEffectiveDefinition !== currentEffectiveDefinition || currentMode === "disabled" || !automaticAllowed)
         throw new Error("Tool policy changed or the request was canceled before dispatch. Retry with a new MCP request.");
     };
+    const issuedGuard = () => { this.issuedGuards.set(dispatchGuard, issued); return dispatchGuard; };
     const name = `${provider}: ${tool}`;
-    if (automatic) { await this.settled(session, "", name, true, true); await dispatchGuard(); return dispatchGuard; }
+    if (automatic) { await this.settled(session, "", name, true, true); await dispatchGuard(); return issuedGuard(); }
     const id = randomUUID();
     let finish!: (value: boolean) => void;
     const decision = new Promise<boolean>(resolve => { finish = resolve; });
@@ -208,13 +215,23 @@ export class McpToolPolicy {
       mode = await this.mode(provider, identity, tool);
       await this.settled(session, id, name, allowed && mode !== "disabled" && !signal.aborted, false);
       if (!allowed || mode === "disabled" || signal.aborted) throw new Error("Tool call denied, expired, canceled or disabled before dispatch.");
-      await dispatchGuard(); return dispatchGuard;
+      await dispatchGuard(); return issuedGuard();
     } finally { clearTimeout(timer); signal.removeEventListener("abort", cancel); this.pending.delete(id); }
   }
   resolve(session: string, id: string, allowed: boolean): boolean {
     const pending = this.pending.get(id);
     if (!pending || pending.session !== session) return false;
     this.pending.delete(id); pending.finish(allowed); return true;
+  }
+  /** End the native request namespace, transferring only one current reviewed operation. */
+  disconnect(session: string, retainedGuard?: () => Promise<void>): void {
+    const issued = retainedGuard && this.issuedGuards.get(retainedGuard);
+    const retain = issued?.session === session && !issued.signal.aborted && this.generations.get(issued.scope) === issued.generation;
+    this.cancel(session);
+    if (retain) {
+      issued.generation = Symbol();
+      this.generations.set(issued.scope, issued.generation);
+    }
   }
   /** Revoke one provider's requests, or the entire native client on session teardown. */
   cancel(session: string, provider?: string): void {

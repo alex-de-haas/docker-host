@@ -78,6 +78,18 @@ export class TokenExchange {
     }
   }
 
+  async task(binding: { dispatch: import("@hosty-sdk/app/providers").TaskDispatchRef; executionId: string; sessionId: string }, targetAppId: string): Promise<IssuedToken | null> {
+    if (!this.coreOrigin || !this.serviceToken) return null;
+    const response = await fetch(`${this.coreOrigin}/api/internal/apps/${encodeURIComponent(this.appId)}/task-mcp`, {
+      method: "POST", redirect: "error", headers: { authorization: `Bearer ${this.serviceToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ binding, targetAppId }), signal: AbortSignal.timeout(15000),
+    }).catch(() => { throw new CoreTemporarilyUnavailable(); });
+    if (response.status === 429 || response.status >= 500) throw new CoreTemporarilyUnavailable();
+    if (!response.ok) return null;
+    const result = await response.json() as IssuedToken;
+    return typeof result.token === "string" && typeof result.expiresAt === "string" ? result : null;
+  }
+
   /** Read a catalog through Core without creating a conversation or receiving an MCP token. */
   async catalog(presented: string, targetAppId: string): Promise<import("./upstream.js").UpstreamTool[]> {
     if (!this.coreOrigin || !this.serviceToken) throw new Error("Core discovery is unavailable.");
@@ -92,8 +104,8 @@ export class TokenExchange {
   }
 
   /** Retained local aliases use the same current Core MCP grant as canonical agent tools. */
-  async invokeCore(presented: string, sessionId: string, url: string, name: string, args: Record<string, unknown>, guard?: () => Promise<void>): Promise<unknown> {
-    const issued = await this.exchange(presented, CORE_PROVIDER_ID, sessionId);
+  async invokeCore(presented: string, sessionId: string, url: string, name: string, args: Record<string, unknown>, guard?: () => Promise<void>, task?: { dispatch: import("@hosty-sdk/app/providers").TaskDispatchRef; executionId: string; sessionId: string }): Promise<unknown> {
+    const issued = task ? await this.task(task, CORE_PROVIDER_ID) : await this.exchange(presented, CORE_PROVIDER_ID, sessionId);
     if (!issued) throw new AppContextError(403, "mcp_access_denied", "Current Core MCP access is required for this platform tool.");
     const session = await openSession(url, issued.token);
     if (!session) throw new AppContextError(503, "core_unavailable", "Core MCP is unavailable; retain the original operation requestId.");
@@ -142,6 +154,7 @@ export class TokenExchange {
     providers: readonly McpProvider[],
     enabled: Readonly<Record<string, boolean>>,
     sessionId?: string,
+    task?: { dispatch: import("@hosty-sdk/app/providers").TaskDispatchRef; executionId: string; sessionId: string },
   ): Promise<ExchangedServer[]> {
     const wanted = providers.filter(
       (provider) => enabled[provider.appId] === true && provider.running && provider.url,
@@ -149,7 +162,7 @@ export class TokenExchange {
 
     const issued = await Promise.all(
       wanted.map(async (provider) => {
-        const token = await this.exchange(presented, provider.appId, sessionId);
+        const token = task ? await this.task(task, provider.appId) : await this.exchange(presented, provider.appId, sessionId);
         return token
           ? {
               appId: provider.appId,

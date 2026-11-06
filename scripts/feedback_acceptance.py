@@ -59,6 +59,34 @@ def check(context, app_origin, link):
     h('/hosty/ui/feedback', wrong_user, expected=403)
     say('PASS: authenticated intake, immutable context, no agent dispatch, exact replay and account scope')
 
+    editable, editable_input = submit('Acceptance: disposable report for edit/delete')
+    original = report(editable)
+    image_path = '/api/feedback/'+editable+'/images/'+original['annotations'][0]['id']
+    with client.open(app_origin+image_path, timeout=30) as response: original_image = response.read()
+    edit = {'requestId':str(uuid.uuid4()), 'expectedRevision':original['revision'], 'comment':'Acceptance: revised report',
+      'annotations':[{'id':note['id'], 'text':'Revised control observation'} for note in original['annotations']]}
+    edited = h('/feedback/'+editable+'/edit', edit)
+    assert edited['revision'] == original['revision']+1 and edited['comment'] == edit['comment']
+    assert edited['status'] == 'unprocessed' and edited['currentAttemptId'] is None
+    assert edited['context'] == original['context'] and edited['workspaceId'] == original['workspaceId']
+    assert edited['annotations'] == [{**note, 'text':'Revised control observation'} for note in original['annotations']]
+    assert h('/feedback/'+editable+'/edit', edit) == edited, 'Exact edit replay must retain its receipt'
+    assert h('/feedback/'+editable+'/edit', {**edit, 'comment':'Conflicting same-request edit'}, expected=409)['code'] == 'feedback_request_conflict'
+    assert h('/feedback/'+editable+'/edit', {**edit, 'requestId':str(uuid.uuid4()), 'expectedRevision':original['revision']}, expected=409)['code'] == 'feedback_revision_conflict'
+    assert h('/hosty/ui/feedback', editable_input) == {'id':editable, 'status':'submitted'}
+    assert report(editable) == edited, 'Intake retry must not restore the original report text'
+    with client.open(app_origin+image_path, timeout=30) as response: assert response.read() == original_image
+    assert h('/feedback/'+editable+'/delete', {'requestId':str(uuid.uuid4()), 'expectedRevision':original['revision']}, expected=409)['code'] == 'feedback_revision_conflict'
+    deletion = {'requestId':str(uuid.uuid4()), 'expectedRevision':edited['revision']}
+    removed = h('/feedback/'+editable+'/delete', deletion)
+    assert removed == {'id':editable, 'status':'deleted'}
+    assert h('/feedback/'+editable+'/delete', deletion) == removed, 'Exact deletion replay must retain its receipt'
+    assert not any(r['id'] == editable for r in h('/feedback')['reports'])
+    h('/feedback/'+editable+'/images/'+original['annotations'][0]['id'], expected=404)
+    assert h('/hosty/ui/feedback', editable_input) == removed, 'Delayed intake must not resurrect a deleted report'
+    assert h('/sessions')['sessions'] == before_sessions
+    say('PASS: revision-checked edits preserve evidence/context; exact mutation replay and permanent deletion prevent resurrection')
+
     if not os.environ.get('HOSTY_FEEDBACK_BROWSER_ONLY'):
         # Previewing the Core catalog does not grant tool execution. Review the installed
         # assistant's access on this disposable child's normal administrator confirmation page.
@@ -113,17 +141,19 @@ def check(context, app_origin, link):
         say('PASS: one global batch, new chat/source workspace, screenshot tool, exact prompt and explicit per-report outcomes')
         followup = settle(dispatch([first], 'FEEDBACK_ACCEPTANCE:PARTIAL', attempt['input']['sessionId'], workspace_id))
         assert report(first)['status']=='partial' and report(first)['currentAttemptId']==followup['id']
-        third, _ = submit('Acceptance: unprocessed survives deletion')
+        third, _ = submit('Acceptance: unprocessed removed with workspace')
         h('/feedback/'+third, {'expectedRevision':report(third)['revision'], 'workspaceId':workspace_id})
         wait_for(lambda: not h('/sessions/'+attempt['input']['sessionId']).get('workerRun'), 90)
         deletion = {'requestId':str(uuid.uuid4())}
         h('/development-workspaces/'+workspace_id+'/delete', deletion)
         h('/development-workspaces/'+workspace_id+'/delete', deletion)
         remaining = h('/feedback')['reports']
-        assert not any(r['id']==second for r in remaining)
-        assert report(first)['workspaceId'] is None and report(third)['workspaceId'] is None
-        assert report(first)['annotations'][0]['mediaType']=='image/png'
-        say('PASS: repeat history, partial outcome, processed-only deletion and unprocessed evidence retention')
+        assert not any(r['id'] in (first, second, third) for r in remaining)
+        for prior in (attempt, followup):
+            retained = next(d for d in h('/feedback')['dispatches'] if d['id']==prior['id'])
+            assert not retained['snapshot'] and not retained.get('outcomes')
+            assert retained['input']['instruction']==''
+        say('PASS: repeat history, partial outcome and workspace deletion of all bound reports with history redaction')
     # The same child owns Shell, so embedding uses real Core app launch and SDK frame policy.
     shell_manifest = json.loads((workspace/'apps/shell/manifest.json').read_text())
     shell_manifest['source']['repository'] = context['repository']

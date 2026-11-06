@@ -61,7 +61,9 @@ export interface HarnessQuestion {
 export type HarnessEvent =
   | import("./prompt-suggestion.js").PromptSuggestion
   | { type: "answer_complete" }
-  | { type: "execution_parked"; runId: string }
+  /** Private execution evidence used only for task barriers, never transcript display. */
+  | { type: "native_effect"; id: string; state: "started" | "settled" | "unknown" }
+  | { type: "execution_parked"; runId: string; barrier?: import("../worker/contracts.js").WorkerBarrier }
   | { type: "provider_usage"; usage: import("./provider-usage.js").ProviderUsage }
   | { type: "context_usage"; usage: import("./context-usage.js").ContextUsage | null }
   | { type: "execution_model"; requested: { model: string | null; reasoningEffort: string | null }; reported: { model: string | null; reasoningEffort: string | null } }
@@ -119,6 +121,7 @@ export interface HarnessStartOptions {
   /** Worker-owned isolated discovery home; never supplied by an API caller. */
   nativeHome?: string;
   workerRunId?: string;
+  onWorkerUsage?: (runId: string, usage: NonNullable<import("../worker/contracts.js").WorkerReceipt["usage"]>) => void | Promise<void>;
   onWorkerEvent?: (frame: import("../worker/contracts.js").WorkerEvent) => Promise<void>;
   onWorkerPending?: (events: import("../worker/contracts.js").WorkerEvent[]) => Promise<void>;
   model?: string | null;
@@ -130,6 +133,7 @@ export interface HarnessStartOptions {
   cwd: string;
   /** Operator-authored instructions, appended to the harness's own sources — never replacing them. */
   systemPrompt?: string;
+  instructionSources?: import("./context-sources.js").InstructionText[];
   /** Enabled app MCP providers, already carrying a token scoped to each app. */
   mcpServers?: Record<string, unknown>;
   /**

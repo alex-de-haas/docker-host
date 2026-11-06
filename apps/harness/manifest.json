@@ -3,7 +3,7 @@
   "id": "hosty.harness",
   "name": "Hosty Harness",
   "description": "Hosty assistant with Docker and Local production runtimes, managed Claude and Codex connections, chat and settings.",
-  "version": "0.87.0",
+  "version": "0.94.0",
   "role": "system",
   "source": {
     "type": "git",
@@ -78,7 +78,7 @@
         },
         "docker": {
           "type": "docker",
-          "image": "ghcr.io/alex-de-haas/hosty-harness:0.87.0",
+          "image": "ghcr.io/alex-de-haas/hosty-harness:0.94.0",
           "environment": {
             "HOSTY_HARNESS_RUNTIME": "docker",
             "PORT": "3400"
@@ -165,7 +165,7 @@
         },
         "docker": {
           "type": "docker",
-          "image": "ghcr.io/alex-de-haas/hosty-harness-worker:0.87.0",
+          "image": "ghcr.io/alex-de-haas/hosty-harness-worker:0.94.0",
           "environment": {
             "HOSTY_HARNESS_RUNTIME": "docker",
             "PORT": "3401"
@@ -364,7 +364,11 @@
           "markdown",
           "review",
           "resources",
-          "events"
+          "events",
+          "removal",
+          "parent-child",
+          "prerequisites",
+          "delegated-review"
         ]
       }
     ],
@@ -378,7 +382,7 @@
           "markdown",
           "options",
           "cancellation",
-          "existing-workspace"
+          "configuration-ref"
         ]
       }
     ],
@@ -447,13 +451,13 @@
         "label": "Tasks",
         "endpoint": "http",
         "path": "/tasks",
-        "iconAsset": "assets/nav/list-checks.svg"
+        "iconAsset": "assets/nav/clipboard-check.svg"
       },
       {
         "label": "Decisions",
         "endpoint": "http",
         "path": "/decisions",
-        "iconAsset": "assets/nav/list-checks.svg"
+        "iconAsset": "assets/nav/list-todo.svg"
       },
       {
         "label": "Feedback",

@@ -58,7 +58,14 @@ afterEach(async () => {
   container.remove(); vi.resetAllMocks(); vi.unstubAllGlobals();
 });
 const render = () => act(async () => root.render(<AssistantPage />));
-const button = (name: string) => container.querySelector<HTMLButtonElement>(`button[aria-label="${name}"]`);
+const button = (name: string) => document.querySelector<HTMLButtonElement>(`button[aria-label="${name}"]`);
+const openSettings = async () => {
+  const trigger = container.querySelector<HTMLButtonElement>('button[aria-label^="Agent settings:"]')!;
+  if (trigger.getAttribute("aria-expanded") !== "true") await act(async () => trigger.click());
+};
+const currentProfile = () => document.querySelector('[aria-label="Current agent profile"]') ?? button("Agent profile");
+const currentProvider = () => document.querySelector('[aria-label="Current provider"]') ?? document.querySelector('[aria-label^="Provider:"]');
+const effortLabel = () => document.querySelector('[aria-label="Selected reasoning effort"]');
 const input = () => container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message"]')!;
 const type = (text: string) => act(async () => {
   Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(input(), text);
@@ -557,9 +564,11 @@ it.each(["session_autonomy_changed", "session_provider_changed"])("uses %s activ
     : { connectionId: "new-provider", connectionRevision: 2, harnessKind: "claude", providerLocked: false };
   await act(async () => emit({ type, seq: 3, ts: "2026-10-18T12:00:00Z", ...settings }));
   expect(navigationTitles()).toEqual(["Conversation", "Newer conversation"]);
-  expect(button(type === "session_autonomy_changed" ? "Autonomy: Autonomous" : "Provider: claude")).not.toBeNull();
+  await openSettings();
+  expect(type === "session_autonomy_changed" ? button("Autonomy: Autonomous") : button("Provider: claude")).not.toBeNull();
   await act(async () => emit({ type, seq: 1, ts: "2026-10-18T10:30:00Z", autonomy: "normal", connectionId: "old-provider", connectionRevision: 1, harnessKind: "codex", providerLocked: false }));
-  expect(button(type === "session_autonomy_changed" ? "Autonomy: Autonomous" : "Provider: claude")).not.toBeNull();
+  await openSettings();
+  expect(type === "session_autonomy_changed" ? button("Autonomy: Autonomous") : button("Provider: claude")).not.toBeNull();
   expect(input().value).toBe("My retained draft");
 });
 
@@ -725,10 +734,11 @@ it("keeps one set of execution controls when creating consecutive profile-enable
   for (const id of ["second-session", "third-session"]) {
     vi.mocked(api.createSession).mockResolvedValue({ ...record, id });
     await act(async () => button("New session")!.click());
-    for (const label of ["Agent profile", "Model", "Reasoning effort"]) {
-      expect(container.querySelectorAll(`button[aria-label="${label}"]`)).toHaveLength(1);
-    }
-    expect(container.querySelectorAll('[aria-label="Chat provider"]')).toHaveLength(1);
+    expect(container.querySelectorAll('button[aria-label^="Agent settings:"]')).toHaveLength(1);
+    expect(container.querySelectorAll('button[aria-label="Model"], button[aria-label="Agent profile"]')).toHaveLength(0);
+    await openSettings();
+    expect(document.querySelectorAll('button[aria-label="Model"]')).toHaveLength(1);
+    expect(document.querySelectorAll('[aria-label="Chat provider"]')).toHaveLength(1);
   }
 });
 
@@ -747,9 +757,11 @@ it("applies a profile refresh whose saved timestamp precedes its notification", 
     executionSelection: { model: profile.model, reasoningEffort: profile.reasoningEffort }, selectionRevision: 1,
     lastEventSeq: 2, updatedAt: "2026-10-26T12:00:01.000Z" });
   await act(async () => emit({ type: "session_profile_changed", profileId: profile.id, revision: 1, seq: 2, ts: "2026-10-26T12:00:01.005Z" }));
-  expect(button("Agent profile")?.textContent).toBe("Reviewer");
+  await openSettings();
+  expect(currentProfile()?.textContent).toBe("Reviewer");
+  await openSettings();
   expect(button("Model")?.textContent).toBe("Review model");
-  expect(button("Reasoning effort")?.textContent).toBe("High");
+  expect(effortLabel()?.textContent).toBe("High");
   await type("Review this snippet"); await submit();
   expect(api.postMessage).toHaveBeenCalledWith(record.id, "Review this snippet", [], 0, false, 1, expect.any(String));
 });
@@ -777,13 +789,16 @@ it.each(["before", "after"])("retains the newer model when a delayed profile sna
     .mockImplementationOnce(() => new Promise(resolve => { releaseLatest = resolve; }));
   await act(async () => emit({ type: "session_profile_changed", profileId: profile.id, revision: 1, seq: 2, ts: "2026-10-26T12:00:01.005Z" }));
   await act(async () => emit({ type: "model_selection_changed", revision: 2, selection: latest.executionSelection, seq: 3, ts: latest.updatedAt }));
+  await openSettings();
   expect(button("Model")?.textContent).toBe("New model");
   if (order === "before") await act(async () => releaseStale(stale));
   await act(async () => releaseLatest?.(latest));
   if (order === "after") await act(async () => releaseStale(stale));
+  await openSettings();
   expect(button("Model")?.textContent).toBe("New model");
-  expect(button("Reasoning effort")?.textContent).toBe("High");
-  expect(button("Agent profile")?.textContent).toBe("Reviewer");
+  expect(effortLabel()?.textContent).toBe("High");
+  await openSettings();
+  expect(currentProfile()?.textContent).toBe("Reviewer");
   expect(input().value).toBe("Retained review request");
   await submit();
   expect(api.postMessage).toHaveBeenCalledWith(record.id, "Retained review request", [], 0, false, 2, expect.any(String));
@@ -806,6 +821,7 @@ it("does not let a delayed profile mutation response replace a newer model event
   let finishRefresh!: (value: api.AssistantSession) => void;
   vi.mocked(profilesApi.selectSessionProfile).mockImplementation(() => new Promise(resolve => { finishSave = resolve; }));
   vi.mocked(api.getSession).mockImplementationOnce(() => new Promise(resolve => { finishRefresh = resolve; }));
+  await openSettings();
   await act(async () => button("Agent profile")!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })));
   await act(async () => [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find(item => item.textContent?.startsWith("Reviewer"))!.click());
   const saved = { ...record, agentProfile: profile, selectionRevision: 1, lastEventSeq: 2,
@@ -814,9 +830,12 @@ it("does not let a delayed profile mutation response replace a newer model event
     executionSelection: { model: "new-model", reasoningEffort: null } };
   await act(async () => emit({ type: "model_selection_changed", revision: 2, selection: latest.executionSelection, seq: 3, ts: latest.updatedAt }));
   await act(async () => finishSave(saved));
+  await openSettings();
   expect(button("Model")?.textContent).toBe("New model");
   await act(async () => finishRefresh(latest));
-  expect(button("Agent profile")?.textContent).toBe("Reviewer");
+  await openSettings();
+  expect(currentProfile()?.textContent).toBe("Reviewer");
+  await openSettings();
   expect(button("Model")?.textContent).toBe("New model");
   await type("Review after the concurrent update"); await submit();
   expect(api.postMessage).toHaveBeenCalledWith(record.id, "Review after the concurrent update", [], 0, false, 2, expect.any(String));
@@ -854,12 +873,15 @@ it.each(["session_status", "app_context_changed"])("refreshes complete settings 
   const currentRead = responses.length > 2 ? responses.pop() : undefined;
   await act(async () => { for (const resolve of responses) resolve(snapshot); });
   await act(async () => currentRead?.(refreshed));
-  expect(button("Agent profile")?.textContent).toBe("Reviewer");
-  expect(button("Provider: codex")).not.toBeNull();
+  await openSettings();
+  expect(currentProfile()?.textContent).toBe("Reviewer");
+  expect(currentProvider()).not.toBeNull();
+  await openSettings();
   expect(button("Model")?.textContent).toBe("New model");
   expect(input().value).toBe("Retained review request");
   if (eventType === "session_status") {
-    expect(button("Agent profile")?.disabled).toBe(true);
+    expect(button("Agent profile")).toBeNull();
+    expect(currentProfile()).not.toBeNull();
     expect(button("Model")?.disabled).toBe(true);
   } else {
     await submit();
@@ -882,14 +904,18 @@ it("keeps admission locks when a delayed profile save arrives before the status 
   await render();
   let finishSave!: (value: api.AssistantSession) => void;
   vi.mocked(profilesApi.selectSessionProfile).mockImplementation(() => new Promise(resolve => { finishSave = resolve; }));
+  await openSettings();
   await act(async () => button("Agent profile")!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })));
   await act(async () => [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find(item => item.textContent?.startsWith("Reviewer"))!.click());
   await act(async () => emit({ type: "user_message", text: "Sent from the other tab", seq: 3, ts: "2026-10-26T12:00:02.000Z" }));
   await act(async () => finishSave({ ...record, agentProfile: profile, selectionRevision: 1, lastEventSeq: 2,
     updatedAt: "2026-10-26T12:00:01.000Z" }));
-  expect(button("Agent profile")?.textContent).toBe("Reviewer");
-  expect(button("Agent profile")?.disabled).toBe(true);
-  expect(container.querySelector<HTMLButtonElement>('[aria-label="Chat provider"] button')?.disabled).toBe(true);
+  await openSettings();
+  expect(currentProfile()?.textContent).toBe("Reviewer");
+  expect(button("Agent profile")).toBeNull();
+    expect(currentProfile()).not.toBeNull();
+  expect(document.querySelector('[aria-label="Chat provider"] button')).toBeNull();
+  expect(currentProvider()).not.toBeNull();
 });
 
 const suggestionEvent = (extra: Partial<api.AssistantEvent> = {}): api.AssistantEvent => ({ type: "session_suggestion", seq: -2, ts: "", epoch: "server1", revision: 2,

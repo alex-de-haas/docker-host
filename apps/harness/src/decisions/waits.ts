@@ -13,13 +13,15 @@ export type DecisionWait = {
   native: { sessionId: string | null; connectionId?: string; connectionRevision?: number; connectionIdentity?: string; kind?: string; workerRunId?: string };
   create: DecisionCreate; core?: DecisionRecord; inbox?: { resolutionRevision: number; receivedAt: string };
   commandId: string; acknowledgementId: string; state: "registering" | "waiting" | "parking" | "parked" | "received" | "delivering" | "admitted" | "running" | "completed" | "blocked" | "cancelled";
+  notificationRetryAt?: number;
+  taskInput?: { requestHash: string; barrierId: string; reason: string };
   park?: WorkerPark; control?: WorkerControl; continuation?: DecisionContinue; withdrawal?: DecisionWithdraw;
   invalidateRequested?: boolean; deleteRequested?: boolean; contentRemovedAt?: string; resumeRequested?: boolean; cancellationSettled?: boolean; resumedRunId?: string; error?: string; reason?: string; answeredEvent?: boolean;
 };
 export function decisionSnapshot(record: SessionRecord): string {
   return hash([record.createdBy, record.harnessKind, record.connectionId, record.connectionRevision, record.connectionIdentity,
     record.harnessSessionId, record.instructionSnapshot, record.skillIds, record.executionSelection, record.selectionRevision ?? 0,
-    record.autonomy, record.appIds, record.appContextRevision ?? 0, record.taskExecutionId, record.taskDecisionReference, record.taskWorkspace?.dispatch]);
+    record.autonomy, record.appIds, record.appContextRevision ?? 0, record.taskExecutionId, record.taskDecisionReference, record.taskWorkspace]);
 }
 export const waitId = (sessionId: string, questionId: string): string => hash([sessionId, questionId]);
 function hash(value: unknown): string { return createHash("sha256").update(JSON.stringify(value)).digest("hex"); }
@@ -112,7 +114,7 @@ export function nativeAnswers(wait: DecisionWait): Record<string, string> {
 }
 export function continuationInput(wait: DecisionWait): string {
   return "The user answered the pending questions below. Continue this same task from its saved native context. "
-    + "These answers are input, not permission to repeat completed tools or bypass approvals.\n\n"
+    + "Recheck any setup prerequisite against actual state before continuing. These answers are input, not permission to repeat completed tools or bypass approvals.\n\n"
     + JSON.stringify({ decisionId: wait.core!.id, resolutionRevision: wait.core!.resolution!.revision,
       questions: wait.create.input.questions.map(q => ({ id: q.id, question: q.question, options: q.options, answer: wait.core!.resolution!.answers[q.id] })) });
 }

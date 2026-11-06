@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { MAX_COMMAND_BYTES, WORKER_PROTOCOL, WorkerApiError, terminal, type WorkerControl } from "./contracts.js";
+import { MAX_COMMAND_BYTES, WORKER_PROTOCOL, WorkerApiError, terminal, type WorkerControl, type WorkerRecovery } from "./contracts.js";
 import { authorizeService, type ServiceIdentity } from "./auth.js";
 import type { WorkerEngine } from "./engine.js";
 
@@ -37,7 +37,7 @@ export function createWorkerServer(engine: WorkerEngine, identity: () => Promise
     const url = new URL(request.url ?? "/", "http://worker"), method = request.method;
     if (method === "GET" && url.pathname === "/healthz") { json(response, 200, { status: "ok", protocol: WORKER_PROTOCOL }); return; }
     authorizeService(request, await identity());
-    if (method === "GET" && url.pathname === "/v1/capabilities") { json(response, 200, { protocol: WORKER_PROTOCOL, ...await control.capabilities() }); return; }
+    if (method === "GET" && url.pathname === "/v1/capabilities") { json(response, 200, { protocol: WORKER_PROTOCOL, ...await control.capabilities(), occupied: engine.occupied }); return; }
     if (method === "PUT" && url.pathname === "/v1/coordinator") { json(response, 200, await control.configure(await readCommand(request))); return; }
     const attachment = url.pathname.match(/^\/v1\/conversations\/([A-Za-z0-9-]+)\/attachments\/([^/]+)$/);
     if (method === "PUT" && attachment && control.attachment) {
@@ -53,7 +53,7 @@ export function createWorkerServer(engine: WorkerEngine, identity: () => Promise
     if (method === "GET" && models) { json(response, 200, await control.models(models[1]!)); return; }
     const controlMatch = url.pathname.match(/^\/v1\/runs\/([A-Za-z0-9-]+)\/controls\/([A-Za-z0-9-]+)$/);
     if (method === "GET" && controlMatch) { json(response, 200, await engine.journal.controlOutcome(controlMatch[1]!, controlMatch[2]!)); return; }
-    const match = url.pathname.match(/^\/v1\/runs\/([A-Za-z0-9-]+)(?:\/(events|responses|cancel|park|configuration|disable-suggestions))?$/);
+    const match = url.pathname.match(/^\/v1\/runs\/([A-Za-z0-9-]+)(?:\/(events|responses|cancel|recover|park|barrier|configuration|disable-suggestions))?$/);
     if (!match) throw new WorkerApiError(404, "not_found", "Unknown worker route.");
     const id = match[1]!;
     if (method === "PUT" && !match[2]) { json(response, 202, await engine.submit(id, await readCommand(request))); return; }
@@ -63,11 +63,15 @@ export function createWorkerServer(engine: WorkerEngine, identity: () => Promise
       if (!input?.servers || typeof input.servers !== "object" || Array.isArray(input.servers)) throw new WorkerApiError(400, "invalid_configuration", "Invalid MCP configuration.");
       json(response, 200, await engine.configure(id, input.servers, input.autoAllowedPrefixes)); return;
     }
+    if (method === "POST" && match[2] === "barrier") { json(response, 200, await engine.barrier(id, await readCommand(request) as import("./contracts.js").WorkerBarrier)); return; }
     if (method === "POST" && match[2] === "park") { json(response, 200, await engine.park(id, await readCommand(request) as import("./contracts.js").WorkerPark)); return; }
     if (method === "POST" && match[2] === "responses") { json(response, 200, await engine.respond(id, await readCommand(request) as WorkerControl)); return; }
     if (method === "POST" && match[2] === "disable-suggestions") {
       const input = await readCommand(request) as { controlId: string };
       json(response, 200, await engine.disableSuggestions(id, input?.controlId)); return;
+    }
+    if (method === "POST" && match[2] === "recover") {
+      json(response, 200, await engine.recover(id, await readCommand(request) as WorkerRecovery)); return;
     }
     if (method === "POST" && match[2] === "cancel") {
       const input = await readCommand(request) as { controlId: string };
@@ -95,6 +99,7 @@ export function createWorkerServer(engine: WorkerEngine, identity: () => Promise
                 response.end(); return;
               }
             }
+            if (record.receipt.usage) response.write(`event: usage\ndata: ${JSON.stringify({ runId: id, generation: record.receipt.generation, usage: record.receipt.usage })}\n\n`);
             if (terminal(record.receipt.state)) {
               response.write(`event: state\ndata: ${JSON.stringify(record.receipt)}\n\n`); response.end(); return;
             }

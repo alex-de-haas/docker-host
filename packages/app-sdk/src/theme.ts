@@ -71,7 +71,8 @@ export interface ThemeResolution {
  * either channel is ignored rather than honoured — a newer shell must degrade an older app to
  * what it did before, never to a theme it cannot render. A preference that arrives without a
  * recognizable value defaults to the theme itself: a shell that resolved `dark` and said nothing
- * more chose dark.
+ * more chose dark. In a standalone tab, a system preference resolves against the current OS
+ * instead of retaining the shell's old resolved color; an embedded frame follows its host.
  */
 export function resolveTheme(input: {
   param?: string | null;
@@ -79,15 +80,22 @@ export function resolveTheme(input: {
   stored?: string | null;
   storedPreference?: string | null;
   systemPrefersDark: boolean;
+  /** True for a top-level document; embedded frames retain the host's resolved color. */
+  standalone?: boolean;
 }): ThemeResolution {
+  const resolve = (theme: HostyResolvedTheme, preference: HostyThemePreference, source: ThemeSource): ThemeResolution => ({
+    theme: input.standalone && preference === "system" ? (input.systemPrefersDark ? "dark" : "light") : theme,
+    preference,
+    source,
+  });
   const declared = normalizeResolvedTheme(input.param);
   if (declared) {
-    return { theme: declared, preference: normalizeThemePreference(input.preferenceParam) ?? declared, source: "param" };
+    return resolve(declared, normalizeThemePreference(input.preferenceParam) ?? declared, "param");
   }
 
   const stored = normalizeResolvedTheme(input.stored);
   if (stored) {
-    return { theme: stored, preference: normalizeThemePreference(input.storedPreference) ?? stored, source: "stored" };
+    return resolve(stored, normalizeThemePreference(input.storedPreference) ?? stored, "stored");
   }
 
   return { theme: input.systemPrefersDark ? "dark" : "light", preference: "system", source: "system" };
@@ -190,6 +198,9 @@ export function createThemeBootstrapScript(options: { followSystem?: boolean } =
       }
       theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
       preference = "system";
+    }
+    if (preference === "system" && window.parent === window.self) {
+      theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
     }
     const root = document.documentElement;
     root.classList.toggle(${JSON.stringify(DARK_THEME_CLASS)}, theme === "dark");

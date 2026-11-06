@@ -337,6 +337,8 @@ async function route(
     return;
   }
 
+  if (await tasks.operatorRoute(request, response, url, actor.userId, actor.via === "app-session", () => readJson(request))) return;
+
   if (url.pathname === "/api/decisions" || url.pathname.startsWith("/api/decisions/")) {
     const token = actor.via === "app-session" ? readAppCredential(request) : null;
     if (!token || !manager.decisions) throw new DecisionError("app_session_required", "Open Harness through Core to use Decisions.", 403);
@@ -693,6 +695,9 @@ async function route(
       appIds: body.appIds,
       clientRequestId: body.clientRequestId,
       connectionId: body.connectionId,
+      executionSelection: body.executionSelection,
+      autonomy: body.autonomy,
+      browserDefaults: body.browserDefaults,
     });
     sendJson(response, 200, record);
     return;
@@ -720,7 +725,8 @@ async function route(
     if (!credential) throw new AppContextError(401, "reauth_required", "Open Harness through Core to join a workspace.");
     const body = await readJson(request);
     sendJson(response, 200, await manager.newWorkspaceSession(actor.userId, credential, {
-      workspaceId: body.workspaceId as string, requestId: body.requestId as string, expectedRevision: body.expectedRevision as number })); return;
+      workspaceId: body.workspaceId as string, requestId: body.requestId as string, expectedRevision: body.expectedRevision as number,
+      browserDefaults: body.browserDefaults })); return;
   }
 
   if (url.pathname === "/api/building-sessions" && method === "POST") {
@@ -728,7 +734,8 @@ async function route(
     if (!credential) throw new AppContextError(401, "reauth_required", "Open Harness through Core to continue building.");
     const body = await readJson(request);
     sendJson(response, 200, await manager.newBuildingSession(actor.userId, credential, {
-      appId: body.appId as string, requestId: body.requestId as string, expectedLocalHead: body.expectedLocalHead as string }));
+      appId: body.appId as string, requestId: body.requestId as string, expectedLocalHead: body.expectedLocalHead as string,
+      browserDefaults: body.browserDefaults }));
     return;
   }
 
@@ -995,6 +1002,19 @@ async function route(
       return;
     }
     sendJson(response, 200, { resolved: true });
+    return;
+  }
+
+  if (rest === "/execution-recovery" && (method === "GET" || method === "POST")) {
+    const credential = readAppCredential(request);
+    if (actor.via !== "app-session" || !credential)
+      throw new AppContextError(403, "recovery_operator_required", "Sign in through Core as the owning operator to recover an execution.");
+    response.setHeader("Cache-Control", "no-store");
+    if (method === "GET") sendJson(response, 200, await manager.executionRecovery(sessionId, actor.userId));
+    else {
+      await manager.recoverExecution(sessionId, actor.userId, await readJson(request), credential);
+      sendJson(response, 200, { recovered: true });
+    }
     return;
   }
 

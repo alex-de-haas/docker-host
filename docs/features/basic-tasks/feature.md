@@ -1,6 +1,6 @@
 ---
 created: 2026-10-27
-updated: 2026-11-03
+updated: 2026-11-05
 summary: Provider-owned tasks with qualified numbers, human or app assignment, durable execution, Harness profile options, review and a live Tasks UI.
 components: [apps/core, apps/harness, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -25,7 +25,8 @@ expose private transcripts; only the owner receives a linked execution conversat
 checks its own access. Human assignment does not grant operator-chat access to ordinary users.
 
 Question waits and parked continuation use [Shared Decisions](../shared-decisions/feature.md).
-Automatic workspace allocation, task trees, general orchestration and artifact storage remain in
+Harness root/child delegation and optional source binding are described in
+[Profile-Based Task Delegation](../profile-task-delegation/feature.md). Broader coordination and artifact storage remain in
 [workspace coordination](../shared-tasks/plan.md), [orchestration](../harness-work-orchestration/plan.md),
 [durable jobs](../durable-agent-jobs/plan.md) and [artifacts](../shared-artifacts/plan.md).
 
@@ -38,17 +39,17 @@ fsynced atomic write. Concurrent creation cannot reuse numbers. Request replay r
 number; provider-local prefixes may collide. Core never parses numbers or reserves prefixes.
 
 Inputs contain `title` (200 characters), `markdown` (32000), `assignee` (human/app/null),
-`requiresReview` (false when omitted), up to 32 `resources`, and optional `workspaceId`. HTTP requests also have the Harness-wide
+`review` (`none`, `owner` or `delegator`), up to 32 `resources`, optional `parentTaskRef` and `dependsOn`. HTTP requests also have the Harness-wide
 64 KiB encoded-body limit; individual field limits do not override it.
 Human assignment supplies a current user ID. Application assignment supplies a qualified executor
-and optional opaque `optionId`. Ready resolves an executor default once; it does not silently change
+and optional revisioned `selection` (`option` or executor-scoped `configuration`). Ready resolves an executor default once; it does not silently change
 an unavailable selection. Creator/owner attribution comes from authenticated callers.
 
 A resource is `{kind, owner, id, label?, version}`. Kinds are `app`, `workspace` and `external`;
 version is `{mode: "live"}` or `{mode: "pinned", revision}`. References are contextual information,
 not copied content or grants. The immutable execution snapshot preserves their owner/version. This
 adapter forwards references without resolving external content or replacing a pinned revision.
-`workspaceId` separately selects an existing execution binding; an attachment alone does not do so.
+Execution source belongs to the executor and Core broker; a resource reference alone does not select it.
 
 Records include optimistic `revision`, admitted `inputRevision`, timestamps, status, optional blocked
 reason, cancellation intent, explicit Markdown result and retained attempts/outcomes. Each app attempt
@@ -67,9 +68,8 @@ rework and reopening in `outcomes`.
 Cancellation remains a flag and is displayed as Cancelling until stop confirmation. Failed execution
 is attempt evidence and maps to Blocked, not a seventh task status. Ordinary successful model output
 is insufficient: an agent must report `task_result`, then its native run must stop. Review-required
-success becomes `Blocked/needs_review`; only the owner can accept it or request changes against its
-current input/result revision. Feedback returns stopped work to Draft. Ready again creates a new
-attempt. Reopening Done/Cancelled preserves history and does not launch work.
+success becomes `Blocked/needs_review`; the owner or current direct delegator accepts its exact result reference. Requesting changes
+records feedback and arms a fresh attempt on the same task. Reopening Done/Cancelled preserves history and does not launch work.
 
 Inputs cannot change during admitted or uncertain execution. Duplicate Ready never starts another
 attempt. At most one attempt is active or has an unconfirmed stop. Late outcomes cannot revive a
@@ -93,19 +93,19 @@ Harness task base: `/api/tasks/v1`. Executor base: `/api/task-executor/v1`.
 | Method and relative path | Operation |
 | --- | --- |
 | `GET /capabilities` | Version, prefix, common statuses, page limit. |
-| `GET /tasks?cursor=&limit=&status=` | Authorized tasks, opaque next cursor, maximum 100 per page. |
+| `GET /tasks?cursor=&limit=&status=&removed=` | Authorized tasks, opaque next cursor, maximum 100 per page. |
 | `POST /tasks` | `{requestId, input}` creates Draft. |
 | `GET /tasks/{id}` | Current authorized task. |
-| `PATCH /tasks/{id}` | `{requestId, expectedRevision, input}` replaces Draft input. |
+| `PATCH /tasks/{id}` | `{requestId, expectedRevision, expectedGraphRevision, input}` replaces Draft input. |
 | `POST /tasks/{id}/actions` | Replayable lifecycle command. |
 | `GET /options` (executor) | Opaque choices and optional default ID. |
 | `PUT /executions/{executionId}` | Durable immutable acceptance; returns 202. |
 | `GET /executions/{executionId}` | Retained authoritative receipt. |
 | `POST /executions/{executionId}/cancel` | Idempotent `{requestId}` stop intent. |
 
-Lifecycle commands are `ready`, `draft`, `start`, `complete`, `cancel`, `accept`, `request_changes`.
+Lifecycle commands are `ready`, `draft`, `start`, `complete`, `cancel`, `accept`, `request_changes`, `retry`, `disposition`, `remove` and `restore`.
 Each carries `requestId`, `expectedRevision` and `action`. `complete` includes a Markdown/resources
-result. Review includes `resultInputRevision`; request_changes also includes feedback (4000 characters).
+result. Review includes an exact `resultRef`; request_changes also includes feedback (4000 characters).
 The same request ID/input recovers the original response before stale-revision checks; changed input
 conflicts. Read current state afterwards to observe subsequent progress.
 
@@ -116,9 +116,63 @@ They never retry a mutation or choose another provider implicitly. The service t
 Core; the selected endpoint receives only its scoped provider token.
 
 Harness also supplies its UI directory/options endpoints and `/events` SSE. Agent tools are
-`task_options`, `task_list`, `task_get`, `task_create`, `task_edit`, `task_action`, `task_result`.
+Core-mediated `task_options`, `task_list`, `task_get`, `task_create`, `task_edit` and `task_action`.
+Harness adds the session-owned `task_executor_options`, `task_request_input`, `task_result` and `task_fail`.
 Management tools use the current session owner/credential. The result tool binds to its accepted
 execution and passes through existing MCP policy; it cannot complete another task by supplying an ID.
+
+## Required Input And Truthful Outcomes
+
+`task_request_input` is the provider-independent Harness operation for mandatory human input,
+including missing setup in Autonomous tasks. It accepts a request UUID, bounded questions and a
+reason; task, attempt, owner and session identity come from the current execution. Harness persists
+its wait and acknowledgement barrier before returning. The Worker parks only after durable tool
+acknowledgement. The task remains Blocked with an `awaiting_input` receipt, an open business attempt
+and confirmed native-segment exit. No mandatory wait expires into success.
+
+Core registration retries retain the same request identity. A failed registration remains visible
+in Decisions recovery even before a Core question exists. Required questions include the task number,
+title and reason; Tasks links to the relevant Decisions view. Decision notifications use stable
+identities and expose pending delivery. Failed/interrupted task attempts also produce owner-scoped,
+deduplicated attention notifications and retained recovery projections. Notifications are pointers;
+records and waits remain authoritative if delivery fails.
+
+An accepted answer resumes the original attempt, session and native checkpoint after current
+identity, permissions, input snapshot, source capacity and cancellation checks. External task
+providers retain their own graph/source policy; their continuation does not require a local Harness
+task record. The continuation
+instructs the agent to recheck actual setup. Cancellation is durably fenced before acknowledgement;
+a late answer cannot restart the task. Uncertain stops or unavailable checkpoints remain recoverable
+and do not create replacement attempts. Optional native nonblocking questions remain independent.
+
+`task_result` requires `completed: true` and explicit successful evidence. `task_fail` retains an
+unsuccessful diagnostic outcome and maps it to Blocked, not Done. Both report admission and terminal
+reconciliation enforce runtime-owned barriers, including mandatory input and unresolved approvals.
+A new mandatory question invalidates an earlier success report; continuation must submit fresh
+completion evidence. Admission captures the input generation before reading barriers, so a question
+arriving during that check also supersedes the in-flight report. An invalidated success also permits
+a subsequent unsuccessful report with its actual diagnostic evidence. Historical reports remain
+retained. The runtime does not infer completion from
+Markdown wording or prove arbitrary output quality; configured review remains a separate check.
+
+## Recoverable Removal
+
+Providers can declare the neutral v1 `removal` capability. `remove` and `restore` carry an exact
+`removalScope` of qualified task references and revisions, bounded to 100 records. Core validates the
+capability and current authority. Harness allows these operations only to the task owner, excluding
+workflow-bound agents. Removal requires the entire reviewed descendant subtree; restoration requires
+the original batch. Missing or changed scope conflicts, and identical replay recovers the receipt.
+
+Removal is rejected for armed or active work, incomplete cancellation, uncertain native exit and
+open external dependencies. It writes a `removed` marker with batch, time and actor. Ordinary lists
+exclude removed tasks; `removed=true` and the Tasks Trash filter expose retained entries for
+restoration. Restoring does not arm execution. Task numbering, attempts, outcomes, replay fences,
+source, workspaces, profiles and conversations are preserved.
+
+The UI confirms the exact subtree before removal and retains uncertain request bodies for replay.
+Quarantined pre-tree records have a separate bounded owner-only cleanup view and private
+`/api/task-orchestration/v1/legacy-tasks` endpoints. Cleanup marks retained records without rewriting
+or executing their original content; restoration is explicit. Permanent purge is not implemented.
 
 ## Execution And Recovery
 
@@ -143,9 +197,9 @@ evidence can restore that projection, without duplicating attempts or outcomes. 
 late PUT, including cancellation before acceptance. A persisted local cancellation continues after
 restart without requiring a fresh credential to stop already-authorized work.
 
-User credentials remain in memory. Restart observes existing Worker/session evidence; an accepted
-but unsent attempt waits for its owner to authenticate again, then resumes with the original ID.
-Remote observation/dispatch similarly needs fresh authority. Recovery never stores an operator
+User credentials remain in memory. Restart observes existing Worker/session evidence and retains
+Core task dispatch references. Mediated background execution revalidates those references against
+current grants; older credential-only executions need fresh owner authentication. Recovery never stores an operator
 credential or invents a replacement native run. Unknown termination stays visible and prevents
 another attempt. A proven rejection before native admission permits explicit retry. Caught Local
 startup failures persist non-admission before the rejected receipt; recovery honors this proof even
@@ -203,6 +257,7 @@ managed runtime/browser journey. Changes are not deployed to the operator's live
 | `npm run build --workspace @hosty-sdk/app` and `npm test --workspace @hosty-sdk/app` | Build passed; 712 tests passed. |
 | `dotnet build packages/app-sdk-dotnet/HostySdk.App/HostySdk.App.csproj` | net8.0 and net10.0 passed. |
 | `npm run sdk:dotnet:test` | 70 passed, including create/edit requests with an explicit null assignee. |
+| Review regressions: task, Decision, Worker and Tasks UI suites | 238 passed, including external-provider required-input continuation after restart, stale-success-to-failure transitions and an input/result admission race. |
 | `npm run harness:lint` | API/web TypeScript and web ESLint passed. |
 | `npm test --workspace @haas/hosty-harness` | Full suite passed: 164 files, 1790 tests after lifecycle, availability recovery, draft race and cross-app link fixes. |
 | `npm test --workspace @haas/hosty-harness -- src/tasks src/profiles web/src/components/tasks.test.tsx web/src/components/session-model.test.tsx web/src/components/session-profile.test.tsx` | Review-fix suite passed: 9 files, 52 tests, including accepted-task selection/dispatch locks and draft recovery after Ready/Cancelled transitions. |
@@ -240,7 +295,53 @@ contract; optional null fields are omitted while an explicit null assignee remai
 Provider storage and existing UI remain authoritative. See [Core MCP](../core-mcp/feature.md) for
 receipt-bound executor dispatch, current origin revalidation and scoped workspace admission.
 
+## Required-Input And Removal Verification (2026-11-05)
+
+Deliverables D7-D13 of the completed Task Blockers, Outcomes And Removal plan are implemented and verified.
+The registered macOS arm64 worktree passes affected task, Decision, Worker, Core and SDK checks.
+The managed runtime uses separate users/data, Docker app services and normal Core login.
+
+| Command / scope | Result |
+| --- | --- |
+| `npm run harness:test` | 2,399 of 2,400 passed; one Gateway HTTP test and its cleanup hook timed out in the full run. |
+| `npm test --workspace @haas/hosty-harness -- src/gateway.test.ts` | All 64 passed on an isolated rerun; no source change or timeout relaxation. |
+| Affected Harness suites | 668 passed; after the catalog fix, 295 boundary tests and 34 final catalog/continuation tests passed. |
+| `npm test --workspace @hosty-sdk/app` | 781 passed; the subsequently expanded task-server file passes all four cases. |
+| `dotnet test packages/app-sdk-dotnet/HostySdk.App.Tests/HostySdk.App.Tests.csproj` | 75 passed. |
+| Core Decisions and provider mediation selections | 47 passed; the final expanded mediation selection passes 35 cases. |
+| Review regressions: task, Decision, Worker and Tasks UI suites | 238 passed, including external-provider required-input continuation after restart, stale-success-to-failure transitions and an input/result admission race. |
+| `npm run harness:lint` | API/web TypeScript and web ESLint passed. |
+| `HOSTY_TASKS_BROWSER=1 HOSTY_TASKS_BROWSER_CHANNEL=chrome npm run test:integration -- tasks` | Final Core/CLI/API/Worker builds, managed task/Decision acceptance and Chromium checks passed. The installed Playwright module was selected with `HOSTY_TASKS_PLAYWRIGHT_MODULE`. |
+| `node scripts/check-versions.mjs`, documentation/index validation and `git diff --check` | Passed. |
+
+Real Codex and Claude each observe a missing required profile, create a Decision with a delivered
+notification, park with confirmed native exit, accept the operator's answer and reread the actual
+profile directory. Both complete the original attempt and session with the exact newly available
+profile ID. Decisions exposes both pending tasks without opening either chat. Earlier attempts also
+verify truthful failure: a catalog alias collision produced another required Decision or an explicit
+unsuccessful outcome, never Done. The dedicated `task_executor_options` operation resolves that
+collision; Core's canonical provider directory remains unchanged.
+
+The scripted journey separately verifies five-minute parking and API/Worker restart, unknown-stop
+protection, successful-result barriers, removal/restoration/replay, source attribution, independent
+providers, retained drafts and narrow-screen Decisions. This is bounded required-input acceptance,
+not an end-to-end application-development benchmark. Other operating systems and the full repository
+matrix were not run. Existing compiler/package and SDK documentation warnings remain.
+
+Parent Finish confirms removal of both the scripted test child and the real-provider sandbox,
+including their processes, Docker services and temporary data. The implementation worktree is
+retained. The operator’s live Core, Harness, profiles and demo task were not changed.
+
+Artifact versions: Platform 0.174.1 → 0.175.0; Harness API/web/Worker 0.91.2 → 0.92.0;
+TypeScript SDK 0.44.0 → 0.45.0; .NET SDK 0.14.0 → 0.15.0.
+
 ## Testing Expectations
+
+- Required-input coverage includes registration failure, notification retry, replay, early answers,
+  parking/restart, same-attempt continuation, cancellation, superseded success reports, optional
+  questions and unknown stops. Real Codex/Claude acceptance is separate from scripted fixtures.
+- Removal coverage includes reviewed descendant/batch scope, stale revisions, replay, active/native
+  guards, external dependencies, owner/install boundaries, legacy cleanup and preserved history.
 
 - Core provider contract tests cover empty registries, unrelated app IDs, confirmed roles,
   independent categories, installation binding, current user access and revoked grants.

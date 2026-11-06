@@ -409,8 +409,9 @@ and exact review actions. Current open PR icons carry CI color, running checks u
 merged is violet and drafts/closed/stale evidence are neutral. Historical summaries stay labelled
 as cached. CI checks expand in place on phones. Approval cards retain one-time allow and supported
 optional denial reasons; the autonomy menu explains each mode without adding grants or repeating
-its description below the composer. The right side of the conversation header places the current
-session activity badge immediately before the read-only Local or Docker execution badge. Local
+its description below the composer. The conversation header omits idle status and places other
+activity badges before a compact read-only execution icon. The Local/Docker label and explanation
+remain in its keyboard-accessible tooltip and accessible name. Local
 carries a host-access warning based
 on the native Harness process permissions; Docker describes the worker's container limits without
 claiming that enabled MCP tools are confined to that container. The full-page and embedded composers
@@ -422,13 +423,19 @@ Reasoning-effort-only and unchanged preference updates preserve the last usage o
 its timestamp and native conversation identity; an actual model change invalidates that observation.
 
 Compact bound-application rows place lifecycle status immediately after the app name and use a
-second line for package/runtime, hammer/workspace or Git/source identity. Per-app switching targets
-the exact bound worktree. Group actions show Use workspace, Return to packages or both according
-to factual selections; successful background refresh retains the last observation without flashing
-actions. During a submitted runtime switch, group and per-app switch buttons are hidden and
-the progress status remains visible. The information tooltip beside Use on this Core holds the
-switching explanation; completed switches leave no persistent success caption. Consumer and
-lease details stay under Activity diagnostics.
+second line for package/runtime, hammer/workspace or Git/source identity. Multi-app rows retain
+exact-worktree switching; a single app uses the primary action without a duplicate icon. One primary
+Use workspace or Return to packages action follows observed selections. Mixed selections keep
+package return in an alternative menu. Missing status offers refresh without guessing. A pending
+journal never adds competing actions. Switching shows one progress line; failure replaces the
+primary action with Try again and keeps details collapsed. Required Core confirmation opens
+automatically and resumes the same switch after explicit approval. A direct link remains available
+to reopen Core’s isolated confirmation window; explicit Cancel stops continuation. Successful
+switches leave no persistent success caption. Registered activity has a shield tooltip beside the
+workspace status; Used by's information tooltip summarizes source use once per application. Raw
+lease IDs, consumer kinds and source paths have no separate diagnostics block. Conversations have
+no retention banner. See [Harness Development](../harness-development-ui/feature.md) for
+recovery and authority boundaries.
 
 Workspace lifecycle failures distinguish an in-flight action from an uncertain retained request;
 a definite unadmitted refusal does not leave a misleading Retry action. Ordinary Delete physically
@@ -494,7 +501,7 @@ under reduced motion. Approval surfaces use semantic warning tokens; selected an
 Field labels use lime, while attachment actions retain one child focus indicator without a
 second parent halo.
 
-Harness source/diff/speech choices use the existing Radix Select; retention fields and provider/
+Harness source/diff/speech and feedback choices use the existing themed Radix Select; retention fields and provider/
 handoff confirmations use shared Input/Checkbox. Empty, detached, unavailable and unknown choices
 remain explicit, with no first-choice substitution. File upload retains its hidden native input.
 Provider/settings/app-roster/mention reads and workspace actions show labelled grid loading;

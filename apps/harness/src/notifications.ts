@@ -36,6 +36,19 @@ export class WaitingNotifier {
     private readonly appId: string,
   ) {}
 
+  async task(owner: string, taskId: string, executionId: string): Promise<void> {
+    if (!this.coreOrigin || !this.serviceToken) throw new Error("Task notification delivery is unavailable.");
+    const origin = process.env.HOSTY_PUBLIC_ORIGIN_HTTP ?? process.env.HOSTY_PUBLIC_ORIGIN_HTTPS;
+    const response = await fetch(`${this.coreOrigin}/api/internal/apps/${encodeURIComponent(this.appId)}/notifications`, {
+      method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${this.serviceToken}` },
+      body: JSON.stringify({ target: owner, level: "warning", title: "A task needs attention",
+        body: "Execution did not complete successfully. Open Tasks to review its retained attempt.",
+        ...(origin ? { link: `${origin.replace(/\/$/, "")}/tasks?task=${encodeURIComponent(taskId)}` } : {}),
+        dedupeKey: `task.attention.${executionId}` }), signal: AbortSignal.timeout(1500),
+    });
+    if (!response.ok) throw new Error("Task notification delivery is unavailable.");
+  }
+
   /**
    * Announces that one session needs its operator.
    *

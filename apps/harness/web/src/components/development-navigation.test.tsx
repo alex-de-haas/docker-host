@@ -162,3 +162,67 @@ it("shows every accessible chat separately and reserves development actions for 
   expect(container.querySelector('[aria-label="Continue building"]')).not.toBeNull();
   expect(container.querySelector('[aria-label="New session"]')).toBeNull();
 });
+
+it("adds workspace-only lifecycle and source/PR summaries without per-row fetches", async () => {
+  const fetch = vi.fn(); vi.stubGlobal("fetch", fetch);
+  const onWorkspace = vi.fn();
+  const workspaces: DevelopmentWorkspace[] = [{ id: "completed", name: "Finished feature", state: "active", owner: { kind: "external", reference: "task", label: "Agent" },
+    workflow: { state: "completed", revision: 1 }, worktrees: [], pullRequestSummary: { count: 2, state: "merged", checks: "none", observedAt: "2026-11-01T10:00:00Z", partial: false } }];
+  await act(async () => root.render(<DevelopmentNavigation view="workspaces" sessions={[]} workspaces={workspaces} onPick={vi.fn()} onWorkspace={onWorkspace} onNew={vi.fn()} onDelete={vi.fn()} />));
+  expect(container.textContent).toContain("Completed"); expect(container.textContent).toContain("Merged");
+  const row = [...container.querySelectorAll("button")].find(b => b.textContent?.includes("Finished feature"))!;
+  expect(row.querySelector("[title*='Workspace: Completed']")).not.toBeNull();
+  await act(async () => row.click()); expect(onWorkspace).toHaveBeenCalledWith(workspaces[0], undefined);
+  expect(fetch).not.toHaveBeenCalled();
+  await act(async () => root.render(<DevelopmentNavigation view="chats" sessions={[disposable]} workspaces={workspaces} onPick={vi.fn()} onNew={vi.fn()} onDelete={vi.fn()} />));
+  expect(container.textContent).not.toContain("Completed"); expect(container.textContent).not.toContain("Merged");
+});
+
+it("shows active unmerged PRs beside clean source and successful CI without fetching row details", async () => {
+  const fetch = vi.fn(); vi.stubGlobal("fetch", fetch);
+  const workspace: DevelopmentWorkspace = { id: "clean-with-pr", name: "Awaiting merge", state: "active", owner: { kind: "external", reference: "task", label: "Agent" },
+    workflow: { state: "in-progress", revision: 1 }, worktrees: [{ id: "tree", workspaceId: "clean-with-pr", repository: "repo", branch: "work/review", state: "active", apps: [], leases: [], pullRequests: [], observationHealth: "watching",
+      observation: { at: "2026-11-04T10:00:00Z", state: "ok", local: { files: [], truncated: false } } }],
+    pullRequestSummary: { count: 5, openCount: 2, draftCount: 1, state: "open", checks: "passed", observedAt: new Date().toISOString(), partial: false } };
+  await act(async () => root.render(<DevelopmentNavigation view="workspaces" sessions={[]} workspaces={[workspace]} onPick={vi.fn()} onWorkspace={vi.fn()} onNew={vi.fn()} onDelete={vi.fn()} />));
+  const summary = container.querySelector('[title*="2 observed open pull requests"]')!;
+  expect(summary.textContent).toContain("Clean");
+  expect(summary.textContent).toContain("2 open PRs");
+  expect(summary.textContent).toContain("CI passed");
+  expect(summary.textContent).not.toContain("Merged");
+  expect(summary.getAttribute("title")).toContain("including 1 draft");
+  expect(summary.getAttribute("title")).toContain("5 linked pull requests");
+  expect(summary.querySelector(".sr-only")?.textContent).toContain("2 observed open pull requests");
+  expect(fetch).not.toHaveBeenCalled();
+});
+
+it("shows observed added and deleted line counts alongside the workspace file count", async () => {
+  const fetch = vi.fn(); vi.stubGlobal("fetch", fetch);
+  const workspace: DevelopmentWorkspace = { id: "dirty", name: "Current changes", state: "active", owner: { kind: "external", reference: "task", label: "Agent" },
+    workflow: { state: "in-progress", revision: 1 }, worktrees: [{ id: "tree", workspaceId: "dirty", repository: "repo", branch: "work/changes", state: "active", apps: [], leases: [], pullRequests: [], observationHealth: "watching",
+      observation: { at: "2026-11-04T10:00:00Z", state: "ok", local: { files: [{ path: "code", status: "M" }, { path: "tests", status: "A" }], truncated: false, lineStats: { additions: 12, deletions: 4 } } } }] };
+  const render = (value = workspace) => act(async () => root.render(<DevelopmentNavigation view="workspaces" sessions={[]} workspaces={[value]} onPick={vi.fn()} onWorkspace={vi.fn()} onNew={vi.fn()} onDelete={vi.fn()} />));
+  await render();
+  const summary = container.querySelector('[title*="2 uncommitted files"]')!;
+  expect(summary.textContent).toContain("2 files");
+  expect(summary.querySelector(".text-success-foreground")?.textContent).toBe("+12");
+  expect(summary.querySelector(".text-destructive-foreground")?.textContent).toBe("−4");
+  expect(summary.getAttribute("title")).toContain("12 added and 4 deleted lines in uncommitted changes");
+  expect(fetch).not.toHaveBeenCalled();
+  await render({ ...workspace, worktrees: [{ ...workspace.worktrees[0], observationHealth: "pending" }] });
+  expect(summary.textContent).toContain("2 files");
+  expect(summary.querySelector(".text-success-foreground")?.textContent).toBe("+12");
+  expect(summary.querySelector(".text-destructive-foreground")?.textContent).toBe("−4");
+  expect(summary.textContent).not.toContain("Changes unknown");
+  expect(summary.querySelectorAll(".animate-spin, .motion-safe\\:animate-spin")).toHaveLength(1);
+  expect(summary.getAttribute("title")).toContain("last successful source observation while checking for updates");
+  expect(summary.querySelector(".sr-only")?.textContent).toContain("while checking for updates");
+  await render();
+  expect(summary.querySelector("svg")).toBeNull();
+  expect(summary.textContent).toContain("2 files");
+  await render({ ...workspace, worktrees: [{ ...workspace.worktrees[0], observation: { ...workspace.worktrees[0].observation!, local: { ...workspace.worktrees[0].observation!.local!, truncated: true } } }] });
+  expect(container.textContent).toContain("2+ files");
+  const partialSummary = container.querySelector('[title*="At least 2 uncommitted files"]')!;
+  expect(partialSummary.querySelector(".text-success-foreground")).toBeNull();
+  expect(partialSummary.querySelector(".text-destructive-foreground")).toBeNull();
+});

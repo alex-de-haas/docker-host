@@ -359,10 +359,7 @@ function AppNavigationItem({
   );
 }
 
-// Compact-rail item for a running app with more than one page: the icon triggers a flyout instead
-// of launching directly, because the rail has no room for the page list or the standalone-open
-// control. The flyout opens on click (Radix's own path — also keyboard and touch) and on hover
-// after a delay as a mouse-only accelerator.
+// Compact app icons launch the first page; hover or ArrowDown exposes all pages.
 function CompactAppMenu({
   app,
   coreOrigin,
@@ -398,6 +395,22 @@ function CompactAppMenu({
           title={app.displayName}
           aria-label={app.displayName}
           {...menu.triggerProps}
+          disabled={busyAction === `${app.id}:open`}
+          onPointerDown={event => {
+            // Prevent Radix's pointer toggle while preserving keyboard menu access.
+            if (event.button === 0 && !event.ctrlKey) event.preventDefault();
+          }}
+          onKeyDown={event => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              menu.menuProps.onOpenChange(false);
+              void onLaunch(app, pages[0], "workspace");
+            }
+          }}
+          onClick={() => {
+            menu.menuProps.onOpenChange(false);
+            void onLaunch(app, pages[0], "workspace");
+          }}
         >
           <AppIcon src={resolveAssetSrc(coreOrigin, app.iconUrl)} name={app.icon} fallback={LayoutGrid} className="h-5 w-5 shrink-0 rounded-sm" alt="" />
         </button>

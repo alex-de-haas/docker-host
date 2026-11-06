@@ -1,6 +1,6 @@
 ---
 created: 2026-10-28
-updated: 2026-11-02
+updated: 2026-11-04
 summary: Optional connection-level quota and credit observations for Codex and Claude, with bounded diagnostics, retained snapshots and shared Limits controls.
 components: [apps/harness]
 ---
@@ -86,7 +86,22 @@ Unsupported and not-applicable observations hide the Limits control in both sett
 Loading, unavailable and stale observations keep the control and its refresh action; a temporary
 failure does not imply absent support. Connection revision guards prevent an old account's support
 state from hiding the control for its replacement. Unknown amounts never become a fabricated zero.
-A provider-selected active row may supply the compact label; otherwise the control says Limits.
+The control shows an hourglass inside a blue ring with the percentage of allowance remaining.
+It shares its shape with the adjacent stacked-pages context ring; context fills as usage rises,
+while the limits ring empties. The visible `left` suffix hides below a 640 CSS px composer width,
+preserving the percentage and icon. Remaining allowance at 20% or below uses the warning color;
+zero uses the destructive color. Hover and keyboard focus expose the selected window and absolute
+reset time; clicking opens all reported windows and credits.
+
+A provider-designated headline row is authoritative. Otherwise, the indicator takes the smallest
+remaining percentage across windows in a single applicable bucket, or the known generic Claude
+five-hour and seven-day windows. Codex model scopes use exact selected-model identifiers; ambiguous
+buckets and model/surface display names do not establish applicability. Credits and monetary balances
+are excluded from the ring. Missing amounts, partial or stale observations, elapsed resets and
+ambiguous applicability produce a dashed ring with `?`, rather than a fabricated balance. Each
+selected window's amount must be fresh, including retained rows from partial updates. Detailed
+last-known values remain in the popover. A local display clock expires the meter without making
+provider requests.
 Refresh affects only usage state, preserving settings edits and message drafts and leaving Send
 independent of diagnostic availability.
 
@@ -146,6 +161,9 @@ uncommitted in the existing Harness 0.84.0 candidate.
 - HTTP/stream tests verify administrator authentication and ticket admission. UI tests cover
   unsupported/local control visibility, unavailable recovery, countdown rollover, bounded bars, absolute
   times and HTTP/stream ordering.
+- Summary and ring tests distinguish remaining from used amounts, preserve provider headline picks,
+  reject unrelated scopes and currencies, select the limiting eligible window, and expire stale or
+  elapsed observations without restoring quota. Verify focus tooltip and popover Refresh behavior.
 - Run Harness lint, web build, tests, version/docs validation, and the worker/harness-local
   integration suites. Use a managed child Core with normal password login for browser acceptance.
   Real account checks require scoped authorization; fixture results never establish live-account

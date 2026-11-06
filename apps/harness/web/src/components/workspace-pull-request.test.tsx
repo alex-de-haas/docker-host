@@ -59,3 +59,37 @@ it("still warns about outdated open PR evidence", async () => {
   await act(async () => trigger().click());
   expect(container.textContent).toContain("Refresh to observe current PR and CI state.");
 });
+
+const completionPr = (state: string, stale = false): PullRequest => ({ ...pr(), observation: { ...pr().observation!,
+  state: "merged", complete: false, at: stale ? "2026-10-21T19:55:00Z" : "2026-10-21T20:00:00Z",
+  checks: [{ name: "PR build", state: "SUCCESS" }], error: "PR merged; check is missing for merge commit. Internal diagnostic.",
+  completionIssue: { kind: "check", requirement: "ci-required", state, mergeCommit: "merge-sha" },
+} });
+it.each(["missing", "pending"])("presents %s merge CI as waiting separately from passing PR checks", async state => {
+  await render(completionPr(state)); await act(async () => trigger().click());
+  expect(container.textContent).toContain("Waiting for post-merge CI");
+  expect(container.textContent).toContain("Pull request checks (before merge)");
+  expect(container.textContent).toContain("ci-required");
+  expect(container.textContent).not.toContain("Internal diagnostic");
+  expect(container.querySelector('[role="status"]')?.className).not.toContain("text-destructive");
+  await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="repo #7: CI 1/1, show checks"]')!.click());
+  expect(document.querySelector('[role="dialog"]')?.textContent).not.toContain("Internal diagnostic");
+  expect(document.querySelector('[role="dialog"] .text-destructive-foreground')).toBeNull();
+});
+it("keeps old failure evidence neutral until a fresh post-merge result confirms failure or completion", async () => {
+  await render(completionPr("failed", true)); await act(async () => trigger().click());
+  expect(container.textContent).toContain("Current results have not been checked yet");
+  expect(container.querySelector('[role="status"]')?.className).not.toContain("text-destructive");
+  await render(completionPr("failed"));
+  expect(container.textContent).toContain("Post-merge CI failed");
+  expect(container.querySelector('[role="status"]')?.className).toContain("text-destructive");
+  await render({ ...pr(), observation: { ...pr().observation!, state: "merged", complete: true, checks: [{ name: "PR build", state: "SUCCESS" }] } });
+  expect(trigger().getAttribute("aria-expanded")).toBe("true");
+  expect(container.textContent).toContain("CI passed");
+  expect(container.querySelector('[role="status"]')).toBeNull();
+});
+it.each(["unverified", "unavailable"])("shows %s evidence as unknown, not a CI failure", async state => {
+  await render(completionPr(state)); await act(async () => trigger().click());
+  expect(container.textContent).toContain("Could not confirm post-merge CI");
+  expect(container.querySelector('[role="status"]')?.className).not.toContain("text-destructive");
+});

@@ -24,8 +24,20 @@ createServer(async (req, res) => {
         : body.operation === 'get' ? await client.get(body.id) : await client.accept(body.id, body.input);
       return reply(200, value);
     }
-    const auth = await providers.validate(req.headers.authorization?.replace(/^Bearer /i, ''), 'task-executor');
-    if (route === '/v1/options') return reply(200, { options: [{ id: 'default', name: 'Plain executor', capabilities: ['markdown'] }], defaultId: 'default' });
+    const token = req.headers.authorization?.replace(/^Bearer /i, '') ?? '';
+    const operation = route === '/v1/options' ? 'dispatch.options' : route.endsWith('/cancel') ? 'dispatch.cancel' : req.method === 'PUT' ? 'dispatch.accept' : 'dispatch.get';
+    let auth;
+    if (token.startsWith('hosty_provider.2.')) {
+      try { auth = await providers.validateMediated(token, 'task-executor', { operation, method: req.method, path: route.slice('/v1'.length), body: bytes }); }
+      catch (error) {
+        if (route !== '/v1/options' || error.code !== 'token_invalid') throw error;
+        auth = await providers.validateMediated(token, 'task-executor', { operation: 'options', method: req.method, path: '/options', body: bytes });
+      }
+    } else {
+      try { auth = await providers.validate(token, 'task-executor'); }
+      catch (error) { console.error('Fixture provider introspection failed', JSON.stringify({ route, method: req.method, format: token.startsWith('hosty_provider.') ? token.split('.').slice(0, 2).join('.') : 'unexpected', tokenLength: token.length, code: error.code })); throw error; }
+    }
+    if (route === '/v1/options') return reply(200, { version: 1, revision: 1, options: [{ id: 'default', revision: 1, name: 'Plain executor', description: 'Independent executor with no profile concept', capabilities: ['markdown'], availability: { state: 'available' } }], defaultId: 'default' });
     const match = route.match(/^\/v1\/executions\/([a-f0-9-]{36})(\/cancel)?$/);
     if (!match) return reply(404, {code:'not_found'});
     const id = match[1], key = createHash('sha256').update(auth.callerAppId+auth.callerInstallation+id).digest('hex');

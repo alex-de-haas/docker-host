@@ -161,6 +161,14 @@ function DraftEditor({ source, available, incoming, request, setBlocked, capture
     }
     async function flush() { await queue.current; if (saveFailure.current)
         throw saveFailure.current; }
+    function confirmCommentSaved() {
+        const { requestId, revision: savedRevision } = current.current;
+        setNotice('');
+        void flush().then(() => {
+            if (live.current && current.current.requestId === requestId && current.current.revision === savedRevision)
+                setNotice('Comment saved locally. Submit feedback to send the report.');
+        }).catch(e => { if (live.current) setError(message(e)); });
+    }
     function noteChange(id: string, change: Partial<DraftNote>) { if (!current.current.submitting)
         update({ annotations: current.current.annotations.map(n => n.id === id ? { ...n, ...change } : n) }); }
     useEffect(() => {
@@ -299,7 +307,7 @@ function DraftEditor({ source, available, incoming, request, setBlocked, capture
         maxLength={2000} disabled={locked} speech={speech} onChange={text => noteChange(n.id, { text })}
         onDictation={text => noteChange(n.id, { text: ((current.current.annotations.find(a => a.id === n.id)?.text ?? '') + ' ' + text).trim().slice(0, 2000) })}
         screenshot={{ image: n.image, capturing, available, capture: () => void screenshot(n.id), remove: () => noteChange(n.id, { image: undefined }) }}
-        onDone={() => { void flush().catch(e => setError(message(e))); }} />
+        onDone={confirmCommentSaved} />
     </li>)}</ol>
     <FeedbackCommentInput label="Overall comment (optional)" target="overall" value={draft.comment}
       maxLength={5000} disabled={locked} speech={speech} onChange={comment => update({ comment })}

@@ -133,7 +133,7 @@ public sealed partial class GitHubPublicationTests
     public async Task PostMergeChecksAndReleaseMustMatchActualMergeCommit()
     {
         var h = new Http(); h.Replies.Enqueue(Graph("MERGED"));
-        h.Replies.Enqueue("""{"total_count":1,"workflow_runs":[{"head_sha":"merge","head_branch":"main","event":"push","run_number":3,"conclusion":"success"}]}""");
+        h.Replies.Enqueue("""{"total_count":1,"workflow_runs":[{"head_sha":"merge","head_branch":"main","event":"push","run_number":3,"status":"completed","conclusion":"success"}]}""");
         h.Replies.Enqueue("""{"sha":"unrelated-later-main"}""");
         var record = Record with { Policy = new([], [17], [new("v1.2.3", "release.zip")]) };
         var observed = await new GitHubPublicationProvider(new HttpClient(h), new Clock()).ObserveAsync(Connection, record, default);

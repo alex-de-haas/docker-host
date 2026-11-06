@@ -1,6 +1,6 @@
 ---
 created: 2026-10-26
-updated: 2026-10-30
+updated: 2026-11-04
 summary: Shared Harness agent configurations with connection, model, reasoning, role instructions and explicit skills, selectable before a conversation starts.
 components: [apps/harness]
 ---
@@ -18,8 +18,9 @@ provider credentials and conversations, and are shared within Harness rather tha
 applications. The configuration type and controlled `AgentProfileForm` component are reusable without
 a second configuration editor. [Basic Tasks](../basic-tasks/feature.md) exposes profiles as opaque
 executor choices and snapshots the selected configuration into each accepted execution. Profiles
-remain private to Harness; task providers receive no configuration or credentials. Richer
-coordination belongs to [Harness Work Orchestration](../harness-work-orchestration/plan.md).
+remain private to Harness; task providers receive no configuration or credentials. Profile-first delegation and task-specific fallback configurations are described in
+[Profile-Based Task Delegation](../profile-task-delegation/feature.md). Broader coordination remains in
+[Harness Work Orchestration](../harness-work-orchestration/plan.md).
 
 ## Editing And Defaults
 
@@ -63,7 +64,8 @@ action or explicit Refresh, without periodic requests that overwrite edits.
 
 A new chat starts with No profile unless the operator explicitly configured a default or supplied a
 profile choice. No profile leaves provider selection available before the first message. Before its
-first message the composer can switch profile, applying connection/model/effort, role and skill
+first message the composer’s [Agent settings panel](../harness-composer-controls/feature.md) can
+switch profile, applying connection/model/effort, role and skill
 selection as one persisted change. Profile selection and message dispatch share the session queue
 and selection revision, so a send cannot race a partially applied profile. Creating or switching
 conversations retains one set of profile, model, reasoning and provider controls for the selected

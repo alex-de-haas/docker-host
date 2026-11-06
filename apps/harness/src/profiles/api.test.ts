@@ -50,3 +50,17 @@ it("keeps session profile changes owner-bound and refuses resource or permission
   expect((await request("/api/profiles", "POST", { expectedRevision: state.revision, profile: { ...profile, permissions: ["all"] } })).status).toBe(400);
   expect((await request("/api/settings", "PUT", { skillIds: [] })).status).toBe(409);
 });
+
+it("applies optional browser autonomy only at creation and retains original settings on retry", async () => {
+  const input = { clientRequestId: "browser-defaults-chat", browserDefaults: { ownerId: "admin", autonomy: "autonomous" } };
+  const created = await request("/api/sessions", "POST", input);
+  expect(created.status).toBe(200);
+  const first = await created.json() as SessionRecord;
+  expect(first.autonomy).toBe("autonomous");
+  const replay = await (await request("/api/sessions", "POST", { ...input, browserDefaults: { ownerId: "admin", autonomy: "normal" } })).json() as SessionRecord;
+  expect(replay.id).toBe(first.id); expect(replay.autonomy).toBe("autonomous");
+  const explicit = await (await request("/api/sessions", "POST", { browserDefaults: input.browserDefaults, autonomy: "normal" })).json() as SessionRecord;
+  expect(explicit.autonomy).toBe("normal");
+  const switched = await (await request("/api/sessions", "POST", { browserDefaults: input.browserDefaults }, token("another-admin"))).json() as SessionRecord;
+  expect(switched.createdBy).toBe("another-admin"); expect(switched.autonomy).toBeUndefined();
+});

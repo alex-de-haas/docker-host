@@ -84,11 +84,18 @@ internal sealed class FeedbackStore(CoreDataPaths paths, IClock clock)
                 return new FeedbackSubmissionReceipt(id, receipt.Deleted ? "deleted" : "submitted");
             }
             CleanupEvidence(state);
+            if (observation.WorkspaceId is { } deleted && state.DeletedWorkspaces.Contains(deleted))
+            {
+                // Observation and intake can race workspace removal. Fence the original request
+                // without recreating its feedback or writing evidence after the deletion commits.
+                await Save(state with { Receipts = [.. state.Receipts, new(id, fingerprint, Deleted: true)] }, ct);
+                return new FeedbackSubmissionReceipt(id, "deleted");
+            }
             foreach (var note in input.Annotations)
                 if (note.Image is not null) await JsonStorage.WriteAsync(ImagePath(id, note.Id), note.Image, true, ct);
             var report = new FeedbackReport(id, reporter, observation, input.Comment,
                 input.Annotations.Select(n => new FeedbackNote(n.Id, n.Text, n.Route, n.CapturedAt, n.Target, n.Image?.MediaType)).ToArray(),
-                observation.WorkspaceId is { } workspace && !state.DeletedWorkspaces.Contains(workspace) ? workspace : null);
+                observation.WorkspaceId);
             await Save(state with { Reports = [.. state.Reports, report], Receipts = [.. state.Receipts, new(id, fingerprint)] }, ct);
             return new FeedbackSubmissionReceipt(id, "submitted");
         }, ct);
@@ -129,6 +136,85 @@ internal sealed class FeedbackStore(CoreDataPaths paths, IClock clock)
         await Save(state with { Reports = state.Reports.Select(r => r.Id == id ? report : r).ToArray() }, ct);
         return report;
     }, ct);
+    private static bool MutationReplayed(FeedbackState state, string requestId, string reportId, string kind, string fingerprint)
+    {
+        var prior = state.Mutations?.FirstOrDefault(r => r.RequestId == requestId);
+        if (prior is null) return false;
+        if (prior.ReportId != reportId || prior.Kind != kind || prior.Fingerprint != fingerprint)
+            throw new FeedbackException("feedback_request_conflict", "Retry the exact feedback change with its original request ID.");
+        return true;
+    }
+    private static FeedbackReport MutableReport(FeedbackState state, string id, long expectedRevision)
+    {
+        var report = state.Reports.FirstOrDefault(r => r.Id == id)
+            ?? throw new FeedbackException("feedback_not_found", "Feedback not found.", 404);
+        if (report.Revision != expectedRevision)
+            throw new FeedbackException("feedback_revision_conflict", "Feedback changed; refresh before continuing.");
+        if (report.Status is "pending" or "uncertain")
+            throw new FeedbackException("feedback_busy", "Resolve the active or uncertain attempt before changing feedback.");
+        return report;
+    }
+    internal Task<FeedbackReport> EditAsync(string id, FeedbackEdit input, CancellationToken ct)
+    {
+        Uuid(input.RequestId); Text(input.Comment, 5000, "report comment");
+        if (input.Annotations is not { Length: > 0 and <= 20 } || input.Annotations.Any(n => n is null) ||
+            input.Annotations.Select(n => n.Id).Distinct(StringComparer.Ordinal).Count() != input.Annotations.Length)
+            throw new FeedbackException("feedback_invalid", "Include the existing distinct annotations.", 400);
+        foreach (var note in input.Annotations) Text(note.Text, 2000, "annotation comment", true);
+        var fingerprint = DevelopmentWorkspaceService.Hash(CoreJson.Text(input));
+        return Locked(async state =>
+        {
+            if (MutationReplayed(state, input.RequestId, id, "edit", fingerprint))
+                return state.Reports.FirstOrDefault(r => r.Id == id)
+                    ?? throw new FeedbackException("feedback_not_found", "Feedback was deleted.", 404);
+            var report = MutableReport(state, id, input.ExpectedRevision);
+            if (input.Annotations.Length != report.Annotations.Length ||
+                input.Annotations.Any(n => !report.Annotations.Any(existing => existing.Id == n.Id)))
+                throw new FeedbackException("feedback_invalid", "Edit the existing annotations without adding or removing them.", 400);
+            var texts = input.Annotations.ToDictionary(n => n.Id, n => n.Text, StringComparer.Ordinal);
+            report = report with { Comment = input.Comment, Revision = report.Revision + 1, Status = "unprocessed", CurrentAttemptId = null,
+                Annotations = report.Annotations.Select(n => n with { Text = texts[n.Id] }).ToArray() };
+            await Save(state with {
+                Reports = state.Reports.Select(r => r.Id == id ? report : r).ToArray(),
+                Mutations = [.. state.Mutations ?? [], new(input.RequestId, id, "edit", fingerprint)],
+            }, ct);
+            return report;
+        }, ct);
+    }
+    internal Task<FeedbackSubmissionReceipt> DeleteAsync(string id, FeedbackDelete input, CancellationToken ct)
+    {
+        Uuid(input.RequestId);
+        var fingerprint = DevelopmentWorkspaceService.Hash(CoreJson.Text(input));
+        return Locked(async state =>
+        {
+            if (!MutationReplayed(state, input.RequestId, id, "delete", fingerprint))
+            {
+                MutableReport(state, id, input.ExpectedRevision);
+                // Keep the intake tombstone and only mutation fingerprints. Historical batches must
+                // not retain the report text, evidence metadata, outcome text or copied instruction.
+                await Save(state with {
+                    Reports = state.Reports.Where(r => r.Id != id).ToArray(),
+                    Receipts = state.Receipts.Select(r => r.Id == id ? r with { Deleted = true } : r).ToArray(),
+                    Dispatches = RedactReports(state.Dispatches, new(StringComparer.Ordinal) { id }),
+                    Mutations = [.. state.Mutations ?? [], new(input.RequestId, id, "delete", fingerprint)],
+                }, ct);
+            }
+            // The receipt commits first so a retry also finishes cleanup after a filesystem failure.
+            DeleteEvidence(id);
+            return new FeedbackSubmissionReceipt(id, "deleted");
+        }, ct);
+    }
+    private static FeedbackDispatch[] RedactReports(FeedbackDispatch[] dispatches, HashSet<string> removed) =>
+        dispatches.Select(d => d with {
+            Snapshot = d.Snapshot.Where(r => !removed.Contains(r.Id)).ToArray(),
+            Outcomes = d.Outcomes?.Where(o => !removed.Contains(o.ReportId)).ToArray(),
+            Input = removed.Overlaps(d.Input.Reports.Select(r => r.Id)) ? d.Input with { Instruction = "" } : d.Input,
+        }).ToArray();
+    private void DeleteEvidence(string id)
+    {
+        var directory = Path.Combine(Root, "evidence", id);
+        if (Directory.Exists(directory)) Directory.Delete(directory, true);
+    }
     private static void RequireWorkspace(FeedbackState state, string? id)
     {
         if (id is not null && state.DeletedWorkspaces.Contains(id)) throw new FeedbackException("workspace_deleted", "This workspace was deleted.");
@@ -231,32 +317,26 @@ internal sealed class FeedbackStore(CoreDataPaths paths, IClock clock)
         }, ct);
     internal Task<bool> DeleteWorkspaceAsync(string workspaceId, CancellationToken ct) => Locked(async state =>
     {
+        var removed = state.Reports.Where(r => r.WorkspaceId == workspaceId).Select(r => r.Id).ToHashSet();
         var cancelled = state.Dispatches.Where(d => d.State is "reserved" or "accepted" or "unknown")
-            .Where(d => (d.WorkspaceId ?? d.Input.WorkspaceId) == workspaceId).Select(d => d.Id).ToHashSet();
-        var removed = state.Reports.Where(r => r.WorkspaceId == workspaceId && r.Status == "processed").Select(r => r.Id).ToHashSet();
+            .Where(d => (d.WorkspaceId ?? d.Input.WorkspaceId) == workspaceId || removed.Overlaps(d.Input.Reports.Select(r => r.Id)))
+            .Select(d => d.Id).ToHashSet();
         // Keep receipts but redact every retained batch snapshot/outcome referencing deleted content.
         var receipts = state.Receipts.Select(r => removed.Contains(r.Id) ? r with { Deleted = true } : r).ToArray();
         await Save(state with
         {
             DeletedWorkspaces = state.DeletedWorkspaces.Contains(workspaceId) ? state.DeletedWorkspaces : [.. state.DeletedWorkspaces, workspaceId],
-            Reports = state.Reports.Where(r => !removed.Contains(r.Id)).Select(r => r.WorkspaceId == workspaceId || r.CurrentAttemptId is { } attempt && cancelled.Contains(attempt)
-                ? r with { WorkspaceId = r.WorkspaceId == workspaceId ? null : r.WorkspaceId, Revision = r.Revision + 1,
-                    Status = r.CurrentAttemptId is { } active && cancelled.Contains(active) ? "cancelled" : r.Status } : r).ToArray(),
+            Reports = state.Reports.Where(r => !removed.Contains(r.Id)).Select(r => r.CurrentAttemptId is { } attempt && cancelled.Contains(attempt)
+                ? r with { Revision = r.Revision + 1, Status = "cancelled" } : r).ToArray(),
             Receipts = receipts,
-            Dispatches = state.Dispatches.Select(d => d with {
+            Dispatches = RedactReports(state.Dispatches, removed).Select(d => d with {
                 State = cancelled.Contains(d.Id) ? "cancelled" : d.State,
-                Error = cancelled.Contains(d.Id) ? "The processing workspace was deleted. Unprocessed feedback was retained." : d.Error,
-                Snapshot = d.Snapshot.Where(r => !removed.Contains(r.Id)).ToArray(),
-                Outcomes = d.Outcomes?.Where(o => !removed.Contains(o.ReportId)).ToArray(),
-                Input = removed.Overlaps(d.Input.Reports.Select(r => r.Id)) ? d.Input with { Instruction = "" } : d.Input,
+                Error = cancelled.Contains(d.Id) ? "Feedback processing was cancelled because the workspace was deleted." : d.Error,
             }).ToArray(),
         }, ct);
         // Tombstones survive a failed filesystem deletion, so retry removes the same evidence.
         foreach (var receipt in receipts.Where(r => r.Deleted))
-        {
-            var directory = Path.Combine(Root, "evidence", receipt.Id);
-            if (Directory.Exists(directory)) Directory.Delete(directory, true);
-        }
+            DeleteEvidence(receipt.Id);
         return true;
     }, ct);
 }

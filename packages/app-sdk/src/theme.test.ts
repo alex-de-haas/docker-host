@@ -33,6 +33,16 @@ describe("resolveTheme", () => {
     });
   });
 
+  it.each([false, true])("refreshes a standalone system preference from the current OS (dark=%s)", (systemPrefersDark) => {
+    const theme = systemPrefersDark ? "dark" : "light";
+    const stale = systemPrefersDark ? "light" : "dark";
+    expect(resolveTheme({ param: stale, preferenceParam: "system", systemPrefersDark, standalone: true }))
+      .toEqual({ theme, preference: "system", source: "param" });
+    expect(resolveTheme({ stored: stale, storedPreference: "system", systemPrefersDark, standalone: true }))
+      .toEqual({ theme, preference: "system", source: "stored" });
+    expect(resolveTheme({ stored: stale, storedPreference: stale, systemPrefersDark, standalone: true }).theme).toBe(stale);
+  });
+
   it("reads the operating system when no shell has spoken", () => {
     expect(resolveTheme({ systemPrefersDark: true })).toEqual({ theme: "dark", preference: "system", source: "system" });
     expect(resolveTheme({ systemPrefersDark: false })).toEqual({ theme: "light", preference: "system", source: "system" });
@@ -120,7 +130,7 @@ describe("applyTheme", () => {
 });
 
 describe("themeBootstrapScript", () => {
-  const run = (search: string, stored: Record<string, string> | "throws", systemDark: boolean, script = themeBootstrapScript) => {
+  const run = (search: string, stored: Record<string, string> | "throws", systemDark: boolean, script = themeBootstrapScript, standalone = false) => {
     const { root, attributes, classes } = themeRoot();
     const store: Record<string, string> = stored === "throws" ? {} : { ...stored };
     const storage =
@@ -139,7 +149,9 @@ describe("themeBootstrapScript", () => {
               store[key] = value;
             },
           };
+    const self = {};
     const win = {
+      self, parent: standalone ? self : {},
       location: { search },
       sessionStorage: storage,
       matchMedia: () => ({ matches: systemDark }),
@@ -160,6 +172,19 @@ describe("themeBootstrapScript", () => {
     const result = run("", { [THEME_STORAGE_KEY]: "dark", [THEME_PREFERENCE_STORAGE_KEY]: "dark" }, false);
     expect(result).toMatchObject({ dark: true, scheme: "dark" });
     expect(result.attributes[THEME_PREFERENCE_ATTRIBUTE]).toBe("dark");
+  });
+
+  it.each([false, true])("paints standalone system mode with the current OS before hydration (dark=%s)", (systemDark) => {
+    const stale = systemDark ? "light" : "dark";
+    for (const script of [themeBootstrapScript, createThemeBootstrapScript({ followSystem: false })]) {
+      const stored = run("", { [THEME_STORAGE_KEY]: stale, [THEME_PREFERENCE_STORAGE_KEY]: "system" }, systemDark, script, true);
+      expect(stored).toMatchObject({ dark: systemDark, attributes: { [THEME_PREFERENCE_ATTRIBUTE]: "system" } });
+      const launched = run(`?hosty_theme=${stale}&hosty_theme_preference=system`, {}, systemDark, script, true);
+      expect(launched).toMatchObject({ dark: systemDark, store: {
+        [THEME_STORAGE_KEY]: systemDark ? "dark" : "light", [THEME_PREFERENCE_STORAGE_KEY]: "system",
+      } });
+      expect(run(`?hosty_theme=${stale}`, {}, systemDark, script, true).dark).toBe(!systemDark);
+    }
   });
 
   it("reads the operating system when nothing is declared, and stores nothing", () => {

@@ -1,6 +1,6 @@
 ---
 created: 2026-10-20
-updated: 2026-10-29
+updated: 2026-11-05
 summary: Shell unifies personal, host and application settings; Core confirms protected changes while Harness owns invocation preferences and skill selections.
 components: [apps/core, apps/shell, apps/harness, apps/marketplace]
 ---
@@ -38,6 +38,10 @@ status or fields show Unavailable; a known status without a public origin shows 
 This block retains the same administrator access as the surrounding host settings. Core metadata,
 status, resources, Logs and runtime/workspace, restart, update and Source settings actions remain
 on Dashboard.
+
+Host > Updates configures only the Core and CLI release feed. It contains no application update
+source section or publisher migration controls. Application update channels remain in each
+application's App Details > Updates tab.
 
 App Details/Manage is a standalone page at `/apps/<app-id>?section=<section>`, outside Settings.
 An administrator sees `Dashboard / <app name>` with a native Dashboard link to `/dashboard`.

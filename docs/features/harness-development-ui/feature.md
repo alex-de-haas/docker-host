@@ -1,6 +1,6 @@
 ---
 created: 2026-10-16
-updated: 2026-11-03
+updated: 2026-11-04
 summary: Harness provides separate Chats and Workspaces pages, multi-repository details, environment previews and verified lifecycle actions.
 components: [apps/harness, apps/core, apps/shell, packages/app-sdk]
 ---
@@ -11,6 +11,10 @@ Standalone Harness uses the SDK page navigation from its manifest, exposing Chat
 Wide windows show the page sidebar; narrow windows use the Page navigation drawer. Embedded
 and native hosts control navigation visibility through the SDK chrome contract. The conversation
 and workspace list remains available independently of page navigation.
+
+The conversation workspace fills the available SDK content height below the standalone top bar,
+or the host-provided height when embedded. The workspace/chat list, conversation transcript and
+Workspace Details scroll independently; reaching a panel edge does not scroll the outer workspace.
 
 Workspace inventory and source details use [Core observation events](../workspace-event-observation/feature.md).
 The Source workspaces panel shares one authenticated event subscription per document. Harness
@@ -28,6 +32,9 @@ utility scale follows the design's size/line-height pairs: small 13/20, body 14/
 then headings 17/24, 22/30 and 30/38 px. Body text uses weight 400, headings 600 and buttons/badges
 500; technical text uses JetBrains Mono at 13/20. Phone inputs retain 16 px text. These app-owned
 styles remain effective inside the SDK workspace because its font reset targets only SDK chrome.
+
+Navigation uses distinct Lucide assets: Tasks uses `clipboard-check` and Decisions uses `list-todo`.
+The manifest supplies the same icons to standalone navigation and Shell.
 
 ## Browser Event Delivery
 
@@ -118,7 +125,12 @@ Failed filters, scoped to their own rows. Workspace search also matches disclose
 app context. Each page restores its own selected conversation; the assistant panel retains its
 existing history. Sessionless workspaces offer explicit creation; selecting a row never
 creates a conversation automatically. Rename remains in the conversation header. Desktop navigation
-and workspace columns measure 264/344 px; transcript and composer are capped at 760 px. Session
+and workspace columns default to 264/344 px. Their boundaries support pointer dragging, arrow keys,
+Home/End for minimum/maximum width and double-click to reset. Preferred widths persist in local
+browser storage. Navigation ranges from 220 to 480 px and details from 280 to 560 px, constrained by
+the actual application content width to leave at least 320 px for the chat. Temporarily narrow
+surfaces fit the columns without overwriting saved preferences; details use the retained dialog when
+both columns and the chat cannot fit. Transcript and composer are capped at 760 px. Session
 rows support keyboard focus and activation. Workspace details use the existing mobile dialog. Its
 icon sits in the conversation header beside status and execution mode, or in the empty-center
 header when no chat is selected. On wide surfaces the same
@@ -149,6 +161,14 @@ Core records managed operations, lease/consumer changes, workflow changes and ob
 source metadata changes; ignored build output does not affect order. Legacy workspace records use
 their last saved observation as a baseline until new activity is recorded. A Core predating this
 field leaves activity unknown, sorted deterministically after dated records.
+Opening a chat shows a loading state until its existing event stream finishes the initial historical
+replay and reports the current session status. The message scroller then mounts with the complete
+history and positions at the end before showing it, without animating through earlier messages.
+Subsequent stream reconnects retain the mounted transcript and reading position. New messages follow
+the bottom while the reader remains there; scrolling up suspends following until Jump to latest.
+An initial terminal disconnection exposes the stream error and any received history instead of
+keeping the loading state indefinitely. The composer and its draft remain mounted while history loads.
+
 The selected chat uses its existing event stream. While another chat is running or waiting, the
 visible full-page navigation reconciles session inventory every five seconds, or every thirty
 seconds when other sessions are idle so activity started in another window is discovered. Hidden pages pause
@@ -197,7 +217,9 @@ Approval cards have an amber header and retain the exact command in an ink code 
 uses the existing one-time decision. Deny… reveals the supported optional reason; providers without
 reason support keep their existing immediate denial. Cancel and denied/cancelled replay states
 retain their original semantics. No session grant or repository/branch metadata is inferred.
-The composer retains attachments, mentions, dictation, provider/model and autonomy controls.
+The composer retains attachments, mentions, dictation and autonomy controls. Its
+[compact action row](../harness-composer-controls/feature.md) groups profile, provider, model and
+reasoning in one Agent settings panel and collapses its label according to composer width.
 A Core workspace closure or completed, deferred, deleting or deleted workflow hides the composer
 and blocks local send/Ask handoff. Both full-page and embedded conversations observe the existing
 workspace inventory. Initial inventory loading keeps the composer hidden; successful background
@@ -205,12 +227,13 @@ reads do not toggle it. A failed read or disconnect cannot reopen known fenced s
 Resume restores the composer and its retained draft and attachments. Ordinary chats remain writable
 regardless of an idle or completed agent-turn status. History and change inspection remain available.
 The autonomy menu contains each mode's explanation without repeating it below the composer.
-The right side of the conversation header groups the current session activity badge immediately
-before the read-only Local or Docker execution badge. Its tooltip explains native Harness process
+The right side of the conversation header hides idle status and places other session activity
+badges before the read-only Local or Docker execution icon. Its accessible label and tooltip name
+the execution mode; the tooltip explains native Harness process
 access for Local and the worker's container limits for
 Docker, without claiming OS administrator privileges or container confinement for enabled MCP tools.
-The compact [Context indicator](../harness-context-usage/feature.md) sits immediately after the
-provider selector in full-page and embedded chat. Its circular meter has a keyboard-accessible
+The compact [Context indicator](../harness-context-usage/feature.md) shares the action row with
+Agent settings, autonomy and provider limits in full-page and embedded chat. Its circular meter has a keyboard-accessible
 shared tooltip with used/maximum tokens, percentage and observation details. Empty sessions use
 the Harness cell mark; loading uses the shared motion-aware Hosty grid mark. Working presence
 remains Info blue.
@@ -244,7 +267,9 @@ Notices expand independently and retain their disclosure state as later events a
 
 Each activity block with recorded edits has a separate collapsible **Changes** section beside
 Tool calls. Its header stays visible while Tool calls is collapsed, with the source-bound file
-count and confirmed aggregate additions/deletions; unknown or overflowing totals are unavailable.
+count and confirmed aggregate additions/deletions. When only some edit operations provide counts,
+the header retains their known subtotals as explicit lower bounds. A later edit without counts does
+not erase earlier counts for the same file. Entirely unknown or overflowing totals are unavailable.
 The two sections expand independently. Changes contains the file summary and existing Review
 links rather than nesting that summary inside Tool calls. Its scope is the activity block bounded
 by prose, approvals, questions and turns.
@@ -300,7 +325,12 @@ or polling connection.
 
 Sessions, Used by, Changes and Pull requests share muted section headings and horizontal dividers.
 Used by follows Sessions and displays applications directly, without an enclosing card or background.
-Sessions remains visible when empty; other empty sections are hidden. Dividers appear only between visible sections, never before the first or
+Sessions remains visible when empty; other empty sections are hidden. Optional Feedback and
+Previews sections stay absent during their first read, then appear only when data or a read error
+needs to be shown. Existing content remains mounted while background reads are pending.
+Feedback uses the same muted heading and compact two-line list density as neighboring sections;
+report versions and dates remain available in its tooltip and full details.
+Workspace-keyed sections reject late results from the previous selection. Dividers appear only between visible sections, never before the first or
 after the last. Changes groups the repository cards. Used by has one heading with the same information
 icon and tooltip styling as Sessions; its application list does not repeat a heading. Each accessible
 own session exposes Detach session and Delete session in a three-dot menu beside that row.
@@ -329,6 +359,14 @@ its draft and scroll. Back restores the originating session or external-workspac
 Ask Harness is available when the owning workspace admits new turns; it returns to the owning
 conversation at every width, appends the reference and focuses the composer without sending a message. File/scope selection persists per repository while
 the panel remains mounted. Viewed belongs to the source revision; changed revisions invalidate it.
+The mounted review retains successfully loaded file diffs in memory, so returning to a loaded file
+renders it immediately without another request. The cache is bounded to 24 diffs and 12 MiB of
+serialized UTF-16 data. Viewer, workspace, worktree, source observation, review scope and published
+comparison boundaries isolate entries. Refresh files, retries and a changed source observation
+invalidate retained results. Errors and superseded requests are not cached; oversized diffs remain
+viewable but are loaded again when revisited. Closing the review releases its cache.
+An already loaded syntax highlighter is reused across file changes without another loading frame;
+line selections remain scoped to the selected file and revision.
 Read errors offer explicit retry. Phones start with the file list and open one file at a time.
 Selected lines and Ask Harness on a thread add structured source/revision/side or thread references
 to the conversation draft without sending a message.
@@ -437,45 +475,69 @@ health qualifying a running state. Its second line describes the current executi
 icon with the source branch. Workspace/source labels remain accessible to screen readers, with
 source-path name fallback and the full path retained in the title. Selection and installation/update
 provenance do not establish process state; missing observations remain Unknown or Target unavailable.
-The accessible per-app Use this workspace icon is hidden when the current workspace and
-worktree IDs exactly match the bound target, or while a runtime switch is being submitted or
-observed. Unavailable rights, targets and other app transitions disable switching with an explanation.
-Group actions use compact Use workspace and Return to packages labels. A fresh, complete observation shows only Use workspace when every bound app
-is positively outside this workspace, only Return to packages when every exact bound worktree
-is selected, and both for a mixed selection. Missing/legacy/partial observations and another tree
-in this workspace retain both actions. Initial loading, disconnection and retained execution requests
-also keep both visible so package recovery and original-request retries remain reachable.
-While a submitted switch or retry is in progress, group and per-app switch buttons are hidden;
-the switching status remains visible. Actions return after success or failure, with original-request
-retry and package recovery retained on failure.
-Visibility follows observations rather than treating an operation result as proof of selection.
-The information tooltip next to Use on this Core explains ordinary-data switching and package
-recovery. Successful switches leave no additional completion message; the app rows show the
-observed target and lifecycle state.
+The accessible per-app Use this workspace icon targets the exact bound worktree in multi-app
+workspaces and is omitted for a single app, which already has the group action. Unavailable rights,
+targets and other app transitions disable switching with an explanation.
+
+Used by has one primary transition. Fresh observations show Use workspace when any bound app is
+outside the exact target, including an observed legacy development runtime, and Return to packages
+when all targets match. A mixed selection exposes
+Return to packages in a compact alternative-actions menu, only when at least one app is observed
+using this workspace. Missing or disconnected observations offer refresh rather than guessing a
+target. Background reads preserve the last verified rows and focus. An operation receipt never
+establishes the current target or process readiness.
+
+Submitting a switch replaces actions with one progress line. A failure replaces the primary
+transition with Try again and a concise error; technical details stay collapsed. Retained request
+IDs do not create extra Use workspace, Return or Retry runtime switch buttons. A package recovery
+alternative remains available when an app is actually observed in this workspace. Paused workspaces
+block entry and its retry while retaining observed package return.
+
+Core access confirmation is prepared and opened automatically only when the exact candidate needs
+additional authority. Ordinary code/metadata changes with no authority delta need no popup. Explicit
+approval stays in Core; matching branches, user permissions and selecting a workspace do not grant
+app access. Approval automatically resumes the original execution request. Group selections handle
+each required app review before resuming; Core skips completed children. A direct confirmation link
+remains available to reopen an isolated or blocked popup. Core isolates its confirmation window with
+COOP, so a window handle cannot prove approval, denial or closure. Standalone Harness opens the final
+URL without an opener. Embedded Harness asks the SDK frame host to present the receipt on its own
+Core origin; iframe sandbox permissions remain unchanged. Harness observes Core's receipt.
+Denying or explicitly cancelling confirmation stops automatic continuation and leaves one retry,
+including after reload. Cancel stops this client's wait, without claiming to cancel a Core operation
+or revoke a permission already confirmed there.
 
 Workspace-scoped Harness routes revalidate installed bindings and project only bound-app status,
 execution choices and the permitted operation/review result from existing generic Core APIs. They
-are not an arbitrary Core management proxy and add no Core/SDK/manifest contract or permissions.
-Visible rows share the workspace SSE subscription and refresh after actions. Successful background
-reads keep the last verified rows, button visibility and per-app enabled states until the next
-response arrives; loading applies to initial or recovery reads. Failed reads or disconnect clear
-stale data; they do not poll the app fleet. Per-app requests retain the application,
-workspace, worktree, runtime and original UUID across access review, retry and reload recovery.
-Missing rights never trigger automatic approval; the existing explicit Core review remains required.
+are not an arbitrary Core management proxy and add no Core permissions or manifest authority.
+Visible rows share the workspace SSE subscription and refresh after actions. Failed reads or
+disconnect clear stale data; they do not poll the app fleet. Only an active execution or confirmation
+request is polled. Reload automatically resumes observation. Retries resolve uncertain results by
+reading the original request before replay, retaining the application, workspace, worktree, runtime
+and UUID. A Core-confirmed missing request is resubmitted with that same identity. Stale/superseded
+selections clear the local intent; a new user action creates a new request. Access review identity
+is retained before submission and reused across reload until its candidate changes, it expires or
+Core denies/fails it. Neither completed execution nor completed access approval is resubmitted.
 
-Folded Activity diagnostics list actual source consumers by name, kind and reference, together with
-leases and cleanup guidance. They replace expanded Active source uses cards and contain no Manage
-application links. Core consumer entries reflect actual source use; dirty files or a Core project
-path in the repository do not create a consumer or add Core to the bound-app switch. The existing
+Registered agent/tool activity appears as a shield icon beside the workspace origin/status in the
+header. Its tooltip explains that other sessions can still use the workspace, that registration is
+not proof of a running agent, and that Pause recovers abandoned activity. It exposes no lease IDs.
+Used by's information tooltip groups actual source-use records by application, explaining selected
+source versus running services. Multiple services of one app appear once. Worktree paths, internal
+consumer kinds and references are omitted; lease-only workspaces do not gain an empty Used by section.
+There is no separate Activity diagnostics block. Core source use remains visible in the explanation;
+dirty files or a Core project path do not create a consumer or add Core to the bound-app switch. The existing
 separately authorized [Core/workspace activation flow](../workspace-live-activation/feature.md) and
 [Core development controls](../core-dev-target/feature.md) retain Core selection and Return.
 
-Preview cards keep Open preview/Open test Core visible. Their compact ReUI action menus retain
+Preview cards keep Open preview visible and place an accessible Open test Core icon at the end of
+the Core URL field while the child is running. The sandbox menu sits at the top right beside its
+name; its runtime badge shares the Separate Core and test data row. Operation progress, recovery
+and informational messages remain below the URL. Their compact ReUI action menus retain
 sandbox lifecycle, reviewed checks, restart and service logs, including original-request recovery
 and confirmations. Current launch stage/time and service state come from Core. Missing full launch
 history, time-to-ready, Not pushed counts or child-Core test-user totals are not invented.
 
-The entire sandbox section is omitted after a successful empty child-environment inventory read. Loading and unavailable/error states stay visible with their existing retry; later observations reveal newly created previews. Owned child Core environments show their label, runtime
+The sandbox section is omitted during its first child-environment inventory read and after a successful empty result. Unavailable/error states and explicit retry progress remain visible; later observations reveal newly created previews. Owned child Core environments show their label, runtime
 state and authorized Core/application preview links. Ordinary child login remains required. Missing resource permission or unavailable
 application status is reported. Merely completing a workspace does not finish a retained sandbox.
 
@@ -570,9 +632,10 @@ text. A newly started provider client receives the current instructions; an alre
 is not silently reconfigured in the middle of its session.
 
 The same settings page provides separate ordinary-chat and completed-workspace expiry, each with
-Off. Completed-workspace expiry defaults to Off. The conversation shows its eligibility, completion
-time or preservation reason and offers refresh/retry when cleanup is blocked. In-progress, deferred
-and unknown work is never deleted because of age. The
+Off. The completed-workspace value is a legacy compatibility policy and defaults to Off; it never
+starts deletion of an attached session or shared workspace. Conversations do not display retention
+eligibility, technical blockers or cleanup controls. In-progress, deferred and unknown work is never
+deleted because of age. The
 [retention feature](../harness-session-retention/feature.md) documents authorization, coordinated
 resource cleanup, migration and D5 browser/startup acceptance.
 
@@ -869,7 +932,71 @@ Verified on macOS on 2026-10-29 for the Harness 0.80.0 release; the initial coun
 Workspace details contains positioned accessibility labels within its own scroll area. Long
 workspace content scrolls inside the pane without increasing the embedded document height.
 
+## Workspace Navigation Summary
+
+Workspace rows show a second line with lifecycle status, observed uncommitted files, confirmed
+added/deleted line totals, an open PR count and aggregate CI status. Added lines use green and deleted lines
+use red. The file count remains visible alongside the line totals. Lifecycle is independent of attached-session activity, whose counts remain beside the
+title. Chat rows retain their existing presentation. Completed workspaces remain visible; there is no
+archive behavior in this UI enhancement.
+
+The existing inventory includes a small authorized `pullRequestSummary` derived from retained
+publication observations. The projection reads cached records, revalidates source/account access,
+and excludes private review content. It does not fetch Git or call a provider. Rendering rows adds no
+per-row requests, subscriptions or polling. The existing workspace event stream refreshes inventory. Active PR summaries become outdated after six
+minutes, allowing the shared five-minute background cadence without promoting every list row to
+visible provider demand. Private-source checks use local grant validation without refreshing credentials.
+Open PR counts include drafts and exclude merged or closed history. Fresh counts remain visible
+alongside Clean and successful, running or failed CI; all-draft open sets are labelled as drafts.
+Incomplete fresh observations show a lower bound with `+`. Outdated or undated nonterminal
+observations show only `PR outdated`; their tooltip retains last-known counts and timestamps.
+They do not present a stale open/draft count or CI result as current activity.
+Older Core summaries without separate open counts show an open/draft label without guessing a
+count from the total number of linked PRs. Unpublished commits without a linked PR are not counted.
+
+Merged requires every distinct linked PR to have an available merged observation. Closed-unmerged,
+draft, open, failing/running/passing checks, unknown observations and outdated active PR status remain
+distinct. Old merged history does not make a fresh corrective PR's checks stale. Source cleanliness
+requires a complete successful observation; partial counts are marked as lower bounds. During an
+ordinary queued Git refresh (`pending`), rows retain that observation's clean, conflict, file and line
+facts, with a compact updating indicator and an explanation in the tooltip and accessible text.
+Missing observations and watcher recovery still show unavailable source facts. Inactive
+workspaces show lifecycle and retained PR information without claiming current local cleanliness.
+Line totals aggregate the current local observations across all repositories. They appear only when
+every source observation is readable and complete and every changed text file has observed line
+counts, or the observation supplies confirmed aggregate totals. Missing, stale, recovering or
+truncated observations omit line totals rather than substituting zero or an incomplete sum.
+Narrow rows truncate the second line, with full details in its native tooltip and accessible text.
+Older Core inventories retain lifecycle/source status and show PR unknown when only links are available.
+An incomplete lifecycle observation renders Unavailable and does not claim clean source.
+
+The 2026-11-04 acceptance passes 50 affected Core tests and 33 Harness navigation/presentation tests,
+Core/CLI and Harness production builds, and the managed `harness-local` integration suite. Browser
+checks cover eight summary states, selection, narrow layouts and authenticated Shell embedding with
+controlled response fixtures; unselected rows make no detail requests. The final managed run verifies
+cold startup, warm restart, missing-output recovery and owner-confirmed resource cleanup.
+
+
+The column-resizing follow-up passes 133 affected Harness tests, targeted ESLint and the production
+web build. Authenticated managed-sandbox browser checks cover both pointer boundaries, keyboard
+limits, persistence, reset and retained compact details in standalone and Shell. A 1022 px standalone
+window keeps a 320 px chat without document overflow; Shell uses its actual iframe/content width.
+The managed local suite verifies warm restart, missing-output recovery and owner-confirmed cleanup.
+
 ## Testing Expectations
+
+- Open a long chat with historical events delivered in separate chunks: the transcript stays behind
+  its loading state until the current-status boundary, then appears at the end without smooth
+  scrolling. Verify live following, manual reading above the bottom, Jump to latest, reconnects,
+  terminal initial errors, session switching and rejected late stream callbacks without losing drafts.
+
+- Verify both column resize boundaries with pointer and keyboard, cancellation, reload persistence, unavailable storage and reset. Check container resizing in standalone and Shell, chat minimum width, mobile dialog focus/state retention and independent scrolling.
+
+- Verify workspace second-line aggregation for multiple repositories, confirmed added/deleted line counts alongside file counts, missing/truncated line totals, duplicate PR links, closed-unmerged and corrective PRs, stale/missing source and CI observations, and owner/account revocation. Inventory reads must not trigger Git/provider observation or leak review bodies. Verify no per-row browser fetches and two-line narrow navigation in standalone and Shell layouts.
+
+- Delay optional workspace section reads while switching workspaces: Feedback and Previews must
+  not flash before empty results. Verify populated results, visible read errors/retries, retained
+  content during refresh, rejected late results and the full Feedback page's loading state.
 
 - Verify separate manifest navigation, page-specific selection memory and counts, all accessible
   chats regardless of attachment, workspace-only development actions and empty-page app creation.
@@ -911,7 +1038,7 @@ workspace content scrolls inside the pane without increasing the embedded docume
   dialog focus restoration, retained creation drafts/recovery and the unchanged building chooser, and no separate application selector.
 
 - Preserve editable workflow defaults, custom/empty text, instruction delivery, independent retention
-  policies and unsaved settings drafts. Keep retention eligibility/retry consistent with Core's
+  policies and unsaved settings drafts. Keep retention protection consistent with Core's
   verified workflow; follow the retention feature's boundary, migration and recovery checks.
 
 - Credential refresh with no app providers, last-provider removal and delegation expiry preserve
@@ -921,6 +1048,9 @@ workspace content scrolls inside the pane without increasing the embedded docume
 
 - Verify the local typography scale, heading/body/control weights, technical monospace and phone
   input sizing in standalone and SDK-hosted views; app-owned font utilities survive SDK chrome CSS.
+- Verify the conversation workspace fits the available SDK content height in standalone and embedded
+  views, including short and narrow windows. Long navigation lists, transcripts and Workspace Details
+  scroll independently without moving the top bar, composer or outer workspace.
 - Preserve existing assistant streaming, approvals/questions, providers, attachments and context tests.
 - Verify hidden composer/send/Ask for completed and paused/closing/deleting workspace workflows in
   full-page and embedded conversations, initial inventory loading, known fences during unavailable
@@ -943,7 +1073,8 @@ workspace content scrolls inside the pane without increasing the embedded docume
   conflicting outcomes. Verify retained disclosure/focus as calls arrive, immediately visible
   approval cards, and each command's own recorded result and input/output. Verify independent
   Changes/Tool calls collapse state, a visible Changes header while tools are collapsed, source-bound
-  file counts and confirmed totals, unknown/overflow fallbacks, per-activity boundaries, separate
+  file counts and confirmed totals, partial lower bounds across files and repeated edits, independent
+  addition/deletion completeness, genuine zero and unknown/overflow fallbacks, per-activity boundaries, separate
   legacy entries and retained exact-source Review bindings. Verify repository grouping by the exact
   recorded source tuple, one short/full-title repository heading per group and no per-file branch
   line or recorded caption. Repository cards start collapsed and retain independent expansion across observation updates;
@@ -972,8 +1103,8 @@ workspace content scrolls inside the pane without increasing the embedded docume
 - Verify compact bound-app lifecycle/health states independently of update operations and execution
   selection; package version/runtime, workspace name and source branch/path labels must not use
   installation provenance as a substitute. Verify exact workspace/worktree matching, current-target
-  icon hiding, unavailable/permission/transition refusal, group actions and Core exclusion.
-- Exercise workspace-scoped BFF binding checks and minimal projections, explicit access review and
+  icon hiding, unavailable/permission/transition refusal, observation-driven primary actions, mixed-selection package alternatives and Core exclusion.
+- Exercise workspace-scoped BFF binding checks and minimal projections, automatic access confirmation, explicit Core approval, blocked/isolated popup, explicit cancellation and denial, retained review identity across reload and
   retained per-app arguments/UUID through approval, uncertain dispatch, retry and reload. Verify
   shared visible-consumer SSE, failed/disconnected snapshot clearing, scope changes and action
   refresh without fleet polling. Contract/UI fixtures cover per-app dispatch and review recovery;

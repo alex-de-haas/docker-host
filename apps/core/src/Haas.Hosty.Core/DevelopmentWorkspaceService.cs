@@ -395,6 +395,9 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
             if (w.SourceStamp is null && w.Observation is { } previousObservation && previousObservation.Head == local.Head
                 && previousObservation.Conflict == (merge.ExitCode == 0) && previousObservation.Local?.Files.SequenceEqual(local.Files) == true)
                 w = await Save(w with { SourceStamp = sourceStamp }, baselineSource: true);
+            // Retain bounded HEAD-to-worktree line counts in the same shared observation. List
+            // clients consume this snapshot without requesting a diff or rescanning each row.
+            local = await AppSourceService.AddLineStatisticsAsync(local, ct);
             w = w with { SourceStamp = sourceStamp, Observation = new(clock.UtcNow, "ok", local.Head, target, int.Parse(counts[0]), int.Parse(counts[1]), merge.ExitCode == 0, local, files) };
         }
         catch (Exception ex) when (ex is AppLifecycleException or IOException or UnauthorizedAccessException)
@@ -895,13 +898,13 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
         return (await Git(local, ["rev-parse", "--path-format=absolute", "--git-common-dir"], ct)).StandardOutput.Trim();
     }
 
-    internal async Task RequireExternalSourceAsync(DevelopmentWorkspace workspace, CancellationToken ct, UserProviderConnection? heldConnection = null)
+    internal async Task RequireExternalSourceAsync(DevelopmentWorkspace workspace, CancellationToken ct, UserProviderConnection? heldConnection = null, bool localOnly = false)
     {
         if (!workspace.Owner.IsExternal) return;
-        await RequireCoreSourceAsync(workspace, workspace.Owner.UserId, ct, heldConnection);
+        await RequireCoreSourceAsync(workspace, workspace.Owner.UserId, ct, heldConnection, localOnly);
         if (workspace.SourceGrant is not null)
         {
-            var effective = await WorkspaceGrantAsync(workspace, ct, heldConnection);
+            var effective = await WorkspaceGrantAsync(workspace, ct, heldConnection, localOnly);
             if (effective is null || effective.OwnerId != workspace.Owner.UserId ||
                 effective.Repository != LogicalRepositoryIdentity(workspace.Repository))
                 throw PrivateSourceService.Denied("This workspace's reviewed Git source grant is no longer available.");
@@ -913,7 +916,7 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
             if (app.PrivateSources?.Git is not { } grant) continue;
             if (grant.OwnerId != workspace.Owner.UserId || grant.Repository != LogicalRepositoryIdentity(workspace.Repository))
                 throw PrivateSourceService.Denied("This workspace's source belongs to another administrator or repository.");
-            await ValidateSourceGrantAsync(grant, ct, heldConnection);
+            await ValidateSourceGrantAsync(grant, ct, heldConnection, localOnly);
         }
     }
 

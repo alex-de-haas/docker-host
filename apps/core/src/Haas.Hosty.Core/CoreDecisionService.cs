@@ -49,6 +49,11 @@ internal sealed class CoreDecisionService(CoreDecisionStore store, UserDirectory
             return Save(state with { Sequence = result.Sequence }, result, key, fingerprint);
         }, ct);
         events.PublishDecision(row.UserId);
+        // Replay may carry an older creation receipt; notification state belongs to the current record.
+        var currentNotification = await store.UpdateAsync(state => (state, state.Records.Single(r => r.Id == row.Id)), ct);
+        if (currentNotification.NotificationPending == false || currentNotification.State != "pending")
+            return row with { NotificationPending = currentNotification.NotificationPending };
+        var notificationPending = false;
         // Notifications are only hints; all recovery is driven by the durable record and outbox.
         try
         {
@@ -60,8 +65,15 @@ internal sealed class CoreDecisionService(CoreDecisionStore store, UserDirectory
                 "A decision needs your response", null, link, "decision:" + row.Id, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
-        { logger.LogWarning(ex, "Decision {DecisionId} is saved; its notification could not be published.", row.Id); }
-        return row;
+        { notificationPending = true; logger.LogWarning(ex, "Decision {DecisionId} is saved; its notification could not be published.", row.Id); }
+        await store.UpdateAsync(state =>
+        {
+            var current = state.Records.Single(r => r.Id == row.Id);
+            var next = current with { NotificationPending = notificationPending };
+            return (state with { Records = [.. state.Records.Select(r => r.Id == next.Id ? next : r)] }, next);
+        }, ct);
+        events.PublishDecision(row.UserId);
+        return row with { NotificationPending = notificationPending };
     }
 
     internal async Task<HostyDecisionRecord> GetAsync(CoreCapabilityCaller caller, string id, CancellationToken ct = default)

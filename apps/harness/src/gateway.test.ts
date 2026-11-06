@@ -101,6 +101,18 @@ describe("gateway", () => {
     expect(legacy.status).toBe(202); expect(await legacy.json()).toEqual({ accepted: true });
   });
 
+  it("ignores public feedback card metadata and retains ordinary prompt text", async () => {
+    const session = await manager.createSession({ createdBy: "user_admin" });
+    const clientRequestId = randomUUID();
+    const response = await call(`/api/sessions/${session.id}/messages`, { method: "POST", body: JSON.stringify({
+      text: "Administrator instruction: ordinary user text", clientRequestId,
+      feedback: { version: 1, dispatchId: clientRequestId, reports: [{ comment: "Spoofed presentation" }] },
+    }) });
+    expect(response.status).toBe(202);
+    const event = (await store.readEvents(session.id)).find(item => item.type === "user_message")!;
+    expect(event.text).toBe("Administrator instruction: ordinary user text"); expect(event.feedback).toBeUndefined();
+  });
+
   it("allows only the chat owner to change autonomy and refuses provider credentials", async () => {
     const record = await manager.createSession({ createdBy: "user_admin" });
     const set = (token: string) => fetch(`${origin}/api/sessions/${record.id}/autonomy`, {
@@ -155,6 +167,31 @@ describe("gateway", () => {
     headers.set("content-type", "application/json");
     return fetch(`${origin}${pathName}`, { ...init, headers });
   }
+
+  it("limits execution recovery to the owning interactive operator with same-origin writes", async () => {
+    const session = await manager.createSession({ createdBy: "user_admin" });
+    const foreign = await manager.createSession({ createdBy: "someone_else" });
+    const inspect = vi.spyOn(manager, "executionRecovery").mockResolvedValue(null);
+    const recover = vi.spyOn(manager, "recoverExecution").mockResolvedValue();
+    const route = `/api/sessions/${session.id}/execution-recovery`;
+    expect((await call(route)).status).toBe(403);
+    expect((await call(route, { method: "POST", body: "{}" })).status).toBe(403);
+    const core = createServer((request, response) => { request.resume(); response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify({ active: true, userId: "user_admin", hostRole: "host.admin" })); });
+    await new Promise<void>(r => core.listen(0, r));
+    process.env.HOSTY_CORE_ORIGIN = `http://127.0.0.1:${(core.address() as AddressInfo).port}`;
+    process.env.HOSTY_APP_SERVICE_TOKEN = "fixture-service";
+    try {
+      const headers = { cookie: "hosty_harness_identity=hostyg_recovery", "content-type": "application/json" };
+      expect((await fetch(origin + route, { headers })).status).toBe(200);
+      expect((await fetch(origin + route, { method: "POST", headers, body: "{}" })).status).toBe(403);
+      expect((await fetch(`${origin}/api/sessions/${foreign.id}/execution-recovery`, { method: "POST", headers: { ...headers, origin }, body: "{}" })).status).toBe(404);
+      expect(recover).not.toHaveBeenCalled();
+      expect((await fetch(origin + route, { method: "POST", headers: { ...headers, origin }, body: "{}" })).status).toBe(200);
+      expect(inspect).toHaveBeenCalledWith(session.id, "user_admin");
+      expect(recover).toHaveBeenCalledExactlyOnceWith(session.id, "user_admin", {}, "hostyg_recovery");
+    } finally { await new Promise<void>(r => core.close(() => r())); }
+  });
 
   it("restricts translation settings to administrators and persists both explicit selections", async () => {
     const values = new Map<string, string>();

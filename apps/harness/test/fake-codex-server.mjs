@@ -167,6 +167,17 @@ function handle(msg) {
     { model: "fixture-other", displayName: "Other model", isDefault: false, defaultReasoningEffort: "low", supportedReasoningEfforts: [{ reasoningEffort: "low" }, { reasoningEffort: "xhigh" }] },
   ], nextCursor: null } }); return; }
 
+  if (msg.method === "mcpServerStatus/list") {
+    if (!msg.params.threadId || msg.params.detail !== "toolsAndAuthOnly") fail("catalog must be thread scoped");
+    const mode = process.env.HOSTY_TEST_CONTEXT_CATALOG;
+    if (mode === "timeout") return;
+    if (mode === "failed") { send({ id: msg.id, error: { code: -32601, message: "unsupported" } }); return; }
+    const tool = { name: "inspect", description: "private definition", inputSchema: { type: "object" } };
+    const respond = () => send({ id: msg.id, result: { data: [{ name: msg.params.cursor ? "second" : "first", tools: { native_alias: tool }, runtimeStatus: "connected" }], nextCursor: msg.params.cursor ? null : "page2" } });
+    if (mode === "delayed") setTimeout(respond, 120); else respond();
+    return;
+  }
+
   if (msg.method === "thread/start") {
     if (typeof msg.params?.sandbox !== "string") {
       fail("thread/start sandbox must be a plain string");
@@ -216,11 +227,14 @@ function handle(msg) {
     }
     if (currentTurnText.includes("DECISIONS_ACCEPTANCE:LIVE")) currentTurnText = "question-native";
     if (currentTurnText.includes("TASK_ACCEPTANCE:QUESTION")) currentTurnText = "question-task";
+    if (currentTurnText.includes("Continue the same task in its selected workspace.")) currentTurnText = "TASK_ACCEPTANCE:RESULT";
+    if (currentTurnText.includes("Continue the same task after its child wait.")) currentTurnText = "TASK_ACCEPTANCE:REVIEW_CHILDREN";
     if (currentTurnText.includes("TASK_ACCEPTANCE:")) {
       send({ id: msg.id, result: {} });
       send({ method: "turn/started", params: { threadId: activeThreadId, turn: { id: "task-turn" } } });
       if (currentTurnText.includes("TASK_ACCEPTANCE:WAIT")) return;
-      void taskOutcome(currentTurnText).then(() => {
+      void taskOutcome(currentTurnText, (method, item) => send({ method, params: { threadId: activeThreadId, turnId: "task-turn", item } })).then(parked => {
+        if (parked) return;
         send({ method: "item/completed", params: { threadId: activeThreadId, item: { type: "agentMessage", id: "task-result", text: "Scripted task fixture completed." } } });
         send({ method: "turn/completed", params: { threadId: activeThreadId, turn: { id: "task-turn", status: "completed" } } });
       }).catch(error => fail(error.message));
@@ -254,6 +268,17 @@ function handle(msg) {
     }
     if (currentTurnText === "provider-usage") {
       send({ method: "account/rateLimits/updated", params: { rateLimits: { limitId: "codex", primary: { usedPercent: 40, windowDurationMins: 300 } } } });
+    }
+    if (currentTurnText.endsWith("local-context")) {
+      send({ method: "turn/started", params: { threadId: activeThreadId, turn: { id: "context" } } });
+      send({ method: "thread/tokenUsage/updated", params: { threadId: activeThreadId, tokenUsage: { last: { totalTokens: 123 }, modelContextWindow: 1000 } } });
+      send({ method: "turn/completed", params: { threadId: activeThreadId, turn: { id: "old-context", status: "completed" } } });
+      send({ method: "turn/completed", params: { threadId: activeThreadId, turn: { id: "context", status: "completed" } } }); return;
+    }
+    if (currentTurnText.endsWith("compact-context")) {
+      send({ method: "thread/tokenUsage/updated", params: { threadId: activeThreadId, tokenUsage: { last: { totalTokens: 123 }, modelContextWindow: 1000 } } });
+      send({ method: "thread/compacted", params: { threadId: activeThreadId } });
+      send({ method: "turn/completed", params: { threadId: activeThreadId, turn: { id: "context", status: "completed" } } }); return;
     }
     if (currentTurnText === "context-usage") {
       send({ method: "turn/started", params: { threadId: activeThreadId, turn: { id: "current" } } });
@@ -437,7 +462,7 @@ function handle(msg) {
 }
 
 // Exercise the real session MCP transport and approval gate; never write task/session state.
-async function taskOutcome(text) {
+async function taskOutcome(text, emitItem) {
   if (text.includes("TASK_ACCEPTANCE:NO_OUTCOME")) return;
   const config = Object.fromEntries(argv.filter(a => a.startsWith("mcp_servers.")).map(a => {
     const split = a.indexOf("="); return [a.slice(0, split), JSON.parse(a.slice(split + 1))];
@@ -451,7 +476,56 @@ async function taskOutcome(text) {
   await client.connect(new StreamableHTTPClientTransport(new URL(config[key]), { requestInit: { headers: { Authorization: `Bearer ${token}` } } }));
   const tools = await client.listTools();
   if (!tools.tools.some(t => t.name === "task_result")) throw new Error("Task result tool missing");
-  const result = await client.callTool({ name: "task_result", arguments: { requestId: crypto.randomUUID(), result: { markdown: "Verified explicit task outcome from the scripted native adapter.", resources: [] } } });
+  const invoke = async (name, args) => {
+    const id = crypto.randomUUID();
+    emitItem("item/started", { type: "mcpToolCall", id, status: "inProgress", server: "hosty-workspaces", tool: name, arguments: args });
+    const result = await client.callTool({ name, arguments: args });
+    emitItem("item/completed", { type: "mcpToolCall", id, status: result.isError ? "failed" : "completed", server: "hosty-workspaces", tool: name, arguments: args, result });
+    if (result.isError) throw new Error(name + " refused: " + JSON.stringify(result.content));
+    return JSON.parse(result.content.find(item => item.type === "text").text);
+  };
+  if (text.includes("TASK_ACCEPTANCE:REQUIRED")) {
+    const wait = await invoke("task_request_input", { requestId: crypto.randomUUID(), reason: "The isolated setup prerequisite is missing.",
+      questions: [{ id: "setup", header: "Setup", question: "Confirm setup, then the task must recheck it.", isOther: true, options: [{ label: "Configured", description: "Recheck the prerequisite" }] }] });
+    if (!wait.barrier) throw new Error("Required input did not retain a boundary");
+    await client.close(); return true;
+  }
+  if (text.includes("TASK_ACCEPTANCE:FAIL")) {
+    await invoke("task_fail", { requestId: crypto.randomUUID(), result: { markdown: "The fixture could not complete its work.", resources: [] } });
+    await client.close(); return;
+  }
+  if (text.includes("TASK_ACCEPTANCE:DELEGATE")) {
+    const summary = await invoke("task_execution_get", {});
+    const directory = await invoke("task_executor_options", {});
+    const option = directory.options.find(option => option.name === "Acceptance writer");
+    if (!option) throw new Error("The saved child profile is absent");
+    const selected = await invoke("task_prepare_executor", { requestId: crypto.randomUUID(), directoryRevision: directory.revision, option: { id: option.id, revision: option.revision } });
+    const child = await invoke("task_delegate", { requestId: crypto.randomUUID(), expectedGraphRevision: summary.task.graphRevision,
+      title: "Delegated fixture child", markdown: "TASK_ACCEPTANCE:RESULT", resources: [], selection: selected.selection,
+      rationale: "The installed writer profile matches this child task.", writeScope: { mode: "read", paths: [] } });
+    const wait = await invoke("task_wait", { requestId: crypto.randomUUID(), children: [child.ref], mode: "all" });
+    if (wait.state === "pending") { await client.close(); return true; }
+    text = "TASK_ACCEPTANCE:REVIEW_CHILDREN";
+  }
+  if (text.includes("TASK_ACCEPTANCE:REVIEW_CHILDREN")) {
+    const summary = await invoke("task_execution_get", {});
+    const children = summary.tasks.filter(task => task.parentTaskRef?.id === summary.task.ref.id);
+    if (children.length !== 1) throw new Error("Expected exactly one retained child");
+    for (const child of children) {
+      if (child.status !== "Blocked" || child.blocked?.reason !== "needs_review" || !child.resultRef) throw new Error("Child result is not reviewable: " + JSON.stringify(child));
+      await invoke("task_action", { requestId: crypto.randomUUID(), expectedRevision: child.revision, taskId: child.ref.id, action: "accept", resultRef: child.resultRef });
+    }
+  }
+  const source = text.match(/TASK_ACCEPTANCE:SOURCE:([a-f0-9]{64})/);
+  if (source) {
+    const id = crypto.randomUUID(), arguments_ = { requestId: crypto.randomUUID(), expectedRevision: 0, workspaceId: source[1] };
+    emitItem("item/started", { type: "mcpToolCall", id, status: "inProgress", server: "hosty-workspaces", tool: "task_bind_workspace", arguments: arguments_ });
+    const result = await client.callTool({ name: "task_bind_workspace", arguments: arguments_ });
+    if (result.isError) throw new Error("Source selection refused: " + JSON.stringify(result.content));
+    emitItem("item/completed", { type: "mcpToolCall", id, status: "completed", server: "hosty-workspaces", tool: "task_bind_workspace", result });
+    await client.close(); return true;
+  }
+  const result = await client.callTool({ name: "task_result", arguments: { requestId: crypto.randomUUID(), completed: true, result: { markdown: "Verified explicit task outcome from the scripted native adapter.", resources: [] } } });
   if (result.isError) throw new Error("Task result tool refused: " + JSON.stringify(result.content));
   await client.close();
 }

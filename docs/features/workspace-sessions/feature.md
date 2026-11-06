@@ -1,6 +1,6 @@
 ---
 created: 2026-10-25
-updated: 2026-11-03
+updated: 2026-11-05
 summary: Core workspaces support concurrent private sessions, permission-based source access, attributable activity and independent conversation lifetimes.
 components: [apps/core, apps/harness]
 ---
@@ -57,6 +57,12 @@ releasing its exact claims. Missing stop acknowledgements retain the lease and r
 Permission revocation fences new managed admissions. Pause
 fences the workspace, coordinates its current-installation sessions and confirms only after consumers
 reconcile. Other installations and arbitrary external processes require their own recovery.
+
+Hosted MCP source operations take their acting session from Core's authenticated invocation claims,
+including review, commit, merge and activity leases. They use the same actor as the session HTTP API,
+even when the workspace was allocated by a lost external client or an earlier hosted conversation.
+The allocation owner remains unchanged. Clients without signed session context retain their existing
+opaque task attribution. Another execution's active lease still blocks branch-replacing operations.
 
 Managed mutations serialize on stable workspace/worktree identity. Branch-replacing operations
 refuse other or unknown writers. Shared-workspace commits require an explicit selected-file review
@@ -138,6 +144,9 @@ fresh consumer checks.
 - Verify direct creation from the plus and attachment from its adjacent icon, excluding bound/active chats;
   preserve private chat boundaries, retry identity, dialog focus return and workspace-switch isolation.
 
+- Continue dirty external and hosted allocations through a replacement session: review through MCP,
+  commit through the session API, merge the updated target with the current lease, and recover the same
+  request. Preserve allocation/path/branch/base and unrelated changes; refuse another session's merge.
 - Core tests cover immutable allocation identity, fresh credentials, cross-user source access,
   current user/app denial, attach/replay, private transcript boundaries and actor-bound remote credentials.
 - Harness tests cover session ownership, provider isolation, exact execution stop acknowledgements,

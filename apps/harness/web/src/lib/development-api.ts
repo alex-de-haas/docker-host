@@ -16,6 +16,7 @@ export function workflowLabel(workflow: Workflow): string {
 export type Change = { path: string; status: string; binary?: boolean; lineStats?: { additions: number; deletions: number } | null };
 export type PullRequest = { historical?: boolean; url: string; unavailable?: string; publishedHead?: string; observation?: {
   at: string; mergedAt?: string | null; state: string; complete?: boolean; title?: string; commentCount?: number; head?: string; draft: boolean;
+  completionIssue?: { kind: string; requirement: string; state: string; mergeCommit: string } | null;
   reviewDecision?: string; unresolvedThreads: number; checks?: { name: string; state: string }[]; error?: string;
 } | null };
 export type Worktree = { observationHealth?: string; observationRevision?: string; id: string; workspaceId: string; repository: string; branch: string; targetBranch?: string; state: string;
@@ -29,7 +30,8 @@ export type WorkspaceParticipation = {
   sessions: { appId: string; userId: string; sessionId: string; title: string; attached: boolean; canOpen: boolean; viewerPath: string | null; status: string; activityAt: string | null; changedAt?: string | null }[];
   eligibleUsers: { id: string; name: string }[];
 };
-export type DevelopmentWorkspace = { permissions?: { read: boolean; manage: boolean }; participation?: WorkspaceParticipation | null; name?: string; id: string; state: string; updatedAt?: string | null; workflow: Workflow;
+export type WorkspacePullRequestSummary = { count: number; openCount?: number; draftCount?: number; state: string; checks: string; observedAt?: string | null; partial: boolean };
+export type DevelopmentWorkspace = { pullRequestSummary?: WorkspacePullRequestSummary | null; permissions?: { read: boolean; manage: boolean }; participation?: WorkspaceParticipation | null; name?: string; id: string; state: string; updatedAt?: string | null; workflow: Workflow;
   owner: { kind: string; label: string; reference: string; appId?: string }; worktrees: Worktree[] };
 export function orderWorkspaces(workspaces: readonly DevelopmentWorkspace[]): DevelopmentWorkspace[] {
   return [...workspaces].sort((left, right) => activityTime(right) - activityTime(left) || left.id.localeCompare(right.id));

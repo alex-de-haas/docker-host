@@ -57,7 +57,7 @@ export async function checkDecisions({ page, context, config, csrf }) {
   const made = await page.request.post(config.harness + "/api/tasks/v1/tasks", {
     headers: { Origin: config.harness }, data: { requestId: randomUUID(), input: {
       title: taskTitle, markdown: "Review the existing task through Decisions.",
-      assignee: { kind: "human", userId: identity.userId }, requiresReview: true, resources: [],
+      assignee: { kind: "human", userId: identity.userId }, review: { mode: "owner" }, resources: [],
     } },
   });
   assert.equal(made.status(), 201, await made.text());

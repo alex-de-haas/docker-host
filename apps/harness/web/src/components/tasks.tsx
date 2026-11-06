@@ -1,4 +1,6 @@
 "use client";
+import { LegacyTasks } from "./legacy-tasks";
+import { TaskLimits } from "./task-limits";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { appFetch } from "@hosty-sdk/app/browser-auth";
 import type { TaskAction, TaskInput, TaskRecord, TaskProviderRef, TaskResource, TaskExecutorOptions, TaskPage } from "@hosty-sdk/app/tasks";
@@ -12,29 +14,33 @@ import { Textarea } from "@/components/ui/textarea";
 type Executor = TaskProviderRef & { displayName: string; available: boolean; options: TaskExecutorOptions["options"] | null; defaultId?: string | null };
 type Directory = { provider: TaskProviderRef; users: { id: string; displayName?: string; email?: string }[]; executors: Executor[];
   workspaces: { workspaces: { id: string; name?: string; title?: string }[] }; warning?: string };
-const empty = (): TaskInput => ({ title: "", markdown: "", assignee: null, requiresReview: false, resources: [] });
-const inputOf = (t: TaskRecord): TaskInput => ({ title: t.title, markdown: t.markdown, assignee: t.assignee, requiresReview: t.requiresReview, resources: t.resources, ...(t.workspaceId ? { workspaceId: t.workspaceId } : {}) });
+const empty = (): TaskInput => ({ title: "", markdown: "", assignee: null, review: { mode: "none" }, resources: [], parentTaskRef: null, dependsOn: [] });
+const inputOf = (t: TaskRecord): TaskInput => ({ title: t.title, markdown: t.markdown, assignee: t.assignee, review: t.review, resources: t.resources, parentTaskRef: t.parentTaskRef, dependsOn: t.dependsOn });
 const key = (p: TaskProviderRef) => `${p.appId}:${p.installationId}:${p.key}`;
 const selectClass = "w-full rounded-md border bg-background px-3 py-2 text-sm";
 
 export function Tasks() {
   const [rows, setRows] = useState<TaskRecord[]>([]), [directory, setDirectory] = useState<Directory | null>(null);
-  const [selected, setSelected] = useState<string | null>(null), [creating, setCreating] = useState(false);
+  const [selected, setSelected] = useState<string | null>(() => typeof window === "undefined" ? null : new URL(window.location.href).searchParams.get("task")), [creating, setCreating] = useState(false);
   const [storedDraft, setDraft] = useState<TaskInput>(empty), [baseRevision, setBaseRevision] = useState(0), [dirty, setDirty] = useState(false);
   const [error, setError] = useState<string | null>(null), [busy, setBusy] = useState(false), [filter, setFilter] = useState("");
   const [result, setResult] = useState(""), [feedback, setFeedback] = useState("");
   const [resource, setResource] = useState<TaskResource>({ kind: "external", owner: "", id: "", version: { mode: "live" } });
   const [uncertain, setUncertain] = useState(false);
-  const assigneeRequest = useRef(0);
+  const [removalReview, setRemovalReview] = useState<{ task: TaskRecord; rows: TaskRecord[]; action: "remove" | "restore" } | null>(null);
+  const trash = filter === "trash";
+  const assigneeRequest = useRef(0), refreshGeneration = useRef(0);
   const pending = useRef<{ route: string; method: string; body: string } | null>(null);
   const selectedTask = rows.find(t => t.ref.id === selected);
   const draft = !dirty && !creating && selectedTask ? inputOf(selectedTask) : storedDraft;
   const edit = (patch: Partial<TaskInput>) => { if (!dirty) setBaseRevision(selectedTask?.revision ?? 0); setDraft(current => ({ ...(!dirty && !creating && selectedTask ? inputOf(selectedTask) : current), ...patch })); setDirty(true); };
   const refresh = useCallback(async () => {
+    const generation = ++refreshGeneration.current;
     let cursor: string | null = null; const tasks: TaskRecord[] = [];
-    do { const page: TaskPage = await (await call(`/tasks/v1/tasks?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`)).json(); tasks.push(...page.tasks); cursor = page.nextCursor; } while (cursor);
-    setRows(tasks);
-  }, []);
+    do { const page: TaskPage = await (await call(`/tasks/v1/tasks?limit=100${trash ? "&removed=true" : ""}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`)).json(); tasks.push(...page.tasks); cursor = page.nextCursor; } while (cursor);
+    if (refreshGeneration.current === generation) setRows(tasks);
+  }, [trash]);
+  const invalidateLoads = useCallback(() => { refreshGeneration.current++; assigneeRequest.current++; }, []);
   useEffect(() => {
     const controller = new AbortController(); let retry: ReturnType<typeof setTimeout> | undefined;
     void call("/tasks/v1/directory").then(r => r.json()).then(setDirectory).catch(e => setError(e.message));
@@ -59,8 +65,8 @@ export function Tasks() {
     void stream();
     const visible = () => { if (document.visibilityState === "visible") void refresh().catch(e => setError(e.message)); };
     document.addEventListener("visibilitychange", visible);
-    return () => { assigneeRequest.current++; controller.abort(); clearTimeout(retry); document.removeEventListener("visibilitychange", visible); };
-  }, [refresh]);
+    return () => { invalidateLoads(); controller.abort(); clearTimeout(retry); document.removeEventListener("visibilitychange", visible); };
+  }, [refresh, invalidateLoads]);
   const choose = (t?: TaskRecord) => {
     if (dirty || uncertain) { setError("Save or discard the current draft before changing tasks."); return; }
     assigneeRequest.current++;
@@ -75,7 +81,7 @@ export function Tasks() {
     try {
       const op = pending.current;
       const task: TaskRecord = await (await call(op.route, { method: op.method, body: op.body })).json();
-      pending.current = null; setUncertain(false); setDirty(false); setCreating(false); setSelected(task.ref.id); setDraft(inputOf(task)); setBaseRevision(task.revision);
+      pending.current = null; setRemovalReview(null); setUncertain(false); setDirty(false); setCreating(false); setSelected(task.ref.id); setDraft(inputOf(task)); setBaseRevision(task.revision);
       setRows(rows => rows.some(t => t.ref.id === task.ref.id) ? rows.map(t => t.ref.id === task.ref.id ? task : t) : [...rows, task]);
       setResult(""); setFeedback("");
       // The mutation is confirmed. A later list refresh cannot turn it into an uncertain command.
@@ -88,12 +94,12 @@ export function Tasks() {
     } finally { setBusy(false); }
   };
   const save = () => send(creating ? "/tasks/v1/tasks" : `/tasks/v1/tasks/${selected}`, creating ? "POST" : "PATCH",
-    { requestId: crypto.randomUUID(), ...(creating ? {} : { expectedRevision: baseRevision }), input: draft });
+    { requestId: crypto.randomUUID(), ...(creating ? {} : { expectedRevision: baseRevision, expectedGraphRevision: selectedTask?.graphRevision }), input: draft });
   const action = (name: TaskAction["action"]) => {
     if (!selectedTask) return;
     void send(`/tasks/v1/tasks/${selectedTask.ref.id}/actions`, "POST", { requestId: crypto.randomUUID(), expectedRevision: selectedTask.revision, action: name,
       ...(name === "complete" ? { result: { markdown: result, resources: [] } } : {}),
-      ...(name === "accept" || name === "request_changes" ? { resultInputRevision: selectedTask.resultInputRevision, feedback } : {}) });
+      ...(name === "accept" || name === "request_changes" ? { resultRef: selectedTask.resultRef, feedback } : {}) });
   };
   const selectAssignee = async (value: string) => {
     const request = ++assigneeRequest.current;
@@ -114,10 +120,22 @@ export function Tasks() {
       if (request !== assigneeRequest.current) return;
       const option = options.find(o => o.id === defaultId) ?? options[0];
       setDraft(current => current.assignee?.kind === "app" && key(current.assignee.executor) === key(ref)
-        ? { ...current, assignee: { kind: "app", executor: ref, ...(option ? { optionId: option.id, name: option.name } : {}) } } : current);
+        ? { ...current, assignee: { kind: "app", executor: ref, ...(option ? { selection: { kind: "option", id: option.id, revision: option.revision }, name: option.name } : {}) } } : current);
     } catch (e) { if (request === assigneeRequest.current) setError(e instanceof Error ? e.message : "Executor unavailable."); }
   };
-  const editable = creating || selectedTask?.status === "Draft";
+  const reviewRemoval = () => {
+    if (!selectedTask) return;
+    const selectedRows = selectedTask.removed ? rows.filter(row => row.removed?.batchId === selectedTask.removed!.batchId) : [selectedTask];
+    if (!selectedTask.removed) for (let i = 0; i < selectedRows.length; i++) selectedRows.push(...rows.filter(row => row.parentTaskRef?.id === selectedRows[i]!.ref.id));
+    setRemovalReview({ task: selectedTask, rows: selectedRows, action: selectedTask.removed ? "restore" : "remove" });
+  };
+  const confirmRemoval = () => {
+    if (!removalReview) return;
+    void send(`/tasks/v1/tasks/${removalReview.task.ref.id}/actions`, "POST", { requestId: crypto.randomUUID(),
+      expectedRevision: removalReview.task.revision, action: removalReview.action,
+      removalScope: removalReview.rows.map(task => ({ taskRef: task.ref, revision: task.revision })) });
+  };
+  const editable = creating || selectedTask?.status === "Draft" && !selectedTask.removed;
   const selectedExecutor = draft.assignee?.kind === "app" ? directory?.executors.find(e => key(e) === key(draft.assignee?.kind === "app" ? draft.assignee.executor : directory!.provider)) : undefined;
   const active = selectedTask?.attempts.at(-1);
   const running = active && (!active.receipt || !active.receipt.stopConfirmed || !["completed", "failed", "cancelled", "interrupted"].includes(active.receipt.state));
@@ -127,25 +145,34 @@ export function Tasks() {
     {directory?.warning && <p role="status" className="text-sm text-muted-foreground">{directory.warning}</p>}
     {error && <div role="alert" className="rounded-md border border-destructive/40 p-3 text-sm">{error}{uncertain && <Button variant="outline" className="ml-3" disabled={busy} onClick={() => void send()}>Retry original request</Button>}</div>}
     <div className="grid flex-1 gap-6 md:grid-cols-[260px_minmax(0,1fr)]">
-      <aside className="space-y-3"><label className="block text-sm">Status<select className={selectClass} value={filter} onChange={e => setFilter(e.target.value)}><option value="">All tasks</option>{taskStatuses.map(s => <option key={s}>{s}</option>)}</select></label>
-        <nav aria-label="Tasks" className="space-y-1">{rows.filter(t => !filter || t.status === filter).slice().reverse().map(t => <button type="button" key={t.ref.id} aria-current={selected === t.ref.id ? "page" : undefined} className={`w-full rounded-md p-3 text-left hover:bg-muted ${selected === t.ref.id ? "bg-muted" : ""}`} onClick={() => choose(t)}>
-          <span className="text-xs text-muted-foreground">{t.number} · {t.cancelRequested ? "Cancelling" : t.status}</span><span className="block truncate text-sm font-medium">{t.title || "Untitled task"}</span></button>)}</nav>
+      <aside className="space-y-3"><label className="block text-sm">Status<select className={selectClass} value={filter} disabled={busy || dirty || uncertain} onChange={e => { setFilter(e.target.value); setRemovalReview(null); }}><option value="">All tasks</option><option value="trash">Trash</option>{taskStatuses.map(s => <option key={s}>{s}</option>)}</select></label>
+        <nav aria-label="Tasks" className="space-y-1">{rows.filter(t => trash || !filter || t.status === filter).slice().reverse().map(t => <button type="button" key={t.ref.id} aria-current={selected === t.ref.id ? "page" : undefined} className={`w-full rounded-md p-3 text-left hover:bg-muted ${selected === t.ref.id ? "bg-muted" : ""}`} onClick={() => choose(t)}>
+          <span className="text-xs text-muted-foreground">{t.number} · {t.removed ? "In trash" : t.cancelRequested ? "Cancelling" : t.status}</span><span className="block truncate text-sm font-medium">{t.title || "Untitled task"}</span></button>)}</nav>
         {!rows.length && <p className="text-sm text-muted-foreground">No tasks yet. Create one to get started.</p>}
+        {trash && <LegacyTasks />}
       </aside>
       {!selectedTask && !creating ? <section className="rounded-lg border border-dashed p-10 text-sm text-muted-foreground">Select a task to see its description, execution and result.</section> : <section className="min-w-0 space-y-6">
         <div className="flex items-center justify-between"><div className="text-sm text-muted-foreground">{creating ? "New task" : `${selectedTask!.number} · ${selectedTask!.cancelRequested ? "Cancelling" : selectedTask!.status}`}</div>
           {selectedTask && <span className="text-xs text-muted-foreground">Revision {selectedTask.revision}</span>}</div>
-        {selectedTask?.blocked && <p role="status" className="rounded-md bg-muted p-3 text-sm">{selectedTask.blocked.message}</p>}
+        {selectedTask && !selectedTask.removed && !selectedTask.parentTaskRef && selectedTask.assignee?.kind === "app" && <TaskLimits key={selectedTask.ref.id} rootId={selectedTask.ref.id} />}
+        {selectedTask?.blocked && <div role="status" className="space-y-2 rounded-md bg-muted p-3 text-sm"><p>{selectedTask.blocked.message}</p>{active?.receipt?.sessionRef && <a className="underline" href={`/decisions?session=${encodeURIComponent(active.receipt.sessionRef.id)}`}>Open required action in Decisions</a>}</div>}
+        {selectedTask?.removed && <p role="status" className="rounded-md bg-muted p-3 text-sm">This task is in the trash. Its execution history, source and workspaces are retained.</p>}
+        {removalReview && <section role="alertdialog" aria-label="Review task removal" className="space-y-3 rounded-md border p-4">
+          <h2 className="font-semibold">{removalReview.action === "remove" ? "Move these tasks to trash?" : "Restore these tasks?"}</h2>
+          <ul className="max-h-60 overflow-auto text-sm">{removalReview.rows.map(task => <li key={task.ref.id}>{task.number} · {task.title}</li>)}</ul>
+          <p className="text-sm">History, conversations and workspaces are preserved. Restoring tasks does not start execution.</p>
+          <Button disabled={busy || uncertain} onClick={confirmRemoval}>{removalReview.action === "remove" ? "Move to trash" : "Restore tasks"}</Button>
+          <Button variant="outline" disabled={busy || uncertain} onClick={() => setRemovalReview(null)}>Keep unchanged</Button>
+        </section>}
         {editable || dirty ? <div className="space-y-4">
           <fieldset className="space-y-4" disabled={!editable}>
           <label className="block space-y-1 text-sm">Title<Input value={draft.title} maxLength={200} onChange={e => edit({ title: e.target.value })} disabled={busy || uncertain} /></label>
           <label className="block space-y-1 text-sm">Description · Markdown<Textarea className="min-h-40" value={draft.markdown} maxLength={32000} onChange={e => edit({ markdown: e.target.value })} disabled={busy || uncertain} /></label>
           <div className="grid gap-4 sm:grid-cols-2"><label className="block text-sm">Assignee<select className={selectClass} disabled={!directory || busy || uncertain} value={draft.assignee?.kind === "human" ? `human:${draft.assignee.userId}` : draft.assignee?.kind === "app" ? `app:${key(draft.assignee.executor)}` : ""} onChange={e => void selectAssignee(e.target.value)}>
             <option value="">Choose an assignee</option><optgroup label="People">{directory?.users.map(u => <option key={u.id} value={`human:${u.id}`}>{u.displayName ?? u.email ?? u.id}</option>)}</optgroup><optgroup label="Executors">{directory?.executors.map(e => <option key={key(e)} value={`app:${key(e)}`} disabled={!e.available}>{e.displayName}</option>)}</optgroup></select></label>
-          {draft.assignee?.kind === "app" && <label className="block text-sm">Executor option<select className={selectClass} value={draft.assignee.optionId ?? ""} disabled={busy || uncertain} onChange={e => { const option = selectedExecutor?.options?.find(o => o.id === e.target.value); if (draft.assignee?.kind === "app") edit({ assignee: { ...draft.assignee, optionId: e.target.value, name: option?.name } }); }}>
+          {draft.assignee?.kind === "app" && <label className="block text-sm">Executor option<select className={selectClass} value={draft.assignee.selection?.id ?? ""} disabled={busy || uncertain} onChange={e => { const option = selectedExecutor?.options?.find(o => o.id === e.target.value); if (draft.assignee?.kind === "app") edit({ assignee: { ...draft.assignee, selection: option ? { kind: "option", id: option.id, revision: option.revision } : undefined, name: option?.name } }); }}>
             <option value="">Choose an option</option>{selectedExecutor?.options?.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}</select></label>}</div>
-          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={draft.requiresReview} onChange={e => edit({ requiresReview: e.target.checked })} disabled={busy || uncertain} />Review result before completing</label>
-          <label className="block text-sm">Existing workspace · optional<select className={selectClass} value={draft.workspaceId ?? ""} disabled={busy || uncertain} onChange={e => edit({ workspaceId: e.target.value || undefined })}><option value="">No workspace</option>{directory?.workspaces.workspaces.map(w => <option key={w.id} value={w.id}>{w.name ?? w.title ?? w.id}</option>)}</select></label>
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={draft.review.mode !== "none"} onChange={e => edit({ review: { mode: e.target.checked ? "owner" : "none" } })} disabled={busy || uncertain} />Review result before completing</label>
           <details className="rounded-md border p-3"><summary className="cursor-pointer text-sm">Resource references ({draft.resources.length})</summary><div className="mt-3 space-y-2">
             {draft.resources.map((r, i) => <div key={i} className="flex justify-between gap-3 text-sm"><span className="break-all">{r.label ?? r.id} · {r.version.mode === "live" ? "Live" : r.version.revision}</span><Button size="sm" variant="ghost" onClick={() => edit({ resources: draft.resources.filter((_, j) => j !== i) })}>Remove</Button></div>)}
             <label className="block text-sm">Kind<select className={selectClass} value={resource.kind} onChange={e => setResource({ ...resource, kind: e.target.value as TaskResource["kind"] })}><option value="external">External material</option><option value="app">Application</option><option value="workspace">Workspace reference</option></select></label>
@@ -159,8 +186,8 @@ export function Tasks() {
           {editable && dirty && selectedTask && baseRevision !== selectedTask.revision && <p className="text-sm text-muted-foreground">This task changed while you were editing. Your input is preserved; reload before saving.</p>}
           <div className="flex gap-2"><Button disabled={!editable || busy || uncertain || !directory || !creating && !dirty} onClick={() => void save()}>Save draft</Button>{dirty && <Button variant="outline" disabled={busy || uncertain} onClick={() => { assigneeRequest.current++; setDirty(false); setDraft(selectedTask ? inputOf(selectedTask) : empty()); setError(null); }}>Discard edits</Button>}</div>
         </div> : <div className="space-y-3"><h2 className="text-xl font-semibold">{selectedTask!.title}</h2><p className="text-sm text-muted-foreground">{selectedTask!.assignee?.name ?? (selectedTask!.assignee?.kind === "human" ? selectedTask!.assignee.userId : selectedTask!.assignee?.executor.appId)}</p><Markdown text={selectedTask!.markdown} />
-          {!!selectedTask!.resources.length && <ul className="space-y-1 text-sm">{selectedTask!.resources.map((r, i) => <li key={i} className="break-all">{r.kind}: {r.label ?? r.id} · {r.owner} · {r.version.mode === "live" ? "Live" : r.version.revision}</li>)}</ul>}{selectedTask!.workspaceId && <p className="text-sm text-muted-foreground">Workspace: {directory?.workspaces.workspaces.find(w => w.id === selectedTask!.workspaceId)?.name ?? selectedTask!.workspaceId}</p>}</div>}
-        {selectedTask && <div className="space-y-3">
+          {!!selectedTask!.resources.length && <ul className="space-y-1 text-sm">{selectedTask!.resources.map((r, i) => <li key={i} className="break-all">{r.kind}: {r.label ?? r.id} · {r.owner} · {r.version.mode === "live" ? "Live" : r.version.revision}</li>)}</ul>}</div>}
+        {selectedTask && !selectedTask.removed && <div className="space-y-3">
           {selectedTask.status === "InProgress" && selectedTask.assignee?.kind === "human" && <label className="block text-sm">Result · Markdown<Textarea value={result} onChange={e => setResult(e.target.value)} maxLength={32000} /></label>}
           {selectedTask.blocked?.reason === "needs_review" && <label className="block text-sm">Review feedback<Textarea value={feedback} onChange={e => setFeedback(e.target.value)} maxLength={4000} /></label>}
           <div className="flex flex-wrap gap-2">
@@ -172,8 +199,14 @@ export function Tasks() {
             {!["Done", "Cancelled"].includes(selectedTask.status) && <Button variant="outline" disabled={disabled || selectedTask.cancelRequested} onClick={() => action("cancel")}>{selectedTask.cancelRequested ? "Cancelling…" : "Cancel task"}</Button>}
           </div>
         </div>}
+        {selectedTask && !running && !selectedTask.cancelRequested && <Button variant="outline" disabled={disabled || !!removalReview} onClick={reviewRemoval}>{selectedTask.removed ? "Restore task" : "Delete task"}</Button>}
         {selectedTask?.result && <section className="space-y-3 rounded-lg border p-4"><h2 className="font-semibold">Result</h2><Markdown text={selectedTask.result.markdown} />{selectedTask.result.resources.map((r, i) => <p key={i} className="break-all text-sm">{r.label ?? r.id} · {r.owner}</p>)}</section>}
-        {(selectedTask?.outcomes?.filter(o => !o.executionId).length ?? 0) > 1 && <section className="space-y-3"><h2 className="font-semibold">Result history</h2>{selectedTask!.outcomes!.filter(o => !o.executionId).slice().reverse().map((o, i) => <details key={i} className="rounded-md border p-3"><summary className="cursor-pointer text-sm">Input revision {o.inputRevision} · {new Date(o.recordedAt).toLocaleString()}</summary><Markdown text={o.result.markdown} /></details>)}</section>}
+        {(selectedTask?.outcomes?.filter(o => !o.ref.executionId).length ?? 0) > 1 && <section className="space-y-3"><h2 className="font-semibold">Result history</h2>{selectedTask!.outcomes!.filter(o => !o.ref.executionId).slice().reverse().map((o, i) => <details key={i} className="rounded-md border p-3"><summary className="cursor-pointer text-sm">Input revision {o.ref.inputRevision} · {new Date(o.recordedAt).toLocaleString()}</summary><Markdown text={o.result.markdown} /></details>)}</section>}
+        {selectedTask && <section className="space-y-2 text-sm" aria-label="Task relationships">
+          {selectedTask.parentTaskRef && <p>Parent task: <a className="underline" href={`/tasks?task=${encodeURIComponent(selectedTask.parentTaskRef.id)}`}>{rows.find(t => t.ref.id === selectedTask.parentTaskRef!.id)?.title ?? selectedTask.parentTaskRef.id}</a></p>}
+          {!!selectedTask.dependsOn?.length && <div>Requires accepted results from: <ul>{selectedTask.dependsOn.map(ref => <li key={ref.id}><a className="underline" href={`/tasks?task=${encodeURIComponent(ref.id)}`}>{rows.find(t => t.ref.id === ref.id)?.title ?? ref.id}</a></li>)}</ul></div>}
+          {rows.some(t => t.parentTaskRef?.id === selectedTask.ref.id) && <div>Subtasks: <ul>{rows.filter(t => t.parentTaskRef?.id === selectedTask.ref.id).map(t => <li key={t.ref.id}><a className="underline" href={`/tasks?task=${encodeURIComponent(t.ref.id)}`}>{t.title}</a> · {t.status}</li>)}</ul></div>}
+        </section>}
         {!!selectedTask?.attempts.length && <section className="space-y-3"><h2 className="font-semibold">Execution history</h2>{selectedTask.attempts.slice().reverse().map((a, i) => <article className="space-y-2 rounded-md border p-3 text-sm" key={a.executionId}><div className="flex flex-wrap justify-between gap-2"><span>Attempt {selectedTask.attempts.length - i} · {a.receipt?.state ?? "Queued"}</span><span className="text-muted-foreground">{a.executor.appId}</span></div>{a.receipt?.error && <p>{a.receipt.error.message}</p>}{a.receipt?.sessionRef && <a className="underline underline-offset-4" href={a.receipt.sessionRef.path}>Open execution conversation</a>}{a.receipt?.result && <details><summary className="cursor-pointer">Attempt result</summary><Markdown text={a.receipt.result.markdown} /></details>}<p className="text-xs text-muted-foreground">{a.receipt?.stopConfirmed ? "Execution stopped" : "No stop confirmation"}</p></article>)}</section>}
       </section>}
     </div>

@@ -113,6 +113,10 @@ public sealed class McpHttpTests
             Assert.False(string.IsNullOrWhiteSpace(metadata.GetProperty("feature").GetProperty("id").GetString()));
             Assert.False(string.IsNullOrWhiteSpace(metadata.GetProperty("feature").GetProperty("title").GetString()));
         }
+        var publicationSchema = tools.Single(tool => tool.GetProperty("name").GetString() == "pr_configure").GetProperty("inputSchema").GetRawText();
+        Assert.Contains("policyAmendment", publicationSchema);
+        Assert.Contains("previousPolicy", publicationSchema);
+        Assert.Contains("reason", publicationSchema);
         var workspace = tools.Single(tool => tool.GetProperty("name").GetString() == "get_workspace");
         Assert.True(workspace.GetProperty("annotations").GetProperty("readOnlyHint").GetBoolean());
         var authority = workspace.GetProperty("_meta").GetProperty(CoreMcpCatalog.MetadataKey).GetProperty("authority");

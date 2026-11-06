@@ -16,6 +16,12 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
     private async Task Save(PublicationRecord r)
         => await workspaces.WritePublicationAsync(r.WorkspaceId,
             () => JsonStorage.WriteAsync(FilePath(r.WorkspaceId), r, restrictToOwner: true), default);
+    private readonly WorkspaceRecordCache inspectionRecords = new();
+    internal async Task<PublicationRecord?> ReadInspectionRecordAsync(string id, CancellationToken ct)
+    {
+        try { return await inspectionRecords.ReadAsync<PublicationRecord>(FilePath(id), ct); }
+        catch (Exception ex) when (ex is JsonException or IOException) { return null; }
+    }
     private Task<PublicationRecord?> Read(string id, CancellationToken ct) => JsonStorage.ReadAsync<PublicationRecord>(FilePath(id), ct);
     private async Task<T> Locked<T>(Func<Task<T>> action, CancellationToken ct)
     {
@@ -173,6 +179,8 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
     {
         if (!Guid.TryParse(input.RequestId, out _) || kind is not ("resolve-review" or "commit" or "configure" or "push" or "publish" or "link" or "ready" or "merge" or "complete" or "corrective"))
             throw new PublicationException("request_invalid", "Supply a UUID requestId and a supported publication operation.");
+        if (input.PolicyAmendment is not null && kind != "configure")
+            throw new PublicationException("policy_amendment_invalid", "Policy amendments belong to configure only.");
         await RequireOwner(owner, ct);
         var w = await workspaces.ObserveAsync(id, owner, ct);
         var remote = await workspaces.PublicationRemoteAsync(w, ct, validateGrant: owner.UserId == w.Owner.UserId);
@@ -216,7 +224,7 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
         if (kind == "configure")
         {
             ValidatePolicy(input.Policy ?? new([], [], []));
-            await Dependencies(record with { Dependencies = input.Dependencies ?? [] }, ct, false);
+            await Dependencies(record with { Dependencies = input.PolicyAmendment is null ? input.Dependencies ?? [] : record.Dependencies }, ct, false);
         }
         if (kind is "publish" or "merge") await Dependencies(record, ct, true);
         if (kind == "complete" && input.Outcome != "abandoned") await RequireSessionCompletion(record, input, ct);
@@ -250,11 +258,26 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
             journaled = true;
             if (kind == "configure")
             {
-                if (record.Number is not null || record.PublishedHead is not null) throw new PublicationException("policy_locked", "Configure completion policy before publication.");
-                var policy = input.Policy ?? new PublicationPolicy([], [], []); ValidatePolicy(policy);
-                if ((input.Dependencies?.Length ?? 0) > 20) throw new PublicationException("dependency_limit", "At most twenty publication dependencies are supported.");
-                record = record with { Policy = policy, Dependencies = input.Dependencies ?? [] };
-                record = record with { HeadRepository = await UseConnection(c => provider.DestinationAsync(c, record.Repository, input.Fork, ct)) };
+                if (input.PolicyAmendment is { } amendment)
+                {
+                    ValidatePolicyAmendment(record, input, amendment);
+                    RequireHead(w, input);
+                    var observation = await UseConnection(c => provider.ObserveAsync(c, record, ct));
+                    if (observation.State != "merged" || observation.Head != input.ExpectedHead ||
+                        observation.Base != record.TargetBranch || string.IsNullOrWhiteSpace(observation.MergeCommit))
+                        throw new PublicationException("policy_amendment_invalid", "Refresh the exact merged PR before amending its policy.");
+                    RequireHead(await workspaces.ObserveAsync(id, owner, ct), input);
+                    record = record with { Policy = input.Policy!, Observation = null };
+                }
+                else
+                {
+                    if (record.Number is not null || record.PublishedHead is not null)
+                        throw new PublicationException("policy_locked", "Configure completion policy before publication, or explicitly amend an unfinished merged publication with its previousPolicy, reason and exact expectedHead.");
+                    var policy = input.Policy ?? new PublicationPolicy([], [], []); ValidatePolicy(policy);
+                    if ((input.Dependencies?.Length ?? 0) > 20) throw new PublicationException("dependency_limit", "At most twenty publication dependencies are supported.");
+                    record = record with { Policy = policy, Dependencies = input.Dependencies ?? [] };
+                    record = record with { HeadRepository = await UseConnection(c => provider.DestinationAsync(c, record.Repository, input.Fork, ct)) };
+                }
             }
             else if (kind == "commit")
             {
@@ -366,17 +389,29 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
                     if (record.Observation.Head != input.ExpectedHead || record.PublishedHead != input.ExpectedHead) throw new PublicationException("unpublished", "The current workspace head is not the published PR head.");
                     if (input.Outcome == "merged" && record.Observation is not { State: "merged", Complete: true } ||
                         input.Outcome == "submitted" && record.Observation.State != "open" || input.Outcome is not ("merged" or "submitted" or "abandoned"))
-                        throw new PublicationException("completion_blocked", "Choose an outcome supported by current PR and configured release evidence.");
+                        throw new PublicationException("completion_blocked", record.Observation.Error ?? "Choose an outcome supported by current PR and configured release evidence.");
                     record = record with { Outcome = input.Outcome, CompletedAt = clock.UtcNow, CleanupRequested = input.Cleanup };
                 }
             }
             record = record with { Operations = record.Operations.Select(o => o.Id == input.RequestId ? o with { State = "succeeded", Error = null } : o).ToArray() };
-            await Save(record);
+            if (input.PolicyAmendment is not null)
+                await workspaces.WithPublicationAdmissionAsync(canonical ? w.Owner : owner, async current =>
+                {
+                    if (current.Closure is not null || current.State is "deferred" or "deleting" or "deleted" ||
+                        !await workspaces.CanObservePublicationAsync(id, ct))
+                        throw new PublicationException("workspace_closed", "Resume retained workspace source before amending publication policy.");
+                    if (validateCaller is not null) await validateCaller(ct);
+                    await RequireOwner(owner, ct);
+                    await Save(record);
+                }, ct);
+            else await Save(record);
         }
         catch (Exception ex) when (ex is PublicationException or UserConnectionException or HttpRequestException or IOException or OperationCanceledException or AppLifecycleException)
         {
             // Rejected admission must not create a receipt through error recovery.
             if (!journaled) throw;
+            // An amendment has no remote side effect. A refused/local-failed write retains the old policy.
+            if (input.PolicyAmendment is not null) record = record with { Policy = r.Policy, Observation = r.Observation };
             // Preserve pending intent: an HTTP error may follow a successful push, fork or PR mutation.
             record = record with { Operations = record.Operations.Select(o => o.Id == input.RequestId ? o with { State = ex is PublicationException pe && pe.Code is not ("publication_provider_unavailable" or "publication_push_uncertain" or "publication_merge_uncertain" or "publication_fork_unavailable" or "publication_commit_uncertain") ? "failed" : "pending", Error = "Operation did not complete. Inspect state before retrying; retain the request ID for an uncertain outcome." } : o).ToArray() };
             await Save(record); throw;

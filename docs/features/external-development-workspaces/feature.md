@@ -1,6 +1,6 @@
 ---
 created: 2026-10-07
-updated: 2026-11-03
+updated: 2026-11-04
 summary: Authorized external clients use registered Core worktrees, independent test environments, canonical publication and native Git/provider reconciliation.
 components: [apps/core, apps/harness, apps/documents]
 ---
@@ -71,6 +71,21 @@ external references and the installed-app inbox. Provider work has a bounded dea
 retain the prior evidence timestamp and are retried under the shared budget.
 The read-only path never creates publication commands, merges, pushes, resolves review threads or
 schedules source cleanup. Compact facts carry no publication-completion or review-body evidence.
+
+Inspection selects the newest retained observation for each linked PR across the external-reference
+snapshot and its matching publication record, including retained publication history. Both sources
+must match the current workspace owner, repository and selected connection; publication records
+also match the provider, head repository, target branch and canonical PR URL/number. A newer
+publication status read therefore replaces an older external snapshot without a provider call from
+inventory. Equal-time contradictory observations remain unavailable.
+Failed external attempts retain an internal per-reference timestamp. A newer failure keeps the
+summary unavailable instead of exposing an older successful publication status; a newer verified
+success restores it. Untimestamped legacy failures remain unavailable until a live refresh.
+
+Explicit completion verification retains sanitized display observations before background checks
+stop. External batch, compact and completion writers merge under the same guarded publication lock,
+preserving newer observations and other linked PRs. They recheck current bindings and deletion state;
+retained display facts do not authorize completion or recreate deleted workspaces.
 
 Core uses the workspace's reviewed Git connection when present. For public source without a
 selected connection, it uses the owner's sole connected account for that provider. Missing,

@@ -68,7 +68,7 @@ export function canonicalAlias(action: string, input: Record<string, unknown>, c
       if (!context.taskProvider) throw new AppContextError(503, "task_provider_unavailable", "The original task provider installation is unavailable.");
       const provider = context.taskProvider;
       if (action === "task-options") return nested({ provider, ...select(input, ["executor"]) });
-      if (action === "task-list") return nested({ provider, ...select(input, ["cursor", "limit"]) });
+      if (action === "task-list") return nested({ provider, ...select(input, ["cursor", "limit", "status", "parentTaskRef", "rootTaskRef", "rootsOnly", "removed"]) });
       if (action === "task-create") return nested({ provider, input });
       const taskRef = { ...provider, id: input.taskId };
       return nested(action === "task-get" ? { taskRef } : { taskRef, input: select(input, Object.keys(input).filter(k => k !== "taskId")) });

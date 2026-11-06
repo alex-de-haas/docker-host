@@ -88,6 +88,13 @@ def check(context):
             assert response.status == 200 and len(response.read()) > 0
     say('PASS: production API/worker, password login, Core launch-code identity, sessions API and compiled static assets')
 
+    if os.environ.get('HOSTY_EXECUTION_RECOVERY'):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('execution_recovery_acceptance', workspace/'apps/harness/test/execution_recovery_acceptance.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        module.check(context, app, app_origin, call, timed, link)
+
     if context.get('scenario') == 'feedback':
         from feedback_acceptance import check as check_feedback
         check_feedback(context, app_origin, link)
@@ -98,6 +105,13 @@ def check(context):
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         module.check(context, app_origin, client, call, timed)
+
+    if os.environ.get('HOSTY_CONTEXT_BROWSER'):
+        import subprocess
+        result = subprocess.run(['node', str(workspace/'apps/harness/test/context-browser.mjs')],
+            input=json.dumps({'core':origin, 'harness':app_origin, 'email':'activation-fixture@example.test', 'password':password, 'link':link}),
+            text=True, cwd=workspace)
+        assert result.returncode == 0, 'Context browser acceptance failed'
 
     if os.environ.get('HOSTY_SUGGESTIONS_BROWSER'):
         import subprocess

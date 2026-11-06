@@ -16,7 +16,7 @@ import { developmentRequest, DevelopmentRequestError, repositoryName, changeTota
 import { LocalRepositoryActions } from "./local-repository-actions";
 import { LocalAppHandoff } from "./local-app-handoff";
 import { WorkspaceActivation } from "./workspace-activation";
-import { WorkspaceConsumers } from "./workspace-consumers";
+import { WorkspaceActivity, WorkspaceConsumers } from "./workspace-consumers";
 import { WorkspaceDelete } from "./workspace-delete";
 import { WorkspaceLeaseRecovery } from "./workspace-lease-recovery";
 import { WorkspacePreviews } from "./workspace-previews";
@@ -47,8 +47,12 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
   refresh: () => void; deleteConversation?: () => Promise<void>; onReview?: (tree: Worktree, choice?: ReviewChoice) => void;
 }) {
   const canManage = workspace.permissions?.manage !== false;
+  const [trees, setTrees] = useState<Worktree[]>(() => workspace.worktrees.map(t => ({ ...t, sessionChanges: undefined })));
   const updatePrConsumer = useEffectEvent(() => refresh());
-  const hasTrackedPr = workspace.worktrees.some(tree => tree.pullRequests.length > 0);
+  // Published PRs can live in publication records rather than the worktree's explicit URL list.
+  // Inventory summary and authorized details both establish display demand, never merge authority.
+  const hasTrackedPr = (workspace.pullRequestSummary?.count ?? 0) > 0 ||
+    workspace.worktrees.some(tree => tree.pullRequests.length > 0) || trees.some(tree => tree.pullRequests.some(pr => !pr.historical));
   const activePrConsumer = hasTrackedPr && workflowIsActive(workspace.workflow);
   useEffect(() => {
     if (!activePrConsumer) return;
@@ -60,7 +64,6 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
     }).catch(() => { /* Older Core installations retain their existing workspace event stream. */ });
     return () => { abort.abort(); unsubscribe?.(); };
   }, [workspace.id, activePrConsumer]);
-  const [trees, setTrees] = useState<Worktree[]>(() => workspace.worktrees.map(t => ({ ...t, sessionChanges: undefined })));
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState("");
   const [leaseRefusal, setLeaseRefusal] = useState(false);
@@ -84,6 +87,21 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
     return () => clearInterval(timer);
   }, []);
   const [detailRefresh, setDetailRefresh] = useState(0);
+  const prObservationVersion = JSON.stringify(trees.map(tree => tree.pullRequests.map(pr => [pr.url, pr.observation?.at, pr.unavailable])));
+  const [prRefresh, setPrRefresh] = useState<{ workspaceId: string; version: string; message: string } | null>(null);
+  const [requestingPrRefresh, setRequestingPrRefresh] = useState(false);
+  const refreshWorkspace = async () => {
+    setDetailRefresh(n => n + 1); refresh();
+    if (!activePrConsumer || requestingPrRefresh) return;
+    setRequestingPrRefresh(true); setPrRefresh({ workspaceId: workspace.id, version: prObservationVersion, message: "Requesting current CI results…" });
+    try {
+      const result = await prRequest<{ state: string; nextAttemptAt?: string }>("/refresh", { requestId: crypto.randomUUID(), workspaces: [workspace.id] });
+      setPrRefresh({ workspaceId: workspace.id, version: prObservationVersion, message: result.state === "deferred"
+        ? `CI refresh is temporarily limited.${result.nextAttemptAt ? ` Try again after ${new Date(result.nextAttemptAt).toLocaleTimeString()}.` : " Try again shortly."}`
+        : "CI refresh queued. Results update automatically when the provider responds." });
+    } catch (e) { setPrRefresh({ workspaceId: workspace.id, version: prObservationVersion, message: e instanceof Error ? e.message : "Could not request current CI results." }); }
+    finally { setRequestingPrRefresh(false); }
+  };
   const workspaceAppMetadata = useWorkspaceAppMetadata(workspace.id, trees, appMetadata, detailRefresh);
   // Inventory responses create new objects even when only a different workspace changed.
   // Retain details until this workspace's source, consumer, lease or PR facts change.
@@ -145,10 +163,11 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
   };
   const externalClose = canManage && !!pending && ["pause", "close", "defer"].includes(pending.kind) && state.closure === "closing" && trees.some(t => t.leases.length > 0);
   const currentDiff = trees.find(t => t.id === diffTree);
-  return <aside aria-label="Workspace details" className="relative h-full overflow-y-auto">
+  return <aside aria-label="Workspace details" className="relative h-full overflow-y-auto overscroll-contain">
     <div className="border-b p-4">
       <div className="mb-3 flex items-center justify-between gap-2"><p className="text-xs font-semibold text-muted-foreground">Workspace</p>
         <div className="flex items-center gap-1.5">
+          <WorkspaceActivity trees={trees} />
           {workspace.owner.kind === "external" && <TooltipProvider delayDuration={250}><Tooltip>
             <TooltipTrigger asChild><Button type="button" variant="ghost" size="icon-sm" className="size-6 text-muted-foreground" aria-label="Created from an external session"><Cast className="size-3.5" aria-hidden="true" /></Button></TooltipTrigger>
             <TooltipContent className="max-w-xs">Created from an external session using {workspace.owner.label}. Its conversation and agent activity are not synchronized here. Harness sessions can also use this workspace.</TooltipContent>
@@ -158,7 +177,7 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
       <div className="flex items-start gap-1.5">
       <div className="min-w-0 flex-1"><WorkspaceName key={workspace.id} workspace={workspace} fallback={title} refresh={refresh} />
         {state.completedAt && <p className="mt-1 text-xs text-muted-foreground">Completed {new Date(state.completedAt).toLocaleDateString()}</p>}</div>
-      <Button size="icon-sm" variant="ghost" aria-label="Refresh workspace" onClick={() => { setDetailRefresh(n => n + 1); refresh(); }}><RefreshCw className="size-3.5" /></Button>
+      <Button size="icon-sm" variant="ghost" aria-label="Refresh workspace" disabled={requestingPrRefresh} onClick={() => void refreshWorkspace()}><RefreshCw className="size-3.5" /></Button>
       {canManage && <DropdownMenu><DropdownMenuTrigger asChild><Button size="icon-sm" variant="ghost" aria-label="Workspace actions"><MoreHorizontal /></Button></DropdownMenuTrigger>
         <DropdownMenuContent align="end">
           <DropdownMenuItem disabled={busy || recovering || !!discardOperation || !!pending || running || !["in-progress", "deferred"].includes(state.state)} onSelect={() => void run("complete")}>Complete workspace</DropdownMenuItem>
@@ -172,9 +191,9 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
     </div>
     <div className="space-y-4 p-4 [&>[data-workspace-section]~[data-workspace-section]]:border-t [&>[data-workspace-section]~[data-workspace-section]]:pt-4">
       <WorkspaceSessions actions={sessionActions} workspace={workspace} sessionId={sessionId} running={running} refresh={refresh} onSelect={onSessionSelected} onPick={onSessionPicked} onDelete={onDeleteSession} />
-      {trees.some(tree => tree.apps.length || tree.leases.length || tree.consumers?.length) && <div data-workspace-section className="space-y-3"><WorkspaceSectionHeading informationLabel="About using apps on this Core" information="Switch the bound applications using their ordinary data. Return keeps the existing package recovery.">Used by</WorkspaceSectionHeading>
+      {trees.some(tree => tree.apps.length || tree.consumers?.length) && <div data-workspace-section className="space-y-3"><WorkspaceSectionHeading informationLabel="About using apps on this Core" information={<WorkspaceConsumers trees={trees} />}>Used by</WorkspaceSectionHeading>
       <WorkspaceActivation key={workspace.id} workspaceId={workspace.id} appMetadata={workspaceAppMetadata} apps={[...new Map(trees.flatMap(tree => tree.apps).map(app => [app.appId, app])).values()]}
-        disabled={busy || recovering} canUse={workflowIsActive(state)} refresh={refresh} /><WorkspaceConsumers trees={trees} /></div>}
+        disabled={busy || recovering} canUse={workflowIsActive(state)} refresh={refresh} /></div>}
       {running && <p className="text-xs text-muted-foreground">An agent is running. Pause workspace fences all participants and waits for confirmed execution stops.</p>}
       {(state.closure || state.state === "deferred") && !["deleting", "deleted"].includes(state.state) && <p role="status" className="text-xs text-muted-foreground">{state.closure === "closing" ? "Pausing: new development work is blocked while execution stop is verified." : "Paused: source, previews and conversation are retained. Resume to continue development."}</p>}
       {(!externalClose || loadError) && (error || loadError || operation?.error) && <p role="alert" className="text-sm text-destructive-foreground">{error || loadError || operation?.error}</p>}
@@ -231,7 +250,8 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
       })}
       </section>}
       {trees.some(t => t.pullRequests.length) && <section data-workspace-section className="space-y-3"><h3 className="text-xs font-semibold text-muted-foreground">Pull requests</h3>
-        {trees.flatMap(tree => tree.pullRequests.map(pr => <WorkspacePullRequest key={`${tree.id}:${pr.url}`} tree={tree} pr={pr} now={now} onReview={button => {
+        {prRefresh?.workspaceId === workspace.id && prRefresh.version === prObservationVersion && <p role="status" className="text-xs text-muted-foreground">{prRefresh.message}</p>}
+        {trees.flatMap(tree => tree.pullRequests.map(pr => <WorkspacePullRequest key={`${tree.id}:${pr.url}`} tree={tree} pr={pr} now={now} onRefresh={activePrConsumer && !pr.historical ? () => void refreshWorkspace() : undefined} refreshing={requestingPrRefresh} onReview={button => {
           diffTrigger.current = button;
           const choice = { view: `pr:${pr.url}`, path: "" };
           if (onReview) onReview(tree, choice);

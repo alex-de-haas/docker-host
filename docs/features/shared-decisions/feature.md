@@ -1,6 +1,6 @@
 ---
 created: 2026-11-03
-updated: 2026-11-03
+updated: 2026-11-05
 summary: Core-owned private questions with immutable answers, source delivery receipts and a shared Harness Decisions view.
 components: [apps/core, apps/harness, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -113,6 +113,21 @@ Live acceptance with both actual providers verifies option/free-text delivery an
 completion. Claude acceptance also verifies five-minute parking, a full child Core/Harness/Worker restart,
 and exactly one successful continuation of the same native session. Scripted protocol checks
 separately cover duplicate wording, unsupported inputs and worker crash boundaries.
+
+## Required Task Input
+
+Harness `task_request_input` creates a durable mandatory wait through this contract, independent of
+native provider question tools. Its reason and trusted task number/title identify the required
+intervention. Registration failures remain visible in local recovery; retries preserve the original
+request. Acknowledged tool delivery parks the task without the ordinary native-question timeout.
+Answers continue the same task attempt and supported native checkpoint after current authority,
+source capacity and cancellation checks, then require a fresh prerequisite check and completion report.
+
+`notificationPending` exposes failed attention delivery on a retained question. Replaying its original
+creation retries delivery with the same notification identity, without changing the original creation
+receipt or duplicating an answered question. Harness retries pending delivery with bounded spacing;
+the inbox remains authoritative. Task-specific outcomes and removal are documented in
+[Basic Tasks And Execution](../basic-tasks/feature.md).
 
 ## Retention And Removal
 

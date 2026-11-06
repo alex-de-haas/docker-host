@@ -28,8 +28,12 @@ internal sealed record FeedbackDispatch(string Id, string CallerAppId, string Ca
 internal sealed record FeedbackDelivery(string State, long? MessageSequence = null, string? WorkspaceId = null, string? Error = null);
 internal sealed record FeedbackResults(FeedbackOutcome[] Outcomes);
 internal sealed record FeedbackChange(long ExpectedRevision, string? WorkspaceId, string? Disposition = null);
+internal sealed record FeedbackAnnotationEdit(string Id, string Text);
+internal sealed record FeedbackEdit(string RequestId, long ExpectedRevision, string Comment, FeedbackAnnotationEdit[] Annotations);
+internal sealed record FeedbackDelete(string RequestId, long ExpectedRevision);
+internal sealed record FeedbackMutationReceipt(string RequestId, string ReportId, string Kind, string Fingerprint);
 internal sealed record FeedbackState(FeedbackReport[] Reports, FeedbackReceipt[] Receipts,
-    FeedbackDispatch[] Dispatches, string[] DeletedWorkspaces);
+    FeedbackDispatch[] Dispatches, string[] DeletedWorkspaces, FeedbackMutationReceipt[]? Mutations = null);
 internal sealed record FeedbackCollection(FeedbackReport[] Reports, FeedbackDispatch[] Dispatches);
 internal sealed record FeedbackSubmissionReceipt(string Id, string Status);
 internal sealed record FeedbackCapabilities(int Version, string CoreId, string AppId, string Installation, string UserId,

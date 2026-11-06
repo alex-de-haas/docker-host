@@ -4,6 +4,11 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { OllamaTool } from "./client.js";
 
+// Catalog capacity is independent of the eight MCP schemas exposed per model step.
+// Bound discovery memory while allowing an ordinary host with many authorized tools.
+const MAX_CATALOG_TOOLS = 4096;
+const MAX_CATALOG_BYTES = 16 * 1024 * 1024;
+
 const text = { type: "string", maxLength: 32000 };
 const file = { type: "string", minLength: 1, maxLength: 2048 };
 const object = (
@@ -115,6 +120,7 @@ export class OllamaMcp {
   ): Promise<void> {
     await this.close();
     const ajv = schemaValidator();
+    let catalogBytes = 0;
     for (const [server, value] of Object.entries(servers)) {
       signal.throwIfAborted();
       const config = value as { url: string; headers?: Record<string, string> };
@@ -135,8 +141,11 @@ export class OllamaMcp {
           timeout: 15000,
         });
         for (const tool of page.tools) {
-          if (this.tools.length >= 128)
-            throw new Error("Too many MCP tools for the Ollama catalog.");
+          if (this.tools.length >= MAX_CATALOG_TOOLS)
+            throw new Error(`MCP tool catalog exceeds its ${MAX_CATALOG_TOOLS}-tool limit.`);
+          catalogBytes += Buffer.byteLength(JSON.stringify(tool));
+          if (catalogBytes > MAX_CATALOG_BYTES)
+            throw new Error("MCP tool catalog exceeds its size limit.");
           if (JSON.stringify(tool.inputSchema).length > 32000)
             throw new Error("MCP tool schema exceeds its limit.");
           const displayName = `mcp__${server}__${tool.name}`;

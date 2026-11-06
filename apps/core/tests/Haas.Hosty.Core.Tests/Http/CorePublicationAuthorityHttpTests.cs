@@ -27,6 +27,11 @@ public sealed class CorePublicationAuthorityHttpTests
             Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
             Assert.Contains(AccessTokenScopes.McpPublicationWrite, await response.Content.ReadAsStringAsync());
         }
+        var amendment = await client.PostAsJsonAsync("/api/publications/v1/commands/configure",
+            new CorePublicationMutation(new string('a', 64), new(Guid.NewGuid().ToString(), "head", Policy: new([], [17], []),
+                PolicyAmendment: new(new(["PR-only"], [], []), "Verify the release workflow"))));
+        Assert.Equal(HttpStatusCode.Forbidden, amendment.StatusCode);
+        Assert.Contains(AccessTokenScopes.McpPublicationWrite, await amendment.Content.ReadAsStringAsync());
         var commit = await client.PostAsJsonAsync("/api/publications/v1/commands/commit", new CorePublicationMutation(new string('a', 64), new(Guid.NewGuid().ToString())));
         Assert.Equal(HttpStatusCode.Conflict, commit.StatusCode);
         Assert.Contains("workspace_not_found", await commit.Content.ReadAsStringAsync());

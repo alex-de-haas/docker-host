@@ -48,6 +48,7 @@ public sealed partial class CoreLifecycleServiceTests
             await WaitForObservation(() => Task.FromResult(state.Health(tree.Id) == "watching" && !state.NeedsObservation(tree.Id)));
             var inspection = new WorkspaceInspectionService(service, f.Apps, f.Clock, observationState: state);
             var first = await inspection.ReadAsync(tree.WorkspaceId, tree.Id, "admin", default);
+            Assert.Equal(new AppSourceLineStats(0, 0), first.Observation!.Local!.LineStats);
             var scans = state.ScanCount(tree.Id);
             var record = Path.Combine(f.Paths.CoreRoot, "development/workspaces", tree.Id + ".json");
             var modified = File.GetLastWriteTimeUtc(record);
@@ -63,11 +64,54 @@ public sealed partial class CoreLifecycleServiceTests
             await WaitForObservation(async () => (await service.Read(tree.Id, null, default)).Observation!.Local!.Files.Any(x => x.Path == "README.md"));
             var changed = await inspection.ReadAsync(tree.WorkspaceId, tree.Id, "admin", default);
             Assert.Single(changed.SessionChanges);
+            Assert.Equal(new AppSourceLineStats(1, 1), changed.Observation!.Local!.LineStats);
+            Assert.Equal(changed.Observation.Local.LineStats, Assert.Single(changed.Observation.Local.Files).LineStats);
             Assert.NotEqual(first.ObservationRevision, changed.ObservationRevision);
             await RunGitAsync(tree.Path, ["add", "README.md"]);
             await WaitForObservation(async () => (await service.Read(tree.Id, null, default)).Observation!.Local!.Files.Any(x => x.Path == "README.md" && x.Status == "M "));
         }
         finally { await observer.StopAsync(default); }
+    }
+
+    [Fact]
+    public async Task WorkspaceEvents_RetainBoundedLineStatisticsForInventoryWithoutExtraScans()
+    {
+        var (f, _) = await SourceFixtureAsync();
+        var state = new WorkspaceObservationState(new CoreEventHub());
+        var service = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock, observationState: state);
+        var owner = WorkspaceTestOwner(f);
+        var tree = await service.PrepareAsync(owner, WorkspaceRequest(), default);
+        await File.WriteAllTextAsync(Path.Combine(tree.Path, "README.md"), "first\nsecond\n");
+        await RunGitAsync(tree.Path, ["add", "README.md"]);
+        await File.WriteAllTextAsync(Path.Combine(tree.Path, "new.txt"), "third\nfourth");
+        await File.WriteAllBytesAsync(Path.Combine(tree.Path, "binary.bin"), [0, 1, 2]);
+        var indexPath = (await RunGitAsync(tree.Path, ["rev-parse", "--git-path", "index"])).Trim();
+        var indexBefore = await File.ReadAllBytesAsync(Path.GetFullPath(indexPath, tree.Path));
+
+        tree = await service.ObserveAsync(tree.Id, owner, default);
+        Assert.Equal(new AppSourceLineStats(4, 1), tree.Observation!.Local!.LineStats);
+        Assert.Equal(new AppSourceLineStats(2, 1), tree.Observation.Local.Files.Single(file => file.Path == "README.md").LineStats);
+        Assert.Equal(new AppSourceLineStats(2, 0), tree.Observation.Local.Files.Single(file => file.Path == "new.txt").LineStats);
+        Assert.True(tree.Observation.Local.Files.Single(file => file.Path == "binary.bin").Binary);
+        Assert.Equal(indexBefore, await File.ReadAllBytesAsync(Path.GetFullPath(indexPath, tree.Path)));
+        state.SetHealth(tree.Id, "watching");
+        state.Observed(tree.Id, state.Generation(tree.Id));
+        var scans = state.ScanCount(tree.Id);
+        var inspection = new WorkspaceInspectionService(service, f.Apps, f.Clock, observationState: state);
+        for (var i = 0; i < 3; i++)
+        {
+            var inventory = Assert.Single(Assert.Single((await inspection.ListAsync("admin", default)).Workspaces).Worktrees);
+            Assert.Equal(tree.Observation.Local.LineStats, inventory.Observation!.Local!.LineStats);
+            Assert.Equal(3, inventory.Observation.Local.Files.Count);
+        }
+        Assert.Equal(scans, state.ScanCount(tree.Id));
+
+        await File.WriteAllTextAsync(Path.Combine(tree.Path, "oversized.txt"), new string('x', 4 * 1024 * 1024 + 1));
+        tree = await service.ObserveAsync(tree.Id, owner, default);
+        Assert.Equal("ok", tree.Observation!.State);
+        Assert.Null(tree.Observation.Local!.LineStats);
+        Assert.Null(tree.Observation.Local.Files.Single(file => file.Path == "oversized.txt").LineStats);
+        Assert.Equal(new AppSourceLineStats(2, 1), tree.Observation.Local.Files.Single(file => file.Path == "README.md").LineStats);
     }
 
     [Fact]

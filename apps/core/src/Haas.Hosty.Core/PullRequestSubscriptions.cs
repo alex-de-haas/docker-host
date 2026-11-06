@@ -66,6 +66,11 @@ internal sealed partial class PullRequestService
             if (activeScopes.Count >= 256 || activeScopes.Count(p => p.Value.Actor.UserId == actor.UserId) >= 32)
                 throw new PullRequestException("pr_subscription_limit", "Too many active PR streams.", 429);
             pendingScopes.Remove(id); activeScopes[id] = pending;
+            // Opening or returning to a workspace promotes stale observations through the same queue.
+            foreach (var value in workspaceJobs.Values.Where(v => v.Job.UserId == actor.UserId &&
+                pending.Scope.Workspaces?.Contains(v.Job.WorkspaceId, StringComparer.Ordinal) == true &&
+                clock.UtcNow - v.Last >= PullRequestPolicy.Quiet)) requestedWorkspaceJobs.Add(value.Job.Id);
+            workspaceReconciled = DateTimeOffset.MinValue;
             return new StreamLease(this, id);
         }
     }

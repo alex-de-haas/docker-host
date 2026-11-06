@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import {
   mkdtemp,
   mkdir,
@@ -232,6 +233,8 @@ it("streams Unicode text and retains context across turns and durable resume", a
       .map((e) => e.text)
       .join(""),
   ).toBe("Привет 👋Second");
+  expect(s.events.filter(e => e.type === "assistant_text").map(e => e.text)).toEqual(["Привет 👋", "Second"]);
+  expect(resumed.events.filter(e => e.type === "assistant_text").map(e => e.text)).toEqual(["Resumed"]);
 });
 
 it("never dispatches a tool from an incomplete generation", async () => {
@@ -507,6 +510,8 @@ it("preserves old history completely during bounded compaction", async () => {
     "A".repeat(6000),
   );
   expect(s.events.some((e) => e.type === "notice")).toBe(true);
+  // Auxiliary summary calls must not replace the ordinary request's context observation.
+  expect(s.events.filter(e => e.type === "context_usage")).toHaveLength(2);
 });
 
 it("stores endpoint revisions without credentials and cannot rebind a reserved connection", async () => {
@@ -901,4 +906,113 @@ it("enters the first authorized worktree on the next turn with fresh instruction
     ),
   ).toBe(true);
   expect(resumed.events.some((e) => e.type === "notice")).toBe(true);
+});
+
+
+it("binds MCP detail to each measured request, including discovery replacement and equal tool names", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body ?? "{}"));
+    if (body.method.startsWith("notifications/")) return new Response(null, { status: 202 });
+    const result = body.method === "initialize"
+      ? { protocolVersion: "2025-03-26", serverInfo: { name: "fixture", version: "1" }, capabilities: { tools: {} } }
+      : { tools: [{ name: "read", description: "Read 文档", inputSchema: { type: "object", properties: {} } }] };
+    return Response.json({ jsonrpc: "2.0", id: body.id, result });
+  }));
+  cleanup.push(async () => { vi.unstubAllGlobals(); });
+  const f = fixture((_body, index) => ({
+    ...(index < 2 ? tool("discover_tools", { query: index === 0 ? "alpha" : "beta" }) : answer()),
+    prompt_eval_count: 100 + index,
+  }));
+  const s = await start(f, { mcpServers: { alpha: { url: "http://alpha.invalid/mcp" }, beta: { url: "http://beta.invalid/mcp" } } });
+  s.run.send("Discover both services");
+  await wait(s.events, "result");
+  const snapshots = s.events.filter(e => e.type === "context_usage").map(e => e.usage);
+  expect(snapshots).toHaveLength(3);
+  expect(snapshots.map(s => s?.usedTokens)).toEqual([100, 101, 102]);
+  expect(snapshots.map(s => s?.estimated)).toEqual([false, false, false]);
+  expect(snapshots[0]?.mcp?.tools.every(t => t.inclusion === "available")).toBe(true);
+  expect(snapshots[1]?.mcp?.tools.find(t => t.server === "alpha")).toMatchObject({ name: "read", inclusion: "loaded" });
+  expect(snapshots[1]?.mcp?.tools.find(t => t.server === "beta")).toMatchObject({ name: "read", inclusion: "available" });
+  expect(snapshots[2]?.mcp?.tools.find(t => t.server === "alpha")).toMatchObject({ inclusion: "available" });
+  expect(snapshots[2]?.mcp?.tools.find(t => t.server === "beta")).toMatchObject({ inclusion: "loaded" });
+  const wire = f.chats[2].tools.find((t: any) => t.function.name.startsWith("mcp_"));
+  expect(snapshots[2]?.mcp?.tools.find(t => t.server === "beta")?.tokens).toBe(Math.ceil(Buffer.byteLength(JSON.stringify(wire)) / 4));
+  expect(f.chats).toHaveLength(3); // Accounting never requests inference.
+  expect(JSON.stringify(snapshots)).not.toContain("properties");
+});
+
+it.each([undefined, 0, -1, 1.5])("does not keep stale detail when prompt count is %s; zero is valid", async count => {
+  const f = fixture([answer(), { ...answer(), prompt_eval_count: count }]);
+  const s = await start(f);
+  s.run.send("First"); await wait(s.events, "result");
+  s.run.send("Second"); await wait(s.events, "result", 2);
+  const observations = s.events.filter(e => e.type === "context_usage");
+  expect(observations).toHaveLength(2);
+  expect(observations[0]!.usage).toMatchObject({ usedTokens: 25, mcp: { method: "local-estimate", tools: [] } });
+  if (count === 0) expect(observations[1]!.usage).toMatchObject({ usedTokens: 0, estimated: false, mcp: { tools: [] } });
+  else expect(observations[1]!.usage).toBeNull();
+});
+
+
+it("discovers and calls a tool past 128 without exposing the full catalog to the model", async () => {
+  vi.spyOn(Client.prototype, "connect").mockResolvedValue();
+  vi.spyOn(Client.prototype, "close").mockResolvedValue();
+  const definitions = Array.from({ length: 160 }, (_, i) => ({
+    name: `catalog_item_${i}`,
+    description: "Catalog fixture item",
+    inputSchema: { type: "object" as const, properties: {} },
+  }));
+  vi.spyOn(Client.prototype, "listTools")
+    .mockResolvedValueOnce({ tools: definitions, nextCursor: "last" })
+    .mockResolvedValueOnce({ tools: [{
+      name: "list_running_apps", description: "List running applications",
+      inputSchema: { type: "object", properties: {} },
+    }] });
+  const called = vi.spyOn(Client.prototype, "callTool").mockResolvedValue({
+    content: [{ type: "text", text: "Running fixture app" }],
+  });
+  const f = fixture((body, index) => {
+    const remote = body.tools.filter((t: any) => t.function.name.startsWith("mcp_"));
+    expect(remote.length).toBeLessThanOrEqual(8);
+    if (index === 0) {
+      expect(remote).toHaveLength(0);
+      return tool("discover_tools", { query: "catalog_item" });
+    }
+    if (index === 1) {
+      expect(remote).toHaveLength(8);
+      return tool("discover_tools", { query: "list_running_apps" });
+    }
+    expect(remote).toHaveLength(1);
+    expect(remote[0].function.description).toContain("mcp__fixture__list_running_apps");
+    if (index === 2) return tool(remote[0].function.name, {});
+    expect(body.messages.at(-1).content).toContain("Running fixture app");
+    return answer();
+  });
+  const s = await start(f, {
+    mcpServers: { fixture: { url: "http://fixture/mcp" } },
+    isAutoAllowed: () => true,
+  });
+  s.run.send("Which applications are running?");
+  await wait(s.events, "result");
+  expect(s.events.filter(e => e.type === "error")).toEqual([]);
+  expect(called).toHaveBeenCalledTimes(1);
+  expect(called.mock.calls[0]![0]).toEqual({ name: "list_running_apps", arguments: {} });
+  expect(f.chats).toHaveLength(4);
+});
+
+
+it("publishes complete assistant text before tool dispatch and turn completion", async () => {
+  const discover = tool("discover_tools", { query: "apps" });
+  (discover.message as { content: string }).content = "Searching for app tools.";
+  const f = fixture([discover, answer("No apps found.")]);
+  const s = await start(f);
+  s.run.send("Which applications are running?");
+  await wait(s.events, "result");
+  expect(s.events.filter(e => e.type === "assistant_text").map(e => e.text)).toEqual([
+    "Searching for app tools.", "No apps found.",
+  ]);
+  const firstText = s.events.findIndex(e => e.type === "assistant_text");
+  const lastText = s.events.findLastIndex(e => e.type === "assistant_text");
+  expect(firstText).toBeLessThan(s.events.findIndex(e => e.type === "tool_use"));
+  expect(lastText).toBeLessThan(s.events.findIndex(e => e.type === "result"));
 });

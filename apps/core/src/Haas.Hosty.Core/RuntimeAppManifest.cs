@@ -16,6 +16,9 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
     private const string ManifestFileName = "manifest.json";
     private const string LegacySchemaVersion = "app.0.1";
     private const string SupportedSchemaVersion = "app.0.2";
+    internal static bool IsSupportedSchemaVersion(string? schemaVersion)
+        => schemaVersion is LegacySchemaVersion or SupportedSchemaVersion;
+
     private const int MaxManifestBytes = 1024 * 1024;
     private static readonly Regex ContractKeyPattern = new("^[a-z][a-z0-9-]{0,62}$", RegexOptions.Compiled);
     private static readonly Regex CapabilityNamePattern = new("^[a-z][a-z0-9-]{0,62}(?:\\.[a-z][a-z0-9-]{0,62})*$", RegexOptions.Compiled);
@@ -497,7 +500,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
         ValidateRequired(manifest.Name, "$.name", errors);
         ValidateRequired(manifest.Version, "$.version", errors);
 
-        if (manifest.SchemaVersion is not (LegacySchemaVersion or SupportedSchemaVersion))
+        if (!IsSupportedSchemaVersion(manifest.SchemaVersion))
         {
             errors.Add(new("unsupported_app_manifest_schema_version", "Only app.0.1 and app.0.2 runtime app manifests are supported by Hosty Core.", "$.schemaVersion"));
         }

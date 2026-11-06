@@ -1,3 +1,4 @@
+import { validInstructionTexts } from "../harness/context-sources.js";
 import type { HarnessEvent, HarnessStartOptions } from "../harness/adapter.js";
 import type { ConnectionBinding } from "../connections/registry.js";
 
@@ -17,17 +18,23 @@ export type WorkerRunRequest = {
   selection: ExecutionSelection;
   resource: ResourceReference;
   input: string;
-  options: Pick<HarnessStartOptions, "autonomy" | "systemPrompt" | "resumeHarnessSessionId" | "mcpServers" | "promptSuggestions" | "requireNativeResume">;
+  options: Pick<HarnessStartOptions, "autonomy" | "systemPrompt" | "instructionSources" | "resumeHarnessSessionId" | "mcpServers" | "promptSuggestions" | "requireNativeResume">;
   autoAllowedPrefixes: string[];
 };
 export type RunState = "accepted" | "running" | "awaiting_input" | "suggesting" | "parking" | "parked" | "cancelling" | "completed" | "failed" | "cancelled" | "interrupted";
 export type WorkerEvent = { runId: string; generation: string; sequence: number; event: HarnessEvent };
+export type WorkerRecovery = { requestId: string; generation: string; expectedRevision: number; consumerExitConfirmed: true; actorId: string };
 export type WorkerReceipt = {
   runId: string; conversationId: string; generation: string; state: RunState; revision: number;
   boundary?: "container" | "local"; exitConfirmed?: boolean;
+  recovery?: { requestId: string; actorId: string; confirmedAt: string };
   pending?: WorkerEvent[];
+  barrier?: WorkerBarrier;
+  effects?: Record<string, "started" | "unknown">;
+  usage?: { sequence: number; activeMs: number; unknown: boolean };
   selection: ExecutionSelection; snapshot?: { text?: string; nativeSessionId?: string; result?: HarnessEvent; contextUsage?: WorkerEvent }; createdAt: string; updatedAt: string; error?: string;
 };
+export type WorkerBarrier = { controlId: string; expectedRevision: number; kind: "task_adoption" | "child_wait" | "source_rebind" | "limits" | "human_input"; barrierId: string; generation: number; acknowledgedSequence: number; origin?: "coordinator" };
 export type WorkerPark = { controlId: string; eventId: number; expectedRevision: number; id: string };
 export type WorkerControl = { controlId: string; eventId: number; expectedRevision: number } & (
   { kind: "approval"; id: string; decision: "allow" | "deny"; message?: string }
@@ -51,8 +58,10 @@ export function validateRun(value: unknown): asserts value is WorkerRunRequest {
     throw new WorkerApiError(400, "invalid_run", "Invalid worker run request.");
   if (r.skillExportId !== undefined && (typeof r.skillExportId !== "string" || !/^[a-f0-9]{64}$/.test(r.skillExportId)))
     throw new WorkerApiError(400, "invalid_skills", "Invalid skill export reference.");
-  if (Object.keys(r.options).some(key => !["autonomy", "systemPrompt", "resumeHarnessSessionId", "mcpServers", "promptSuggestions", "requireNativeResume"].includes(key))
+  if (Object.keys(r.options).some(key => !["autonomy", "systemPrompt", "instructionSources", "resumeHarnessSessionId", "mcpServers", "promptSuggestions", "requireNativeResume"].includes(key))
     || r.options.systemPrompt !== undefined && typeof r.options.systemPrompt !== "string"
+    || r.options.instructionSources !== undefined && (!validInstructionTexts(r.options.instructionSources)
+      || r.options.instructionSources.map(block => block.text).join("\n\n") !== r.options.systemPrompt?.trim())
     || r.options.resumeHarnessSessionId !== undefined && !safeIdentity(r.options.resumeHarnessSessionId)
     || r.options.mcpServers !== undefined && (!r.options.mcpServers || typeof r.options.mcpServers !== "object" || Array.isArray(r.options.mcpServers)))
     throw new WorkerApiError(400, "invalid_options", "Invalid provider options.");
