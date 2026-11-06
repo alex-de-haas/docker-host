@@ -7,11 +7,13 @@ import type { UiHost } from "./ui-host";
 import type { UiBootstrap, UiPanel } from "./ui-types";
 vi.mock("./browser-auth", () => ({ APP_SESSION_RESTORED: "hosty:app-session-restored", appFetch: (...args: Parameters<typeof fetch>) => fetch(...args) }));
 let root: Root, element: HTMLDivElement, host: UiHost | null, bootstrap: UiBootstrap;
+let catalog: UiPanel[];
 const policy = { microphone: false, popupEscape: false };
 const panel: UiPanel = { panel: { appId: "provider", installationId: "provider-1", panelId: "notes" }, label: "Notes", appName: "Notebook", icon: null,
   endpoint: "web", route: "/notes", origin: "https://notes.test", available: true, state: "running", canStart: false, framePolicy: policy };
 function Document() { host = useHostyUiHost(); return <textarea aria-label="Document draft" defaultValue="Keep this draft" />; }
 beforeEach(() => {
+  catalog = [panel];
   bootstrap = { version: 1, coreOrigin: "https://core.test", userId: "alice", canHost: true, pinnedOpen: true,
     app: { appId: "editor", installationId: "editor-1", origins: [location.origin], displayName: "Document Editor", iconUrl: "https://core.test/icon.svg" } };
   localStorage.clear(); document.documentElement.removeAttribute("data-hosty-chrome-hints");
@@ -25,7 +27,7 @@ beforeEach(() => {
       { key: "home", label: "Home", icon: null, endpoint: "web", origin: location.origin, route: "/", available: true, state: "running", standaloneHref: "/" }] });
     if (path.endsWith("resolve")) { const target = JSON.parse(init!.body as string); return Response.json({target,available:true,state:"running",standaloneHref:"https://core.test/open",
       surface: {...panel.panel,endpoint:panel.endpoint,origin:panel.origin,route:panel.route,framePolicy:policy} }); }
-    return Response.json({panels:[panel]});
+    return Response.json({panels:catalog});
   }));
   element = document.createElement("div"); document.body.append(element); root = createRoot(element);
 });
@@ -33,6 +35,35 @@ afterEach(async () => { await act(async () => root.unmount()); element.remove();
 const button = (label: string) => element.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!;
 const render = async () => { await act(async () => root.render(<HostyUiRoot><Document /></HostyUiRoot>)); await act(async () => host!.refresh()); };
 const click = async (label: string) => { expect(button(label)).not.toBeNull(); await act(async () => button(label).click()); };
+it("renders manifest Lucide icons for each pin and keeps legacy or unknown icons usable", async () => {
+  catalog = [
+    { ...panel, label: "Assistant", icon: "bot", panel: { ...panel.panel, panelId: "assistant" } },
+    { ...panel, label: "Feedback", icon: "MessageSquare", panel: { ...panel.panel, panelId: "feedback" } },
+    { ...panel, label: "Unknown", icon: "not-a-lucide-icon", panel: { ...panel.panel, panelId: "unknown" } },
+    { ...panel, label: "Legacy", icon: null, panel: { ...panel.panel, panelId: "legacy" } },
+  ];
+  await render(); await click("Tools");
+  for (const item of catalog) await click(`Pin Notebook — ${item.label} to top bar`);
+  await click("Close tool chooser");
+  await vi.waitFor(async () => {
+    await act(async () => {});
+    expect(button("Open Notebook — Assistant").querySelector("svg.lucide-bot")).not.toBeNull();
+    expect(button("Open Notebook — Feedback").querySelector("svg.lucide-message-square")).not.toBeNull();
+  });
+  const fallback = button("Tools").querySelector("svg")!.outerHTML;
+  for (const label of ["Unknown", "Legacy"]) expect(button(`Open Notebook — ${label}`).querySelector("svg")!.outerHTML).toBe(fallback);
+  expect(button("Open Notebook — Assistant").querySelector("svg")!.getAttribute("aria-hidden")).toBe("true");
+  expect(element.querySelector("iframe")).toBeNull();
+  await click("Open Notebook — Assistant"); const frame = element.querySelector("iframe");
+  expect(frame).not.toBeNull();
+  catalog = catalog.map(item => item.label === "Assistant" ? { ...item, icon: "git-pull-request" } : item);
+  await act(async () => host!.refresh());
+  await vi.waitFor(async () => {
+    await act(async () => {});
+    expect(button("Open Notebook — Assistant").querySelector("svg.lucide-git-pull-request")).not.toBeNull();
+  });
+  expect(element.querySelector("iframe")).toBe(frame);
+});
 it("pins without opening, retains a selected tool when unpinned, and restores choices across reload", async () => {
   await render(); expect(element.querySelector('.hosty-panel-rail')).toBeNull();
   expect(element.querySelector('.hosty-standalone-identity')?.textContent).toBe('Document Editor');
