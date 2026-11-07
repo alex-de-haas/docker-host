@@ -19,4 +19,4 @@ export function proxy(request: NextRequest) {
   return response;
 }
 
-export const config = { matcher: ["/", "/dashboard", "/apps/:path*", "/settings/:path*", "/users", "/installed-apps", "/system-apps/:path*", "/workspace"] };
+export const config = { matcher: ["/", "/dashboard", "/storage", "/apps/:path*", "/settings/:path*", "/users", "/installed-apps", "/system-apps/:path*", "/workspace"] };

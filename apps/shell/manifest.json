@@ -3,7 +3,7 @@
   "id": "hosty.shell",
   "name": "Hosty Shell",
   "description": "Hosty browser management shell.",
-  "version": "0.121.6",
+  "version": "0.122.1",
   "role": "system",
   "source": {
     "type": "git",
@@ -108,6 +108,7 @@
     "apps.lifecycle",
     "apps.configure",
     "core.read",
+    "core.storage.read",
     "core.update",
     "core.lifecycle",
     "core.configure",

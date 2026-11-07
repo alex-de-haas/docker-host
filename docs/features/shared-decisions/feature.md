@@ -1,6 +1,6 @@
 ---
 created: 2026-11-03
-updated: 2026-11-05
+updated: 2026-11-06
 summary: Core-owned private questions with immutable answers, source delivery receipts and a shared Harness Decisions view.
 components: [apps/core, apps/harness, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -75,6 +75,13 @@ scoped by user and decision, survive background refresh and same-tab reload, and
 request UUID while submission outcome is unknown. A changed revision requires explicit review;
 removed options cannot silently carry into the reviewed draft. Saved answers display a separate
 continuation status. Plain Markdown lists remain ordinary text.
+
+Both native and Docker assistant instructions direct necessary operator questions and choices
+through the provider's available native question tool: Codex `request_user_input` or
+`request_user_input_async`, Claude `AskUserQuestion`, and Ollama `ask_user`. Harness turns those
+requests into shared Decisions and interactive chat cards. Agents continue independent work while
+a nonblocking question is pending, keep required task input on `task_request_input`, and report
+an unavailable or rejected question tool explicitly. Answers remain separate from operation approvals.
 
 Existing native permissions, task-result reviews and execution recovery are projections, not copies
 of their owners' authority. Native permissions use the original exact-run approval operation;

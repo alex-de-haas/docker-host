@@ -27,14 +27,21 @@ The production generation contains:
 - Standalone runtime dependencies installed with `npm ci` from the reviewed lock's resolved
   versions and integrity records, including the pinned Claude SDK and Codex executable packages.
 
-The standalone package excludes workspace links, Next, React, TypeScript and `tsx`. SDK dependencies
-are selected from the external imports retained in the compiled API and worker;
-unused SDK browser dependencies remain in the frontend build. App-declared runtime dependencies,
-including provider packages resolved by name, remain available in the production generation. The launcher
+The standalone package retains application-declared runtime dependencies, including providers resolved
+by name, and only those SDK third-party packages imported externally by the compiled API/worker.
+The SDK import inventory is sorted, deduplicated and bounded. UI-only SDK dependencies do not pull
+React into the backend. Exact resolved versions and integrity records still come from the reviewed lock.
+
+The standalone package excludes workspace links, Next, React, TypeScript and `tsx`. The launcher
 imports compiled JavaScript in its own Node process and sets `NODE_ENV=production` and the
 generation's absolute static-export path. Core still injects identity, assigned ports, service URLs,
 managed-workspace/skill mounts and app-owned storage. Provider connections and user data keep their
 existing app data locations.
+
+Native setup and injected services retain an explicit OS/toolchain environment, including Windows
+profile, application-data and installation directories needed by NuGet and executable discovery.
+The filter excludes ambient provider credentials, Git configuration, Docker authentication and
+Node loader options; retaining system paths does not inherit arbitrary Core environment variables.
 
 ## Isolation And Recovery
 

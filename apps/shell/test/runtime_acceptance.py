@@ -7,6 +7,7 @@ import os
 import pathlib
 import re
 import shutil
+import subprocess
 import time
 import urllib.parse
 import urllib.request
@@ -70,6 +71,60 @@ def check(context):
     assert isinstance(call(app_origin, '/api/core/api/apps/execution-targets')['apps'], list)
     assert isinstance(call(app_origin, '/api/core/api/development/activation-workspaces')['workspaces'], list)
     say('PASS: Docker Shell, password login, Core launch identity and both workspace inventory endpoints')
+
+    # Exercise storage through Shell's own authenticated management facade. Synthetic files
+    # belong only to this managed child; Finish removes them with the rest of the fixture.
+    cache = root/'apps'/'hosty.shell'/'cache'
+    cache.mkdir(parents=True, exist_ok=True)
+    (cache/'storage-acceptance.bin').write_bytes(b's' * 8192)
+    unknown = root/'storage-acceptance-unclassified'
+    unknown.mkdir()
+    (unknown/'payload.bin').write_bytes(b'u' * 3072)
+    outside = base/'storage-acceptance-outside'
+    outside.mkdir()
+    (outside/'excluded.bin').write_bytes(b'x' * 65536)
+    (root/'storage-acceptance-link').symlink_to(outside, target_is_directory=True)
+    state = call(app_origin, '/api/core/api/storage')
+    assert state['snapshot'] is None and not state['isScanning'], 'Storage GET started acquisition'
+    storage_csrf = call(app_origin, '/api/core/api/auth/csrf')['token']
+    context['diagnostic_secrets'].add(storage_csrf)
+    storage_request = {'requestId':str(uuid.uuid4())}
+    call(app_origin, '/api/core/api/storage/refresh', storage_request, storage_csrf)
+    def storage_complete():
+        current = call(app_origin, '/api/core/api/storage')
+        assert not current.get('lastError'), 'Storage acquisition failed'
+        return current if current['snapshot'] is not None and not current['isScanning'] else None
+    state = wait_for(storage_complete, 90)
+    snapshot = state['snapshot']
+    assert snapshot['excludedSymlinkCount'] >= 1
+    assert any(resource['category'] == 'apps' and resource['appId'] == 'hosty.shell'
+        and resource['logicalBytes'] >= 8192 for resource in snapshot['resources'])
+    assert any(resource['category'] == 'other' and
+        resource['relativePath'] == 'storage-acceptance-unclassified' and
+        resource['logicalBytes'] >= 3072 for resource in snapshot['resources'])
+    assert not any(resource['relativePath'] == 'storage-acceptance-link'
+        for resource in snapshot['resources'])
+    assert snapshot['logicalBytes'] == sum(category['logicalBytes'] for category in snapshot['categories'])
+    assert snapshot['logicalBytes'] == sum(resource['logicalBytes'] for resource in snapshot['resources'])
+    if snapshot['allocatedBytes'] is not None:
+        assert snapshot['allocatedBytes'] == sum(category['allocatedBytes'] for category in snapshot['categories'])
+        assert snapshot['allocatedBytes'] == sum(resource['allocatedBytes'] for resource in snapshot['resources'])
+    replay = call(app_origin, '/api/core/api/storage/refresh', storage_request, storage_csrf)
+    assert not replay['isScanning'] and replay['snapshot']['id'] == snapshot['id']
+    say('PASS: Shell storage permission, explicit refresh, cached replay, category totals, app cache, unknown files and excluded symlink')
+    if os.environ.get('HOSTY_SHELL_STORAGE_BROWSER') == '1':
+        # The optional real-browser check uses this same child and normal password login.
+        # Its credentials travel only over stdin, never through argv, files or exported state.
+        playwright_module = os.environ.get('HOSTY_PLAYWRIGHT_MODULE')
+        assert playwright_module, 'HOSTY_PLAYWRIGHT_MODULE is required for storage browser acceptance'
+        browser_configuration = json.dumps({'coreOrigin':request('/control/v1/core/status', control=True)['corePublicOrigin'], 'appOrigin':app_origin, 'appUrl':link,
+                'email':'activation-fixture@example.test', 'password':password,
+                'playwrightModule':playwright_module})
+        browser_check = subprocess.run(['node', str(workspace/'apps/shell/test/storage-browser-acceptance.mjs')],
+            input=browser_configuration, env=context['env'], capture_output=True, text=True, timeout=240)
+        assert browser_check.returncode == 0, 'Storage browser acceptance failed: '+browser_check.stderr.strip()
+        say(browser_check.stdout.strip())
+
     # This local fixture intentionally has no feed. The proxy must preserve the structured
     # absence code consumed by App Details, and migration reads must not alter the installation.
     before_source_read = next(app for app in request('/api/apps')['apps'] if app['id'] == 'hosty.shell')

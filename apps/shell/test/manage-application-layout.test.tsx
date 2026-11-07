@@ -45,7 +45,7 @@ const click = (label: string) => act(async () => [...container.querySelectorAll<
 
 it("keeps Manage actions and approved tab order without changing source or runtime on entry", async () => {
   await render();
-  expect([...container.querySelectorAll('[role="tab"]')].map(item => item.textContent)).toEqual(["Launch", "Logs", "Services", "Metrics", "Parameters", "Folders", "Network", "Permissions", "Updates", "Backups"]);
+  expect([...container.querySelectorAll('[role="tab"]')].map(item => item.textContent)).toEqual(["Launch", "Logs", "Services", "Metrics", "Storage", "Parameters", "Folders", "Network", "Permissions", "Updates", "Backups"]);
   expect(container.querySelector('nav[aria-label="Breadcrumb"]')?.textContent).toBe("DashboardMedia");
   expect(container.querySelector('nav[aria-label="Breadcrumb"] a')?.getAttribute("href")).toBe("/dashboard");
   expect(container.querySelector("h1")?.textContent).toBe("Media");
@@ -180,10 +180,23 @@ it("reveals the selected Manage tab on selection and width changes without scrol
   [...strip.querySelectorAll<HTMLElement>('[role="tab"]')].forEach((trigger, index) => {
     trigger.getBoundingClientRect = () => ({ left: index * 100 - strip.scrollLeft, right: (index + 1) * 100 - strip.scrollLeft, width: 100 } as DOMRect);
   });
-  await tab("Updates"); expect(strip.scrollLeft).toBe(640);
-  width = 180; await act(async () => resized()); expect(strip.scrollLeft).toBe(720);
+  await tab("Updates"); expect(strip.scrollLeft).toBe(740);
+  width = 180; await act(async () => resized()); expect(strip.scrollLeft).toBe(820);
   await tab("Launch"); expect(strip.scrollLeft).toBe(0); expect(pageScroll).not.toHaveBeenCalled();
   pageScroll.mockRestore();
+});
+
+it("loads the shared storage measurement only when its administrator tab opens", async () => {
+  vi.mocked(fetch).mockImplementation(async input => Response.json(String(input).includes("/api/storage")
+    ? { snapshot: null, isScanning: false, lastError: null } : { feeds: [] }));
+  await render();
+  expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes("/api/storage"))).toBe(false);
+  await tab("Storage");
+  expect(container.textContent).toContain("No storage measurement available");
+  expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).includes("/api/storage"))).toHaveLength(1);
+  props.canManageApps = false;
+  await render();
+  expect([...container.querySelectorAll('[role="tab"]')].some(item => item.textContent === "Storage")).toBe(false);
 });
 
 

@@ -703,7 +703,7 @@ export type AppAction = "start" | "stop" | "restart" | "backup" | "autostart";
 export type DetailView = "backups" | "settings" | "update" | "remove" | "logs";
 
 // Tabs inside the consolidated Settings dialog. Hidden when the app has no matching data.
-export type SettingsTab = "app" | "parameters" | "permissions" | "publicOrigins" | "mounts" | "source" | "backups" | "logs" | "services" | "metrics";
+export type SettingsTab = "app" | "parameters" | "permissions" | "publicOrigins" | "mounts" | "source" | "backups" | "logs" | "services" | "metrics" | "storage";
 // Home is a neutral entry: administrators resolve to Dashboard; ordinary users open apps from
 // navigation. Legacy catalog URLs no longer render a second app list.
 export type ShellView =
@@ -713,7 +713,7 @@ export type ShellView =
 
 // Host-level configuration surfaces, resolved from the settings group and section URL parameters. Distinct from the per-app
 // `SettingsTab` above, which describes one app rather than the host.
-export type HostSettingsTab = "source" | "profile" | "general" | "agents" | "connections" | "shell" | "users" | "tokens" | "permissions" | "policies" | "core" | "mounts" | "ingress";
+export type HostSettingsTab = "source" | "profile" | "general" | "agents" | "connections" | "shell" | "users" | "tokens" | "permissions" | "policies" | "core" | "mounts" | "ingress" | "storage";
 
 // A device waiting for someone to approve the code it is showing. Held in memory by Core and gone ten
 // minutes later, so this is never a durable record of anything.
