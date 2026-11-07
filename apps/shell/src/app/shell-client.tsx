@@ -227,6 +227,7 @@ export function ShellClient({
   // instance. The manifest alone is not enough: reopening the same manifestRef would keep the key,
   // skip the mount-only auto-review, and (with the panel state wiped on open) render an empty dialog.
   const updateActivations = useRef(new Set<string>());
+  const bulkUpdateActivation = useRef(false);
   const installActivation = useRef(false);
   const [installNonce, setInstallNonce] = useState(0);
   const [mountLibrary, setMountLibrary] = useState<{ scope: string | null; mounts: CoreGlobalMount[] | null; loading: boolean; error: string | null }>({
@@ -1257,25 +1258,33 @@ export function ShellClient({
     }
   }, [coreOrigin, refresh, sendCsrfJson, shellAppId]);
 
-  const applyUpdateFromRow = useCallback(async (app: CoreApp) => {
-    if (updateActivations.current.has(app.id)) return;
+  const prepareAndEnqueueUpdate = useCallback(async (app: CoreApp, routineOnly = false): Promise<boolean> => {
+    if (updateActivations.current.has(app.id)) return false;
     updateActivations.current.add(app.id);
     // Reserve the window in the click gesture. A fresh routine verdict needs no window;
     // if its refresh discovers a review, Core's explicit confirmation link is available.
-    const reserve = app.updateCheck?.requiresReview || app.updateCheck?.error || !app.updateCheck?.planDigest;
+    const reserve = !routineOnly && (app.updateCheck?.requiresReview || app.updateCheck?.error || !app.updateCheck?.planDigest);
     const popup = reserve ? openInstallationConfirmation() : null;
     const actionKey = `${app.id}:update`;
     setBusyAction(actionKey);
     try {
       for (let attempt = 0; attempt < 2; attempt++) {
-        const plan = await getUpdatePlan(app, attempt > 0 || Boolean(app.updateCheck?.error));
+        // The offer may predate another release. Resolve the latest candidate before consent
+        // or queueing, while Core still applies that exact plan without re-resolving it.
+        const plan = await getUpdatePlan(app, true);
         if (plan.error) throw new Error(plan.error);
         if (plan.sourceConfigured === false) throw new Error("Configure an update source in app Settings before updating.");
-        if (!plan.changes.length) { popup?.close(); return; }
+        if (!plan.changes.length) { popup?.close(); await refresh(); return false; }
+        if (routineOnly && plan.requiresReview !== false) {
+          toast.warning("Update needs review", {
+            description: `${app.displayName} now requires review. Open its update to review the latest changes.` });
+          await refresh();
+          return false;
+        }
         try {
-          if (plan.requiresReview !== false) await enqueueUpdate(app, plan.planDigest, popup);
-          else { popup?.close(); await enqueueRoutine(app, plan.planDigest, true); }
-          return;
+          if (plan.requiresReview !== false) return await enqueueUpdate(app, plan.planDigest, popup);
+          popup?.close();
+          return await enqueueRoutine(app, plan.planDigest, true);
         } catch (error) {
           if (attempt === 1 || !isStaleUpdatePreparation(error)) throw error;
         }
@@ -1283,10 +1292,17 @@ export function ShellClient({
     } catch (error) {
       popup?.close();
       if (!isAuthRequiredRedirectError(error)) toast.error("Update could not be prepared", {
+        appId: app.id,
         description: error instanceof Error ? error.message : "Check the update source and try again.",
       });
+      void refresh();
     } finally { updateActivations.current.delete(app.id); setBusyAction(current => current === actionKey ? null : current); }
-  }, [enqueueRoutine, enqueueUpdate, getUpdatePlan]);
+    return false;
+  }, [enqueueRoutine, enqueueUpdate, getUpdatePlan, refresh]);
+
+  const applyUpdateFromRow = useCallback(async (app: CoreApp) => {
+    await prepareAndEnqueueUpdate(app);
+  }, [prepareAndEnqueueUpdate]);
 
   // Points an installed app at one of its app-owned feeds. Core resolves the stored FeedsUrl and
   // re-points ManifestUrl at the feed head, so the update plan is rebuilt against the new selection.
@@ -1798,12 +1814,15 @@ export function ShellClient({
 
   // Submit routine updates without popups, with Shell last because it reloads this page.
   const updateAllApps = useCallback(async () => {
-    const routine = state.apps.filter(isRoutineUpdate);
-    if (routine.length === 0) {
-      return;
+    if (bulkUpdateActivation.current) return;
+    bulkUpdateActivation.current = true;
+    try {
+      const routine = state.apps.filter(isRoutineUpdate);
+      await reviewUpdatesInOrder(routine, shellAppId, app => prepareAndEnqueueUpdate(app, true));
+    } finally {
+      bulkUpdateActivation.current = false;
     }
-    await reviewUpdatesInOrder(routine, shellAppId, app => enqueueRoutine(app, app.updateCheck!.planDigest!));
-  }, [enqueueRoutine, shellAppId, state.apps]);
+  }, [prepareAndEnqueueUpdate, shellAppId, state.apps]);
 
   useEffect(() => {
     void refresh();
