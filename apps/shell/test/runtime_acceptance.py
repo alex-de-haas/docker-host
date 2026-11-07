@@ -47,6 +47,57 @@ def check(context):
         headers={'Content-Type':'application/x-www-form-urlencoded','Origin':origin}), timeout=30) as response: response.read()
     assert call(origin, '/api/auth/session')['authenticated']
     csrf = call(origin, '/api/auth/csrf')['token']
+    # Exercise direct user creation and review in the managed child before establishing the
+    # separate app identity. Only this child's disposable accounts and data participate.
+    admin_id = call(origin, '/api/auth/session')['user']['id']
+    proposal = {'email':'created-member@example.test', 'displayName':'Created member',
+                'password':password, 'role':'host.user', 'assignedAppIds':[manifest['id']]}
+    create_headers = {'Content-Type':'application/json', 'Origin':origin, 'X-Hosty-CSRF':csrf}
+    create_request = urllib.request.Request(origin+'/api/auth/users',
+        data=json.dumps(proposal).encode(), headers=create_headers)
+    try:
+        client.open(create_request, timeout=30)
+        raise AssertionError('User creation skipped protected settings review')
+    except urllib.error.HTTPError as error:
+        assert error.code == 428
+        creation_review = json.load(error)
+    creation_path = '/settings/confirm/'+creation_review['id']
+    with client.open(origin+creation_path, timeout=30) as response:
+        creation_html = response.read().decode()
+    assert password not in creation_html, 'Password leaked into the review page'
+    creation_nonce = re.search(r'name=nonce value="([^"]+)"', creation_html)
+    assert creation_nonce, 'User creation review did not contain a decision form'
+    context['diagnostic_secrets'].add(creation_nonce.group(1))
+    creation_decision = urllib.parse.urlencode({'nonce':creation_nonce.group(1), 'decision':'approve'}).encode()
+    with client.open(urllib.request.Request(origin+creation_path, data=creation_decision,
+        headers={'Content-Type':'application/x-www-form-urlencoded', 'Origin':origin}), timeout=30) as response:
+        response.read()
+    create_request.add_header('X-Hosty-Settings-Change', creation_review['id'])
+    with client.open(create_request, timeout=30) as response:
+        created = json.load(response)['user']
+    assert created['role'] == 'host.user' and created['assignedAppIds'] == [manifest['id']]
+    assert created['activeSessionCount'] == 0 and 'password' not in created
+    assert call(origin, '/api/auth/session')['user']['id'] == admin_id
+
+    class NoLoginRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl): return None
+    member_jar = http.cookiejar.CookieJar()
+    member = urllib.request.build_opener(urllib.request.ProxyHandler({}),
+        urllib.request.HTTPCookieProcessor(member_jar), NoLoginRedirect())
+    member_form = urllib.parse.urlencode({'email':proposal['email'], 'password':password}).encode()
+    try:
+        member.open(urllib.request.Request(origin+'/login', data=member_form,
+            headers={'Content-Type':'application/x-www-form-urlencoded', 'Origin':origin}), timeout=30)
+        raise AssertionError('Created member login did not redirect to the installed UI')
+    except urllib.error.HTTPError as error:
+        assert error.code == 302
+    context['diagnostic_secrets'].update(cookie.value for cookie in member_jar)
+    with member.open(origin+'/api/auth/session', timeout=30) as response:
+        member_session = json.load(response)
+    assert member_session['authenticated'] and member_session['user']['id'] == created['id']
+    assert call(origin, '/api/auth/session')['user']['id'] == admin_id
+    say('PASS: reviewed direct user creation, app assignment and separate password login in the child Core')
+
     verifier = uuid.uuid4().hex + uuid.uuid4().hex
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip('=')
     code = call(origin, '/api/apps/hosty.shell/launch-code',
