@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-25
-updated: 2026-11-04
+updated: 2026-11-07
 summary: Compose app-owned task providers and executors through Core contracts, with Harness profiles, optional resources, decisions and artifact handoffs.
 components: [apps/core, apps/harness, apps/documents, packages/app-sdk]
 ---
@@ -333,15 +333,16 @@ is not a gate for Basic Tasks implementation.
 
 [Assistant Events And Session Continuation](../assistant-events-and-continuation/plan.md) is the
 scoped owner for app-activity bindings, authorized event admission and result-triggered continuation
-of an existing assistant conversation. Its examples are chess and one delegated task result. It
+of an existing assistant conversation. Its examples are an interactive-activity fixture and one delegated task result. It
 consumes Notifications D6 and Durable Agent Jobs D7, preserves direct provider messaging and private
 session boundaries. The later selected flat coordination belongs to Profile-Based Task Delegation;
 richer material/human composition remains with Harness Work Orchestration.
 
 An interactive activity needs no task per move, and one parent wait needs no organization tree.
 This is an additional bounded composition linked from I6/I10/I11, not approval of this umbrella or
-completion of its deliverables. The independent chess repository owns game behavior and consumes
-the public platform contract. The new plan records dependency sequencing as an open Ready decision.
+completion of its deliverables. The owner withdrew the independent chess application plan on
+2026-11-07; platform acceptance retains a bounded interactive fixture. The event plan records
+dependency sequencing as an open Ready decision.
 
 [Harness Pull Request Inbox](../harness-pull-request-inbox/plan.md) is a separate read-only
 repository-observation and page/panel proposal. Its optional event/routine/decision links reuse the

@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-29
-updated: 2026-11-04
+updated: 2026-11-07
 summary: Bind application activities and delegated results to assistant conversations with authorized events, observable continuation and recoverable context.
 components: [apps/core, apps/harness, apps/desktop, apps/shell, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -11,7 +11,7 @@ components: [apps/core, apps/harness, apps/desktop, apps/shell, packages/app-sdk
 ## Goal And Approval Boundary
 
 Let a compatible assistant continue the correct conversation when an application reports a relevant
-event or a delegated task returns a result. An interactive chess game and a parent awaiting delegated
+event or a delegated task returns a result. An interactive activity fixture and a parent awaiting delegated
 work are the two initial runtime acceptance examples. Neither needs continuous model calls while
 waiting. A Dependabot review routine is an additional contract-design example: it can create work
 when no recipient conversation exists yet, then resume that work after CI or a human decision.
@@ -21,6 +21,10 @@ the independent Hosty Chess plan. This is documentation-only authorization. The 
 no implementation, provider execution, commit, publication or live activation is approved here.
 It scopes the assistant-facing connection between existing capabilities, not a second event bus,
 task system, transcript store or scheduler.
+
+On 2026-11-07 the owner withdrew the independent Hosty Chess application plan. This platform plan
+retains its generic interactive-activity and delegated-result contracts. Interactive acceptance uses
+a bounded domain fixture; shipping a standalone chess application is no longer a dependency.
 
 ## Local Delegated-Result Transfer (2026-11-04)
 
@@ -45,7 +49,7 @@ reports 0.163.0. Existing behavior and proposed additions are distinct:
 | Existing behavior | Addition proposed here |
 | --- | --- |
 | [Desktop assistant panels](../desktop-shell/feature.md) open an empty app-context draft and retain the conversation for that window. Opening does not start inference. | An explicit, durable binding from an application activity to a selected assistant conversation, independent of a window's lifetime. |
-| [App context](../assistant-app-context/feature.md) supplies selected application metadata; it is not tool authority. | Versioned activity references and authorized state retrieval, such as one user's particular chess match. |
+| [App context](../assistant-app-context/feature.md) supplies selected application metadata; it is not tool authority. | Versioned activity references and authorized state retrieval, such as one user's particular interactive activity. |
 | [Assistant handoffs](../provider-consumption/feature.md) accept app-originated draft preparation; provider-originated v1 handoffs remain draft-only. | A separately negotiated event-input and continuation capability with explicit activation policy. Existing draft behavior stays compatible. |
 | [Basic Tasks](../basic-tasks/feature.md) persists task dispatch and explicit execution results. | An authorized result can reach a registered parent wait and cause one eligible continuation in its existing conversation. |
 | [Core event bus](../core-event-bus/feature.md) carries ephemeral refresh hints. | Consumption of the durable delivery owned by Notifications D6, with receipts and recovery rather than relying on an open browser stream. |
@@ -67,9 +71,7 @@ it does not require importing a child's entire transcript or implementing a full
 | [Profile-Based Task Delegation](../profile-task-delegation/feature.md) and [Harness Work Orchestration D7](../harness-work-orchestration/plan.md#deliverables) | Flat task decomposition/routing and the first local wait consumer; richer selected material access stays with D7. | Cross-application result-to-parent exchange over the negotiated transport, preserving the existing local correlation contract. |
 | [Shared Decisions](../shared-decisions/feature.md#durable-native-waiting) | Addressed question/response records and consistent publication of their resolution. | A resolved-decision event can satisfy its correlated wait; event delivery is not approval or proof of resumed execution. |
 | [Panel System](../sdk-panel-system/feature.md) and [UI Composition](../sdk-ui-composition/feature.md) | Verified provider presentation, retained frames and navigation. | Connect a selected activity to its assistant presentation; browser view/presentation IDs are not domain identity. |
-| [Hosty Chess plan](https://github.com/alex-de-haas/hosty-chess/blob/main/docs/features/chess-v1/plan.md) | Game rules, storage, board, gameplay tools and application-side events in the independent repository. | Generic Hosty contract, assistant adapter and platform acceptance fixtures. |
 
-The chess plan is currently local and unpublished; its link names the intended repository location.
 Cross-links do not approve or complete another owner's deliverables. Notifications D6 and Durable
 Agent Jobs D7 remain prerequisites, not work silently absorbed here. Agree their delivery sequence
 or an explicit scope transfer before Ready; do not split their features into partial PRs to bypass
@@ -78,7 +80,7 @@ cross-provider session migration and a generic agent chat network are outside th
 
 ## Domain Independence And Implementation Priority (2026-10-29)
 
-The owner clarifies that events can originate from unrelated domains. Chess turns, delegated results,
+The owner clarifies that events can originate from unrelated domains. Interactive actions, delegated results,
 PR changes and decision answers are examples, not a closed event catalog or a required workflow.
 The common contract uses an authenticated source, versioned event type, subject/resource reference,
 opaque revision where relevant, stable event identity and causation/correlation. The producer owns
@@ -86,7 +88,7 @@ its payload schema and domain validation; a GitHub head SHA, game ID or task sta
 field in every event. Schema/version negotiation and bounded payloads still apply to new types.
 
 Subscription/routine filters must be compatible with the selected source schema and current access.
-Do not encode Dependabot, PR status, a chess turn or a first-party app identity into Core's generic
+Do not encode Dependabot, PR status, an interactive action or a first-party app identity into Core's generic
 delivery/admission policy. Native transports such as webhooks, periodic observation and direct app
 publication feed the same contract. A consumer can target an existing activity binding or an
 application-owned routine activation that creates work; no universal live-chat prerequisite exists.
@@ -106,8 +108,8 @@ non-PR producer/consumer exchange alongside the PR example so the design remains
 2. **Admit continuation.** The assistant app checks binding policy, current access, session state,
    correlation, revision and budget. It can queue, park, reject or start one bounded turn.
 3. **Observe execution and effects.** The assistant adapts the accepted input to its native provider;
-   domain tools validate any proposed action independently. A finished turn is not proof of a legal
-   chess move, an accepted business result or a completed user goal.
+   domain tools validate any proposed action independently. A finished turn is not proof of a valid
+   domain action, an accepted business result or a completed user goal.
 
 Core supplies generic discovery, authority and the linked durable-domain-event infrastructure. It
 does not select prompts, own conversations, run model loops or infer a recipient from a first-party
@@ -142,7 +144,7 @@ read, admission and effect; uninstall/reinstall invalidates old installation ref
 Opening an assistant panel may prepare context and a draft, but stays inference-free. A deliberate
 Start/Play action can authorize a bounded recurring response to specified activity events. Its
 scope, pause/stop control and limits are visible. Record this authorization once and reuse it within
-its scope; do not ask again for every chess move. Merely receiving an event is never that authority.
+its scope; do not ask again for every authorized activity turn. Merely receiving an event is never that authority.
 
 Proposed v1 binds one activity to one selected conversation; reopening and multiple views resolve the
 same binding. Switching the focused app, starting a new match or selecting another provider must not
@@ -155,7 +157,7 @@ expires parks for reauthorization; unattended use needs the existing background-
 Specify a versioned envelope with a stable producer event ID, authenticated source installation,
 event type, activity/resource reference and revision, occurrence time, correlation/causation IDs,
 and bounded facts or protected result references. Destination binding and subscription are authorized
-routing records, not a producer-selected arbitrary session. Event names such as `chess.turn_ready`
+routing records, not a producer-selected arbitrary session. Event names such as `activity.turn_ready`
 and `task.execution_settled` below are illustrative, not registered platform contracts.
 
 Use the owning application's transaction/outbox boundary, or an equally explicit recovery protocol,
@@ -193,9 +195,9 @@ result only when it satisfies a real pending tool invocation with matching ident
 a historical tool call or impersonate the user. The model eventually receives supported input, but
 the durable event, permission to run and native message are separate records.
 
-The domain app is authoritative for the board/task; the assistant owns the visible conversation and
+The domain app is authoritative for the activity/task; the assistant owns the visible conversation and
 model context. Supply a compact current snapshot and references for history retrieval. D7 owns recent
-turns, versioned summaries with coverage and authorized retrieval of earlier evidence; no chess-owned
+turns, versioned summaries with coverage and authorized retrieval of earlier evidence; no domain-owned
 second transcript or fixed replay of the whole conversation is needed. Stored history does not mean
 every turn fits the model window. Native resume is bound to the same provider/account; unsupported
 resume uses an explicitly supported same-provider reconstruction path or reports unsupported.
@@ -203,31 +205,32 @@ Recovered text must not replay old tool effects, permissions or previously consu
 
 Use one admitted turn at a time per conversation and bounded input/output, elapsed time, tool actions,
 inference and automatic wake counts. Preserve causation across apps to prevent event feedback loops:
-an agent's own chess move is not a new human-turn trigger. Define aggregate delegation budgets and
+an agent's own domain action is not a new user-action trigger. Define aggregate delegation budgets and
 failure escalation with the orchestration owner. Manual resume reuses the pending receipt where safe;
 a new attempt requires settled evidence or explicit reconciliation of unknown effects.
 
-## Example: Chess And Conversation In One Assistant
+## Example: Interactive Activity And Conversation In One Assistant
 
-1. The user opens Chess and chooses a compatible assistant panel. Context identifies the app; creating
-   a game adds its authorized activity binding. The provider retains its own model/profile selection.
-2. Play records the opponent side and scoped permission to respond on that game's turns. If the user
-   is black, the initial position produces the first turn-ready event without a fabricated player move.
-3. Chess atomically saves a legal player move and publication intent with the new position revision.
-   The bound assistant receives the event, re-reads position/legal moves and continues the same chat.
-4. The agent selects a move through a game-owned action with expected position revision, stable request
-   ID and a trusted binding/turn authorization. Chess validates ownership, opponent side, turn and legal
-   move, then atomically saves the move and effect receipt. Re-delivery returns the recorded outcome.
-5. The user asks why it chose that move in the assistant panel. The same conversation can read the
-   board/history and answer. A discussion-only turn has no game mutation authority; a prompt sentence
-   cannot grant it. The binding/adapter must propagate a trustworthy turn purpose to game tools.
-6. Reopening restores the game and selects the existing conversation without inference. Pause stops
-   automatic reactions; game end fences later move attempts while leaving authorized discussion usable.
+Use a bounded interactive fixture to verify the platform contract without delivering a separate
+application. Its domain state and action rules are authoritative; the assistant owns the conversation.
 
-The game never needs a provider task per move or chat message. Chess chooses no model credentials,
-does not parse free-form prose as a move and does not copy the assistant transcript. An accepted move
-survives failure to produce commentary. A model that offers no valid move leaves a visible unresolved
-turn; the app does not substitute an engine move. The independent chess plan owns its implementation.
+1. The user opens the fixture and chooses a compatible assistant panel. Starting the activity creates
+   its authorized binding. The provider retains its own model/profile selection.
+2. Activation records scoped permission for assistant reactions. An assistant-first activity can
+   publish its initial event without fabricating a user action.
+3. The fixture atomically saves a user action and publication intent with a new state revision.
+   The bound assistant receives the event, reads current state and continues the same conversation.
+4. The agent requests a domain action with expected revision, stable request ID and trusted
+   binding/turn authority. The fixture validates it and atomically saves the effect and receipt;
+   re-delivery returns the recorded outcome.
+5. A question in the same assistant panel can read current state/history but cannot authorize a
+   domain mutation. The adapter supplies trustworthy turn purpose independently of prompt text.
+6. Reopening restores the activity and existing conversation without inference. Pause prevents new
+   automatic reactions; ending the activity fences late actions while retaining authorized discussion.
+
+The fixture creates no provider task per interaction, chooses no model credentials and copies no
+assistant transcript. A committed effect survives missing commentary. Invalid or unresolved actions
+remain visible without silently substituting an action or starting another inference attempt.
 
 ## Example: A Delegated Result Continues Its Parent
 
@@ -336,15 +339,15 @@ changes the two initial runtime examples or grants event-triggered execution aut
 - [ ] D3. Implement the remaining cross-application Harness event-to-session adapter over common session primitives, the transferred local child-result consumer and existing journal, with idle/busy/waiting/paused/cancelled policy, trusted turn purpose, current authority, budgets, same-provider recovery and uncertain-start reconciliation; do not duplicate the session engine.
 - [ ] D4. Add the versioned public SDK/provider contract and optional discovery capability, plus activity attach/reopen/pause/stop presentation in existing assistant panels; retain draft-only v1 handoffs and inference-free opening, support unsupported-provider outcomes and installation changes, and verify an unrelated third-party assistant fixture.
 - [ ] D5. Integrate independently provided delegated-task results and parent waits over the public event contract, reusing the transferred same-Harness consumer correlation; verify early completion, failure/cancellation, required-review distinctions and selected-result visibility without duplicate delivery. Task decomposition remains with its owner.
-- [ ] D6. Verify the two end-to-end examples with the independent chess implementation and one real assistant configuration, plus contract fixtures for a separately implemented assistant; cover attribution, turn-only mutation authority, restart, lost/duplicate/out-of-order input, busy sessions, revoked access and late results without duplicate domain effects.
-- [ ] D7. Document verified capabilities, compatibility limits, retention and operator recovery in feature.md; reconcile linked owners and the chess plan without completing their outstanding scope, remove this plan only after all deliverables pass and regenerate the documentation index.
+- [ ] D6. Verify the two end-to-end examples with the interactive-activity fixture and one real assistant configuration, plus contract fixtures for a separately implemented assistant; cover attribution, turn-only mutation authority, restart, lost/duplicate/out-of-order input, busy sessions, revoked access and late results without duplicate domain effects.
+- [ ] D7. Document verified capabilities, compatibility limits, retention and operator recovery in feature.md; reconcile linked owners without completing their outstanding scope, remove this plan only after all deliverables pass and regenerate the documentation index.
 
 ## Sequence And Decisions Before Ready
 
 First resolve D1 with the shared delivery and session owners. Existing notification, task and panel
 behavior must remain independently usable. After separately approved prerequisites are available,
 build one idle-session continuation, then recovery/busy behavior and the two consuming examples.
-Keep D1-D7 on one feature branch/PR; chess remains its own repository feature. These are proposed
+Keep D1-D7 on one feature branch/PR, including the bounded interactive acceptance fixture. These are proposed
 implementation phases, not authorization to begin them during planning.
 
 Decisions still needed:
@@ -354,7 +357,7 @@ Decisions still needed:
 - Set the initial active-authority policy, pause/detach/end semantics, idle/busy defaults, wait retention,
   event limits, deduplication lifetime, wake/cost budgets and behavior after retention gaps.
 - Specify how the native adapter supplies trusted binding/turn purpose to tools, so a discussion turn
-  cannot spend a move authorization. Identify native resume/reconstruction and run-reconciliation
+  cannot spend a domain-action authorization. Identify native resume/reconstruction and run-reconciliation
   capabilities for each actual provider; advertising an assistant panel alone is insufficient.
 - Agree delivery of Notifications D6 and common session recovery D7 without requiring unrelated
   notification channels, scheduling UI or hierarchy, and reconcile their existing feature scopes
@@ -382,14 +385,14 @@ or select the first live event producer.
 
 Implementation acceptance must cover:
 
-- Two chess turns and a position-aware discussion in the same conversation, with player-black opening,
-  safe reopen and a discussion-only attempt to mutate the board denied beside a legitimate turn action.
+- Two activity events and a state-aware discussion in the same conversation, including assistant-first
+  activation, safe reopen and a discussion-only mutation denied beside an authorized domain action.
 - One child task success and one failure reaching the correct parent wait; a native subagent completion
   is not injected twice, and required business review is not inferred from execution completion.
 - Interrupt source persistence/publication, inbox append/ack and session command acceptance. Recover
   original IDs after lost replies; never equate transport retries with a new inference attempt.
 - Busy-parent input, fast-child/wait registration, concurrent browser views, cancelled or paused
-  sessions, late results, stale board revisions, retention gaps, provider restart and unknown stop state.
+  sessions, late results, stale activity revisions, retention gaps, provider restart and unknown stop state.
 - Current-user and destination-session denial, forged source/user IDs, cross-installation replay,
   revoked grants, changed provider/account, unavailable result references and external input that
   attempts to elevate itself into a user/system instruction.

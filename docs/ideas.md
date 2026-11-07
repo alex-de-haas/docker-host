@@ -1,6 +1,6 @@
 ---
 created: 2026-10-23
-updated: 2026-11-03
+updated: 2026-11-07
 ---
 
 # Ideas
@@ -687,8 +687,9 @@ sampling is deprecated.
 **Scoped planning, 2026-10-29:** The owner requested
 [Assistant Events And Session Continuation](features/assistant-events-and-continuation/plan.md) for
 activity/conversation bindings, authorized reactions, context recovery and delegated-task results.
-Chess is the first interactive example, with game state in the game and chat history in the selected
-compatible assistant. This scopes a Draft proposal; broader interactive activities remain ideas.
+The interactive example uses app-owned state and chat history in the selected compatible assistant.
+The independent Chess application plan was withdrawn on 2026-11-07; a bounded platform fixture
+retains interactive contract acceptance. Broader interactive activities remain ideas.
 
 ## I11. Application-Provided Roles, Instructions And Interaction Profiles
 
@@ -768,13 +769,11 @@ addition to any feature plan.
   review of changed instructions on update, as manifests are reviewed today.
 - Personas drift over long conversations. Keep profiles short and send them again each turn.
 
-**Scoped planning, 2026-10-29:** The independent
-[Hosty Chess Draft](https://github.com/alex-de-haas/hosty-chess/blob/main/docs/features/chess-v1/plan.md)
-selects agent-chosen legal moves and activity-scoped tone/language with an existing assistant panel.
-That plan is currently local and unpublished. It depends on
-[Assistant Events And Session Continuation](features/assistant-events-and-continuation/plan.md).
-It does not introduce shared Harness profiles, calibrated Elo, engine-based moves or the broader
-coaching/difficulty controls considered in this idea.
+**Owner decision, 2026-11-07:** The independent Hosty Chess application plan was withdrawn and its
+unpublished local draft removed. The chess examples above remain exploratory illustrations of
+roles and interaction profiles, with no application delivery commitment.
+[Assistant Events And Session Continuation](features/assistant-events-and-continuation/plan.md)
+retains its generic platform scope and bounded interactive acceptance fixture.
 
 ## I12. Workspace, Session And Material Lifetimes
 
