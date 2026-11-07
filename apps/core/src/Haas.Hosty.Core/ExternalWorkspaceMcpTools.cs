@@ -87,11 +87,12 @@ internal sealed class ExternalWorkspaceMcpTools
         => CommandAsync(workspaceId, "refresh", new(requestId), authorization, workspaces, accessor, audit, clock, cancellationToken);
 
     [McpServerTool(Name = "commit_workspace", ReadOnly = false, Destructive = false, Idempotent = true)]
-    [Description("Commit explicitly selected repository-relative paths at the reviewed expectedHead with explicit message and author. Requires mcp:workspaces plus user/repository permission to commit. Preserve unrelated changes; follow repository commit and attribution rules. Use a UUID requestId and repeat its exact arguments after uncertainty. This never pushes or publishes.")]
+    [Description("Commit explicitly selected repository-relative paths at the reviewed expectedHead with explicit message and author. Pass reviewId from get_workspace_commit_review for a shared workspace. Requires mcp:workspaces plus user/repository permission to commit. Preserve unrelated changes; follow repository commit and attribution rules. Use a UUID requestId and repeat its exact arguments after uncertainty. This never pushes or publishes.")]
     public static Task<string> CommitAsync(string workspaceId, string requestId, string expectedHead, string message,
         string[] paths, string authorName, string authorEmail, ExternalWorkspaceMcpAuthorization authorization,
-        DevelopmentWorkspaceService workspaces, IHttpContextAccessor accessor, AuditStore audit, IClock clock, CancellationToken cancellationToken)
-        => CommandAsync(workspaceId, "commit", new(requestId, expectedHead, message, paths, authorName, authorEmail),
+        DevelopmentWorkspaceService workspaces, IHttpContextAccessor accessor, AuditStore audit, IClock clock, CancellationToken cancellationToken,
+        string? reviewId = null)
+        => CommandAsync(workspaceId, "commit", new(requestId, expectedHead, message, paths, authorName, authorEmail, ReviewId: reviewId),
             authorization, workspaces, accessor, audit, clock, cancellationToken);
 
     [McpServerTool(Name = "merge_workspace_target", ReadOnly = false, Destructive = true, Idempotent = true)]
