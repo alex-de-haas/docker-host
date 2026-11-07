@@ -1,6 +1,6 @@
 ---
 created: 2026-06-04
-updated: 2026-11-06
+updated: 2026-11-07
 summary: Reviewed update plans and their apply behavior, including permission changes and routine updates.
 components: [apps/core, apps/shell]
 ---
@@ -228,10 +228,16 @@ additionally wait for their restart before reloading the page into the new asset
 
 Rows render from the app summary's `updateCheck` verdict, so the affordances survive navigation and reloads without re-probing:
 
-- **routine** — Update applies the cached plan by digest through Core's queue, without a confirmation dialog;
+- **routine** — Update checks the configured source again and applies the fresh routine plan by digest through Core's queue, without a confirmation dialog;
 - **review-required** — the existing review path opens Core confirmation; there is no silent path;
 - **check failed** — the problem icon after the app name carries the error;
 - **applying** — active update progress appears beneath the current runtime/health status in the Status column, driven by `updateProgress` and `operationStatus`.
+
+Individual and bulk update actions rebuild the plan before submission, so an earlier offer does not
+pin the action to an older source head. A refreshed individual plan requiring review opens Core
+confirmation. Bulk updates check each app in order, with Shell last; a candidate newly requiring
+review is skipped with a review notice while the remaining apps continue. A fresh empty plan clears
+the old offer without applying anything. Failed checks never fall back to an older cached candidate.
 
 Package metadata shows the installed and available versions as `current → target`, including a
 new build with the same version. Revision/build tooltips distinguish those builds. A verdict with
@@ -246,7 +252,12 @@ uses actual runtime state and applicable health; update operation progress occup
 
 App actions > Check updates triggers or joins the fleet sweep. "Update all (N)" applies every routine verdict, leaving review-class ones on their rows; the Shell's own app goes last, because its apply restarts the Shell serving the page.
 
-An accepted update follows the existing queue/Core-confirmation flow. A rejected enqueue (stale, expired, consumed, or already updating) keeps the existing error/recovery handling and refreshes state; uncertain submissions do not authorize replay. Manage reads the applicable cached pending plan; explicit Check now, a source/feed change or a definite stale-preparation refusal uses the existing rebuild path. Progress needs no poll: every app-record commit publishes a hint on Core's event stream, and the page re-reads the list from it.
+An accepted update follows the existing queue/Core-confirmation flow. An explicit stale, expired or
+digest-mismatch refusal before acceptance permits one fresh preparation and submission, using the
+new classification. Already-updating, authorization and transport failures do not authorize replay;
+neither do errors after acceptance. Manage reads the applicable cached pending plan for display;
+Update, Check now and source/feed changes rebuild it. Progress needs no poll: every app-record
+commit publishes a hint on Core's event stream, and the page re-reads the list from it.
 
 ### Update stages and check feedback
 
@@ -374,6 +385,10 @@ Digest resolution is covered offline against a stub transport — the suite must
   stopping/starting phases, specific other phases and optional service, absent terminal row labels
   and timers, unknown/failed/empty checks, and bulk-update exclusion of failed, review-required,
   expired and already-updating offers.
+- Update actions recheck an older offer before their first submission, route fresh review-required
+  changes to Core review, and never apply an older candidate after a failed check. Bulk checks each
+  candidate sequentially with Shell last and continues after a skipped or failed app; definite
+  pre-acceptance stale refusals permit one rebuild while uncertain or accepted mutations never replay.
 - Shell distinguishes installed-but-unready updates from successful readiness: a terminal warning
   names affected services and opens logs, while persistent details survive page reloads. A separate
   available update remains visible; healthy recovery clears stale readiness feedback.

@@ -138,16 +138,72 @@ it.each(["stopped", "starting", "ready"])("reports whether Shell accepts a works
   else { expect(fixture.router.push).not.toHaveBeenCalled(); expect(shell.state.error).toContain(state === "starting" ? "is starting" : "must be running"); }
 });
 
+it("checks the current candidate before submitting an old advertised digest without reading a cached plan", async () => {
+  overrideRequests((path, init) => path.endsWith("/update/plan") && init?.method === "POST"
+    ? Response.json(plan("latest-digest")) : undefined);
+  await mount();
+  await act(async () => actions.applyUpdateFromRow(target));
+  expect(callsTo("/api/apps/routine.app/update/plan", "GET")).toHaveLength(0);
+  expect(callsTo("/api/apps/routine.app/update/plan").map(([, init]) => JSON.parse(init.body))).toEqual([{}]);
+  expect(callsTo("/api/apps/routine.app/update").map(([, init]) => JSON.parse(init.body))).toEqual([{ planDigest: "latest-digest" }]);
+  expect(callsTo("/api/installations")).toHaveLength(0);
+  expect(fixture.toast.error).not.toHaveBeenCalled();
+});
+
+it("refreshes the row and submits nothing when the current candidate has no changes", async () => {
+  overrideRequests((path, init) => {
+    if (path.endsWith("/update/plan") && init?.method === "POST") {
+      apps = [{ ...target, updateCheck: { ...target.updateCheck!, updateAvailable: false } }];
+      return Response.json({ ...plan("unchanged-digest"), changes: [] });
+    }
+  });
+  await mount();
+  const reads = callsTo("/api/apps", "GET").length;
+  await act(async () => actions.applyUpdateFromRow(target));
+  expect(callsTo("/api/apps/routine.app/update/plan")).toHaveLength(1);
+  expect(callsTo("/api/apps/routine.app/update/plan", "GET")).toHaveLength(0);
+  expect(callsTo("/api/apps/routine.app/update")).toHaveLength(0);
+  expect(callsTo("/api/installations")).toHaveLength(0);
+  expect(callsTo("/api/apps", "GET").length).toBeGreaterThan(reads);
+  expect(shell.state.apps[0].updateCheck?.updateAvailable).toBe(false);
+  expect(fixture.toast.error).not.toHaveBeenCalled();
+});
+
+it.each([
+  ["source", "Configure an update source in app Settings before updating."],
+  ["check", "The update feed is unavailable"],
+  ["http", "The update check failed"],
+  ["transport", "The update check response was lost"],
+])("does not submit the advertised candidate after a fresh %s failure", async (kind, description) => {
+  overrideRequests((path, init) => {
+    if (!path.endsWith("/update/plan") || init?.method !== "POST") return;
+    if (kind === "transport") throw new TypeError(description);
+    if (kind === "http") return Response.json({ message: description }, { status: 503 });
+    return Response.json(kind === "source" ? { ...plan("latest-digest"), sourceConfigured: false }
+      : { ...plan("latest-digest"), error: description });
+  });
+  await mount(); await act(async () => actions.applyUpdateFromRow(target));
+  expect(callsTo("/api/apps/routine.app/update/plan")).toHaveLength(1);
+  expect(callsTo("/api/apps/routine.app/update/plan", "GET")).toHaveLength(0);
+  expect(callsTo("/api/apps/routine.app/update")).toHaveLength(0);
+  expect(callsTo("/api/installations")).toHaveLength(0);
+  expect(fixture.toast.error).toHaveBeenCalledExactlyOnceWith("Update could not be prepared", expect.objectContaining({ description }));
+});
+
 it.each([400, 409].flatMap(status => ["update_plan_expired", "update_plan_stale", "update_plan_digest_mismatch"].map(code => [status, code] as const)))(
-  "refreshes the actual row transport's HTTP %i %s refusal once and queues the new digest", async (status, code) => {
-    let attempts = 0;
-    overrideRequests(path => path.endsWith("/update") && ++attempts === 1 ? refusal(code, status) : undefined);
+  "refreshes the actual row transport's HTTP %i %s refusal once and queues the newer digest", async (status, code) => {
+    let attempts = 0; let preparations = 0;
+    overrideRequests((path, init) => {
+      if (path.endsWith("/update/plan") && init?.method === "POST") return Response.json(plan(++preparations === 1 ? "fresh-digest" : "newer-digest"));
+      if (path.endsWith("/update") && ++attempts === 1) return refusal(code, status);
+    });
     await mount();
     await act(async () => actions.applyUpdateFromRow(target));
     expect(callsTo("/api/apps/routine.app/update").map(([, init]) => JSON.parse(init.body))).toEqual([
-      { planDigest: "old-digest" }, { planDigest: "fresh-digest" },
+      { planDigest: "fresh-digest" }, { planDigest: "newer-digest" },
     ]);
-    expect(callsTo("/api/apps/routine.app/update/plan")).toHaveLength(1);
+    expect(callsTo("/api/apps/routine.app/update/plan")).toHaveLength(2);
+    expect(callsTo("/api/apps/routine.app/update/plan", "GET")).toHaveLength(0);
     expect(callsTo("/api/installations")).toHaveLength(0);
     expect(fixture.toast.info).not.toHaveBeenCalled();
     expect(fixture.toast.success).not.toHaveBeenCalled();
@@ -155,12 +211,14 @@ it.each([400, 409].flatMap(status => ["update_plan_expired", "update_plan_stale"
   },
 );
 
-it("reclassifies a refreshed routine candidate and opens Core review instead of blindly queuing it", async () => {
-  let attempts = 0;
+it.each([false, true])("reclassifies a fresh routine candidate and opens Core review with stale retry=%s", async retry => {
+  let attempts = 0; let preparations = 0;
   const approval = { id: "review", status: "draft", approvalUrl: "https://core.test/install/confirm/review", expiresAt: "2099-01-01T00:00:00Z" };
   overrideRequests((path, init) => {
     if (path.endsWith("/update")) { attempts++; return refusal("update_plan_stale", 400); }
-    if (path.endsWith("/update/plan") && init?.method === "POST") return Response.json(plan("review-digest", true));
+    if (path.endsWith("/update/plan") && init?.method === "POST") {
+      return Response.json(retry && ++preparations === 1 ? plan("fresh-digest") : plan("review-digest", true));
+    }
     if (path === "/api/installations") return Response.json(approval);
     if (path === "/api/installations/review/submit") return Response.json({ ...approval, status: "pending" });
     if (path === "/api/installations/review") return Response.json({ ...approval, status: "denied" });
@@ -170,7 +228,9 @@ it("reclassifies a refreshed routine candidate and opens Core review instead of 
     const applying = actions.applyUpdateFromRow(target);
     await vi.advanceTimersByTimeAsync(1000); await applying;
   });
-  expect(attempts).toBe(1);
+  expect(attempts).toBe(retry ? 1 : 0);
+  expect(callsTo("/api/apps/routine.app/update/plan")).toHaveLength(retry ? 2 : 1);
+  expect(callsTo("/api/apps/routine.app/update/plan", "GET")).toHaveLength(0);
   expect(callsTo("/api/installations").map(([, init]) => JSON.parse(init.body))).toEqual([{ updateAppId: target.id, planDigest: "review-digest" }]);
   expect(fixture.showConfirmation).toHaveBeenCalledWith(null, expect.objectContaining({ id: "review", status: "pending" }));
   expect(fixture.toast.info).not.toHaveBeenCalled();
@@ -181,7 +241,7 @@ it("stops after the second definite stale refusal", async () => {
   overrideRequests(path => path.endsWith("/update") ? refusal("update_plan_stale", 400) : undefined);
   await mount(); await act(async () => actions.applyUpdateFromRow(target));
   expect(callsTo("/api/apps/routine.app/update")).toHaveLength(2);
-  expect(callsTo("/api/apps/routine.app/update/plan")).toHaveLength(1);
+  expect(callsTo("/api/apps/routine.app/update/plan")).toHaveLength(2);
   expect(fixture.toast.error).toHaveBeenCalledExactlyOnceWith("Update could not be prepared", expect.objectContaining({ description: "Candidate changed" }));
 });
 
@@ -193,30 +253,160 @@ it.each(["transport", "server", "authorization", "other-bad-request", "other-con
   });
   await mount(); await act(async () => actions.applyUpdateFromRow(target));
   expect(callsTo("/api/apps/routine.app/update")).toHaveLength(1);
-  expect(callsTo("/api/apps/routine.app/update/plan")).toHaveLength(0);
+  expect(callsTo("/api/apps/routine.app/update/plan")).toHaveLength(1);
   expect(callsTo("/api/installations")).toHaveLength(0);
   expect(fixture.toast.error).toHaveBeenCalledTimes(1);
 });
 
-it.each([400, 409])("never retries an HTTP %i stale-shaped error after Shell's routine update was accepted", async status => {
+it.each([400, 409].flatMap(status => [false, true].map(bulk => [status, bulk] as const)))("never retries an HTTP %i stale-shaped error after Shell's routine update was accepted with bulk=%s", async (status, bulk) => {
   const shell = { ...target, id: "hosty.shell", displayName: "Shell" };
   apps = [shell];
   fixture.settle.mockRejectedValue(new CoreRequestError("Status changed after acceptance", "update_plan_stale", status, null));
-  await mount(); await act(async () => actions.applyUpdateFromRow(shell));
+  await mount(); await act(async () => bulk ? actions.updateAllApps() : actions.applyUpdateFromRow(shell));
   expect(callsTo("/api/apps/hosty.shell/update")).toHaveLength(1);
-  expect(callsTo("/api/apps/hosty.shell/update/plan")).toHaveLength(0);
+  expect(callsTo("/api/apps/hosty.shell/update/plan")).toHaveLength(1);
   expect(fixture.settle).toHaveBeenCalledTimes(1);
   expect(fixture.toast.error).toHaveBeenCalledExactlyOnceWith("Update not completed", expect.objectContaining({ description: "Status changed after acceptance" }));
 });
 
-it("continues bulk updates after one app's definite stale refusal without preparing new consent", async () => {
+it("guards repeated row activation during freshness checking and queue submission", async () => {
+  const preparation = deferred<Response>(); const submission = deferred<Response>();
+  overrideRequests((path, init) => path.endsWith("/update/plan") && init?.method === "POST" ? preparation.promise
+    : path.endsWith("/update") ? submission.promise : undefined);
+  await mount();
+  let applying!: Promise<void>;
+  await act(async () => { applying = actions.applyUpdateFromRow(target); void actions.applyUpdateFromRow(target); });
+  expect(callsTo("/api/apps/routine.app/update/plan")).toHaveLength(1);
+  expect(callsTo("/api/apps/routine.app/update")).toHaveLength(0);
+  await act(async () => { preparation.resolve(Response.json(plan("latest-digest"))); });
+  expect(callsTo("/api/apps/routine.app/update")).toHaveLength(1);
+  await act(async () => actions.applyUpdateFromRow(target));
+  expect(callsTo("/api/apps/routine.app/update/plan")).toHaveLength(1);
+  expect(callsTo("/api/apps/routine.app/update")).toHaveLength(1);
+  await act(async () => { submission.resolve(Response.json({ status: "updating" })); await applying; });
+});
+
+it("refreshes bulk candidates sequentially against the latest digest and submits Shell last", async () => {
+  const ownShell = { ...target, id: "hosty.shell", displayName: "Shell" };
+  const second = { ...target, id: "second.app", displayName: "Second app" };
+  apps = [ownShell, target, second];
+  const firstSubmission = deferred<Response>();
+  const sequence: string[] = [];
+  overrideRequests((path, init) => {
+    if (path.endsWith("/update/plan") && init?.method === "POST") {
+      const id = path.split("/")[3]; sequence.push(`prepare:${id}`);
+      return Response.json(plan(`latest-${id}`));
+    }
+    if (path.endsWith("/update")) {
+      const id = path.split("/")[3]; sequence.push(`submit:${id}`);
+      return id === target.id ? firstSubmission.promise : Response.json({ status: "updating" });
+    }
+  });
+  fixture.settle.mockResolvedValue({ kind: "unresolved" });
+  await mount();
+  let updating!: Promise<void>;
+  await act(async () => { updating = actions.updateAllApps(); });
+  expect(sequence).toEqual(["prepare:routine.app", "submit:routine.app"]);
+  await act(async () => { firstSubmission.resolve(Response.json({ status: "updating" })); await updating; });
+  expect(sequence).toEqual([
+    "prepare:routine.app", "submit:routine.app", "prepare:second.app", "submit:second.app", "prepare:hosty.shell", "submit:hosty.shell",
+  ]);
+  for (const app of apps) {
+    expect(callsTo(`/api/apps/${app.id}/update`).map(([, init]) => JSON.parse(init.body))).toEqual([{ planDigest: `latest-${app.id}` }]);
+    expect(callsTo(`/api/apps/${app.id}/update/plan`, "GET")).toHaveLength(0);
+  }
+  expect(callsTo("/api/installations")).toHaveLength(0);
+});
+
+it("guards repeated bulk activation while the first app's fresh check is pending", async () => {
+  const ownShell = { ...target, id: "hosty.shell", displayName: "Shell" };
+  const second = { ...target, id: "second.app", displayName: "Second app" };
+  apps = [ownShell, target, second];
+  const firstPreparation = deferred<Response>();
+  const sequence: string[] = [];
+  overrideRequests((path, init) => {
+    if (path.endsWith("/update/plan") && init?.method === "POST") {
+      const id = path.split("/")[3]; sequence.push(`prepare:${id}`);
+      return id === target.id ? firstPreparation.promise : Response.json(plan(`latest-${id}`));
+    }
+    if (path.endsWith("/update")) {
+      const id = path.split("/")[3]; sequence.push(`submit:${id}`);
+      return Response.json({ status: "updating" });
+    }
+  });
+  fixture.settle.mockResolvedValue({ kind: "unresolved" });
+  await mount();
+  let updating!: Promise<void>;
+  await act(async () => { updating = actions.updateAllApps(); });
+  await act(async () => actions.updateAllApps());
+  expect(sequence).toEqual(["prepare:routine.app"]);
+  await act(async () => { firstPreparation.resolve(Response.json(plan("latest-routine.app"))); await updating; });
+  expect(sequence).toEqual([
+    "prepare:routine.app", "submit:routine.app", "prepare:second.app", "submit:second.app", "prepare:hosty.shell", "submit:hosty.shell",
+  ]);
+  for (const app of apps) {
+    expect(callsTo(`/api/apps/${app.id}/update/plan`)).toHaveLength(1);
+    expect(callsTo(`/api/apps/${app.id}/update`).map(([, init]) => JSON.parse(init.body))).toEqual([{ planDigest: `latest-${app.id}` }]);
+  }
+});
+
+it("continues bulk updates after one app exhausts its bounded stale retry without preparing new consent", async () => {
   const second = { ...target, id: "second.app" }; apps = [target, second];
   overrideRequests(path => path === "/api/apps/routine.app/update" ? refusal() : undefined);
   await mount(); await act(async () => actions.updateAllApps());
-  expect(callsTo("/api/apps/routine.app/update")).toHaveLength(1);
+  expect(callsTo("/api/apps/routine.app/update")).toHaveLength(2);
   expect(callsTo("/api/apps/second.app/update")).toHaveLength(1);
-  expect(callsTo("/api/apps/routine.app/update/plan")).toHaveLength(0);
+  expect(callsTo("/api/apps/routine.app/update/plan")).toHaveLength(2);
+  expect(callsTo("/api/apps/second.app/update/plan")).toHaveLength(1);
   expect(callsTo("/api/installations")).toHaveLength(0);
+});
+
+it("continues bulk updates without replaying an uncertain queue submission", async () => {
+  const second = { ...target, id: "second.app" }; apps = [target, second];
+  overrideRequests(path => {
+    if (path === "/api/apps/routine.app/update") throw new TypeError("Response lost after queueing");
+  });
+  await mount(); await act(async () => actions.updateAllApps());
+  for (const app of apps) {
+    expect(callsTo(`/api/apps/${app.id}/update/plan`)).toHaveLength(1);
+    expect(callsTo(`/api/apps/${app.id}/update`)).toHaveLength(1);
+  }
+  expect(callsTo("/api/installations")).toHaveLength(0);
+  expect(fixture.toast.error).toHaveBeenCalledExactlyOnceWith("Update not completed", expect.objectContaining({
+    appId: target.id, description: "Response lost after queueing",
+  }));
+});
+
+it("skips bulk candidates needing review, with errors or without changes and continues later apps", async () => {
+  const ids = ["review.app", "check-error.app", "source-error.app", "request-error.app", "unchanged.app", "later.app"];
+  apps = ids.map(id => ({ ...target, id, displayName: id }));
+  overrideRequests((path, init) => {
+    if (!path.endsWith("/update/plan") || init?.method !== "POST") return;
+    const id = path.split("/")[3];
+    if (id === "review.app") return Response.json(plan("review-digest", true));
+    if (id === "check-error.app") return Response.json({ ...plan(), error: "Update feed is unavailable" });
+    if (id === "source-error.app") return Response.json({ ...plan(), sourceConfigured: false });
+    if (id === "request-error.app") return Response.json({ message: "Update check failed" }, { status: 503 });
+    if (id === "unchanged.app") {
+      apps = apps.map(app => app.id === id ? { ...app, updateCheck: { ...app.updateCheck!, updateAvailable: false } } : app);
+      return Response.json({ ...plan(), changes: [] });
+    }
+    return Response.json(plan("latest-later-digest"));
+  });
+  await mount(); await act(async () => actions.updateAllApps());
+  for (const id of ids) {
+    expect(callsTo(`/api/apps/${id}/update/plan`)).toHaveLength(1);
+    expect(callsTo(`/api/apps/${id}/update/plan`, "GET")).toHaveLength(0);
+    expect(callsTo(`/api/apps/${id}/update`)).toHaveLength(id === "later.app" ? 1 : 0);
+  }
+  expect(callsTo("/api/apps/later.app/update").map(([, init]) => JSON.parse(init.body))).toEqual([{ planDigest: "latest-later-digest" }]);
+  expect(callsTo("/api/installations")).toHaveLength(0);
+  expect(fixture.showConfirmation).not.toHaveBeenCalled();
+  expect(fixture.toast.warning).toHaveBeenCalledExactlyOnceWith("Update needs review", {
+    description: "review.app now requires review. Open its update to review the latest changes.",
+  });
+  expect(fixture.toast.error).toHaveBeenCalledTimes(3);
+  expect(shell.state.apps.find(app => app.id === "unchanged.app")?.updateCheck?.updateAvailable).toBe(false);
 });
 
 function deferred<T>() {
