@@ -198,3 +198,32 @@ it("does not let a late accepted receipt clear another view's newer UUID with id
   expect(message().value).toBe(original.draftText); expect(attachment()).not.toBeNull(); expect(message().disabled).toBe(true);
   expect(button("Retry send")).toBeDefined(); expect(api.postMessage).not.toHaveBeenCalled();
 });
+
+
+it.each(["initial", "recovery"] as const)("settles a known workspace writer refusal during %s send and resumes the same chat without reload", async attempt => {
+  const refusal = new api.AssistantApiError("workspace_in_use", "Return or recover the pending app transition before starting writers.", 409);
+  localStorage.setItem(attachmentsKey, JSON.stringify(original.attachments));
+  if (attempt === "recovery") seedPending();
+  await mount();
+  if (attempt === "initial") await write(original.draftText);
+  else vi.mocked(api.getMessageReceipt).mockRejectedValueOnce(new api.AssistantApiError("message_request_not_found", "Not admitted", 404));
+  vi.mocked(api.postMessage).mockRejectedValueOnce(refusal);
+  if (attempt === "initial") await send(); else await retry();
+  const refusedId = vi.mocked(api.postMessage).mock.calls[0][6];
+  if (attempt === "recovery") expect(refusedId).toBe(original.clientRequestId);
+  expect(readPendingSend(session.id)).toBeNull();
+  expect(button("Retry send")).toBeUndefined();
+  expect(message().disabled).toBe(false);
+  expect(message().value).toBe(original.draftText);
+  expect(attachment()).not.toBeNull();
+  expect(container.textContent).toContain(refusal.message);
+  vi.mocked(api.postMessage).mockImplementationOnce(async (...args) => ({ clientRequestId: args[6]!, state: "accepted" }));
+  // The operator has completed Return and intentionally sends the retained draft again.
+  await send();
+  expect(api.postMessage).toHaveBeenCalledTimes(2);
+  expect(vi.mocked(api.postMessage).mock.calls[1][0]).toBe(session.id);
+  expect(vi.mocked(api.postMessage).mock.calls[1][6]).not.toBe(refusedId);
+  expect(api.uploadAttachment).not.toHaveBeenCalled();
+  expect(message().value).toBe("");
+  expect(attachment()).toBeNull();
+});

@@ -33,6 +33,15 @@ describe("shared workspace event stream", () => {
     await vi.advanceTimersByTimeAsync(200); expect(first).toHaveBeenCalledTimes(2);
   });
 
+  it("refreshes task consumers for the existing task changed event after readiness", async () => {
+    const sync = vi.fn(async () => {});
+    cleanup.push(subscribeWorkspaceEvents("/api/tasks/v1/events", sync, vi.fn()));
+    await vi.advanceTimersByTimeAsync(0); emit("stream.ready"); await vi.advanceTimersByTimeAsync(0);
+    expect(sync).toHaveBeenCalledTimes(1);
+    emit("changed"); await vi.advanceTimersByTimeAsync(5000);
+    expect(sync).toHaveBeenCalledTimes(2);
+  });
+
   it("keeps an event arriving during synchronization and coalesces the follow-up", async () => {
     let finish!: () => void;
     const sync = vi.fn().mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; })).mockResolvedValue(undefined);

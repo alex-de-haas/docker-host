@@ -43,7 +43,10 @@ responses out of the browser's shared connection pool. Each reader obtains a sho
 single-use ticket through its own authenticated app request. The server binds the ticket to that
 request's credential and event path, checks the browser origin and revalidates authority before
 accepting the socket. Tickets and app grants do not appear in socket URLs; documents do not share
-credentials or transcripts. The existing SSE endpoints remain available to direct clients.
+credentials or transcripts. Task-history readers use the same ticketed transport for the task event
+endpoint. Task streams acknowledge readiness and deliver content-free change hints after current
+authority checks; reconnect and visibility recovery refresh their authorized snapshots. The existing
+SSE endpoints remain available to direct clients.
 
 The wire payload retains the existing event frames and durable session sequence. Reconnect resumes
 from the retained cursor and waits for the authoritative current session status. Hidden documents
@@ -68,7 +71,11 @@ retains its draft and exposes **Retry send**; the normal Send action stays block
 reads that original receipt. Accepted requests settle locally without another POST; unknown
 outcomes remain unresolved. Only the explicit not-admitted result permits a POST of the original
 UUID and frozen payload. Definitive pre-admission refusals retain an editable draft for a separate
-intentional send. Restoring access never invokes Retry or dispatches a mutation automatically.
+intentional send. A concrete Core writer-admission refusal (`workspace_in_use`, HTTP 409) also
+settles the attempted send before provider dispatch. The composer keeps its editable draft instead
+of leaving an uncertain-send journal. After the runtime transition is recovered or returned, the
+same conversation can send again without restarting Harness. A failed receipt lookup still proves
+nothing about an earlier send. Restoring access never invokes Retry or dispatches a mutation automatically.
 
 Harness atomically persists a receipt before provider admission and serializes receipt reads and
 sends per session. Reusing an admitted UUID cannot start another turn, including after coordinator
@@ -990,6 +997,12 @@ window keeps a 320 px chat without document overflow; Shell uses its actual ifra
 The managed local suite verifies warm restart, missing-output recovery and owner-confirmed cleanup.
 
 ## Testing Expectations
+
+- Refuse a turn on the second repository before provider dispatch, recover its runtime fence and
+  resume the same session without coordinator restart or duplicate messages. Preserve the draft
+  and exact uncertain-send recovery rules across HTTP failures and reload.
+- Open the actual task event ticket/WebSocket route, observe readiness and task changes, and verify
+  revocation and unsubscribe cleanup. Test the transport target rather than replacing it with a mock.
 
 - Open a long chat with historical events delivered in separate chunks: the transcript stays behind
   its loading state until the current-status boundary, then appears at the end without smooth

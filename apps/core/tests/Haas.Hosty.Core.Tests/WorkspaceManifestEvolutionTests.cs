@@ -158,6 +158,170 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.Equal(bytes, await File.ReadAllTextAsync(before.ManifestPath!));
     }
 
+    private static async Task<(LifecycleFixture Fixture, WorkspaceOwner Owner, DevelopmentWorkspace Tree,
+        ManifestNativeAdapter Native, AppExecutionOperation Selection)> NativeProviderManifestFixture(bool withPermissions = true)
+    {
+        var native = new ManifestNativeAdapter();
+        var f = await LifecycleFixture.CreateAsync(localRuntimeAdapter: native);
+        var owner = WorkspaceTestOwner(f);
+        var created = await f.Service.CreateLocalAppAsync(owner, NewApp(), null, default);
+        var workspaces = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock);
+        var tree = await workspaces.PrepareAsync(owner,
+            new(created.Operation.Id, owner.SessionId, "test.created", "/assistant", "main"), default);
+        await AddManifestPackageRuntime(f, tree);
+        await EditDevManifest(tree.Path, manifest =>
+        {
+            manifest["runtimeProfiles"]![0]!["type"] = "localCommand";
+            var previous = manifest["services"]![0]!["runtimes"]!["dev"]!;
+            manifest["services"]![0]!["runtimes"]!["dev"] = new JsonObject {
+                ["type"] = "localCommand", ["artifact"] = "source", ["command"] = "echo native-provider",
+                ["workingDirectory"] = ".", ["ports"] = previous["ports"]!.DeepClone() };
+            manifest["provides"] = new JsonArray(PlatformCapabilities.SpeechToText);
+            if (withPermissions)
+            {
+                manifest["corePermissions"] = new JsonArray("apps.read");
+                manifest["optionalCorePermissions"] = new JsonArray("apps.logs");
+            }
+            manifest["settings"] = new JsonArray(new JsonObject { ["key"] = "MODE", ["type"] = "string", ["default"] = "native" });
+        });
+        var selection = await SelectManifestTarget(f, owner, tree);
+        Assert.Equal("review-required", selection.State);
+        var review = selection.Review!.WorkspaceManifest!;
+        Assert.Contains("Run commands directly on the host", review.Changes);
+        Assert.Contains(review.Changes, change => change.StartsWith("Provider role: speech-to-text", StringComparison.Ordinal));
+        await f.Service.ApproveWorkspaceManifestAsync(review, owner.UserId, withPermissions ? ["apps.logs"] : [], default);
+        return (f, owner, tree, native, selection);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WorkspaceManifest_NativeProviderConsentSurvivesProjectionRetryAndRestart(bool withPermissions)
+    {
+        var (f, owner, tree, native, selection) = await NativeProviderManifestFixture(withPermissions);
+        Assert.Equal("completed", (await f.Service.ExecuteTargetAsync(selection, default)).State);
+        var app = (await f.Apps.GetAppAsync("test.created"))!;
+        Assert.Equal("running", app.RuntimeState);
+        Assert.Contains(PlatformCapabilities.SpeechToText, app.ConfirmedRoles!);
+        Assert.Equal(withPermissions, (app.GrantedCorePermissions ?? []).Contains("apps.logs"));
+        Assert.Equal("completed", (await f.RecreateService(localRuntimeAdapter: native).ExecuteTargetAsync(selection, default)).State);
+        await f.RecreateService(localRuntimeAdapter: native).RestartAsync(app.Id);
+        Assert.Equal("echo native-provider", native.LastContext!.Manifest.Services[0].Runtime.Command);
+        await EditDevManifest(tree.Path, manifest => {
+            manifest["version"] = "0.2.0";
+            manifest["services"]![0]!["runtimes"]!["dev"]!["command"] = "echo evolved-provider";
+            manifest["settings"]!.AsArray().Add(new JsonObject { ["key"] = "LATER_MODE", ["type"] = "string", ["default"] = "evolved" });
+        });
+        Assert.Equal("active", (await ApplyReviewedDev(f.Service, DevRequest("restart"), DevActor(owner))).Phase);
+        Assert.Equal("echo evolved-provider", native.LastContext!.Manifest.Services[0].Runtime.Command);
+        await f.RecreateService(localRuntimeAdapter: native).RestartAsync(app.Id);
+        Assert.Equal("completed", (await SelectManifestTarget(f, owner, tree, "package")).State);
+        app = (await f.Apps.GetAppAsync(app.Id))!;
+        Assert.DoesNotContain(PlatformCapabilities.SpeechToText, app.ConfirmedRoles ?? []);
+        Assert.DoesNotContain("apps.read", app.GrantedCorePermissions ?? []);
+        Assert.DoesNotContain("apps.logs", app.GrantedCorePermissions ?? []);
+    }
+
+    [Fact]
+    public async Task WorkspaceManifest_NativeProviderConsentRecoversStartingWithOriginalRequestAfterServiceRecreation()
+    {
+        var (f, _, tree, native, selection) = await NativeProviderManifestFixture();
+        var draft = Path.Combine(tree.Path, "uncommitted-draft.txt");
+        await File.WriteAllTextAsync(draft, "preserve source edits");
+        native.FailOnStartCount = native.StartCount + 1;
+        Assert.Equal("runtime_start_failed", (await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            f.Service.ExecuteTargetAsync(selection, default))).Code);
+        var app = (await f.Apps.GetAppAsync("test.created"))!;
+        var interrupted = (await AppDevStore.ReadAsync(f.Paths, app, default))!;
+        Assert.Equal("starting", interrupted.Phase);
+        Assert.Equal(tree.Path, app.SourceState!.LocalOverridePath);
+        Assert.Equal("dev", app.SelectedRuntime);
+        Assert.NotNull(interrupted.ExecutionAccessPlan);
+        Assert.Equal("pending", Assert.Single(interrupted.Receipts!, receipt => receipt.RequestId == selection.Request.RequestId).State);
+        native.FailOnStartCount = null;
+        var recovered = f.RecreateService(localRuntimeAdapter: native);
+        var starts = native.StartCount;
+        var resumed = await recovered.ExecuteTargetAsync(selection, default);
+        Assert.Equal(selection.Request.RequestId, resumed.Request.RequestId);
+        Assert.Equal("completed", resumed.State);
+        app = (await f.Apps.GetAppAsync(app.Id))!;
+        var active = (await AppDevStore.ReadAsync(f.Paths, app, default))!;
+        Assert.Equal(interrupted.Id, active.Id);
+        Assert.Equal(interrupted.BackupId, active.BackupId);
+        Assert.Equal("active", active.Phase);
+        Assert.Equal("succeeded", Assert.Single(active.Receipts!, receipt => receipt.RequestId == selection.Request.RequestId).State);
+        Assert.Equal("running", app.RuntimeState);
+        Assert.Equal(tree.Path, app.SourceState!.LocalOverridePath);
+        Assert.Contains(PlatformCapabilities.SpeechToText, app.ConfirmedRoles!);
+        Assert.Contains("apps.read", app.GrantedCorePermissions!);
+        Assert.Contains("apps.logs", app.GrantedCorePermissions!);
+        Assert.Equal("preserve source edits", await File.ReadAllTextAsync(draft));
+        Assert.Equal(starts + 1, native.StartCount);
+        Assert.Equal("completed", (await recovered.ExecuteTargetAsync(selection, default)).State);
+        Assert.Equal(starts + 1, native.StartCount);
+    }
+
+    [Theory]
+    [InlineData("permission-revision")]
+    [InlineData("permission")]
+    [InlineData("role")]
+    [InlineData("configuration")]
+    [InlineData("network-access")]
+    [InlineData("unknown-extension")]
+    [InlineData("legacy-evidence")]
+    [InlineData("missing-consent")]
+    public async Task WorkspaceManifest_NativeProviderConsentCannotBypassChangedAuthority(string change)
+    {
+        var (f, owner, tree, native, selection) = await NativeProviderManifestFixture();
+        Assert.Equal("completed", (await f.Service.ExecuteTargetAsync(selection, default)).State);
+        var app = (await f.Apps.GetAppAsync("test.created"))!;
+        var operation = (await AppDevStore.ReadAsync(f.Paths, app, default))!;
+        switch (change)
+        {
+            case "permission-revision":
+                await f.Apps.UpdateAppAsync(app.Id, current => current with { PermissionRevision = "new-review-required" }); break;
+            case "permission":
+                await f.Apps.UpdateAppAsync(app.Id, current => current with { GrantedCorePermissions = [] }); break;
+            case "role":
+                await f.Apps.UpdateAppAsync(app.Id, current => current with { ConfirmedRoles = [] }); break;
+            case "configuration":
+                await f.Apps.UpdateAppAsync(app.Id, current => current with { Settings = current.Settings.ToDictionary(pair => pair.Key,
+                    pair => pair.Key == "MODE" ? pair.Value with { Value = "operator-change" } : pair.Value) }); break;
+            case "network-access":
+                await EditDevManifest(tree.Path, manifest => manifest["endpoints"]!.AsArray().Add(new JsonObject {
+                    ["key"] = "extra-public", ["service"] = "web", ["port"] = "http", ["protocol"] = "http", ["public"] = true })); break;
+            case "unknown-extension":
+                await EditDevManifest(tree.Path, manifest => manifest["newHostAccess"] = new JsonObject { ["write"] = true }); break;
+            case "legacy-evidence":
+                await AppDevStore.SaveAsync(f.Paths, operation with { ExecutionAccessPlan = null, ExecutionPermissionRevision = null }, default); break;
+            case "missing-consent":
+                File.Delete(Path.Combine(AppDevStore.Root(f.Paths, app.Id), "consents", operation.ExecutionAccessPlan!.PlanDigest + ".json")); break;
+        }
+        var lastStart = native.LastContext;
+        Assert.Equal("dev_review_required", (await Assert.ThrowsAsync<AppLifecycleException>(() => f.RecreateService(localRuntimeAdapter: native).RestartAsync(app.Id))).Code);
+        Assert.Same(lastStart, native.LastContext);
+    }
+
+    [Fact]
+    public async Task WorkspaceManifest_NativeProviderConsentIsBoundToItsActorAndSource()
+    {
+        var (f, owner, tree, _, selection) = await NativeProviderManifestFixture();
+        Assert.Equal("completed", (await f.Service.ExecuteTargetAsync(selection, default)).State);
+        var app = (await f.Apps.GetAppAsync("test.created"))!;
+        foreach (var actor in new[] { new AppDevActor("someone-else", "test-assistant"), new AppDevActor(owner.UserId, "another-client") })
+        {
+            var candidate = await f.Service.PrepareExecutionCandidateAsync(app, tree.Path, "dev", actor, default);
+            Assert.True(candidate.ReviewRequired);
+            Assert.Equal("dev_review_required", (await Assert.ThrowsAsync<AppLifecycleException>(() =>
+                f.Service.EnsureExecutionCandidateApprovedAsync(candidate, app, default))).Code);
+        }
+        var operation = (await AppDevStore.ReadAsync(f.Paths, app, default))!;
+        await f.Apps.UpdateAppAsync(app.Id, current => current with { SourceState = operation.PreviousSource });
+        app = (await f.Apps.GetAppAsync(app.Id))!;
+        var unbound = await f.Service.PrepareExecutionCandidateAsync(app, tree.Path, "dev", DevActor(owner), default);
+        Assert.True(unbound.ReviewRequired);
+    }
+
     [Fact]
     public async Task WorkspaceManifest_StaleApprovalCannotAdmitChangedManifestOrInstallation()
     {
@@ -355,11 +519,51 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.Equal("completed", (await SelectManifestTarget(f, owner, tree, "package")).State);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WorkspaceManifest_NativeConsentRecoversOnlyJournaledPendingConfigurationProjection(bool projectionPending)
+    {
+        var (f, _, tree, native, selection) = await NativeProviderManifestFixture();
+        Assert.Equal("completed", (await f.Service.ExecuteTargetAsync(selection, default)).State);
+        await EditDevManifest(tree.Path, manifest => manifest["settings"]!.AsArray().Add(new JsonObject {
+            ["key"] = "AFTER_CRASH", ["type"] = "string", ["required"] = true, ["default"] = "recovered-default" }));
+        var app = (await f.Apps.GetAppAsync("test.created"))!;
+        var operation = (await AppDevStore.ReadAsync(f.Paths, app, default))!;
+        var candidate = await f.Service.PrepareExecutionCandidateAsync(app, tree.Path, "dev", operation.Actor, default);
+        Assert.False(candidate.ReviewRequired);
+        operation = await f.Service.SaveExecutionCandidateAsync(operation, candidate, default);
+        await AppDevStore.SaveAsync(f.Paths, operation with { ExecutionProjectionPending = projectionPending }, default);
+        Assert.NotNull(operation.PriorExecutionConfigurationHash);
+        Assert.NotEqual(operation.PriorExecutionConfigurationHash, operation.ExecutionConfigurationHash);
+        Assert.False(app.Settings.ContainsKey("AFTER_CRASH"));
+        var starts = native.StartCount;
+        var service = f.RecreateService(localRuntimeAdapter: native);
+        if (!projectionPending)
+        {
+            Assert.Equal("dev_review_required", (await Assert.ThrowsAsync<AppLifecycleException>(() => service.RestartAsync(app.Id))).Code);
+            Assert.Equal(starts, native.StartCount);
+            return;
+        }
+        await service.RestartAsync(app.Id);
+        app = (await f.Apps.GetAppAsync(app.Id))!;
+        Assert.Equal("recovered-default", app.Settings["AFTER_CRASH"].Value);
+        Assert.Equal("running", app.RuntimeState);
+        Assert.Equal(starts + 1, native.StartCount);
+        var recovered = (await AppDevStore.ReadAsync(f.Paths, app, default))!;
+        Assert.Equal(operation.Id, recovered.Id);
+        Assert.Equal(CoreJson.Text(operation.ExecutionAccessPlan), CoreJson.Text(recovered.ExecutionAccessPlan));
+        Assert.False(recovered.ExecutionProjectionPending);
+        Assert.Null(recovered.PriorExecutionConfigurationHash);
+    }
+
     private sealed class ManifestNativeAdapter : IRuntimePreparation, IAppRuntimeAdapter
     {
         private readonly RecordingRuntimeAdapter inner = new("localCommand");
         public string Type => "localCommand";
         public RuntimeLifecycleContext? LastContext => inner.LastContext;
+        public int StartCount => inner.StartCount;
+        public int? FailOnStartCount { set => inner.FailOnStartCount = value; }
         public Task<RuntimePreparation> PrepareAsync(RuntimeLifecycleContext context, CancellationToken ct) => inner.PrepareAsync(context, ct);
         public async Task<AppRuntimeStartResult> StartAsync(RuntimeLifecycleContext context, CancellationToken ct = default)
             => (await inner.StartAsync(context, ct)) with { Endpoints = [] };

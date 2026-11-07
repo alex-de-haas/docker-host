@@ -1204,3 +1204,42 @@ describe("deferred operations at task boundaries", () => {
     await expect(guard()).rejects.toThrow("canceled before dispatch");
   });
 });
+
+
+it("resumes the same message and session after a partial workspace lease refusal without restarting Harness", async () => {
+  const record = await manager.createSession({ createdBy: "admin", appIds: ["notes"] });
+  await manager.workspaceAction(record.id, "prepare", { appId: "notes" }, "token", "admin");
+  const second = { ...tree, id: "b".repeat(64), path: "/owned/second-worktree" };
+  const acquired = new Map<string, string>();
+  let transitionPending = true;
+  vi.mocked(client.call).mockImplementation(async (_id, _token, action, input) => {
+    if (action === "list") return { workspaces: [tree, second] };
+    if (action === "lease") {
+      if (input.workspaceId === second.id && transitionPending)
+        throw new AppContextError(409, "workspace_in_use", "Recover the pending app transition before starting writers.");
+      acquired.set(String(input.workspaceId), String(input.leaseId));
+    }
+    return tree;
+  });
+  const request = { actorUserId: "admin", clientRequestId: randomUUID() };
+  await expect(manager.postMessage(record.id, "Continue the retained work", "token", [], request))
+    .rejects.toMatchObject({ code: "workspace_in_use" });
+  const refused = (await store.readRecord(record.id))!;
+  expect(refused.developmentLeaseState).toBe("admitting");
+  expect(acquired.get(tree.id)).toBe(refused.developmentLease);
+  expect(acquired.has(second.id)).toBe(false);
+  expect(starts).toHaveLength(0);
+  expect(sent).toHaveLength(0);
+  expect((await store.readEvents(record.id)).filter(event => event.type === "user_message")).toHaveLength(0);
+  await expect(manager.messageReceipt(record.id, request.clientRequestId, "admin"))
+    .rejects.toMatchObject({ status: 404, code: "message_request_not_found" });
+  // Core Return has completed; the same serialized request reuses its exact activity lease.
+  transitionPending = false;
+  await expect(manager.postMessage(record.id, "Continue the retained work", "token", [], request)).resolves.toMatchObject({ state: "accepted" });
+  expect(new Set(acquired.values())).toEqual(new Set([refused.developmentLease]));
+  await expect(manager.postMessage(record.id, "Continue the retained work", "token", [], request)).resolves.toMatchObject({ state: "accepted" });
+  expect(starts).toHaveLength(1);
+  expect(sent).toHaveLength(1);
+  expect((await store.readEvents(record.id)).filter(event => event.type === "user_message")).toHaveLength(1);
+  await finish(record.id);
+});
