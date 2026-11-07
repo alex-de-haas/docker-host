@@ -238,6 +238,10 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<LocalResourceReader>();
         builder.Services.AddSingleton<RuntimeResourceSampler>();
         builder.Services.AddHostedService(sp => sp.GetRequiredService<RuntimeResourceSampler>());
+        builder.Services.AddSingleton<IStorageFileSystem, StorageFileSystem>();
+        builder.Services.AddSingleton<StorageUsageScanner>();
+        builder.Services.AddSingleton<StorageUsageService>();
+        builder.Services.AddHostedService(sp => sp.GetRequiredService<StorageUsageService>());
         // One controller: it reads the live ingress provider from CoreSettingsService and no-ops for every
         // provider that is not "cloudflared", so switching providers is a settings edit, not a restart.
         builder.Services.AddSingleton<CloudflaredIngressController>();
@@ -475,6 +479,7 @@ internal static class HostyCoreApplication
         CoreLogEndpoints.Map(app);
         CoreTracing.Map(app);
         RuntimeResourceEndpoints.Map(app);
+        StorageUsageEndpoints.Map(app);
         CoreRestartEndpoints.Map(app);
         CoreWorkspaceEndpoints.Map(app);
         CloudflareConnectionEndpoints.Map(app);

@@ -1,6 +1,6 @@
 ---
 created: 2026-10-20
-updated: 2026-11-05
+updated: 2026-11-06
 summary: Shell unifies personal, host and application settings; Core confirms protected changes while Harness owns invocation preferences and skill selections.
 components: [apps/core, apps/shell, apps/harness, apps/marketplace]
 ---
@@ -16,7 +16,7 @@ embedded in Shell or standalone. Each field has one authoritative store and edit
 | Destination | Tabs and contents |
 | --- | --- |
 | My profile | Profile; Connections; Tokens & devices. Credential lists default to the current user, including browser sessions, device/manual tokens and OAuth grant metadata. |
-| Host | Updates; Network; Shared folders; Core source. Source uses the existing development/source checks and does not select an application runtime. |
+| Host | Updates; Network; Storage; Shared folders; Core source. Storage shows managed disk usage; Source uses the existing development/source checks and does not select an application runtime. |
 | Users & security | Users and invitations; App permissions; Policies. Authorized support for another user's credentials opens in that user's detail. OAuth client registrations stay in Policies. |
 | Shell | Shell preferences and tool presentation. |
 | Apps | One app-named entry per declared app-owned `ui.settings` surface. Internal tabs belong to the app; host-managed App Details is separate. |
@@ -30,6 +30,12 @@ path. There is no duplicate installed-app catalog or general App settings entry.
 Entries retain their existing role/permission checks. Ordinary users can open personal Profile
 and Tokens & devices; host administration and app management remain administrator surfaces.
 Bookmarks using former settings tab names resolve to the corresponding destination.
+
+Host > Storage presents Core's cached [managed disk-usage snapshot](../storage-usage/feature.md)
+with category/resource bars and explicit recount. It lives at
+`/settings?tab=host&section=storage`, without a separate main-sidebar entry. Legacy `/storage`
+links redirect there while preserving assistant continuation. Application details retain their
+own Storage tab and link back to the Host settings overview.
 
 Host > Updates includes read-only Core information from Shell's existing status snapshot: listen
 address and public origin with copy buttons, data root, runtime host and ingress mode. It makes no

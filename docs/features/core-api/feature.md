@@ -1,6 +1,6 @@
 ---
 created: 2026-05-13
-updated: 2026-10-08
+updated: 2026-11-06
 summary: Core's browser and control APIs and the serialization rules every endpoint must follow.
 components: [apps/core]
 ---
@@ -20,6 +20,10 @@ A Host user session may be presented either as the `hosty_session` cookie or as 
 Mutating browser endpoints are CSRF-protected: `GET /api/auth/csrf` sets the double-submit cookie and returns the token to echo in `X-Hosty-CSRF`.
 
 - `GET /api/core/status` - public Core status.
+- `GET /api/storage` - administrator cached disk-usage snapshot; no acquisition on read.
+- `POST /api/storage/refresh` - administrator background recount with a replayable UUID requestId;
+  app-mediated calls require the dedicated storage metadata permission. See
+  [managed storage usage](../storage-usage/feature.md).
 - `GET /login` - Core-owned email/password login page in every environment, including Development.
 - `POST /login` - verify local email/password credentials and create a Core session, then follow a validated continuation or return to Shell.
 - `GET /api/auth/session` - inspect the caller's existing session. POST is not supported; knowing a user ID cannot create a session.
