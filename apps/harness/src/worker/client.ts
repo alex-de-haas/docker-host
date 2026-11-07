@@ -142,6 +142,7 @@ class RemoteRun implements HarnessRun {
   private stopped = false;
   private busy = false;
   private submitted?: WorkerRunRequest;
+  private admission?: Promise<WorkerReceipt>;
   private confirmed = true;
   private deliveringTerminal = false;
   constructor(private readonly client: WorkerClient, private readonly binding: ConnectionBinding | null, private readonly options: HarnessStartOptions) {
@@ -163,11 +164,13 @@ class RemoteRun implements HarnessRun {
     this.id = id; this.busy = true; this.confirmed = false; this.controller = new AbortController();
     this.observe(id, this.controller.signal);
   }
+  async waitForAdmission(): Promise<void> { await this.admission; }
   private observe(id: string, signal: AbortSignal, request?: WorkerRunRequest): void {
     this.finished = (async () => {
       let final: HarnessEvent | undefined, accepted = false;
       try {
-        const current = sanitizeWorkerCommandReceipt(request ? await this.client.request<WorkerReceipt>(`/v1/runs/${id}`, "PUT", request, true)
+        // Admission must resolve before usage/event callbacks can enter the coordinator queue.
+        const current = sanitizeWorkerCommandReceipt(request ? await (this.admission = this.client.request<WorkerReceipt>(`/v1/runs/${id}`, "PUT", request, true))
           : await this.client.request<WorkerReceipt>(`/v1/runs/${id}`));
         accepted = true;
         if (current.usage) await this.options.onWorkerUsage?.(id, current.usage);

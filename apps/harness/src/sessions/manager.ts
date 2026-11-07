@@ -2826,17 +2826,31 @@ export class SessionManager {
   }
 
   async executionRecovery(id: string, actorId: string) {
-    const session = await this.requireLive(id);
-    if (session.record.createdBy !== actorId) throw new AppContextError(404, "session_not_found", "Session not found.");
-    const pending = session.record.workerRecovery?.state === "pending" ? session.record.workerRecovery : undefined;
-    const runId = session.record.workerRun?.id ?? pending?.runId;
-    if (!this.worker || !runId) return null;
-    const receipt = await this.worker.request<WorkerReceipt>(`/v1/runs/${runId}`);
-    if (receipt.conversationId !== id) throw new AppContextError(409, "recovery_mismatch", "The run does not belong to this conversation.");
-    const recoverable = receipt.state === "interrupted" && !receipt.exitConfirmed;
-    if (!recoverable && !pending) return null;
-    return { runId, generation: receipt.generation, expectedRevision: receipt.revision, recoverable,
-      pending: pending && { ...pending.input, runId: pending.runId } };
+    const worker = this.worker;
+    const snapshot = await this.serialize(id, async () => {
+      // Setup publishes workerRun before send; cross its queue before capturing the attempt.
+      const session = await this.requireLive(id);
+      if (session.record.createdBy !== actorId) throw new AppContextError(404, "session_not_found", "Session not found.");
+      const pending = session.record.workerRecovery?.state === "pending" ? session.record.workerRecovery : undefined;
+      const runId = session.record.workerRun?.id ?? pending?.runId;
+      return runId ? { runId, run: session.run } : null;
+    });
+    if (!worker || !snapshot) return null;
+    // Network waits must leave Stop and coordinator callbacks free to use the queue.
+    await snapshot.run?.waitForAdmission?.();
+    const receipt = await worker.request<WorkerReceipt>(`/v1/runs/${snapshot.runId}`);
+    return this.serialize(id, async () => {
+      const session = await this.requireLive(id);
+      if (session.record.createdBy !== actorId) throw new AppContextError(404, "session_not_found", "Session not found.");
+      const pending = session.record.workerRecovery?.state === "pending" ? session.record.workerRecovery : undefined;
+      const runId = session.record.workerRun?.id ?? pending?.runId;
+      if (runId !== snapshot.runId) return null;
+      if (receipt.conversationId !== id) throw new AppContextError(409, "recovery_mismatch", "The run does not belong to this conversation.");
+      const recoverable = receipt.state === "interrupted" && !receipt.exitConfirmed;
+      if (!recoverable && !pending) return null;
+      return { runId, generation: receipt.generation, expectedRevision: receipt.revision, recoverable,
+        pending: pending && { ...pending.input, runId: pending.runId } };
+    });
   }
 
   async recoverExecution(id: string, actorId: string, value: Record<string, unknown>, credential?: string): Promise<void> {

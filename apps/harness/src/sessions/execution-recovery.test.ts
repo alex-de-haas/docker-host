@@ -8,6 +8,7 @@ import { SessionManager } from "./manager.js";
 import { FakeHarnessAdapter } from "../harness/fake.js";
 import { AuditReporter } from "../audit.js";
 import { WorkerClient } from "../worker/client.js";
+import { WorkerApiError } from "../worker/contracts.js";
 import { WorkerJournal } from "../worker/journal.js";
 import { WorkerEngine } from "../worker/engine.js";
 import { createWorkerServer } from "../worker/http.js";
@@ -15,38 +16,126 @@ import { ensureServiceIdentity } from "../worker/auth.js";
 import { DevelopmentClient } from "./development.js";
 const cleanup: (() => Promise<unknown>)[] = [];
 afterEach(async () => { for (const f of cleanup.splice(0).reverse()) await f(); vi.restoreAllMocks(); });
-async function fixture() {
+const deferred = () => {
+  let resolve!: () => void;
+  const promise = new Promise<void>(done => { resolve = done; });
+  return { promise, resolve };
+};
+async function freshFixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), "harness-recovery-")); cleanup.push(() => rm(root, { recursive: true, force: true }));
   const store = new SessionStore(path.join(root, "sessions"));
   const identity = await ensureServiceIdentity(path.join(root, "auth"));
   const journal = new WorkerJournal(path.join(root, "runs")); await journal.initialize();
-  const engine = new WorkerEngine(journal, { reserve: async () => () => {}, validateSelection: async () => {}, cwd: async () => root, adapter: async () => new FakeHarnessAdapter() }, 1);
+  const adapter = new FakeHarnessAdapter(), started = vi.spyOn(adapter, "start");
+  const engine = new WorkerEngine(journal, { reserve: async () => () => {}, validateSelection: async () => {}, cwd: async () => root, adapter: async () => adapter }, 1);
   const server = createWorkerServer(engine, async () => identity, { capabilities: async () => ({}), configure: async () => ({}), connection: async () => ({}), models: async () => ({}) });
   await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
   cleanup.push(async () => { server.closeAllConnections(); await new Promise<void>(r => server.close(() => r())); await engine.close(); });
   const client = new WorkerClient(`http://127.0.0.1:${(server.address() as { port: number }).port}`, identity);
   const development = new DevelopmentClient("http://core.test", "harness", "service");
   const released = vi.spyOn(development, "activity").mockResolvedValue({ workspaceId: null, revision: null, stopRequested: false, state: "unbound" });
-  const build = () => new SessionManager(store, new FakeHarnessAdapter(), new AuditReporter(null, null, "harness"), root,
+  const binding = { connectionId: "fixture", connectionRevision: 1, harnessKind: "codex" as const };
+  const build = () => new SessionManager(store, client.adapter(binding, adapter.capabilities, "codex"), new AuditReporter(null, null, "harness"), root,
     null, null, null, null, null, null, null, development, client, "native");
   let manager = build();
   cleanup.push(() => manager.shutdown());
   const session = await manager.createSession({ createdBy: "owner" });
+  return { root, manager: () => manager, client, store, journal, session, released, started,
+    restart: async () => { await manager.shutdown(); manager = build(); } };
+}
+async function fixture() {
+  const f = await freshFixture();
+  const { root, store, journal, session } = f;
   const runId = randomUUID();
   await journal.accept(runId, { conversationId: session.id, binding: { connectionId: "fixture", connectionRevision: 1, harnessKind: "codex" },
     selection: { model: null, reasoningEffort: null }, resource: { kind: "conversation", id: session.id }, input: "Preserved request", options: {}, autoAllowedPrefixes: [] });
   await journal.update(runId, "running");
   await store.appendEvent(session.id, { seq: 2, ts: new Date().toISOString(), type: "user_message", text: "Preserved request" });
-  const agentRunId = await manager.observations.begin({ ...session, harnessSessionId: "retained-native-session" }, true);
-  await manager.shutdown();
+  const agentRunId = await f.manager().observations.begin({ ...session, harnessSessionId: "retained-native-session" }, true);
+  await f.manager().shutdown();
   await store.saveRecord({ ...(await store.readRecord(session.id))!, agentRunId, harnessSessionId: "retained-native-session", status: "running", workerRun: { id: runId, sequence: 0 }, developmentLease: randomUUID(), developmentLeaseState: "admitting" });
   await new WorkerJournal(path.join(root, "runs")).initialize();
-  manager = build();
-  const review = (await manager.executionRecovery(session.id, "owner"))!;
+  await f.restart();
+  const review = (await f.manager().executionRecovery(session.id, "owner"))!;
   const input = { requestId: randomUUID(), runId, generation: review.generation, expectedRevision: review.expectedRevision, consumerExitConfirmed: true };
-  return { manager: () => manager, client, store, journal, session, input, released, agentRunId,
-    restart: async () => { await manager.shutdown(); manager = build(); } };
+  return { ...f, input, agentRunId };
 }
+it("waits through preparation and durable admission before reviewing a freshly submitted run", async () => {
+  const f = await freshFixture(), prepared = deferred(), prepare = deferred(), submitting = deferred(), submit = deferred();
+  const save = f.store.saveRecord.bind(f.store), request = f.client.request.bind(f.client);
+  let held = false;
+  vi.spyOn(f.store, "saveRecord").mockImplementation(async record => {
+    await save(record);
+    if (record.workerRun && !held) { held = true; prepared.resolve(); await prepare.promise; }
+  });
+  const calls = vi.spyOn(f.client, "request").mockImplementation(async (...args) => {
+    if (args[1] === "PUT") { submitting.resolve(); await submit.promise; }
+    return request(...args);
+  });
+  const posted = f.manager().postMessage(f.session.id, "ask before continuing");
+  await prepared.promise;
+  const review = f.manager().executionRecovery(f.session.id, "owner");
+  let settled = false;
+  void review.then(() => { settled = true; }, () => { settled = true; });
+  try {
+    await new Promise(resolve => setImmediate(resolve));
+    expect(settled).toBe(false);
+    expect(calls).not.toHaveBeenCalled();
+    prepare.resolve(); await submitting.promise; await posted;
+    await new Promise(resolve => setImmediate(resolve));
+    expect(settled).toBe(false);
+    expect(calls.mock.calls.filter(args => args[0].startsWith("/v1/runs/") && (!args[1] || args[1] === "GET"))).toHaveLength(0);
+    // Another queued operation must not wait behind a slow admission review.
+    await expect(f.manager().executionRecovery(f.session.id, "other")).rejects.toMatchObject({ code: "session_not_found" });
+  } finally { prepare.resolve(); submit.resolve(); }
+  await expect(review).resolves.toBeNull();
+  await expect.poll(() => f.started.mock.calls.length).toBe(1);
+  expect(calls.mock.calls.filter(args => args[1] === "PUT")).toHaveLength(1);
+  expect((await f.store.readEvents(f.session.id)).filter(event => event.type === "error")).toEqual([]);
+});
+it("propagates admission failure and leaves the conversation queue available", async () => {
+  const f = await freshFixture(), submitting = deferred(), submit = deferred();
+  const request = f.client.request.bind(f.client);
+  vi.spyOn(f.client, "request").mockImplementation(async (...args) => {
+    if (args[1] === "PUT") {
+      submitting.resolve(); await submit.promise;
+      throw new WorkerApiError(409, "worker_busy", "Worker capacity is occupied.");
+    }
+    return request(...args);
+  });
+  await f.manager().postMessage(f.session.id, "Continue"); await submitting.promise;
+  const review = expect(f.manager().executionRecovery(f.session.id, "owner")).rejects.toMatchObject({ code: "worker_busy" });
+  submit.resolve(); await review;
+  await expect.poll(async () => (await f.store.readRecord(f.session.id))?.status).toBe("failed");
+  await expect(f.manager().executionRecovery(f.session.id, "other")).rejects.toMatchObject({ code: "session_not_found" });
+  expect(f.started).not.toHaveBeenCalled();
+});
+it("allows Stop during a slow receipt review and discards the superseded review", async () => {
+  const f = await freshFixture(), reading = deferred(), read = deferred();
+  await f.manager().postMessage(f.session.id, "ask before continuing");
+  await expect.poll(() => f.started.mock.calls.length).toBe(1);
+  const request = f.client.request.bind(f.client);
+  let held = false;
+  vi.spyOn(f.client, "request").mockImplementation(async (...args) => {
+    const result = await request(...args);
+    if (!args[1] && args[0].startsWith("/v1/runs/") && !held) {
+      held = true; reading.resolve(); await read.promise;
+      return { ...result as object, state: "interrupted", exitConfirmed: false };
+    }
+    return result;
+  });
+  const review = f.manager().executionRecovery(f.session.id, "owner");
+  await reading.promise;
+  try { await f.manager().cancelSession(f.session.id); }
+  finally { read.resolve(); }
+  await expect(review).resolves.toBeNull();
+  expect((await f.store.readRecord(f.session.id))!.workerRun).toBeUndefined();
+});
+it("still reports a genuinely missing retained run after coordinator restart", async () => {
+  const f = await fixture();
+  await rm(path.join(f.root, "runs", f.input.runId + ".json"));
+  await expect(f.manager().executionRecovery(f.session.id, "owner")).rejects.toMatchObject({ code: "run_not_found" });
+});
 it("keeps source claims on failed Stop and recovers the exact owned run without losing its transcript", async () => {
   const f = await fixture();
   await expect(f.manager().cancelSession(f.session.id)).rejects.toMatchObject({ code: "exit_unconfirmed" });
