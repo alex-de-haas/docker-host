@@ -5,6 +5,165 @@ namespace Haas.Hosty.Core.Tests;
 
 public sealed class UserManagementServiceTests
 {
+    [Fact]
+    public async Task CreateUserAsync_CreatesPasswordAndNormalizedAssignmentsWithoutInvitationOrSession()
+    {
+        var fixture = await UserManagementFixture.CreateAsync();
+        var actor = CreateUser("admin_1", "host.admin");
+        await fixture.Users.WriteAsync(new UserDirectoryState(1, [actor], [], [], []));
+        const string password = "correct horse battery staple";
+
+        var result = await fixture.Service.CreateUserAsync(new HostUserCreateRequest(
+            Email: "  NEW.USER@Example.Test  ",
+            DisplayName: "  New User  ",
+            Password: password,
+            AssignedAppIds: [" com.example.notes ", "com.example.notes", "", "com.example.files"]), actor);
+        var state = await fixture.Users.ReadAsync();
+        var user = Assert.Single(state.Users, candidate => candidate.Id == result.User.Id);
+        var credential = Assert.Single(state.PasswordCredentials ?? []);
+
+        Assert.Equal("new.user@example.test", user.Email);
+        Assert.Equal("New User", user.DisplayName);
+        Assert.Equal("host.user", user.Role);
+        Assert.False(user.Disabled);
+        Assert.Equal(["com.example.files", "com.example.notes"], result.User.AssignedAppIds);
+        Assert.Equal(2, state.Assignments.Count);
+        Assert.All(state.Assignments, assignment => Assert.Equal(user.Id, assignment.UserId));
+        Assert.Equal(user.Id, credential.UserId);
+        Assert.NotEqual(password, credential.Hash);
+        Assert.True(LocalPasswordAuthService.VerifyPassword(password, credential));
+        Assert.Empty(state.Invitations);
+        Assert.Empty(state.Sessions);
+    }
+
+    [Fact]
+    public async Task CreateUserAsync_AdministratorHasImplicitAccessAndNoStoredAssignments()
+    {
+        var fixture = await UserManagementFixture.CreateAsync();
+        var actor = CreateUser("admin_1", "host.admin");
+        await fixture.Users.WriteAsync(new UserDirectoryState(1, [actor], [], [], []));
+
+        var result = await fixture.Service.CreateUserAsync(new HostUserCreateRequest(
+            Email: "admin2@example.test", Role: "host.admin", Password: "another test password",
+            AssignedAppIds: ["com.example.notes"]), actor);
+        var state = await fixture.Users.ReadAsync();
+
+        Assert.Equal("host.admin", result.User.Role);
+        Assert.Empty(result.User.AssignedAppIds);
+        Assert.Empty(state.Assignments);
+        Assert.Single(state.PasswordCredentials ?? []);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("short")]
+    [InlineData("        ")]
+    public async Task CreateUserAsync_InvalidPasswordLeavesDirectoryUnchanged(string? password)
+    {
+        var fixture = await UserManagementFixture.CreateAsync();
+        var actor = CreateUser("admin_1", "host.admin");
+        await fixture.Users.WriteAsync(new UserDirectoryState(1, [actor], [], [], []));
+
+        var error = await Assert.ThrowsAsync<LocalPasswordAuthException>(() => fixture.Service.CreateUserAsync(
+            new HostUserCreateRequest(Email: "new@example.test", Password: password,
+                AssignedAppIds: ["com.example.notes"]), actor));
+        var state = await fixture.Users.ReadAsync();
+
+        Assert.Equal("password_invalid", error.Code);
+        Assert.Equal(actor, Assert.Single(state.Users));
+        Assert.Empty(state.Assignments);
+        Assert.Empty(state.PasswordCredentials ?? []);
+        Assert.Empty(state.Invitations);
+    }
+
+    [Fact]
+    public async Task CreateUserAsync_RejectsPasswordBeyondPolicyLimit()
+    {
+        var fixture = await UserManagementFixture.CreateAsync();
+        var actor = CreateUser("admin_1", "host.admin");
+        await fixture.Users.WriteAsync(new UserDirectoryState(1, [actor], [], [], []));
+
+        var error = await Assert.ThrowsAsync<LocalPasswordAuthException>(() => fixture.Service.CreateUserAsync(
+            new HostUserCreateRequest(Email: "new@example.test", Password: new string('p', 1025)), actor));
+
+        Assert.Equal("password_invalid", error.Code);
+        Assert.Equal(actor, Assert.Single((await fixture.Users.ReadAsync()).Users));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CreateUserAsync_RejectsExistingEmailIncludingDisabledUsers(bool disabled)
+    {
+        var fixture = await UserManagementFixture.CreateAsync();
+        var actor = CreateUser("admin_1", "host.admin");
+        var existing = CreateUser("existing", "host.user") with { Email = "existing@example.test", Disabled = disabled };
+        await fixture.Users.WriteAsync(new UserDirectoryState(1, [actor, existing], [], [], []));
+
+        var error = await Assert.ThrowsAsync<UserManagementException>(() => fixture.Service.CreateUserAsync(
+            new HostUserCreateRequest(Email: " EXISTING@EXAMPLE.TEST ", Password: "another test password"), actor));
+        var state = await fixture.Users.ReadAsync();
+
+        Assert.Equal("email_exists", error.Code);
+        Assert.Equal(StatusCodes.Status409Conflict, error.StatusCode);
+        Assert.Equal(2, state.Users.Count);
+        Assert.Empty(state.PasswordCredentials ?? []);
+    }
+
+    [Fact]
+    public async Task CreateUserAsync_RejectsActiveInvitationWithoutConsumingIt()
+    {
+        var fixture = await UserManagementFixture.CreateAsync();
+        var actor = CreateUser("admin_1", "host.admin");
+        await fixture.Users.WriteAsync(new UserDirectoryState(1, [actor], [], [], []));
+        await fixture.Service.CreateInvitationAsync(new UserInvitationCreateRequest(Email: "invited@example.test"), actor);
+
+        var error = await Assert.ThrowsAsync<UserManagementException>(() => fixture.Service.CreateUserAsync(
+            new HostUserCreateRequest(Email: " INVITED@EXAMPLE.TEST ", Password: "another test password"), actor));
+        var state = await fixture.Users.ReadAsync();
+
+        Assert.Equal("invitation_exists", error.Code);
+        Assert.Equal(StatusCodes.Status409Conflict, error.StatusCode);
+        Assert.Equal("pending", Assert.Single(state.Invitations).Status);
+        Assert.Equal(actor, Assert.Single(state.Users));
+        Assert.Empty(state.PasswordCredentials ?? []);
+    }
+
+    [Fact]
+    public async Task CreateUserAsync_ExpiredInvitationDoesNotReserveEmail()
+    {
+        var fixture = await UserManagementFixture.CreateAsync();
+        var actor = CreateUser("admin_1", "host.admin");
+        await fixture.Users.WriteAsync(new UserDirectoryState(1, [actor], [], [], []));
+        await fixture.Service.CreateInvitationAsync(new UserInvitationCreateRequest(Email: "invited@example.test"), actor);
+        fixture.Clock.UtcNow = fixture.Clock.UtcNow.AddDays(2);
+
+        var result = await fixture.Service.CreateUserAsync(new HostUserCreateRequest(
+            Email: "invited@example.test", Password: "another test password"), actor);
+
+        Assert.Equal("invited@example.test", result.User.Email);
+        Assert.Equal(2, (await fixture.Users.ReadAsync()).Users.Count);
+    }
+
+    [Theory]
+    [InlineData("invalid-email", "host.user", "invalid_email")]
+    [InlineData("new@example.test", "owner", "invalid_role")]
+    public async Task CreateUserAsync_RejectsInvalidIdentityWithoutWriting(string email, string role, string code)
+    {
+        var fixture = await UserManagementFixture.CreateAsync();
+        var actor = CreateUser("admin_1", "host.admin");
+        await fixture.Users.WriteAsync(new UserDirectoryState(1, [actor], [], [], []));
+
+        var error = await Assert.ThrowsAsync<UserManagementException>(() => fixture.Service.CreateUserAsync(
+            new HostUserCreateRequest(Email: email, Role: role, Password: "another test password"), actor));
+        var state = await fixture.Users.ReadAsync();
+
+        Assert.Equal(code, error.Code);
+        Assert.Equal(actor, Assert.Single(state.Users));
+        Assert.Empty(state.PasswordCredentials ?? []);
+    }
+
     // As with setup tokens: the invitation carries the origin as it is now, not as it was when Core booted.
     [Fact]
     public async Task CreateInvitationAsync_BuildsTheLinkFromTheLivePublicOrigin()

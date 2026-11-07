@@ -17,6 +17,26 @@ internal static class UserManagementEndpoints
                 async () => await HandleUserManagementError(() => management.ListAsync(cancellationToken)),
                 cancellationToken: cancellationToken));
 
+        app.MapPost("/api/auth/users", async (
+            HttpRequest request,
+            UserDirectoryStore users,
+            IClock clock,
+            UserManagementService management,
+            HostUserCreateRequest input,
+            CancellationToken cancellationToken) =>
+            await CoreSessionAuthorization.RequireAdminSessionAsync(
+                request,
+                users,
+                clock,
+                async () => await CoreSessionAuthorization.RequireSessionAsync(
+                    request,
+                    users,
+                    clock,
+                    async actor => await HandleUserManagementError(() => management.CreateUserAsync(input, actor, cancellationToken)),
+                    cancellationToken: cancellationToken),
+                requireCsrf: true,
+                cancellationToken: cancellationToken));
+
         app.MapGet("/api/auth/invitations", async (
             HttpRequest request,
             UserDirectoryStore users,
