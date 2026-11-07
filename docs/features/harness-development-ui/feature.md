@@ -1023,8 +1023,8 @@ reporting without replacing the iframe document, retained unsent drafts and sele
 restoration after Shell reload. The managed local suite also passes production startup, dependency
 containment, warm restart, missing-output recovery and verified Finish cleanup without provider prompts.
 
-Validation includes 1,319 Harness web tests, 11 runtime-packaging tests, the full Shell suite
-(207 Node and 858 component tests), and 26 affected checks after the final navigation-priority fix.
+Validation includes 1,319 Harness web tests, 13 runtime-packaging tests, and the full Shell suite
+(209 Node and 891 component tests) after integrating current main and the navigation-priority fixes.
 Harness/Shell lint and type checks, Harness production and Core/CLI builds, version consistency
 and documentation validation pass. [Local runtime acceptance](../harness-local-runtime/feature.md#verified-acceptance)
 records the startup/recovery measurements; Linux and Windows lifecycle checks are not run locally.
