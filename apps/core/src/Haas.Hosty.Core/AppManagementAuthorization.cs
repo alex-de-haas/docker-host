@@ -110,6 +110,8 @@ internal static class AppManagementAuthorization
     private static IReadOnlyDictionary<string, string[]> BuildPolicies()
     {
         var result = new Dictionary<string, string[]>(StringComparer.Ordinal);
+        result["GET /api/storage"] = [CoreAppPermissions.ReadCore, CoreAppPermissions.ReadStorage];
+        result["POST /api/storage/refresh"] = [CoreAppPermissions.ConfigureCore, CoreAppPermissions.ReadStorage];
         void Add(string permission, params string[] routes)
         {
             foreach (var route in routes) result.Add(route, [permission]);

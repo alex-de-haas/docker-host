@@ -5,6 +5,7 @@ import {
   getManageAppHref,
   getShellAuthorizationRedirect,
   getSettingsHref,
+  getHostSettingsSection,
   getShellViewHref,
   getWorkspaceHref,
   readCanonicalRedirect,
@@ -23,6 +24,41 @@ test("the three destinations resolve from their own paths", () => {
   assert.equal(readShellRoute("/settings", params()).view, "settings");
   assert.equal(readShellRoute("/apps", params()).view, "home");
   assert.equal(readShellRoute("/", params()).view, "home");
+});
+
+test("storage belongs to administrator Host settings and retains its app detail section", () => {
+  assert.equal(getSettingsHref("storage"), "/settings?tab=host&section=storage");
+  assert.equal(getHostSettingsSection("storage").id, "host");
+  assert.equal(readHostSettingsTab("storage"), "storage");
+  for (const url of ["/settings?tab=host&section=storage", "/settings?tab=storage", "/storage"]) {
+    const address = new URL(url, "https://shell.test");
+    const route = readShellRoute(address.pathname, address.searchParams);
+    assert.equal(route.view, "settings");
+    assert.equal(route.settingsTab, "storage");
+    assert.equal(getShellAuthorizationRedirect(route, true, false), "/");
+    assert.equal(getShellAuthorizationRedirect(route, true, true), null);
+  }
+  assert.equal(readCanonicalRedirect("/storage", params()), getSettingsHref("storage"));
+  assert.equal(readCanonicalRedirect("/settings", params("tab=host&section=storage")), null);
+  const app = new URL(getManageAppHref("unrelated.application", "storage"), "https://shell.test");
+  assert.deepEqual(readShellRoute(app.pathname, app.searchParams).appDetails, { appId: "unrelated.application", section: "storage" });
+});
+
+test("legacy storage links keep assistant continuation while using the canonical Host query", () => {
+  const source = params("tab=users&section=permissions&assistantSession=session_123&assistantApp=third.party%26tab%3Dusers&assistantPanel=discussion&unrelated=drop");
+  const target = new URL(readCanonicalRedirect("/storage/", source), "https://shell.test");
+  assert.equal(target.pathname, "/settings");
+  assert.equal(target.searchParams.get("tab"), "host");
+  assert.equal(target.searchParams.get("section"), "storage");
+  assert.equal(target.searchParams.get("unrelated"), null);
+  for (const key of ["assistantSession", "assistantApp", "assistantPanel"]) assert.equal(target.searchParams.get(key), source.get(key));
+  assert.equal(readCanonicalRedirect(target.pathname, target.searchParams), null);
+  const route = readShellRoute(target.pathname, target.searchParams);
+  assert.equal(getShellAuthorizationRedirect(route, true, true, target.searchParams), null);
+  const fallback = new URL(getShellAuthorizationRedirect(route, true, false, target.searchParams), "https://shell.test");
+  assert.equal(fallback.pathname, "/");
+  assert.equal(fallback.searchParams.get("tab"), null);
+  for (const key of ["assistantSession", "assistantApp", "assistantPanel"]) assert.equal(fallback.searchParams.get(key), source.get(key));
 });
 
 test("the parser is total — every path yields a route state", () => {
