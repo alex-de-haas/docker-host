@@ -1,6 +1,6 @@
 ---
 created: 2026-11-03
-updated: 2026-11-05
+updated: 2026-11-07
 summary: Exact-run operator recovery for interrupted Harness execution.
 components: [apps/harness]
 ---
@@ -33,6 +33,12 @@ after a lost reply, browser reload or coordinator restart. It retries normal sou
 fresh Hosty authority after Worker acknowledgement. Pending cleanup prevents new prompt admission.
 Only a completed cleanup closes the recovery request. Files and history remain available for a
 later explicit continuation; recovery itself sends no new prompt.
+
+Recovery review waits for serialized conversation setup and the new Worker's durable acceptance
+before reading its receipt. A freshly submitted prompt therefore does not display a missing-run
+error while its journal record is still being created. The wait covers acceptance only, not the
+agent's response or coordinator event callbacks. Existing retained runs still report missing
+receipts and admission failures remain visible.
 
 ## Verified Local Runtime
 
@@ -86,6 +92,8 @@ same-request replay across restart. Coordinator tests cover owner checks, unchan
 claim release, lost replies and failed Core cleanup without new prompt admission. HTTP tests require
 interactive authentication, ownership and same-origin requests. UI tests require explicit confirmation,
 retain the same request after uncertainty and restore server-retained requests.
+Regression coverage delays both conversation preparation and Worker acceptance, checks admission
+failure without blocking the conversation queue, and preserves missing-receipt errors after restart.
 
 Runtime verification
 uses a Core-managed Local sandbox, normal password login and launch-code identity, with synthetic
