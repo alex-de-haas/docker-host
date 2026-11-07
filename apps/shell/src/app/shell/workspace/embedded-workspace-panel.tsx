@@ -15,6 +15,7 @@ export function EmbeddedWorkspacePanel({
   onAuthRequired,
   onAskAssistant,
   onDelegatedTokenRequest,
+  onSurfaceState,
 }: {
   workspace: EmbeddedWorkspace;
   grantedCorePermissions?: readonly string[] | null;
@@ -25,6 +26,7 @@ export function EmbeddedWorkspacePanel({
   onAskAssistant?: (text: string, sourceAppId: string) => void;
   // Mints a delegated token for this app. Undefined for every app but the assistant gateway.
   onDelegatedTokenRequest?: (refresh: boolean) => Promise<DelegatedTokenGrant>;
+  onSurfaceState?: (state: { route: string; title?: string }) => void;
 }) {
   return (
     <div className="relative h-full w-full overflow-hidden bg-background">
@@ -32,7 +34,7 @@ export function EmbeddedWorkspacePanel({
         src={workspace.src}
         standaloneHref={workspace.externalUrl}
         title={`${workspace.title}: ${workspace.pageLabel}`}
-        frameKey={`${workspace.appId}:${workspace.path}:${workspace.src}`}
+        frameKey={`${workspace.appId}:${workspace.src}`}
         appId={workspace.appId}
         grantedCorePermissions={grantedCorePermissions}
         theme={theme}
@@ -40,6 +42,7 @@ export function EmbeddedWorkspacePanel({
         onAuthRequired={onAuthRequired}
         onAskAssistant={onAskAssistant}
         onDelegatedTokenRequest={onDelegatedTokenRequest}
+        onSurfaceState={onSurfaceState}
       />
     </div>
   );

@@ -149,7 +149,7 @@ Plans: 14 In Progress · 1 Blocked · 43 Draft · 8 On Hold.
 - [Global (Shared) Host-Path Mounts](features/global-mounts/feature.md) — A host-level library of shared host folders that apps attach by reference.
 - [Compact Harness Composer Controls](features/harness-composer-controls/feature.md) — One responsive composer action row with a shared agent-settings panel and catalog-driven reasoning controls.
 - [Harness Context Usage](features/harness-context-usage/feature.md) — Native context observations, recorded MCP calls and separate definition estimates in the Harness composer. · [plan](features/harness-context-usage/plan.md): Draft, 0/8, updated 2026-11-06
-- [Harness Development UI](features/harness-development-ui/feature.md) — Harness provides separate Chats and Workspaces pages, multi-repository details, environment previews and verified lifecycle actions.
+- [Harness Development UI](features/harness-development-ui/feature.md) — Harness combines conversations and workspace groups in Sessions, with shared navigation, multi-repository details, environment previews and verified lifecycle actions.
 - [Harness Dialog Layout](features/harness-dialog-layout/feature.md) — Harness modal forms and choosers keep their headers and actions visible while only their central content scrolls.
 - [Harness Local Production Runtime](features/harness-local-runtime/feature.md) — Harness local production starts reuse isolated compiled API and worker bundles with a static UI and locked runtime dependencies.
 - [Harness Provider Usage Limits](features/harness-provider-usage-limits/feature.md) — Optional connection-level quota and credit observations for Codex and Claude, with bounded diagnostics, retained snapshots and shared Limits controls.

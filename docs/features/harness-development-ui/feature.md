@@ -1,13 +1,13 @@
 ---
 created: 2026-10-16
-updated: 2026-11-06
-summary: Harness provides separate Chats and Workspaces pages, multi-repository details, environment previews and verified lifecycle actions.
+updated: 2026-11-07
+summary: Harness combines conversations and workspace groups in Sessions, with shared navigation, multi-repository details, environment previews and verified lifecycle actions.
 components: [apps/harness, apps/core, apps/shell, packages/app-sdk]
 ---
 
 # Harness Development UI
 
-Standalone Harness uses the SDK page navigation from its manifest, exposing Chats, Workspaces and Tasks.
+Standalone Harness uses the SDK page navigation from its manifest, exposing Sessions, Tasks and the other declared pages.
 Wide windows show the page sidebar; narrow windows use the Page navigation drawer. Embedded
 and native hosts control navigation visibility through the SDK chrome contract. The conversation
 and workspace list remains available independently of page navigation.
@@ -109,28 +109,33 @@ the selected conversation. Participation updates use the shared workspace observ
 
 ## Navigation And Conversation
 
-Harness opens Chats at `/chats` and exposes Workspaces at `/development` through separate Shell and
-standalone navigation entries. Existing `/development?session=…` and workspace links remain valid. `/assistant` remains
+Harness opens Sessions at `/chats` through one Shell, Desktop and standalone navigation entry.
+`/development` renders the same unified page, so existing session and workspace links remain valid. `/assistant` remains
 the compact assistant panel. Both render the same conversation component and use the same session,
 streaming, provider, question, approval, app-context and attachment APIs. Plans is not an installation dependency and remains a separate app. The standalone
 [Workspaces app is retired](../workspaces-app/feature.md). Child Core creation and test-account setup
 remain available through Harness's development tools; its former operator creation form is removed.
 
-Each full page places its own list on the left. Chats lists every accessible conversation individually,
-including conversations attached to workspaces. Workspaces lists only workspaces. The center shows
-the selected conversation; the Sessions section on the right selects accessible chats without a top
-tab bar. Workspaces without an accessible chat leave the center empty. Attached chats appear as
-individual rows on Chats. Other users' disclosed activity contributes to independent Working, Needs
+Sessions places one mixed list on the left: authorized non-deleted workspaces and accessible conversations
+not represented by those workspace rows. Each workspace occupies one row, including external and
+sessionless workspaces. Its attached accessible conversations appear in Sessions in the right-hand
+workspace details instead of separate list rows. The center shows the selected conversation;
+workspaces without an accessible chat leave the center empty. Conversations whose workspace is
+absent, deleted or inaccessible remain individually reachable. Workspace membership is resolved
+before search/activity filtering, so filtering a workspace does not ungroup its chats.
+Other users' disclosed activity contributes to independent Working, Needs
 attention and Failed counts without exposing private conversation links. Unknown/stopping metadata
 has a separate indication.
 
-Create app and Continue building appear only on Workspaces. Create app is available before selecting
+New session, Create app and Continue building are available together in Sessions. Create app is available before selecting
 a workspace or conversation; it creates an empty conversation and opens the existing form without
-sending a provider message. New session on Chats creates an unattached chat; the plus in Sessions
-creates a chat in that workspace. Both pages share search and All, Needs attention, Working and
-Failed filters, scoped to their own rows. Workspace search also matches disclosed session titles and
-app context. Each page restores its own selected conversation; the assistant panel retains its
-existing history. Sessionless workspaces offer explicit creation; selecting a row never
+sending a provider message. New session creates an unattached chat; the plus in Sessions
+creates a chat in that workspace. One search and the All, Needs attention, Working and
+Failed filters apply to the mixed rows. Workspace search also matches disclosed session titles and
+app context; a matching accessible chat title selects that chat. Both full-page paths share saved
+conversation/workspace selection, with explicit URL selection taking precedence and legacy path
+selection imported when no shared selection exists. The assistant panel retains its existing history.
+Sessionless workspaces offer explicit creation; selecting a row never
 creates a conversation automatically. Rename remains in the conversation header. Desktop navigation
 and workspace columns default to 264/344 px. Their boundaries support pointer dragging, arrow keys,
 Home/End for minimum/maximum width and double-click to reset. Preferred widths persist in local
@@ -144,7 +149,7 @@ header when no chat is selected. On wide surfaces the same
 control toggles the retained details column; on narrow surfaces it opens the dialog. The narrow
 chat/workspace list controls live in their existing headers, without an additional page-wide
 title row when an embedded page becomes narrower. The manifest declares distinct navigation
-image assets for Chats, Workspaces, Tasks, Feedback and Pull requests so Shell and Desktop use
+image assets for Sessions, Tasks, Feedback and Pull requests so Shell and Desktop use
 the same page icons. Codex file-change approval input correlates the proposed patch from the exact active native thread,
 turn and item before persistence. Retention is bounded and proposals are consumed once; stale,
 completed, oversized or unavailable proposals cannot become another approval's patch. No patch is
@@ -156,7 +161,7 @@ Pending approvals/questions have a pinned Review action that scrolls and focuses
 active work shows its live activity at the end of the transcript and Stop in the composer,
 without an additional activity bar below the conversation header. When the composer is blocked,
 Stop remains available in the header. Repository summaries use bordered cards. Search and activity chips change navigation without
-changing conversation identity. Both lists are ordered by most recent activity, with
+changing conversation identity. The mixed list is ordered by most recent activity, with
 stable ID ordering for equal or unavailable dates. Waiting sessions keep their indicators without
 being pinned above newer work. Sessions fall back to their creation date on older records; Core
 aggregates workspace activity across its repositories and workflow; participant state/title changes
@@ -189,7 +194,10 @@ an approval decision. Historical statuses in replay retain cancellation-card sem
 change current controls or signal stream readiness before the authoritative snapshot. Create app
 persists its context-change time before emitting the corresponding event. Provider/autonomy events apply their settings immediately, even if reconciliation
 fails; a fetch superseded by a later settings event cannot replace that event.
-Each Chats row offers Delete session with confirmation. It reuses the existing session deletion API,
+Ordinary conversation rows use the same two-line layout, spacing, selection and hover states as
+workspace rows, with a chat icon, one activity indicator and a muted status/activity-time line.
+Workspace rows retain their activity counts, source and pull request facts.
+Each standalone conversation row offers Delete session with confirmation. It reuses the existing session deletion API,
 including verified execution stop, independent workspace detachment and resource protection, and keeps failures visible for retry without navigating
 away from the current conversation. Deleting the selected session clears its draft and route selection;
 deleting another session preserves the selected conversation. A terminal deletion event detaches
@@ -197,6 +205,14 @@ the session immediately, including when a locally initiated DELETE loses its HTT
 A failed deletion request also reconciles against a fresh authenticated session inventory, including
 rows that have no active event stream. Confirmed absence removes only that session and its draft;
 an unavailable inventory or a retained session preserves local state and the error for retry.
+
+Manageable workspace rows offer a trailing trash shortcut with the same hover, keyboard-focus and
+touch reachability as conversation deletion. It opens the existing workspace deletion dialog for
+that row without selecting it or switching conversations. The dialog retains source/unmerged-commit
+details, temporary resources, activity warnings, confirmation, progress and same-request recovery.
+The shortcut does not bind deletion to an unrelated current conversation. The dialog remains mounted
+after its row disappears so the result stays visible. Cancel restores focus to the shortcut;
+removal falls back to a surviving list control. Completed/merged state is not a prerequisite.
 Removing a session removes its single navigation row; search and activity-chip selection remain
 unchanged. Delete controls and confirmations use the displayed label while deleting only the
 selected session by ID. History belongs only to the compact assistant.
@@ -571,7 +587,7 @@ sandbox. The [creation feature](../app-prototype-workspaces/feature.md#optional-
 owns the runtime recipe, serialization and recovery contract.
 
 
-External workspaces appear on the Workspaces page, using Core's typed external ownership
+External workspaces appear in Sessions, using Core's typed external ownership
 and the same summary/diff components. The 264 px navigation column uses compact 36 px rows:
 the same hammer for every workspace, one truncated display name with its full title, and the accent
 selection fill. External workspaces have no distinct icon, secondary label or tooltip in the list. Rows omit the external task reference; selection remains bound to
@@ -950,7 +966,9 @@ workspace content scrolls inside the pane without increasing the embedded docume
 Workspace rows show a second line with lifecycle status, observed uncommitted files, confirmed
 added/deleted line totals, an open PR count and aggregate CI status. Added lines use green and deleted lines
 use red. The file count remains visible alongside the line totals. Lifecycle is independent of attached-session activity, whose counts remain beside the
-title. Chat rows retain their existing presentation. Completed workspaces remain visible; there is no
+title. Ordinary chat rows use the same two-line layout, with status and last activity on the second
+line. Their activity indicator sits beside the title without an aggregate session count.
+Completed workspaces remain visible; there is no
 archive behavior in this UI enhancement.
 
 The existing inventory includes a small authorized `pullRequestSummary` derived from retained
@@ -996,6 +1014,21 @@ limits, persistence, reset and retained compact details in standalone and Shell.
 window keeps a 320 px chat without document overflow; Shell uses its actual iframe/content width.
 The managed local suite verifies warm restart, missing-output recovery and owner-confirmed cleanup.
 
+The 2026-11-07 Sessions acceptance passes on macOS arm64 with normal child-Core password and
+PKCE authentication. Real synthetic workspace/chat data verifies mixed-list grouping and search,
+attached sessions in details, desktop and narrow layouts, the existing target-specific deletion
+dialog, Cancel/focus restoration and retained chats after confirmed workspace removal. Actual Shell
+embedding verifies the compatible `/development` URL, a single Sessions destination, parent URL
+reporting without replacing the iframe document, retained unsent drafts and selected-chat/draft
+restoration after Shell reload. The managed local suite also passes production startup, dependency
+containment, warm restart, missing-output recovery and verified Finish cleanup without provider prompts.
+
+Validation includes 1,319 Harness web tests, 13 runtime-packaging tests, and the full Shell suite
+(209 Node and 891 component tests) after integrating current main and the navigation-priority fixes.
+Harness/Shell lint and type checks, Harness production and Core/CLI builds, version consistency
+and documentation validation pass. [Local runtime acceptance](../harness-local-runtime/feature.md#verified-acceptance)
+records the startup/recovery measurements; Linux and Windows lifecycle checks are not run locally.
+
 ## Testing Expectations
 
 - Refuse a turn on the second repository before provider dispatch, recover its runtime fence and
@@ -1017,11 +1050,20 @@ The managed local suite verifies warm restart, missing-output recovery and owner
   not flash before empty results. Verify populated results, visible read errors/retries, retained
   content during refresh, rejected late results and the full Feedback page's loading state.
 
-- Verify separate manifest navigation, page-specific selection memory and counts, all accessible
-  chats regardless of attachment, workspace-only development actions and empty-page app creation.
-  Keep existing workspace deep links, per-session drafts and assistant promotion to the correct page.
+- Verify the single Sessions navigation entry, mixed activity ordering, shared selection memory and
+  counts, workspace grouping without duplicate or lost accessible chats, all creation actions and
+  empty-page app creation. Keep existing workspace deep links, per-session drafts and assistant promotion.
+- Verify workspace-row trash opens the existing target-specific dialog without switching the
+  selected chat or deleting anything before confirmation. Cover manage permission, Cancel/focus,
+  pending-request recovery, retained results and accessible chats after workspace removal.
+- Run browser acceptance with `HOSTY_WORK_BROWSER=1 HOSTY_WORK_SHELL_BROWSER=1 npm run test:integration -- harness-local`.
+  Supply an installed Playwright module through `HOSTY_WORK_PLAYWRIGHT_MODULE` and an available
+  Chrome browser. The fixture uses normal child-Core password authentication, synthetic chats and
+  a disposable workspace, checks the compatible `/development` URL and actual Shell frame, and
+  verifies parent-route reporting, unchanged iframe identity, retained drafts and reload restoration
+  before finishing its child resources. Optional `HOSTY_WORK_SCREENSHOTS` exports synthetic UI screenshots.
 
-- Verify standalone navigation between Chats, Workspaces and Tasks at wide and narrow widths, active-page
+- Verify standalone navigation between Sessions and Tasks at wide and narrow widths, active-page
   selection and host-controlled navigation hiding without losing conversation/workspace controls.
 
 - Measure short Tasks and Pull requests pages in standalone and actual Shell frames at desktop and

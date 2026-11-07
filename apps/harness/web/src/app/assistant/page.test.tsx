@@ -4,6 +4,9 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import AssistantPage from "./page";
 import { AssistantConversation } from "@/components/assistant-conversation";
+import ChatsPage from "../chats/page";
+import DevelopmentPage from "../development/page";
+import { WORK_SELECTION_STORAGE_KEY } from "@/lib/work-selection";
 import * as api from "@/lib/assistant-api";
 import * as profilesApi from "@/lib/profiles-api";
 
@@ -397,7 +400,7 @@ it("updates the host destination when selecting another full-page session and pr
   vi.mocked(api.getSession).mockImplementation(async id => id === next.id ? next : record);
   ui.getNavigation.mockReturnValue({ entries: [{ key: "chats", route: "/chats" }] });
   ui.navigate.mockResolvedValue({ status: "accepted" });
-  await act(async () => root.render(<AssistantConversation fullPage navigation="chats" />));
+  await act(async () => root.render(<AssistantConversation fullPage />));
   const pick = [...container.querySelectorAll("button")].find(b => b.textContent?.startsWith("Other conversation"))!;
   await act(async () => pick.click());
   expect(ui.navigate).not.toHaveBeenCalled();
@@ -411,10 +414,10 @@ it("updates standalone selection URLs when the host has no main destination", as
   vi.mocked(api.listSessions).mockResolvedValue([record, next]);
   vi.mocked(api.getSession).mockImplementation(async id => id === next.id ? next : record);
   ui.getNavigation.mockReturnValue({ entries: [] });
-  await act(async () => root.render(<AssistantConversation fullPage navigation="chats" />));
+  await act(async () => root.render(<AssistantConversation fullPage />));
   await act(async () => [...container.querySelectorAll("button")].find(b => b.textContent?.startsWith("Standalone next"))!.click());
   expect(window.location.search).toBe("?session=standalone-next");
-  expect(localStorage.getItem("hosty.assistant.session")).toBe(next.id);
+  expect(localStorage.getItem(WORK_SELECTION_STORAGE_KEY)).toBe(JSON.stringify({ sessionId: next.id }));
 });
 
 it("synchronizes uploaded draft references with an already open second surface without sending", async () => {
@@ -450,7 +453,7 @@ const openDelete = async (title = "Conversation") => {
 const renderDeletion = async () => {
   window.history.replaceState({}, "", "/development?session=session-one");
   ui.getNavigation.mockReturnValue({ entries: [] });
-  await act(async () => root.render(<AssistantConversation fullPage navigation="chats" />));
+  await act(async () => root.render(<AssistantConversation fullPage />));
   await type("My retained draft");
 };
 it("detaches on a local deletion event even if the HTTP response is lost", async () => {
@@ -472,7 +475,7 @@ it("preserves an active conversation and draft when deletion is not confirmed", 
   vi.mocked(api.deleteSession).mockRejectedValue(new Error("Workspace is unfinished"));
   await renderDeletion(); await openDelete();
   expect(input().value).toBe("My retained draft");
-  expect(localStorage.getItem("hosty.assistant.session")).toBe(record.id);
+  expect(localStorage.getItem(WORK_SELECTION_STORAGE_KEY)).toBe(JSON.stringify({ sessionId: record.id }));
   expect(localStorage.getItem("hosty.assistant.draft.session-one")).toBe("My retained draft");
   expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Workspace is unfinished");
   expect(window.location.search).toBe("?session=session-one");
@@ -508,7 +511,7 @@ it.each(["deleted", "retained", "unavailable"])("reconciles a lost non-active de
   await openDelete("Other conversation");
   expect(api.listSessions).toHaveBeenCalledTimes(2);
   expect(input().value).toBe("My retained draft");
-  expect(localStorage.getItem("hosty.assistant.session")).toBe(record.id);
+  expect(localStorage.getItem(WORK_SELECTION_STORAGE_KEY)).toBe(JSON.stringify({ sessionId: record.id }));
   expect(window.location.search).toBe("?session=session-one");
   if (outcome === "deleted") {
     expect(button("Delete Other conversation")).toBeNull();
@@ -528,7 +531,7 @@ it.each(["deleted", "retained", "unavailable"])("reconciles a lost non-active de
   }
 });
 
-const navigationTitles = () => [...container.querySelectorAll('nav[aria-label="Chats"] button span.block[title]')].map(node => node.textContent);
+const navigationTitles = () => [...container.querySelectorAll('nav[aria-label="Sessions"] button span.block[title]')].map(node => node.textContent);
 const renderActivityOrder = async () => {
   record = { ...record, appIds: ["one"], appContextRevision: 1, updatedAt: "2026-10-18T10:00:00Z" };
   const newer = { ...record, id: "newer", title: "Newer conversation", updatedAt: "2026-10-18T11:00:00Z" };
@@ -587,17 +590,17 @@ it("refreshes non-selected running sessions through waiting and completion witho
     await act(async () => emit({ type: "session_status", seq: 2, ts: "2026-10-18T11:30:00Z", status: "running" }));
     await act(async () => refresh([record, { ...other, status: "awaiting_approval", updatedAt: "2026-10-18T12:00:00Z" }]));
     expect(navigationTitles()).toEqual(["Background work", "Conversation"]);
-    expect(container.querySelector('[aria-label="Needs attention: 1"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Needs attention"]')).not.toBeNull();
     vi.mocked(api.listSessions).mockResolvedValue([record, { ...other, status: "idle", updatedAt: "2026-10-18T13:00:00Z" }]);
     await act(async () => { vi.advanceTimersByTime(5000); });
-    expect(container.querySelector('[aria-label="Needs attention: 1"]')).toBeNull();
+    expect(container.querySelector('[aria-label="Needs attention"]')).toBeNull();
     const calls = vi.mocked(api.listSessions).mock.calls.length;
     await act(async () => { vi.advanceTimersByTime(15000); });
     expect(api.listSessions).toHaveBeenCalledTimes(calls);
     vi.mocked(api.listSessions).mockResolvedValue([record, { ...other, status: "running", updatedAt: "2026-10-18T14:00:00Z" }]);
     await act(async () => { vi.advanceTimersByTime(15000); });
     expect(api.listSessions).toHaveBeenCalledTimes(calls + 1);
-    expect(container.querySelector('[aria-label="Working: 1"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Working"]')).not.toBeNull();
     await act(async () => { vi.advanceTimersByTime(5000); });
     expect(api.listSessions).toHaveBeenCalledTimes(calls + 2);
     expect(input().value).toBe("My retained draft");
@@ -955,14 +958,15 @@ it("refuses foreign, expired and out-of-order projections and keeps literal text
 });
 
 
-it("keeps page selection separate and exposes app creation before a workspace or chat is selected", async () => {
+it("keeps compact selection separate and exposes all creation actions before a workspace or chat is selected", async () => {
   localStorage.setItem("hosty.assistant.session", record.id);
   window.history.replaceState({}, "", "/development");
   await act(async () => root.render(<AssistantConversation fullPage />));
   expect(api.createSession).not.toHaveBeenCalled();
-  expect(container.textContent).toContain("Choose a workspace, create an app or continue building.");
+  expect(container.textContent).toContain("Choose a workspace or session, create an app or continue building.");
   expect(button("Create app")?.disabled).toBe(false);
-  expect(button("New session")).toBeNull();
+  expect(button("New session")).not.toBeNull();
+  expect(button("Continue building")).not.toBeNull();
   expect(container.querySelector('[aria-label="Message composer"]')).toBeNull();
   await act(async () => button("Create app")!.click());
   expect(api.createSession).toHaveBeenCalledOnce();
@@ -970,11 +974,89 @@ it("keeps page selection separate and exposes app creation before a workspace or
   expect(api.postMessage).not.toHaveBeenCalled();
 });
 
-it("shows Chats without development actions and restores its own selected conversation", async () => {
-  localStorage.setItem("hosty.harness.chats.session", record.id);
-  window.history.replaceState({}, "", "/chats");
-  await act(async () => root.render(<AssistantConversation fullPage navigation="chats" />));
-  expect(input()).not.toBeNull(); expect(button("Create app")).toBeNull();
-  expect(button("Continue building")).toBeNull(); expect(button("New session")).not.toBeNull();
+it.each([
+  { path: "/chats", key: "hosty.harness.chats.session", Page: ChatsPage },
+  { path: "/development", key: "hosty.harness.workspaces.session", Page: DevelopmentPage },
+])("imports $path legacy selection into Sessions and exposes every creation action", async ({ path, key, Page }) => {
+  localStorage.setItem(key, record.id);
+  window.history.replaceState({}, "", path);
+  await act(async () => root.render(<Page />));
+  expect(input()).not.toBeNull(); expect(button("Create app")).not.toBeNull();
+  expect(button("Continue building")).not.toBeNull(); expect(button("New session")).not.toBeNull();
+  expect(container.querySelector('nav[aria-label="Sessions"]')).not.toBeNull();
+  expect(localStorage.getItem(WORK_SELECTION_STORAGE_KEY)).toBe(JSON.stringify({ sessionId: record.id }));
+  expect(window.location.pathname).toBe(path); expect(window.location.search).toBe(`?session=${record.id}`);
+  expect(ui.reportSurfaceState).toHaveBeenCalledWith({ route: `${path}?session=${record.id}`, state: "ready" });
   expect(api.createSession).not.toHaveBeenCalled();
+});
+
+it.each(["/chats", "/development"])("prefers shared Sessions selection over either legacy selection on %s", async path => {
+  localStorage.setItem(WORK_SELECTION_STORAGE_KEY, JSON.stringify({ sessionId: record.id }));
+  localStorage.setItem("hosty.harness.chats.session", "old-chats");
+  localStorage.setItem("hosty.harness.workspaces.session", "old-workspaces");
+  window.history.replaceState({}, "", path);
+  await act(async () => root.render(<AssistantConversation fullPage />));
+  expect(api.getSession).toHaveBeenCalledWith(record.id);
+  expect(api.getSession).not.toHaveBeenCalledWith("old-chats"); expect(api.getSession).not.toHaveBeenCalledWith("old-workspaces");
+  expect(input()).not.toBeNull();
+});
+
+it.each(["/chats", "/development"])("prefers an explicit URL over saved Sessions selection and preserves query/hash on %s", async path => {
+  localStorage.setItem(WORK_SELECTION_STORAGE_KEY, JSON.stringify({ sessionId: "saved" }));
+  window.history.replaceState({}, "", `${path}?session=${record.id}&diff=tree#file`);
+  await act(async () => root.render(<AssistantConversation fullPage />));
+  expect(api.getSession).not.toHaveBeenCalledWith("saved");
+  expect(input()).not.toBeNull(); expect(window.location.search).toBe(`?session=${record.id}&diff=tree`);
+  expect(window.location.hash).toBe("#file");
+  expect(localStorage.getItem(WORK_SELECTION_STORAGE_KEY)).toBe(JSON.stringify({ sessionId: record.id }));
+  expect(ui.reportSurfaceState).toHaveBeenCalledWith({ route: `${path}?session=${record.id}&diff=tree#file`, state: "ready" });
+});
+
+it("keeps an explicitly cleared Sessions selection empty instead of reimporting the old page session", async () => {
+  localStorage.setItem(WORK_SELECTION_STORAGE_KEY, "{}"); localStorage.setItem("hosty.harness.chats.session", record.id);
+  window.history.replaceState({}, "", "/chats");
+  await act(async () => root.render(<ChatsPage />));
+  expect(input()).toBeNull(); expect(api.getSession).not.toHaveBeenCalled(); expect(api.createSession).not.toHaveBeenCalled();
+});
+
+it.each(["/chats", "/development"])("preserves the compact assistant's independent session when Sessions opens and deletes a chat on %s", async path => {
+  const compact = { ...record, id: "compact-chat", title: "Compact conversation" };
+  localStorage.setItem("hosty.assistant.session", compact.id);
+  localStorage.setItem("hosty.assistant.draft.compact-chat", "Compact retained draft");
+  vi.mocked(api.listSessions).mockResolvedValue([record, compact]);
+  vi.mocked(api.getSession).mockImplementation(async id => id === compact.id ? compact : record);
+  vi.mocked(api.deleteSession).mockResolvedValue(undefined);
+  window.history.replaceState({}, "", `${path}?session=${record.id}`);
+  await act(async () => root.render(<AssistantConversation fullPage />));
+  expect(input()).not.toBeNull(); expect(localStorage.getItem("hosty.assistant.session")).toBe(compact.id);
+  expect(localStorage.getItem(WORK_SELECTION_STORAGE_KEY)).toBe(JSON.stringify({ sessionId: record.id }));
+  await openDelete();
+  expect(input()).toBeNull(); expect(localStorage.getItem(WORK_SELECTION_STORAGE_KEY)).toBe("{}");
+  expect(localStorage.getItem("hosty.assistant.session")).toBe(compact.id);
+  expect(localStorage.getItem("hosty.assistant.draft.compact-chat")).toBe("Compact retained draft");
+  await act(async () => root.unmount()); root = createRoot(container);
+  vi.mocked(api.listSessions).mockResolvedValue([compact]);
+  window.history.replaceState({}, "", "/assistant");
+  await render();
+  expect(input().value).toBe("Compact retained draft");
+  expect(api.streamEvents).toHaveBeenLastCalledWith(compact.id, expect.any(Function), expect.any(AbortSignal), expect.any(Function));
+  expect(api.createSession).not.toHaveBeenCalled(); expect(api.postMessage).not.toHaveBeenCalled();
+});
+
+it("restores each Back/Forward session and draft without creating a conversation", async () => {
+  const other = { ...record, id: "other-session", title: "Other conversation" };
+  vi.mocked(api.listSessions).mockResolvedValue([record, other]);
+  vi.mocked(api.getSession).mockImplementation(async id => id === other.id ? other : record);
+  localStorage.setItem("hosty.assistant.draft.other-session", "Other draft");
+  window.history.replaceState({}, "", `/chats?session=${record.id}`);
+  await act(async () => root.render(<ChatsPage />)); await type("First draft");
+  await act(async () => [...container.querySelectorAll<HTMLButtonElement>("nav button")].find(b => b.textContent?.startsWith(other.title))!.click());
+  expect(input().value).toBe("Other draft");
+  await act(async () => { window.history.replaceState({}, "", `/chats?session=${record.id}`); window.dispatchEvent(new PopStateEvent("popstate")); });
+  expect(input().value).toBe("First draft");
+  expect(localStorage.getItem(WORK_SELECTION_STORAGE_KEY)).toBe(JSON.stringify({ sessionId: record.id }));
+  await act(async () => { window.history.replaceState({}, "", `/chats?session=${other.id}`); window.dispatchEvent(new PopStateEvent("popstate")); });
+  expect(input().value).toBe("Other draft");
+  expect(ui.reportSurfaceState).toHaveBeenCalledWith({ route: `/chats?session=${other.id}`, state: "ready" });
+  expect(api.createSession).not.toHaveBeenCalled(); expect(api.postMessage).not.toHaveBeenCalled();
 });

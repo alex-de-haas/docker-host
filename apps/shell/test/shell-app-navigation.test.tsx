@@ -151,3 +151,23 @@ it("opens compact app pages on mouse hover and launches from an already open men
   expect(document.querySelector('[role="menu"]')).toBeNull();
   expect(props.onLaunchApp).toHaveBeenCalledExactlyOnceWith(multi, expect.objectContaining({ path: "/library" }), "workspace");
 });
+
+it.each([false, true].flatMap(compact => [
+  { compact, path: "/library/?tab=second#draft", expected: "Second tab" },
+  { compact, path: "/library?session=selected", expected: "First tab" },
+]))("keeps one declared page highlighted after in-place selection at $path, compact=$compact", async ({ compact, path, expected }) => {
+  const multi = { ...running, navigation: [
+    { label: "First tab", path: "/library?tab=first", service: "web", embeddedUrl: "https://example.notes.test/library?tab=first" },
+    { label: "Second tab", path: "/library?tab=second", service: "web", embeddedUrl: "https://example.notes.test/library?tab=second" },
+  ] };
+  const props = { ...sidebarProps(), compact, uiApps: [multi], workspace: {
+    appId: multi.id, title: "Notes", pageLabel: "Library", path, src: "https://example.notes.test/library", externalUrl: "https://example.notes.test/library",
+  } };
+  await act(async () => root.render(<ShellSidebar {...props} />));
+  if (compact) await act(async () => button("Notes").dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" })));
+  else if (!button("First tab")) await act(async () => button("Expand Notes pages").click());
+  const items = compact ? [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+    : [...container.querySelectorAll<HTMLElement>("button")];
+  const selected = items.filter(item => item.classList.contains(compact ? "bg-accent" : "bg-sidebar-accent") && /^(First|Second) tab$/.test(item.textContent ?? ""));
+  expect(selected.map(item => item.textContent)).toEqual([expected]);
+});

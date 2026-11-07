@@ -1,6 +1,6 @@
 ---
 created: 2026-07-30
-updated: 2026-11-04
+updated: 2026-11-07
 summary: Shell routes, role-specific home, sidebar app launchers and phone navigation.
 components: [apps/shell]
 ---
@@ -63,6 +63,21 @@ its query and fragment under the installed app's origin and base path. For examp
 `/?workspace=<id>&worktree=<id>` selects that worktree in Workspaces instead of requesting a
 pathname containing an encoded question mark. A protocol-relative destination cannot change the
 installed app origin.
+
+Declared navigation entries retain their own resolved URL and service. An app-relative route that
+is absent from navigation resolves from the installed entry URL after removing its matching
+declared entry-path suffix. This preserves deployment prefixes without nesting the requested route
+under the entry page; a missing, root or nonmatching entry path retains the existing base path.
+Absolute entry declarations contribute only their pathname, never an origin, query or fragment.
+
+The main embedded workspace accepts ready-route reports through the SDK's verified surface-state
+callback. It updates the app-relative `path`, selected page and standalone link while retaining the
+same iframe document and launch URL, so in-place selections and unsent drafts survive. Parent URL
+parameters and fragments outside the app path remain intact. Reload opens the reported selection;
+explicit navigation still replaces the frame source. Reports from stale frames, installations or
+superseded parent routes cannot replace a newer selection. Settings and side-panel reports do not
+change the main workspace route. Sidebar page selection first matches the declared query, then a
+single matching pathname with trailing slashes normalized.
 
 On load Shell asks Core for a fresh launch code
 before loading the iframe; codes are single-use, so a refresh re-mints rather than replaying.
@@ -466,7 +481,9 @@ disabled optional permissions are not a problem. See [App permission management]
   and parent-only grouped focus; check SDK-owned rail and chooser controls separately.
 - Navigation tests retain direct app launch, page selection and standalone links in expanded and
   compact modes, without an interactive Apps heading, All apps icon or app overview cards. Retain
-  administrator-only Uninstall in Dashboard and App Details. Verify direct Core removal review,
+  unlisted app routes beside their declared entry page, deployment prefixes, query/fragment and
+  installed-origin protection, with unrelated app identities and exact navigation/service routing.
+  Retain administrator-only Uninstall in Dashboard and App Details. Verify direct Core removal review,
   all cleanup choices, popup fallback, denial/errors, source safety and same-request recovery without
   an intermediate Shell popup or premature success.
 - Verify revision/build-only app-version hover and the full update-check error on the problem icon,

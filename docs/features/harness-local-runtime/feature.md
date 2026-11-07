@@ -27,7 +27,10 @@ The production generation contains:
 - Standalone runtime dependencies installed with `npm ci` from the reviewed lock's resolved
   versions and integrity records, including the pinned Claude SDK and Codex executable packages.
 
-The standalone package retains application-declared runtime dependencies and only those SDK third-party packages imported externally by the compiled API/worker. UI-only SDK dependencies do not pull React into the backend. Exact resolved versions and integrity records still come from the reviewed lock.
+The standalone package retains application-declared runtime dependencies, including providers resolved
+by name, and only those SDK third-party packages imported externally by the compiled API/worker.
+The SDK import inventory is sorted, deduplicated and bounded. UI-only SDK dependencies do not pull
+React into the backend. Exact resolved versions and integrity records still come from the reviewed lock.
 
 The standalone package excludes workspace links, Next, React, TypeScript and `tsx`. The launcher
 imports compiled JavaScript in its own Node process and sets `NODE_ENV=production` and the
@@ -70,12 +73,15 @@ into its image, while `dev` retains its editable source setup/watch recipe.
 
 ## Verified Acceptance
 
-On 2026-10-27, the managed child-Core suite passed on macOS arm64 with Node 24.18.0 and npm 11.16.0.
-With no app generation and an already populated host npm cache, first app start took 28.556 seconds;
-warm restart took 1.961 seconds without installation or compilation. Missing static-output recovery
-took 23.248 seconds. These include Core lifecycle/readiness and do not measure empty npm-cache
+On 2026-11-07, the managed child-Core suite passed on macOS arm64 with Node 24.18.0 and npm 11.16.0.
+With no app generation and an already populated host npm cache, first app start took 26.974 seconds;
+warm restart took 2.028 seconds without installation or compilation. Missing static-output recovery
+took 27.485 seconds. These include Core lifecycle/readiness and do not measure empty npm-cache
 downloads or startup of the test Core itself. Normal password/launch-code authentication, static
-assets, contained provider dependencies, fresh process identity and Finish cleanup passed.
+assets, contained provider dependencies, absent backend React/Next/TypeScript dependencies,
+fresh process identity and Finish cleanup passed. The optional Sessions browser checks also passed
+through standalone and Core/Shell URLs: desktop/narrow workspace grouping and deletion, embedded
+selection reporting without iframe reload, preserved drafts and Shell reload restoration.
 Windows and Linux lifecycle acceptance and paid provider turns were not run.
 
 ## Testing Expectations

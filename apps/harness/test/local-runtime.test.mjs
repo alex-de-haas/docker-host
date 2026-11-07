@@ -106,6 +106,10 @@ it("rebuilds after npm workspace or executable links disappear", async () => {
 
 it("keeps dynamic app dependencies and only externally imported SDK dependencies in the standalone runtime", async () => {
   const { runtimePackage } = await import("../scripts/local-runtime.mjs");
+  const { build } = await import("esbuild");
+  const compiled = await build({ stdin: { contents: 'import { hash } from "@sdk/hashes/sha2.js"; console.log(hash); import("sdk-server/stream"); import("@scope/prefix-lookalike/unrelated");', resolveDir: process.cwd() },
+    bundle: true, platform: "node", format: "esm", packages: "external", metafile: true, write: false });
+  const imports = Object.values(compiled.metafile.outputs).flatMap(output => output.imports.filter(value => value.external).map(value => value.path));
   const dependency = { version: "1.2.3", integrity: "locked" };
   const source = { lockfileVersion: 3, packages: {
     "": { workspaces: ["apps/*"] }, "apps/harness": { version: "0.1.0" },
@@ -115,10 +119,10 @@ it("keeps dynamic app dependencies and only externally imported SDK dependencies
   } };
   const { manifest, lock } = runtimePackage({ version: "0.1.0", dependencies: {
     "native-provider": "1.2.3", "@hosty-sdk/app": "*", tsx: "^4",
-  } }, { dependencies: { "sdk-dependency": "2", "@scope/used": "3", "lucide-react": "1" }, peerDependencies: { next: "^16", react: "^19" } }, {}, source,
-    ["sdk-dependency/helpers", "@scope/used/server", "@scope/used-extra/unrelated"]);
-  expect(manifest.dependencies).toEqual({ "native-provider": "1.2.3", "sdk-dependency": "2", "@scope/used": "3" });
-  expect(manifest.dependencies["lucide-react"]).toBeUndefined();
+  } }, { dependencies: { "@sdk/hashes": "2", "sdk-server": "3", "ui-icons": "4", "@scope/prefix": "5" }, peerDependencies: { next: "^16", react: "^19" } }, {}, source, imports);
+  expect(manifest.dependencies).toEqual({ "native-provider": "1.2.3", "@sdk/hashes": "2", "sdk-server": "3" });
+  expect(manifest.dependencies["ui-icons"]).toBeUndefined();
+  expect(manifest.dependencies["@scope/prefix"]).toBeUndefined();
   expect(manifest.dependencies.react).toBeUndefined();
   expect(manifest.workspaces).toBeUndefined();
   expect(lock.packages["node_modules/native-provider"]).toBe(dependency);
@@ -127,9 +131,16 @@ it("keeps dynamic app dependencies and only externally imported SDK dependencies
   expect(source.packages[""].workspaces).toEqual(["apps/*"]);
 });
 
+it("defaults to no SDK dependencies when the backend has no external SDK imports", async () => {
+  const { runtimePackage } = await import("../scripts/local-runtime.mjs");
+  const { manifest } = runtimePackage({ version: "1", dependencies: { "native-provider": "1" } },
+    { dependencies: { "ui-icons": "2" } }, {}, { packages: {} });
+  expect(manifest.dependencies).toEqual({ "native-provider": "1" });
+});
+
 it("rejects an unbounded or malformed SDK import inventory", async () => {
   const { runtimePackage } = await import("../scripts/local-runtime.mjs");
-  for (const imports of [Array(257).fill("sdk"), [null], ["x".repeat(2049)]])
+  for (const imports of [null, {}, "sdk", Array(257).fill("sdk"), [null], ["x".repeat(2049)]])
     expect(() => runtimePackage({ version: "1", dependencies: {} }, {}, {}, { packages: {} }, imports))
       .toThrow("Invalid compiled SDK runtime import inventory");
 });
