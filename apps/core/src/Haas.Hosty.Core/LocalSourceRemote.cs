@@ -19,7 +19,27 @@ internal sealed partial class DevelopmentWorkspaceService
         if (app is null || !w.Apps.Any(a => a.AppId == appId && a.Installation == app.InstalledAt) ||
             app.SourceState is not { Type: "local-git" } source)
             throw Error("source_changed", "The local app source binding changed. Retained source and worktree are unchanged.");
-        var local = await LocalBuildingSource.ReadAsync(paths, app, ct);
+        var canonical = paths.ResolveManagedCheckoutPath(appId);
+        var sourceApp = app;
+        if (source.LocalOverridePath != canonical)
+        {
+            var development = await AppDevStore.ReadAsync(paths, app, ct);
+            if (development is not { Phase: "active", PreviousSource: { Type: "local-git" } previous } ||
+                development.Installation != app.InstalledAt || development.WorktreeId != w.Id ||
+                development.SourcePath != w.Path || source.LocalOverridePath != w.Path ||
+                app.SelectedRuntime != development.TargetRuntime || w.State != "active" ||
+                previous.Repository != source.Repository || previous.ManagedCheckoutPath != source.ManagedCheckoutPath ||
+                previous.Commit != source.Commit || previous.ManifestSubpath != source.ManifestSubpath ||
+                development.Receipts?.Any(receipt => receipt.State == "pending") == true ||
+                w.Operations.Any(operation => operation.State is "pending" or "unknown" &&
+                    !operation.Kind.StartsWith("remote-", StringComparison.Ordinal)))
+                throw Error("source_changed", "The selected source is not a verified active development worktree for this installation.");
+            await ValidateTree(w, ct);
+            // Remote metadata does not select executable source. Validate canonical main without
+            // treating this operation's registered live worktree as an arbitrary source override.
+            sourceApp = app with { SourceState = source with { LocalOverridePath = canonical } };
+        }
+        var local = await LocalBuildingSource.ReadAsync(paths, sourceApp, ct);
         if (local.Unavailable is not null) throw Error("source_changed", local.Unavailable);
         if (await CanonicalRepository(source.Repository, source.LocalOverridePath, ct) != w.Repository)
             throw Error("source_changed", "The registered local repository identity changed.");

@@ -1,6 +1,6 @@
 ---
 created: 2026-10-07
-updated: 2026-11-04
+updated: 2026-11-07
 summary: Authorized external clients use registered Core worktrees, independent test environments, canonical publication and native Git/provider reconciliation.
 components: [apps/core, apps/harness, apps/documents]
 ---
@@ -318,7 +318,7 @@ review, typed name, prior inspection, completion or pause.
 | `get_workspace(workspaceId)` | Observe the binding and inspect durable `operations` and leases |
 | `get_workspace_diff(workspaceId, path, view?)` | Preview a repository-relative path; `session` is the default view |
 | `refresh_workspace(workspaceId, requestId)` | Fetch the target without changing the workspace branch |
-| `commit_workspace(workspaceId, requestId, expectedHead, message, paths, authorName, authorEmail)` | Commit the explicitly selected paths with attribution and a HEAD check |
+| `commit_workspace(workspaceId, requestId, expectedHead, message, paths, authorName, authorEmail, reviewId?)` | Commit explicitly selected paths with attribution and a HEAD check; pass the exact-file review receipt for shared workspaces |
 | `merge_workspace_target(workspaceId, requestId, expectedHead, message, authorName, authorEmail)` | Explicitly integrate the latest target into clean source |
 | `abort_workspace_merge(workspaceId, requestId, expectedHead)` | Abort a pending integration with a HEAD check |
 | `acquire_workspace_lease(workspaceId, requestId, leaseId)` | Record durable activity before native work |
@@ -357,6 +357,8 @@ participation requires separate Core authority; ordinary source or lifecycle acc
 Return preserves current data and live source edits.
 
 ## Testing Expectations
+
+- Exercise a shared-workspace commit through direct MCP: require a current exact-file review receipt, reject missing/stale receipts, preserve unselected changes and retain same-request replay. The optional reviewId is present in the MCP schema.
 
 - Exercise external PR observation with multiple references, remote head changes, provider errors,
   malformed or unrelated URLs, expired/disconnected/ambiguous accounts, owner access loss and

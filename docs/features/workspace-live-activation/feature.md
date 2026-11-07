@@ -1,6 +1,6 @@
 ---
 created: 2026-10-19
-updated: 2026-11-06
+updated: 2026-11-07
 summary: Select named app workspaces or installed package runtimes with scoped access review, retained package choices and recoverable Core-owned transitions.
 components: [apps/core, apps/cli, apps/shell, apps/harness, shared]
 ---
@@ -590,6 +590,8 @@ on subsequent GETs, without changing persisted Git observations, dirty source, r
 activation records or snapshots. Finish removes the child, its processes and test data.
 
 ## Testing Expectations
+
+- A local app can connect and publish its registered active worktree without a runtime switch. A remote connected during development survives grouped and package Return, including interrupted Return recovery while source edits and current data remain intact.
 
 - Exercise a development-only installed bootstrap through workspace entry, interrupted startup and
   package Return. Keep its installed baseline visible even when the workspace uses the same runtime

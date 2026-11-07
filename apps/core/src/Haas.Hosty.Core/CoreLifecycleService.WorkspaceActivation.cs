@@ -152,7 +152,7 @@ internal sealed partial class CoreLifecycleService
             throw DevError("binding_changed", "Return cannot overwrite a different installation.");
         if (op.Phase == "returned")
         {
-            if (app.SelectedRuntime != op.PreviousRuntime || app.SourceState != op.PreviousSource ||
+            if (app.SelectedRuntime != op.PreviousRuntime || app.SourceState != ReturnDevSource(op, app) ||
                 op.WasRunning && (await GetHealthAsync(appId, ct)).Status != "healthy" || !op.WasRunning && AppRuntimeStates.IsUp(app.RuntimeState))
                 throw DevError("return_not_ready", "The previous runtime no longer confirms its captured running state. Inspect it before completing Return.");
             return;
@@ -162,7 +162,7 @@ internal sealed partial class CoreLifecycleService
         {
             await ReturnDevAsync(op, WorkspaceRuntimeFiles.ChildId(request.RequestId, appId), request.AcceptDataChanges, ct);
             var restored = await RequireAppAsync(appId, ct);
-            if (restored.SelectedRuntime != op.PreviousRuntime || restored.SourceState != op.PreviousSource ||
+            if (restored.SelectedRuntime != op.PreviousRuntime || restored.SourceState != ReturnDevSource(op, restored) ||
                 op.WasRunning && (await GetHealthAsync(appId, ct)).Status != "healthy" ||
                 !op.WasRunning && AppRuntimeStates.IsUp(restored.RuntimeState))
                 throw DevError("return_not_ready", "The captured previous runtime has not confirmed its original running state.");
