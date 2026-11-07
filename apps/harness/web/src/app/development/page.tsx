@@ -1,3 +1,2 @@
-import { AssistantConversation } from "@/components/assistant-conversation";
-
-export default function DevelopmentPage() { return <AssistantConversation fullPage />; }
+// Preserve historical URLs and their session/workspace/diff parameters in place.
+export { default } from "../chats/page";

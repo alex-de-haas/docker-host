@@ -1,6 +1,6 @@
 ---
 created: 2026-10-25
-updated: 2026-11-05
+updated: 2026-11-06
 summary: Core workspaces support concurrent private sessions, permission-based source access, attributable activity and independent conversation lifetimes.
 components: [apps/core, apps/harness]
 ---
@@ -76,8 +76,12 @@ and requires rereading files after another participant's edits. Permission revoc
 
 ## Navigation And Lifetimes
 
-Harness has separate Chats and Workspaces pages. Chats lists accessible conversations; Workspaces
-lists authorized workspaces, including external and sessionless ones. All workspace rows use the same hammer icon, with no external marker, secondary label or tooltip.
+Harness combines conversations and workspace groups on Sessions. Its left-hand list contains authorized
+non-deleted workspaces, including external and sessionless ones, and accessible conversations not
+represented by those workspace rows. Attached conversations appear in the workspace's right-hand
+Sessions section instead of separate list rows. An accessible chat remains individually reachable
+when its workspace is absent, deleted or inaccessible. All workspace rows use the same hammer icon,
+with no external marker, secondary label or tooltip.
 Internal and externally allocated workspaces show only the current user's accessible Harness sessions
 as selectable rows in the Sessions sidebar, with a plus that creates one idle conversation. Empty workspaces offer
 explicit creation without creating a chat on selection. Other hosted participants' titles and activity

@@ -120,6 +120,13 @@ def check(context):
             text=True, cwd=workspace)
         assert result.returncode == 0, 'Suggestion browser acceptance failed'
 
+    if os.environ.get('HOSTY_WORK_BROWSER'):
+        import subprocess
+        result = subprocess.run(['node', str(workspace/'apps/harness/test/work-browser.mjs')],
+            input=json.dumps({'core':origin, 'harness':app_origin, 'email':'activation-fixture@example.test', 'password':password,
+                'link':link, 'outputDirectory':os.environ.get('HOSTY_WORK_SCREENSHOTS')}), text=True, cwd=workspace)
+        assert result.returncode == 0, 'Work browser acceptance failed'
+
     if review := os.environ.get('HOSTY_HARNESS_BROWSER_REVIEW'):
         shell_manifest = json.loads((workspace/'apps/shell/manifest.json').read_text())
         shell_manifest['source']['repository'] = context['repository']
