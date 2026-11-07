@@ -1,6 +1,6 @@
 ---
 created: 2026-10-15
-updated: 2026-11-03
+updated: 2026-11-07
 summary: Harness runs declared API and Worker services over authenticated HTTP and SSE, with shared Core-owned source access and native model and reasoning-effort selection.
 components: [apps/harness, apps/core, apps/shell]
 ---
@@ -35,6 +35,13 @@ Child Core admission supplies its existing Core-owned service budgets without a 
 reservation or credit. An adopted running container retains its existing Docker configuration
 until the operator recreates it through ordinary lifecycle.
 
+An admission fence rejects new run IDs but still resolves existing durable acceptance receipts.
+The coordinator treats a definitive pre-admission stopping refusal as a failed turn, without a
+second submission during cleanup. Temporary sharing violations receive bounded retries before
+a journal write fails. Usage clocks advance only with their durable charge; a persistent sampling
+failure fences admission, stops known execution conservatively and logs a bounded error code.
+Health and capabilities expose the fence instead of reporting a usable worker.
+
 ## Direct HTTP And SSE
 
 `src/worker/contracts.ts` defines protocol version 2. The endpoint client depends on a URL,
@@ -44,7 +51,7 @@ listening test fixture exercises the same client with its own journal and no Cor
 
 | Endpoint | Behavior |
 | --- | --- |
-| `GET /healthz` | Public process liveness, including before service-secret bootstrap |
+| `GET /healthz` | Public availability, including before service-secret bootstrap; returns 503 when admission is fenced |
 | `GET /v1/capabilities` | Authenticated provider, resource, concurrency and readiness capabilities |
 | `PUT /v1/coordinator` | Authenticate the coordinator callback before enabling provider secrets |
 | `POST /v1/connections/operations/:operation` | Whitelisted private connection operations |
