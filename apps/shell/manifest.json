@@ -108,6 +108,7 @@
     "apps.lifecycle",
     "apps.configure",
     "core.read",
+    "core.storage.read",
     "core.update",
     "core.lifecycle",
     "core.configure",

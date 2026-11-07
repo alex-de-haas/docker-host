@@ -35,9 +35,12 @@ export function createWorkerServer(engine: WorkerEngine, identity: () => Promise
   });
   async function route(request: IncomingMessage, response: ServerResponse) {
     const url = new URL(request.url ?? "/", "http://worker"), method = request.method;
-    if (method === "GET" && url.pathname === "/healthz") { json(response, 200, { status: "ok", protocol: WORKER_PROTOCOL }); return; }
+    if (method === "GET" && url.pathname === "/healthz") { json(response, engine.available ? 200 : 503, { status: engine.available ? "ok" : "stopping", protocol: WORKER_PROTOCOL }); return; }
     authorizeService(request, await identity());
-    if (method === "GET" && url.pathname === "/v1/capabilities") { json(response, 200, { protocol: WORKER_PROTOCOL, ...await control.capabilities(), occupied: engine.occupied }); return; }
+    if (method === "GET" && url.pathname === "/v1/capabilities") {
+      if (!engine.available) throw new WorkerApiError(503, "worker_stopping", "Worker is stopping.");
+      json(response, 200, { protocol: WORKER_PROTOCOL, ...await control.capabilities(), generation: engine.journal.generation, occupied: engine.occupied }); return;
+    }
     if (method === "PUT" && url.pathname === "/v1/coordinator") { json(response, 200, await control.configure(await readCommand(request))); return; }
     const attachment = url.pathname.match(/^\/v1\/conversations\/([A-Za-z0-9-]+)\/attachments\/([^/]+)$/);
     if (method === "PUT" && attachment && control.attachment) {

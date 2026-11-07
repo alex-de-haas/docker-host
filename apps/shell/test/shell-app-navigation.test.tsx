@@ -34,6 +34,18 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.resetAllMocks(); vi.unstubAllGlobals(); });
 const button = (label: string) => [...container.querySelectorAll<HTMLButtonElement>("button")].find(node => node.textContent === label || node.getAttribute("aria-label") === label)!;
 
+it.each([false, true])("keeps one Settings destination without a separate Storage sidebar item (compact=%s)", async compact => {
+  const props = { ...sidebarProps(), compact, activeView: "settings" as const, selectedSettings: "storage" };
+  await act(async () => root.render(<ShellSidebar {...props} />));
+  const navigation = container.querySelector('nav[aria-label="Host navigation"]')!;
+  expect([...navigation.querySelectorAll("button,a")].filter(item => item.textContent === "Storage" || item.getAttribute("aria-label") === "Storage")).toHaveLength(0);
+  expect(navigation.querySelectorAll('[aria-label="Settings"]')).toHaveLength(1);
+  expect(button("Settings").getAttribute("aria-current")).toBe("page");
+  await act(async () => button("Settings").click());
+  expect(props.onOpenSettings).toHaveBeenCalledExactlyOnceWith("profile");
+  expect(props.onNavigate).not.toHaveBeenCalled();
+});
+
 it.each([false, true])("keeps direct app launch rows while the Apps heading is noninteractive (compact=%s)", async compact => {
   const props = { ...sidebarProps(), compact };
   await act(async () => root.render(<ShellSidebar {...props} />));
@@ -138,4 +150,24 @@ it("opens compact app pages on mouse hover and launches from an already open men
   await act(async () => button("Notes").click());
   expect(document.querySelector('[role="menu"]')).toBeNull();
   expect(props.onLaunchApp).toHaveBeenCalledExactlyOnceWith(multi, expect.objectContaining({ path: "/library" }), "workspace");
+});
+
+it.each([false, true].flatMap(compact => [
+  { compact, path: "/library/?tab=second#draft", expected: "Second tab" },
+  { compact, path: "/library?session=selected", expected: "First tab" },
+]))("keeps one declared page highlighted after in-place selection at $path, compact=$compact", async ({ compact, path, expected }) => {
+  const multi = { ...running, navigation: [
+    { label: "First tab", path: "/library?tab=first", service: "web", embeddedUrl: "https://example.notes.test/library?tab=first" },
+    { label: "Second tab", path: "/library?tab=second", service: "web", embeddedUrl: "https://example.notes.test/library?tab=second" },
+  ] };
+  const props = { ...sidebarProps(), compact, uiApps: [multi], workspace: {
+    appId: multi.id, title: "Notes", pageLabel: "Library", path, src: "https://example.notes.test/library", externalUrl: "https://example.notes.test/library",
+  } };
+  await act(async () => root.render(<ShellSidebar {...props} />));
+  if (compact) await act(async () => button("Notes").dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" })));
+  else if (!button("First tab")) await act(async () => button("Expand Notes pages").click());
+  const items = compact ? [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+    : [...container.querySelectorAll<HTMLElement>("button")];
+  const selected = items.filter(item => item.classList.contains(compact ? "bg-accent" : "bg-sidebar-accent") && /^(First|Second) tab$/.test(item.textContent ?? ""));
+  expect(selected.map(item => item.textContent)).toEqual([expected]);
 });

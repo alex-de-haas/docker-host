@@ -151,6 +151,8 @@ export interface HarnessStartOptions {
 }
 
 export interface HarnessRun {
+  /** Wait only for durable remote admission, independently of coordinator event callbacks. */
+  waitForAdmission?(): Promise<void>;
   /** Cancel optional collection and observe confirmed completion, outside the coordinator queue. */
   finishSuggestions?(): Promise<void>;
   disableSuggestions?(): Promise<void>;

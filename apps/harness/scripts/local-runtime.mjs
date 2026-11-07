@@ -143,10 +143,15 @@ export async function run(command, args, cwd) {
 }
 
 
-export function runtimePackage(app, sdk, rootPackage, sourceLock) {
-  // The SDK is compiled into the entry points. Its third-party dependencies still need runtime
-  // delivery, but its optional React/Next peers and the development TS loader do not.
-  const dependencies = { ...sdk.dependencies, ...app.dependencies };
+export function runtimePackage(app, sdk, rootPackage, sourceLock, sdkImports = []) {
+  if (!Array.isArray(sdkImports) || sdkImports.length > 256
+    || sdkImports.some(value => typeof value !== "string" || value.length > 2048))
+    throw new Error("Invalid compiled SDK runtime import inventory.");
+  // Keep declared application dependencies, including providers spawned dynamically. Only SDK
+  // dependencies actually left external by the backend compiler belong in this standalone runtime.
+  const sdkDependencies = Object.fromEntries(Object.entries(sdk.dependencies ?? {})
+    .filter(([name]) => sdkImports.some(value => value === name || value.startsWith(name + "/"))));
+  const dependencies = { ...sdkDependencies, ...app.dependencies };
   delete dependencies["@hosty-sdk/app"];
   delete dependencies.tsx;
   const manifest = { name: "hosty-harness-local", version: app.version, private: true,
@@ -168,7 +173,7 @@ export async function build(snapshot) {
   // neither the original checkout's node_modules nor a previous generation is mutated.
   const json = async file => JSON.parse(await readFile(path.join(snapshot, file), "utf8"));
   const runtime = runtimePackage(await json("apps/harness/package.json"), await json("packages/app-sdk/package.json"),
-    await json("package.json"), await json("package-lock.json"));
+    await json("package.json"), await json("package-lock.json"), await json("runtime-sdk-imports.json"));
   await writeFile(path.join(snapshot, "package.json"), JSON.stringify(runtime.manifest, null, 2) + "\n");
   await writeFile(path.join(snapshot, "package-lock.json"), JSON.stringify(runtime.lock, null, 2) + "\n");
   await run("npm", ["ci", "--omit=dev", "--no-audit", "--no-fund"], snapshot);

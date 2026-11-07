@@ -27,9 +27,10 @@ function storedCommand(workspaceId: string): DeleteCommand | null {
   return null;
 }
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
-export function WorkspaceDelete({ workspaceId, name, pendingRequestId, onClose, refresh, deleteConversation }: {
+export function WorkspaceDelete({ workspaceId, name, pendingRequestId, onClose, refresh, deleteConversation, onCloseAutoFocus }: {
   workspaceId: string; name: string; pendingRequestId?: string; onClose: () => void; refresh: () => void;
   deleteConversation?: () => Promise<void>;
+  onCloseAutoFocus?: (event: Event) => void;
 }) {
   const [command, setCommand] = useState<DeleteCommand | null>(() => pendingRequestId ? { requestId: pendingRequestId } : storedCommand(workspaceId));
   const [details, setDetails] = useState<DeleteDetails | null>(null);
@@ -98,7 +99,7 @@ export function WorkspaceDelete({ workspaceId, name, pendingRequestId, onClose, 
   };
   const removed = progress?.state === "removed";
   return <Dialog open onOpenChange={open => { if (!open && !removing) onClose(); }}>
-    <DialogContent className="sm:max-w-2xl" showCloseButton={!removing}>
+    <DialogContent className="sm:max-w-2xl" showCloseButton={!removing} onCloseAutoFocus={onCloseAutoFocus}>
       <DialogHeader><DialogTitle>{removed ? "Workspace deleted" : command ? "Workspace deletion" : "Delete workspace?"}</DialogTitle>
         <DialogDescription>{removed ? "The workspace source, local branches and temporary test data have been removed." : "Permanently delete this workspace, including unfinished source, local branches and temporary test data. This cannot be undone."}</DialogDescription></DialogHeader>
       <DialogBody>

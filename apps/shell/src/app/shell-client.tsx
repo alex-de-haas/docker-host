@@ -227,6 +227,7 @@ export function ShellClient({
   // instance. The manifest alone is not enough: reopening the same manifestRef would keep the key,
   // skip the mount-only auto-review, and (with the panel state wiped on open) render an empty dialog.
   const updateActivations = useRef(new Set<string>());
+  const bulkUpdateActivation = useRef(false);
   const installActivation = useRef(false);
   const [installNonce, setInstallNonce] = useState(0);
   const [mountLibrary, setMountLibrary] = useState<{ scope: string | null; mounts: CoreGlobalMount[] | null; loading: boolean; error: string | null }>({
@@ -245,6 +246,11 @@ export function ShellClient({
   // Runtime switches reset artifact locks. Refresh any open Manage service diagnostics afterwards.
   const [updateStatusInvalidations, setUpdateStatusInvalidations] = useState<Record<string, number>>({});
   const [workspace, setWorkspace] = useState<EmbeddedWorkspace | null>(null);
+  const workspaceReportState = useRef({ workspace, apps: state.apps });
+  workspaceReportState.current = { workspace, apps: state.apps };
+  const workspaceSurfaceEpoch = useRef(0);
+  const workspaceRenderEpoch = workspaceSurfaceEpoch.current;
+  const acknowledgedWorkspaceRoute = useRef<{ appId: string; src: string; path: string } | null>(null);
   const [optimisticWorkspaceRoute, setOptimisticWorkspaceRoute] = useState<WorkspaceRoute | null>(null);
   const [sidebarCompact, setSidebarCompact] = useState(initialSidebarCompact ?? false);
   const [narrowViewport, setNarrowViewport] = useState(false);
@@ -716,6 +722,7 @@ export function ShellClient({
   const launchAppPage = useCallback(
     async (app: CoreApp, page: AppPageLink, target: AppOpenTarget = "workspace"): Promise<boolean> => {
       if (app.id === shellAppId) {
+        workspaceSurfaceEpoch.current++;
         setWorkspace(null);
         setOptimisticWorkspaceRoute(null);
         router.push(getShellViewHref(canManageApps ? "dashboard" : "home"));
@@ -745,6 +752,9 @@ export function ShellClient({
         return true;
       }
 
+      workspaceSurfaceEpoch.current++;
+      acknowledgedWorkspaceRoute.current = null;
+
       const routePath = normalizeAppPath(page.path);
       const embeddedRedirectUri = appendHostyLaunchParam(
         appendThemeLaunchParams(page.redirectUri, shellResolvedTheme, shellThemePreference),
@@ -761,6 +771,7 @@ export function ShellClient({
           title: app.displayName,
           pageLabel: page.label,
           path: routePath,
+          launchPath: routePath,
           src: embeddedRedirectUri,
           externalUrl: getStandaloneAppHref(app, page),
         });
@@ -790,6 +801,7 @@ export function ShellClient({
           title: app.displayName,
           pageLabel: page.label,
           path: routePath,
+          launchPath: routePath,
           src: embeddedRedirectUri,
           // The standalone href, never the frame's own URL: that one declares the embedded mode,
           // and a new tab opened on it would be an app hiding the navigation nothing else renders.
@@ -814,6 +826,39 @@ export function ShellClient({
     },
     [appEndpoint, canManageApps, getStandaloneAppHref, router, sendCsrfJson, shellAppId, shellResolvedTheme, shellThemePreference, workspace?.appId],
   );
+
+  // The SDK verifies the reporting document, origin and declared route. Only the currently
+  // mounted main surface may update Shell's reload destination; its iframe source stays fixed.
+  const handleWorkspaceSurfaceState = useCallback((source: EmbeddedWorkspace, installationId: string | null | undefined,
+    epoch: number, report: { route: string; title?: string }) => {
+    const current = workspaceReportState.current.workspace;
+    const app = workspaceReportState.current.apps.find(item => item.id === source.appId);
+    if (!current || !app || epoch !== workspaceSurfaceEpoch.current || current.appId !== source.appId
+      || current.src !== source.src || app.installationId !== installationId) return;
+    const parent = new URL(window.location.href);
+    const active = readShellRoute(parent.pathname, parent.searchParams).workspace;
+    if (normalizeShellPath(parent.pathname) !== "/workspace" || active?.appId !== current.appId
+      || normalizeAppPath(active.path) !== current.path || !report.route.startsWith("/") || report.route.startsWith("//")) return;
+    try {
+      const launch = new URL(source.src), reported = new URL(report.route, launch.origin);
+      if (reported.origin !== launch.origin) return;
+      const launchPath = new URL(source.launchPath ?? source.path, "https://app.invalid").pathname.replace(/\/$/, "");
+      const launchedPath = launch.pathname.replace(/\/$/, "");
+      const prefix = !launchPath ? launchedPath : launchedPath.endsWith(launchPath) ? launchedPath.slice(0, -launchPath.length) : "";
+      if (prefix && reported.pathname !== prefix && !reported.pathname.startsWith(`${prefix}/`)) return;
+      const path = `${reported.pathname.slice(prefix.length) || "/"}${reported.search}${reported.hash}`;
+      const page = findAppPageLink(app, path);
+      if (!page) return;
+      const next = { ...current, path, pageLabel: report.title ?? page.label,
+        externalUrl: getStandaloneAppHref(app, { ...page, redirectUri: reported.href }) };
+      acknowledgedWorkspaceRoute.current = { appId: current.appId, src: current.src, path };
+      workspaceReportState.current = { ...workspaceReportState.current, workspace: next };
+      // Keep unrelated Shell parameters, including the compact assistant's selection, intact.
+      parent.searchParams.set("app", current.appId); parent.searchParams.set("path", path);
+      window.history.replaceState(window.history.state, "", parent.pathname + parent.search + parent.hash);
+      setWorkspace(next);
+    } catch { /* A rejected route never changes the active page or its source. */ }
+  }, [getStandaloneAppHref]);
 
   useEffect(() => {
     if (!panelHost) return;
@@ -1257,25 +1302,33 @@ export function ShellClient({
     }
   }, [coreOrigin, refresh, sendCsrfJson, shellAppId]);
 
-  const applyUpdateFromRow = useCallback(async (app: CoreApp) => {
-    if (updateActivations.current.has(app.id)) return;
+  const prepareAndEnqueueUpdate = useCallback(async (app: CoreApp, routineOnly = false): Promise<boolean> => {
+    if (updateActivations.current.has(app.id)) return false;
     updateActivations.current.add(app.id);
     // Reserve the window in the click gesture. A fresh routine verdict needs no window;
     // if its refresh discovers a review, Core's explicit confirmation link is available.
-    const reserve = app.updateCheck?.requiresReview || app.updateCheck?.error || !app.updateCheck?.planDigest;
+    const reserve = !routineOnly && (app.updateCheck?.requiresReview || app.updateCheck?.error || !app.updateCheck?.planDigest);
     const popup = reserve ? openInstallationConfirmation() : null;
     const actionKey = `${app.id}:update`;
     setBusyAction(actionKey);
     try {
       for (let attempt = 0; attempt < 2; attempt++) {
-        const plan = await getUpdatePlan(app, attempt > 0 || Boolean(app.updateCheck?.error));
+        // The offer may predate another release. Resolve the latest candidate before consent
+        // or queueing, while Core still applies that exact plan without re-resolving it.
+        const plan = await getUpdatePlan(app, true);
         if (plan.error) throw new Error(plan.error);
         if (plan.sourceConfigured === false) throw new Error("Configure an update source in app Settings before updating.");
-        if (!plan.changes.length) { popup?.close(); return; }
+        if (!plan.changes.length) { popup?.close(); await refresh(); return false; }
+        if (routineOnly && plan.requiresReview !== false) {
+          toast.warning("Update needs review", {
+            description: `${app.displayName} now requires review. Open its update to review the latest changes.` });
+          await refresh();
+          return false;
+        }
         try {
-          if (plan.requiresReview !== false) await enqueueUpdate(app, plan.planDigest, popup);
-          else { popup?.close(); await enqueueRoutine(app, plan.planDigest, true); }
-          return;
+          if (plan.requiresReview !== false) return await enqueueUpdate(app, plan.planDigest, popup);
+          popup?.close();
+          return await enqueueRoutine(app, plan.planDigest, true);
         } catch (error) {
           if (attempt === 1 || !isStaleUpdatePreparation(error)) throw error;
         }
@@ -1283,10 +1336,17 @@ export function ShellClient({
     } catch (error) {
       popup?.close();
       if (!isAuthRequiredRedirectError(error)) toast.error("Update could not be prepared", {
+        appId: app.id,
         description: error instanceof Error ? error.message : "Check the update source and try again.",
       });
+      void refresh();
     } finally { updateActivations.current.delete(app.id); setBusyAction(current => current === actionKey ? null : current); }
-  }, [enqueueRoutine, enqueueUpdate, getUpdatePlan]);
+    return false;
+  }, [enqueueRoutine, enqueueUpdate, getUpdatePlan, refresh]);
+
+  const applyUpdateFromRow = useCallback(async (app: CoreApp) => {
+    await prepareAndEnqueueUpdate(app);
+  }, [prepareAndEnqueueUpdate]);
 
   // Points an installed app at one of its app-owned feeds. Core resolves the stored FeedsUrl and
   // re-points ManifestUrl at the feed head, so the update plan is rebuilt against the new selection.
@@ -1798,12 +1858,15 @@ export function ShellClient({
 
   // Submit routine updates without popups, with Shell last because it reloads this page.
   const updateAllApps = useCallback(async () => {
-    const routine = state.apps.filter(isRoutineUpdate);
-    if (routine.length === 0) {
-      return;
+    if (bulkUpdateActivation.current) return;
+    bulkUpdateActivation.current = true;
+    try {
+      const routine = state.apps.filter(isRoutineUpdate);
+      await reviewUpdatesInOrder(routine, shellAppId, app => prepareAndEnqueueUpdate(app, true));
+    } finally {
+      bulkUpdateActivation.current = false;
     }
-    await reviewUpdatesInOrder(routine, shellAppId, app => enqueueRoutine(app, app.updateCheck!.planDigest!));
-  }, [enqueueRoutine, shellAppId, state.apps]);
+  }, [prepareAndEnqueueUpdate, shellAppId, state.apps]);
 
   useEffect(() => {
     void refresh();
@@ -1922,6 +1985,19 @@ export function ShellClient({
     }
 
     const routePath = normalizeAppPath(page.path);
+    const acknowledged = acknowledgedWorkspaceRoute.current;
+    if (acknowledged && workspace?.appId === acknowledged.appId && workspace.src === acknowledged.src && workspace.path === acknowledged.path) {
+      if (routePath === acknowledged.path) acknowledgedWorkspaceRoute.current = null;
+      else {
+        const browser = new URL(window.location.href);
+        const observed = readShellRoute(browser.pathname, browser.searchParams).workspace;
+        // Native history updates notify Next's router; its previous search snapshot can render once
+        // before that notification catches up. It must not relaunch the acknowledged document.
+        if (normalizeShellPath(browser.pathname) === "/workspace" && observed?.appId === acknowledged.appId
+          && normalizeAppPath(observed.path) === acknowledged.path) return;
+        acknowledgedWorkspaceRoute.current = null;
+      }
+    }
     if (workspace?.appId === app.id && workspace.path === routePath) {
       pendingWorkspaceRoute.current = null;
       setBusyAction((current) => current === `${app.id}:open` ? null : current);
@@ -1945,6 +2021,7 @@ export function ShellClient({
         title: app.displayName,
         pageLabel: page.label,
         path: routePath,
+        launchPath: routePath,
         src: embeddedRedirectUri,
         externalUrl: getStandaloneAppHref(app, page),
       });
@@ -1969,6 +2046,7 @@ export function ShellClient({
           title: workspaceApp.displayName,
           pageLabel: workspacePage.label,
           path: routePath,
+          launchPath: routePath,
           src: embeddedRedirectUri,
           externalUrl: getStandaloneAppHref(workspaceApp, workspacePage),
         });
@@ -2465,6 +2543,8 @@ export function ShellClient({
                   onAuthRequired={handleAuthRequired}
                   onDelegatedTokenRequest={handleDelegatedTokenRequest}
                   onAskAssistant={assistantAvailable ? askAssistant : undefined}
+                  onSurfaceState={report => handleWorkspaceSurfaceState(workspace,
+                    state.apps.find(app => app.id === workspace.appId)?.installationId, workspaceRenderEpoch, report)}
                 />
               ) : activeWorkspaceRoute ? (
                 <EmbeddedWorkspacePendingPanel

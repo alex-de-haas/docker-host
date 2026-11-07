@@ -23,7 +23,7 @@ export type WorkerRunRequest = {
 };
 export type RunState = "accepted" | "running" | "awaiting_input" | "suggesting" | "parking" | "parked" | "cancelling" | "completed" | "failed" | "cancelled" | "interrupted";
 export type WorkerEvent = { runId: string; generation: string; sequence: number; event: HarnessEvent };
-export type WorkerRecovery = { requestId: string; generation: string; expectedRevision: number; consumerExitConfirmed: true; actorId: string };
+export type WorkerRecovery = { requestId: string; generation: string; expectedRevision: number; consumerExitConfirmed: true; actorId: string; conversationId?: string };
 export type WorkerReceipt = {
   runId: string; conversationId: string; generation: string; state: RunState; revision: number;
   boundary?: "container" | "local"; exitConfirmed?: boolean;

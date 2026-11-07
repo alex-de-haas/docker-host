@@ -27,7 +27,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
-import { getAccountInitials, getAppPageLinks, resolveAssetSrc } from "../app-helpers";
+import { findDeclaredAppPage, getAccountInitials, getAppPageLinks, resolveAssetSrc } from "../app-helpers";
 import { AppIcon } from "../app-icon";
 import { isAppBusy } from "../runtime-states";
 import { SettingsNavigation } from "./settings-navigation";
@@ -196,6 +196,7 @@ function AppNavigationItem({
 }) {
   const [expanded, setExpanded] = useState(false);
   const pages = getAppPageLinks(app);
+  const activePage = workspace?.appId === app.id ? findDeclaredAppPage(pages, workspace.path) : undefined;
   const primaryPage = pages[0] ?? null;
   const running = app.runtimeState === "running";
   const active = workspace?.appId === app.id;
@@ -340,7 +341,7 @@ function AppNavigationItem({
               type="button"
               className={cn(
                 "flex min-h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-                workspace?.appId === app.id && workspace.path === page.path && "bg-sidebar-accent text-sidebar-accent-foreground",
+                activePage === page && "bg-sidebar-accent text-sidebar-accent-foreground",
               )}
               disabled={busyAction === `${app.id}:open` || !resolveLaunchGate(app, page.service).allowed}
               onClick={() => void onLaunch(app, page, "workspace")}
@@ -380,6 +381,7 @@ function CompactAppMenu({
   getStandaloneHref: (app: CoreApp, page: AppPageLink) => string;
 }) {
   const menu = useCompactMenu();
+  const selectedPage = workspace?.appId === app.id ? findDeclaredAppPage(pages, workspace.path) : undefined;
 
   return (
     <DropdownMenu {...menu.menuProps}>
@@ -425,7 +427,7 @@ function CompactAppMenu({
         <DropdownMenuSeparator />
         {pages.map((page) => {
           const busy = busyAction === `${app.id}:open`;
-          const activePage = workspace?.appId === app.id && workspace.path === page.path;
+          const activePage = selectedPage === page;
           return (
             <DropdownMenuItem
               key={`${app.id}:${page.path}`}

@@ -187,6 +187,45 @@ public sealed class LocalCommandRuntimeAdapterTests
         finally { TryDeleteDirectory(root); }
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void InjectEnvironment_FilteredServiceAndPreparationKeepWindowsPathsWithoutAmbientSecrets(bool preparationOnly)
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            var (adapter, _, context) = CreateSetupScenario(root, null, "unused");
+            context = context with { PreparationOnly = preparationOnly };
+            var service = context.Manifest.Services.Single() with
+            {
+                Injection = new() { AppServiceToken = false, AppIdentityToken = false, Settings = [] },
+                Runtime = context.Manifest.Services.Single().Runtime with
+                {
+                    Environment = new Dictionary<string, string> { ["DECLARED_BUILD_FLAG"] = "reviewed-value" },
+                },
+            };
+            var start = new System.Diagnostics.ProcessStartInfo();
+            start.Environment.Clear();
+            start.Environment["APPDATA"] = "operator-roaming-profile";
+            start.Environment["LOCALAPPDATA"] = "operator-local-profile";
+            start.Environment["ProgramFiles(x86)"] = "machine-toolchain-directory";
+            start.Environment["OPENAI_API_KEY"] = "ambient-provider-secret";
+            start.Environment["HOSTY_APP_SERVICE_TOKEN"] = "ambient-service-secret";
+
+            adapter.InjectEnvironment(start, context, service, [],
+                new Dictionary<string, IReadOnlyDictionary<string, int>> { ["app"] = new Dictionary<string, int>() });
+
+            Assert.Equal("operator-roaming-profile", start.Environment["APPDATA"]);
+            Assert.Equal("operator-local-profile", start.Environment["LOCALAPPDATA"]);
+            Assert.Equal("machine-toolchain-directory", start.Environment["ProgramFiles(x86)"]);
+            Assert.Equal("reviewed-value", start.Environment["DECLARED_BUILD_FLAG"]);
+            Assert.False(start.Environment.ContainsKey("OPENAI_API_KEY"));
+            Assert.False(start.Environment.ContainsKey("HOSTY_APP_SERVICE_TOKEN"));
+        }
+        finally { TryDeleteDirectory(root); }
+    }
+
     [Fact]
     public void MixedDiscovery_InjectsLoopbackEvenWithPublicLanHost()
     {

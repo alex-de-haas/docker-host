@@ -1,6 +1,7 @@
 "use client";
 
 import { AppMetricsPanel } from "../resources/resource-usage";
+import { AppStoragePanel } from "../storage/storage-view";
 
 import { AppPermissions } from "./app-permissions";
 import { ConsoleLogsPanel } from "./app-console-logs";
@@ -319,6 +320,7 @@ const SETTINGS_TABS: { id: SettingsTab; label: string }[] = [
   { id: "logs", label: "Logs" },
   { id: "services", label: "Services" },
   { id: "metrics", label: "Metrics" },
+  { id: "storage", label: "Storage" },
   { id: "parameters", label: "Parameters" },
   { id: "mounts", label: "Folders" },
   { id: "publicOrigins", label: "Network" },
@@ -387,6 +389,8 @@ function SettingsDialog({
         return app.capabilities.includes("logs");
       case "backups":
         return !!backups;
+      case "storage":
+        return canManageApps;
       case "services":
       case "metrics":
       case "app":
@@ -444,6 +448,7 @@ function SettingsDialog({
       <TabsContent value={active} className="flex min-h-0 flex-1 flex-col gap-4">
       {active === "services" && <AppServicesPanel key={app.id} app={app} coreOrigin={coreOrigin} serviceRevision={serviceRevision} />}
       {active === "metrics" && <AppMetricsPanel key={app.id} app={app} coreOrigin={coreOrigin} />}
+      {active === "storage" && canManageApps && <AppStoragePanel key={app.id} appId={app.id} />}
       {active === "logs" && app.capabilities.includes("logs") && <ConsoleLogsPanel key={app.id} app={app} coreOrigin={coreOrigin} />}
       {hasPermissions && <div className={cn("min-h-0 overflow-y-auto", active !== "permissions" && "hidden")}><AppPermissions key={app.id} app={app} active={active === "permissions"} /></div>}
       {backups && <div className={cn("flex min-h-0 flex-1 flex-col", active !== "backups" && "hidden")}>{backups}</div>}

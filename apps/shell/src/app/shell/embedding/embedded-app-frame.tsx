@@ -19,6 +19,7 @@ export function EmbeddedAppFrame(props: {
   onAskAssistant?: (text: string, sourceAppId: string) => void;
   outbound?: { message: unknown; nonce: number } | null;
   onAttention?: (count: number) => void;
+  onSurfaceState?: (state: { route: string; title?: string }) => void;
 }) {
   const frameId = useId();
   const { state } = useShellState();
@@ -38,6 +39,7 @@ export function EmbeddedAppFrame(props: {
     } };
   return <HostyAppFrame key={JSON.stringify([props.frameKey, props.src, surface])} {...props} surface={surface}
     view={{ viewId: `app-${app.id}-${frameId}`, workspaceId: "default", chrome: { navigation: "hide", tools: { enabled: true, launcher: "hide" } },
+      onSurfaceState: props.onSurfaceState,
       navigate: async next => {
         const page = app.navigation?.find(item => item.endpoint === next.endpoint && item.path === next.route);
         const accepted = await launchAppPage(app, { label: page?.label ?? props.title, path: next.route,

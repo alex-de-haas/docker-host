@@ -41,6 +41,8 @@ internal static class CoreJson
 [JsonSerializable(typeof(Haas.Hosty.Initialization.InitializationRequest))]
 [JsonSerializable(typeof(Haas.Hosty.Initialization.InitializationStatus))]
 [JsonSerializable(typeof(FeedbackState))]
+[JsonSerializable(typeof(StorageRefreshRequest))]
+[JsonSerializable(typeof(StorageUsageState))]
 [JsonSerializable(typeof(FeedbackSubmit))]
 [JsonSerializable(typeof(FeedbackObservation))]
 [JsonSerializable(typeof(FeedbackImage))]

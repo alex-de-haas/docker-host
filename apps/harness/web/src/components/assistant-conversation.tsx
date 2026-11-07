@@ -39,6 +39,7 @@ import { resolveTranscriptReview, type TranscriptReviewReference } from "@/lib/t
 import { InputGroup, InputGroupAddon } from "@/components/ui/input-group";
 import { useWorkspaceSessionActions } from "@/lib/use-workspace-session-actions";
 import { rememberWorkspaceSession, rememberedWorkspaceSession, workspaceSessionIds } from "@/lib/workspace-navigation";
+import { readWorkSelection, rememberWorkSelection } from "@/lib/work-selection";
 import { ColumnResizeHandle } from "@/components/column-resize-handle";
 import { COLUMN_DEFAULTS, COLUMN_MIN, useConversationColumns } from "@/lib/use-conversation-columns";
 import { DevelopmentNavigation } from "@/components/development-navigation";
@@ -92,13 +93,16 @@ const MAX_ASK_CHARS = 4_000;
 const EMPTY_MCP_ACTIVITY: McpActivity = { total: 0, tools: [] };
 
 
-export function AssistantConversation({ fullPage = false, navigation = "workspaces" }: { fullPage?: boolean; navigation?: "workspaces" | "chats" }) {
+export function AssistantConversation({ fullPage = false }: { fullPage?: boolean }) {
   const ui = useHostyUi();
   const [health, setHealth] = useState<HarnessHealth | null>(null);
   const [sessions, setSessions] = useState<AssistantSession[]>([]);
   // Hold an embedder's session request until authentication finishes. Resolve it directly through
   // the API: a session Shell just created may not appear in this tab's initial list.
   const requestedSessionRef = useRef<string | null>(null);
+  // Workspace-only and cleared selections have no session ID. Keep their intent through late
+  // startup reads just as we do for an explicitly requested conversation.
+  const selectionIntent = useRef(0);
   const requestedDraftRef = useRef<{ sessionId: string; text: string; sourceAppId: string } | null>(null);
   const [requestedSessionId, setRequestedSessionId] = useState<string | null>(null);
   // Retain the expected message-selected session even if fetching it fails.
@@ -178,8 +182,7 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [historyOpen, setShowSessions] = useState(false);
   const showSessions = !fullPage && historyOpen;
-  const sessionStorageKey = fullPage ? `hosty.harness.${navigation}.session` : SESSION_STORAGE_KEY;
-  const navigationTitle = navigation === "workspaces" ? "Workspaces" : "Chats";
+  const navigationTitle = "Sessions";
   const [openAppCreation, setOpenAppCreation] = useState(false);
   const setHistoryOpen = useCallback((open: boolean) => {
     setShowSessions(open);
@@ -300,8 +303,7 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
     setUploadingFile(null);
     setFailedUpload(null);
     try {
-      window.localStorage.setItem(SESSION_STORAGE_KEY, record.id);
-      if (fullPage) window.localStorage.setItem(sessionStorageKey, record.id);
+      if (!fullPage) window.localStorage.setItem(SESSION_STORAGE_KEY, record.id);
     } catch {
       // Private-mode storage refusal costs reattachment across reloads, nothing else.
     }
@@ -432,23 +434,25 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
         if (state === "disconnected") setStreamed("");
       },
     );
-  }, [onSessionChange, suggestionsReceive, fullPage, sessionStorageKey]);
+  }, [onSessionChange, suggestionsReceive, fullPage]);
 
   // A full-page selection is also a navigation: Shell must restore that exact session on reload.
-  const navigateSelection = useCallback(async (sessionId: string | null, workspaceId?: string | null) => {
+  const navigateSelection = useCallback(async (sessionId: string | null, workspaceId?: string | null, replace = false) => {
     if (!fullPage) return;
+    rememberWorkSelection(sessionId ? { sessionId } : workspaceId ? { workspaceId } : {});
     const route = new URL(window.location.href);
     route.searchParams.delete("workspace");
     if (!sessionId && workspaceId) route.searchParams.set("workspace", workspaceId);
     if (sessionId) route.searchParams.set("session", sessionId);
     else route.searchParams.delete("session");
-    if (route.href !== window.location.href) window.history.pushState(window.history.state, "", route);
+    if (route.href !== window.location.href) window.history[replace ? "replaceState" : "pushState"](window.history.state, "", route);
     // Report an in-place selection to the host; opening a main surface reloads this document.
     for (const key of ["hosty_launch", "hosty_theme", "hosty_theme_preference"]) route.searchParams.delete(key);
     ui.reportSurfaceState({ route: `${route.pathname}${route.search}${route.hash}`, state: "ready" });
   }, [fullPage, ui]);
   const selectedRoute = useRef<string | null>(null);
   const pickSession = (record: Pick<AssistantSession, "id">) => {
+    selectionIntent.current++;
     setSelectedWorkspaceId(null); setWorkspaceToResolve(null);
     selectedRoute.current = fullPage ? record.id : null;
     requestedSessionRef.current = record.id;
@@ -458,6 +462,7 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
   };
 
   const clearActiveConversation = useCallback(() => {
+    selectionIntent.current++;
     streamAbortRef.current?.abort(); activeSessionId.current = null;
     requestedSessionRef.current = null; selectedRoute.current = null;
     setRequestedSessionId(null); setSurfaceSessionId(null); setSession(null);
@@ -482,12 +487,14 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
       clearActiveConversation();
       const params = new URLSearchParams(window.location.search);
       const id = params.get("session"), target = params.get("workspace");
+      rememberWorkSelection(id ? { sessionId: id } : target ? { workspaceId: target } : {});
       setSelectedWorkspaceId(target); setWorkspaceToResolve(target); setMobileSessions(!id && !target);
       if (id) { requestedSessionRef.current = id; setRequestedSessionId(id); }
+      else if (!target) void navigateSelection(null);
     };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
-  }, [fullPage, clearActiveConversation]);
+  }, [fullPage, clearActiveConversation, navigateSelection]);
   useEffect(() => {
     if (!workspaceToResolve || !ready || inventory.loading || inventory.error) return;
     const target = inventory.workspaces.find(w => w.id === workspaceToResolve && w.workflow.state !== "deleted");
@@ -509,6 +516,7 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
   }, [workspaceToResolve, ready, inventory.loading, inventory.error, inventory.workspaces, ui]);
 
   const startNew = useCallback(async () => {
+    selectionIntent.current++;
     setError(null);
     try {
       const record = await createSession({});
@@ -527,6 +535,7 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
   // means every request below is answered 401 by a gateway that is working correctly.
   useEffect(() => {
     let cancelled = false;
+    const startupIntent = selectionIntent.current;
     void (async () => {
       try {
         const params = new URLSearchParams(window.location.search);
@@ -554,20 +563,35 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
         // An unavailable listing leaves the list as it was rather than emptying it: "we could not
         // ask" and "there are none" are different statements, and only one of them is knowledge.
         setSessions(list ?? []);
-
+        if (selectionIntent.current !== startupIntent) return;
 
         // Reattach first: the stream replays from seq 0, which rebuilds unresolved approval cards.
         let stored: string | null = null;
+        let storedWorkspace: string | undefined;
         let restoreHistory = false;
         try {
-          stored = window.localStorage.getItem(sessionStorageKey);
+          if (fullPage) {
+            const selection = readWorkSelection(window.location.pathname);
+            stored = selection?.sessionId ?? null;
+            storedWorkspace = selection?.workspaceId;
+          } else stored = window.localStorage.getItem(SESSION_STORAGE_KEY);
           restoreHistory = window.localStorage.getItem(HISTORY_STORAGE_KEY) === "true";
         } catch {
           // Private-mode storage can refuse reads as well as writes; that costs reattachment, and
           // must not take the whole page down with it.
         }
+        // URL and embedder requests win without even fetching an unrelated saved conversation.
+        if (requestedSessionRef.current || requestedWorkspace) {
+          if (fullPage) rememberWorkSelection(requestedSessionRef.current ? { sessionId: requestedSessionRef.current } : { workspaceId: requestedWorkspace! });
+          return;
+        }
+        if (storedWorkspace) {
+          setSelectedWorkspaceId(storedWorkspace); setWorkspaceToResolve(storedWorkspace); setMobileSessions(false);
+          await navigateSelection(null, storedWorkspace, true);
+          return;
+        }
         const previous = stored ? await getSession(stored).catch(() => null) : null;
-        if (cancelled) {
+        if (cancelled || selectionIntent.current !== startupIntent) {
           return;
         }
 
@@ -576,6 +600,7 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
 
         if (previous) {
           attach(previous);
+          if (fullPage) { setMobileSessions(false); await navigateSelection(previous.id, null, true); }
           return;
         }
 
@@ -585,7 +610,7 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
         // Created because nothing was stored — and added to the list, or "Recent sessions" would
         // say there are none while one is open, and switching away would strand it.
         const created = await createSession({});
-        if (cancelled) {
+        if (cancelled || selectionIntent.current !== startupIntent) {
           return;
         }
         setSessions((current) => [created, ...current]);
@@ -605,7 +630,7 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
       cancelled = true;
       streamAbortRef.current?.abort();
     };
-  }, [attach, fullPage, sessionStorageKey]);
+  }, [attach, fullPage, navigateSelection]);
 
   /**
    * An "ask the assistant" handed in by the embedder.
@@ -633,6 +658,7 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
       }
 
       if (data.type === "hosty:open-assistant-session" && typeof data.sessionId === "string") {
+        selectionIntent.current++;
         // Shell can also hand off an error to a fresh session. Resolve the session through the
         // authenticated API before filling its draft; never submit this untrusted text.
         requestedDraftRef.current = typeof data.draft === "string" ? {
@@ -686,6 +712,10 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
         await navigateSelection(record.id);
         if (cancelled) return;
       }
+      else if (fullPage) {
+        const workspaceId = new URLSearchParams(window.location.search).get("workspace");
+        rememberWorkSelection(workspaceId ? { workspaceId } : { sessionId: record.id });
+      }
       setSelectedWorkspaceId(null);
       attach(record);
       // A repeated delivery/reload must not append the same error or replace an operator's draft.
@@ -703,7 +733,7 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
       if (!cancelled) { requestedSessionRef.current = null; setError(cause instanceof Error ? cause.message : String(cause)); setRequestedSessionId(null); }
     });
     return () => { cancelled = true; };
-  }, [attach, requestedSessionId, ready, setHistoryOpen, navigateSelection]);
+  }, [attach, requestedSessionId, ready, setHistoryOpen, navigateSelection, fullPage]);
 
   // Written on change rather than on unload: a closed laptop, a crashed tab and a navigation away all
   // skip unload handlers, and those are exactly the cases where the text matters most.
@@ -905,17 +935,16 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
     setSurfaceSessionId(null);
     setMobileDetails(false);
     setHistoryOpen(!fullPage);
-    const retainedWorkspaceId = navigation === "workspaces" ? workspace?.id : undefined;
+    const retainedWorkspaceId = workspace?.id;
     setSelectedWorkspaceId(retainedWorkspaceId ?? null);
     void inventory.refresh();
     void navigateSelection(null, retainedWorkspaceId).catch(cause => setError(cause instanceof Error ? cause.message : String(cause)));
     try {
-      window.localStorage.removeItem(SESSION_STORAGE_KEY);
-      window.localStorage.removeItem(sessionStorageKey);
+      if (!fullPage) window.localStorage.removeItem(SESSION_STORAGE_KEY);
     } catch {
       // An obsolete stored id is harmless: reattachment resolves it through the API.
     }
-  }, [setHistoryOpen, fullPage, navigateSelection, workspace, inventory, sessionStorageKey, navigation]);
+  }, [setHistoryOpen, fullPage, navigateSelection, workspace, inventory]);
 
   const remove = useCallback(async (sessionId: string) => {
     setError(null);
@@ -1007,7 +1036,7 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
 
   const pendingDecision = events.find(event => status === "awaiting_approval" && event.type === "approval_request" && !decidedApprovals.has(String(event.approvalId)) || status === "awaiting_question" && event.type === "question_request" && !cancelledQuestionIds.has(String(event.questionId)) && !answeredQuestions.has(String(event.questionId)));
 
-  const createAppAction = fullPage && navigation === "workspaces" ? session ? (
+  const createAppAction = fullPage ? session ? (
     <CreateApp key={`creation-${session.id}`} session={session} openOnMount={openAppCreation}
       onOpened={() => setOpenAppCreation(false)} busy={running || sending || stopping || providerSaving}
       onChange={record => { onSessionChange(record); void inventory.refresh(); }} />
@@ -1030,8 +1059,8 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
     <div className={`harness-conversation flex h-full min-h-0 min-w-0 flex-col overflow-hidden ${review ? "harness-review-active" : ""}`}>
       {fullPage && inventory.error && <p role="alert" className="border-b px-4 py-2 text-sm text-destructive-foreground">{inventory.error}</p>}
       <div ref={columnsRef} className="flex min-h-0 min-w-0 flex-1">
-      {fullPage && <div inert={workspaceModal} style={{ "--navigation-width": `${columns.widths.navigation}px` } as CSSProperties} className={`${review ? "hidden" : mobileSessions ? "block md:block" : "hidden md:block"} relative w-full shrink-0 border-r md:w-[var(--navigation-width)]`}><DevelopmentNavigation view={navigation} sessions={listedSessions} activeId={session?.id} activeWorkspaceId={navigation === "workspaces" ? workspace?.id : undefined} workspaces={inventory.workspaces}
-        createAppAction={createAppAction} onClose={() => setMobileSessions(false)} onWorkspace={pickWorkspace} onNew={() => { setMobileSessions(false); void startNew(); }} onPick={pickSession} onDelete={remove} />
+      {fullPage && <div inert={workspaceModal} style={{ "--navigation-width": `${columns.widths.navigation}px` } as CSSProperties} className={`${review ? "hidden" : mobileSessions ? "block md:block" : "hidden md:block"} relative w-full shrink-0 border-r md:w-[var(--navigation-width)]`}><DevelopmentNavigation sessions={listedSessions} activeId={session?.id} activeWorkspaceId={workspace?.id} workspaces={inventory.workspaces}
+        createAppAction={createAppAction} onRefresh={inventory.refresh} onClose={() => setMobileSessions(false)} onWorkspace={pickWorkspace} onNew={() => { setMobileSessions(false); void startNew(); }} onPick={pickSession} onDelete={remove} />
         <ColumnResizeHandle label={`Resize ${navigationTitle.toLowerCase()} list`} side="right" className="hidden md:block"
           width={columns.widths.navigation} min={COLUMN_MIN.navigation} max={columns.maximum.navigation} defaultWidth={COLUMN_DEFAULTS.navigation}
           onResize={width => columns.resize("navigation", width)} />
@@ -1041,8 +1070,8 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
       {fullPage && (!chatVisible || !session) && <div className={`shrink-0 items-center gap-2 border-b px-3 py-2 ${workspace ? "flex" : "flex md:hidden"}`}>{navigationToggle}<div className="ml-auto">{workspaceToggle}</div></div>}
       {fullPage && (!chatVisible || !session) ? <div className="min-h-0 flex-1" aria-label="Workspace center">
         {!workspace && <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-sm text-muted-foreground">
-          <p>{navigation === "workspaces" ? "Choose a workspace, create an app or continue building." : "Choose a chat or start a new one."}</p>
-          {navigation === "chats" && <Button variant="outline" disabled={!ready} onClick={() => void startNew()}>New chat</Button>}
+          <p>Choose a workspace or session, create an app or continue building.</p>
+          <Button variant="outline" disabled={!ready} onClick={() => void startNew()}>New session</Button>
         </div>}
         {workspace && <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-sm text-muted-foreground">
           <p>No accessible chats in this workspace.</p>
@@ -1090,7 +1119,7 @@ export function AssistantConversation({ fullPage = false, navigation = "workspac
                     }
                     if (!writeDraftAttachments(session.id, stored)) throw new Error("Browser storage is unavailable. Your draft and attachments remain in this panel.");
                     localStorage.setItem(SESSION_STORAGE_KEY, session.id);
-                    const destination = workspace ? "/development" : "/chats";
+                    const destination = "/chats";
                     const entry = ui.getNavigation().entries.find(e => e.route === destination);
                     if (entry) { const result = await ui.navigate(entry.key, { requestId: crypto.randomUUID(), placement: "main", search: `?session=${encodeURIComponent(session.id)}` }); if (result.status === "accepted") return; }
                     window.open(`${destination}?session=${encodeURIComponent(session.id)}`, "_blank", "noopener");
