@@ -122,20 +122,43 @@ def check(context):
 
     if os.environ.get('HOSTY_WORK_BROWSER'):
         import subprocess
+        browser_input = {'core':origin, 'harness':app_origin, 'email':'activation-fixture@example.test', 'password':password,
+            'link':link, 'outputDirectory':os.environ.get('HOSTY_WORK_SCREENSHOTS')}
+        if os.environ.get('HOSTY_WORK_SHELL_BROWSER'):
+            shell = json.loads((workspace/'apps/shell/manifest.json').read_text())
+            shell['source']['repository'] = context['repository']
+            shell_source = base/'work-browser-shell-manifest.json'
+            shell_source.write_text(json.dumps(shell))
+            shutil.copytree(workspace/'apps/shell/assets', base/'assets', dirs_exist_ok=True)
+            run([cli, '--data-root', root, 'apps', 'install', shell_source, '--runtime', 'dev', '--no-autostart'])
+            run([cli, '--data-root', root, 'apps', 'start', shell['id']])
+            wait_for(lambda: request('/api/apps/'+shell['id']+'/health')['status'] == 'healthy', 180)
+            shell_summary = next(item for item in request('/api/apps')['apps'] if item['id'] == shell['id'])
+            shell_endpoint = next(item for item in shell_summary['endpoints'] if item['key'] == shell['endpoints'][0]['key'])
+            shell_origin = shell_endpoint.get('browserOrigin') or shell_endpoint.get('publicOrigin') or shell_endpoint['url']
+            shell_link = json.loads(run([cli, '--data-root', root, 'apps', 'open', shell['id'],
+                '--redirect-uri', shell_origin.rstrip('/')+'/dashboard', '--format', 'json']))['url']
+            parsed_shell = urllib.parse.urlparse(shell_link)
+            browser_input.update(shell=urllib.parse.urlunparse((parsed_shell.scheme, parsed_shell.netloc, '', '', '', '')),
+                shellLink=shell_link, shellAppId=shell['id'])
+            say('PASS: isolated source Shell started for Sessions embedding acceptance')
         result = subprocess.run(['node', str(workspace/'apps/harness/test/work-browser.mjs')],
-            input=json.dumps({'core':origin, 'harness':app_origin, 'email':'activation-fixture@example.test', 'password':password,
-                'link':link, 'outputDirectory':os.environ.get('HOSTY_WORK_SCREENSHOTS')}), text=True, cwd=workspace)
+            input=json.dumps(browser_input), text=True, cwd=workspace)
         assert result.returncode == 0, 'Work browser acceptance failed'
 
     if review := os.environ.get('HOSTY_HARNESS_BROWSER_REVIEW'):
         shell_manifest = json.loads((workspace/'apps/shell/manifest.json').read_text())
-        shell_manifest['source']['repository'] = context['repository']
-        shell_source = base/'shell-manifest.json'
-        shell_source.write_text(json.dumps(shell_manifest))
-        run([cli, '--data-root', root, 'apps', 'install', shell_source, '--runtime', 'dev', '--no-autostart'])
-        run([cli, '--data-root', root, 'apps', 'start', 'hosty.shell'])
-        wait_for(lambda: request('/api/apps/hosty.shell/health')['status'] == 'healthy', 180)
-        shell_summary = next(item for item in request('/api/apps')['apps'] if item['id'] == 'hosty.shell')
+        shell_id = shell_manifest['id']
+        shell_summary = next((item for item in request('/api/apps')['apps'] if item['id'] == shell_id), None)
+        if shell_summary is None:
+            shell_manifest['source']['repository'] = context['repository']
+            shell_source = base/'shell-manifest.json'
+            shell_source.write_text(json.dumps(shell_manifest))
+            run([cli, '--data-root', root, 'apps', 'install', shell_source, '--runtime', 'dev', '--no-autostart'])
+        if shell_summary is None or shell_summary['runtimeState'] not in ('running', 'starting'):
+            run([cli, '--data-root', root, 'apps', 'start', shell_id])
+        wait_for(lambda: request('/api/apps/'+shell_id+'/health')['status'] == 'healthy', 180)
+        shell_summary = next(item for item in request('/api/apps')['apps'] if item['id'] == shell_id)
         shell_endpoint = next(item for item in shell_summary['endpoints'] if item['key'] == 'web')
         shell_url = shell_endpoint.get('browserOrigin') or shell_endpoint.get('publicOrigin') or shell_endpoint['url']
         development = request('/api/core/development')

@@ -1,9 +1,9 @@
 // Real Core password login, Harness identity and disposable child-Core workspace data.
-// Supply { core, harness, link, email, password, outputDirectory? } on stdin.
+// Supply { core, harness, link, email, password, outputDirectory?, shell?, shellLink?, shellAppId? } on stdin.
 // The caller owns the child environment and its cleanup. No provider prompts are sent.
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 const { chromium } = await import(process.env.HOSTY_WORK_PLAYWRIGHT_MODULE || 'playwright');
@@ -18,11 +18,14 @@ const redact = value => {
 const browser = await chromium.launch({ headless: true, channel: process.env.HOSTY_WORK_BROWSER_CHANNEL || 'chrome' });
 const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
 const page = await context.newPage();
+let diagnosticPage = page;
 page.setDefaultTimeout(30_000);
 const errors = [], deleteRequests = [], sessionDeletes = [];
 let messages = 0;
+let fixtureDiagnostics = {};
 page.on('pageerror', error => errors.push(redact(error.message)));
-page.on('request', request => {
+context.on('page', opened => opened.on('pageerror', error => errors.push(redact(error.message))));
+context.on('request', request => {
   const pathname = new URL(request.url()).pathname;
   if (request.method() === 'POST' && pathname.endsWith('/messages')) messages++;
   if (request.method() === 'POST' && /^\/api\/development-workspaces\/[^/]+\/delete$/.test(pathname)) deleteRequests.push(pathname);
@@ -76,11 +79,20 @@ try {
     targetBranch: 'main', name: titles.workspace,
   });
   assert.ok(tree.workspaceId && tree.id && tree.path && tree.branch, 'Core prepares a real disposable workspace');
+  // Preparation initially discloses the workspace name for the owner's idle binding.
+  // Explicit metadata updates publish the synthetic chat titles without starting a worker.
+  await api('/sessions/' + first.id, { title: titles.first }, 'PATCH');
   const participants = await api('/development-workspaces/' + tree.workspaceId + '/participants');
   const second = await api('/workspace-sessions', {
     requestId: randomUUID(), workspaceId: tree.workspaceId, expectedRevision: participants.revision,
   });
   await api('/sessions/' + second.id, { title: titles.second }, 'PATCH');
+  const readyParticipants = await api('/development-workspaces/' + tree.workspaceId + '/participants');
+  fixtureDiagnostics = { participants: readyParticipants.sessions.map(binding => ({
+    title: binding.title, attached: binding.attached, canOpen: binding.canOpen,
+    first: binding.sessionId === first.id, second: binding.sessionId === second.id,
+    matchesFirstTitle: binding.title === titles.first, matchesSecondTitle: binding.title === titles.second,
+  })) };
 
   // Keep the background selection inspectable while Radix hides it from accessibility.
   const nav = page.locator('nav[aria-label="Sessions"]');
@@ -173,6 +185,74 @@ try {
   assert.equal(await trash().evaluate(element => document.activeElement === element), true, 'Narrow Cancel restores trash focus');
 
   await page.setViewportSize({ width: 1440, height: 1000 }); await page.emulateMedia({ colorScheme: 'light' });
+  const alias = await context.newPage(); diagnosticPage = alias;
+  await alias.goto(config.harness + '/development/?session=' + encodeURIComponent(second.id));
+  await alias.locator('nav[aria-label="Sessions"]').waitFor();
+  await alias.getByRole('region', { name: titles.second, exact: true }).waitFor();
+  assert.equal(new URL(alias.url()).searchParams.get('session'), second.id, 'The compatibility page preserves explicit conversation selection');
+  const advertised = alias.getByRole('navigation', { name: 'App pages', exact: true });
+  await advertised.getByRole('link', { name: 'Sessions', exact: true }).waitFor();
+  assert.equal(await advertised.getByRole('link', { name: /^(Chats|Workspaces)$/ }).count(), 0, 'Standalone advertises one unified destination');
+  await alias.close(); diagnosticPage = page;
+
+  if (config.shell) {
+    config.shell = new URL(config.shell).origin;
+    const shellCsrf = await (await page.request.get(config.core + '/api/auth/csrf')).json(); secrets.add(shellCsrf.token);
+    const shellVerifier = randomUUID().replaceAll('-', '') + randomUUID().replaceAll('-', ''); secrets.add(shellVerifier);
+    const shellLaunch = await page.request.post(config.core + '/api/apps/' + encodeURIComponent(config.shellAppId) + '/launch-code', {
+      headers: { Origin: config.core, 'X-Hosty-CSRF': shellCsrf.token },
+      data: { redirectUri: config.shellLink, codeChallenge: createHash('sha256').update(shellVerifier).digest('base64url'), codeChallengeMethod: 'S256' },
+    });
+    const shellAuthorization = await shellLaunch.json();
+    assert.equal(shellLaunch.status(), 200, 'Core authorizes the child Shell' + (shellLaunch.status() === 200 ? '' : ': ' + shellAuthorization.code));
+    const shellCode = shellAuthorization.code; secrets.add(shellCode);
+    assert.equal((await page.request.post(config.shell + '/api/auth/app-code', {
+      headers: { Origin: config.shell }, data: { code: shellCode, codeVerifier: shellVerifier },
+    })).status(), 200, 'Child Shell accepts normal Core app identity');
+    const shellPage = await context.newPage(); diagnosticPage = shellPage;
+    shellPage.setDefaultTimeout(60_000);
+    await shellPage.goto(config.shell + '/workspace?app=' + encodeURIComponent(appId)
+      + '&path=' + encodeURIComponent('/development?session=' + second.id));
+    const embedded = shellPage.frameLocator('iframe[title^="Hosty Harness:"]');
+    await embedded.locator('nav[aria-label="Sessions"]').waitFor();
+    await embedded.getByRole('region', { name: titles.second, exact: true }).waitFor();
+    assert.equal(await embedded.getByRole('navigation', { name: 'App pages', exact: true }).isVisible(), false, 'Embedded Harness delegates page navigation to Shell');
+    const hostNav = shellPage.getByRole('navigation', { name: 'Host navigation', exact: true });
+    const expand = hostNav.getByRole('button', { name: 'Expand Hosty Harness pages', exact: true });
+    if (await expand.count()) await expand.click();
+    await hostNav.getByRole('button', { name: 'Sessions', exact: true }).click();
+    await embedded.locator('nav[aria-label="Sessions"]').waitFor();
+    await shellPage.waitForFunction(() => new URL(location.href).searchParams.get('path')?.startsWith('/chats'));
+    assert.equal(await hostNav.getByRole('button', { name: /^(Chats|Workspaces)$/ }).count(), 0, 'Shell advertises the same single Sessions destination');
+    const embeddedDocument = await embedded.locator('html').elementHandle();
+    await embedded.locator('nav[aria-label="Sessions"] button').filter({ hasText: titles.standalone }).click();
+    await embedded.getByRole('region', { name: titles.standalone, exact: true }).waitFor();
+    const selectionReported = async id => shellPage.waitForFunction(id => {
+      const route = new URL(location.href).searchParams.get('path');
+      return route && new URL(route, location.origin).searchParams.get('session') === id;
+    }, id);
+    await selectionReported(standalone.id);
+    assert.equal(await embedded.locator('html').evaluate((element, previous) => element === previous, embeddedDocument), true, 'Shell selection reporting preserves the iframe document');
+    const draft = 'Unsent Sessions QA draft ' + suffix;
+    await embedded.getByRole('textbox', { name: 'Message', exact: true }).fill(draft);
+    await embedded.locator('nav[aria-label="Sessions"] button').filter({ hasText: titles.workspace }).click();
+    await embedded.getByRole('region', { name: 'Workspace sessions', exact: true })
+      .getByRole('button', { name: 'Open session ' + titles.second, exact: true }).click();
+    await embedded.getByRole('region', { name: titles.second, exact: true }).waitFor();
+    await selectionReported(second.id);
+    await embedded.locator('nav[aria-label="Sessions"] button').filter({ hasText: titles.standalone }).click();
+    await embedded.getByRole('region', { name: titles.standalone, exact: true }).waitFor();
+    await selectionReported(standalone.id);
+    assert.equal(await embedded.locator('html').evaluate((element, previous) => element === previous, embeddedDocument), true, 'Embedded session switching keeps the same document');
+    assert.equal(await embedded.getByRole('textbox', { name: 'Message', exact: true }).inputValue(), draft, 'Session switching preserves the dirty composer draft');
+    if (config.outputDirectory) await shellPage.screenshot({ path: path.join(config.outputDirectory, 'work-shell-embedded.png'), fullPage: true });
+    await shellPage.reload();
+    await embedded.getByRole('region', { name: titles.standalone, exact: true }).waitFor();
+    assert.equal(await embedded.getByRole('textbox', { name: 'Message', exact: true }).inputValue(), draft, 'Reloading the reported Shell destination restores the selected chat and saved draft');
+    await shellPage.close(); diagnosticPage = page;
+    console.log('PASS: source Shell/Core URLs, normal Shell app identity, embedded compatibility route, one Sessions destination, selection reporting without iframe reload, preserved drafts and Shell reload restoration.');
+  }
+
   dialog = await openDelete();
   const currentUrl = page.url();
   await dialog.getByRole('button', { name: 'Delete', exact: true }).click();
@@ -193,6 +273,31 @@ try {
   assert.deepEqual(errors, [], 'Sessions has no browser runtime errors');
   console.log('PASS: child Core password login and PKCE, unified Sessions grouping/search, workspace sessions, desktop/narrow layout, hover Delete details/cancel/focus, explicit workspace deletion and retained chats; no inference.');
 } catch (error) {
+  const failureUrl = new URL(diagnosticPage.url());
+  if (config.outputDirectory && [config.harness, config.shell].includes(failureUrl.origin)
+      && ['/chats', '/development', '/workspace'].some(route => failureUrl.pathname.startsWith(route))) {
+    try {
+      await mkdir(config.outputDirectory, { recursive: true });
+      await diagnosticPage.screenshot({ path: path.join(config.outputDirectory, 'work-failure.png'), fullPage: true });
+      const visibleSurface = await diagnosticPage.evaluate(() => {
+        const surface = document.querySelector('.harness-conversation');
+        const details = surface?.querySelector('aside[aria-label="Workspace details"]');
+        return {
+          route: location.pathname, queryKeys: [...new URL(location.href).searchParams.keys()],
+          headings: [...surface?.querySelectorAll('h1,h2,h3') ?? []].map(element => element.textContent?.trim()),
+          selected: [...surface?.querySelectorAll('nav button[aria-current="page"]') ?? []].map(element => element.textContent?.trim()),
+          frames: [...document.querySelectorAll('iframe')].map(element => ({
+            title: element.title.split(':', 1)[0], route: new URL(element.src, location.href).pathname,
+          })),
+          sessionButtons: [...surface?.querySelectorAll('[aria-label="Workspace sessions"] button') ?? []]
+            .map(element => ({ label: element.getAttribute('aria-label'), text: element.textContent?.trim() })),
+          details: details ? { width: details.getBoundingClientRect().width, display: getComputedStyle(details).display,
+            visible: Boolean(details.getClientRects().length), parentDisplay: getComputedStyle(details.parentElement).display } : null,
+        };
+      });
+      await writeFile(path.join(config.outputDirectory, 'work-failure.json'), redact(JSON.stringify({ ...fixtureDiagnostics, ...visibleSurface }, null, 2)));
+    } catch { /* Preserve the original acceptance failure when diagnostics are unavailable. */ }
+  }
   console.error(redact(error instanceof Error ? error.stack || error.message : error));
   process.exitCode = 1;
 } finally { await browser.close(); }

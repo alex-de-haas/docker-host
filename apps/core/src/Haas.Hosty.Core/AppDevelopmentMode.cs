@@ -19,7 +19,8 @@ internal sealed record AppDevOperation(string Id, string AppId, DateTimeOffset I
     bool PackageReturn = false, string? PackageRuntime = null, string[]? BaseGrantedPermissions = null,
     string[]? ExecutionGrantedPermissions = null, string[]? BaseConfirmedRoles = null, string[]? ExecutionConfirmedRoles = null,
     string? ExecutionConfigurationHash = null, string? PriorExecutionConfigurationHash = null,
-    string? ReturnConfigurationHash = null, bool ExecutionProjectionPending = false)
+    string? ReturnConfigurationHash = null, bool ExecutionProjectionPending = false,
+    AppDevelopmentAccessPlan? ExecutionAccessPlan = null, string? ExecutionPermissionRevision = null)
 {
     [JsonIgnore] public bool Active => Phase != "returned";
 }

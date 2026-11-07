@@ -31,7 +31,7 @@ export class TaskService {
   private readonly current = new Map<string, Authority>();
   private closed = false;
   private readonly jobs = new Map<string, Promise<void>>();
-  private readonly streams = new Set<ServerResponse>();
+  private readonly streams = new Set<() => void>();
   private readonly retries = new Map<string, { failures: number; after: number }>();
   private readonly timer: NodeJS.Timeout;
   private readonly unsubscribe: () => void;
@@ -92,9 +92,32 @@ export class TaskService {
     this.closed = true;
     this.manager.taskDecisionProjections = undefined; this.manager.taskModeChanged = undefined;
     clearInterval(this.timer); this.unsubscribe(); this.manager.taskAction = undefined; this.manager.taskUsage = undefined; this.manager.beforeTaskDecisionResume = undefined;
-    for (const stream of this.streams) stream.end();
+    for (const stop of this.streams) stop();
     this.streams.clear();
     return Promise.all([...this.jobs.values()]).then(() => {});
+  }
+  async subscribeEvents(validate: () => Promise<void>, write: (frame: string) => void, end: () => void): Promise<() => void> {
+    await validate();
+    if (this.closed) return taskError("tasks_stopping", "Task dispatch is stopping.", 503);
+    let stopped = false, running = false, pending = false;
+    let timer: ReturnType<typeof setInterval> | undefined, unsubscribe: (() => void) | undefined;
+    const cleanup = () => { if (stopped) return; stopped = true; clearInterval(timer); unsubscribe?.(); this.streams.delete(stop); };
+    const stop = () => { if (stopped) return; cleanup(); end(); };
+    // Hints carry no task content. Revalidate each observer before a change or keepalive,
+    // coalescing writes while a previous authority check is still in flight.
+    const publish = async () => {
+      if (running || stopped) return;
+      running = true;
+      try {
+        while (pending && !stopped) { pending = false; await validate(); if (!stopped) write("event: changed\ndata: {}\n\n"); }
+      } catch { stop(); }
+      finally { running = false; }
+    };
+    unsubscribe = this.store.subscribe(() => { pending = true; void publish(); });
+    timer = setInterval(() => { void validate().then(() => { if (!stopped) write(": keepalive\n\n"); }).catch(stop); }, 15000);
+    timer.unref(); this.streams.add(stop);
+    try { write("event: stream.ready\ndata: {}\n\nevent: changed\ndata: {}\n\n"); } catch { stop(); }
+    return cleanup;
   }
   private ownScope() { return `${this.provider.appId}:${this.provider.installationId}`; }
   private own(executor: TaskProviderRef) { return executor.appId === this.provider.appId && executor.installationId === this.provider.installationId && executor.key === this.provider.key; }
@@ -398,12 +421,12 @@ export class TaskService {
         const ref = providerRef(await readJson()); await send(200, this.own(ref) ? await this.executor.options() : await this.remote(ref, authority).options()); return true;
       }
       if (method === "GET" && route === "/events") {
-        response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive" });
-        const emit = () => { if (!response.destroyed) response.write("event: changed\ndata: {}\n\n"); };
-        this.streams.add(response);
-        const unsubscribe = this.store.subscribe(emit); emit();
-        const timer = setInterval(() => { void authority.validate().then(() => response.write(": keepalive\n\n")).catch(() => response.end()); }, 15000);
-        response.on("close", () => { clearInterval(timer); unsubscribe(); this.streams.delete(response); }); return true;
+        // Do not commit SSE headers until the subscription's fresh authority check succeeds.
+        response.setHeader("content-type", "text/event-stream"); response.setHeader("cache-control", "no-store"); response.setHeader("connection", "keep-alive");
+        const unsubscribe = await this.subscribeEvents(authority.validate,
+          frame => { if (!response.destroyed) response.write(frame); }, () => response.end());
+        if (response.destroyed) unsubscribe(); else response.once("close", unsubscribe);
+        return true;
       }
       if (route === "/tasks" && method === "GET") {
         const page = await this.store.list(authority.actor, url.searchParams.get("cursor") ?? "", Number(url.searchParams.get("limit") ?? 50), (url.searchParams.get("status") || undefined) as TaskStatus | undefined,

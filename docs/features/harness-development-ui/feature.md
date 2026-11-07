@@ -43,7 +43,10 @@ responses out of the browser's shared connection pool. Each reader obtains a sho
 single-use ticket through its own authenticated app request. The server binds the ticket to that
 request's credential and event path, checks the browser origin and revalidates authority before
 accepting the socket. Tickets and app grants do not appear in socket URLs; documents do not share
-credentials or transcripts. The existing SSE endpoints remain available to direct clients.
+credentials or transcripts. Task-history readers use the same ticketed transport for the task event
+endpoint. Task streams acknowledge readiness and deliver content-free change hints after current
+authority checks; reconnect and visibility recovery refresh their authorized snapshots. The existing
+SSE endpoints remain available to direct clients.
 
 The wire payload retains the existing event frames and durable session sequence. Reconnect resumes
 from the retained cursor and waits for the authoritative current session status. Hidden documents
@@ -68,7 +71,11 @@ retains its draft and exposes **Retry send**; the normal Send action stays block
 reads that original receipt. Accepted requests settle locally without another POST; unknown
 outcomes remain unresolved. Only the explicit not-admitted result permits a POST of the original
 UUID and frozen payload. Definitive pre-admission refusals retain an editable draft for a separate
-intentional send. Restoring access never invokes Retry or dispatches a mutation automatically.
+intentional send. A concrete Core writer-admission refusal (`workspace_in_use`, HTTP 409) also
+settles the attempted send before provider dispatch. The composer keeps its editable draft instead
+of leaving an uncertain-send journal. After the runtime transition is recovered or returned, the
+same conversation can send again without restarting Harness. A failed receipt lookup still proves
+nothing about an earlier send. Restoring access never invokes Retry or dispatches a mutation automatically.
 
 Harness atomically persists a receipt before provider admission and serializes receipt reads and
 sends per session. Reusing an admitted UUID cannot start another turn, including after coordinator
@@ -945,6 +952,12 @@ Verified on macOS on 2026-10-29 for the Harness 0.80.0 release; the initial coun
 - The operator's automatic General default is cleared through Settings. Explicit profile choices
   and existing conversation snapshots remain intact.
 
+Conversation and pull-request pages fill the SDK content area's height, below the standalone
+header or inside the host frame. The document establishes a definite full-height root for embedded
+launches. Tasks use that same available area as their minimum height, while longer page content can
+scroll normally. The header is not added to a second viewport-sized page; conversation lists,
+transcripts and workspace details keep their own scroll regions.
+
 Workspace details contains positioned accessibility labels within its own scroll area. Long
 workspace content scrolls inside the pane without increasing the embedded document height.
 
@@ -1001,7 +1014,28 @@ limits, persistence, reset and retained compact details in standalone and Shell.
 window keeps a 320 px chat without document overflow; Shell uses its actual iframe/content width.
 The managed local suite verifies warm restart, missing-output recovery and owner-confirmed cleanup.
 
+The 2026-11-07 Sessions acceptance passes on macOS arm64 with normal child-Core password and
+PKCE authentication. Real synthetic workspace/chat data verifies mixed-list grouping and search,
+attached sessions in details, desktop and narrow layouts, the existing target-specific deletion
+dialog, Cancel/focus restoration and retained chats after confirmed workspace removal. Actual Shell
+embedding verifies the compatible `/development` URL, a single Sessions destination, parent URL
+reporting without replacing the iframe document, retained unsent drafts and selected-chat/draft
+restoration after Shell reload. The managed local suite also passes production startup, dependency
+containment, warm restart, missing-output recovery and verified Finish cleanup without provider prompts.
+
+Validation includes 1,319 Harness web tests, 11 runtime-packaging tests, the full Shell suite
+(207 Node and 858 component tests), and 26 affected checks after the final navigation-priority fix.
+Harness/Shell lint and type checks, Harness production and Core/CLI builds, version consistency
+and documentation validation pass. [Local runtime acceptance](../harness-local-runtime/feature.md#verified-acceptance)
+records the startup/recovery measurements; Linux and Windows lifecycle checks are not run locally.
+
 ## Testing Expectations
+
+- Refuse a turn on the second repository before provider dispatch, recover its runtime fence and
+  resume the same session without coordinator restart or duplicate messages. Preserve the draft
+  and exact uncertain-send recovery rules across HTTP failures and reload.
+- Open the actual task event ticket/WebSocket route, observe readiness and task changes, and verify
+  revocation and unsubscribe cleanup. Test the transport target rather than replacing it with a mock.
 
 - Open a long chat with historical events delivered in separate chunks: the transcript stays behind
   its loading state until the current-status boundary, then appears at the end without smooth
@@ -1022,9 +1056,19 @@ The managed local suite verifies warm restart, missing-output recovery and owner
 - Verify workspace-row trash opens the existing target-specific dialog without switching the
   selected chat or deleting anything before confirmation. Cover manage permission, Cancel/focus,
   pending-request recovery, retained results and accessible chats after workspace removal.
+- Run browser acceptance with `HOSTY_WORK_BROWSER=1 HOSTY_WORK_SHELL_BROWSER=1 npm run test:integration -- harness-local`.
+  Supply an installed Playwright module through `HOSTY_WORK_PLAYWRIGHT_MODULE` and an available
+  Chrome browser. The fixture uses normal child-Core password authentication, synthetic chats and
+  a disposable workspace, checks the compatible `/development` URL and actual Shell frame, and
+  verifies parent-route reporting, unchanged iframe identity, retained drafts and reload restoration
+  before finishing its child resources. Optional `HOSTY_WORK_SCREENSHOTS` exports synthetic UI screenshots.
 
 - Verify standalone navigation between Sessions and Tasks at wide and narrow widths, active-page
   selection and host-controlled navigation hiding without losing conversation/workspace controls.
+
+- Measure short Tasks and Pull requests pages in standalone and actual Shell frames at desktop and
+  phone widths. Their main area fills the available content below host chrome without document
+  overflow. Long Tasks editors retain scrolling inside the content area without stretching the document.
 
 - Cover expired stream admission followed by verified same-actor restoration, durable cursor replay,
   fast recovery races, terminal denial and listener/timer cleanup.

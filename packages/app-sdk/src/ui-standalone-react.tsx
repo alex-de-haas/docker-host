@@ -1,6 +1,7 @@
 "use client";
 import { createContext, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { SdkIcon } from "./sdk-chrome";
+import { UiPanelIcon } from "./ui-panel-icon";
 import { UiHostContext } from "./ui-context";
 import { useHostyChrome, useHostyNavigation } from "./ui-navigation-react";
 import { StandaloneNavigationContext } from "./ui-standalone-context";
@@ -60,7 +61,7 @@ export function StandaloneHeader({ panels, selected, expanded, onSelect, onChoos
       <nav className="hosty-pinned-tools" aria-label="Pinned tools">{prefs.pins.map(key => panels.find(panel => panelKey(panel.panel) === key)).filter((panel): panel is UiPanel => !!panel).map(panel =>
         <button key={panelKey(panel.panel)} type="button" aria-label={`Open ${panel.appName} — ${panel.label}`} title={`${panel.appName}: ${panel.label}`}
           aria-expanded={expanded && selected === panelKey(panel.panel)} onClick={() => onSelect(panel)}>
-          <SdkIcon name="tools" /><span>{panel.label}</span>{attention(panel) && <span className="hosty-panel-attention" aria-label="Needs attention"><SdkIcon name="warning" /></span>}
+          <UiPanelIcon name={panel.icon} /><span>{panel.label}</span>{attention(panel) && <span className="hosty-panel-attention" aria-label="Needs attention"><SdkIcon name="warning" /></span>}
         </button>)}</nav>
       <button type="button" aria-label="Tools" aria-haspopup="dialog" aria-expanded={chooserOpen} onClick={onChoose}><SdkIcon name="tools" /><span>Tools</span><SdkIcon name="chevron" /></button>
     </div>}

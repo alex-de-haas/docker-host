@@ -1,10 +1,20 @@
 // Normal password/app-code identity in the managed child Core. Secrets arrive on stdin only.
 import assert from 'node:assert/strict';
-import {writeFile} from 'node:fs/promises';
+import {readFile, writeFile} from 'node:fs/promises';
 import { randomUUID, createHash } from 'node:crypto';
-const captureWindowHeight = process.env.HOSTY_FEEDBACK_CAPTURE_WINDOW_HEIGHT === undefined ? null : Number(process.env.HOSTY_FEEDBACK_CAPTURE_WINDOW_HEIGHT);
+let captureWindowHeight = process.env.HOSTY_FEEDBACK_CAPTURE_WINDOW_HEIGHT === undefined ? null : Number(process.env.HOSTY_FEEDBACK_CAPTURE_WINDOW_HEIGHT);
+if (process.env.HOSTY_FEEDBACK_SCREENSHOT) {
+  const calibration = process.env.HOSTY_FEEDBACK_SCREENSHOT+'.capture-window-height';
+  let value;
+  try { value = (await readFile(calibration, 'utf8')).trim(); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
+  if (value !== undefined) {
+    assert.match(value, /^\d+$/, calibration+' must contain a decimal integer between 960 and 4096');
+    captureWindowHeight = Number(value);
+  }
+}
 assert.ok(captureWindowHeight === null || Number.isInteger(captureWindowHeight) && captureWindowHeight >= 960 && captureWindowHeight <= 4096,
-  'HOSTY_FEEDBACK_CAPTURE_WINDOW_HEIGHT must be an integer between 960 and 4096');
+  'Native capture window height must be an integer between 960 and 4096');
 const { chromium } = await import(process.env.HOSTY_FEEDBACK_PLAYWRIGHT_MODULE || 'playwright');
 let input = ''; for await (const chunk of process.stdin) input += chunk;
 const config = JSON.parse(input); input = '';

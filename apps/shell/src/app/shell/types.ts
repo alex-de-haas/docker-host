@@ -872,6 +872,8 @@ export type AppPageLink = {
 };
 
 export type EmbeddedWorkspace = {
+  /** App-relative route used to launch src; stays fixed during in-place surface reports. */
+  launchPath?: string;
   appId: string;
   title: string;
   pageLabel: string;

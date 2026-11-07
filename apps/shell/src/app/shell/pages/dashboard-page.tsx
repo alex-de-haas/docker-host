@@ -340,10 +340,11 @@ function CoreSection({
   const development = useCoreDevelopment(coreOrigin, canManageApps);
   const launch = development.state?.launch ?? status?.launch;
   const dev = launch?.mode === "dev";
+  const updating = coreUpdating && coreUpdate?.clientPhase !== "completed";
   const workspace = coreWorkspaceSource(launch, workspaces);
   const runtime = useCoreWorkspaceControl({
     coreOrigin, state: development.state, workspace, workspaces,
-    disabled: !canManageApps || development.busy || coreUpdating, menu: true,
+    disabled: !canManageApps || development.busy || updating, menu: true,
     onRelease: async (signal) => {
       // A workspace Return can replace Core before the next ordinary poll. Use
       // its fresh process identity and source revision for the release restart.
@@ -354,20 +355,20 @@ function CoreSection({
       return requestId;
     },
   });
-  const stopping = useCoreStop(coreOrigin, development.state, !canManageApps || development.busy || runtime.busy || coreUpdating);
-  const coreBusy = development.busy || runtime.busy || coreUpdating || stopping.busy;
+  const stopping = useCoreStop(coreOrigin, development.state, !canManageApps || development.busy || runtime.busy || updating);
+  const coreBusy = development.busy || runtime.busy || updating || stopping.busy;
   const corePhase = stopping.phase || development.phase;
   const phaseNeedsAttention = coreOperationNeedsAttention(corePhase);
   const updateStatus = coreUpdateFeedback(coreUpdating, coreUpdate?.clientPhase);
-  const runtimeNeedsAttention = runtime.needsAttention && !stopping.busy && !development.busy && !coreUpdating;
+  const runtimeNeedsAttention = runtime.needsAttention && !stopping.busy && !development.busy && !updating;
   const actionTone = runtimeNeedsAttention ? "attention" : stopping.busy || development.busy || runtime.busy
     ? phaseNeedsAttention ? "attention" : "working" : updateStatus?.tone ?? "working";
-  const CoreActionIcon = actionTone === "attention" ? TriangleAlert : actionTone === "success" ? Check : LoaderCircle;
-  const coreActionLabel = runtimeNeedsAttention ? "Check switch" : actionTone === "attention" ? "Needs confirmation" : actionTone === "success" ? "Updated"
+  const CoreActionIcon = actionTone === "attention" ? TriangleAlert : LoaderCircle;
+  const coreActionLabel = runtimeNeedsAttention ? "Check switch" : actionTone === "attention" ? "Needs confirmation"
     : stopping.busy ? "Stopping…" : development.busy ? "Restarting…" : runtime.busy ? "Switching…" : "Updating…";
   const showRestartRequired = Boolean(development.state?.restartRequired && !development.busy && !stopping.busy);
   const needsDiagnostics = ["degraded", "unhealthy", "failed"].includes(status?.status ?? "");
-  const showUpdate = !dev && canManageApps && (coreUpdate?.updateAvailable === true || !!coreUpdate?.operationId || coreUpdating);
+  const showUpdate = !dev && canManageApps && (coreUpdate?.updateAvailable === true || !!coreUpdate?.operationId || updating);
 
   return (
     <div className="min-w-0 text-sm">

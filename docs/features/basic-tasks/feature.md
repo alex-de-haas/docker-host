@@ -1,6 +1,6 @@
 ---
 created: 2026-10-27
-updated: 2026-11-05
+updated: 2026-11-06
 summary: Provider-owned tasks with qualified numbers, human or app assignment, durable execution, Harness profile options, review and a live Tasks UI.
 components: [apps/core, apps/harness, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -115,7 +115,10 @@ fresh Core bindings per request, check the selected installation and preserve HT
 They never retry a mutation or choose another provider implicitly. The service token travels only to
 Core; the selected endpoint receives only its scoped provider token.
 
-Harness also supplies its UI directory/options endpoints and `/events` SSE. Agent tools are
+Harness also supplies its UI directory/options endpoints and `/events` SSE. Browser task-history
+readers consume that event contract through the authenticated single-use WebSocket ticket bridge.
+A readiness event precedes content-free change hints, and current task authority is revalidated
+throughout the subscription. Reconnection refreshes the authorized task snapshot. Agent tools are
 Core-mediated `task_options`, `task_list`, `task_get`, `task_create`, `task_edit` and `task_action`.
 Harness adds the session-owned `task_executor_options`, `task_request_input`, `task_result` and `task_fail`.
 Management tools use the current session owner/credential. The result tool binds to its accepted

@@ -104,8 +104,12 @@ it("rebuilds after npm workspace or executable links disappear", async () => {
   expect(f.builds()).toBe(2);
 });
 
-it("derives standalone runtime dependencies from the reviewed lock without workspace peers or loaders", async () => {
+it("keeps server SDK imports and late-resolved providers without delivering unused SDK browser dependencies", async () => {
   const { runtimePackage } = await import("../scripts/local-runtime.mjs");
+  const { build } = await import("esbuild");
+  const compiled = await build({ stdin: { contents: 'import { hash } from "@sdk/hashes/sha2.js"; console.log(hash); import("sdk-server/stream");', resolveDir: process.cwd() },
+    bundle: true, platform: "node", format: "esm", packages: "external", metafile: true, write: false });
+  const imports = Object.values(compiled.metafile.outputs).flatMap(output => output.imports.filter(value => value.external).map(value => value.path));
   const dependency = { version: "1.2.3", integrity: "locked" };
   const source = { lockfileVersion: 3, packages: {
     "": { workspaces: ["apps/*"] }, "apps/harness": { version: "0.1.0" },
@@ -115,8 +119,8 @@ it("derives standalone runtime dependencies from the reviewed lock without works
   } };
   const { manifest, lock } = runtimePackage({ version: "0.1.0", dependencies: {
     "native-provider": "1.2.3", "@hosty-sdk/app": "*", tsx: "^4",
-  } }, { dependencies: { "sdk-dependency": "2" }, peerDependencies: { next: "^16", react: "^19" } }, {}, source);
-  expect(manifest.dependencies).toEqual({ "native-provider": "1.2.3", "sdk-dependency": "2" });
+  } }, { dependencies: { "@sdk/hashes": "2", "sdk-server": "3", "ui-icons": "4" }, peerDependencies: { next: "^16", react: "^19" } }, {}, source, imports);
+  expect(manifest.dependencies).toEqual({ "native-provider": "1.2.3", "@sdk/hashes": "2", "sdk-server": "3" });
   expect(manifest.workspaces).toBeUndefined();
   expect(lock.packages["node_modules/native-provider"]).toBe(dependency);
   expect(lock.packages["node_modules/native-provider/node_modules/nested"].version).toBe("3.2.1");

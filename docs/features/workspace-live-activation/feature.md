@@ -1,6 +1,6 @@
 ---
 created: 2026-10-19
-updated: 2026-11-04
+updated: 2026-11-06
 summary: Select named app workspaces or installed package runtimes with scoped access review, retained package choices and recoverable Core-owned transitions.
 components: [apps/core, apps/cli, apps/shell, apps/harness, shared]
 ---
@@ -12,8 +12,12 @@ Core exposes configurable development source, immutable build provenance and one
 ## Package And Workspace Selection
 
 Dashboard uses one execution selector for each app. Package entries are the installed manifest's
-release profiles. Workspace entries are named, explicitly app-bound worktrees with a supported
-development recipe. Raw development profiles are internal recipes and do not appear as independent
+release profiles. If the installed manifest has no release profile, its ordinary default runtime
+remains the installed baseline, including a newly created app's development-only bootstrap.
+The default follows the manifest selection order: top-level default, flagged profile, then first
+profile. This fallback uses the installed contract and canonical source; it does not expose other raw
+development recipes as package choices. Workspace entries are named, explicitly app-bound worktrees
+with a supported development recipe. Raw development profiles are internal recipes and do not appear as independent
 choices. Selectable workspace entries belong to the current user and, for direct credentials, the
 current principal. Public source inspection remains broader; another user's already active workspace
 keeps its current name without becoming a selectable target. A recipe uses its declared development default, the conventional `dev` profile when
@@ -33,7 +37,11 @@ Core retains the selected package release runtime independently of workspace exe
 workspace A and then B preserves that package choice. Selecting a package entry directly runs the
 current installed package with the selected release runtime. It never restores an old workspace,
 package manifest or data backup. A missing release profile is reported as unavailable.
-Source edits and current ordinary data remain intact.
+Source edits and current ordinary data remain intact. A development-only installed baseline stays
+selectable during failed or interrupted workspace entry, so recovery does not depend on a healthy
+workspace process. A manual source override without a retained development journal remains a legacy
+binding. Clear that override through the supported source controls before selecting this installed
+baseline; selection never reports a package return while alternate source remains bound.
 
 The current execution target follows the persisted runtime and source binding. A prepared workspace
 does not become current before binding. During Return, the installed package becomes current as soon
@@ -101,7 +109,10 @@ Switching from a workspace without a skill collection to one with it preserves t
 Restart refreshes an admitted candidate and checks current access again. Stop uses the last
 launched snapshot, so invalid live JSON does not trap an app. Package return uses the current
 installed contract and strips temporary workspace authority. Native, system, Docker and mixed
-recipes retain their supported execution paths.
+recipes retain their supported execution paths. Exact admitted host/runtime access survives the
+Core-owned projection of approved workspace permissions and provider roles. Revalidation still
+checks the admitted contract, source/runtime, actor, current permission revision and configuration;
+revocation or a changed access contract requires review.
 
 ### Names And Automation
 
@@ -579,6 +590,14 @@ on subsequent GETs, without changing persisted Git observations, dirty source, r
 activation records or snapshots. Finish removes the child, its processes and test data.
 
 ## Testing Expectations
+
+- Exercise a development-only installed bootstrap through workspace entry, interrupted startup and
+  package Return. Keep its installed baseline visible even when the workspace uses the same runtime
+  key; reject raw development package choices when release profiles exist. Preserve source and data.
+- Approve a native workspace that also adds a provider role or Core permission, then verify entry,
+  retry and restart without another prompt for the unchanged admitted access. Refuse stale consent
+  after permission revocation, source/runtime or access-contract changes. Include the exact pending
+pre-projection configuration checkpoint when recovering an interrupted native snapshot update.
 
 - Verify execution-target inventory during workspace entry and package Return, including the live
   starting callback, failed package startup and retry. Current workspace identity must match the

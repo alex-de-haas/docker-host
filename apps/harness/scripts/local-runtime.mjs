@@ -143,10 +143,13 @@ export async function run(command, args, cwd) {
 }
 
 
-export function runtimePackage(app, sdk, rootPackage, sourceLock) {
-  // The SDK is compiled into the entry points. Its third-party dependencies still need runtime
-  // delivery, but its optional React/Next peers and the development TS loader do not.
-  const dependencies = { ...sdk.dependencies, ...app.dependencies };
+export function runtimePackage(app, sdk, rootPackage, sourceLock, imports) {
+  // The SDK is compiled into the entry points: deliver only its dependencies retained by that
+  // server build. Its browser components have separate dependencies and optional framework peers.
+  // Keep app-declared dependencies as well, including providers resolved by name at runtime.
+  const sdkDependencies = Object.fromEntries(Object.entries(sdk.dependencies ?? {}).filter(([name]) =>
+    imports.some(value => value === name || value.startsWith(name + "/"))));
+  const dependencies = { ...sdkDependencies, ...app.dependencies };
   delete dependencies["@hosty-sdk/app"];
   delete dependencies.tsx;
   const manifest = { name: "hosty-harness-local", version: app.version, private: true,
@@ -168,7 +171,8 @@ export async function build(snapshot) {
   // neither the original checkout's node_modules nor a previous generation is mutated.
   const json = async file => JSON.parse(await readFile(path.join(snapshot, file), "utf8"));
   const runtime = runtimePackage(await json("apps/harness/package.json"), await json("packages/app-sdk/package.json"),
-    await json("package.json"), await json("package-lock.json"));
+    await json("package.json"), await json("package-lock.json"), await json("runtime-imports.json"));
+  await rm(path.join(snapshot, "runtime-imports.json"));
   await writeFile(path.join(snapshot, "package.json"), JSON.stringify(runtime.manifest, null, 2) + "\n");
   await writeFile(path.join(snapshot, "package-lock.json"), JSON.stringify(runtime.lock, null, 2) + "\n");
   await run("npm", ["ci", "--omit=dev", "--no-audit", "--no-fund"], snapshot);
