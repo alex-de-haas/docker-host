@@ -2837,14 +2837,31 @@ export class SessionManager {
     });
     if (!worker || !snapshot) return null;
     // Network waits must leave Stop and coordinator callbacks free to use the queue.
-    await snapshot.run?.waitForAdmission?.();
-    const receipt = await worker.request<WorkerReceipt>(`/v1/runs/${snapshot.runId}`);
+    try { await snapshot.run?.waitForAdmission?.(); }
+    catch (error) {
+      // A definite refusal remains visible. An uncertain transport failure needs the same
+      // authoritative receipt lookup as a retained run after coordinator restart.
+      if (error instanceof WorkerApiError && (error.status < 500 || error.code === "worker_stopping")) throw error;
+    }
+    const receipt = await worker.request<WorkerReceipt>(`/v1/runs/${snapshot.runId}`).catch(error => {
+      if (error instanceof WorkerApiError && error.code === "run_not_found") return null;
+      throw error;
+    });
+    // A missing receipt is not exit evidence. Bind its explicit operator attestation to the
+    // current worker generation; recovery creates a tombstone before normal source cleanup.
+    const missingGeneration = receipt ? undefined : (await worker.capabilities()).generation;
     return this.serialize(id, async () => {
       const session = await this.requireLive(id);
       if (session.record.createdBy !== actorId) throw new AppContextError(404, "session_not_found", "Session not found.");
       const pending = session.record.workerRecovery?.state === "pending" ? session.record.workerRecovery : undefined;
       const runId = session.record.workerRun?.id ?? pending?.runId;
       if (runId !== snapshot.runId) return null;
+      if (!receipt) {
+        if (!missingGeneration || !/^[A-Za-z0-9-]{1,100}$/.test(missingGeneration))
+          throw new AppContextError(503, "recovery_unavailable", "The worker cannot review this missing execution. Check its service status.");
+        return { runId, generation: missingGeneration, expectedRevision: 0, recoverable: true,
+          pending: pending && { ...pending.input, runId: pending.runId } };
+      }
       if (receipt.conversationId !== id) throw new AppContextError(409, "recovery_mismatch", "The run does not belong to this conversation.");
       const recoverable = receipt.state === "interrupted" && !receipt.exitConfirmed;
       if (!recoverable && !pending) return null;
@@ -2862,8 +2879,11 @@ export class SessionManager {
         || typeof value.generation !== "string" || !/^[A-Za-z0-9-]{1,100}$/.test(value.generation)
         || !Number.isSafeInteger(value.expectedRevision) || Number(value.expectedRevision) < 0)
         throw new AppContextError(400, "recovery_invalid", "Review this run and confirm that its agent and commands have stopped.");
-      const input: WorkerRecovery = { requestId, generation: value.generation, expectedRevision: Number(value.expectedRevision), consumerExitConfirmed: true, actorId };
       const previous = session.record.workerRecovery;
+      const input: WorkerRecovery = { requestId, generation: value.generation, expectedRevision: Number(value.expectedRevision), consumerExitConfirmed: true, actorId,
+        // Preserve pre-upgrade pending inputs exactly; new requests bind any missing tombstone
+        // to the authenticated conversation rather than trusting a browser-supplied owner.
+        ...(previous?.input.requestId === requestId && !previous.input.conversationId ? {} : { conversationId: id }) };
       const replay = previous?.input.requestId === requestId;
       if (replay && (previous.runId !== value.runId || JSON.stringify(previous.input) !== JSON.stringify(input)))
         throw new AppContextError(409, "recovery_conflict", "Reuse the original recovery request.");
@@ -2876,9 +2896,13 @@ export class SessionManager {
         throw new AppContextError(409, "recovery_pending", "Retry the retained recovery request first.");
       // Read before retaining a new request: a stale review must not poison future recovery.
       if (!replay) {
-        const receipt = await this.worker.request<WorkerReceipt>(`/v1/runs/${value.runId}`);
-        if (receipt.conversationId !== id || receipt.generation !== input.generation || receipt.revision !== input.expectedRevision
-          || receipt.state !== "interrupted" || receipt.exitConfirmed)
+        const receipt = await this.worker.request<WorkerReceipt>(`/v1/runs/${value.runId}`).catch(error => {
+          if (error instanceof WorkerApiError && error.code === "run_not_found") return null;
+          throw error;
+        });
+        if (receipt ? receipt.conversationId !== id || receipt.generation !== input.generation || receipt.revision !== input.expectedRevision
+          || receipt.state !== "interrupted" || receipt.exitConfirmed
+          : input.expectedRevision !== 0 || (await this.worker.capabilities()).generation !== input.generation)
           throw new AppContextError(409, "recovery_stale", "The execution changed. Refresh its recovery review.");
         session.record.workerRecovery = { runId: value.runId, input, state: "pending" };
         await this.store.saveRecord(session.record);

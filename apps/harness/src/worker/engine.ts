@@ -20,30 +20,37 @@ export class WorkerEngine {
   private readonly usageTimer: NodeJS.Timeout;
   constructor(readonly journal: WorkerJournal, private readonly execution: WorkerExecution, private readonly capacity: number) {
     this.usageTimer = setInterval(() => {
-      void this.journal.exclusive(async () => { for (const id of this.admitted) await this.journal.sample(id); }).catch(() => {
-        // Fence admission immediately, then stop native consumers even when durable usage
-        // storage is unavailable. Restart keeps uncommitted usage/exit evidence uncertain.
-        if (!this.closing) void this.close().catch(() => {});
+      void this.journal.exclusive(async () => { for (const id of this.admitted) await this.journal.sample(id); }).catch(error => {
+        // A failed durable sample cannot become successful usage or exit evidence. The journal
+        // already retries transient sharing violations before this permanent admission fence.
+        if (!this.closing) {
+          console.warn("[worker] Usage persistence failed; admission fenced.", { code: journalErrorCode(error) });
+          void this.close("Worker stopped after usage persistence failed. Check worker logs.")
+            .catch(error => console.warn("[worker] Shutdown finalization remains unconfirmed.", { code: journalErrorCode(error) }));
+        }
       });
     }, 1000);
     this.usageTimer.unref();
   }
 
   get occupied(): number { return this.admitted.size; }
+  get available(): boolean { return !this.closing; }
   async submit(id: string, input: unknown): Promise<WorkerReceipt> {
-    if (this.closing) throw new WorkerApiError(503, "worker_stopping", "Worker is stopping.");
     validateRun(input);
     // Foreground work preempts optional collection, including Docker's single execution slot.
     const retry = await this.journal.exclusive(() => this.journal.load(id).catch(error => {
       if (error instanceof WorkerApiError && error.status === 404) return null; throw error;
     }));
-    if (!retry) for (const [otherId, active] of this.active) {
+    if (!retry && !this.closing) for (const [otherId, active] of this.active) {
       if (active.collecting && (this.admitted.size >= this.capacity || active.request.binding.connectionId === input.binding.connectionId))
         await this.finishSuggestion(otherId);
     }
     return this.journal.exclusive(async () => {
       // Observe an existing receipt before admission: a retry is not a new workload.
       const existing = await this.journal.load(id).catch(error => { if (error instanceof WorkerApiError && error.status === 404) return null; throw error; });
+      // Existing accepted identities remain observable during a fence. worker_stopping therefore
+      // proves rejection before admission, including when the coordinator repeats an uncertain PUT.
+      if (!existing && this.closing) throw new WorkerApiError(503, "worker_stopping", "Worker is stopping.");
       if (!existing && this.admitted.size >= this.capacity) throw new WorkerApiError(409, "worker_busy", "Worker capacity is occupied.");
       if (!existing) await this.execution.validateSelection(input);
       const accepted = await this.journal.accept(id, input);
@@ -318,10 +325,16 @@ export class WorkerEngine {
     active.request.autoAllowedPrefixes = prefixes;
     return { applied: await active.run.setMcpServers(servers) };
   }
-  async close(): Promise<void> {
+  async close(reason = "Worker is shutting down."): Promise<void> {
     this.closing = true; clearInterval(this.usageTimer);
     await Promise.allSettled([...this.starts]);
-    await Promise.allSettled([...this.active].map(([id, active]) => active.collecting ? this.finishSuggestion(id) : this.fail(id, "Worker is shutting down.")));
+    await Promise.allSettled([...this.active].map(([id, active]) => active.collecting ? this.finishSuggestion(id) : this.fail(id, reason)));
     await this.journal.exclusive(async () => {});
   }
+}
+
+/** Log only bounded classifications; storage errors may include private paths or provider data. */
+function journalErrorCode(error: unknown): string {
+  const code = error instanceof WorkerApiError ? error.code : (error as NodeJS.ErrnoException | null)?.code;
+  return typeof code === "string" && /^[A-Za-z0-9_]{1,60}$/.test(code) ? code : error instanceof SyntaxError ? "invalid_json" : "unknown";
 }

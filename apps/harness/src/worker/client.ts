@@ -60,8 +60,8 @@ export class WorkerClient {
     if (!response.ok || !value.path) throw new WorkerApiError(response.status, "attachment_failed", value.message ?? "Worker attachment upload failed.");
     return value.path;
   }
-  async capabilities(): Promise<{ protocol: number; capacity: number; occupied?: number; resources?: { trees?: string } }> {
-    const value = await this.request<{ protocol: number; capacity: number; occupied?: number; resources?: { trees?: string } }>("/v1/capabilities");
+  async capabilities(): Promise<{ protocol: number; generation?: string; capacity: number; occupied?: number; resources?: { trees?: string } }> {
+    const value = await this.request<{ protocol: number; generation?: string; capacity: number; occupied?: number; resources?: { trees?: string } }>("/v1/capabilities");
     if (value.protocol !== WORKER_PROTOCOL) throw new WorkerApiError(409, "protocol_mismatch", "Harness and Worker versions are incompatible.");
     return value;
   }
@@ -209,7 +209,8 @@ class RemoteRun implements HarnessRun {
           } else this.options.onEvent(event);
         }
       } catch (error) {
-        if (request && !accepted && error instanceof WorkerApiError && error.status < 500 && error.code !== "run_conflict") this.confirmed = true;
+        if (request && !accepted && error instanceof WorkerApiError
+          && (error.code === "worker_stopping" || error.status < 500 && error.code !== "run_conflict")) this.confirmed = true;
         this.busy = false;
         if (!this.stopped) this.options.onEvent({ type: "error", message: error instanceof Error ? error.message : "Worker disconnected." });
       }
@@ -232,7 +233,21 @@ class RemoteRun implements HarnessRun {
   }
   async interrupt(): Promise<void> {
     if (!this.id || this.confirmed) return;
-    if (this.submitted) await this.client.request(`/v1/runs/${this.id}`, "PUT", this.submitted, true);
+    if (this.submitted) {
+      const current = await this.client.request<WorkerReceipt>(`/v1/runs/${this.id}`).catch(error => {
+        if (error instanceof WorkerApiError && error.code === "run_not_found") return null;
+        throw error;
+      });
+      if (current && (current.runId !== this.id || current.conversationId !== this.options.sessionId))
+        throw new WorkerApiError(409, "run_mismatch", "Worker receipt does not match this conversation.");
+      // Explicit recovery may have written a terminal tombstone after an uncertain admission.
+      // Only its attested exit proof bypasses the original PUT/hash check; ordinary reused run
+      // identities must still conflict when their accepted input differs.
+      if (current?.recovery && terminal(current.state) && current.exitConfirmed === true) {
+        this.confirmed = true; return;
+      }
+      await this.client.request(`/v1/runs/${this.id}`, "PUT", this.submitted, true);
+    }
     let receipt = await this.client.request<WorkerReceipt>(`/v1/runs/${this.id}/cancel`, "POST", { controlId: randomUUID() }, true);
     const unconfirmed = () => new WorkerApiError(503, "exit_unconfirmed", "Worker execution exit is not confirmed; keep source leases.");
     // Startup/reservation can still be unwinding after the cancellation command is acknowledged.

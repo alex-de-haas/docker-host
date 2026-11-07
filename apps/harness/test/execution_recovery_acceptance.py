@@ -85,3 +85,38 @@ def check(context, app, app_origin, call, timed, link):
     observed = json.loads((data/'agent-observations.json').read_text())
     assert all(value['stopConfirmed'] for value in observed['runs'] if value['conversation'] == session_id)
     say('PASS: legacy Local interruption, failed Stop, explicit exact-run recovery, native stop observation, preserved transcript/source and durable replay across real restart')
+
+
+    missing = call(app_origin, '/api/sessions', {'title': 'Missing admission recovery acceptance'})
+    missing_session, missing_run = missing['id'], str(uuid.uuid4())
+    run([context['cli'], '--data-root', root, 'apps', 'stop', app])
+    missing_record_path = data/'sessions'/missing_session/'record.json'
+    missing_record = json.loads(missing_record_path.read_text())
+    missing_record.update(status='running', workerRun={'id':missing_run, 'sequence':0})
+    missing_record_path.write_text(json.dumps(missing_record))
+    missing_events_path = missing_record_path.parent/'events.ndjson'
+    missing_history = missing_events_path.read_bytes()
+    missing_journal_path = data/'worker-service'/'runs'/(missing_run+'.json')
+    assert not missing_journal_path.exists()
+    timed('start')
+    missing_route = '/api/sessions/'+missing_session+'/execution-recovery'
+    missing_review = call(app_origin, missing_route)
+    assert missing_review['recoverable'] and missing_review['runId'] == missing_run
+    assert missing_review['expectedRevision'] == 0 and missing_review['generation']
+    missing_request = {'requestId':str(uuid.uuid4()), 'runId':missing_run,
+        'generation':missing_review['generation'], 'expectedRevision':0, 'consumerExitConfirmed':True}
+    call(app_origin, missing_route, missing_request)
+    recovered = call(app_origin, '/api/sessions/'+missing_session)
+    assert recovered['status'] == 'cancelled' and not recovered.get('workerRun')
+    assert recovered['workerRecovery']['state'] == 'completed'
+    tombstone = json.loads(missing_journal_path.read_text())['receipt']
+    assert tombstone['conversationId'] == missing_session and tombstone['state'] == 'cancelled'
+    assert tombstone['exitConfirmed'] and tombstone['recovery']['requestId'] == missing_request['requestId']
+    assert missing_events_path.read_bytes().startswith(missing_history)
+    assert hashlib.sha256(source.read_bytes()).hexdigest() == source_hash
+    call(app_origin, missing_route, missing_request)
+    timed('restart')
+    assert call(app_origin, '/api/sessions/'+missing_session)['status'] == 'cancelled'
+    call(app_origin, missing_route, missing_request)
+    assert call(app_origin, '/api/sessions/'+session_id)['status'] == 'cancelled'
+    say('PASS: missing-admission review, explicit recovery tombstone, preserved history/source and same-request replay after real restart')

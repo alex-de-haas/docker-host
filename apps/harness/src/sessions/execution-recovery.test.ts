@@ -93,22 +93,24 @@ it("waits through preparation and durable admission before reviewing a freshly s
   expect(calls.mock.calls.filter(args => args[1] === "PUT")).toHaveLength(1);
   expect((await f.store.readEvents(f.session.id)).filter(event => event.type === "error")).toEqual([]);
 });
-it("propagates admission failure and leaves the conversation queue available", async () => {
+it.each([[409, "worker_busy"], [503, "worker_stopping"]] as const)("cleans up a definitive %s admission refusal without retrying execution", async (status, code) => {
   const f = await freshFixture(), submitting = deferred(), submit = deferred();
   const request = f.client.request.bind(f.client);
-  vi.spyOn(f.client, "request").mockImplementation(async (...args) => {
+  const requests = vi.spyOn(f.client, "request").mockImplementation(async (...args) => {
     if (args[1] === "PUT") {
       submitting.resolve(); await submit.promise;
-      throw new WorkerApiError(409, "worker_busy", "Worker capacity is occupied.");
+      throw new WorkerApiError(status, code, "Worker admission refused.");
     }
     return request(...args);
   });
   await f.manager().postMessage(f.session.id, "Continue"); await submitting.promise;
-  const review = expect(f.manager().executionRecovery(f.session.id, "owner")).rejects.toMatchObject({ code: "worker_busy" });
+  const review = expect(f.manager().executionRecovery(f.session.id, "owner")).rejects.toMatchObject({ code });
   submit.resolve(); await review;
   await expect.poll(async () => (await f.store.readRecord(f.session.id))?.status).toBe("failed");
   await expect(f.manager().executionRecovery(f.session.id, "other")).rejects.toMatchObject({ code: "session_not_found" });
   expect(f.started).not.toHaveBeenCalled();
+  expect((await f.store.readRecord(f.session.id))!.workerRun).toBeUndefined();
+  expect(requests.mock.calls.filter(args => args[1] === "PUT")).toHaveLength(1);
 });
 it("allows Stop during a slow receipt review and discards the superseded review", async () => {
   const f = await freshFixture(), reading = deferred(), read = deferred();
@@ -131,10 +133,23 @@ it("allows Stop during a slow receipt review and discards the superseded review"
   await expect(review).resolves.toBeNull();
   expect((await f.store.readRecord(f.session.id))!.workerRun).toBeUndefined();
 });
-it("still reports a genuinely missing retained run after coordinator restart", async () => {
+it("requires explicit exact-generation recovery for a missing retained run and preserves its history", async () => {
   const f = await fixture();
   await rm(path.join(f.root, "runs", f.input.runId + ".json"));
-  await expect(f.manager().executionRecovery(f.session.id, "owner")).rejects.toMatchObject({ code: "run_not_found" });
+  const review = (await f.manager().executionRecovery(f.session.id, "owner"))!;
+  expect(review).toMatchObject({ runId: f.input.runId, generation: f.journal.generation, expectedRevision: 0, recoverable: true });
+  expect(f.released).not.toHaveBeenCalled();
+  const input = { requestId: randomUUID(), runId: review.runId, generation: review.generation, expectedRevision: review.expectedRevision, consumerExitConfirmed: true };
+  await expect(f.manager().recoverExecution(f.session.id, "owner", { ...input, consumerExitConfirmed: false })).rejects.toMatchObject({ code: "recovery_invalid" });
+  await expect(f.manager().recoverExecution(f.session.id, "owner", { ...input, generation: "old-worker" })).rejects.toMatchObject({ code: "recovery_stale" });
+  await f.manager().recoverExecution(f.session.id, "owner", input, "fresh-grant");
+  await f.manager().recoverExecution(f.session.id, "owner", input, "fresh-grant");
+  expect((await f.store.readRecord(f.session.id))!).toMatchObject({ status: "cancelled", harnessSessionId: "retained-native-session", workerRecovery: { state: "completed" } });
+  expect((await f.store.readRecord(f.session.id))!.workerRun).toBeUndefined();
+  expect((await f.store.readEvents(f.session.id)).some(event => event.type === "user_message" && event.text === "Preserved request")).toBe(true);
+  expect(f.released).toHaveBeenCalledTimes(1);
+  expect(f.started).not.toHaveBeenCalled();
+  expect((await f.journal.load(input.runId)).receipt).toMatchObject({ conversationId: f.session.id, state: "cancelled", exitConfirmed: true });
 });
 it("keeps source claims on failed Stop and recovers the exact owned run without losing its transcript", async () => {
   const f = await fixture();
@@ -183,4 +198,31 @@ it("blocks new turns until failed source cleanup finishes with the retained reco
   await f.manager().recoverExecution(f.session.id, "owner", f.input, "fresh-grant");
   expect((await f.store.readRecord(f.session.id))!.workerRecovery?.state).toBe("completed");
   expect((await f.store.readRecord(f.session.id))!.developmentLease).toBeUndefined();
+});
+
+it("recovers a still-live unknown admission without resubmitting through its recovery tombstone", async () => {
+  const f = await freshFixture(), request = f.client.request.bind(f.client);
+  const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const requests = vi.spyOn(f.client, "request").mockImplementation(async (...args) => {
+    if (args[1] === "PUT") throw new WorkerApiError(503, "worker_error", "Admission reply is uncertain.");
+    return request(...args);
+  });
+  await f.manager().postMessage(f.session.id, "Retain this uncertain request");
+  await expect.poll(async () => (await f.store.readEvents(f.session.id)).some(event => event.type === "error")).toBe(true);
+  expect((await f.store.readRecord(f.session.id))!.workerRun).toBeDefined();
+  expect(f.released).not.toHaveBeenCalled();
+  const review = (await f.manager().executionRecovery(f.session.id, "owner"))!;
+  expect(review).toMatchObject({ generation: f.journal.generation, expectedRevision: 0, recoverable: true });
+  const puts = requests.mock.calls.filter(args => args[1] === "PUT").length;
+  const input = { requestId: randomUUID(), runId: review.runId, generation: review.generation, expectedRevision: 0, consumerExitConfirmed: true };
+  await f.manager().recoverExecution(f.session.id, "owner", input, "fresh-grant");
+  expect(requests.mock.calls.filter(args => args[1] === "PUT")).toHaveLength(puts);
+  expect((await f.store.readRecord(f.session.id))!).toMatchObject({ status: "cancelled", workerRecovery: { state: "completed" } });
+  expect((await f.store.readRecord(f.session.id))!.workerRun).toBeUndefined();
+  expect(f.started).not.toHaveBeenCalled();
+  expect((await f.store.readEvents(f.session.id)).some(event => event.type === "user_message" && event.text === "Retain this uncertain request")).toBe(true);
+  await f.manager().observations.synchronize();
+  expect(await f.manager().observations.change(state => state.runs.find(run => run.conversation === f.session.id)))
+    .toMatchObject({ state: "cancelled", stopConfirmed: true });
+  expect(JSON.stringify(warning.mock.calls)).not.toContain("run_conflict");
 });

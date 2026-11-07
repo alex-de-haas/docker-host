@@ -104,7 +104,7 @@ it("rebuilds after npm workspace or executable links disappear", async () => {
   expect(f.builds()).toBe(2);
 });
 
-it("derives standalone runtime dependencies from the reviewed lock without workspace peers or loaders", async () => {
+it("keeps dynamic app dependencies and only externally imported SDK dependencies in the standalone runtime", async () => {
   const { runtimePackage } = await import("../scripts/local-runtime.mjs");
   const dependency = { version: "1.2.3", integrity: "locked" };
   const source = { lockfileVersion: 3, packages: {
@@ -115,11 +115,21 @@ it("derives standalone runtime dependencies from the reviewed lock without works
   } };
   const { manifest, lock } = runtimePackage({ version: "0.1.0", dependencies: {
     "native-provider": "1.2.3", "@hosty-sdk/app": "*", tsx: "^4",
-  } }, { dependencies: { "sdk-dependency": "2" }, peerDependencies: { next: "^16", react: "^19" } }, {}, source);
-  expect(manifest.dependencies).toEqual({ "native-provider": "1.2.3", "sdk-dependency": "2" });
+  } }, { dependencies: { "sdk-dependency": "2", "@scope/used": "3", "lucide-react": "1" }, peerDependencies: { next: "^16", react: "^19" } }, {}, source,
+    ["sdk-dependency/helpers", "@scope/used/server", "@scope/used-extra/unrelated"]);
+  expect(manifest.dependencies).toEqual({ "native-provider": "1.2.3", "sdk-dependency": "2", "@scope/used": "3" });
+  expect(manifest.dependencies["lucide-react"]).toBeUndefined();
+  expect(manifest.dependencies.react).toBeUndefined();
   expect(manifest.workspaces).toBeUndefined();
   expect(lock.packages["node_modules/native-provider"]).toBe(dependency);
   expect(lock.packages["node_modules/native-provider/node_modules/nested"].version).toBe("3.2.1");
   expect(lock.packages["node_modules/@hosty-sdk/app"]).toBeUndefined();
   expect(source.packages[""].workspaces).toEqual(["apps/*"]);
+});
+
+it("rejects an unbounded or malformed SDK import inventory", async () => {
+  const { runtimePackage } = await import("../scripts/local-runtime.mjs");
+  for (const imports of [Array(257).fill("sdk"), [null], ["x".repeat(2049)]])
+    expect(() => runtimePackage({ version: "1", dependencies: {} }, {}, {}, { packages: {} }, imports))
+      .toThrow("Invalid compiled SDK runtime import inventory");
 });
