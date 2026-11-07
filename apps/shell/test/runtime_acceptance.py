@@ -7,6 +7,7 @@ import os
 import pathlib
 import re
 import shutil
+import subprocess
 import time
 import urllib.parse
 import urllib.request
@@ -111,6 +112,18 @@ def check(context):
     replay = call(app_origin, '/api/core/api/storage/refresh', storage_request, storage_csrf)
     assert not replay['isScanning'] and replay['snapshot']['id'] == snapshot['id']
     say('PASS: Shell storage permission, explicit refresh, cached replay, category totals, app cache, unknown files and excluded symlink')
+    if os.environ.get('HOSTY_SHELL_STORAGE_BROWSER') == '1':
+        # The optional real-browser check uses this same child and normal password login.
+        # Its credentials travel only over stdin, never through argv, files or exported state.
+        playwright_module = os.environ.get('HOSTY_PLAYWRIGHT_MODULE')
+        assert playwright_module, 'HOSTY_PLAYWRIGHT_MODULE is required for storage browser acceptance'
+        browser_configuration = json.dumps({'coreOrigin':request('/control/v1/core/status', control=True)['corePublicOrigin'], 'appOrigin':app_origin, 'appUrl':link,
+                'email':'activation-fixture@example.test', 'password':password,
+                'playwrightModule':playwright_module})
+        browser_check = subprocess.run(['node', str(workspace/'apps/shell/test/storage-browser-acceptance.mjs')],
+            input=browser_configuration, env=context['env'], capture_output=True, text=True, timeout=240)
+        assert browser_check.returncode == 0, 'Storage browser acceptance failed: '+browser_check.stderr.strip()
+        say(browser_check.stdout.strip())
 
     # This local fixture intentionally has no feed. The proxy must preserve the structured
     # absence code consumed by App Details, and migration reads must not alter the installation.

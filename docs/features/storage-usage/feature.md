@@ -1,6 +1,6 @@
 ---
 created: 2026-11-06
-updated: 2026-11-06
+updated: 2026-11-07
 summary: Core measures managed disk storage in one cached snapshot shared by Shell's overview and application details.
 components: [apps/core, apps/shell]
 ---
@@ -89,3 +89,7 @@ UUID. An older Core or missing permission is displayed as an error, without auto
 - Runtime acceptance uses a Core-managed child with synthetic files, normal password login and
   authenticated Core/Shell routes. Native behavior requires validation on each supported OS;
   macOS results do not establish Windows or Linux runtime readiness.
+- `npm run test:integration -- shell` exercises storage through the installed Shell. Setting
+  `HOSTY_SHELL_STORAGE_BROWSER=1` and `HOSTY_PLAYWRIGHT_MODULE` to an installed Playwright module
+  adds real Chrome navigation, recount, resource disclosure, mobile layout and app-details checks.
+  Browser credentials travel over stdin and browser state is discarded after the run.
