@@ -215,6 +215,7 @@ Plans: 14 In Progress · 1 Blocked · 43 Draft · 8 On Hold.
 - [Shell operation feedback](features/shell-operation-feedback/feature.md) — Shell separates confirmations, transient operation results and persistent diagnostics.
 - [Resizable Shell Panels](features/shell-panel-resize/feature.md) — Shell tool columns with independent persistent resizing, compact tabs, and retained SDK app frames.
 - [Source Providers](features/source-providers/feature.md) — Core owns a typed source-provider registry with built-in GitHub, owner-scoped connections and Shell account management.
+- [Managed storage usage](features/storage-usage/feature.md) — Core measures managed disk storage in one cached snapshot shared by Shell's overview and application details.
 - [Swift Shell](features/swift-shell/feature.md) — A native SwiftUI client for iOS, iPadOS and macOS that manages a host's installed apps.
 - [Telemetry Over MCP](features/telemetry-mcp/feature.md) — Stored logs, traces and resource metrics exposed as an MCP interface behind a scoped credential.
 - [Tool Activity](features/tool-activity/feature.md) — Per-user tool activity flows from app servers through Core to Tools, including unopened panels, presence expiry and restart recovery.

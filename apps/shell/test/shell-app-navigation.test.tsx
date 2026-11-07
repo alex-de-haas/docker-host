@@ -34,6 +34,18 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.resetAllMocks(); vi.unstubAllGlobals(); });
 const button = (label: string) => [...container.querySelectorAll<HTMLButtonElement>("button")].find(node => node.textContent === label || node.getAttribute("aria-label") === label)!;
 
+it.each([false, true])("keeps one Settings destination without a separate Storage sidebar item (compact=%s)", async compact => {
+  const props = { ...sidebarProps(), compact, activeView: "settings" as const, selectedSettings: "storage" };
+  await act(async () => root.render(<ShellSidebar {...props} />));
+  const navigation = container.querySelector('nav[aria-label="Host navigation"]')!;
+  expect([...navigation.querySelectorAll("button,a")].filter(item => item.textContent === "Storage" || item.getAttribute("aria-label") === "Storage")).toHaveLength(0);
+  expect(navigation.querySelectorAll('[aria-label="Settings"]')).toHaveLength(1);
+  expect(button("Settings").getAttribute("aria-current")).toBe("page");
+  await act(async () => button("Settings").click());
+  expect(props.onOpenSettings).toHaveBeenCalledExactlyOnceWith("profile");
+  expect(props.onNavigate).not.toHaveBeenCalled();
+});
+
 it.each([false, true])("keeps direct app launch rows while the Apps heading is noninteractive (compact=%s)", async compact => {
   const props = { ...sidebarProps(), compact };
   await act(async () => root.render(<ShellSidebar {...props} />));

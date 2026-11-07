@@ -40,6 +40,7 @@ import { SandboxLaunchPermissions } from "./settings-sandbox-permissions";
 import { SourceProviders } from "./source-providers";
 import { UserProfilePage } from "./user-profile-page";
 import { UserManagementPanel } from "./user-management-page";
+import { StoragePage } from "../storage/storage-view";
 
 // Everything that configures the host, in one place. Before this page, User Management was a route
 // while Core settings and shared mounts were dialogs opened from a version block and an app page —
@@ -130,6 +131,7 @@ export function SettingsPage({
 
       {canManageApps && resolvedTab === "general" && <PlatformFeedSettings coreOrigin={coreOrigin} sendCsrfJson={sendCsrfJson} />}
       {canManageApps && resolvedTab === "source" && <CoreSourceSettings coreOrigin={coreOrigin} />}
+      {canManageApps && resolvedTab === "storage" && <StoragePage dataRoot={coreStatus?.dataRoot} withinSettings />}
 
       {canManageApps && resolvedTab === "connections" && <SourceProviders coreOrigin={coreOrigin} sendCsrfJson={sendCsrfJson} />}
 

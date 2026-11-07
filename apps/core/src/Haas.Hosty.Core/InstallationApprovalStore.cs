@@ -13,6 +13,7 @@ internal static class CoreAppPermissions
     public const string AppLifecycle = "apps.lifecycle";
     public const string ConfigureApps = "apps.configure";
     public const string ReadCore = "core.read";
+    public const string ReadStorage = "core.storage.read";
     public const string UpdateCore = "core.update";
     public const string WorkspaceCore = "core.workspace.activate";
     public const string CoreLifecycle = "core.lifecycle";
@@ -55,7 +56,7 @@ internal static class CoreAppPermissions
     public const string AgentSessionProviders = "providers.agent-sessions";
     public const string AgentSessionsRead = "core.agent-sessions.read";
     public const string AgentSessionsControl = "core.agent-sessions.control";
-    public static readonly string[] Known = [DecisionsRequest, DecisionsRead, DecisionsRespond, CoreEnvironmentsApi, PublicationWrite, TasksRead, TasksWrite, TasksExecute, HistoryProviders, HistoryRead, HistoryShare, HistoryExport, AgentSessionProviders, AgentSessionsRead, AgentSessionsControl, FeedbackManage, ReadCredentials, RevokeCredentials, RequestMcpAccess, WorkspaceCore, Install, ReadApps, ReadPanels, AppLogs, Notifications, AppLifecycle, ConfigureApps, ReadCore, UpdateCore, CoreLifecycle, ConfigureCore, CoreLogs, ReadUsers, ManageUsers, Sources, SourcesRead, WorkspacesRead, WorkspacesCleanup, CoreEnvironmentsRead, CoreEnvironmentsManage, CoreEnvironmentsInspect, CoreEnvironmentsOperate, SourceConnections, ReadSkills, ManageSkills, SpeechProviders, TranslationProviders, AssistantProviders, TaskProviders, TaskExecutors];
+    public static readonly string[] Known = [DecisionsRequest, DecisionsRead, DecisionsRespond, CoreEnvironmentsApi, PublicationWrite, TasksRead, TasksWrite, TasksExecute, HistoryProviders, HistoryRead, HistoryShare, HistoryExport, AgentSessionProviders, AgentSessionsRead, AgentSessionsControl, FeedbackManage, ReadCredentials, RevokeCredentials, RequestMcpAccess, WorkspaceCore, Install, ReadApps, ReadPanels, AppLogs, Notifications, AppLifecycle, ConfigureApps, ReadCore, ReadStorage, UpdateCore, CoreLifecycle, ConfigureCore, CoreLogs, ReadUsers, ManageUsers, Sources, SourcesRead, WorkspacesRead, WorkspacesCleanup, CoreEnvironmentsRead, CoreEnvironmentsManage, CoreEnvironmentsInspect, CoreEnvironmentsOperate, SourceConnections, ReadSkills, ManageSkills, SpeechProviders, TranslationProviders, AssistantProviders, TaskProviders, TaskExecutors];
 
     // The old name grants exactly the same authority. Other retired permissions remain unsupported.
     public static string Normalize(string permission) => permission == LegacySources ? Sources : permission;
@@ -113,6 +114,7 @@ internal static class CoreAppPermissions
         AppLifecycle => "Start, stop and restart applications; change autostart and select reviewed runtimes and managed dev mode. Other source folder changes require Core confirmation",
         ConfigureApps => "Read and change application settings, including sensitive values, mounts and backups",
         ReadCore => "Read Core state",
+        ReadStorage => "Read host-wide disk usage, resource labels, relative paths and app/workspace associations as the initiating administrator; no file contents or source mutations",
         UpdateCore => "Update Core",
         WorkspaceCore => "Activate and Return reviewed workspace Core builds on ordinary host data, including Core interruption and recovery",
         CoreLifecycle => "Restart Core",
