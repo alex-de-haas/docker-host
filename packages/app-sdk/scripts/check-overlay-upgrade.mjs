@@ -33,7 +33,7 @@ try {
     pkg.exports = Object.fromEntries(Object.entries(pkg.exports).map(([key, source]) =>
       [key, source.replace("./src/", "./dist/").replace(/\.tsx?$/, ".js")]));
     writeFileSync(join(dependency, "package.json"), JSON.stringify(pkg));
-    for (const name of ["react", "react-dom", "@noble"]) {
+    for (const name of ["react", "react-dom", "@noble", "lucide-react"]) {
       symlinkSync(join(root, "node_modules", name), join(directory, "node_modules", name), "dir");
     }
     if (revision === "update") {

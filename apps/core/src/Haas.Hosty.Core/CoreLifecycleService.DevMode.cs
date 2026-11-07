@@ -231,7 +231,9 @@ internal sealed partial class CoreLifecycleService
                 ExecutionConfigurationHash = current.ExecutionConfigurationHash,
                 PriorExecutionConfigurationHash = current.PriorExecutionConfigurationHash,
                 ReturnConfigurationHash = current.ReturnConfigurationHash,
-                ExecutionProjectionPending = current.ExecutionProjectionPending };
+                ExecutionProjectionPending = current.ExecutionProjectionPending,
+                ExecutionAccessPlan = current.ExecutionAccessPlan,
+                ExecutionPermissionRevision = current.ExecutionPermissionRevision };
         op = op with { Phase = phase, Error = completedRequestId is null ? op.Error : null,
             Receipts = completedRequestId is null ? op.Receipts : op.Receipts!.Select(r =>
                 r.RequestId == completedRequestId ? r with { State = "succeeded" } : r).ToArray() };

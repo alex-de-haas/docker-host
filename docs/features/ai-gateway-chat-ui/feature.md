@@ -1,6 +1,6 @@
 ---
 created: 2026-09-22
-updated: 2026-11-05
+updated: 2026-11-06
 summary: The chat components Harness uses for messages, code blocks, attachments, the composer and collapsible activity.
 components: [apps/harness]
 ---
@@ -86,6 +86,15 @@ a response, but neither Enter nor form submission sends another message until th
 finishes or stops. Drafts are not queued or sent automatically. The messages API rejects
 busy sessions with HTTP 409 (`session_busy`) before recording another user message.
 When idle, Enter sends, Shift+Enter inserts a newline, and IME composition does not send.
+
+A confirmed workspace writer-admission refusal keeps the draft and uploaded files editable. The
+operator can recover or Return the app transition and intentionally send again in the same chat
+without restarting Harness. A lost acknowledgement retains the original send UUID; Retry checks
+its serialized receipt before replaying that exact request. A receipt-read failure alone never
+settles an uncertain send, and an unknown or already accepted request is never dispatched again.
+Partial source lease admission retains its original lease until a retry admits the remaining
+workspaces or native-exit recovery confirms that release is safe.
+
 After a successful answer, the optional native prediction phase allows a new Send to preempt
 collection and wait for native cleanup. A current suggestion appears above an empty connected
 composer as literal text. **Use suggestion** or Tab inserts an editable draft; Escape or **Dismiss**
@@ -216,7 +225,9 @@ installation has only a Codex connection.
 Composer tests cover running/waiting states, Enter and submit guards, draft retention,
 stop failure/retry, send failure, and completion before or after the HTTP response.
 Gateway API tests verify that busy sends are rejected without transcript changes and
-that sending resumes after cancellation.
+that sending resumes after cancellation. Workspace-fence tests cover initial and retained-send
+refusals, same-session recovery after Return, partial repository admission with the original lease,
+and preservation of unknown receipt outcomes without duplicate dispatch.
 
 - Run `npm run harness:test`, including chat-rendering tests for unfinished code fences,
   inline code and URL policy, attachment errors, and transcript association after replay.

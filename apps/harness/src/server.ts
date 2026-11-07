@@ -85,7 +85,7 @@ export function createGatewayServer(
   const execution = new AgentSessionService(manager, history.provider);
   const feedback = new FeedbackService(manager, undefined, providers);
   const handoffs = new HandoffStore(manager, settings, providers);
-  const eventStreams = new EventStreamTransport(manager, Date.now, connections);
+  const eventStreams = new EventStreamTransport(manager, Date.now, connections, tasks);
   const translations = connections && settings ? new TranslationService(connections, settings) : null;
   const recovered = handoffs.sweep().then(() => manager.recoverWorkerRuns()).then(() => manager.recoverMcpApprovals()).catch(error => {
     // A transient directory/storage failure is retried by the periodic sweep. Keep unrelated

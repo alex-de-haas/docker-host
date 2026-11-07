@@ -79,9 +79,13 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
     // for the selected destination; an unrelated broken default recipe must not hide recovery choices.
     internal async Task<IReadOnlyList<RuntimeProfileManifest>> ReadRuntimeProfilesAsync(
         string manifestPath, CancellationToken cancellationToken)
+        => (await ReadRuntimeProfilesAndDefaultAsync(manifestPath, cancellationToken)).Profiles;
+
+    internal async Task<(IReadOnlyList<RuntimeProfileManifest> Profiles, string? DefaultRuntime)> ReadRuntimeProfilesAndDefaultAsync(
+        string manifestPath, CancellationToken cancellationToken)
     {
         var (manifest, _, _) = await ReadDocumentAsync(manifestPath, null, false, cancellationToken);
-        return manifest.RuntimeProfiles;
+        return (manifest.RuntimeProfiles, manifest.DefaultRuntime);
     }
 
     private async Task<(RuntimeAppManifest Manifest, AppManifestSource Source, string Digest)> ReadDocumentAsync(
