@@ -14,7 +14,13 @@ updates:
         patterns: ["*"]
 
   - package-ecosystem: npm
-    directory: /
+    # The Harness worker keeps its own package.json/lockfile outside the root workspaces, but
+    # scripts/check-versions.mjs requires it to pin the same @openai/codex and
+    # @anthropic-ai/claude-agent-sdk versions as apps/harness. Listing both directories lets the
+    # group below bump them together in one PR; with only "/" every group PR failed that check.
+    directories:
+      - /
+      - /apps/harness/worker
     schedule:
       interval: weekly
     groups:
@@ -65,6 +71,8 @@ updates:
     directories:
       - /apps/shell
       - /apps/demo-app
+      # Digest-pinned node and dotnet/sdk base images for the Harness worker image.
+      - /apps/harness/worker
       - /apps/telemetry-backend
       - /apps/marketplace
     schedule:

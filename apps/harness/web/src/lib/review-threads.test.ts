@@ -3,7 +3,7 @@ import { parsePatchFiles } from "@pierre/diffs";
 import { placeReviewThreads, reviewThreadLocation, type ReviewThread } from "./review-threads";
 
 const patch = "diff --git a/example.ts b/example.ts\n--- a/example.ts\n+++ b/example.ts\n@@ -10,2 +10,3 @@\n before\n-old\n+new\n+extra\n@@ -30 +31 @@\n-old again\n+new again\n";
-const file = parsePatchFiles(patch, undefined, true)[0].files[0];
+const file = parsePatchFiles(patch, { throwOnError: true })[0].files[0];
 const thread = (id: string, fields: Partial<ReviewThread> = {}): ReviewThread => ({ id, path: "example.ts", line: 11, resolved: false, comments: ["Review"], diffSide: "RIGHT", ...fields });
 it("places multi-line and left-side threads only on the coordinates present in the rendered patch", () => {
   const result = placeReviewThreads([thread("right", { startLine: 10, line: 12, startDiffSide: "RIGHT" }), thread("left", { diffSide: "LEFT" }), thread("second-hunk", { line: 31 }), thread("gap", { line: 20 }), thread("cross-gap", { startLine: 12, line: 31 }), thread("cross-side", { startLine: 10, startDiffSide: "LEFT" })], file);
