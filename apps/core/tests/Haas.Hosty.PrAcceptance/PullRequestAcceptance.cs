@@ -19,10 +19,28 @@ internal static class PullRequestAcceptance
     private sealed class Fixture : HttpMessageHandler
     {
         private readonly System.Collections.Concurrent.ConcurrentDictionary<int, string> heads = new();
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> deviceScopes = new();
         private readonly System.Collections.Concurrent.ConcurrentDictionary<int, bool> merged = new();
         private string Head(int n) => heads.GetValueOrDefault(n, new string('a', 40));
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
+            if (request.RequestUri!.Host == "github.com" && request.Method == HttpMethod.Post)
+            {
+                var fields = (await request.Content!.ReadAsStringAsync(ct)).Split('&').Select(part => part.Split('=', 2))
+                    .ToDictionary(part => Uri.UnescapeDataString(part[0].Replace('+', ' ')),
+                        part => Uri.UnescapeDataString(part.ElementAtOrDefault(1)?.Replace('+', ' ') ?? ""));
+                if (request.RequestUri.AbsolutePath == "/login/device/code")
+                {
+                    var scopes = fields.GetValueOrDefault("scope", "");
+                    if (!scopes.Split(' ').Contains("workflow")) return Reply(HttpStatusCode.BadRequest, new JsonObject { ["error"] = "invalid_scope" });
+                    var code = Guid.NewGuid().ToString("N"); deviceScopes[code] = scopes;
+                    return Reply(HttpStatusCode.OK, new JsonObject { ["device_code"] = code, ["user_code"] = "TEST-ONLY", ["expires_in"] = 600, ["interval"] = 1 });
+                }
+                if (request.RequestUri.AbsolutePath == "/login/oauth/access_token" &&
+                    deviceScopes.TryRemove(fields.GetValueOrDefault("device_code", ""), out var granted))
+                    return Reply(HttpStatusCode.OK, new JsonObject { ["access_token"] = "hosty-pr-fixture-alice", ["scope"] = granted });
+                return Reply(HttpStatusCode.BadRequest, new JsonObject { ["error"] = "expired_token" });
+            }
             var token = request.Headers.Authorization?.Parameter;
             if (token is not ("hosty-pr-fixture-alice" or "hosty-pr-fixture-bob")) return Reply(HttpStatusCode.Unauthorized, new JsonObject());
             if (request.RequestUri!.Host != "api.github.com") return Reply(HttpStatusCode.NotFound, new JsonObject());

@@ -146,6 +146,7 @@ Plans: 14 In Progress · 1 Blocked · 43 Draft · 8 On Hold.
 - [External Host-Path Mounts](features/external-mounts/feature.md) — Apps declare external mount slots and operators bind host folders to them, injected as HOSTY_MOUNT_{KEY} and never backed up or deleted.
 - [Workspace Permissions And Deletion](features/external-workspace-access-continuity/feature.md) — Existing app and initiating-user permissions cover all Core workspaces, with stable allocation identity and one UI/MCP Delete operation.
 - [Feedback Composer Tools](features/feedback-composer-tools/feature.md) — App-provided feedback tools own forms and drafts while verified SDK source services supply selection, capture and scoped intake.
+- [GitHub Publication Recovery](features/github-publication-recovery/feature.md) — GitHub workflow authorization, actionable push rejection diagnostics and same-account connection renewal preserve existing publication bindings.
 - [Global (Shared) Host-Path Mounts](features/global-mounts/feature.md) — A host-level library of shared host folders that apps attach by reference.
 - [Compact Harness Composer Controls](features/harness-composer-controls/feature.md) — One responsive composer action row with a shared agent-settings panel and catalog-driven reasoning controls.
 - [Harness Context Usage](features/harness-context-usage/feature.md) — Native context observations, recorded MCP calls and separate definition estimates in the Harness composer. · [plan](features/harness-context-usage/plan.md): Draft, 0/8, updated 2026-11-06

@@ -21,7 +21,7 @@ internal sealed partial class GitHubSourceProvider(HttpClient client, IConfigura
         using var json = await SendAsync(HttpMethod.Post, url, new Dictionary<string, string>
         {
             ["client_id"] = clientId,
-            ["scope"] = (input.PrivateRepositories ? "repo" : "public_repo") + " user:email offline_access",
+            ["scope"] = (input.PrivateRepositories == true ? "repo" : "public_repo") + " workflow user:email offline_access",
         }, ct: ct);
         CheckError(json.RootElement);
         var root = json.RootElement;
@@ -61,7 +61,19 @@ internal sealed partial class GitHubSourceProvider(HttpClient client, IConfigura
     }
     private ProviderToken ReadToken(JsonElement root)
         => new(Required(root, "access_token"), String(root, "refresh_token"),
-            root.TryGetProperty("expires_in", out _) ? clock.UtcNow.AddSeconds(Math.Clamp(Number(root, "expires_in", 0), 1, 31536000)) : null);
+            root.TryGetProperty("expires_in", out _) ? clock.UtcNow.AddSeconds(Math.Clamp(Number(root, "expires_in", 0), 1, 31536000)) : null, ReadScopes(root));
+    private static string[]? ReadScopes(JsonElement root)
+    {
+        if (!root.TryGetProperty("scope", out var value)) return null;
+        if (value.ValueKind != JsonValueKind.String || value.GetString() is not { Length: <= 4096 } text)
+            throw new UserConnectionException("provider_response_invalid", "The provider returned invalid permission metadata.", 502);
+        var scopes = text.Split([',', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (scopes.Length > 64 || scopes.Any(scope => scope.Length > 100 ||
+            scope.Any(c => !char.IsAsciiLetterOrDigit(c) && c is not ('_' or '-' or ':' or '.'))))
+            throw new UserConnectionException("provider_response_invalid", "The provider returned invalid permission metadata.", 502);
+        return scopes.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+    }
+
     private async Task<JsonDocument> SendAsync(HttpMethod method, string url, Dictionary<string, string>? form = null,
         AuthenticationHeaderValue? authorization = null, CancellationToken ct = default)
     {
