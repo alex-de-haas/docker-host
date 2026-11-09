@@ -10,7 +10,7 @@ import type { HistoryChange, HistoryChangePage, HistoryExportSnapshot } from "@h
 import { attachmentFile } from "./attachments.js";
 import { ProviderError } from "@hosty-sdk/app/providers";
 import { SessionStore } from "../sessions/store.js";
-import { fingerprint, fold, project, searchable } from "./projection.js";
+import { fingerprint, fold, project, searchable, PROMPT_SUGGESTION_EXTENSION } from "./projection.js";
 import { fail, missing, uuid, revision, id, HistoryStorage, type HistoryState, type Snapshot, type SourceConversation } from "./storage.js";
 
 export type HistoryActor = Pick<MediatedProviderInvocation, "userId" | "principalId" | "hostRole">;
@@ -27,7 +27,7 @@ export class HistoryService {
   private readonly waiters = new Map<string, Set<() => void>>();
   private readonly unsubscribe: () => void;
   readonly capabilities: HistoryCapabilities = { version: 1, entryKinds: ["message", "tool_call", "tool_result", "usage", "extension"],
-    extensions: [{ name: "harness.prompt-suggestion", version: 1, schema: { type: "object", required: ["suggestionId", "text", "state"], properties: {
+    extensions: [{ name: PROMPT_SUGGESTION_EXTENSION, version: 1, schema: { type: "object", required: ["suggestionId", "text", "state"], properties: {
       suggestionId: { type: "string" }, answerSeq: { type: "integer" }, text: { type: "string" },
       state: { enum: ["available", "selected-for-draft", "dismissed", "expired", "superseded"] }, expiresAt: { type: "number" }, resolvedAt: { type: "string" },
     } } }], maxPageSize: 200, snapshotLifetimeSeconds: 900, changeRetentionSeconds: 604800 };

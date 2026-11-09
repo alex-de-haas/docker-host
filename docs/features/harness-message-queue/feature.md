@@ -22,8 +22,18 @@ the active turn. Stop and execution failure pause the queue, and Resume queue is
 Before server acceptance, a local row distinguishes saving/uploading from delivery to the agent.
 The browser stages submitted text and file blobs in IndexedDB before clearing their composer
 snapshot. Its sequence and serialized uploader preserve submission order when an earlier message
-contains slower uploads. A late acknowledgement does not clear a newer draft. When browser storage
-is unavailable, the composer retains the submitted draft until the server accepts it.
+contains slower uploads. Draft changes are tracked per conversation: switching away, typing in
+another conversation and returning does not leave an unchanged submitted draft available to send
+again. An intentional edit in the original conversation preserves its newer draft, including when
+the replacement text matches the submitted text. When browser storage is unavailable, the composer
+retains the submitted draft until the server accepts it.
+
+A local failure exposes Recover draft only before an enqueue attempt or after a known rejection
+that proves non-admission. Recovery moves the original text, attachment references and file blobs
+into Saved drafts and removes the local row in one IndexedDB transaction, allowing later messages
+to continue without replacing the current composer. A full Saved drafts allowance or failed storage
+transaction preserves the local row. Once enqueue was attempted, unknown replies, authentication
+failures, conflicting identities and corrupt queue evidence retain their original Retry path.
 
 Server rows distinguish queued, editing, sending, failed and unknown outcomes. Sending and unknown
 rows remain locked against editing, deletion and reordering. Retry reconciles an uncertain attempt;
@@ -42,11 +52,15 @@ restoring its text and attachments to the composer. The current draft is stashed
 preserves queue position; Cancel retains the original queued content. An editing head blocks later
 rows from passing it.
 
-The browser retains edit buffers and pending file blobs in IndexedDB; server edit updates retain
-text and already-stored attachment references. Recover edit explicitly transfers the reservation
-to another view and fences stale saves. A timeout does not silently release an editing row for
-dispatch. Stashed server attachments retain durable references after Save or Cancel, so restoring
-the draft does not depend on an agent's mutable workspace copy.
+The browser retains edit buffers and pending file blobs in IndexedDB by conversation, entry and
+reservation; server edit updates retain text and already-stored attachment references. Independent
+edits of different rows keep separate buffers and stashed files, including across reloads. The
+previous single-record browser format migrates atomically without dropping its bytes. Recover edit
+explicitly transfers the reservation to another view and fences stale saves. Restoration prefers
+the exact reservation or that view's pending buffer; an older writer cannot replace or clear a
+newer reservation. A timeout does not silently release an editing row for dispatch. Stashed server
+attachments retain durable references after Save or Cancel, so restoring the draft does not depend
+on an agent's mutable workspace copy.
 
 If another tab changes the ordinary draft during editing, Save or Cancel retains that newer draft
 and preserves the stashed one separately in browser storage. Saved drafts exposes explicit restore;
@@ -59,6 +73,13 @@ Browser state is scoped by origin, Harness installation, authenticated owner and
 Owner checks precede restoration or upload. Web Locks and cross-tab change signals coordinate
 same-origin views; stable identities and server receipts also prevent competing uploaders from
 recreating an acknowledged message when Web Locks are unavailable.
+
+For durably staged rows, each actual enqueue HTTP call also registers a distinct local
+transport-attempt UUID before it starts. This journal is separate from the stable server command
+UUID and survives stale outbox writes. A definitive rejection settles only its own transport
+attempt; another unknown call keeps recovery blocked, even when both calls use the same server
+command. Recovery and registration serialize through the same IndexedDB stores, so a competing
+uploader cannot send a locally recovered row.
 
 ## API And Identities
 
@@ -90,6 +111,9 @@ attachment paths, settings/context revisions, a settings binding, payload finger
 `clientRequestId` before calling `postMessage`. Provider/account, runtime, autonomy, profile, skills
 or workspace changes after the claim cannot redirect that attempt. The legacy immediate-send
 endpoint cannot overtake accepted queue entries.
+Validated replies to an already parked native question or task Decision continue that same turn
+before this queue gate. Their existing owner, question and replay checks still apply; a paused
+follow-up queue remains paused while the active question is answered.
 
 `postMessage` remains the provider-admission primitive. It persists unknown admission before
 publishing the message or dispatching the provider, and acceptance afterwards. Recovery follows
@@ -138,6 +162,23 @@ Any queue entry, including paused, editing, failed or unknown work, protects the
 automatic expiry. Explicit conversation deletion removes its queue, upload receipts and snapshots
 through the normal lifecycle. See [Harness Session Retention](../harness-session-retention/feature.md).
 
+## Verification Evidence
+
+On 2026-11-09 the complete Harness suite passes 2,817 tests across 238 files on macOS Arm64,
+with backend/web lint and TypeScript checks, SDK tests/build, production web/local bundles and
+the sessions and worker integration suites. The real Chromium IndexedDB fixture covers separate
+edit reservations, retained file blobs, atomic rejected-head recovery and independent transport
+attempts without assuming Web Locks.
+
+The opt-in `HOSTY_QUEUE_BROWSER=1 npm run test:integration -- harness-local` passes through normal
+Core password login and app PKCE in a parent-managed child. It verifies paused FIFO order, continued
+typing during upload, exact server attachment bytes, edit/reload/recover/Save/Cancel, stashed files,
+reorder/delete, independent edits from two tabs and the 360 px dark layout. Three actual Worker
+requests complete in order after the last browser page closes. Its owned deterministic Ollama HTTP
+fixture calls no external model. Paused queue entries and their exact attachment bytes survive
+both warm restart and missing-output recovery. The production runtime passes cold start, and
+the parent verifies Finish and child resource removal.
+
 ## Testing Expectations
 
 - Exercise owner and same-origin guards, capacity refusal, command replay, revision races and
@@ -148,9 +189,17 @@ through the normal lifecycle. See [Harness Session Retention](../harness-session
 - Cover stable upload replay, immutable-byte verification, workspace-file modification, queue-only
   collection, restored draft pins, duplicate-byte identity limits and cache-path reuse.
 - Cover edit reservation recovery, stale saves, cancellation, original position and restoration of
-  both the queued message and pre-existing draft with attachments.
+  both the queued message and pre-existing draft with attachments. Edit different entries in
+  separate views, reload both buffers and migrate the legacy single-record format without losing
+  stashed or edited file blobs.
 - Verify IndexedDB ordering, reload during uploads/editing, account changes, unavailable storage,
-  late acknowledgements, legacy send recovery and accessible Send/Stop/stack controls.
+  late acknowledgements, legacy send recovery and accessible Send/Stop/stack controls. Include an
+  A-to-B-to-A switch while A stages, intentional identical-text replacements and B's retained draft.
+- Exercise atomic local rejection recovery into Saved drafts, byte preservation, full-capacity
+  rollback and advancement past the recovered head. Unknown or unsafe rejection evidence does not
+  authorize recovery. Distinct transport attempts sharing a server command remain fenced when one
+  rejection arrives while another call is unknown, including without browser locks.
 - Run affected Harness tests and type checks, production web/local builds and the sessions,
   worker and Harness Local integration suites. Keep deterministic fixture results distinct from
-  Core-managed browser/login/runtime evidence; the [queue plan](plan.md) tracks remaining acceptance.
+  Core-managed browser/login/runtime evidence. `HOSTY_QUEUE_PLAYWRIGHT_MODULE` selects an installed
+  Playwright module and `HOSTY_QUEUE_BROWSER_CHANNEL` selects an installed Chromium channel.

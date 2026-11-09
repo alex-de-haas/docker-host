@@ -113,7 +113,7 @@ preserves the changed draft; **Retry insertion** permits deliberate recovery. Or
 saved text/intent, never reconstructs a draft merely from a selected history card. Live insertion
 participates in editor undo; the undo stack itself is not persisted across reload.
 
-History exports project each suggestion as the `harness.prompt-suggestion` extension with literal
+History exports project each suggestion as the `hosty.harness/prompt-suggestion` extension with literal
 fallback text and its current choice. Sharing that extension requires explicit disclosure. Neither
 the card nor its resolution creates a model turn or enters provider context. Internal worker
 transport events retain their existing bounded journal retention and session cleanup.
@@ -133,6 +133,17 @@ the explicit unsupported-version feedback for Codex 0.162.1. Credential-free nat
 the protocol-level refusal on macOS and in Docker. Deterministic fixtures cover a newer runtime
 returning a correlated prediction. These results do not claim Windows or Linux native Local
 acceptance or a live successful Codex prediction on the unavailable pinned binary.
+
+## Verified History UI
+
+On 2026-11-09 the production local runtime passes normal child Core password login/app PKCE,
+transcript placement, retained choices after reload, guarded literal insertion, Tab/Shift+Tab,
+undo, draft precedence, same-UUID lost-reply recovery and mobile dark layout with zero automatic
+sends. `HOSTY_SUGGESTIONS_BROWSER=1 npm run test:integration -- harness-local` uses controlled
+prediction events and action receipts in browser-test memory; these are UI evidence rather than
+native inference or backend durability. Separate real sessions integration verifies Core-validated
+history capabilities, exports and sharing/revocation; unit/API tests exercise restart and action
+receipt persistence. Production cold/warm/missing-output recovery and owner-managed Finish pass.
 
 ## Testing Expectations
 

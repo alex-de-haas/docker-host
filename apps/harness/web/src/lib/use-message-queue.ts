@@ -3,9 +3,12 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { APP_SESSION_RESTORED } from "@hosty-sdk/app/browser-auth";
 import { AssistantApiError, type AssistantEvent, type AssistantSession, type StoredAttachment } from "./assistant-api";
 import { commandMessageQueue, getMessageQueue, uploadQueueAttachment, type MessageQueue, type QueueCommand, type QueueCommandInput } from "./message-queue-api";
-import { listOutbox, outboxFiles, outboxScope, OUTBOX_CHANGED, removeOutbox, saveOutbox, stageOutbox, withOutboxLock, type OutboxEntry } from "./message-outbox";
+import { listOutbox, outboxFiles, outboxScope, OUTBOX_CHANGED, preserveDraft, recordOutboxAttempt, recoverOutbox, removeOutbox, saveOutbox, stageOutbox, withOutboxLock, type OutboxEntry } from "./message-outbox";
 
 const message = (cause: unknown) => cause instanceof Error ? cause.message : String(cause);
+// These failures occur after receipt lookup and prove this exact enqueue was not admitted.
+const rejectedEnqueue = (cause: unknown) => cause instanceof AssistantApiError && [400, 409, 413].includes(cause.status ?? 0)
+  && ["queue_capacity", "queue_text_invalid", "text_required", "queue_attachments_invalid", "queue_attachment_missing", "attachment_too_large", "queue_attachment_capacity"].includes(cause.code ?? "");
 type Snapshot = { sessionId: string; queue: MessageQueue };
 type Operation = { scope: string; sessionId: string; input: QueueCommandInput };
 const operationKey = (scope: string) => `hosty.message-queue.operation.${scope}`;
@@ -113,11 +116,16 @@ export function useMessageQueue(session: AssistantSession | null, ready: boolean
               attachments: [...row.attachments, ...row.files.flatMap(file => file.stored ? [file.stored] : [])].map(file => file.name),
               ...(row.promptSuggestions ? { promptSuggestions: true } : {}), ...(row.withoutAppDetails ? { withoutAppDetails: true } : {}),
             } };
+            row.recoverable = false;
             await persist();
+            const transportAttemptId = crypto.randomUUID();
+            if (!memory.current.includes(row) && !await recordOutboxAttempt(key, row.id, transportAttemptId)) return;
             try {
               const reply = await commandMessageQueue(sessionId, row.command); if (activeScope.current === key) update(sessionId, reply.queue); break;
             } catch (cause) {
               if (cause instanceof AssistantApiError && cause.code === "queue_entry_exists") break;
+              if ((rejectedEnqueue(cause) || cause instanceof AssistantApiError && cause.code === "queue_revision_conflict") && !memory.current.includes(row))
+                await recordOutboxAttempt(key, row.id, transportAttemptId, true);
               if (!(cause instanceof AssistantApiError) || cause.code !== "queue_revision_conflict") throw cause;
               row.command = undefined; await persist();
               if (conflict >= 2) throw cause;
@@ -129,7 +137,7 @@ export function useMessageQueue(session: AssistantSession | null, ready: boolean
           else await removeOutbox(key, row.id);
           await loadLocal(key);
         } catch (cause) {
-          row.error = message(cause); await persist();
+          row.error = message(cause); row.recoverable = !row.command || rejectedEnqueue(cause); await persist();
           if (activeScope.current === key) setError(null); // Error belongs to its own row.
           break;
         }
@@ -203,10 +211,23 @@ export function useMessageQueue(session: AssistantSession | null, ready: boolean
     await flush(scope, session.id); await loadLocal(scope);
     return row.durable === false && !memory.current.includes(row) ? row : undefined;
   }, [scope, session, flush, loadLocal]);
+  const recoverLocal = useCallback(async (id: string) => {
+    if (!scope || !session) return;
+    await withOutboxLock(scope, async () => {
+      const row = memory.current.find(row => row.scope === scope && row.id === id);
+      if (row) {
+        if (!row.error || row.command && !row.recoverable) throw new Error("Retry the original request before recovering this draft.");
+        await preserveDraft(scope, { id: `outbox:${id}`, draft: { text: row.draftText, attachments: row.attachments, files: row.files } });
+        memory.current = memory.current.filter(value => value !== row);
+      } else await recoverOutbox(scope, id);
+      await loadLocal(scope);
+    });
+    await flush(scope, session.id);
+  }, [scope, session, loadLocal, flush]);
   const refreshAll = async () => {
     await refresh();
     const key = activeScope.current, id = current.current?.id;
     if (key && id) { await loadLocal(key); await flush(key, id); }
   };
-  return { queue, scope, outbox: scope ? outbox.filter(row => row.scope === scope) : [], error, busy, operation, enqueue, perform, retryLocal, receive, refresh: refreshAll };
+  return { queue, scope, outbox: scope ? outbox.filter(row => row.scope === scope) : [], error, busy, operation, enqueue, perform, retryLocal, recoverLocal, receive, refresh: refreshAll };
 }

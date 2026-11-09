@@ -46,7 +46,10 @@ it("retains suggestion choices in owned exports and shares them only with explic
   expect(initial.entries.at(-1)?.data).toMatchObject({ kind: "extension", payload: { state: "available" } });
   await share({ selection: { entryIds: [entry(3).id] } });
   await expect(history.get(recipient, { entry: entry(3) })).rejects.toMatchObject({ code: "not_found" });
-  await share({ selection: { entryIds: [entry(3).id] }, extensions: ["harness.prompt-suggestion"] });
+  const declaration = history.capabilities.extensions.find(extension => extension.name === "hosty.harness/prompt-suggestion");
+  expect(declaration).toMatchObject({ version: 1, schema: { type: "object", required: ["suggestionId", "text", "state"] } });
+  expect(initial.entries.at(-1)?.data).toMatchObject({ name: declaration!.name, version: declaration!.version });
+  await share({ selection: { entryIds: [entry(3).id] }, extensions: [declaration!.name] });
   expect((await history.get(recipient, { entry: entry(3) })).data).toMatchObject({ kind: "extension", fallbackText: expect.stringContaining("Review <script>literally</script>") });
   await event(4, "prompt_suggestion_resolved", { suggestionId: "suggestion", state: "selected-for-draft", requestId: randomUUID(), expectedRevision: 1 });
   const chosen = await history.get(owner, { entry: entry(3) });

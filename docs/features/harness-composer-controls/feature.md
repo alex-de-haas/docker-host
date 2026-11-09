@@ -86,7 +86,10 @@ between browsers or origins.
 The message stack sits immediately above the composer. Send captures the current text and
 attachments; after that snapshot is safely staged, the composer accepts the next draft while
 uploads and server submission continue. Text entered after the captured snapshot remains in the
-composer. The stack shows uploading, saving and sending states on the corresponding message,
+composer. Draft changes belong to their conversation: typing in B while A is submitting does not
+leave A's unchanged submitted text in its composer after returning to A. Deliberately editing A
+again preserves that replacement, including identical text. The stack shows uploading, saving and
+sending states on the corresponding message,
 with inline errors and Retry controls. The previous amber sending banner is absent. A message
 with an unconfirmed send stays locked while its original request is reconciled.
 
@@ -96,13 +99,23 @@ the queue. Sending entries lose edit/delete controls. Browser outbox records pre
 uploads and exact command identities across reloads, scoped to the Harness origin, installation,
 owner and conversation. Storage failures retain recoverable rows and preserve an unsaved composer.
 
+When a local upload or enqueue is confirmed rejected before admission, Recover draft moves its
+original text and files into Saved drafts, removes that local head and lets later messages proceed.
+The current composer stays intact. This transfer is atomic; unavailable storage or a full Saved
+drafts allowance keeps the original row. Uncertain requests retain Retry and cannot be recovered
+into a replacement send. For durable local rows, a separate journal records each actual HTTP attempt
+under its own local identity while retries keep their original server command identity; one call's
+rejection cannot authorize discarding another call with an unknown outcome.
+
 Editing first retains the current draft and attachments, reserves the queued entry, then restores
 that message in the composer. The edit buffer is separate from ordinary draft synchronization.
 Save or Cancel restores the stashed draft after confirmation; uncertain operations retain their
 original Retry identity. Each document has its own editor identity, and a reload or another view
 uses Recover edit explicitly. Stored edit text and file bytes support recovery without silently
-overwriting a newer draft. Submission or an edit-destination change also invalidates dictation
-results belonging to the previous composer destination.
+overwriting a newer draft. Browser buffers are stored per queued entry and reservation, so editing
+a different row in another tab preserves both rows' pending files and stashed drafts across reloads.
+Legacy browser edit storage migrates with its bytes intact. Submission or an edit-destination change
+also invalidates dictation results belonging to the previous composer destination.
 
 When another tab has a newer ordinary draft, finishing an edit keeps it in the composer and
 retains the earlier stashed draft under Saved drafts. Restore preserves the current draft before
@@ -160,8 +173,14 @@ recording available.
   available. Check inline upload/send failures and Retry without an amber sending banner.
 - Verify FIFO with slow uploads, exact request replay after lost replies, actor/installation
   isolation, storage failures, unchanged snapshot cleanup and newer drafts during submission.
+  Switch A to B, type in B and return to A before acknowledgement; keep B intact and retire only
+  A's unchanged submitted draft. Preserve an intentionally re-edited identical draft in A.
+- Recover definitively rejected local snapshots into Saved drafts without replacing the current
+  composer or losing file blobs. Full storage preserves the failed row. Multiple HTTP attempts
+  sharing an exact server request never permit recovery while another attempt remains unknown.
 - Edit queued text/files with an existing draft, then Save/Cancel/reload/recover. Preserve stashed
-  and edited bytes, isolate other views, and reconcile uncertain operations before cleanup.
+  and edited bytes for different entries in separate views, migrate the legacy browser format,
+  reject stale reservation writes and reconcile uncertain operations before cleanup.
 - Verify transcript suggestion history and recorded choices, empty-draft insertion, disabled
   insertion during edits, Tab/Escape behavior and no automatic send or composer overlay.
 - Check the real action row at 360, 390, 480 and 640 CSS px, including wide viewports with narrow

@@ -282,9 +282,13 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     insert: text => mentionInputRef.current?.insertPlainText(text) ?? false, scope: queueSnapshot?.installationId,
   });
   const suggestionsReceive = suggestions.receive;
-  const draftGeneration = useRef(0);
+  const draftGeneration = useRef(new Map<string, number>());
   const suggestionInteracted = suggestions.interact;
-  const draftInteracted = useCallback(() => { draftGeneration.current++; suggestionInteracted(); }, [suggestionInteracted]);
+  const draftInteracted = useCallback(() => {
+    const id = activeSessionId.current;
+    if (id) draftGeneration.current.set(id, (draftGeneration.current.get(id) ?? 0) + 1);
+    suggestionInteracted();
+  }, [suggestionInteracted]);
   const editLocked = editSaving || editOwnershipLost || editTransition === session?.id || !!queueOperation && ["reserve_edit", "recover_edit", "save_edit", "cancel_edit"].includes(queueOperation.input.command.type);
   const visibleSuggestion = !running && !sending && !pendingSend && !contextSaving && !mentionSaving && !providerSaving
     && !composerBlocked && queueSnapshot && connection === "connected" ? suggestions.suggestion : null;
@@ -314,7 +318,9 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     const entry = queueSnapshot?.entries.find(entry => entry.edit?.viewId === viewId);
     if (!entry?.edit || restoredEdit.current === `${key}:${entry.edit.reservationId}`) return;
     let active = true;
-    void readEditDraft(key).then(local => {
+    void Promise.all([readEditDraft(key, entry.id, entry.edit.reservationId), readEditDraft(key, entry.id, `pending:${viewId}`), readEditDraft(key, entry.id)])
+      .then(([exact, pending, current]) => {
+      const local = exact ?? pending ?? current;
       if (!active || !entry.edit) return;
       const reusable = local?.entryId === entry.id && local.viewId === viewId;
       const saved: EditDraft = { scope: key, entryId: entry.id, viewId, reservationId: entry.edit.reservationId,
@@ -347,10 +353,12 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     const id = session.id; setEditTransition(id);
     try {
       const draft = currentDraft.current;
-      const previous = recover ? await readEditDraft(queueScope) : null;
-      const saved: EditDraft = { scope: queueScope, entryId: entry.id, viewId, reservationId: "pending",
+      const previous = recover ? await readEditDraft(queueScope, entry.id) : null;
+      const keepStash = previous?.entryId === entry.id && previous.stash.text === draft.input && !draft.pending.length;
+      if (previous && !keepStash) await preserveDraft(queueScope, { id: `${previous.reservationId}:stash`, draft: previous.stash });
+      const saved: EditDraft = { scope: queueScope, entryId: entry.id, viewId, reservationId: `pending:${viewId}`,
         originalDraft: { text: draft.input, attachments: draft.uploaded },
-        stash: previous?.entryId === entry.id && previous.stash.text === draft.input && !draft.pending.length
+        stash: keepStash
           ? previous.stash : { text: draft.input, attachments: draft.uploaded, files: fileSnapshots(draft.pending) },
         ...(previous?.entryId === entry.id && previous.buffer ? { buffer: previous.buffer } : {}) };
       await saveEditDraft(saved);
@@ -379,7 +387,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
       setEditDraft(current => current?.reservationId === edit.reservationId ? null : current); restoredEdit.current = "";
       setPreserved({ scope: edit.scope, drafts });
     } else if (!changed) { writeDraft(id, edit.stash.text); writeDraftAttachments(id, edit.stash.attachments); pendingBySession.current.set(id, restoredFiles(edit.stash.files)); }
-    await clearEditDraft(edit.scope, edit.reservationId);
+    await clearEditDraft(edit.scope, edit.entryId, edit.reservationId);
   }, [restoreComposer]);
   useEffect(() => {
     if (!editing || !session || !editOwnershipLost || editSaving || editTransition || queueOperation) return;
@@ -1021,7 +1029,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     const text = (mentionInputRef.current?.serialize() ?? input).trim();
     if (!session || !hasMessageContent(text, pending.length, uploaded.length) || pendingSend || sendRecoveryBlocked || composerBlockedRef.current
       || sendingRef.current || providerSavingRef.current || contextSaving || mentionSavingRef.current || !queueSnapshot) return;
-    const snapshot = { input, pending, uploaded, generation: draftGeneration.current }, id = session.id;
+    const id = session.id, snapshot = { input, pending, uploaded, generation: draftGeneration.current.get(session.id) ?? 0 };
     sendingRef.current = true; setSending(true); setError(null);
     try {
       await messageQueue.enqueue({ text, draftText: input, files: pending, attachments: uploaded,
@@ -1029,14 +1037,14 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
       // Retire this session's persisted snapshot even if the operator switched away while staging.
       // Compare before clearing so a newer draft from another view survives the acknowledgement.
       if (readDraft(id) === draftStorageText(snapshot.input)
-        && (activeSessionId.current !== id || draftGeneration.current === snapshot.generation)) writeDraft(id, "");
+        && (draftGeneration.current.get(id) ?? 0) === snapshot.generation) writeDraft(id, "");
       writeDraftAttachments(id, (readDraftAttachments(id) ?? snapshot.uploaded).filter(file => !snapshot.uploaded.some(sent => sent.name === file.name)));
       const retained = pendingBySession.current.get(id);
       if (retained) pendingBySession.current.set(id, retained.filter(file => !snapshot.pending.includes(file)));
       // Only the submitted snapshot moves into the stack. A newer draft stays editable.
       if (activeSessionId.current === id) {
         setComposerEpoch(current => current + 1);
-        setInput(current => draftGeneration.current === snapshot.generation && current === snapshot.input ? "" : current);
+        setInput(current => (draftGeneration.current.get(id) ?? 0) === snapshot.generation && current === snapshot.input ? "" : current);
         setPending(current => current.filter(file => !snapshot.pending.includes(file)));
         setUploaded(current => current.filter(file => !snapshot.uploaded.includes(file)));
         setWithoutAppDetails(false); setContextUnavailable(false);
@@ -1405,6 +1413,13 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                 setPending(current => current.filter(file => !accepted.files.some(sent => sent.bytes === file)));
                 setUploaded(current => current.filter(file => !accepted.attachments.some(sent => sent.name === file.name)));
               }).catch(cause => setError(String(cause))); }}
+              onRecoverLocal={id => {
+                const scope = queueScope, sessionId = session?.id;
+                if (!scope || !sessionId) return;
+                void messageQueue.recoverLocal(id).then(() => listPreservedDrafts(scope)).then(drafts => {
+                  if (activeSessionId.current === sessionId) setPreserved({ scope, drafts });
+                }).catch(cause => { if (activeSessionId.current === sessionId) setError(String(cause)); });
+              }}
               onRetryOperation={() => { void retryQueueOperation(); }} onRefresh={() => { void messageQueue.refresh().catch(() => {}); }} />
             {!!savedDrafts.length && <section aria-label="Saved drafts" className="mx-3 mb-2 max-h-36 overflow-y-auto rounded-lg border px-3 py-2 text-xs">
               <p className="mb-1 text-muted-foreground">Earlier drafts were preserved while another tab changed this conversation.</p>

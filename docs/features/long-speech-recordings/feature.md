@@ -58,10 +58,26 @@ cancellation. A real local HTTP test demonstrates a lower response-header timeou
 delayed response through the SDK's independent bounded transport. Native tiny-model CPU inference
 recognizes the repeated synthetic Russian fixture at 600 seconds: one detailed run takes 5.09
 seconds and returns 8,307 characters. The .NET runtime supplies no usable peak-memory value on
-this platform. This checks interoperability rather than natural-speech quality. Core-managed
-child identity/microphone checks and complete deployed transport verification are tracked in the
-[remaining plan](plan.md). This evidence makes no
-Windows/AMD performance or microphone-path claim.
+this platform. This checks interoperability rather than natural-speech quality and makes no
+Windows/AMD performance claim.
+
+A parent-managed child run on 2026-11-09 also verifies the authenticated production Harness →
+Whisper HTTP path with independent tiny-model cache and the 600-second repeated Russian WAV.
+The 19,200,044-byte request takes 5.602 seconds and returns 8,307 characters. Forty-three native
+process-tree observations at a nominal 100 ms interval report summed RSS before / sampled peak /
+after of 446,906,368 / 927,514,624 / 787,447,808 bytes and a process-tree CPU accounting delta of
+18.21 seconds. These partial measurements can double-count shared pages and miss peaks; they are
+neither a complete native allocation profile nor system peak memory.
+
+The same child passes Chromium 156 acceptance through normal Core password login and the
+advertised Core preview/Harness launch origins. Real MediaRecorder captures a controlled Russian
+WAV microphone source for 5.5 seconds, shows the 600-second capability limit, inserts recognized
+text into the existing draft and sends zero messages. All microphone tracks end on Stop/Cancel.
+A separate generated 600-second HTTP request occupies the actual Whisper CPU slot, is aborted
+by the browser and releases that slot within 22 ms. The oversized Content-Length probe returns
+the expected 413 rejection. The parent confirms Finish and resource removal. The maximum payload
+and short real-time microphone recording are separate checks; this evidence does not claim ten
+minutes of wall-clock capture, a physical microphone, natural-speech quality or external ingress.
 
 The standalone `apps/harness/test/long-speech-browser.mjs` fixture also exercises the actual
 `recordingWave` Web Audio conversion in headless Chromium 156.0.8078.80 on macOS Arm64. On
@@ -88,6 +104,14 @@ It does not establish cancellation, natural speech quality or deployed authentic
   aborts and exercise actual delayed HTTP responses with a lower independent transport timeout.
 - Core-managed child checks use normal password login, independent Whisper data and advertised
   Harness preview/microphone URLs; record model, machine, duration, latency and peak memory.
+- Run `HOSTY_LONG_SPEECH_ACCEPTANCE=1 npm run test:integration -- harness-local` for the opt-in
+  production-runtime path. It downloads a verified tiny model into independent child cache,
+  reviews only optional speech access, sends the repeated 600-second Russian WAV through Harness
+  and Whisper, then uses Chromium's controlled WAV microphone for real MediaRecorder/draft-only
+  insertion and HTTP cancellation/CPU-slot recovery. `HOSTY_SPEECH_PLAYWRIGHT_MODULE` selects an
+  installed Playwright module and `HOSTY_SPEECH_BROWSER_CHANNEL` an installed Chromium channel.
+  Distinguish the short real-time UI recording from the maximum payload and keep sampled
+  process-tree CPU/RSS evidence separate from full native peaks. The parent fixture owns cleanup.
 - Run `node apps/harness/test/long-speech-browser.mjs` with Playwright and Chrome installed. An
   existing Playwright module can be selected with `HOSTY_SPEECH_PLAYWRIGHT_MODULE`; an alternate
   installed browser channel uses `HOSTY_SPEECH_BROWSER_CHANNEL`. Keep sampled heap/backing-storage

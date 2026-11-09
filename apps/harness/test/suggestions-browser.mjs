@@ -58,12 +58,14 @@ try {
   await page.routeWebSocket('**/api/event-stream', route => {
     const server = route.connectToServer(); let replayed = false;
     server.onMessage(message => {
-      route.send(message);
       if (String(message).includes('"type":"session_status"') && !replayed) {
         replayed = true; socket = route;
+        // Production replays durable history before the authoritative current status. Keep the
+        // controlled stream in that order, so connected also means its replay was delivered.
         for (const event of events) sendFixture(event);
+        route.send(message);
         connected?.();
-      }
+      } else route.send(message);
     });
   });
   const open = async (mode = 'standalone') => {
@@ -74,6 +76,8 @@ try {
       const url = new URL(config.preview || `${config.harness}/assistant/`);
       url.searchParams.set('session', session.id); url.searchParams.set('hosty_launch', mode);
       await page.goto(url.href); await page.getByRole('textbox', { name: 'Message', exact: true }).waitFor(); await Promise.all([streamReady, queueReady]);
+      // Receiving the stream and rendering its batched React updates are separate boundaries.
+      if (values.size) await page.waitForFunction(expected => document.querySelectorAll('[data-slot="prompt-suggestion"]').length === expected, values.size);
     } finally { clearTimeout(timer); }
   };
   const emit = async text => {
@@ -92,7 +96,7 @@ try {
   await emit('Review @app <script>literally</script>');
   const card = page.locator('[data-slot="prompt-suggestion"]').last();
   assert.equal(await card.locator('script').count(), 0);
-  assert.ok(await card.evaluate(node => !!node.closest('[aria-label="Conversation messages"]') && !node.closest('[aria-label="Message composer"]')));
+  assert.ok(await card.evaluate(node => !!node.closest('[aria-label="Assistant conversation"]') && !node.closest('[aria-label="Message composer"]')));
   await message.focus(); await message.press('Shift+Tab'); assert.equal(await message.inputValue(), '');
   await message.focus(); await message.press('Tab'); await page.waitForFunction(() => document.querySelector('textarea[aria-label="Message"]')?.value === 'Review @app <script>literally</script>');
   assert.ok((await card.textContent()).includes('Selected for draft')); assert.equal(sends, 0);

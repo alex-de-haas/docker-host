@@ -22,6 +22,7 @@ vi.mock("@/lib/message-outbox", async original => ({ ...await original<object>()
   saveOutbox: async (entry: OutboxEntry) => { localQueue.rows = localQueue.rows.map(row => row.id === entry.id && row.scope === entry.scope ? entry : row); },
   removeOutbox: async (scope: string, id: string) => { localQueue.rows = localQueue.rows.filter(row => row.scope !== scope || row.id !== id); },
   readEditDraft: async () => undefined,
+  recordOutboxAttempt: async () => true,
 }));
 vi.mock("@hosty-sdk/app/ui/react", () => ({ useHostyUi: () => ui }));
 

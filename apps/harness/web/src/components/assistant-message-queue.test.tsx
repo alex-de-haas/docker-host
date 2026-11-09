@@ -20,10 +20,12 @@ vi.mock("@/lib/assistant-api", async original => ({ ...await original<object>(),
 vi.mock("@/lib/message-outbox", async original => ({ ...await original<object>(),
   readEditDraft: vi.fn(async () => controls.stored), saveEditDraft: vi.fn(async value => {
     const previous = controls.stored as EditDraft | undefined;
-    if (previous && previous.reservationId !== value.reservationId && previous.reservationId !== "pending" && value.reservationId !== "pending") throw new Error("This edit moved to another view.");
+    const pending = (id: string) => id === "pending" || id.startsWith("pending:");
+    if (previous && previous.entryId === value.entryId && previous.reservationId !== value.reservationId && !pending(value.reservationId)
+      && !(pending(previous.reservationId) && previous.viewId === value.viewId)) throw new Error("This edit moved to another view.");
     controls.stored = value;
   }),
-  clearEditDraft: vi.fn(async (_scope, reservationId) => { if ((controls.stored as EditDraft | undefined)?.reservationId === reservationId) controls.stored = undefined; }),
+  clearEditDraft: vi.fn(async (_scope, _entryId, reservationId) => { if ((controls.stored as EditDraft | undefined)?.reservationId === reservationId) controls.stored = undefined; }),
   listPreservedDrafts: vi.fn(async () => [...controls.saved]),
   preserveDraft: vi.fn(async (_scope, value: PreservedDraft) => { if (!controls.saved.some(draft => draft.id === value.id)) controls.saved.push(value); }),
   removePreservedDraft: vi.fn(async (_scope, id: string) => { controls.saved = controls.saved.filter(draft => draft.id !== id); }),
@@ -42,7 +44,7 @@ let emit: (event: api.AssistantEvent) => void;
 const session: api.AssistantSession = { id: "queue-chat", createdBy: "owner", title: "Queue chat", status: "running", createdAt: "" };
 const otherSession: api.AssistantSession = { ...session, id: "queue-chat-b", title: "Another queue chat" };
 const blank = (): MessageQueue => ({ version: 1, installationId: "install", ownerId: "owner", revision: 1, paused: true, entries: [], updatedAt: "" });
-const enqueue = vi.fn(), perform = vi.fn(), retryLocal = vi.fn();
+const enqueue = vi.fn(), perform = vi.fn(), retryLocal = vi.fn(), recoverLocal = vi.fn();
 const input = () => container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message"]')!;
 const button = (name: string) => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.getAttribute("aria-label") === name || button.textContent === name)!;
 const mount = () => act(async () => root.render(<AssistantConversation fullPage />));
@@ -77,7 +79,7 @@ beforeEach(() => {
   controls.stored = undefined; controls.saved = []; controls.listeners.clear(); controls.version++;
   controls.suggestionHook = { cards: new Map(), receive: vi.fn(), interact: controls.interact,
     preference: { enabled: false, revision: 0 }, suggestion: null, select: vi.fn(), dismiss: vi.fn(), toggle: vi.fn(), retryInsertion: vi.fn() };
-  controls.hook = { queue: blank(), scope: "scope", outbox: [], busy: false, operation: null, error: null, enqueue, perform, retryLocal,
+  controls.hook = { queue: blank(), scope: "scope", outbox: [], busy: false, operation: null, error: null, enqueue, perform, retryLocal, recoverLocal,
     receive: vi.fn(), refresh: vi.fn() };
   enqueue.mockReset().mockResolvedValue(undefined); perform.mockReset().mockImplementation(async command => {
     if (command?.type === "reserve_edit") return reserve(command);
@@ -196,6 +198,44 @@ it.each(["submitted", "newer"] as const)("keeps conversation B intact when conve
   expect(container.querySelector('[aria-label="Attachments to send"]')?.textContent ?? "").not.toContain("a-local.txt");
   expect(container.querySelector('[aria-label="Attachments to send"]')?.textContent ?? "").not.toContain("a-uploaded.txt");
   if (draft === "newer") expect(container.querySelector('[aria-label="Attachments to send"]')?.textContent).toContain("a-newer-upload.txt");
+});
+
+it.each([false, true])("tracks draft changes per session when returning to A before staging finishes (A edited again: %s)", async editedAgain => {
+  vi.mocked(api.listSessions).mockResolvedValue([session, otherSession]);
+  let staged!: () => void; enqueue.mockImplementationOnce(() => new Promise<void>(resolve => { staged = resolve; }));
+  await mount(); await write("A's submitted draft"); await send();
+  await switchSession(otherSession.id); await write("B's untouched draft");
+  await switchSession(session.id); expect(input().value).toBe("A's submitted draft");
+  if (editedAgain) { await write("A's intentional replacement"); await write("A's submitted draft"); }
+  await act(async () => staged());
+  const expected = editedAgain ? "A's submitted draft" : "";
+  expect(input().value).toBe(expected); expect(localStorage.getItem(`hosty.assistant.draft.${session.id}`)).toBe(expected);
+  await switchSession(otherSession.id); expect(input().value).toBe("B's untouched draft");
+});
+
+it("recovers a rejected local snapshot into Saved drafts without replacing the current composer", async () => {
+  const file = new File(["rejected file bytes"], "too-large.txt");
+  const row: OutboxEntry = { id: "rejected-local", sessionId: session.id, scope: "scope", sequence: 1,
+    text: "Rejected message", draftText: "Rejected message", files: [{ id: "upload", name: file.name, type: file.type, bytes: file }],
+    attachments: [], error: "The attachment exceeds 25 MiB.", recoverable: true };
+  controls.hook.outbox = [row];
+  recoverLocal.mockImplementationOnce(async id => {
+    expect(id).toBe(row.id); controls.saved.push({ id: `outbox:${row.id}`, draft: { text: row.draftText, files: row.files, attachments: [] } });
+    controls.hook.outbox = []; controls.version++; controls.listeners.forEach(listener => listener());
+  });
+  await mount(); await write("Keep my new ordinary draft"); await click("Recover draft");
+  expect(input().value).toBe("Keep my new ordinary draft");
+  expect(container.querySelector('[aria-label="Saved drafts"]')?.textContent).toContain("Rejected message");
+  await click("Restore draft"); expect(input().value).toBe("Rejected message");
+  expect(container.querySelector('[aria-label="Attachments to send"]')?.textContent).toContain("too-large.txt");
+  expect(container.querySelector('[aria-label="Saved drafts"]')?.textContent).toContain("Keep my new ordinary draft");
+});
+
+it("offers only exact Retry for a local message with unknown server admission", async () => {
+  controls.hook.outbox = [{ id: "unknown-local", sessionId: session.id, scope: "scope", sequence: 1,
+    text: "Message", draftText: "Message", files: [], attachments: [], error: "Reply lost", recoverable: false,
+    command: { requestId: "original-request", expectedRevision: 1, command: { type: "enqueue", entryId: "unknown-local", text: "Message", attachments: [] } } }];
+  await mount(); expect(button("Retry")).toBeDefined(); expect(button("Recover draft")).toBeUndefined();
 });
 
 it("preserves another tab's ordinary draft on Cancel and restores the original stash through Saved drafts", async () => {

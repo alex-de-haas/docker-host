@@ -12,11 +12,11 @@ export function queueFileLabel(name: string): string {
     .replace(/^q-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}-/i, "");
 }
 export function MessageQueue({ queue, outbox, transcriptRequestIds, busy, editingId, viewId, error, pendingOperation, legacySend, legacyBusy, onLegacyRetry,
-  onCommand, onEdit, onRetryLocal, onRetryOperation, onRefresh }: {
+  onCommand, onEdit, onRetryLocal, onRecoverLocal, onRetryOperation, onRefresh }: {
   queue: QueueSnapshot | null; outbox: OutboxEntry[]; transcriptRequestIds?: ReadonlySet<string>; busy: boolean; editingId?: string; viewId: string;
   error: string | null; pendingOperation: boolean; legacySend: PendingSend | null; legacyBusy: boolean;
   onCommand: (command: QueueCommand) => void; onEdit: (entry: QueueEntry, recover: boolean) => void;
-  onRefresh: () => void; onRetryLocal: (id: string) => void; onRetryOperation: () => void; onLegacyRetry: () => void;
+  onRefresh: () => void; onRetryLocal: (id: string) => void; onRecoverLocal: (id: string) => void; onRetryOperation: () => void; onLegacyRetry: () => void;
 }) {
   const visible = queue?.entries ?? [];
   const local = outbox.filter(row => !visible.some(entry => entry.id === row.id));
@@ -72,7 +72,8 @@ export function MessageQueue({ queue, outbox, transcriptRequestIds, busy, editin
         <div className="min-w-0 flex-1"><p className="line-clamp-3 whitespace-pre-wrap break-words">{row.draftText || row.text || "Attachments"}</p>
           <p className="mt-1 truncate text-xs text-muted-foreground">{[...row.attachments.map(file => (file.displayName ?? queueFileLabel(file.name))), ...row.files.map(file => file.name)].join(" · ")}</p>
           <p className="mt-1 text-xs text-muted-foreground">{row.error ? "Not yet saved to server" : row.files.length ? "Uploading and saving…" : "Saving to queue…"}</p>
-          {row.error && <><p role="alert" className="mt-1 text-xs text-destructive-foreground">{row.error}</p><Button type="button" size="sm" variant="ghost" onClick={() => onRetryLocal(row.id)}><RotateCcw />Retry</Button></>}
+          {row.error && <><p role="alert" className="mt-1 text-xs text-destructive-foreground">{row.error}</p><Button type="button" size="sm" variant="ghost" onClick={() => onRetryLocal(row.id)}><RotateCcw />Retry</Button>
+            {(!row.command || row.recoverable) && <Button type="button" size="sm" variant="ghost" onClick={() => onRecoverLocal(row.id)}>Recover draft</Button>}</>}
         </div>
       </li>)}
     </ol>

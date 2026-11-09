@@ -62,7 +62,7 @@ it("exports one extension with original text and chosen action without manufactu
   await history.action(record, "owner", value.suggestionId, action({ action: "dismissed" }), "context-one");
   const entries = project(record, await store.readEvents(record.id), { appId: "unrelated.harness", installationId: "install", key: "history" });
   expect(entries).toHaveLength(2);
-  expect(entries[1]).toMatchObject({ actor: { kind: "system" }, updatedAt: new Date(now).toISOString(), data: { kind: "extension", name: "harness.prompt-suggestion", version: 1,
+  expect(entries[1]).toMatchObject({ actor: { kind: "system" }, updatedAt: new Date(now).toISOString(), data: { kind: "extension", name: "hosty.harness/prompt-suggestion", version: 1,
     payload: { text: value.text, state: "dismissed", answerSeq: 1 }, fallbackText: `Suggested next message: ${value.text}\nDismissed` } });
   expect(entries.filter(entry => entry.data.kind === "message")).toHaveLength(1);
 });

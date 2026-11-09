@@ -4,6 +4,7 @@ import type { HistoryData, HistoryEntry, HistoryPart, ProviderRef } from "@hosty
 import type { SessionRecord, StoredEvent } from "../sessions/store.js";
 import { historicalSuggestions } from "../sessions/suggestion-history.js";
 
+export const PROMPT_SUGGESTION_EXTENSION = "hosty.harness/prompt-suggestion";
 export const fingerprint = (value: unknown): string => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 export const fold = (value: string): string => value.normalize("NFKC").toLowerCase().replaceAll("ß", "ss").replaceAll("ς", "σ");
 export function searchable(entry: HistoryEntry): string {
@@ -44,7 +45,7 @@ export function project(record: SessionRecord, events: StoredEvent[], provider: 
       if (!value) continue;
       finish("complete");
       const label = { available: "Available", "selected-for-draft": "Selected for draft", dismissed: "Dismissed", expired: "Expired", superseded: "Superseded" }[value.state];
-      add(event, { kind: "extension", name: "harness.prompt-suggestion", version: 1,
+      add(event, { kind: "extension", name: PROMPT_SUGGESTION_EXTENSION, version: 1,
         payload: { suggestionId: value.suggestionId, answerSeq: value.answerSeq, text: value.text, state: value.state,
           expiresAt: value.expiresAt, ...(value.resolvedAt ? { resolvedAt: value.resolvedAt } : {}) },
         fallbackText: `Suggested next message: ${value.text}\n${label}`, disclosure: "complete" }, { kind: "system" });

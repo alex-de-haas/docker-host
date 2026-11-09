@@ -10,10 +10,11 @@ import { listOutbox, outboxScope, saveOutbox, stageOutbox, type OutboxEntry } fr
 vi.mock("./message-queue-api", () => ({ commandMessageQueue: vi.fn(), getMessageQueue: vi.fn(), uploadQueueAttachment: vi.fn() }));
 vi.mock("./message-outbox", () => ({
   OUTBOX_CHANGED: "hosty:test-outbox-changed", listOutbox: vi.fn(), saveOutbox: vi.fn(), stageOutbox: vi.fn(), removeOutbox: vi.fn(), withOutboxLock: vi.fn(),
+  recordOutboxAttempt: vi.fn(), recoverOutbox: vi.fn(), preserveDraft: vi.fn(),
   outboxScope: (installationId: string, ownerId: string, sessionId: string) => JSON.stringify([location.origin, installationId, ownerId, sessionId]),
   outboxFiles: (files: File[]) => files.map(file => ({ id: crypto.randomUUID(), name: file.name, type: file.type, bytes: file })),
 }));
-import { removeOutbox, withOutboxLock } from "./message-outbox";
+import { recordOutboxAttempt, recoverOutbox, removeOutbox, withOutboxLock } from "./message-outbox";
 
 const owner = "actor-a", installation = "installation-a";
 const session = (id = "chat-a", createdBy = owner): AssistantSession => ({ id, createdBy, title: null, status: "idle", createdAt: "" });
@@ -81,6 +82,12 @@ beforeEach(() => {
   });
   vi.mocked(saveOutbox).mockImplementation(async row => { if (rows.has(key(row.scope, row.id))) rows.set(key(row.scope, row.id), copyEntry(row)); changed(row.scope); });
   vi.mocked(removeOutbox).mockImplementation(async (scope, id) => { rows.delete(key(scope, id)); changed(scope); });
+  vi.mocked(recordOutboxAttempt).mockResolvedValue(true);
+  vi.mocked(recoverOutbox).mockImplementation(async (scope, id) => {
+    const row = rows.get(key(scope, id));
+    if (row && (!row.error || row.command && !row.recoverable)) throw new Error("Server acceptance is not confirmed.");
+    rows.delete(key(scope, id)); changed(scope);
+  });
   vi.mocked(withOutboxLock).mockImplementation((scope, action) => {
     const result = (locks.get(scope) ?? Promise.resolve()).then(action);
     locks.set(scope, result.then(() => {}, () => {})); return result;
@@ -118,6 +125,52 @@ it("persists and replays the exact POST UUID and payload after server acceptance
   await act(async () => { await hook.retryLocal(row.id); });
   expect(vi.mocked(commandMessageQueue).mock.calls[1]![1]).toEqual(original);
   expect(servers.get("chat-a")!.entries).toHaveLength(1); expect(rows.size).toBe(0);
+});
+
+it("recovers a permanently rejected upload and drains the next durable message", async () => {
+  vi.mocked(uploadQueueAttachment).mockRejectedValueOnce(new AssistantApiError("attachment_too_large", "The attachment exceeds 25 MiB.", 413));
+  await render(); await drain();
+  await act(async () => { await hook.enqueue(draft("Keep rejected bytes", [new File(["snapshot bytes"], "large-file.txt")])); });
+  await until(() => expect(hook.outbox[0]?.recoverable).toBe(true));
+  const rejected = hook.outbox[0]!;
+  await act(async () => { await hook.enqueue(draft("Next message")); });
+  expect(commandMessageQueue).not.toHaveBeenCalled();
+  await act(async () => { await hook.recoverLocal(rejected.id); });
+  expect(recoverOutbox).toHaveBeenCalledWith(rejected.scope, rejected.id);
+  expect(servers.get("chat-a")!.entries.map(entry => entry.text)).toEqual(["Next message"]);
+});
+
+it.each(["queue_capacity", "queue_text_invalid", "queue_attachments_invalid"])("marks receipt-first %s rejection safe for draft recovery", async code => {
+  vi.mocked(commandMessageQueue).mockRejectedValueOnce(new AssistantApiError(code, "Definitive rejection", 413));
+  await render(); await drain(); await act(async () => { await hook.enqueue(draft("Rejected immutable snapshot")); });
+  await until(() => expect(hook.outbox[0]?.recoverable).toBe(true));
+  const row = hook.outbox[0]!;
+  const transportId = vi.mocked(recordOutboxAttempt).mock.calls[0]![2];
+  expect(transportId).not.toBe(row.command!.requestId);
+  expect(recordOutboxAttempt).toHaveBeenCalledWith(row.scope, row.id, transportId, true);
+  await act(async () => { await hook.recoverLocal(row.id); }); expect(rows.size).toBe(0);
+});
+
+it.each([
+  new TypeError("Reply lost"), new AssistantApiError("unauthorized", "Sign in", 401),
+  new AssistantApiError("queue_request_conflict", "Changed identity", 409), new AssistantApiError("queue_entry_conflict", "Changed entry", 409),
+  new AssistantApiError("queue_corrupt", "Needs recovery", 503),
+])("retains an uncertain or unsafe admission and its exact request after %s", async cause => {
+  vi.mocked(commandMessageQueue).mockRejectedValueOnce(cause);
+  await render(); await drain(); await act(async () => { await hook.enqueue(draft("Do not duplicate")); });
+  await until(() => expect(hook.outbox[0]?.error).toBe(cause.message));
+  const row = hook.outbox[0]!, request = structuredClone(row.command);
+  expect(row.recoverable).toBe(false);
+  await expect(hook.recoverLocal(row.id)).rejects.toThrow("acceptance is not confirmed");
+  expect(rows.get(key(row.scope, row.id))?.command).toEqual(request);
+  expect(vi.mocked(recordOutboxAttempt).mock.calls.every(call => call[3] !== true)).toBe(true);
+});
+
+it("does not POST a row recovered before its atomic admission claim", async () => {
+  vi.mocked(recordOutboxAttempt).mockResolvedValueOnce(false);
+  await render(); await drain(); await act(async () => { await hook.enqueue(draft("Already recovered elsewhere")); });
+  await until(() => expect(recordOutboxAttempt).toHaveBeenCalledOnce());
+  expect(commandMessageQueue).not.toHaveBeenCalled();
 });
 
 it("does not let a later local message overtake a failed head", async () => {

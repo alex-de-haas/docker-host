@@ -6,7 +6,7 @@ export type OutboxFile = { id: string; name: string; type: string; bytes: Blob; 
 export type OutboxEntry = {
   id: string; scope: string; sequence: number; sessionId: string; text: string; draftText: string;
   files: OutboxFile[]; attachments: StoredAttachment[]; promptSuggestions?: boolean; withoutAppDetails?: boolean;
-  command?: QueueCommandInput; error?: string; durable?: boolean;
+  command?: QueueCommandInput; error?: string; durable?: boolean; recoverable?: boolean;
 };
 export type EditDraft = { scope: string; entryId: string; viewId: string; reservationId: string;
   stash: QueueDraft & { files: OutboxFile[] }; buffer?: QueueDraft & { files: OutboxFile[] }; originalDraft?: QueueDraft };
@@ -74,25 +74,54 @@ export async function saveOutbox(entry: OutboxEntry): Promise<void> {
   await done; changed(entry.scope);
 }
 export async function removeOutbox(scope: string, id: string): Promise<void> {
-  const db = await database(); const tx = db.transaction("entries", "readwrite"); const done = committed(tx);
-  tx.objectStore("entries").delete([scope, id]); await done; changed(scope);
+  const db = await database(); const tx = db.transaction(["entries", "metadata"], "readwrite"); const done = committed(tx);
+  tx.objectStore("entries").delete([scope, id]); tx.objectStore("metadata").delete(attemptKey(scope, id)); await done; changed(scope);
 }
-export async function readEditDraft(scope: string): Promise<EditDraft | undefined> {
-  return result((await database()).transaction("metadata", "readonly").objectStore("metadata").get(`edit:${scope}`));
+const attemptKey = (scope: string, id: string) => `admission:${JSON.stringify([scope, id])}`;
+/** A separate journal cannot be erased by a stale uploader in a browser without Web Locks. */
+export async function recordOutboxAttempt(scope: string, id: string, transportAttemptId: string, rejected = false): Promise<boolean> {
+  const db = await database(), tx = db.transaction(["entries", "metadata"], "readwrite"), done = committed(tx);
+  if (!await result(tx.objectStore("entries").get([scope, id]))) { await done; return false; }
+  const metadata = tx.objectStore("metadata"), key = attemptKey(scope, id);
+  const attempts = await result(metadata.get(key)) as Record<string, "pending" | "rejected"> | undefined ?? {};
+  attempts[transportAttemptId] = rejected ? "rejected" : "pending";
+  metadata.put(attempts, key); await done; return true;
+}
+const editKey = (scope: string, entryId: string, reservationId: string) => `edit-record:${JSON.stringify([scope, entryId, reservationId])}`;
+const editPointer = (scope: string, entryId: string) => `edit-current:${JSON.stringify([scope, entryId])}`;
+const pendingEdit = (reservationId: string) => reservationId === "pending" || reservationId.startsWith("pending:");
+async function migrateEdit(store: IDBObjectStore, scope: string): Promise<void> {
+  const legacy = await result(store.get(`edit:${scope}`)) as EditDraft | undefined;
+  if (!legacy) return;
+  const key = editKey(scope, legacy.entryId, legacy.reservationId), pointer = editPointer(scope, legacy.entryId);
+  if (!await result(store.get(key))) store.put(legacy, key);
+  if (!await result(store.get(pointer))) store.put(legacy.reservationId, pointer);
+  store.delete(`edit:${scope}`);
+}
+export async function readEditDraft(scope: string, entryId: string, reservationId?: string): Promise<EditDraft | undefined> {
+  const db = await database(), tx = db.transaction("metadata", "readwrite"), done = committed(tx), store = tx.objectStore("metadata");
+  await migrateEdit(store, scope);
+  const current = reservationId ?? await result(store.get(editPointer(scope, entryId))) as string | undefined;
+  const value = current ? await result(store.get(editKey(scope, entryId, current))) as EditDraft | undefined : undefined;
+  await done; return value;
 }
 export async function saveEditDraft(value: EditDraft): Promise<void> {
   const db = await database(); const tx = db.transaction("metadata", "readwrite"); const done = committed(tx);
   const metadata = tx.objectStore("metadata");
-  const previous = await result(metadata.get(`edit:${value.scope}`)) as EditDraft | undefined;
-  if (previous && previous.reservationId !== value.reservationId && previous.reservationId !== "pending" && value.reservationId !== "pending") {
+  await migrateEdit(metadata, value.scope);
+  const pointer = editPointer(value.scope, value.entryId), current = await result(metadata.get(pointer)) as string | undefined;
+  const previous = current ? await result(metadata.get(editKey(value.scope, value.entryId, current))) as EditDraft | undefined : undefined;
+  if (previous && previous.reservationId !== value.reservationId && !pendingEdit(value.reservationId)
+    && !(pendingEdit(previous.reservationId) && previous.viewId === value.viewId)) {
     await done; throw new Error("This edit moved to another view. Its saved buffer was preserved.");
   }
-  metadata.put(value, `edit:${value.scope}`); await done;
+  metadata.put(value, editKey(value.scope, value.entryId, value.reservationId)); metadata.put(value.reservationId, pointer); await done;
 }
-export async function clearEditDraft(scope: string, reservationId: string): Promise<void> {
+export async function clearEditDraft(scope: string, entryId: string, reservationId: string): Promise<void> {
   const db = await database(); const tx = db.transaction("metadata", "readwrite"); const done = committed(tx); const store = tx.objectStore("metadata");
-  const value = await result(store.get(`edit:${scope}`)) as EditDraft | undefined;
-  if (value?.reservationId === reservationId) store.delete(`edit:${scope}`); await done;
+  await migrateEdit(store, scope);
+  store.delete(editKey(scope, entryId, reservationId));
+  if (await result(store.get(editPointer(scope, entryId))) === reservationId) store.delete(editPointer(scope, entryId)); await done;
 }
 function preservedDrafts(value: unknown): PreservedDraft[] {
   if (value === undefined) return [];
@@ -113,6 +142,23 @@ export async function preserveDraft(scope: string, value: PreservedDraft): Promi
     throw new Error("There are 100 saved drafts. Restore or remove one before preserving another; existing drafts were kept.");
   }
   store.put([...drafts, value], storageKey); await done; changed(scope);
+}
+/** Keep the only copy of a rejected message and retire it at the same commit boundary. */
+export async function recoverOutbox(scope: string, id: string): Promise<void> {
+  const db = await database(), tx = db.transaction(["entries", "metadata"], "readwrite"), done = committed(tx);
+  const entries = tx.objectStore("entries"), metadata = tx.objectStore("metadata");
+  const row = await result(entries.get([scope, id])) as OutboxEntry | undefined;
+  if (!row) { await done; return; }
+  const attempts = await result(metadata.get(attemptKey(scope, id))) as Record<string, string> | undefined;
+  if (!row.error || row.command && row.recoverable !== true || attempts && Object.values(attempts).some(state => state !== "rejected")) {
+    await done; throw new Error("Retry this message's original request before recovering its draft; server acceptance is not confirmed.");
+  }
+  const storageKey = `preserved:${scope}`, drafts = preservedDrafts(await result(metadata.get(storageKey))), draftId = `outbox:${id}`;
+  if (!drafts.some(draft => draft.id === draftId)) {
+    if (drafts.length >= 100) { tx.abort(); await done.catch(() => {}); throw new Error("There are 100 saved drafts. Restore one before recovering this message; its original snapshot was kept."); }
+    metadata.put([...drafts, { id: draftId, draft: { text: row.draftText, attachments: row.attachments, files: row.files } }], storageKey);
+  }
+  entries.delete([scope, id]); metadata.delete(attemptKey(scope, id)); await done; changed(scope);
 }
 export async function removePreservedDraft(scope: string, id: string): Promise<void> {
   const db = await database(); const tx = db.transaction("metadata", "readwrite"); const done = committed(tx);

@@ -2372,16 +2372,18 @@ export class SessionManager {
         }
       }
       if (this.stopping) throw new AppContextError(503, "harness_stopping", "Harness is stopping; the saved message was not dispatched.");
+      if (context.decisionContinuation) this.checkDecisionRecord(session.record, context.decisionContinuation);
+      if (context.taskContinuation) this.checkTaskContinuation(session.record, context.taskContinuation);
       const queue = session.record.messageQueue;
-      if (queue?.entries.length) {
+      // A validated continuation finishes the current turn; future queued messages must wait
+      // for it rather than preventing the parked question or task checkpoint from resuming.
+      if (!context.decisionContinuation && !context.taskContinuation && queue?.entries.length) {
         const head = queue.entries[0]!;
         if (!context.queueEntryId || head.id !== context.queueEntryId || head.attempt?.clientRequestId !== clientRequestId || queue.paused)
           throw new AppContextError(409, "queue_pending", "Use the conversation queue while accepted messages are waiting.");
         if (head.attempt?.bindingKey && head.attempt.bindingKey !== this.queueBinding(session.record))
           throw new AppContextError(409, "queue_settings_conflict", "Agent settings or workspace changed after this send was claimed. Review it before retrying.");
       } else if (context.queueEntryId) throw new AppContextError(409, "queue_entry_missing", "The claimed message is no longer queued.");
-      if (context.decisionContinuation) this.checkDecisionRecord(session.record, context.decisionContinuation);
-      if (context.taskContinuation) this.checkTaskContinuation(session.record, context.taskContinuation);
       if (session.record.taskExecutionId && (!context.taskDispatch || clientRequestId !== session.record.taskExecutionId && !context.decisionContinuation && !context.taskContinuation))
         throw new AppContextError(409, "task_managed_session", "Use the task lifecycle to start a new attempt. This conversation belongs to one immutable task execution.");
       if (session.record.workerRecovery?.state === "pending")

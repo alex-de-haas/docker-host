@@ -12,7 +12,7 @@ import { readPendingSend, rememberPendingSend, type PendingSend } from "@/lib/pe
 const controls = vi.hoisted(() => ({ ui: { reportSurfaceState: vi.fn(), getNavigation: () => ({ entries: [] }), navigate: vi.fn() } }));
 vi.mock("@hosty-sdk/app/ui/react", () => ({ useHostyUi: () => controls.ui }));
 vi.mock("@/lib/message-queue-api", async original => ({ ...await original<object>(), getMessageQueue: vi.fn(), commandMessageQueue: vi.fn(), uploadQueueAttachment: vi.fn() }));
-vi.mock("@/lib/message-outbox", async original => ({ ...await original<object>(), listOutbox: vi.fn(), stageOutbox: vi.fn(), saveOutbox: vi.fn(), removeOutbox: vi.fn(), readEditDraft: vi.fn() }));
+vi.mock("@/lib/message-outbox", async original => ({ ...await original<object>(), listOutbox: vi.fn(), stageOutbox: vi.fn(), saveOutbox: vi.fn(), removeOutbox: vi.fn(), readEditDraft: vi.fn(), recordOutboxAttempt: vi.fn() }));
 vi.mock("@/lib/assistant-api", async original => ({ ...await original<object>(), getHealth: vi.fn(), listSessions: vi.fn(), getSession: vi.fn(), createSession: vi.fn(),
   listAppNames: vi.fn(), listAgentConnections: vi.fn(), streamEvents: vi.fn(), postMessage: vi.fn(), getMessageReceipt: vi.fn(), uploadAttachment: vi.fn() }));
 vi.mock("@/lib/development-api", async original => ({ ...await original<object>(), useDevelopmentInventory: () => ({ workspaces: [], loading: false, error: "", refresh: vi.fn() }) }));
@@ -66,6 +66,7 @@ beforeEach(() => {
   vi.mocked(outboxApi.saveOutbox).mockImplementation(async value => { localRows = localRows.map(row => row.scope === value.scope && row.id === value.id ? value : row); });
   vi.mocked(outboxApi.removeOutbox).mockImplementation(async (scope, id) => { localRows = localRows.filter(row => row.scope !== scope || row.id !== id); });
   vi.mocked(outboxApi.readEditDraft).mockResolvedValue(undefined);
+  vi.mocked(outboxApi.recordOutboxAttempt).mockResolvedValue(true);
   vi.stubGlobal("matchMedia", (query: string) => ({ matches: query.includes("min-width: 1100px"), addEventListener() {}, removeEventListener() {} }));
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   vi.mocked(api.getHealth).mockResolvedValue({ name: "fake", available: true }); vi.mocked(api.listSessions).mockResolvedValue([session]);
