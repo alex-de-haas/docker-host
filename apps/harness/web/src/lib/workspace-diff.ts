@@ -12,7 +12,7 @@ export function prepareWorkspaceDiff(diff: Diff): Preview {
   if (!diff.combined) return { kind: "text", message: untracked ? "Empty new file." : "No text changes." };
   try {
     if (untracked) return { kind: "diff", file: parseDiffFromFile(null, { name: diff.path, contents: diff.combined }) };
-    const files = parsePatchFiles(diff.combined, undefined, true).flatMap(patch => patch.files);
+    const files = parsePatchFiles(diff.combined, { throwOnError: true }).flatMap(patch => patch.files);
     if (files.length === 1 && files[0].hunks.length) return { kind: "diff", file: files[0] };
     return { kind: "text", message: "No line changes to display. File metadata is shown below.", content: diff.combined };
   } catch {
