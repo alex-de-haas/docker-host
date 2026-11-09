@@ -1,6 +1,6 @@
 ---
 created: 2026-10-17
-updated: 2026-10-29
+updated: 2026-11-07
 summary: Local Git app creation, child Core Docker preview, local acceptance, remote publication and versioned development guidance through Harness, MCP and CLI.
 components: [apps/core, apps/cli, apps/harness]
 ---
@@ -229,6 +229,12 @@ not write credentials or a remote URL into Git configuration. Local-only status 
 connection. Fetch records the observed remote head, time, relationship and ahead/behind counts in a
 separate upstream reference; it never pulls into a branch or rewrites working files.
 
+Remote status, connection, fetch, base publication and PR publication also work while the app
+executes from that registered worktree. Core verifies the active development journal, installation,
+canonical repository and exact runtime/source selection; unrelated overrides and interrupted
+transitions remain unavailable. Publication retains the running runtime, source edits and ordinary
+data. A reviewed remote connection survives a later Return, including recovery after interruption.
+
 When the selected target is absent, the operator can explicitly publish the exact accepted local
 main as its base. A create-only reference lease refuses a concurrent creator; an existing differing
 head is never overwritten. An exact existing head reconciles a lost response. Nonempty remote
@@ -389,6 +395,8 @@ and source-mount checks, artifact versions and explicit platform boundaries. The
 are Core/CLI 0.140.0 and Harness 0.57.0; local acceptance does not attest to registry publication.
 
 ## Testing Expectations
+
+- Publish from an active registered worktree without Return: connect/status/fetch/base, configure/push/PR and lost-response recovery preserve the runtime, source and ordinary data. Refuse unrelated overrides, stale development journals and uncertain Git changes. Verify that legacy, grouped activation and package Return retain the reviewed remote after an interrupted restart.
 
 - Every packaged guide topic is bounded, versioned and AOT-serializable; Core MCP, control, Harness
   and CLI return the same content/revision. Unknown topics never read files or expand the catalog.

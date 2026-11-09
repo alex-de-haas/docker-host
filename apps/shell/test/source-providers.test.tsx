@@ -126,3 +126,125 @@ it("shows unsupported saved accounts but never offers Azure as a new provider", 
   await act(async () => document.getElementById("connection-provider")!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })));
   expect([...document.querySelectorAll('[role="option"]')].map(node => node.textContent)).toEqual(["GitHub"]);
 });
+
+
+it("renews OAuth on the existing connection and retains known private repository access", async () => {
+  vi.useFakeTimers();
+  call.mockImplementation(async (url, init) => init?.method
+    ? send(url, init.body === undefined ? undefined : JSON.parse(init.body as string), init.method)
+    : Response.json({ ...profile, connections: [{ ...connection, method: "oauth", grantedScopes: ["repo", "user:email"] }] }));
+  await render();
+  const trigger = button("Reconnect");
+  await act(async () => trigger.click());
+  const dialog = document.querySelector('[role="dialog"]')!;
+  expect(dialog.textContent).toContain("Renew access for octocat");
+  expect(dialog.textContent).toContain("Your applications, repositories and pull requests stay connected.");
+  expect((document.getElementById("connection-provider") as HTMLButtonElement).disabled).toBe(true);
+  expect(dialog.querySelector('[role="checkbox"]')!.getAttribute("aria-checked")).toBe("true");
+  expect((dialog.querySelector('[role="checkbox"]') as HTMLButtonElement).disabled).toBe(true);
+  expect(document.querySelector("#connection-label")).toBeNull();
+  const pending = { id: "renewal", status: "pending", userCode: "RENEW-CODE", verificationUri: "https://github.com/login/device", expiresAt: "2026-11-09T12:00:00Z", interval: 5 };
+  send.mockImplementation(async url => Response.json(url.endsWith("/poll") ? { status: "connected", connection } : pending));
+  await act(async () => button("Renew connection").click());
+  expect(send).toHaveBeenCalledExactlyOnceWith("/source-connections/personal/device", { label: "Personal", provider: "github", privateRepositories: true }, "POST");
+  expect(dialog.textContent).toContain("Use the account octocat.");
+  await act(async () => vi.advanceTimersByTimeAsync(5000));
+  expect(send).toHaveBeenLastCalledWith("/source-connections/device/renewal/poll", {}, "POST");
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+  expect(container.textContent).toContain("Connection renewed.");
+  expect(container.querySelectorAll("article")).toHaveLength(1);
+});
+
+it("keeps PAT renewal errors in the same connection form and clears submitted credentials", async () => {
+  await render(); await act(async () => button("Reconnect").click());
+  expect(document.querySelector("#connection-label")).toBeNull();
+  await fill("connection-token", "replacement-secret");
+  send.mockRejectedValueOnce(new Error("Use the same GitHub account to renew this connection."));
+  await act(async () => button("Renew connection").click());
+  expect(send).toHaveBeenCalledExactlyOnceWith("/source-connections/personal/pat", {
+    label: "Personal", provider: "github", token: "replacement-secret", privateRepositories: false,
+  }, "POST");
+  expect(document.querySelector('[role="dialog"] [role="alert"]')!.textContent).toContain("same GitHub account");
+  expect(document.querySelector<HTMLInputElement>("#connection-token")!.value).toBe("");
+  expect(container.querySelectorAll("article")).toHaveLength(2);
+  await fill("connection-token", "verified-replacement");
+  await act(async () => button("Renew connection").click());
+  expect(send).toHaveBeenLastCalledWith("/source-connections/personal/pat", expect.objectContaining({ token: "verified-replacement" }), "POST");
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+  expect(container.textContent).toContain("Connection renewed.");
+  expect(send.mock.calls.some(([url, , method]) => url === "/source-connections/pat" || method === "DELETE")).toBe(false);
+});
+
+it("cancels only the renewal attempt and restores the selected connection trigger", async () => {
+  await render();
+  const trigger = [...container.querySelector('[aria-label="Work"]')!.querySelectorAll("button")].find(node => node.textContent === "Reconnect")!;
+  await act(async () => trigger.click());
+  await choose("connection-method", "Sign in with provider");
+  await choose("connection-repository-access", "Public repositories only");
+  expect(document.querySelector('[role="dialog"]')!.textContent).toContain("work-account");
+  const pending = { id: "renewal", status: "pending", userCode: "RENEW-CODE", verificationUri: "https://github.com/login/device", expiresAt: "2026-11-09T12:00:00Z", interval: 5 };
+  send.mockResolvedValueOnce(Response.json(pending));
+  await act(async () => button("Renew connection").click());
+  expect(send).toHaveBeenLastCalledWith("/source-connections/work/device", expect.objectContaining({ provider: "github", label: "Work" }), "POST");
+  send.mockRejectedValueOnce(new Error("Cancellation unavailable"));
+  await act(async () => button("Cancel").click());
+  expect(document.querySelector('[role="dialog"]')!.textContent).toContain("RENEW-CODE");
+  expect(document.querySelector('[role="dialog"] [role="alert"]')!.textContent).toBe("Cancellation unavailable");
+  await act(async () => button("Cancel").click());
+  expect(send).toHaveBeenLastCalledWith("/source-connections/device/renewal", undefined, "DELETE");
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+  await vi.waitFor(() => expect(document.activeElement).toBe(trigger));
+  await act(async () => button("Add connection").click());
+  expect(button("Connect GitHub")).toBeDefined();
+  expect(document.querySelector('[role="dialog"]')!.textContent).not.toContain("Renew access for");
+  expect((document.getElementById("connection-provider") as HTMLButtonElement).disabled).toBe(false);
+});
+
+
+it.each(["Public repositories only", "Public and private repositories"])("requires an explicit legacy OAuth access decision: %s", async access => {
+  call.mockImplementation(async (url, init) => init?.method
+    ? send(url, init.body === undefined ? undefined : JSON.parse(init.body as string), init.method)
+    : Response.json({ ...profile, connections: [{ ...connection, method: "oauth", grantedScopes: null }] }));
+  await render(); await act(async () => button("Reconnect").click());
+  expect(button("Renew connection").disabled).toBe(true);
+  expect(document.getElementById("connection-repository-access")!.textContent).toContain("Choose repository access");
+  expect(send).not.toHaveBeenCalled();
+  await choose("connection-repository-access", access);
+  expect(button("Renew connection").disabled).toBe(false);
+  send.mockResolvedValueOnce(Response.json({ id: "decision", status: "pending", userCode: "CODE", verificationUri: "https://github.com/login/device", expiresAt: "2026-11-09T12:00:00Z", interval: 5 }));
+  await act(async () => button("Renew connection").click());
+  expect(send).toHaveBeenCalledExactlyOnceWith("/source-connections/personal/device", {
+    label: "Personal", provider: "github", privateRepositories: access === "Public and private repositories",
+  }, "POST");
+});
+
+it("pauses after a transient poll failure and retains its attempt for retry, cancel and restart", async () => {
+  vi.useFakeTimers();
+  call.mockImplementation(async (url, init) => init?.method
+    ? send(url, init.body === undefined ? undefined : JSON.parse(init.body as string), init.method)
+    : Response.json({ ...profile, connections: [{ ...connection, method: "oauth", grantedScopes: ["public_repo"] }] }));
+  await render(); await act(async () => button("Reconnect").click());
+  const pending = { id: "recoverable", status: "pending", userCode: "KEEP-CODE", verificationUri: "https://github.com/login/device", expiresAt: "2026-11-09T12:00:00Z", interval: 5 };
+  send.mockResolvedValueOnce(Response.json(pending));
+  await act(async () => button("Renew connection").click());
+  send.mockRejectedValueOnce(Object.assign(new Error("Provider unavailable (502)"), { status: 502 }));
+  await act(async () => vi.advanceTimersByTimeAsync(5000));
+  expect(document.querySelector('[role="dialog"]')!.textContent).toContain("KEEP-CODE");
+  expect(button("Retry authorization check")).toBeDefined();
+  expect(document.querySelector('[role="dialog"] [role="alert"]')!.textContent).toContain("502");
+  const calls = send.mock.calls.length;
+  await act(async () => vi.advanceTimersByTimeAsync(60000));
+  expect(send).toHaveBeenCalledTimes(calls);
+  send.mockResolvedValueOnce(Response.json(pending));
+  await act(async () => button("Retry authorization check").click());
+  await act(async () => vi.advanceTimersByTimeAsync(5000));
+  expect(send).toHaveBeenLastCalledWith("/source-connections/device/recoverable/poll", {}, "POST");
+  await act(async () => button("Cancel").click());
+  expect(send).toHaveBeenLastCalledWith("/source-connections/device/recoverable", undefined, "DELETE");
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+  await act(async () => button("Reconnect").click());
+  send.mockResolvedValueOnce(Response.json({ ...pending, id: "new-attempt" }));
+  await act(async () => button("Renew connection").click());
+  expect(send).toHaveBeenLastCalledWith("/source-connections/personal/device", expect.objectContaining({ privateRepositories: false }), "POST");
+  expect(document.querySelector('[role="dialog"]')!.textContent).toContain("KEEP-CODE");
+});

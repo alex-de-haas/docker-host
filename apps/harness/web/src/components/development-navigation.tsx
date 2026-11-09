@@ -6,6 +6,8 @@ import type { DevelopmentWorkspace } from "@/lib/development-api";
 import { navigationItems } from "@/lib/workspace-navigation";
 import { WorkspaceRowStatus } from "./workspace-row-status";
 import { WorkspaceActivityCounts } from "./workspace-activity-counts";
+import { SessionActivityIndicator, SessionRowStatus } from "./session-row-status";
+import { WorkspaceDelete } from "./workspace-delete";
 import { Input } from "@/components/ui/input";
 import { HostyMark } from "../../../../../shared/web/hosty-mark";
 import { Button } from "@/components/ui/button";
@@ -21,24 +23,26 @@ const statusFilters = [
   { key: "failed", label: "Failed", Icon: CircleAlert, tone: "text-destructive-foreground" },
 ] as const;
 
-export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, onNew, onDelete, activeWorkspaceId, onWorkspace, createAppAction, onClose, view = "chats" }: {
-  view?: "workspaces" | "chats"; onClose?: () => void;
+export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, onNew, onDelete, activeWorkspaceId, onWorkspace, createAppAction, onClose, onRefresh }: {
+  onClose?: () => void; onRefresh?: () => void;
   activeWorkspaceId?: string; onWorkspace?: (workspace: DevelopmentWorkspace, session?: AssistantSession) => void; createAppAction?: ReactNode;
   sessions: AssistantSession[]; activeId?: string; workspaces: DevelopmentWorkspace[];
   onPick: (session: AssistantSession) => void; onNew: () => void; onDelete: (sessionId: string) => Promise<void>;
 }) {
   const [deleting, setDeleting] = useState<AssistantSession | null>(null);
+  const [deletingWorkspace, setDeletingWorkspace] = useState<{ workspace: DevelopmentWorkspace; pendingRequestId?: string } | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const deletionPending = useRef(false);
   const deleteTrigger = useRef<HTMLButtonElement | null>(null);
+  const workspaceDeleteTrigger = useRef<HTMLButtonElement | null>(null);
   const newButton = useRef<HTMLButtonElement | null>(null);
   const [query, setQuery] = useState("");
   const [stateFilter, setStateFilter] = useState("all");
   const [now, setNow] = useState(Date.now);
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 15_000); return () => clearInterval(timer); }, []);
-  const items = navigationItems(workspaces, sessions, now, view);
-  const title = view === "workspaces" ? "Workspaces" : "Chats";
+  const items = navigationItems(workspaces, sessions, now);
+  const title = "Sessions";
   const matchesState = (item: typeof items[number], state: string) => state === "all" || item.counts[state as "waiting" | "working" | "failed"] > 0;
   const visible = items.filter(item => matchesState(item, stateFilter) && (!query.trim() || item.search.includes(query.trim().toLowerCase())));
   const sessionLabel = (session: AssistantSession) => session.title?.trim() || "Untitled session";
@@ -56,14 +60,21 @@ export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, 
         {workspace ? <Hammer className="size-3.5 shrink-0 text-muted-foreground" role="img" aria-label="Workspace" /> : <MessageSquare className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />}
         <span className="min-w-0 flex-1 text-left">
           <span className="flex min-w-0 items-center gap-2"><span className="block min-w-0 flex-1 truncate text-sm font-normal" title={label}>{label}</span>
-            {workspace && <WorkspaceActivityCounts counts={item.counts} />}
+            {workspace ? <WorkspaceActivityCounts counts={item.counts} /> : session && <SessionActivityIndicator status={session.status} />}
           </span>
-          {workspace ? <WorkspaceRowStatus workspace={workspace} now={now} /> : <WorkspaceActivityCounts counts={item.counts} />}
+          {workspace ? <WorkspaceRowStatus workspace={workspace} now={now} /> : session && <SessionRowStatus session={session} now={now} />}
         </span>
       </Button>
       {session && <Button variant="ghost" size="icon-sm" aria-label={`Delete ${label}`} title="Delete session"
         className="shrink-0 text-muted-foreground hover:text-destructive-foreground [@media(hover:hover)]:opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
         onClick={event => { deleteTrigger.current = event.currentTarget; setError(null); setDeleting(session); }}><Trash2 /></Button>}
+      {workspace && workspace.permissions?.manage !== false && <Button variant="ghost" size="icon-sm" aria-label={`Delete workspace ${label}`} title="Delete workspace"
+        className="shrink-0 text-muted-foreground hover:text-destructive-foreground [@media(hover:hover)]:opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
+        onClick={event => {
+          workspaceDeleteTrigger.current = event.currentTarget;
+          const operation = workspace.workflow.operations?.find(o => ["pending", "unknown"].includes(o.state) && ["delete", "discard"].includes(o.kind));
+          setDeletingWorkspace({ workspace, pendingRequestId: operation?.id });
+        }}><Trash2 /></Button>}
     </div>;
   };
   return <nav aria-label={title} className="flex h-full min-h-0 flex-col">
@@ -72,15 +83,15 @@ export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, 
         <h1 className="text-sm font-semibold">{title} <span className="ml-1 font-mono text-xs font-normal tabular-nums text-muted-foreground">{items.length}</span></h1>
         <div className="flex shrink-0 items-center gap-1">
           {onClose && <Button variant="ghost" size="icon-sm" className="md:hidden" aria-label={`Hide ${title.toLowerCase()}`} title={`Hide ${title.toLowerCase()}`} onClick={onClose}><PanelLeftClose aria-hidden /></Button>}
-          {view === "workspaces" && <>{createAppAction}<ContinueBuilding sessions={sessions} onPick={onPick} /></>}
-          {view === "chats" && <TooltipProvider delayDuration={250}>
+          {createAppAction}<ContinueBuilding sessions={sessions} onPick={onPick} />
+          <TooltipProvider delayDuration={250}>
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button ref={newButton} variant="ghost" size="icon-sm" aria-label="New session" onClick={onNew}><MessageSquarePlus aria-hidden="true" /></Button>
               </TooltipTrigger>
               <TooltipContent side="right">New session</TooltipContent>
             </Tooltip>
-          </TooltipProvider>}
+          </TooltipProvider>
         </div>
       </div>
       <div className="relative"><Search className="pointer-events-none absolute top-2.5 left-2.5 size-4 text-muted-foreground" /><Input aria-label={`Search ${title.toLowerCase()}`} placeholder="Search…" className="pl-8" value={query} onChange={event => setQuery(event.target.value)} /></div>
@@ -94,9 +105,16 @@ export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, 
     </div>
     <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-2">
       {visible.map(renderItem)}
-      {!!items.length && !visible.length && <p className="p-3 text-sm text-muted-foreground">No {title.toLowerCase()} match this search and filter.</p>}
-      {!items.length && <div className="flex flex-col items-center gap-3 p-5 text-center"><HostyMark appId="hosty.harness" tile className="size-12" /><p className="text-sm text-muted-foreground">{view === "workspaces" ? "Create an app or continue building to start a workspace." : "Start a new chat to ask a question."}</p></div>}
+      {!!items.length && !visible.length && <p className="p-3 text-sm text-muted-foreground">No sessions match this search and filter.</p>}
+      {!items.length && <div className="flex flex-col items-center gap-3 p-5 text-center"><HostyMark appId="hosty.harness" tile className="size-12" /><p className="text-sm text-muted-foreground">Start a new session, create an app or continue building.</p></div>}
     </div>
+    {deletingWorkspace && <WorkspaceDelete key={deletingWorkspace.workspace.id}
+      workspaceId={deletingWorkspace.workspace.id} name={deletingWorkspace.workspace.name?.trim() || deletingWorkspace.workspace.owner.label?.trim() || "Workspace"}
+      pendingRequestId={deletingWorkspace.pendingRequestId} refresh={() => onRefresh?.()} onClose={() => setDeletingWorkspace(null)}
+      onCloseAutoFocus={event => {
+        event.preventDefault();
+        (workspaceDeleteTrigger.current?.isConnected ? workspaceDeleteTrigger.current : newButton.current)?.focus();
+      }} />}
     <Dialog open={deleting !== null} onOpenChange={open => { if (!open && !deletionPending.current) setDeleting(null); }}>
       <DialogContent showCloseButton={!pending} onCloseAutoFocus={event => {
         event.preventDefault();

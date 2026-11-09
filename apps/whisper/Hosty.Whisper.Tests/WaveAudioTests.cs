@@ -25,6 +25,23 @@ public sealed class WaveAudioTests
         using var cancelled = new MemoryStream(Wave()); using var cts = new CancellationTokenSource(); cts.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => WaveAudio.ReadAsync(cancelled, cts.Token));
     }
+    [Fact]
+    public void AcceptsTenMinutesButRejectsOneExtraSampleEvenWithinTheHeaderAllowance()
+    {
+        Assert.Equal(600, WaveAudio.MaxSeconds);
+        Assert.Equal(19_204_096, WaveAudio.MaxBytes);
+        Assert.Equal(600 * 16000, WaveAudio.Decode(LongWave(600 * 16000)).Length);
+        Assert.Throws<InvalidDataException>(() => WaveAudio.Decode(LongWave(600 * 16000 + 1)));
+        Assert.Throws<InvalidDataException>(() => WaveAudio.Decode(LongWave(0)));
+    }
+    private static byte[] LongWave(int sampleCount)
+    {
+        var bytes = new byte[44 + sampleCount * 2];
+        Wave().AsSpan(0, 44).CopyTo(bytes);
+        BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(4), bytes.Length - 8);
+        BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(40), sampleCount * 2);
+        return bytes;
+    }
     private static byte[] Wave()
     {
         var bytes = new byte[50];

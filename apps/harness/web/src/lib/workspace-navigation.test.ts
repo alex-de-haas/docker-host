@@ -31,16 +31,54 @@ it("uses newer authorized own-session changes without aliasing a foreign session
   expect(workspaceCounts(space, [mine], now)).toEqual({ working: 1, waiting: 1, failed: 0, unknown: 0 });
   expect(workspaceCounts(space, [{ ...mine, status: "idle" }], now)).toEqual({ working: 0, waiting: 1, failed: 0, unknown: 0 });
 });
-it("keeps workspace ordering stable and lists all chats independently of attachment", () => {
+it("interleaves workspaces and unattached chats without promoting participant heartbeats", () => {
   const space = workspace([participant("mine", "idle", true)]);
   const mine = { id: "mine", title: "My chat", status: "idle", createdAt: new Date(now - 60_000).toISOString() } as AssistantSession;
   const solo = { ...mine, id: "solo", createdAt: new Date(now - 30_000).toISOString() };
-  expect(navigationItems([space], [mine, solo], now).map(i => i.key)).toEqual(["workspace:shared"]);
+  expect(navigationItems([space], [mine, solo], now).map(i => i.key)).toEqual(["session:solo", "workspace:shared"]);
   space.participation!.sessions[0].activityAt = new Date(now + 60_000).toISOString();
-  expect(navigationItems([space], [mine, solo], now).map(i => i.key)).toEqual(["workspace:shared"]);
-  expect(navigationItems([space], [mine, solo], now, "chats").map(i => i.key)).toEqual(["session:solo", "session:mine"]);
+  expect(navigationItems([space], [mine, solo], now).map(i => i.key)).toEqual(["session:solo", "workspace:shared"]);
   space.participation!.sessions[0].attached = false;
-  expect(navigationItems([space], [mine, solo], now).map(i => i.key)).toEqual(["workspace:shared"]);
+  expect(navigationItems([space], [mine, solo], now).map(i => i.key)).toEqual(["session:solo", "session:mine", "workspace:shared"]);
+});
+
+it("retains accessible chats when their workspace is missing or deleted despite session-side source history", () => {
+  const space = workspace([participant("mine", "idle", true)]);
+  const mine = { id: "mine", title: "Retained chat", status: "idle", createdAt: new Date(now).toISOString(),
+    workspaceAssociation: { id: space.id, revision: 1 }, developmentWorkspaces: [{ state: "active", workspaceId: space.id }] } as AssistantSession;
+  expect(navigationItems([space], [mine], now).map(i => i.key)).toEqual(["workspace:shared"]);
+  expect(navigationItems([], [mine], now).map(i => i.key)).toEqual(["session:mine"]);
+  expect(navigationItems([{ ...space, workflow: { state: "deleted", revision: 2 } }], [mine], now).map(i => i.key)).toEqual(["session:mine"]);
+});
+
+it("does not hide an own chat behind a private participant with the same session id", () => {
+  const space = workspace([participant("same", "running")]);
+  const mine = { id: "same", title: "My independent chat", status: "idle", createdAt: new Date(now).toISOString() } as AssistantSession;
+  const items = navigationItems([space], [mine], now);
+  expect(items.map(i => i.key)).toEqual(["session:same", "workspace:shared"]);
+  expect(items.find(i => i.workspace)?.matches).toEqual([]);
+  expect(items.find(i => i.workspace)?.counts.working).toBe(1);
+});
+
+it("uses legacy ownership only when participation is absent and keeps empty external workspaces", () => {
+  const mine = { id: "mine", title: "My chat", status: "idle", createdAt: new Date(now).toISOString() } as AssistantSession;
+  const legacy = { ...workspace([]), participation: undefined, owner: { kind: "assistant", appId: "hosty.harness", reference: mine.id, label: "Legacy" } };
+  const external = { ...legacy, id: "external", owner: { kind: "external", reference: "task", label: "External" } };
+  expect(navigationItems([legacy, external], [mine], now).map(i => i.key)).toEqual(["workspace:shared", "workspace:external"]);
+  const detached = { ...legacy, participation: workspace([]).participation };
+  expect(navigationItems([detached], [mine], now).map(i => i.key)).toEqual(["session:mine", "workspace:shared"]);
+});
+
+it("sorts mixed activity with stable identities, ignoring source observations and invalid dates", () => {
+  const older = { ...workspace([]), id: "older", updatedAt: new Date(now - 2000).toISOString() };
+  const newer = { ...older, id: "newer", updatedAt: new Date(now).toISOString() };
+  const unknown = { ...older, id: "unknown", updatedAt: "invalid", participation: undefined };
+  const session = { id: "middle", status: "idle", title: "Middle", createdAt: new Date(now - 1000).toISOString() } as AssistantSession;
+  const sessions = [session, { ...session, id: "z", createdAt: "invalid" }, { ...session, id: "a", createdAt: "invalid" }];
+  const workspaces = [older, unknown, newer];
+  expect(navigationItems(workspaces, sessions, now).map(i => i.key)).toEqual(["workspace:newer", "session:middle", "workspace:older", "session:a", "session:z", "workspace:unknown"]);
+  expect(workspaces.map(w => w.id)).toEqual(["older", "unknown", "newer"]);
+  expect(sessions.map(s => s.id)).toEqual(["middle", "z", "a"]);
 });
 
 it("navigates and counts hosted chats in external workspaces without exposing foreign tabs", () => {

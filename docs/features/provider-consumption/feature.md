@@ -1,6 +1,6 @@
 ---
 created: 2026-09-29
-updated: 2026-11-03
+updated: 2026-11-09
 summary: Apps discover and call confirmed speech, translation, assistant, task and execution providers with short-lived Core credentials.
 components: [apps/core, packages/app-sdk, packages/app-sdk-dotnet, apps/whisper, apps/harness]
 ---
@@ -115,13 +115,18 @@ is reused with different input, instead of reporting a transport failure.
 `SpeechCapabilitiesAsync`, `TranscribeAsync`, `ValidateAsync` and `SendAssistantAsync`. The latter sends
 existing `/handoffs` operations with the acting user's credential. Supply an `HttpClient` with automatic
 redirects disabled and a suitable transcription timeout, plus `HostyAppOptions.FromConfiguration(...)`.
+Long-recording consumers use a deadline of at least fifteen minutes thirty seconds. TypeScript
+SDK 0.47.0 accepts `transcribe(..., { timeoutMs: 930_000 })`; its five-minute default remains intact.
+The optional integer deadline is bounded to 1–930,000 milliseconds and covers authority issuance,
+upload and response. A request-owned matching Undici transport aligns response-header/body timers
+with that deadline without altering the global HTTP dispatcher.
 Methods accept `CancellationToken`. Both SDKs retain stable HTTP status/error codes and refuse interface
 versions other than 1. For container callers, loopback provider URLs are rewritten to the Core host's
 `host.docker.internal` address; that address must be reachable from the container runtime.
 
 ## Whisper Runtime App
 
-`apps/whisper/manifest.json` installs the independent `hosty.whisper` app (0.1.0) with local and source
+`apps/whisper/manifest.json` installs the independent `hosty.whisper` app (0.2.1) with local and source
 development profiles. It is headless, has no system role and is not bundled into Harness. A .NET 10 SDK
 and network access for NuGet/build and the first model download are needed for the source installation.
 Whisper.net and its CPU native runtime are pinned to 1.9.1. The factory explicitly disables GPU use.
@@ -147,9 +152,9 @@ The authenticated version-one endpoint is `/api/speech/v1`:
 - `GET /capabilities`: version, media types, maximum bytes/duration, actual backend and readiness.
 - `POST /transcriptions?language=ru`: raw `audio/wav`; optional language defaults to `auto`; returns
   `{ text, language }`, with null language when auto-detection was requested.
-- Baseline audio is mono, 16 kHz, PCM16 WAV, bounded to 120 seconds and 3,844,096 bytes. Invalid formats
+- Baseline audio is mono, 16 kHz, PCM16 WAV, bounded to 600 seconds and 19,204,096 bytes. Invalid formats
   are refused. There is one active recognition and no queue; additional requests receive 429.
-- Cancellation propagates to native processing. The operation has a five-minute deadline. Missing
+- Cancellation propagates to native processing. The operation has a fifteen-minute deadline. Missing
   credentials return 401, revoked access 403, unsupported media 415, busy 429 and unavailable model or
   Core authorization 503. `/healthz` reports process liveness while a model downloads.
 
@@ -157,7 +162,12 @@ The authenticated version-one endpoint is `/api/speech/v1`:
 
 Harness 0.38.0 requests optional `providers.speech-to-text`. Its composer offers explicit provider
 selection when multiple providers exist, record/stop/cancel controls, and recognition errors. The
-browser converts completed recordings to the WAV baseline. Recording stops before 120 seconds; audio
+browser converts completed recordings to the WAV baseline. Chat recording stops before the smaller
+of ten minutes and the selected provider's advertised duration/byte limit, with an elapsed/limit
+display. Ready WAV capabilities are required before recording; an older two-minute provider keeps
+that lower limit. Canonical chat uploads include a 44-byte WAV header and are bounded again on the
+server using current provider capabilities. The separate feedback recorder retains its shorter
+limit. See [Longer chat speech recordings](../long-speech-recordings/feature.md). Audio
 capture requires a secure browser context (HTTPS or trusted loopback) and separate browser microphone
 consent. Shell 0.90.0 delegates microphone access to an embedded app's origin only with the speech grant;
 changing that grant remounts the frame to release the prior document's microphone resources.

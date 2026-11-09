@@ -1,7 +1,7 @@
 ---
 created: 2026-05-22
-updated: 2026-10-05
-summary: Administrators invite, disable, delete and assign app access to Host users from the Shell User Management view.
+updated: 2026-11-07
+summary: Administrators create, invite, disable, delete and assign app access to Host users from the Shell User Management view.
 components: [apps/core, apps/shell]
 ---
 
@@ -14,6 +14,7 @@ Host users can enter the system through these implemented flows:
 - first-administrator setup creates the initial local `host.admin` with a password after a valid local setup token;
 - local administrator recovery creates or restores a `host.admin` and replaces its password after a valid local recovery token;
 - local invitations create `host.admin` or `host.user` accounts with passwords after the invite is accepted;
+- direct administrator creation creates a local account with an administrator-supplied password and initial app access;
 
 First-administrator bootstrap and local administrator recovery are Core auth flows, not User Management flows. The removed Legacy Host auth-token writer is not part of the current implementation.
 
@@ -49,6 +50,7 @@ The Shell User Management view is available only to `host.admin` principals.
 Administrators can:
 
 - list Host users with role, disabled state, active sessions, and assigned app count;
+- create local users with a password from a separate Create User dialog beside Invite User;
 - invite local `host.user` or `host.admin` accounts;
 - choose invitation expiry from 15 minutes, 24 hours, or 7 days;
 - assign installed apps during invitation creation;
@@ -84,7 +86,13 @@ The recipient opens the URL, confirms the token, sets a password, and creates th
 
 The raw setup token is returned only once to the administrator and is never stored in auth state.
 
-Hosty does not create users directly from User Management. New local users are invite-first, and there is no self-service password reset.
+## Direct Creation
+
+Create User opens a separate dialog beside Invite User. The administrator provides email, optional display name, password and confirmation, role, and initial app access. Passwords must match in the dialog and satisfy Core's existing 8–1024 character policy. Administrators have implicit access to all apps; ordinary users receive the selected assignments.
+
+Core rejects existing user emails, including disabled accounts, and pending invitations for the same email. It creates the user, password credential and assignments atomically. Failed validation leaves no partial account. The response contains a safe user summary, and the audit records `auth.user.created` without password material. Creation does not create a session or replace the administrator's session. The new user signs in normally with email and password.
+
+The dialog displays errors locally, preserves the draft for correction, blocks duplicate submissions while pending, and clears credentials on dismissal or success. Direct creation uses the same protected settings confirmation as other user-management changes; the password is hidden in that review. There is no self-service password reset.
 
 After logout, local users sign in through Core `/login` with email and password. Existing users from older builds that do not have password credentials need administrator recovery before they can use password login.
 
@@ -122,6 +130,7 @@ Invitation assignments are stored on the invitation and applied only when the in
 The UI uses the Core auth API:
 
 - `GET /api/auth/users` lists users, pending invitation summaries, assignable apps, and invite expiry options.
+- `POST /api/auth/users` creates a local user with a password and initial assignments, returning a safe user summary without creating a session.
 - `GET /api/auth/invitations` lists invitation summaries.
 - `POST /api/auth/invitations` creates an invitation and returns the raw setup token and setup URL once.
 - `DELETE /api/auth/invitations/{inviteId}` revokes a pending invitation.
@@ -138,6 +147,8 @@ Common business errors include duplicate email, active invitation already exists
 
 ## Testing Expectations
 
+- Direct creation applies password policy and assignments atomically, supports normal password login, rejects duplicate users and pending invitations, keeps the administrator session, and hides passwords in responses, audit and protected settings review.
+- The separate Create User dialog checks password confirmation, displays recoverable errors, blocks duplicate pending submissions, resets credentials on dismissal/success, and handles role and app assignment changes.
 - Invitation creation rejects a duplicate email and a second pending invitation; acceptance stores
   the password credential, applies the stored assignments and creates a session; a used or expired
   token is refused.

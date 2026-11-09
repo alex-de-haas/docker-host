@@ -1,6 +1,6 @@
 ---
 created: 2026-07-06
-updated: 2026-10-01
+updated: 2026-11-07
 summary: Core-owned email and password setup, recovery, invitations and login.
 components: [apps/core]
 ---
@@ -82,7 +82,7 @@ iterations (current OWASP guidance). `HostUserRecord` and every user summary API
 material.
 
 `LocalPasswordAuthService` owns policy validation, hashing and verification, credential upsert for the
-three account-creating flows, authentication, and in-memory throttling of repeated failures — throttled
+setup, recovery, invitation acceptance and direct administrator creation, authentication, and in-memory throttling of repeated failures — throttled
 separately by email and by remote address, with a cap on the tracked keys so unique login attempts
 cannot grow it without bound. The throttle resets when Core restarts.
 

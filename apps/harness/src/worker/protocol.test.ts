@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -10,7 +10,7 @@ import type { WorkerRunRequest } from "./contracts.js";
 import type { HarnessStartOptions } from "../harness/adapter.js";
 
 const cleanups: Array<() => Promise<unknown>> = [];
-afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
+afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); vi.restoreAllMocks(); });
 const request = (): WorkerRunRequest => ({ conversationId: "chat-1", binding: { connectionId: "account-1", connectionRevision: 1, harnessKind: "codex" },
   selection: { model: null, reasoningEffort: null }, resource: { kind: "conversation", id: "chat-1" }, input: "test", options: {}, autoAllowedPrefixes: [] });
 async function setup(stopAndWait: () => Promise<void> = async () => {}) {
@@ -330,4 +330,51 @@ it("recovers a legacy Local receipt atomically after explicit exit confirmation,
   expect((await recover({ ...input, actorId: "other" })).status).toBe(409);
   expect((await f.put("legacy")).status).toBe(202); expect(f.starts()).toBe(0);
   expect((await again.load("legacy")).events).toEqual(before.events);
+});
+
+it("reports fenced health and refuses only new admission while preserving accepted receipts", async () => {
+  const f = await setup();
+  expect((await f.put("accepted-before-fence")).status).toBe(202);
+  await expect.poll(f.starts).toBe(1);
+  await f.engine.close();
+  expect((await fetch(`${f.base}/healthz`)).status).toBe(503);
+  const capabilities = await fetch(`${f.base}/v1/capabilities`, { headers: f.headers });
+  expect(capabilities.status).toBe(503);
+  expect(await capabilities.json()).toMatchObject({ code: "worker_stopping" });
+  const rejected = await f.put("not-admitted");
+  expect(rejected.status).toBe(503);
+  expect(await rejected.json()).toMatchObject({ code: "worker_stopping" });
+  await expect(f.journal.load("not-admitted")).rejects.toMatchObject({ code: "run_not_found" });
+  const retry = await f.put("accepted-before-fence");
+  expect(retry.status).toBe(202);
+  expect(await retry.json()).toMatchObject({ state: "failed", exitConfirmed: true });
+  expect(f.starts()).toBe(1);
+});
+it.each([true, false])("fences unhealthy usage storage without fabricating exit confirmation (stopped=%s)", async stopped => {
+  const f = await setup(async () => { if (!stopped) throw new Error("Native exit unknown"); });
+  const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+  await f.put("usage-failure"); await expect.poll(f.starts).toBe(1);
+  vi.spyOn(f.journal, "sample").mockRejectedValue(Object.assign(new Error("private path must not be logged"), { code: "ENOSPC" }));
+  await expect.poll(async () => (await fetch(`${f.base}/healthz`)).status).toBe(503);
+  await expect.poll(async () => (await f.journal.load("usage-failure")).receipt.state).toBe(stopped ? "failed" : "interrupted");
+  expect(warning).toHaveBeenCalledWith("[worker] Usage persistence failed; admission fenced.", { code: "ENOSPC" });
+  expect(JSON.stringify(warning.mock.calls)).not.toContain("private path");
+  expect((await f.journal.load("usage-failure")).receipt).toMatchObject({ exitConfirmed: stopped, error: "Worker stopped after usage persistence failed. Check worker logs." });
+  // The renamed receipt is readable before directory fsync finishes and releases capacity.
+  await expect.poll(() => f.engine.occupied, { timeout: 5000 }).toBe(stopped ? 0 : 1);
+});
+it("recovers a missing run only with exact-generation attestation and retains a late-admission tombstone", async () => {
+  const f = await setup();
+  const input = { requestId: "9e52a2da-cd04-46d9-98cf-7aee49d613f1", generation: f.journal.generation, expectedRevision: 0,
+    consumerExitConfirmed: true as const, actorId: "owner", conversationId: "chat-1" };
+  await expect(f.engine.recover("missing-run", { ...input, generation: "stale-worker" })).rejects.toMatchObject({ code: "recovery_stale" });
+  await expect(f.engine.recover("missing-run", { ...input, consumerExitConfirmed: false as true })).rejects.toMatchObject({ code: "recovery_invalid" });
+  const result = await f.engine.recover("missing-run", input);
+  expect(result).toMatchObject({ conversationId: "chat-1", state: "cancelled", exitConfirmed: true, recovery: { requestId: input.requestId, actorId: "owner" } });
+  expect(await f.engine.recover("missing-run", input)).toEqual(result);
+  expect((await f.put("missing-run")).status).toBe(409);
+  expect(f.starts()).toBe(0);
+  const restarted = new WorkerJournal(path.join(f.root, "journal")); await restarted.initialize();
+  expect(await restarted.recover("missing-run", input)).toEqual(result);
+  await expect(restarted.recover("missing-run", { ...input, conversationId: "foreign" })).rejects.toMatchObject({ code: "recovery_stale" });
 });

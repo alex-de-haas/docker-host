@@ -42,6 +42,60 @@ internal sealed class UserManagementService(
             ]);
     }
 
+    public async Task<HostUserCreateResponse> CreateUserAsync(
+        HostUserCreateRequest request,
+        HostUserRecord actor,
+        CancellationToken cancellationToken = default)
+    {
+        var email = NormalizeEmail(request.Email);
+        if (string.IsNullOrWhiteSpace(email))
+        {
+            throw new UserManagementException("invalid_email", "Enter a valid email address.", StatusCodes.Status400BadRequest);
+        }
+
+        var role = NormalizeRole(request.Role);
+        var now = clock.UtcNow;
+        var (user, committedState) = await users.UpdateAsync<(HostUserRecord User, UserDirectoryState State)>(state =>
+        {
+            if (state.Users.Any(existing => string.Equals(existing.Email, email, StringComparison.OrdinalIgnoreCase)))
+            {
+                throw new UserManagementException("email_exists", "A Host user with this email already exists.", StatusCodes.Status409Conflict);
+            }
+
+            if (state.Invitations.Any(invitation =>
+                string.Equals(invitation.Email, email, StringComparison.OrdinalIgnoreCase) &&
+                GetInvitationStatus(invitation, now) == "pending"))
+            {
+                throw new UserManagementException("invitation_exists", "An active invitation for this email already exists.", StatusCodes.Status409Conflict);
+            }
+
+            var created = new HostUserRecord(
+                Id: $"user_{Guid.NewGuid():N}",
+                Email: email,
+                DisplayName: NormalizeOptional(request.DisplayName) ?? email,
+                Role: role,
+                Disabled: false,
+                CreatedAt: now,
+                UpdatedAt: now);
+            var credentials = passwords.UpsertCredential(state.PasswordCredentials, created.Id, request.Password, now);
+            var assignmentIds = role == "host.admin" ? [] : NormalizeIds(request.AssignedAppIds ?? []);
+            var nextState = state with
+            {
+                Users = state.Users.Append(created).ToArray(),
+                PasswordCredentials = credentials,
+                Assignments = state.Assignments.Concat(assignmentIds.Select(appId => new AppAssignmentRecord(appId, created.Id, now))).ToArray(),
+            };
+            return (nextState, (created, nextState));
+        }, cancellationToken);
+
+        await AppendAuditAsync("auth.user.created", "auth.user", user.Id, actor.Id, "succeeded", new Dictionary<string, string>
+        {
+            ["email"] = email,
+            ["role"] = role,
+        }, cancellationToken);
+        return new HostUserCreateResponse(SummarizeUser(committedState, user, now));
+    }
+
     public async Task<UserInvitationCreateResponse> CreateInvitationAsync(
         UserInvitationCreateRequest request,
         HostUserRecord actor,
@@ -609,6 +663,15 @@ internal sealed record UserInvitationAcceptRequest(string SetupToken, string? Di
 internal sealed record UserInvitationAcceptResponse(UserManagementHostUserSummary User, string RedirectTo);
 
 internal sealed record UserInvitationRevokeResponse(bool Revoked);
+
+internal sealed record HostUserCreateRequest(
+    string Email,
+    string? DisplayName = null,
+    string Role = "host.user",
+    string? Password = null,
+    IReadOnlyList<string>? AssignedAppIds = null);
+
+internal sealed record HostUserCreateResponse(UserManagementHostUserSummary User);
 
 internal sealed record HostUserUpdateRequest(string? DisplayName = null, string? Role = null);
 

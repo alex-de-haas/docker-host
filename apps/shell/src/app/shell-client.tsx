@@ -246,6 +246,11 @@ export function ShellClient({
   // Runtime switches reset artifact locks. Refresh any open Manage service diagnostics afterwards.
   const [updateStatusInvalidations, setUpdateStatusInvalidations] = useState<Record<string, number>>({});
   const [workspace, setWorkspace] = useState<EmbeddedWorkspace | null>(null);
+  const workspaceReportState = useRef({ workspace, apps: state.apps });
+  workspaceReportState.current = { workspace, apps: state.apps };
+  const workspaceSurfaceEpoch = useRef(0);
+  const workspaceRenderEpoch = workspaceSurfaceEpoch.current;
+  const acknowledgedWorkspaceRoute = useRef<{ appId: string; src: string; path: string } | null>(null);
   const [optimisticWorkspaceRoute, setOptimisticWorkspaceRoute] = useState<WorkspaceRoute | null>(null);
   const [sidebarCompact, setSidebarCompact] = useState(initialSidebarCompact ?? false);
   const [narrowViewport, setNarrowViewport] = useState(false);
@@ -717,6 +722,7 @@ export function ShellClient({
   const launchAppPage = useCallback(
     async (app: CoreApp, page: AppPageLink, target: AppOpenTarget = "workspace"): Promise<boolean> => {
       if (app.id === shellAppId) {
+        workspaceSurfaceEpoch.current++;
         setWorkspace(null);
         setOptimisticWorkspaceRoute(null);
         router.push(getShellViewHref(canManageApps ? "dashboard" : "home"));
@@ -746,6 +752,9 @@ export function ShellClient({
         return true;
       }
 
+      workspaceSurfaceEpoch.current++;
+      acknowledgedWorkspaceRoute.current = null;
+
       const routePath = normalizeAppPath(page.path);
       const embeddedRedirectUri = appendHostyLaunchParam(
         appendThemeLaunchParams(page.redirectUri, shellResolvedTheme, shellThemePreference),
@@ -762,6 +771,7 @@ export function ShellClient({
           title: app.displayName,
           pageLabel: page.label,
           path: routePath,
+          launchPath: routePath,
           src: embeddedRedirectUri,
           externalUrl: getStandaloneAppHref(app, page),
         });
@@ -791,6 +801,7 @@ export function ShellClient({
           title: app.displayName,
           pageLabel: page.label,
           path: routePath,
+          launchPath: routePath,
           src: embeddedRedirectUri,
           // The standalone href, never the frame's own URL: that one declares the embedded mode,
           // and a new tab opened on it would be an app hiding the navigation nothing else renders.
@@ -815,6 +826,39 @@ export function ShellClient({
     },
     [appEndpoint, canManageApps, getStandaloneAppHref, router, sendCsrfJson, shellAppId, shellResolvedTheme, shellThemePreference, workspace?.appId],
   );
+
+  // The SDK verifies the reporting document, origin and declared route. Only the currently
+  // mounted main surface may update Shell's reload destination; its iframe source stays fixed.
+  const handleWorkspaceSurfaceState = useCallback((source: EmbeddedWorkspace, installationId: string | null | undefined,
+    epoch: number, report: { route: string; title?: string }) => {
+    const current = workspaceReportState.current.workspace;
+    const app = workspaceReportState.current.apps.find(item => item.id === source.appId);
+    if (!current || !app || epoch !== workspaceSurfaceEpoch.current || current.appId !== source.appId
+      || current.src !== source.src || app.installationId !== installationId) return;
+    const parent = new URL(window.location.href);
+    const active = readShellRoute(parent.pathname, parent.searchParams).workspace;
+    if (normalizeShellPath(parent.pathname) !== "/workspace" || active?.appId !== current.appId
+      || normalizeAppPath(active.path) !== current.path || !report.route.startsWith("/") || report.route.startsWith("//")) return;
+    try {
+      const launch = new URL(source.src), reported = new URL(report.route, launch.origin);
+      if (reported.origin !== launch.origin) return;
+      const launchPath = new URL(source.launchPath ?? source.path, "https://app.invalid").pathname.replace(/\/$/, "");
+      const launchedPath = launch.pathname.replace(/\/$/, "");
+      const prefix = !launchPath ? launchedPath : launchedPath.endsWith(launchPath) ? launchedPath.slice(0, -launchPath.length) : "";
+      if (prefix && reported.pathname !== prefix && !reported.pathname.startsWith(`${prefix}/`)) return;
+      const path = `${reported.pathname.slice(prefix.length) || "/"}${reported.search}${reported.hash}`;
+      const page = findAppPageLink(app, path);
+      if (!page) return;
+      const next = { ...current, path, pageLabel: report.title ?? page.label,
+        externalUrl: getStandaloneAppHref(app, { ...page, redirectUri: reported.href }) };
+      acknowledgedWorkspaceRoute.current = { appId: current.appId, src: current.src, path };
+      workspaceReportState.current = { ...workspaceReportState.current, workspace: next };
+      // Keep unrelated Shell parameters, including the compact assistant's selection, intact.
+      parent.searchParams.set("app", current.appId); parent.searchParams.set("path", path);
+      window.history.replaceState(window.history.state, "", parent.pathname + parent.search + parent.hash);
+      setWorkspace(next);
+    } catch { /* A rejected route never changes the active page or its source. */ }
+  }, [getStandaloneAppHref]);
 
   useEffect(() => {
     if (!panelHost) return;
@@ -1941,6 +1985,19 @@ export function ShellClient({
     }
 
     const routePath = normalizeAppPath(page.path);
+    const acknowledged = acknowledgedWorkspaceRoute.current;
+    if (acknowledged && workspace?.appId === acknowledged.appId && workspace.src === acknowledged.src && workspace.path === acknowledged.path) {
+      if (routePath === acknowledged.path) acknowledgedWorkspaceRoute.current = null;
+      else {
+        const browser = new URL(window.location.href);
+        const observed = readShellRoute(browser.pathname, browser.searchParams).workspace;
+        // Native history updates notify Next's router; its previous search snapshot can render once
+        // before that notification catches up. It must not relaunch the acknowledged document.
+        if (normalizeShellPath(browser.pathname) === "/workspace" && observed?.appId === acknowledged.appId
+          && normalizeAppPath(observed.path) === acknowledged.path) return;
+        acknowledgedWorkspaceRoute.current = null;
+      }
+    }
     if (workspace?.appId === app.id && workspace.path === routePath) {
       pendingWorkspaceRoute.current = null;
       setBusyAction((current) => current === `${app.id}:open` ? null : current);
@@ -1964,6 +2021,7 @@ export function ShellClient({
         title: app.displayName,
         pageLabel: page.label,
         path: routePath,
+        launchPath: routePath,
         src: embeddedRedirectUri,
         externalUrl: getStandaloneAppHref(app, page),
       });
@@ -1988,6 +2046,7 @@ export function ShellClient({
           title: workspaceApp.displayName,
           pageLabel: workspacePage.label,
           path: routePath,
+          launchPath: routePath,
           src: embeddedRedirectUri,
           externalUrl: getStandaloneAppHref(workspaceApp, workspacePage),
         });
@@ -2484,6 +2543,8 @@ export function ShellClient({
                   onAuthRequired={handleAuthRequired}
                   onDelegatedTokenRequest={handleDelegatedTokenRequest}
                   onAskAssistant={assistantAvailable ? askAssistant : undefined}
+                  onSurfaceState={report => handleWorkspaceSurfaceState(workspace,
+                    state.apps.find(app => app.id === workspace.appId)?.installationId, workspaceRenderEpoch, report)}
                 />
               ) : activeWorkspaceRoute ? (
                 <EmbeddedWorkspacePendingPanel

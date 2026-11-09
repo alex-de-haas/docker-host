@@ -21,7 +21,7 @@ export function prepareSourceDiff({ path, content, untracked, truncated }: Sourc
     if (untracked) {
       return { kind: "diff", file: parseDiffFromFile(null, { name: path, contents: content }) };
     }
-    const files = parsePatchFiles(content, undefined, true).flatMap((patch) => patch.files);
+    const files = parsePatchFiles(content, { throwOnError: true }).flatMap((patch) => patch.files);
     if (files.length === 1 && files[0].hunks.length > 0) return { kind: "diff", file: files[0] };
     return { kind: "text", message: "No line changes to display. File metadata is shown below." };
   } catch {

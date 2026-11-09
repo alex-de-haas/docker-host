@@ -506,6 +506,8 @@ internal static class CoreJson
 [JsonSerializable(typeof(UserInvitationCreateRequest))]
 [JsonSerializable(typeof(UserInvitationAcceptRequest))]
 [JsonSerializable(typeof(HostUserUpdateRequest))]
+[JsonSerializable(typeof(HostUserCreateRequest))]
+[JsonSerializable(typeof(HostUserCreateResponse))]
 [JsonSerializable(typeof(HostUserAssignmentsRequest))]
 
 // HTTP responses / results.

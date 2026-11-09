@@ -24,14 +24,15 @@ internal static class UserProfileEndpoints
             => RequireSourceAsync(request, users, clock, u => Handle(async () => SourceProfile(await service.UpdateGitIdentityAsync(u.Id, input.GitIdentity, ct))), ct));
         sources.MapPost("/pat", (HttpRequest request, UserConnectionInput input, UserDirectoryStore users, IClock clock, UserConnectionService service, CancellationToken ct)
             => RequireSourceAsync(request, users, clock, u => Handle(() => service.AddPatAsync(u.Id, input, ct)), ct));
+        sources.MapPost("/{id}/pat", (string id, HttpRequest request, UserConnectionInput input, UserDirectoryStore users, IClock clock, UserConnectionService service, CancellationToken ct)
+            => RequireSourceAsync(request, users, clock, u => Handle(() => service.AddPatAsync(u.Id, input, ct, id)), ct));
+        sources.MapPost("/{id}/device", (string id, HttpRequest request, UserConnectionInput input, UserDirectoryStore users, IClock clock, UserConnectionService service, AppIdentityService identities, CancellationToken ct)
+            => RequireSourceAsync(request, users, clock, u => Handle(async () =>
+                await service.StartDeviceAsync(u.Id, await SourceBrowserSessionAsync(request, identities, ct), input, ct, id)), ct));
         sources.MapPost("/device", (HttpRequest request, UserConnectionInput input, UserDirectoryStore users, IClock clock, UserConnectionService service, AppIdentityService identities, CancellationToken ct)
             => RequireSourceAsync(request, users, clock, u => Handle(async () =>
             {
-                var sessionId = AppManagementAuthorization.Caller(request) is { } caller
-                    ? await identities.AuthorizingBrowserSessionAsync(request.Headers[AppManagementAuthorization.IdentityHeader].ToString(), caller.App.Id, ct)
-                    : CoreSessionAuthorization.ReadSessionId(request);
-                if (sessionId is null) throw new UserConnectionException("browser_session_required", "Sign in through Core before connecting a provider.", 403);
-                return await service.StartDeviceAsync(u.Id, sessionId, input, ct);
+                return await service.StartDeviceAsync(u.Id, await SourceBrowserSessionAsync(request, identities, ct), input, ct);
             }), ct));
         sources.MapPost("/device/{id}/poll", (string id, HttpRequest request, UserDirectoryStore users, IClock clock, UserConnectionService service, CancellationToken ct)
             => RequireSourceAsync(request, users, clock, u => Handle(() => service.PollAsync(u.Id, id, ct)), ct));
@@ -44,6 +45,14 @@ internal static class UserProfileEndpoints
         sources.MapDelete("/{id}", (string id, HttpRequest request, UserDirectoryStore users, IClock clock, UserConnectionService service, CancellationToken ct)
             => RequireSourceAsync(request, users, clock, u => Handle(() => service.DisconnectAsync(u.Id, id, ct)), ct));
     }
+    private static async Task<string> SourceBrowserSessionAsync(HttpRequest request, AppIdentityService identities, CancellationToken ct)
+    {
+        var sessionId = AppManagementAuthorization.Caller(request) is { } caller
+            ? await identities.AuthorizingBrowserSessionAsync(request.Headers[AppManagementAuthorization.IdentityHeader].ToString(), caller.App.Id, ct)
+            : CoreSessionAuthorization.ReadSessionId(request);
+        return sessionId ?? throw new UserConnectionException("browser_session_required", "Sign in through Core before connecting a provider.", 403);
+    }
+
     private static BasicUserProfile BasicProfile(UserProfileResponse profile) => new(profile.Id, profile.Email, profile.DisplayName);
     private static SourceConnectionsResponse SourceProfile(UserProfileResponse profile) => new(profile.Connections, profile.Providers, profile.GitIdentity);
 

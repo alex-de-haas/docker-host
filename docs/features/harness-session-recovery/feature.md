@@ -37,8 +37,11 @@ later explicit continuation; recovery itself sends no new prompt.
 Recovery review waits for serialized conversation setup and the new Worker's durable acceptance
 before reading its receipt. A freshly submitted prompt therefore does not display a missing-run
 error while its journal record is still being created. The wait covers acceptance only, not the
-agent's response or coordinator event callbacks. Existing retained runs still report missing
-receipts and admission failures remain visible.
+agent's response or coordinator event callbacks. A retained run whose acceptance receipt is missing receives a separate recovery review bound to
+the current Worker generation. The owning interactive operator must still explicitly confirm native
+exit. Recovery atomically writes a cancelled tombstone for that exact conversation/run before
+normal source cleanup; a late submission cannot execute the recovered identity. Ordinary admission
+failures remain visible and are never inferred to be successful runs.
 
 ## Verified Local Runtime
 
@@ -88,7 +91,10 @@ remained unchanged. Both original workspaces remain available; recovery performe
 
 Worker coverage includes failed native Stop followed by successful retry, refusal while a handle
 is retained, legacy Local journal restart, missing confirmation, stale generation/revision and
-same-request replay across restart. Coordinator tests cover owner checks, unchanged history, source
+same-request replay across restart, bounded transient sharing failures and durable usage clocks.
+Missing-receipt recovery covers current-generation review, explicit exit confirmation, active-run
+refusal, late-admission conflicts and replay after a real service restart.
+Coordinator tests cover owner checks, unchanged history, source
 claim release, lost replies and failed Core cleanup without new prompt admission. HTTP tests require
 interactive authentication, ownership and same-origin requests. UI tests require explicit confirmation,
 retain the same request after uncertainty and restore server-retained requests.

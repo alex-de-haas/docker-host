@@ -114,11 +114,10 @@ internal sealed partial class GitHubPublicationProvider(HttpClient http, IClock 
     {
         var url = "https://github.com/" + Slug(destination) + ".git";
         await PrivateSourceService.ValidateGitConfigAsync(w.Path, url, ct);
-        var start = AppSourceService.CreateGitStartInfo(w.Path, ["push", "--no-verify", url, head + ":refs/heads/" + branch]);
+        var start = AppSourceService.CreateGitStartInfo(w.Path, ["push", "--porcelain", "--no-verify", url, head + ":refs/heads/" + branch]);
         PrivateSourceService.ConfigureGit(start, url, "Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes("x-access-token:" + c.AccessToken)));
         var result = await ProcessRunner.RunAsync(start, TimeSpan.FromMinutes(5), ct, 256 * 1024);
-        if (result.TimedOut || result.ExitCode != 0)
-            throw new PublicationException("push_uncertain", "Push did not confirm success. Recover using the same request ID; remote history is never force-pushed.");
+        RequirePushSuccess(result, branch);
     }
     public async Task<PublicationReference?> FindAsync(UserProviderConnection c, PublicationRecord r, CancellationToken ct)
     {

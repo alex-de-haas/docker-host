@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, Copy } from "lucide-react";
 import { HostyEmptySlots, HostyLoader } from "../../../../../../shared/web/hosty-states";
 import { createSourceConnectionsApi, type SourceProfile, type SourceConnection, type SourceSend } from "../source/source-connections";
@@ -29,12 +29,16 @@ export function SourceProviders({ coreOrigin, sendCsrfJson }: { coreOrigin: stri
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [adding, setAdding] = useState(false);
+  const [reconnecting, setReconnecting] = useState<Connection | null>(null);
+  const reconnectTrigger = useRef<HTMLButtonElement | null>(null);
   const [advanced, setAdvanced] = useState(false);
   const [provider, setProvider] = useState("github");
   const [method, setMethod] = useState("device");
   const [label, setLabel] = useState("");
   const [token, setToken] = useState("");
   const [privateRepositories, setPrivateRepositories] = useState(false);
+  const [repositoryAccess, setRepositoryAccess] = useState<"public" | "private" | null>(null);
+  const [pollFailed, setPollFailed] = useState(false);
   const [device, setDevice] = useState<Device | null>(null);
   const endpoint = "/source-connections";
   const load = useCallback(async (signal?: AbortSignal) => {
@@ -48,7 +52,7 @@ export function SourceProviders({ coreOrigin, sendCsrfJson }: { coreOrigin: stri
     return () => controller.abort();
   }, [load]);
   useEffect(() => {
-    if (!device) return;
+    if (!device || pollFailed) return;
     let active = true;
     const timer = setTimeout(async () => {
       try {
@@ -56,14 +60,14 @@ export function SourceProviders({ coreOrigin, sendCsrfJson }: { coreOrigin: stri
         const next = await response.json() as Device;
         if (!active) return;
         if (next.status === "connected") {
-          setDevice(null); setAdding(false); setNotice("Account connected."); setProfile(await load());
+          setDevice(null); setAdding(false); setReconnecting(null); setNotice(reconnecting ? "Connection renewed." : "Account connected."); setProfile(await load());
         } else setDevice(next);
       } catch (cause) {
-        if (active) { setError(message(cause)); setDevice(null); }
+        if (active) { setError(message(cause)); setPollFailed(true); }
       }
     }, Math.max(device.interval, 5) * 1000);
     return () => { active = false; clearTimeout(timer); };
-  }, [device, endpoint, load, send]);
+  }, [device, endpoint, load, pollFailed, reconnecting, send]);
   const run = async (action: () => Promise<void>) => {
     setBusy(true); setError(""); setNotice("");
     try { await action(); return true; }
@@ -75,30 +79,41 @@ export function SourceProviders({ coreOrigin, sendCsrfJson }: { coreOrigin: stri
     const updated = await response.json() as Profile;
     setProfile(updated); setGitName(updated.gitIdentity?.name ?? ""); setGitEmail(updated.gitIdentity?.email ?? ""); setNotice("Git identity saved.");
   });
+  const needsRepositoryAccessChoice = !!reconnecting && reconnecting.grantedScopes == null;
   const connect = () => run(async () => {
+    if (method === "device" && needsRepositoryAccessChoice && repositoryAccess === null)
+      throw new Error("Choose public-only or public and private repository access before renewing.");
     try {
-      const response = await send(`${endpoint}/${method}`, {
+      const response = await send(`${endpoint}/${reconnecting ? `${encodeURIComponent(reconnecting.id)}/` : ""}${method}`, {
         label, provider, token: method === "pat" ? token : undefined, privateRepositories,
       });
-      if (method === "device") setDevice(await response.json() as Device);
-      else { setProfile(await load()); setAdding(false); setNotice("Account connected."); }
+      if (method === "device") { setPollFailed(false); setDevice(await response.json() as Device); }
+      else { setProfile(await load()); setAdding(false); setReconnecting(null); setNotice(reconnecting ? "Connection renewed." : "Account connected."); }
     } finally { setToken(""); }
   });
   const cancel = async () => {
     setToken("");
     const cancelled = await run(async () => {
       const id = device?.id;
-      setDevice(null);
       if (id) await send(`${endpoint}/device/${id}`, undefined, "DELETE");
+      setDevice(null);
       setProfile(await load());
     });
-    if (cancelled) setAdding(false);
+    if (cancelled) { setAdding(false); setReconnecting(null); }
   };
   const changeAdding = (open: boolean) => {
     if (busy) return;
     if (!open) { void cancel(); return; }
+    setReconnecting(null); reconnectTrigger.current = null;
     setProvider("github"); setMethod("device"); setLabel("");
-    setToken(""); setPrivateRepositories(false); setAdvanced(false); setError(""); setNotice(""); setAdding(true);
+    setToken(""); setPrivateRepositories(false); setRepositoryAccess(null); setPollFailed(false); setAdvanced(false); setError(""); setNotice(""); setAdding(true);
+  };
+  const reconnect = (connection: Connection, trigger: HTMLButtonElement) => {
+    reconnectTrigger.current = trigger;
+    setReconnecting(connection); setProvider(connection.provider);
+    setMethod(connection.method === "pat" ? "pat" : "device"); setLabel(connection.label);
+    setToken(""); setPrivateRepositories(connection.grantedScopes?.includes("repo") ?? false); setRepositoryAccess(null); setPollFailed(false); setAdvanced(connection.method === "pat");
+    setError(""); setNotice(""); setAdding(true);
   };
   const update = (id: string, action: "rename" | "check" | "disconnect", nextLabel?: string) => run(async () => {
     try {
@@ -126,12 +141,16 @@ export function SourceProviders({ coreOrigin, sendCsrfJson }: { coreOrigin: stri
           <DialogTrigger asChild><Button variant="outline" disabled={busy}>Add connection</Button></DialogTrigger></div>
         <p className="text-sm text-muted-foreground">Connect several accounts, including different accounts of the same provider. Connections belong to you and do not change how you sign in to Hosty.</p>
         {!profile.connections.length && <p className="flex flex-col items-center gap-3 rounded-lg border py-6 text-sm text-muted-foreground"><HostyEmptySlots className="size-12" />No connected accounts yet.</p>}
-        {profile.connections.map(connection => <ConnectionCard key={connection.id} connection={connection} busy={busy} update={update} />)}
+        {profile.connections.map(connection => <ConnectionCard key={connection.id} connection={connection} busy={busy} update={update} reconnect={reconnect} canReconnect={profile.providers.some(p => p.id === connection.provider && p.authenticationMethods.length > 0)} />)}
       </div>
-      <DialogContent className="max-h-[90dvh] overflow-y-auto" showCloseButton={!busy}>
+      <DialogContent className="max-h-[90dvh] overflow-y-auto" showCloseButton={!busy} onCloseAutoFocus={event => {
+        if (reconnectTrigger.current) { event.preventDefault(); reconnectTrigger.current.focus(); reconnectTrigger.current = null; }
+      }}>
         <DialogHeader>
-          <DialogTitle>Add connection</DialogTitle>
-          <DialogDescription>Connect a GitHub account for repositories and pull requests.</DialogDescription>
+          <DialogTitle>{reconnecting ? "Reconnect account" : "Add connection"}</DialogTitle>
+          <DialogDescription>{reconnecting
+            ? `Renew access for ${reconnecting.accountName}. Your applications, repositories and pull requests stay connected.`
+            : "Connect a GitHub account for repositories and pull requests."}</DialogDescription>
         </DialogHeader>
         {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
         <form className="flex flex-col gap-4" onSubmit={event => { event.preventDefault(); void connect(); }}>
@@ -139,22 +158,40 @@ export function SourceProviders({ coreOrigin, sendCsrfJson }: { coreOrigin: stri
           <p>Open the provider page and enter this code:</p>
           <DeviceCode key={device.id} code={device.userCode} />
           <Button asChild variant="outline"><a href={device.verificationUri} target="_blank" rel="noreferrer">Open authorization page</a></Button>
-          <p role="status" className="text-sm text-muted-foreground">Waiting for authorization. Use the account you want to connect. Expires {new Date(device.expiresAt).toLocaleTimeString()}.</p>
+          <p role="status" className="text-sm text-muted-foreground">{pollFailed ? "Authorization check paused. Retry or cancel this attempt." : "Waiting for authorization."} {reconnecting ? `Use the account ${reconnecting.accountName}.` : "Use the account you want to connect."} Expires {new Date(device.expiresAt).toLocaleTimeString()}.</p>
+          {pollFailed && <Button type="button" variant="outline" disabled={busy} onClick={() => { setError(""); setPollFailed(false); }}>Retry authorization check</Button>}
         </div> : <FieldGroup>
           <Field><FieldLabel htmlFor="connection-provider">Provider</FieldLabel>
-            <Select value={provider} disabled={busy} onValueChange={value => { setProvider(value); setToken(""); setError(""); }}>
+            <Select value={provider} disabled={busy || !!reconnecting} onValueChange={value => { setProvider(value); setToken(""); setError(""); }}>
               <SelectTrigger id="connection-provider" className="w-full"><SelectValue /></SelectTrigger>
               <SelectContent position="popper"><SelectGroup>
                 {profile.providers.map(p => <SelectItem key={p.id} value={p.id}>{p.displayName}</SelectItem>)}
               </SelectGroup></SelectContent>
             </Select>
           </Field>
-          {method === "device" && configured && <p className="text-sm text-muted-foreground">You will confirm a one-time code on {profile.providers.find(p => p.id === provider)?.displayName}. Your account name will be used for this connection.</p>}
+          {method === "device" && configured && <p className="text-sm text-muted-foreground">You will confirm a one-time code on {profile.providers.find(p => p.id === provider)?.displayName}. {reconnecting ? `Sign in as ${reconnecting.accountName} to keep this connection.` : "Your account name will be used for this connection."}</p>}
           {method === "device" && !configured && <div className="flex flex-col items-start gap-2">
             <p className="text-sm text-muted-foreground">Provider sign-in is not configured on this host. You can connect with a personal access token.</p>
             <Button type="button" variant="outline" disabled={busy} onClick={() => { setMethod("pat"); setAdvanced(true); }}>Use a personal access token</Button>
           </div>}
-          {method === "device" && provider === "github" && <label className="flex items-center gap-2 text-sm"><Checkbox checked={privateRepositories} onCheckedChange={value => setPrivateRepositories(value === true)} />Request access to private repositories too</label>}
+          {method === "device" && provider === "github" && (needsRepositoryAccessChoice ? <Field>
+            <FieldLabel htmlFor="connection-repository-access">Repository access</FieldLabel>
+            <Select value={repositoryAccess ?? ""} disabled={busy} onValueChange={value => {
+              setRepositoryAccess(value as "public" | "private"); setPrivateRepositories(value === "private");
+            }}>
+              <SelectTrigger id="connection-repository-access" className="w-full"><SelectValue placeholder="Choose repository access" /></SelectTrigger>
+              <SelectContent position="popper"><SelectGroup>
+                <SelectItem value="public">Public repositories only</SelectItem>
+                <SelectItem value="private">Public and private repositories</SelectItem>
+              </SelectGroup></SelectContent>
+            </Select>
+            <p className="text-sm text-muted-foreground">Choose the access your connected repositories need. Existing access stays in use until renewal succeeds.</p>
+          </Field> : <>
+            <label className="flex items-center gap-2 text-sm"><Checkbox checked={privateRepositories} disabled={busy || reconnecting?.grantedScopes?.includes("repo")} onCheckedChange={value => setPrivateRepositories(value === true)} />Request access to private repositories too</label>
+            {reconnecting && <p className="text-sm text-muted-foreground">{reconnecting.grantedScopes?.includes("repo")
+              ? "Private repository access is retained for your connected repositories."
+              : "Include private repository access if any connected repositories are private."}</p>}
+          </>)}
           <Collapsible open={advanced} onOpenChange={setAdvanced} className="flex flex-col gap-3">
             <CollapsibleTrigger asChild><Button type="button" variant="ghost" className="self-start" disabled={busy}>Additional options</Button></CollapsibleTrigger>
             <CollapsibleContent>
@@ -167,7 +204,7 @@ export function SourceProviders({ coreOrigin, sendCsrfJson }: { coreOrigin: stri
                     </SelectGroup></SelectContent>
                   </Select>
                 </Field>
-                <Field><FieldLabel htmlFor="connection-label">Connection name (optional)</FieldLabel><Input id="connection-label" placeholder="Use account name" value={label} onChange={e => setLabel(e.target.value)} maxLength={100} /></Field>
+                {!reconnecting && <Field><FieldLabel htmlFor="connection-label">Connection name (optional)</FieldLabel><Input id="connection-label" placeholder="Use account name" value={label} onChange={e => setLabel(e.target.value)} maxLength={100} /></Field>}
               </FieldGroup>
             </CollapsibleContent>
           </Collapsible>
@@ -175,7 +212,7 @@ export function SourceProviders({ coreOrigin, sendCsrfJson }: { coreOrigin: stri
         </FieldGroup>}
         <DialogFooter>
           <Button type="button" variant="outline" disabled={busy} onClick={() => void cancel()}>Cancel</Button>
-          {!device && <Button type="submit" disabled={busy || (method === "device" && !configured)}>{method === "device" ? `Connect ${profile.providers.find(p => p.id === provider)?.displayName ?? provider}` : "Connect account"}</Button>}
+          {!device && <Button type="submit" disabled={busy || (method === "device" && (!configured || (needsRepositoryAccessChoice && repositoryAccess === null)))}>{reconnecting ? "Renew connection" : method === "device" ? `Connect ${profile.providers.find(p => p.id === provider)?.displayName ?? provider}` : "Connect account"}</Button>}
         </DialogFooter>
         </form>
       </DialogContent>
@@ -213,7 +250,7 @@ function DeviceCode({ code }: { code: string }) {
     {copyError && <Alert variant="destructive"><AlertDescription>Could not copy automatically. Select the code and copy it manually.</AlertDescription></Alert>}
   </>;
 }
-function ConnectionCard({ connection: c, busy, update }: { connection: Connection; busy: boolean; update: (id: string, action: "rename" | "check" | "disconnect", label?: string) => Promise<boolean> }) {
+function ConnectionCard({ connection: c, busy, update, reconnect, canReconnect }: { connection: Connection; busy: boolean; reconnect: (connection: Connection, trigger: HTMLButtonElement) => void; canReconnect: boolean; update: (id: string, action: "rename" | "check" | "disconnect", label?: string) => Promise<boolean> }) {
   const [editing, setEditing] = useState(false); const [label, setLabel] = useState(c.label); const [removing, setRemoving] = useState(false);
   return <article className="flex flex-col gap-2 rounded-lg border p-4" aria-label={c.label}>
     <div className="flex flex-wrap justify-between gap-2"><h4 className="font-medium">{c.label}</h4><span className="text-xs text-muted-foreground">{c.status === "connected" ? "Connected" : c.status === "reconnect-required" ? "Reconnect required" : c.status === "unsupported" ? "Provider no longer supported" : "Provider unavailable"}</span></div>
@@ -225,6 +262,7 @@ function ConnectionCard({ connection: c, busy, update }: { connection: Connectio
       <Button type="button" variant="ghost" onClick={() => setEditing(false)}>Cancel rename</Button>
     </form> : <div className="flex flex-wrap gap-2">
       <Button size="sm" variant="outline" disabled={busy || c.status === "unsupported"} onClick={() => void update(c.id, "check")}>Check connection</Button>
+      <Button size="sm" variant="outline" disabled={busy || c.status === "unsupported" || !canReconnect} onClick={event => reconnect(c, event.currentTarget)}>Reconnect</Button>
       <Button size="sm" variant="ghost" disabled={busy} onClick={() => { setLabel(c.label); setEditing(true); }}>Rename</Button>
       <Button size="sm" variant="ghost" disabled={busy} onClick={() => setRemoving(true)}>Disconnect</Button>
     </div>}

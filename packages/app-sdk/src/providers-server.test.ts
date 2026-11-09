@@ -1,8 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProviderClient } from "./providers-server";
+import { createServer } from "node:http";
+import { once } from "node:events";
+import { Agent, fetch as speechFetch } from "undici";
+vi.mock("undici", async importOriginal => {
+  const original = await importOriginal<typeof import("undici")>();
+  return { ...original, fetch: vi.fn((...args: Parameters<typeof original.fetch>) => globalThis.fetch(args[0] as string, args[1] as RequestInit)) };
+});
 const provider = { appId: "speech", key: "default", kind: "speech-to-text" as const, displayName: "Speech", version: 1, url: "http://127.0.0.1:3500/api/speech/v1", capabilities: ["recording"], available: true };
 const client = () => new ProviderClient({ appId: "ordinary", coreOrigin: "http://core.test", serviceToken: "private-service" });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 describe("provider credentials", () => {
   it("keeps service credentials in Core and sends only scoped authority and audio to the chosen provider", async () => {
     const fetch = vi.fn().mockResolvedValueOnce(Response.json({ token: "scoped", provider })).mockResolvedValueOnce(Response.json({ text: "hello" }));
@@ -11,7 +18,7 @@ describe("provider credentials", () => {
     expect(String(fetch.mock.calls[0]![0])).toBe("http://core.test/api/internal/apps/ordinary/providers/speech-to-text/token");
     expect(fetch.mock.calls[0]![1].headers.authorization).toBe("Bearer private-service");
     expect(fetch.mock.calls[1]![1]).toMatchObject({ headers: { authorization: "Bearer scoped", "content-type": "audio/wav" }, redirect: "error" });
-    expect(await fetch.mock.calls[1]![1].body.text()).toBe("wave");
+    expect(new TextDecoder().decode(fetch.mock.calls[1]![1].body)).toBe("wave");
   });
   it("preserves denial and never tries a provider after Core refuses permission", async () => {
     const fetch = vi.fn().mockResolvedValue(Response.json({ code: "app_permission_required", message: "Denied" }, { status: 403 })); vi.stubGlobal("fetch", fetch);
@@ -31,6 +38,44 @@ describe("provider credentials", () => {
     await expect(client().transcribe(provider, new Blob(), { signal: controller.signal })).rejects.toMatchObject({ name: "AbortError" });
     expect(fetch.mock.calls[0]![1].signal.aborted).toBe(true);
   });
+});
+
+describe("speech deadlines", () => {
+  it.each([undefined, 930_000])("preserves the default and accepts the extended explicit deadline (%j)", async timeoutMs => {
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    const fetch = vi.fn().mockResolvedValueOnce(Response.json({ token: "scoped", provider })).mockResolvedValueOnce(Response.json({ text: "hello" }));
+    vi.stubGlobal("fetch", fetch);
+    await client().transcribe(provider, new Blob(), { timeoutMs });
+    expect(timeout).toHaveBeenCalledWith(timeoutMs ?? 300_000);
+    expect(fetch.mock.calls[1]![1].dispatcher).toBeInstanceOf(Agent);
+  });
+  it.each([0, -1, 1.5, 930_001, Infinity, NaN])("rejects an invalid timeout before issuing authority (%j)", async timeoutMs => {
+    const fetch = vi.fn(); vi.stubGlobal("fetch", fetch);
+    await expect(client().transcribe(provider, new Blob(), { timeoutMs })).rejects.toMatchObject({ code: "speech_timeout_invalid", status: 400 });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it("uses its own HTTP response deadline instead of a lower transport limit", async () => {
+    const original = await vi.importActual<typeof import("undici")>("undici");
+    const short = new Agent({ headersTimeout: 100, bodyTimeout: 100 });
+    let origin = "";
+    const server = createServer((request, response) => {
+      response.setHeader("content-type", "application/json");
+      if (request.url?.endsWith("/token")) response.end(JSON.stringify({ token: "scoped-test", provider: { ...provider, url: origin + "/speech" } }));
+      else { request.resume(); setTimeout(() => response.end(JSON.stringify({ text: "long response" })), 2100).unref(); }
+    });
+    server.listen(0, "127.0.0.1"); await once(server, "listening");
+    const address = server.address(); if (!address || typeof address === "string") throw new Error("Missing test listener");
+    origin = `http://127.0.0.1:${address.port}`;
+    try {
+      await expect(original.fetch(origin + "/speech/transcriptions", { dispatcher: short })).rejects.toMatchObject({ cause: { code: "UND_ERR_HEADERS_TIMEOUT" } });
+      const selected = new ProviderClient({ appId: "ordinary", coreOrigin: origin, serviceToken: "test-service" });
+      vi.mocked(speechFetch).mockImplementationOnce(original.fetch);
+      expect(await selected.transcribe(provider, new Blob(["wave"]), { timeoutMs: 5000 })).toEqual({ text: "long response" });
+    } finally {
+      await short.close(); server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
+  }, 10000);
 });
 
 describe("translation providers", () => {

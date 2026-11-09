@@ -308,3 +308,27 @@ it("does not inspect protocol or clear a valid attempt for substituted recovery 
   expect(response.headers.get("set-cookie")).toBeNull();
   expect(protocol).not.toHaveBeenCalled();
 });
+
+
+it.each(["device", "pat"])("forwards existing connection %s renewal with the Shell identity and CSRF protection", async method => {
+  const body = JSON.stringify({ provider: "github", ...(method === "pat" ? { token: "replacement-secret" } : {}) });
+  fetchMock.mockResolvedValue(Response.json({ id: method === "pat" ? "existing" : "attempt", status: "connected" }));
+  const request = () => new Request(`${origin}/api/core/api/source-connections/existing/${method}`, { method: "POST",
+    headers: { cookie: `${appCookie}=own-grant; hosty_shell_csrf=csrf`, "X-Hosty-CSRF": "csrf", Origin: origin, "Content-Type": "application/json" }, body,
+  });
+  const response = await proxyCore(request(), ["api", "source-connections", "existing", method]);
+  expect(response.status).toBe(200);
+  expect(String(fetchMock.mock.calls[0][0])).toBe(`http://core.transport:7070/api/source-connections/existing/${method}`);
+  const forwarded = fetchMock.mock.calls[0][1];
+  expect(forwarded.method).toBe("POST");
+  expect(new TextDecoder().decode(forwarded.body)).toBe(body);
+  expect(forwarded.headers.get("authorization")).toBe("Bearer service-secret");
+  expect(forwarded.headers.get("X-Hosty-App-Identity")).toBe("own-grant");
+  expect(forwarded.headers.get("cookie")).toBeNull();
+  expect(response.headers.get("cache-control")).toBe("no-store");
+  fetchMock.mockClear();
+  const forged = request();
+  forged.headers.delete("X-Hosty-CSRF");
+  expect((await proxyCore(forged, ["api", "source-connections", "existing", method])).status).toBe(403);
+  expect(fetchMock).not.toHaveBeenCalled();
+});

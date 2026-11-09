@@ -217,12 +217,14 @@ internal static class AppManagementAuthorization
         Add(CoreAppPermissions.RevokeCredentials, "PATCH /api/auth/credentials/{fingerprint}/label", "DELETE /api/auth/credentials/{fingerprint}", "DELETE /api/auth/background-grants/{id}", "POST /api/auth/background-grants/revoke-all-authorizations");
         Add(CoreAppPermissions.ConfigureCore, "GET /api/auth/oauth/clients", "DELETE /api/auth/oauth/clients/{clientId}");
         Add(CoreAppPermissions.ManageUsers,
+            "POST /api/auth/users",
             "POST /api/auth/invitations", "DELETE /api/auth/invitations/{invitationId}",
             "PATCH /api/auth/users/{userId}", "DELETE /api/auth/users/{userId}",
             "DELETE /api/auth/users/{userId}/record", "PUT /api/auth/users/{userId}/assignments");
         Add(CoreAppPermissions.SourceConnections,
             "PUT /api/source-connections/identity",
             "POST /api/source-connections/pat", "POST /api/source-connections/device",
+            "POST /api/source-connections/{id}/pat", "POST /api/source-connections/{id}/device",
             "POST /api/source-connections/device/{id}/poll", "DELETE /api/source-connections/device/{id}",
             "PUT /api/source-connections/{id}", "POST /api/source-connections/{id}/check", "DELETE /api/source-connections/{id}");
         Add(CoreAppPermissions.Sources,
