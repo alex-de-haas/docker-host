@@ -19,7 +19,7 @@ beforeEach(()=>{
   vi.mocked(appFetch).mockResolvedValue(Response.json({granted:true,providers:[{appId:"independent.speech",key:"local",displayName:"Local",available:true}]}));
   element=document.createElement("div");document.body.append(element);root=createRoot(element);
 });
-afterEach(async()=>{await act(async()=>root.unmount());element.remove();vi.resetAllMocks();vi.unstubAllGlobals();});
+afterEach(async()=>{await act(async()=>root.unmount());element.remove();vi.useRealTimers();vi.resetAllMocks();vi.unstubAllGlobals();});
 const mount=()=>act(async()=>root.render(<Form/>));
 it("cancel during microphone permission stops the late stream and sends no audio",async()=>{
   let resolve!: (stream:unknown)=>void; const stop=vi.fn();
@@ -48,6 +48,16 @@ function mockRecorder() {
   });
   return stop;
 }
+it("retains its separate one-minute capture limit", async () => {
+  vi.useFakeTimers(); const stop = mockRecorder(); await mount();
+  vi.mocked(appFetch).mockResolvedValue(Response.json({ text: "Short comment" }));
+  await click("Dictate");
+  await act(async () => { await vi.advanceTimersByTimeAsync(59_999); });
+  expect(vi.mocked(appFetch).mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+  await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+  expect(vi.mocked(appFetch).mock.calls.some(([, init]) => init?.method === "POST")).toBe(true);
+  expect(stop).toHaveBeenCalled(); expect(text).toHaveBeenCalledWith("Short comment");
+});
 it("shares one roster and recorder, delivering text to the initiating field even after callbacks change", async () => {
   mockRecorder(); await mount();
   expect(appFetch).toHaveBeenCalledTimes(1);

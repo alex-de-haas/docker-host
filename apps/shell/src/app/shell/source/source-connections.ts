@@ -3,7 +3,7 @@ import { CoreRequestError, readCoreErrorDetail, redirectToCoreLoginIfAuthRequire
 
 export type SourceConnection = {
   id: string; label: string; provider: string; organization: string; accountId: string; accountName: string;
-  method: string; status: string; checkedAt?: string; expiresAt?: string;
+  method: string; status: string; checkedAt?: string; expiresAt?: string; grantedScopes?: string[] | null;
 };
 export type SourceProfile = {
   gitIdentity?: { name: string; email: string }; connections: SourceConnection[];

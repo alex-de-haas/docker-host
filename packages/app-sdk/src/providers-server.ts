@@ -1,5 +1,6 @@
 import type { HistoryExportGrant, HistoryExportAcknowledge, HistoryExportQuery, HistoryExportSnapshot, HistoryChangePage } from "./history.js";
 import { createHash } from "node:crypto";
+import { Agent, fetch as speechFetch } from "undici";
 import { AssistantClient } from "@hosty-sdk/app/assistant";
 import { ProviderError, type AppPermissionState, type ProviderDescriptor, type ProviderInvocation, type ProviderKind, type MediatedProviderInvocation, type MediatedProviderRequest, type SpeechCapabilities, type SpeechResult, type TranslationRequest, type TranslationResult, type TranslationCapabilities } from "@hosty-sdk/app/providers";
 
@@ -71,13 +72,26 @@ export class ProviderClient {
     return read(await fetch(`${binding.url}/capabilities`, { redirect: "error", signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000), headers: { authorization: `Bearer ${binding.token}` } }));
   }
   async transcribe(provider: Pick<ProviderDescriptor, "appId" | "key">, audio: Blob,
-    options: { language?: string; signal?: AbortSignal } = {}): Promise<SpeechResult> {
-    const signal = options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(300_000)]) : AbortSignal.timeout(300_000);
+    options: { language?: string; signal?: AbortSignal; /** Total deadline, 1–930000 ms; defaults to five minutes. */ timeoutMs?: number } = {}): Promise<SpeechResult> {
+    const timeoutMs = options.timeoutMs ?? 300_000;
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 930_000)
+      throw new ProviderError("speech_timeout_invalid", "Use a transcription timeout between 1 and 930000 milliseconds.", 400);
+    const deadline = AbortSignal.timeout(timeoutMs);
+    const signal = options.signal ? AbortSignal.any([options.signal, deadline]) : deadline;
     const binding = await this.connect({ ...provider, kind: "speech-to-text" }, signal);
     const url = new URL(`${binding.url}/transcriptions`);
     if (options.language) url.searchParams.set("language", options.language);
-    return read(await fetch(url, { method: "POST", redirect: "error", signal,
-      headers: { authorization: `Bearer ${binding.token}`, "content-type": audio.type || "audio/wav" }, body: audio }));
+    const body = new Uint8Array(await audio.arrayBuffer());
+    signal.throwIfAborted();
+    // Node fetch has an independent response-header timeout. A request-owned dispatcher keeps it
+    // aligned with the caller's bounded deadline without changing any other consumer's transport.
+    const dispatcher = new Agent({ headersTimeout: timeoutMs, bodyTimeout: timeoutMs });
+    const init: NonNullable<Parameters<typeof speechFetch>[1]> = { method: "POST", redirect: "error", signal, dispatcher,
+      headers: { authorization: `Bearer ${binding.token}`, "content-type": audio.type || "audio/wav" }, body };
+    // Use fetch from the same Undici version as the dispatcher; Node's bundled fetch can expose
+    // a different handler ABI when an app upgrades its Undici dependency independently.
+    try { return await read(await speechFetch(url, init)); }
+    finally { await dispatcher.close(); }
   }
   async translationCapabilities(provider: Pick<ProviderDescriptor, "appId" | "key">, signal?: AbortSignal): Promise<TranslationCapabilities> {
     const binding = await this.connect({ ...provider, kind: "translation" }, signal);
@@ -139,7 +153,7 @@ export class ProviderClient {
   }
 }
 
-async function read<T>(response: Response): Promise<T> {
+async function read<T>(response: Pick<Response, "json" | "ok" | "status">): Promise<T> {
   const body = await response.json().catch(() => null) as { code?: string; message?: string; error?: { code?: string; message?: string } } | null;
   const error = body?.error ?? body;
   if (!response.ok) throw new ProviderError(error?.code ?? "provider_failed", error?.message ?? `Provider request failed (${response.status}).`, response.status);

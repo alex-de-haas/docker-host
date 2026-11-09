@@ -1,15 +1,17 @@
 ---
 created: 2026-09-03
-updated: 2026-09-27
-summary: Files attached in the assistant composer land in the session's working directory and are recorded in the transcript.
+updated: 2026-11-09
+summary: Composer files use immutable queue snapshots before delivery, ordinary execution copies in the session cache and explicit transcript attachment references.
 components: [apps/harness]
 ---
 
 # Assistant Attachments
 
-An operator hands the assistant a file from the composer. It lands in a working directory that
-belongs to the session, the transcript records that it did, and the harness is told where to find
-it. Cross-cuts [ai-gateway](../ai-gateway/feature.md) and
+An operator hands the assistant a file from the composer. The
+[message queue](../harness-message-queue/feature.md) retains an immutable snapshot before accepting
+delivery; execution receives a copy in the session workspace and records its reference in the
+transcript. The legacy immediate-upload API still stores ordinary cache files.
+Cross-cuts [ai-gateway](../ai-gateway/feature.md) and
 [agent-background-sessions](../agent-background-sessions/feature.md); the storage it stands on is
 the [cache](../app-cache-storage/feature.md) kind of the
 [runtime-app manifest](../runtime-app-manifest/feature.md#storage).
@@ -22,9 +24,9 @@ run started in one shared `workDir` that defaulted to the process's home directo
 to run an agent that reads files. Outside Core, with no cache directory injected, sessions still
 share `workDir` (a temp directory now) and the gateway warns once that they do.
 
-The root is the app's `cache`, not its `data`, and the choice is about lifecycle and neighbourhood
+The execution workspace is the app's `cache`, and the choice is about lifecycle and neighbourhood
 rather than capacity. `cache` persists across restarts and updates, is never backed up or restored,
-and is deleted with the app: no upload is copied into a backup archive, and from the workspace,
+and is deleted with the app: ordinary workspace copies are absent from a backup archive. From the workspace,
 `..` is the session's own directory and `../..` the sessions root, where every sibling is a
 workspace and none is a transcript. An external mount would have had the opposite lifecycle — never
 deleted, surviving app removal — and would have orphaned uploads on the host.
@@ -34,9 +36,9 @@ It is used here by its properties; the naming mismatch is stated rather than res
 
 The workspace goes where the session goes and nowhere else: removed on delete and on retention
 expiry, kept through abandonment, because an abandoned session resumes and a resumed turn may refer
-to the file. A session restored from a backup comes back without its attachments — records are
-backed up, the cache is not — and the transcript's `attachment_added` event is what explains the
-file it no longer has.
+to the file. A restored backup contains retained queue/edit/draft snapshots in app data, while
+ordinary sent execution copies remain absent because the cache is not backed up. The transcript's
+`attachment_added` event explains a sent file whose cache copy no longer exists.
 
 An on-demand backup is reachable, but not from Shell. `apps/harness/manifest.json` declares
 `data.enabled: true` but `capabilities: ["logs"]`, and Shell shows the Backups entry — its only way
@@ -55,7 +57,32 @@ entry is a Shell affordance gap rather than a platform one.
 Whichever route takes it, the archive is the same. `CreateBackupAsync` is the single entry point for
 every backup — `manual`, `pre-update`, `pre-restore`, `pre-development-mode`, `pre-runtime-switch` —
 and it archives the app's data directory, branching on `reason` only for the backup's id and its
-retention class. Attachments live under `cache`, which the archive never reaches.
+retention class. The archive includes queue-owned snapshots under data; ordinary execution
+copies live under `cache`, which the archive never reaches.
+
+## Queue Snapshots And Upload Recovery
+
+Composer submission stages text and file blobs in the browser outbox before clearing that draft.
+Harness accepts raw queue uploads at
+`PUT /api/sessions/{id}/message-queue/uploads/{uploadId}?name=...`. The stable UUID binds the
+original name and bytes: exact retries preserve identity, and changed input conflicts. Enqueue
+promotes referenced legacy cache uploads into immutable app data too. Display names remain
+independent of safe internal identities.
+
+Hash/size verification and atomic temporary-file promotion precede acknowledgement. An agent's
+workspace edits cannot change the queued snapshot. At dispatch, Harness materializes that snapshot
+under safe stored names, preserves the ordinary workspace quota and reuses paths across attempts.
+Missing or altered snapshots block delivery. Authorized retained-snapshot downloads at
+`GET /api/sessions/{id}/message-queue/attachments/{attachmentId}` use attachment disposition,
+`application/octet-stream` and `nosniff`.
+
+The durable store enforces 25 MiB per file, 20 retained attachment identities and 100 MiB of content.
+Active queued/edit references, unclaimed uploads and restored-draft pins retain bytes. Accepting or
+deleting the last queue-only reference collects its blob while retaining the upload UUID receipt.
+Reopening that exact upload restores and re-pins its original bytes. Restored-draft pins accumulate
+through conversation retention because another view can still hold the same draft. They count
+toward the 20-identity and 100 MiB allowances and have no separate release command. Conversation
+removal releases the remaining snapshots and identity receipts.
 
 ## Upload, Download, And What The Name Becomes
 
@@ -90,9 +117,10 @@ never cancelled, including when clipboard text is available only as HTML.
 
 Pending images show local blob previews alongside their names and remove buttons. Removing an
 image, changing sessions, sending, or a decoding error releases its preview URL. An unsupported or corrupt image
-keeps its filename even when no preview can be decoded. Files are uploaded only on send. Pending
-files cannot be removed while sending; successfully uploaded files remain available for a retry
-without uploading them again.
+keeps its filename even when no preview can be decoded. Files are uploaded on Send as part of their
+submitted queue snapshot. Transfer failures stay with
+that row and Retry reconciles stable upload identities. The next composer's files remain editable
+while earlier rows upload or wait for admission. A sending or uncertain server row remains locked.
 
 A message can contain text, attachments, or both. An empty or whitespace-only message without
 attachments is refused by the composer and API. The API still requires a string `text` field and
@@ -120,12 +148,11 @@ an injection surface, and is named as one.
 
 ## The Limit, Stated
 
-A per-session workspace prevents accidental mixing. It does not contain a model that decides to read
-`../..`. Codex runs with a read-only sandbox and Claude in default permission mode: writes are gated,
-reads are not, and either can reach anything the gateway process can. Isolation between sessions'
-agents is a harness property — a container or a user per session — which Hosty does not have and
-this feature does not add. Assistant sessions are admin-only by decision, so the boundary being
-drawn is between sessions, not between privilege levels.
+A per-session workspace prevents accidental mixing. It does not itself sandbox filesystem reads.
+Process isolation and permission checks belong to the selected provider/runtime; the
+[managed worker boundary](../assistant-shared-docker-runtime/feature.md) describes the shared Docker
+runtime. Queue snapshots preserve submitted bytes and authorized references, rather than adding
+an execution sandbox. Assistant sessions retain their existing administrator access boundary.
 
 ## What The Transcript Shows
 
@@ -143,9 +170,16 @@ in the usual case — a message POST retried after other events, or a client nam
 turn stored, puts events between them. Ordering alone would then credit the file to the wrong turn,
 or to no turn at all. A `user_message` names its files, so it draws them and their upload rows draw
 nothing; an upload no message ever claimed keeps a row of its own, since it is in the workspace and
-against the session's quota either way.
+against the session's quota either way. Queued messages publish materialized attachment metadata
+during admission and retain display names in their user-message event. Queue acceptance alone
+creates no transcript attachment row or user turn.
 
 ## Testing Expectations
+
+- **Durable queue files**: exact upload replay preserves identity; changed bytes conflict; corrupt or
+  missing blobs block delivery. Workspace edits cannot change snapshots. Cover stashed-draft reuse
+  after cache deletion, queue-only collection, reopened uploads, duplicate-byte identity limits,
+  stable execution paths and workspace quota enforcement.
 
 - **Clipboard and empty drafts**: multiple images preserve their bytes and MIME types, generic
   names are distinct, meaningful names survive, and non-image or missing clipboard files are

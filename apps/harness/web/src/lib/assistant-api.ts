@@ -167,8 +167,14 @@ export async function getSuggestionPreference(): Promise<{ enabled: boolean; rev
 export async function setSuggestionPreference(enabled: boolean, revision: number): Promise<{ enabled: boolean; revision: number }> {
   return (await call("/preferences/prompt-suggestions", { method: "PUT", body: JSON.stringify({ enabled, revision }) })).json();
 }
+export async function resolvePromptSuggestion(sessionId: string, suggestionId: string, input: { requestId: string; expectedRevision: number; action: "selected-for-draft" | "dismissed" }): Promise<import("./prompt-suggestions").PromptSuggestion> {
+  return (await call(`/sessions/${encodeURIComponent(sessionId)}/suggestions/${encodeURIComponent(suggestionId)}/actions`, { method: "POST", body: JSON.stringify(input) })).json();
+}
+export async function getPromptSuggestions(sessionId: string): Promise<import("./prompt-suggestions").PromptSuggestion[]> {
+  return (await call(`/sessions/${encodeURIComponent(sessionId)}/suggestions`)).json();
+}
 
-export type StoredAttachment = { name: string; size: number };
+export type StoredAttachment = { name: string; size: number; displayName?: string };
 
 /**
  * Hands the gateway a file for this session. The body is the file itself — no multipart, no

@@ -46,7 +46,8 @@ internal sealed record PublicationObservation(DateTimeOffset At, string State, s
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] PublicationCompletionIssue? CompletionIssue = null);
 internal sealed record PublicationOperation(string Id, string Kind, string Fingerprint, string State,
     PublicationCommand Input, string? Error = null, PublicationIdentity? Author = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] WorkspaceOwner? Actor = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] WorkspaceOwner? Actor = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ErrorCode = null);
 internal sealed record PublicationRecord
 {
     public string Provider { get; init; } = "github";
@@ -75,9 +76,11 @@ internal sealed record PublicationReference(int Number, string Url, string? Head
 internal sealed record PublicationList(PublicationRecord[] Publications);
 internal sealed record PublicationConnections(UserConnectionSummary[] Connections);
 internal sealed record PublicationIdentity(string Name, string Email);
-internal sealed class PublicationException(string code, string message) : Exception(message)
+internal sealed class PublicationException(string code, string message, bool safeDiagnostic = false) : Exception(message)
 {
     public string Code { get; } = "publication_" + code;
+    // Only bounded, credential-free messages constructed by Core may be retained in receipts.
+    public bool SafeDiagnostic { get; } = safeDiagnostic;
 }
 internal interface IPublicationProvider
 {

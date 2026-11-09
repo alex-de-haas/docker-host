@@ -28,6 +28,8 @@ export type SessionStatus =
 export type SessionAutonomy = "normal" | "autonomous";
 
 export interface SessionRecord {
+  messageQueue?: import("./message-queue.js").MessageQueueRecord;
+  suggestionHistoryVersion?: 1;
   /** Provider-owned execution attempt identity; distinct from chat and native session IDs. */
   agentRunId?: string;
   taskExecutionId?: string;
@@ -222,6 +224,8 @@ export class SessionStore {
     await mkdir(dir, { recursive: true });
     await this.saveRecord(record);
   }
+
+  messageQueueDirectory(id: string): string { return path.join(this.sessionDir(id), "message-queue"); }
 
   private readonly writes = new Map<string, Promise<void>>();
   private readonly observers = new Set<(id: string) => Promise<void>>();

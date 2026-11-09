@@ -246,7 +246,7 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
         {
             await UseConnection(_ => Task.FromResult(true));
             var provider = Publication(record.Provider);
-            var op = previous is null ? new PublicationOperation(input.RequestId, kind, fingerprint, "pending", input, Actor: owner) : previous with { State = "pending", Error = null };
+            var op = previous is null ? new PublicationOperation(input.RequestId, kind, fingerprint, "pending", input, Actor: owner) : previous with { State = "pending", Error = null, ErrorCode = null };
             record = record with { Operations = [.. record.Operations.Where(o => o.Id != op.Id), op] };
             await workspaces.WithPublicationAdmissionAsync(canonical ? w.Owner : owner, async current =>
             {
@@ -393,7 +393,7 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
                     record = record with { Outcome = input.Outcome, CompletedAt = clock.UtcNow, CleanupRequested = input.Cleanup };
                 }
             }
-            record = record with { Operations = record.Operations.Select(o => o.Id == input.RequestId ? o with { State = "succeeded", Error = null } : o).ToArray() };
+            record = record with { Operations = record.Operations.Select(o => o.Id == input.RequestId ? o with { State = "succeeded", Error = null, ErrorCode = null } : o).ToArray() };
             if (input.PolicyAmendment is not null)
                 await workspaces.WithPublicationAdmissionAsync(canonical ? w.Owner : owner, async current =>
                 {
@@ -413,7 +413,13 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
             // An amendment has no remote side effect. A refused/local-failed write retains the old policy.
             if (input.PolicyAmendment is not null) record = record with { Policy = r.Policy, Observation = r.Observation };
             // Preserve pending intent: an HTTP error may follow a successful push, fork or PR mutation.
-            record = record with { Operations = record.Operations.Select(o => o.Id == input.RequestId ? o with { State = ex is PublicationException pe && pe.Code is not ("publication_provider_unavailable" or "publication_push_uncertain" or "publication_merge_uncertain" or "publication_fork_unavailable" or "publication_commit_uncertain") ? "failed" : "pending", Error = "Operation did not complete. Inspect state before retrying; retain the request ID for an uncertain outcome." } : o).ToArray() };
+            var definiteFailure = ex is PublicationException pe && pe.Code is not ("publication_provider_unavailable" or "publication_push_uncertain" or "publication_merge_uncertain" or "publication_fork_unavailable" or "publication_commit_uncertain");
+            var diagnostic = ex as PublicationException;
+            record = record with { Operations = record.Operations.Select(o => o.Id == input.RequestId ? o with {
+                State = definiteFailure ? "failed" : "pending",
+                ErrorCode = diagnostic?.SafeDiagnostic == true ? diagnostic.Code : null,
+                Error = diagnostic?.SafeDiagnostic == true ? diagnostic.Message : "Operation did not complete. Inspect state before retrying; retain the request ID for an uncertain outcome."
+            } : o).ToArray() };
             await Save(record); throw;
         }
         if (record.Url is not null) await workspaces.AddPublicationReferenceAsync(id, owner, record.Url, ct);

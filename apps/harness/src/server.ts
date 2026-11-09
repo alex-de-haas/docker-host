@@ -87,7 +87,7 @@ export function createGatewayServer(
   const handoffs = new HandoffStore(manager, settings, providers);
   const eventStreams = new EventStreamTransport(manager, Date.now, connections, tasks);
   const translations = connections && settings ? new TranslationService(connections, settings) : null;
-  const recovered = handoffs.sweep().then(() => manager.recoverWorkerRuns()).then(() => manager.recoverMcpApprovals()).catch(error => {
+  const recovered = handoffs.sweep().then(() => manager.recoverWorkerRuns()).then(() => manager.recoverMcpApprovals()).then(() => manager.recoverMessageQueues()).catch(error => {
     // A transient directory/storage failure is retried by the periodic sweep. Keep unrelated
     // endpoints available and attach the handler immediately, before the first request arrives.
     console.error("[handoff] startup recovery failed", error);
@@ -911,6 +911,35 @@ async function route(
     return;
   }
 
+  if (rest === "/message-queue" && method === "GET") {
+    response.setHeader("Cache-Control", "no-store");
+    sendJson(response, 200, await manager.messageQueue(sessionId, actor.userId)); return;
+  }
+  if (rest === "/message-queue/commands" && method === "POST") {
+    response.setHeader("Cache-Control", "no-store");
+    sendJson(response, 200, await manager.messageQueueCommand(sessionId, actor.userId, await readJson(request, 256 * 1024), await delegationCredential(request, false))); return;
+  }
+  const queueUpload = rest.match(/^\/message-queue\/uploads\/([^/]+)$/);
+  if (queueUpload && method === "PUT") {
+    response.setHeader("Cache-Control", "no-store");
+    sendJson(response, 201, { attachment: await manager.uploadQueueAttachment(sessionId, actor.userId, queueUpload[1]!, url.searchParams.get("name") ?? "attachment", request) }); return;
+  }
+  const queueAttachment = rest.match(/^\/message-queue\/attachments\/([^/]+)$/);
+  if (queueAttachment && method === "GET") {
+    const { attachment, bytes } = await manager.queuedAttachment(sessionId, actor.userId, queueAttachment[1]!);
+    response.setHeader("Cache-Control", "no-store"); response.setHeader("Content-Type", "application/octet-stream"); response.setHeader("X-Content-Type-Options", "nosniff");
+    response.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(attachment.displayName ?? attachment.name)}`);
+    response.end(bytes); return;
+  }
+  if (rest === "/suggestions" && method === "GET") {
+    response.setHeader("Cache-Control", "no-store"); sendJson(response, 200, await manager.historicalSuggestions(sessionId, actor.userId)); return;
+  }
+  const suggestionActionMatch = rest.match(/^\/suggestions\/([^/]+)\/actions$/);
+  if (suggestionActionMatch && method === "POST") {
+    if (actor.via !== "app-session") throw new AppContextError(403, "app_session_required", "Open Harness through Core to choose a prompt suggestion.");
+    response.setHeader("Cache-Control", "no-store");
+    sendJson(response, 200, await manager.suggestionAction(sessionId, actor.userId, suggestionActionMatch[1]!, await readJson(request))); return;
+  }
   const messageReceiptMatch = rest.match(/^\/messages\/([^/]+)$/);
   if (messageReceiptMatch && method === "GET") {
     response.setHeader("Cache-Control", "no-store");
