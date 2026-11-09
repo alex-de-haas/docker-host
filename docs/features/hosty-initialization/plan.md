@@ -1,8 +1,8 @@
 ---
 status: In Progress
 created: 2026-10-21
-updated: 2026-10-25
-summary: Owner-run Windows acceptance after published macOS and Linux CLI verification; remaining agent-run platform checks are waived.
+updated: 2026-10-29
+summary: First-run hosty init installs Core, selects distribution apps, assigns automatic ports and opens administrator setup; Dashboard environments reuse the initialization services.
 components: [apps/core, apps/cli, apps/shell, packages/app-sdk, scripts]
 ---
 
@@ -227,6 +227,28 @@ Do not silently exceed limits, reduce them to unverified values or omit selected
 readiness and Docker availability are not evidence of spare child capacity. Preserve the current
 two-unfinished-descendant bound, reservations through Stop/failure, and release only after Finish.
 
+## Dashboard Presentation Revision — 2026-10-29
+
+The owner requested this presentation revision and implementation in chat on 2026-10-29.
+It extends the approved Dashboard scope; D10 and D11 retain their original broader acceptance work.
+
+- Remove numbered stages from creation and existing sandbox rows. The creation dialog has a fixed
+  title and footer, a scrolling body with name/application choices and optional ports/resources,
+  and one Create action. After local validation it closes immediately while the parent owns the
+  durable request and displays creation progress or recovery errors.
+- Keep current initialization progress visible in the collapsed sandbox row. Read actual child
+  setup/install observations while needed, including after focus/visibility recovery. Expanded
+  content contains one installed-app inventory with runtime and health alongside each app.
+- Put one main action on the row: Set up administrator when registration is available, Stop for
+  a running environment, Start when stopped. Other lifecycle and navigation actions use the
+  existing three-dot menu pattern. Open Core is available only after administrator existence is
+  confirmed; first-administrator setup disappears after registration. Keep setup-link copying,
+  expiry, resume, legacy child account support and failed-operation recovery reachable.
+- Keep Resources and access where it is for this revision; no separate resource editor is added.
+  Preserve existing Shell tokens, typography and compact buttons. The row name/progress stays
+  left-aligned; status and actions stay right-aligned and wrap on narrow screens. The row remains
+  a details expander, and Open Core explicitly opens the child login in another tab.
+
 ## Deliverables
 
 - [x] D1. Implement the shared initialization request/status contract, durable progress and recovery using Core's catalog/seed/lifecycle services, with explicit pre-selection startup and no premature default seeding.
@@ -240,6 +262,8 @@ two-unfinished-descendant bound, reservations through Stop/failure, and release 
 - [x] D9. Pass affected CLI/Core/SDK/Shell tests and builds, covering state/replay, install failures, readiness, ports, migration, authorization and UI recovery; record the results for the exact candidate.
 - [ ] D10. Verify real first-install and Dashboard-child browser journeys with isolated test roots, normal administrator registration, selected-app readiness, resource limits, restart/retry and independently confirmed Finish cleanup; record platform coverage and every unavailable case.
 - [ ] D11. Update README, CLI help and affected reality documents, publish this feature's reality document, apply required component versions, remove this plan on final completion and regenerate the documentation index.
+
+- [x] D12. Simplify Dashboard creation and sandbox rows as requested on 2026-10-29: persistent dialog actions, no stage indicators, immediate close with durable visible progress, one installed-app list, administrator-aware primary/menu actions, retained setup/recovery paths, affected component tests/builds and isolated browser acceptance; update reality docs and the Shell version.
 
 ## Implementation Sequence
 
@@ -271,6 +295,17 @@ gates pass. D10 retains unavailable publication/native-platform acceptance; the 
 blocker is resolved by the SDK floor documented below. D11 has updated implementation documentation
 and component versions; final plan retirement depends on D10 and is not treated as complete while
 those checks remain outstanding.
+
+### Dashboard presentation verification — 2026-10-29
+
+- D12 is verified in a registered Core workspace. Shell 0.116.4 → 0.117.0; no publication or live-data activation.
+- `npm run shell:test`: 206 Node tests and 809 component tests across 72 files pass. Coverage includes immediate dialog close, catalog/limit validation, collapsed installation progress, one app inventory, administrator-aware actions, resume, lost-response recovery, visibility recovery and late-response isolation.
+- `npm run shell:build` and the Docker acceptance image build pass. `npm run shell:lint` has zero errors and three existing unrelated warnings.
+- `npm run test:integration -- shell` passes on macOS with Docker Desktop: normal password login, Core launch identity, workspace inventory, sandbox SSE/reconnect and independent nested-resource removal. Initial Shell health is reached in 3.09 seconds.
+- Browser acceptance uses that isolated parent-managed Core and separate test accounts. Create closes immediately and exposes the named starting row. Normal first-administrator setup and password login succeed; Setup disappears, Stop becomes primary, and Open Core opens the child login in a new tab. Stop/Start, the action menu, a single installed Docker Shell row with runtime/health, and named deletion toasts are verified.
+- The fixture catalog is empty, so browser creation uses the supported Core-only selection; Docker Shell is then installed through that child's ordinary CLI lifecycle to verify real inventory/health. Selected-catalog installation progress and failures are covered by component tests. This check does not close D10's broader first-install/platform matrix.
+- The final candidate is applied to the test Shell through a reviewed local-image update plan. Desktop and 390 × 650 layouts are checked; the creation header/footer remain visible and narrow row actions wrap without covering the name/status.
+- Both UI-created children are Finished; their directories are absent. The parent then confirms removal of its test child, and the acceptance owner reports stopped Core/helper/Git-server processes, a released port and removal of fixture data/builds/snapshots. No provider credentials or ordinary application data are used.
 
 ### Verified candidate evidence — 2026-10-21
 
@@ -489,43 +524,13 @@ dotnet test apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj -
 
 ### Outstanding verification owned by D10-D11
 
-The [published-artifact acceptance on 2026-10-25](../../reviews/2026-10-25-published-initialization-acceptance.md)
-closes the macOS ARM64 real CLI-only download and default published-distribution child gaps with
-CLI/Core 0.152.3, Shell 0.112.5 and Marketplace 0.12.2. Ordinary primary/child registration, Core-only
-completion, link renewal, capacity refusal, actual Docker limits, child/parent restart, removed-app
-preservation and verified Finish/disposal pass. No implementation change or version bump is needed.
-The report records the terminal-session interruption and the limits of its evidence.
-
-Owner acceptance-scope decision, 2026-10-25:
-
-- macOS Intel is removed from this feature's required acceptance matrix.
-- Linux acceptance may use UTM. The available Hosty QA Ubuntu VM is authorized for the published
-  installation/browser journey; its observed architecture must be recorded rather than inferred.
-- The owner performs Windows verification on the production target and reports the result. This
-  remains pending evidence, not an automated pass or authorization to change that target here.
-
-The [UTM Linux CLI acceptance on 2026-10-25](../../reviews/2026-10-25-linux-published-initialization-cli-acceptance.md)
-verifies the real installer/Core download on Ubuntu 24.04.5 ARM64, recommended app readiness,
-survival after guest-command exit, same-root repeat, stable ports and container IDs across restart,
-and durable Marketplace removal. The report records a partial run retained at the guest login
-screen; no Hosty administrator or guest authentication bypass is created.
-
-The owner subsequently cancels the remaining agent-run platform checks on 2026-10-25 because the
-existing Ubuntu guest password is unavailable. Linux browser/child acceptance and the macOS
-terminal-lifetime observation are waived for this agent run, not reported as passes. No guest login
-or another runtime deployment is requested. The earlier macOS/Ubuntu candidate evidence and the
-published-artifact reports remain valid within their recorded boundaries.
-
-At cancellation, UTM returns an empty VM inventory and reports the known QA VM UUID as not found.
-No running QEMU VM process or open guest disk is observed; the remaining QEMU helper has no guest
-disk or network listener open. The agent does not claim to have executed guest application removal,
-Core uninstall or verified guest filesystem deletion after this disappearance. Selected evidence
-has already been exported outside the VM and repository. The missing VM is not recreated for cleanup.
-
-D10 remains open only for the owner's separately assigned Windows result; D11 retains this plan
-until that result or a further explicit scope decision is recorded. Linux x64 and the skipped
-browser/terminal cases carry no pass claim. Portable PowerShell parsing, substituted downloads,
-Linux in Docker and the observed ARM64 UTM guest do not establish another native target's behavior.
+D10 needs the coordinated published CLI/Core/Shell artifacts for the real CLI-only download
+journey and the default published-distribution child path with the new Shell manifest. Current rolling
+artifacts do not contain this candidate. Native macOS ARM64 and Ubuntu ARM64 recommended-child journeys
+pass with the candidate custom distribution; they do not establish the published download path.
+Native Windows and Linux x64 installer/browser coverage remains unverified, as does macOS Intel runtime
+execution. Portable PowerShell parsing and substituted installer downloads do not replace those cases.
+D11 keeps this plan until these outstanding deliverables are resolved.
 
 Implementation checks include:
 
