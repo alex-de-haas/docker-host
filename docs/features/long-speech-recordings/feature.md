@@ -102,6 +102,8 @@ It does not establish cancellation, natural speech quality or deployed authentic
   explicitly enables native CPU inference, including the long synthetic Russian fixture.
 - SDK tests preserve default deadlines, validate custom deadlines, refuse redirects, propagate
   aborts and exercise actual delayed HTTP responses with a lower independent transport timeout.
+  After the SDK build, run `node packages/app-sdk/scripts/check-overlay-upgrade.mjs`; its isolated
+  published consumer includes all declared runtime dependencies and preserves SSR/hydration.
 - Core-managed child checks use normal password login, independent Whisper data and advertised
   Harness preview/microphone URLs; record model, machine, duration, latency and peak memory.
 - Run `HOSTY_LONG_SPEECH_ACCEPTANCE=1 npm run test:integration -- harness-local` for the opt-in
