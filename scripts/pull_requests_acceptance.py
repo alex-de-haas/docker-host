@@ -8,6 +8,7 @@ import hashlib
 import http.cookiejar
 import json
 import os
+import re
 import time
 import urllib.error
 import urllib.parse
@@ -98,6 +99,37 @@ def check(context):
     inventory = owner.harness('/pull-requests/repositories')
     assert len(inventory['repositories']) == 1, inventory
     repo = inventory['repositories'][0]
+    # Renew through the normal owner API; the same ID must retain repository coverage and cached PRs.
+    renewed = owner.call(origin, '/api/source-connections/'+connection['id']+'/pat',
+        {'provider':'github', 'label':'Ignored replacement label', 'token':'hosty-pr-fixture-alice'})
+    assert renewed['id'] == connection['id'] and renewed['accountId'] == connection['accountId']
+    assert renewed['label'] == connection['label']
+    assert len(owner.call(origin, '/api/source-connections')['connections']) == 1
+    other.call(origin, '/api/source-connections/'+connection['id']+'/pat',
+        {'provider':'github', 'token':'hosty-pr-fixture-alice'}, expected=404)
+    owner.call(origin, '/api/source-connections/'+connection['id']+'/pat',
+        {'provider':'github', 'token':'hosty-pr-fixture-bob'}, expected=409)
+    assert owner.call(origin, '/api/source-connections')['connections'][0]['id'] == connection['id']
+    owner.call(origin, '/api/source-connections/'+connection['id']+'/check', {})
+    assert len(owner.harness('/pull-requests')['items']) == 2
+    assert owner.harness('/pull-requests/repositories')['repositories'][0]['id'] == repo['id']
+    say('PASS: source connection renewal preserves ID, label, repository coverage and PR access; foreign-owner and account-switch attempts are refused')
+    attempt = owner.call(origin, '/api/source-connections/'+connection['id']+'/device',
+        {'provider':'github', 'privateRepositories':True})
+    assert attempt['status'] == 'pending'
+    def complete_reauthorization():
+        result = owner.call(origin, '/api/source-connections/device/'+attempt['id']+'/poll', {})
+        return result['connection'] if result['status'] == 'connected' else None
+    oauth = wait_for(complete_reauthorization, 30)
+    assert oauth['id'] == connection['id'] and oauth['method'] == 'oauth'
+    assert {'repo', 'workflow'} <= set(oauth['grantedScopes'])
+    attempt = owner.call(origin, '/api/source-connections/'+connection['id']+'/device', {'provider':'github'})
+    assert {'repo', 'workflow'} <= set(wait_for(complete_reauthorization, 30)['grantedScopes'])
+    attempt = owner.call(origin, '/api/source-connections/'+connection['id']+'/device', {'provider':'github'})
+    owner.call(origin, '/api/source-connections/device/'+attempt['id'], method='DELETE')
+    owner.call(origin, '/api/source-connections/'+connection['id']+'/check', {})
+    assert len(owner.harness('/pull-requests')['items']) == 2
+    say('PASS: OAuth renewal requests workflow scope, preserves the connection and private access, and cancellation retains working PR access (test provider only)')
     assert {a['id'] for a in repo['apps']} == {app, 'thirdparty.pr.monorepo'}
     wait_for(lambda: any(c['state']=='access_denied' for c in owner.harness('/pull-requests/repositories')['coverage']), 60)
     page = owner.harness('/pull-requests?bot=true')
@@ -153,11 +185,24 @@ def check(context):
         shell['services'][0]['runtimes']['docker']['image'] = 'hosty-shell-acceptance:local'
         install(shell); run([cli, '--data-root', root, 'apps', 'start', shell['id']])
         wait_for(lambda: request('/api/apps/'+shell['id']+'/health')['status'] == 'healthy', 180)
+        review = request('/api/installations', {'permissionsAppId':shell['id']})
+        request('/api/installations/'+review['id']+'/submit', {})
+        with context['browser'].open(origin+'/install/confirm/'+review['id'], timeout=30) as response:
+            html = response.read().decode()
+        nonce = re.search(r'name=nonce value="([^"]+)"', html)
+        assert nonce and 'sources.connections' in html
+        context['diagnostic_secrets'].add(nonce.group(1))
+        decision = urllib.parse.urlencode([('nonce',nonce.group(1)), ('decision','approve'),
+            ('optionalPermission','sources.connections')]).encode()
+        with context['browser'].open(urllib.request.Request(origin+'/install/confirm/'+review['id'], data=decision,
+            headers={'Content-Type':'application/x-www-form-urlencoded','Origin':origin}), timeout=30) as response:
+            response.read()
+        wait_for(lambda: request('/api/installations/'+review['id'])['status'] == 'succeeded')
         shell_record = next(a for a in request('/api/apps')['apps'] if a['id'] == shell['id'])
         shell_endpoint = next(e for e in shell_record['endpoints'] if e['key'] == 'web')
         shell_link = shell_endpoint.get('browserOrigin') or shell_endpoint.get('publicOrigin') or shell_endpoint['url']
         access = base/'browser-access.json'
-        access.write_text(json.dumps({'core':origin,'url':link,'shell':shell_link,'email':'activation-fixture@example.test','password':password,'repositoryId':repo['id']}))
+        access.write_text(json.dumps({'core':origin,'url':link,'shell':shell_link,'email':'activation-fixture@example.test','password':password,'repositoryId':repo['id'], 'connectionId':connection['id']}))
         os.chmod(access, 0o600)
         say('UI READY: '+str(access)+'; create '+str(base/'finish-ui')+' after browser checks')
         deadline = time.time()+1200

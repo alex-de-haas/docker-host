@@ -6,7 +6,7 @@ using Microsoft.Extensions.Configuration;
 
 namespace Haas.Hosty.Core.Tests;
 
-public sealed class UserConnectionTests
+public sealed partial class UserConnectionTests
 {
     private static readonly CancellationToken Ct = CancellationToken.None;
     private const string DeviceJson = """{"device_code":"opaque-secret","user_code":"ABCD-EFGH","expires_in":900,"interval":5}""";
