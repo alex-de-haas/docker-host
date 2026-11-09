@@ -6,7 +6,7 @@ COPY apps/harness/web/package.json apps/harness/web/package.json
 COPY packages/app-sdk/package.json packages/app-sdk/package.json
 RUN npm ci --omit=dev --no-audit --no-fund --workspace @haas/hosty-harness --workspace @hosty-sdk/app
 
-FROM mcr.microsoft.com/dotnet/sdk:10.0@sha256:2fa828c68761b1b8c23d7662dc134421b9d3b59fe1425fdbc80804e390cdb24d AS git-build
+FROM mcr.microsoft.com/dotnet/sdk:10.0@sha256:212fe4cb74627d5adf9817a4088906ae3edff1bd853bb27565d4b46731efe61e AS git-build
 # Relative worktree metadata needs Git >= 2.48 on both Core and Worker.
 ARG GIT_VERSION=2.56.0
 ARG GIT_SHA256=26c56c296b38c0695b26fa95f475f1d01704d2d38e73465ca30b0b2f5dc789d3
@@ -16,7 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends build-essential
     && mkdir /tmp/git && tar -xJf /tmp/git.tar.xz -C /tmp/git --strip-components=1 \
     && make -C /tmp/git -j4 prefix=/opt/git NO_TCLTK=YesPlease NO_RUST=YesPlease install
 
-FROM mcr.microsoft.com/dotnet/sdk:10.0@sha256:2fa828c68761b1b8c23d7662dc134421b9d3b59fe1425fdbc80804e390cdb24d
+FROM mcr.microsoft.com/dotnet/sdk:10.0@sha256:212fe4cb74627d5adf9817a4088906ae3edff1bd853bb27565d4b46731efe61e
 COPY --from=git-build /opt/git /opt/git
 COPY --from=dependencies /usr/local/bin/node /usr/local/bin/node
 COPY --from=dependencies /usr/local/lib/node_modules /usr/local/lib/node_modules
