@@ -1,6 +1,6 @@
 ---
 created: 2026-10-18
-updated: 2026-10-25
+updated: 2026-11-06
 summary: Core-owned execution selection runs installed packages or registered workspace manifests on ordinary app data, with scoped access review and recoverable lifecycle operations.
 components: [apps/core, apps/cli, apps/harness, apps/shell]
 ---
@@ -30,7 +30,9 @@ Source overrides remain supported for existing manual workflows; their retiremen
 ## Workspace Manifest Admission
 
 Core reads the workspace manifest at its bound source path and validates the installed app identity,
-supported schema and runtime recipe. The installed package manifest stays unchanged. Core stores
+supported schema and runtime recipe. A published app.0.2 package can use an app.0.1 source
+workspace, and vice versa: each manifest is validated against its own supported schema. Schema
+transitions still undergo the same access classification; application IDs must match. The installed package manifest stays unchanged. Core stores
 an admitted execution snapshot in its private development journal directory; its raw JSON retains
 unknown extension fields. The registry projects the active execution contract while preserving the
 installed package version and original install/update source.
@@ -52,13 +54,26 @@ flow with a `workspaceManifest` request. It requires source and lifecycle author
 installation authority. The operator sees the concrete added access. Consent is bound to the exact
 candidate digest, installed package, installation, source path, recipe, actor and current permission,
 settings and mount state. The decision nonce remains exclusive to the authenticated Core page.
-A denial grants nothing. Candidate edits, revoked permissions or changed authority require a fresh
-review; retries retain their execution request UUID. A client cannot submit its own approval flag.
+A denial grants nothing. Edits before admission invalidate the exact review; retries retain their
+execution request UUID. After admission, a restart of the same workspace source and runtime keeps
+only its previously admitted, still-granted and still-requested permissions and roles. Removed
+workspace-only permissions drop out; revoked or newly requested rights require review. Package
+Return retains its separate baseline. Exact admitted host/runtime access remains approved across
+Core-owned permission and role projection for the same contract, source, runtime and actor. Current
+authority and configuration are revalidated; a permission revision change or changed access contract
+cannot reuse that consent. An interrupted Core-owned execution projection accepts only its exact
+retained previous configuration hash while projection is pending; unrelated configuration drift
+still requires review. A client cannot submit its own approval flag.
 
 Approval records scoped consent; it does not update the installed manifest or immediately grant
 permissions to the package. The active workspace receives admitted required rights and explicitly
 selected optional rights through its execution projection. Switching away removes those temporary
 additions. Later revocations are respected rather than restored from a captured grant list.
+
+Returned development journals remain available for recovery and replay, but no longer reduce the
+current package permissions or confirmed provider roles. A right approved for the package after
+Return remains available when selecting the same or another workspace and on the next Return;
+only an active workspace's scoped additions are removed when switching away.
 
 ## Refresh, Stop And Package Return
 
@@ -74,8 +89,11 @@ restart was interrupted. Core upgrade projection healing also reads the admitted
 instead of overwriting its contract from package metadata.
 
 Selecting a package runtime returns to the **currently installed package** using Core's independent
-package-runtime baseline. Switching workspace A to workspace B does not create a previous-workspace
-stack. Explicitly selecting another package runtime changes the baseline. Package return does not
+package-runtime baseline. A manifest without release profiles retains its manifest-selected default
+runtime as the package baseline, including a development-only bootstrap. This destination stays
+available after failed workspace entry and executes the installed contract from its canonical
+source. When release profiles exist, development recipes remain workspace-only. Switching workspace
+A to workspace B does not create a previous-workspace stack. Explicitly selecting another package runtime changes the baseline. Package return does not
 restore an old manifest, data archive, settings snapshot or revoked grants. Current source edits,
 worktrees, caches and ordinary app data survive. There is no mandatory generic data-compatibility
 acknowledgement in the unified switching contract. Package selection clears captured workspace
@@ -173,6 +191,9 @@ record substitutes for observed runtime readiness and browser verification.
   authority; require exact review for rights, devices/capabilities, mounts, source writes and exposure.
 - Reject invalid identity/schema and conservatively retain unknown fields. Test stale/denied approval,
   permission revocation, actor binding, preparation failure and replay before runtime replacement.
+- After Return, approve a formerly workspace-only permission or provider role for the package, then
+  select the same or another workspace without repeat review and retain the package grant on Return.
+  Cover service recreation, current revocations and removal of active workspace-only authority.
 - Execute ordinary/system applications with native, Docker and mixed source recipes. Keep the package
   manifest/version unchanged and report simulated-adapter coverage separately from real runtime QA.
 - Refresh a workspace command across service recreation; retain last-launched topology for Stop/logs,

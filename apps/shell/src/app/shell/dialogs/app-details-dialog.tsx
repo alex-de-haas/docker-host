@@ -1,8 +1,12 @@
 "use client";
 
+import { AppMetricsPanel } from "../resources/resource-usage";
+import { AppStoragePanel } from "../storage/storage-view";
+
 import { AppPermissions } from "./app-permissions";
 import { ConsoleLogsPanel } from "./app-console-logs";
 import { AppUpdatesPanel } from "./app-updates-panel";
+import { AppFeedSource } from "./app-feed-source";
 import { HostyLoader } from "../../../../../../shared/web/hosty-states";
 import { PrivateSourceConnections } from "./private-source-connections";
 
@@ -21,13 +25,13 @@ import { Field, FieldLabel } from "@/components/ui/field";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { AppLaunchSummary } from "../pages/app-launch-summary";
+import { AppLaunchSummary, AppServicesPanel } from "../pages/app-launch-summary";
 import { AppNetworkSummary } from "../pages/app-network-summary";
 import Link from "next/link";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { detailTitle, formatBytes, isAppAutostartEnabled } from "../app-helpers";
-import { getAppFeeds, isAuthRequiredRedirectError } from "../core-api";
+import { CoreRequestError, getAppFeeds, isAuthRequiredRedirectError } from "../core-api";
 import {
   buildPublicOriginGroups,
   isPublicOriginSettingKey,
@@ -130,7 +134,7 @@ export function AppDetailsDialog({
       <div className="flex flex-wrap items-center gap-2">
         {onOpenApp && <Button variant="outline" size="sm" onClick={onOpenApp}><ExternalLink className="size-4" />Open app</Button>}
         {onManageAction && <><Button variant="outline" size="sm" disabled={!!busyAction} onClick={() => onManageAction(isAppUp(app.runtimeState) ? "restart" : "start")}>{isAppUp(app.runtimeState) ? <RefreshCw className="size-4" /> : <Play className="size-4" />}{isAppUp(app.runtimeState) ? "Restart" : "Start"}</Button>
-          {isAppUp(app.runtimeState) && <Button variant="outline" size="sm" disabled={!!busyAction} onClick={() => onManageAction("stop")}><Square className="size-4" />Stop</Button>}</>}
+          {(isAppUp(app.runtimeState) || app.runtimeState === "waiting") && <Button variant="outline" size="sm" disabled={!!busyAction} onClick={() => onManageAction("stop")}><Square className="size-4" />{app.runtimeState === "waiting" ? "Cancel start" : "Stop"}</Button>}</>}
         <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label="More app actions"><Ellipsis /></Button></DropdownMenuTrigger>
           <DropdownMenuContent align="end">{onShowLogs && <DropdownMenuItem onSelect={onShowLogs}>Logs</DropdownMenuItem>}{onAskAssistant && <DropdownMenuItem onSelect={onAskAssistant}>Ask assistant</DropdownMenuItem>}{canManageApps && onShowRemoval && <DropdownMenuItem onSelect={onShowRemoval}>Remove app…</DropdownMenuItem>}</DropdownMenuContent>
         </DropdownMenu>
@@ -314,6 +318,9 @@ function BackupsPanel({
 const SETTINGS_TABS: { id: SettingsTab; label: string }[] = [
   { id: "app", label: "Launch" },
   { id: "logs", label: "Logs" },
+  { id: "services", label: "Services" },
+  { id: "metrics", label: "Metrics" },
+  { id: "storage", label: "Storage" },
   { id: "parameters", label: "Parameters" },
   { id: "mounts", label: "Folders" },
   { id: "publicOrigins", label: "Network" },
@@ -366,7 +373,15 @@ function SettingsDialog({
 }) {
   const settings = app.settings || [];
   const hasPublicOrigins = settings.some((setting) => isPublicOriginSettingKey(setting.key)) || !!app.endpoints?.length;
-  const hasMounts = true;
+  const hasParameters = settings.some((setting) => !isPublicOriginSettingKey(setting.key) && !setting.key.startsWith("HOSTY_LOCAL_NAME_"));
+  const hasMounts = (app.mounts?.length ?? 0) > 0;
+  // Keep existing grants and provider roles reachable even after manifest requests change.
+  const hasPermissions = canManageApps && [
+    app.requiredCorePermissions, app.optionalCorePermissions, app.grantedCorePermissions, app.confirmedRoles,
+    app.permissionState?.required, app.permissionState?.optional,
+    app.permissionState?.acceptedRequired, app.permissionState?.acceptedOptional,
+    app.permissionState?.granted, app.permissionState?.unconfirmedRoles,
+  ].some((entries) => (entries?.length ?? 0) > 0);
   const hasSource = Boolean(app.supportsSource) || canManageApps;
   const availableTabs = SETTINGS_TABS.filter((tab) => {
     switch (tab.id) {
@@ -374,11 +389,16 @@ function SettingsDialog({
         return app.capabilities.includes("logs");
       case "backups":
         return !!backups;
-      case "parameters":
+      case "storage":
+        return canManageApps;
+      case "services":
+      case "metrics":
       case "app":
         return true;
+      case "parameters":
+        return hasParameters;
       case "permissions":
-        return canManageApps;
+        return hasPermissions;
       case "publicOrigins":
         return hasPublicOrigins;
       case "mounts":
@@ -426,8 +446,11 @@ function SettingsDialog({
         </TabsList></div>
       )}
       <TabsContent value={active} className="flex min-h-0 flex-1 flex-col gap-4">
+      {active === "services" && <AppServicesPanel key={app.id} app={app} coreOrigin={coreOrigin} serviceRevision={serviceRevision} />}
+      {active === "metrics" && <AppMetricsPanel key={app.id} app={app} coreOrigin={coreOrigin} />}
+      {active === "storage" && canManageApps && <AppStoragePanel key={app.id} appId={app.id} />}
       {active === "logs" && app.capabilities.includes("logs") && <ConsoleLogsPanel key={app.id} app={app} coreOrigin={coreOrigin} />}
-      {canManageApps && <div className={cn("min-h-0 overflow-y-auto", active !== "permissions" && "hidden")}><AppPermissions key={app.id} app={app} active={active === "permissions"} /></div>}
+      {hasPermissions && <div className={cn("min-h-0 overflow-y-auto", active !== "permissions" && "hidden")}><AppPermissions key={app.id} app={app} active={active === "permissions"} /></div>}
       {backups && <div className={cn("flex min-h-0 flex-1 flex-col", active !== "backups" && "hidden")}>{backups}</div>}
       {/* All forms stay mounted (toggled with hidden) so drafts survive tab switches. */}
       <div className={cn("flex min-h-0 flex-1 flex-col", active !== "app" && active !== "parameters" && active !== "publicOrigins" && "hidden")}>
@@ -439,9 +462,7 @@ function SettingsDialog({
           canManageApps={canManageApps}
           onConfigure={onConfigure}
           onRevealSetting={onRevealSetting}
-          coreOrigin={coreOrigin}
           launchVisible={active === "app"}
-          serviceRevision={serviceRevision}
         />
       </div>
       {hasMounts && (
@@ -501,14 +522,10 @@ function SettingsForm({
   canManageApps,
   onConfigure,
   onRevealSetting,
-  coreOrigin,
   launchVisible,
-  serviceRevision,
 }: {
   app: CoreApp;
-  coreOrigin: string;
   launchVisible: boolean;
-  serviceRevision?: number;
   section: "app" | "parameters" | "publicOrigins";
   busyAction: string | null;
   canManageApps: boolean;
@@ -582,7 +599,7 @@ function SettingsForm({
                 <div className="grid gap-3 border-b px-4 py-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]"><div><p className="text-sm font-medium">Start with host</p><p className="mt-1 text-xs text-muted-foreground">The same startup preference as the Dashboard.</p></div><CheckboxRow label="Start at Core startup" checked={autostartDraft} disabled={!canManageApps} onChange={setAutostartDraft} /></div>
                 <div className="grid gap-3 px-4 py-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]"><p className="text-sm font-medium">Runtime</p><div className="min-w-0 space-y-2"><Badge variant="outline">{app.selectedRuntime || "Not reported"}</Badge><p className="text-xs text-muted-foreground">Runtime and source can be changed from this app’s More menu on the Dashboard.</p><Button asChild variant="outline" size="sm"><Link href="/dashboard">Open Dashboard</Link></Button></div></div>
               </section>
-              {launchVisible && <AppLaunchSummary app={app} coreOrigin={coreOrigin} serviceRevision={serviceRevision} />}
+              {launchVisible && <AppLaunchSummary app={app} />}
             </>}
             {section === "parameters" && (appSettings.length > 0 ? (
               <div className="divide-y overflow-hidden rounded-xl border bg-card [&>div]:px-4 [&>div]:py-4">
@@ -956,6 +973,7 @@ function FeedSection({ app, coreOrigin, canManageApps, busyAction, onSetFeed, ac
 }) {
   const [feedState, setFeedState] = useState<CoreAppFeedsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [unbound, setUnbound] = useState(false);
   const [reload, setReload] = useState(0);
   const [wasActive, setWasActive] = useState(active);
   const [activation, setActivation] = useState(0);
@@ -971,9 +989,15 @@ function FeedSection({ app, coreOrigin, canManageApps, busyAction, onSetFeed, ac
     if (!active) return;
     const controller = new AbortController();
     void getAppFeeds(coreOrigin, app.id, controller.signal).then(payload => {
-      if (!controller.signal.aborted) { setFeedState(payload); setError(null); setSettledKey(readKey); }
+      if (!controller.signal.aborted) { setFeedState(payload); setUnbound(false); setError(null); setSettledKey(readKey); }
     }).catch((cause: unknown) => {
-      if (!controller.signal.aborted && !isAuthRequiredRedirectError(cause)) { setError(cause instanceof Error ? cause.message : "Update feeds are unavailable."); setSettledKey(readKey); }
+      if (!controller.signal.aborted && !isAuthRequiredRedirectError(cause)) {
+        const missingBinding = cause instanceof CoreRequestError && cause.code === "app_feeds_not_configured";
+        setUnbound(missingBinding);
+        if (missingBinding) setFeedState(null);
+        setError(missingBinding ? null : cause instanceof Error ? cause.message : "Update feeds are unavailable.");
+        setSettledKey(readKey);
+      }
     });
     return () => controller.abort();
   }, [active, coreOrigin, app.followedFeedId, app.id, readKey]);
@@ -997,6 +1021,7 @@ function FeedSection({ app, coreOrigin, canManageApps, busyAction, onSetFeed, ac
       <div className="min-w-0 flex-1 space-y-3">
         {validating && !error && <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><HostyLoader label={null} className="size-5" />{feedState ? "Refreshing update feeds…" : "Loading update feeds…"}</p>}
         {error && <div className="space-y-2"><p role="alert" className="break-words text-sm text-destructive-foreground">{error}</p><Button type="button" variant="outline" size="sm" onClick={() => { setError(null); setReload(value => value + 1); }}>Retry feeds</Button></div>}
+        {unbound && <p className="text-sm text-muted-foreground">No update feed is configured. This installation can continue using its existing source.</p>}
         {feedState && feeds?.length === 0 && <p className="text-sm text-muted-foreground">No update feeds are declared for this app.</p>}
         {feedState?.feedsUrl && <p className="break-all font-mono text-xs text-muted-foreground">{feedState.feedsUrl}</p>}
         {feedState && <p className="text-xs text-muted-foreground">Confirmed feed: {followed ?? "None"}{unavailable ? " (last observed)" : ""}</p>}
@@ -1008,6 +1033,7 @@ function FeedSection({ app, coreOrigin, canManageApps, busyAction, onSetFeed, ac
             <SelectContent position="popper"><SelectItem value={emptyValue}>{followed === null ? "Choose a feed…" : "None (stop following)"}</SelectItem>{followedMissing && <SelectItem value={followed}>{followed} (missing)</SelectItem>}{feeds.map(feed => <SelectItem key={feed.id} value={feed.id}>{feed.id}{feed.default && feeds.length > 1 ? " (default)" : ""}</SelectItem>)}</SelectContent>
           </Select><Button type="button" size="sm" variant="outline" onClick={() => onSetFeed(app, selected)} disabled={!canManageApps || busy || unavailable || selected === followed || (followed === null && selected.length === 0)}>{busy ? <HostyLoader label={null} className="size-4" /> : <Rss className="size-4" />}{selected.length === 0 && followed !== null ? "Stop following" : "Follow feed"}</Button></div>
         </>}
+        {canManageApps && !app.live && !app.devMode && <AppFeedSource key={`${coreOrigin}|${app.id}|${app.installationId ?? "legacy"}`} app={app} coreOrigin={coreOrigin} active={active} unbound={unbound} onChanged={() => setReload(value => value + 1)} />}
       </div>
     </div>
   </section>;

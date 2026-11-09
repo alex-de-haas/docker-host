@@ -1,3 +1,6 @@
+import type { FeedbackCapabilities } from "./feedback-types";
+import { FEEDBACK_CAPABILITY, feedbackOperation, feedbackScope, type FeedbackOperation, type FeedbackEvent, type FeedbackPort } from "./feedback-channel";
+import { FeedbackRpc } from "./feedback-rpc";
 import { activeNavigationKey, UiCompositionModel } from "./ui-composition";
 import { UI_COMPOSITION_CAPABILITY, UI_MAIN_NAVIGATION_CAPABILITY, navigationSearch, type UiNavigationOptions, type UiChromeOverrides, type UiActionOptions, type UiActionResult } from "./ui-types";
 import { createPresentationRequestId, type UiClient } from "./ui";
@@ -11,6 +14,24 @@ type PendingRequest = { kind: "action" | "presentation"; input: string | null; o
 /** Direct-child transport. Discovery carries no identity and never creates a fallback host. */
 export class EmbeddedUiClient implements UiClient {
   readonly composition: UiCompositionModel;
+  feedbackSupported = false;
+  private readonly feedbackRpc = new FeedbackRpc();
+  private feedbackSource?: {capabilities:FeedbackCapabilities;invoke(operation:FeedbackOperation):Promise<unknown>};
+  private feedbackReceiver?: (event:FeedbackEvent)=>void;
+  registerFeedbackSource(capabilities:FeedbackCapabilities,invoke:(operation:FeedbackOperation)=>Promise<unknown>) {
+    // Metadata refresh is not a new document. Keep pending picker replies attached to this source.
+    if (this.feedbackSource?.invoke === invoke && feedbackScope(this.feedbackSource.capabilities) === feedbackScope(capabilities))
+      this.feedbackSource.capabilities = capabilities;
+    else this.feedbackSource={capabilities,invoke};
+    if(this.feedbackSupported)this.post({type:'hosty:ui:feedback-source',value:capabilities});
+  }
+  unregisterFeedbackSource(){this.feedbackSource=undefined;this.post({type:'hosty:ui:feedback-source-close'});}
+  connectFeedback = (receive:(event:FeedbackEvent)=>void):FeedbackPort => {
+    this.feedbackReceiver=receive;
+    if(this.feedbackSupported)this.post({type:'hosty:ui:feedback-connect'});
+    return {request:operation=>this.feedbackSupported?this.feedbackRpc.request(this,requestId=>this.post({type:'hosty:ui:feedback-request',requestId,operation})):Promise.reject(new Error('This host does not support feedback tools.')),
+      close:()=>{if(this.feedbackReceiver===receive){this.feedbackReceiver=undefined;this.post({type:'hosty:ui:feedback-disconnect'});this.feedbackRpc.clear();}}};
+  };
   private readonly localActions = new Map<string, { key: string; result: Promise<UiActionResult>; pending: boolean }>();
   private environment: UiEnvironment = { mode: "embedded", connection: "connecting" };
   private nonce = createPresentationRequestId();
@@ -21,7 +42,7 @@ export class EmbeddedUiClient implements UiClient {
   private disposed = false;
   private deadline: ReturnType<typeof setTimeout> | undefined;
   private retries: ReturnType<typeof setTimeout>[] = [];
-  private state: { route: string; state: "ready" | "blocked"; code?: string } | null = null;
+  private state: { route: string; state: "ready" | "blocked"; code?: string; title?: string } | null = null;
   private active = true;
   private offered = false;
   private mainNavigation = false;
@@ -68,12 +89,14 @@ export class EmbeddedUiClient implements UiClient {
   };
   private emit(event: UiEvent) { if (!this.disposed) for (const listener of this.listeners) listener(event); }
   private retirePending() {
+    this.feedbackRpc.clear();
     for (const [requestId, entry] of this.pending) entry.resolve(entry.sent
       ? { status: "uncertain", requestId, code: "presentation_unknown" }
       : { status: "unsupported", requestId, code: "host_unavailable" });
   }
   private setEnvironment(connection: UiEnvironment["connection"], code?: string) {
     if (this.disposed) return;
+    if (connection !== "connected") {this.feedbackSupported = false;this.feedbackRpc.clear();}
     this.environment = { mode: "embedded", connection, ...(code ? { code } : {}) };
     this.composition.setEnvironment(this.environment);
     this.emit({ type: "environment", value: this.environment });
@@ -151,15 +174,26 @@ export class EmbeddedUiClient implements UiClient {
       if (msg.code || msg.coreOrigin !== own.coreOrigin || msg.userId !== own.userId || msg.appId !== own.peer?.appId || msg.installationId !== own.peer?.installationId) {
         this.setEnvironment("blocked", "actor_mismatch"); return;
       }
+      this.feedbackSupported = Array.isArray(msg.capabilities) && msg.capabilities.includes(FEEDBACK_CAPABILITY);
       clearTimeout(this.deadline); this.mainNavigation = Array.isArray(msg.capabilities) && msg.capabilities.includes(UI_MAIN_NAVIGATION_CAPABILITY); this.setEnvironment("connected");
       if (Array.isArray(msg.capabilities) && msg.capabilities.includes(UI_COMPOSITION_CAPABILITY)) {
         this.composition.setHostPolicy(channel.generation, msg.revision as number, msg.chrome as UiChromeOverrides, msg.rootDisabled === true, msg.endpoint as string);
       } else this.composition.setLegacyHost();
       void this.composition.refreshNavigation();
       if (this.state) this.reportSurfaceState(this.state);
+      if(this.feedbackSource)this.post({type:'hosty:ui:feedback-source',value:this.feedbackSource.capabilities});
+      if(this.feedbackReceiver)this.post({type:'hosty:ui:feedback-connect'});
       return;
     }
     if (this.environment.connection !== "connected") return;
+    if(msg.type==='hosty:ui:feedback-invoke'&&this.feedbackSupported&&validId(msg.requestId)&&feedbackOperation(msg.operation)){
+      const source=this.feedbackSource;
+      let value:unknown,error:string|undefined;
+      try{if(!source)throw new Error('Capture is unavailable in this document.');value=await source.invoke(msg.operation);}catch(e){error=e instanceof Error?e.message:'Capture failed.';}
+      if(this.channel===channel&&this.feedbackSource===source)this.post({type:'hosty:ui:feedback-source-result',requestId:msg.requestId,value,error});return;
+    }
+    if(msg.type==='hosty:ui:feedback-result'){this.feedbackRpc.receive(this,msg.requestId,msg.value,msg.error);return;}
+    if(msg.type==='hosty:ui:feedback-event'&&this.feedbackSupported){this.feedbackReceiver?.(msg.value as FeedbackEvent);return;}
     if (msg.type === "hosty:ui:chrome" && this.getChrome().capabilities.includes(UI_COMPOSITION_CAPABILITY)) {
       this.composition.setHostPolicy(channel.generation, msg.revision as number, msg.chrome as UiChromeOverrides, msg.rootDisabled === true, msg.endpoint as string); return;
     }
@@ -275,7 +309,7 @@ export class EmbeddedUiClient implements UiClient {
     const entryKey = activeNavigationKey(this.getNavigation().entries, this.composition.currentEndpoint(), route);
     this.post({ type: "hosty:ui:route", route, ...(entryKey ? { entryKey } : {}) });
   }
-  reportSurfaceState = (state: { route: string; state: "ready" | "blocked"; code?: string }) => {
+  reportSurfaceState = (state: { route: string; state: "ready" | "blocked"; code?: string; title?: string }) => {
     this.state = state;
     if (this.environment.connection === "connected") {
       if (this.getChrome().capabilities.includes(UI_COMPOSITION_CAPABILITY)) this.reportRoute(state.route);
@@ -283,6 +317,7 @@ export class EmbeddedUiClient implements UiClient {
     }
   };
   dispose = () => {
+    this.feedbackRpc.clear();
     this.disposed = true; this.composition.dispose(); this.localActions.clear(); clearTimeout(this.deadline); this.retries.forEach(clearTimeout);
     window.removeEventListener("message", this.onMessage); window.removeEventListener("focus", this.onFocus); window.removeEventListener("keydown", this.onKey);
     for (const [id, entry] of this.pending) entry.resolve(failure(id, new UiError("host_unavailable", "Host disconnected.")));

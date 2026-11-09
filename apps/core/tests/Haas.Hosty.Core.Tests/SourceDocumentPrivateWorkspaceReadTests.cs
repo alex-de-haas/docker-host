@@ -73,8 +73,9 @@ public sealed partial class CoreLifecycleServiceTests
             Assert.Equal("source_document_conflict", (await Assert.ThrowsAsync<AppLifecycleException>(() =>
                 documents.ReadContentAsync(entry.Id, "admin", request, default))).Code);
         }
-        Assert.Equal("source_document_forbidden", (await Assert.ThrowsAsync<AppLifecycleException>(() =>
+        if (version == "worktree") Assert.Equal("source_document_conflict", (await Assert.ThrowsAsync<AppLifecycleException>(() =>
             documents.ReadContentAsync(entry.Id, "bob", request, default))).Code);
+        else Assert.Equal(warmDocument.Sha, (await documents.ReadContentAsync(entry.Id, "bob", request, default)).Sha);
         Assert.Equal("source_access_required", (await Assert.ThrowsAsync<AppLifecycleException>(() =>
             documents.ListDocumentsAsync(entry.Id, "admin", false, default))).Code);
         Assert.Equal("source_access_required", (await Assert.ThrowsAsync<AppLifecycleException>(() =>
@@ -89,7 +90,7 @@ public sealed partial class CoreLifecycleServiceTests
     [InlineData("worktree", "rebind")]
     [InlineData("base", "revoke")]
     [InlineData("worktree", "revoke")]
-    public async Task SourceDocuments_PrivateWorkspaceReadsRejectChangedOrRevokedGrants(string version, string transition)
+    public async Task SourceDocuments_LocalWorkspaceReadsSurviveChangedOrRevokedProviderGrants(string version, string transition)
     {
         var (fixture, users, access, _, workspace, documents, entry) = await PrivateWorkspaceDocumentFixtureAsync();
         var listed = await documents.ListDocumentsAsync(entry.Id, "admin", false, default, version, workspace.Id);
@@ -104,17 +105,16 @@ public sealed partial class CoreLifecycleServiceTests
             await fixture.Apps.UpdateAppAsync(SourceTestApp, app => app with { PrivateSources = replacement is null ? null : new(Git: replacement) });
         }
         fixture.Clock.UtcNow += SourceRepositoryFetchCoordinator.Interval;
-        await Assert.ThrowsAsync<AppLifecycleException>(() => documents.ListDocumentsAsync(entry.Id, "admin", false, default, version, workspace.Id));
-        await Assert.ThrowsAsync<AppLifecycleException>(() => documents.ReadContentAsync(entry.Id, "admin", request, default));
-        if (transition == "rebind")
-            Assert.Equal("source_document_forbidden", (await Assert.ThrowsAsync<AppLifecycleException>(() =>
-                documents.ReadContentAsync(entry.Id, "bob", request, default))).Code);
+        Assert.NotEmpty((await documents.ListDocumentsAsync(entry.Id, "admin", false, default, version, workspace.Id)).Documents);
+        Assert.Equal(document.Sha, (await documents.ReadContentAsync(entry.Id, "admin", request, default)).Sha);
+        Assert.Equal(document.Sha, (await documents.ReadContentAsync(entry.Id, "bob", request, default)).Sha);
+
     }
 
     [Theory]
     [InlineData("base")]
     [InlineData("worktree")]
-    public async Task SourceDocuments_PrivateWorkspaceAccessDoesNotBypassPublicAnonymousProof(string version)
+    public async Task SourceDocuments_LocalWorkspaceAccessDoesNotNeedCurrentAnonymousRemoteProof(string version)
     {
         var (fixture, origin, workspaces, documents) = await DocumentFixtureAsync();
         // Use a separate ordinary public fixture so neither a private grant nor private cache can
@@ -130,7 +130,7 @@ public sealed partial class CoreLifecycleServiceTests
         await RunGitAsync(origin, ["update-ref", "-d", "refs/heads/main"]);
         fixture.Clock.UtcNow += SourceRepositoryFetchCoordinator.Interval;
         Assert.False(workspaces.Fetches.HasPublicProof(entry.Repository, entry.Branch, entry.Commit));
-        await Assert.ThrowsAsync<AppLifecycleException>(() => documents.ListDocumentsAsync(entry.Id, "admin", false, default, version, workspace.Id));
-        await Assert.ThrowsAsync<AppLifecycleException>(() => documents.ReadContentAsync(entry.Id, "admin", request, default));
+        Assert.NotEmpty((await documents.ListDocumentsAsync(entry.Id, "admin", false, default, version, workspace.Id)).Documents);
+        Assert.Equal(document.Sha, (await documents.ReadContentAsync(entry.Id, "admin", request, default)).Sha);
     }
 }

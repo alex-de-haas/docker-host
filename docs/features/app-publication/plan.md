@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-16
-updated: 2026-10-18
+updated: 2026-11-04
 summary: Repository provisioning, installable releases and feeds, and catalog promotion for apps built in Hosty.
 components: [apps/core, apps/harness]
 ---
@@ -16,6 +16,19 @@ PRs. This plan continues to own repository provisioning, installable releases/fe
 promotion. Reuse their recorded commits, PRs and artifact observations where the workflows meet;
 do not make the session's Publish button imply a release, catalog listing or installation update.
 The two plans retain separate deliverables and approval boundaries.
+
+The implemented [ready-release publisher](../repository-release-model/feature.md) provides the shared
+release contract, separate check/build/publication selection, verified digest reuse and
+artifact-before-feed ordering. [Runtime App Update](../runtime-app-update/feature.md) supplies
+defensive consumer checks and reviewed migration of existing main-based sources to daily.
+Automatic daily publication follows successful main CI; manual stable promotion reuses exact
+completed releases. Fresh-install defaults select stable after its first approved release.
+[Platform feeds](../platform-release-feeds/feature.md) independently cover Core/CLI native releases,
+migration and preparation; this authoring plan does not duplicate that delivered platform work.
+Feed names/counts/defaults and automation policies are publisher-defined. The stock daily/stable
+configuration is not a required pair for authored apps or third-party platform distributions.
+The release milestone and D3/D4 here compose that contract; they retain the authoring, provider and
+catalog workflow and do not duplicate its publication-readiness or channel-policy deliverables.
 
 ## Goal
 
@@ -59,7 +72,7 @@ and do not inherit permission from a discovery call.
 - Marketplace owns catalog-specific instructions and submission metadata. Start with a maintained
   instruction contract; add MCP only for concrete structured queries/actions that need it. Current
   skill delivery follows enabled MCP providers, so a skill-only Marketplace is not automatically
-  discoverable: decide an explicit delivery path instead of assuming `agent.skillFile` alone works.
+  discoverable: decide an explicit delivery path using the shared `agent.skills` package contract and explicit native selection.
 - A Marketplace tool may prepare/submit a catalog contribution with its own scoped authorization;
   it must not inherit authority to install, update or remove apps. Core remains catalog-agnostic.
 - Keep repository tokens in the selected credential provider, never prompts, generated app files,

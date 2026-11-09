@@ -4,7 +4,7 @@ namespace Haas.Hosty.Core;
 
 // Exists only between verified physical cleanup and removal of the last metadata file.
 // Snapshots let recovery validate ownership/consumers after some worktree records are gone.
-internal sealed record WorkspaceDeletionJournal(WorkspaceOwner Owner, DevelopmentWorkspace[] Worktrees);
+internal sealed record WorkspaceDeletionJournal(WorkspaceOwner Owner, DevelopmentWorkspace[] Worktrees, bool Direct = false);
 
 internal sealed partial class DevelopmentWorkspaceService
 {
@@ -34,7 +34,7 @@ internal sealed partial class DevelopmentWorkspaceService
                 || !w.Owner.SameIdentity(journal.Owner)
                 || w.WorkspaceId != id || w.Path != WorkPath(w.Id) || w.RepositoryId != Hash(w.Repository)
                 || w.Id != Hash(OwnerIdentity(journal.Owner) + "\n" + w.RepositoryId)
-                || w.Branch != "hosty/session/" + w.Id || w.State != "released")
+                || !ValidWorkspaceBranch(w) || w.State != "released")
             || journal.Worktrees.Select(w => w.Id).Distinct().Count() != journal.Worktrees.Length)
             throw Error("ownership_invalid", "Workspace deletion journal is inconsistent; metadata was preserved.");
         foreach (var tree in journal.Worktrees) Id(tree.Id);
@@ -85,7 +85,7 @@ internal sealed partial class DevelopmentWorkspaceService
         {
             if (!await CanObservePublicationAsync(id, ct)) return false;
             await write();
-            observationState?.Publish(id);
+            observationState?.PublicationChanged(id);
             return true;
         }, ct);
 
@@ -112,7 +112,7 @@ internal sealed partial class DevelopmentWorkspaceService
         return owners.Values.ToArray();
     }
 
-    internal Task FinalizeDeletionAsync(WorkspaceOwner owner, CancellationToken ct)
+    internal Task FinalizeDeletionAsync(WorkspaceOwner owner, CancellationToken ct, bool direct = false)
         => Locked(Hash(OwnerIdentity(owner)), () => Locked("workspace-consumers", async () =>
         {
             var id = WorkspaceIdFor(owner);
@@ -126,7 +126,7 @@ internal sealed partial class DevelopmentWorkspaceService
                 if (state.Heads is null || !state.Heads.Keys.Order(StringComparer.Ordinal)
                     .SequenceEqual(current.Select(w => w.Id).Order(StringComparer.Ordinal)))
                     throw Error("completion_unknown", "Deleted workspace has incomplete worktree evidence.");
-                journal = new(owner, current);
+                journal = new(owner, current, direct);
             }
             else if (state.State != "deleted" && File.Exists(WorkflowPath(owner)))
                 throw Error("cleanup_pending", "Workspace workflow changed during metadata cleanup.");
@@ -143,15 +143,15 @@ internal sealed partial class DevelopmentWorkspaceService
                 if (tree.State != "released" || tree.Leases.Length != 0 || tree.SandboxConsumers.Length != 0
                     || tree.Operations.Any(o => o.State is "pending" or "unknown") || PathEntryExists(tree.Path))
                     throw Error("cleanup_pending", "Workspace still has source or unresolved activity.");
-                await CheckConsumers(tree, ct);
+                if (!direct && !journal.Direct) await CheckConsumers(tree, ct);
                 var repo = RepoPath(tree.RepositoryId);
                 if (Directory.Exists(repo))
                 {
                     var branch = await Git(repo, ["show-ref", "--verify", "--quiet", "refs/heads/" + tree.Branch], ct, true);
                     if (branch.ExitCode != 1) throw Error("cleanup_pending", "Workspace branch is present or cannot be verified.");
-                    var registrations = await Git(repo, ["worktree", "list", "--porcelain"], ct);
-                    if (registrations.StandardOutput.Split('\n').Any(line => line == "worktree " + tree.Path
-                        || line == "branch refs/heads/" + tree.Branch))
+                    await RemoveBranchAllocation(tree, ct);
+                    var registrations = await Git(repo, ["worktree", "list", "--porcelain", "-z"], ct);
+                    if (GitWorktreeRegistrations.Contains(registrations.StandardOutput, tree.Path, "refs/heads/" + tree.Branch))
                         throw Error("cleanup_pending", "Workspace still has a Git registration.");
                 }
             }
@@ -172,6 +172,8 @@ internal sealed partial class DevelopmentWorkspaceService
                 var job = await JsonStorage.ReadAsync<WorkspaceCleanupJob>(path, ct);
                 if (job?.WorkspaceId == id && job.UserId == owner.UserId) DeleteMetadata(path);
             }
+            await new FeedbackStore(paths, clock).DeleteWorkspaceAsync(id, ct);
+            await RetireParticipationAsync(id, ct);
             DeleteMetadata(MetadataPath(owner));
             DeleteMetadata(WorkflowPath(owner));
             DeleteMetadata(DeletionPath(id)); // Last durable evidence; successful Delete retains nothing.
@@ -193,14 +195,11 @@ internal sealed partial class WorkspaceCleanupService
 {
     private async Task RequireFinishedResourcesAsync(string workspaceId, WorkspaceOwner? owner, CancellationToken ct)
     {
-        bool Matches(SandboxActor actor, SandboxContext? context) => owner is null
-            ? context?.WorkspaceId == workspaceId : Belongs(actor, context, owner, workspaceId);
+        bool Matches(SandboxActor actor, SandboxContext? context) => context?.WorkspaceId == workspaceId ||
+            owner is not null && Belongs(actor, context, owner, workspaceId);
         foreach (var child in (await environments.ListAsync(ct)).Where(e => Matches(e.Owner, e.Request.Context)))
             if (child.State != "finished" || DevelopmentWorkspaceService.PathEntryExists(environments.Root(child.Id)))
                 throw DevelopmentWorkspaceService.Error("cleanup_pending", "Workspace child Core cleanup is not finished.");
-        foreach (var sandbox in (await sandboxes.ListAsync(ct)).Where(s => Matches(s.Owner, s.Request.Context)))
-            if (sandbox.State != "disposed" || DevelopmentWorkspaceService.PathEntryExists(sandboxes.DataRoot(sandbox.Id)))
-                throw DevelopmentWorkspaceService.Error("cleanup_pending", "Workspace sandbox cleanup is not finished.");
     }
     private async Task FinalizeAsync(WorkspaceOwner owner, CancellationToken ct)
     {

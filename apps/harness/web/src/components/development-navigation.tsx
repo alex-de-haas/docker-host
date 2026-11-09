@@ -1,74 +1,89 @@
 "use client";
-import { useRef, useState, type ReactNode } from "react";
-import { Folder, Hammer, Loader2, MessageSquarePlus, Trash2, Search, ListFilter, Diamond, CircleAlert, ArrowUpRight } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Hammer, Loader2, MessageSquarePlus, Trash2, Search, ListFilter, Diamond, CircleAlert, MessageSquare, PanelLeftClose } from "lucide-react";
 import type { AssistantSession } from "@/lib/assistant-api";
 import type { DevelopmentWorkspace } from "@/lib/development-api";
-import { orderSessions, isWaiting } from "@/lib/attention";
+import { navigationItems } from "@/lib/workspace-navigation";
+import { WorkspaceRowStatus } from "./workspace-row-status";
+import { WorkspaceActivityCounts } from "./workspace-activity-counts";
+import { SessionActivityIndicator, SessionRowStatus } from "./session-row-status";
+import { WorkspaceDelete } from "./workspace-delete";
 import { Input } from "@/components/ui/input";
 import { HostyMark } from "../../../../../shared/web/hosty-mark";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogBody, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ContinueBuilding } from "@/components/continue-building";
 import { cn } from "@/lib/utils";
 
 const statusFilters = [
   { key: "all", label: "All", Icon: ListFilter, tone: "text-muted-foreground" },
-  { key: "waiting", label: "Needs you", Icon: Diamond, tone: "text-warning-foreground" },
+  { key: "waiting", label: "Needs attention", Icon: Diamond, tone: "text-warning-foreground" },
   { key: "working", label: "Working", Icon: Loader2, tone: "text-info-foreground" },
   { key: "failed", label: "Failed", Icon: CircleAlert, tone: "text-destructive-foreground" },
 ] as const;
 
-export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, onNew, onDelete, externalCount = 0, onExternal, createAppAction }: {
-  externalCount?: number; onExternal?: () => void; createAppAction?: ReactNode;
+export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, onNew, onDelete, activeWorkspaceId, onWorkspace, createAppAction, onClose, onRefresh }: {
+  onClose?: () => void; onRefresh?: () => void;
+  activeWorkspaceId?: string; onWorkspace?: (workspace: DevelopmentWorkspace, session?: AssistantSession) => void; createAppAction?: ReactNode;
   sessions: AssistantSession[]; activeId?: string; workspaces: DevelopmentWorkspace[];
   onPick: (session: AssistantSession) => void; onNew: () => void; onDelete: (sessionId: string) => Promise<void>;
 }) {
   const [deleting, setDeleting] = useState<AssistantSession | null>(null);
+  const [deletingWorkspace, setDeletingWorkspace] = useState<{ workspace: DevelopmentWorkspace; pendingRequestId?: string } | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const deletionPending = useRef(false);
   const deleteTrigger = useRef<HTMLButtonElement | null>(null);
+  const workspaceDeleteTrigger = useRef<HTMLButtonElement | null>(null);
   const newButton = useRef<HTMLButtonElement | null>(null);
   const [query, setQuery] = useState("");
   const [stateFilter, setStateFilter] = useState("all");
-  const matchesState = (session: AssistantSession, state: string) => state === "all" || (state === "waiting" ? isWaiting(session.status) : state === "working" ? session.status === "running" : session.status === "failed");
-  const sessionWorkspaces = new Map<string, DevelopmentWorkspace>();
-  for (const workspace of workspaces) {
-    if (workspace.owner.kind === "assistant" && workspace.owner.appId === "hosty.harness" && workspace.workflow.state !== "deleted" && !sessionWorkspaces.has(workspace.owner.reference))
-      sessionWorkspaces.set(workspace.owner.reference, workspace);
-  }
-  const sessionLabel = (session: AssistantSession) => {
-    const workspace = sessionWorkspaces.get(session.id);
-    return workspace ? workspace.name?.trim() || workspace.owner.label?.trim() || session.title?.trim() || "Workspace"
-      : session.title?.trim() || "Untitled session";
-  };
-  const visibleSessions = sessions.filter(session => matchesState(session, stateFilter) && (!query.trim() || [sessionLabel(session), session.title, ...(session.contextApps ?? []).map(app => app.displayName), ...(session.appIds ?? [])].join(" ").toLowerCase().includes(query.trim().toLowerCase())));
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 15_000); return () => clearInterval(timer); }, []);
+  const items = navigationItems(workspaces, sessions, now);
+  const title = "Sessions";
+  const matchesState = (item: typeof items[number], state: string) => state === "all" || item.counts[state as "waiting" | "working" | "failed"] > 0;
+  const visible = items.filter(item => matchesState(item, stateFilter) && (!query.trim() || item.search.includes(query.trim().toLowerCase())));
+  const sessionLabel = (session: AssistantSession) => session.title?.trim() || "Untitled session";
 
-  const renderSession = (session: AssistantSession) => {
-      const workspace = sessionWorkspaces.get(session.id);
-      const label = sessionLabel(session);
-      return <div key={session.id} className={`group mx-1 flex items-center rounded-md pr-1 hover:bg-muted ${activeId === session.id ? "bg-accent" : ""}`}>
-        <Button variant="ghost" type="button" aria-current={activeId === session.id ? "page" : undefined}
-        onClick={() => onPick(session)} className="h-9 min-w-0 flex-1 justify-start gap-2 rounded-md px-3 text-left">
-        {workspace && <Hammer className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />}
-        <span className="min-w-0 flex-1 truncate text-sm font-normal" title={label}>{label}</span>
-        {session.status === "running" && <Loader2 className="size-3.5 shrink-0 animate-spin text-info-foreground motion-reduce:animate-none" aria-label="Agent running" />}
-        {isWaiting(session.status) && <Diamond className="size-3.5 shrink-0 text-warning-foreground" aria-label="Waiting for you" />}
-        {session.status === "failed" && <CircleAlert className="size-3.5 shrink-0 text-destructive-foreground" aria-label="Failed" />}
-        </Button>
-        <Button variant="ghost" size="icon-sm" aria-label={`Delete ${label}`} title="Delete session"
-          className="shrink-0 text-muted-foreground hover:text-destructive-foreground [@media(hover:hover)]:opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
-          onClick={event => { deleteTrigger.current = event.currentTarget; setError(null); setDeleting(session); }}><Trash2 /></Button>
-      </div>;
+  const renderItem = (item: typeof items[number]) => {
+    const { workspace, session, label } = item;
+    const selected = workspace ? activeWorkspaceId === workspace.id || !activeWorkspaceId && item.matches.some(s => s.id === activeId) : !activeWorkspaceId && activeId === session?.id;
+    return <div key={item.key} className={`group mx-1 flex items-center rounded-md pr-1 hover:bg-muted ${selected ? "bg-accent" : ""}`}>
+      <Button variant="ghost" type="button" aria-current={selected ? "page" : undefined} onClick={() => {
+        if (workspace) {
+          const match = query.trim() ? item.matches.find(s => s.title?.toLowerCase().includes(query.trim().toLowerCase())) : undefined;
+          onWorkspace?.(workspace, match);
+        } else if (session) onPick(session);
+      }} className="h-auto min-h-9 min-w-0 flex-1 justify-start gap-2 rounded-md px-3 text-left">
+        {workspace ? <Hammer className="size-3.5 shrink-0 text-muted-foreground" role="img" aria-label="Workspace" /> : <MessageSquare className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />}
+        <span className="min-w-0 flex-1 text-left">
+          <span className="flex min-w-0 items-center gap-2"><span className="block min-w-0 flex-1 truncate text-sm font-normal" title={label}>{label}</span>
+            {workspace ? <WorkspaceActivityCounts counts={item.counts} /> : session && <SessionActivityIndicator status={session.status} />}
+          </span>
+          {workspace ? <WorkspaceRowStatus workspace={workspace} now={now} /> : session && <SessionRowStatus session={session} now={now} />}
+        </span>
+      </Button>
+      {session && <Button variant="ghost" size="icon-sm" aria-label={`Delete ${label}`} title="Delete session"
+        className="shrink-0 text-muted-foreground hover:text-destructive-foreground [@media(hover:hover)]:opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
+        onClick={event => { deleteTrigger.current = event.currentTarget; setError(null); setDeleting(session); }}><Trash2 /></Button>}
+      {workspace && workspace.permissions?.manage !== false && <Button variant="ghost" size="icon-sm" aria-label={`Delete workspace ${label}`} title="Delete workspace"
+        className="shrink-0 text-muted-foreground hover:text-destructive-foreground [@media(hover:hover)]:opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
+        onClick={event => {
+          workspaceDeleteTrigger.current = event.currentTarget;
+          const operation = workspace.workflow.operations?.find(o => ["pending", "unknown"].includes(o.state) && ["delete", "discard"].includes(o.kind));
+          setDeletingWorkspace({ workspace, pendingRequestId: operation?.id });
+        }}><Trash2 /></Button>}
+    </div>;
   };
-  return <nav aria-label="Sessions" className="flex h-full min-h-0 flex-col">
+  return <nav aria-label={title} className="flex h-full min-h-0 flex-col">
     <div className="space-y-3 border-b p-3">
       <div className="flex items-center justify-between gap-2">
-        <h1 className="text-sm font-semibold">Sessions <span className="ml-1 font-mono text-xs font-normal tabular-nums text-muted-foreground">{sessions.length}</span></h1>
+        <h1 className="text-sm font-semibold">{title} <span className="ml-1 font-mono text-xs font-normal tabular-nums text-muted-foreground">{items.length}</span></h1>
         <div className="flex shrink-0 items-center gap-1">
-          {createAppAction}
-          <ContinueBuilding sessions={sessions} onPick={onPick} />
+          {onClose && <Button variant="ghost" size="icon-sm" className="md:hidden" aria-label={`Hide ${title.toLowerCase()}`} title={`Hide ${title.toLowerCase()}`} onClick={onClose}><PanelLeftClose aria-hidden /></Button>}
+          {createAppAction}<ContinueBuilding sessions={sessions} onPick={onPick} />
           <TooltipProvider delayDuration={250}>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -79,31 +94,39 @@ export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, 
           </TooltipProvider>
         </div>
       </div>
-      <div className="relative"><Search className="pointer-events-none absolute top-2.5 left-2.5 size-4 text-muted-foreground" /><Input aria-label="Search sessions" placeholder="Search sessions…" className="pl-8" value={query} onChange={event => setQuery(event.target.value)} /></div>
-      <div className="flex flex-wrap gap-1" aria-label="Session status filters">{statusFilters.map(({ key, label, Icon, tone }) => {
-        const count = sessions.filter(session => matchesState(session, key)).length;
+      <div className="relative"><Search className="pointer-events-none absolute top-2.5 left-2.5 size-4 text-muted-foreground" /><Input aria-label={`Search ${title.toLowerCase()}`} placeholder="Search…" className="pl-8" value={query} onChange={event => setQuery(event.target.value)} /></div>
+      <div className="flex flex-wrap gap-1" aria-label="Activity filters">{statusFilters.map(({ key, label, Icon, tone }) => {
+        const count = items.filter(item => matchesState(item, key)).length;
         return <Button key={key} size="sm" variant={stateFilter === key ? "secondary" : "ghost"} aria-pressed={stateFilter === key} className="h-7 gap-1 rounded-full px-2 text-xs" onClick={() => setStateFilter(key)}>
           <span aria-hidden="true" className={cn("inline-flex shrink-0", tone, key === "working" && count > 0 && "motion-safe:animate-spin")}><Icon className="size-3.5" /></span>
           {label}<span className="font-mono text-xs font-normal tabular-nums text-muted-foreground">{count}</span>
         </Button>;
       })}</div>
     </div>
-    <div className="min-h-0 flex-1 overflow-y-auto py-2">
-      {orderSessions(visibleSessions).map(renderSession)}
-      {!!sessions.length && !visibleSessions.length && <p className="p-3 text-sm text-muted-foreground">No sessions match this search and filter.</p>}
-      {!sessions.length && <div className="flex flex-col items-center gap-3 p-5 text-center"><HostyMark appId="hosty.harness" tile className="size-12" /><p className="text-sm text-muted-foreground">Start a session to ask a question or work on an application.</p></div>}
+    <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-2">
+      {visible.map(renderItem)}
+      {!!items.length && !visible.length && <p className="p-3 text-sm text-muted-foreground">No sessions match this search and filter.</p>}
+      {!items.length && <div className="flex flex-col items-center gap-3 p-5 text-center"><HostyMark appId="hosty.harness" tile className="size-12" /><p className="text-sm text-muted-foreground">Start a new session, create an app or continue building.</p></div>}
     </div>
-    {onExternal && <div className="border-t p-2"><Button variant="ghost" className="w-full justify-start" onClick={onExternal}><Folder className="size-4" />External workspaces<span className="ml-auto font-mono text-xs font-normal tabular-nums text-muted-foreground">{externalCount}</span><ArrowUpRight className="size-3.5" /></Button></div>}
+    {deletingWorkspace && <WorkspaceDelete key={deletingWorkspace.workspace.id}
+      workspaceId={deletingWorkspace.workspace.id} name={deletingWorkspace.workspace.name?.trim() || deletingWorkspace.workspace.owner.label?.trim() || "Workspace"}
+      pendingRequestId={deletingWorkspace.pendingRequestId} refresh={() => onRefresh?.()} onClose={() => setDeletingWorkspace(null)}
+      onCloseAutoFocus={event => {
+        event.preventDefault();
+        (workspaceDeleteTrigger.current?.isConnected ? workspaceDeleteTrigger.current : newButton.current)?.focus();
+      }} />}
     <Dialog open={deleting !== null} onOpenChange={open => { if (!open && !deletionPending.current) setDeleting(null); }}>
       <DialogContent showCloseButton={!pending} onCloseAutoFocus={event => {
         event.preventDefault();
         (deleteTrigger.current?.isConnected ? deleteTrigger.current : newButton.current)?.focus();
       }}>
         <DialogHeader><DialogTitle>Delete session?</DialogTitle>
-          <DialogDescription>Delete the session “{deleting ? sessionLabel(deleting) : "Untitled session"}” and its conversation history? This cannot be undone. Unfinished workspaces must be resolved before their session can be deleted.</DialogDescription>
+          <DialogDescription>Delete the session “{deleting ? sessionLabel(deleting) : "Untitled session"}” and its conversation history? This cannot be undone. The session is stopped and detached. Shared source and other conversations are retained; unresolved session resources must be reconciled first.</DialogDescription>
         </DialogHeader>
-        {error && <p role="alert" className="text-sm text-destructive-foreground">{error}</p>}
-        <DialogFooter>
+      <DialogBody>
+          {error && <p role="alert" className="text-sm text-destructive-foreground">{error}</p>}
+      </DialogBody>
+      <DialogFooter>
           <Button variant="outline" disabled={pending} onClick={() => setDeleting(null)}>Keep session</Button>
           <Button variant="destructive" disabled={pending} onClick={async () => {
             if (!deleting || deletionPending.current) return;

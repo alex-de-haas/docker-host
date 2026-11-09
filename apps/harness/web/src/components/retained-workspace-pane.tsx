@@ -12,10 +12,11 @@ const server = () => false;
 export const useNarrowWorkspace = () => useSyncExternalStore(subscribe, readNarrow, server);
 
 /** Layout changes only style this tree: moving it through a portal would lose local form state. */
-export function RetainedWorkspacePane({ children, open, visible, reviewing, onClose }: {
-  children: ReactNode; open: boolean; visible: boolean; reviewing: boolean; onClose: () => void;
+export function RetainedWorkspacePane({ children, open, visible, reviewing, onClose, narrow: narrowOverride, width = 344, resizeHandle }: {
+  children: ReactNode; open: boolean; visible: boolean; reviewing: boolean; onClose: () => void; narrow?: boolean; width?: number; resizeHandle?: ReactNode;
 }) {
-  const narrow = useNarrowWorkspace();
+  const narrowViewport = useNarrowWorkspace();
+  const narrow = narrowOverride ?? narrowViewport;
   const modal = narrow && open && !reviewing;
   const pane = useRef<HTMLDivElement>(null), close = useRef<HTMLButtonElement>(null);
   const closeHandler = useRef(onClose); useEffect(() => { closeHandler.current = onClose; }, [onClose]);
@@ -39,9 +40,12 @@ export function RetainedWorkspacePane({ children, open, visible, reviewing, onCl
   return <>
     {modal && <button type="button" tabIndex={-1} aria-label="Close workspace" className="fixed inset-0 z-30 bg-black/30" onClick={onClose} />}
     <div ref={pane} role={modal ? "dialog" : undefined} aria-modal={modal || undefined} aria-label={modal ? "Workspace" : undefined}
-      className={cn("min-h-0 min-w-0 border-l min-[900px]:w-[344px] min-[900px]:flex-none", reviewing ? "hidden" : open ? "harness-workspace-sheet block" : "hidden", !reviewing && visible ? "min-[900px]:block" : "min-[900px]:hidden")}>
-      {open && <div className="flex items-center justify-between border-b bg-background px-3 py-2 min-[900px]:hidden"><span className="text-sm font-medium">Workspace</span><Button ref={close} variant="ghost" size="sm" onClick={onClose}>Back to conversation</Button></div>}
+      style={{ width: narrow ? undefined : width, display: reviewing || (narrow ? !open : !visible) ? "none" : undefined }}
+      className={cn("relative min-h-0 min-w-0 flex-none border-l", narrow && open && "harness-workspace-sheet")}>
+      {!narrow && resizeHandle}
+      {modal && <div className="shrink-0 border-b bg-background px-3 py-2 text-sm font-medium">Workspace</div>}
       {children}
+      {modal && <div className="flex shrink-0 justify-end border-t bg-background p-3"><Button ref={close} variant="outline" size="sm" onClick={onClose}>Back to conversation</Button></div>}
     </div>
   </>;
 }

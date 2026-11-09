@@ -1,10 +1,15 @@
+import { coreAliases } from "../mcp/core-migration.js";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { canonicalAlias, type LegacyCoreContext, type CanonicalCall } from "../mcp/core-aliases.js";
+import { feedbackActions, feedbackTools } from "../feedback/tools.js";
+import { taskActions, taskTools } from "../tasks/tools.js";
+import { contextActions, contextTools, type ContextAction } from "./app-context-tools.js";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { McpToolPolicy } from "../mcp/policy.js";
 import { AppContextError } from "./app-context.js";
-import { CoreEnvironmentClient, type CoreEnvironmentAction, SandboxError, SandboxClient, sandboxActions, type SandboxAction } from "@hosty-sdk/app/sandbox/server";
+import { CoreEnvironmentClient, type CoreEnvironmentAction, SandboxError } from "@hosty-sdk/app/sandbox/server";
 import { coreEnvironmentTools, harnessEnvironmentActions } from "./environment-tools.js";
-import { sandboxTools } from "./sandbox-tools.js";
 import { requestWorkspaceApplications } from "../workspace-applications.js";
 
 export interface DevelopmentWorkspace {
@@ -15,14 +20,36 @@ export interface DevelopmentWorkspace {
   observation?: { state: string; at: string; head?: string; targetHead?: string; ahead?: number; behind?: number;
     conflict?: boolean; error?: string; sessionFiles?: string[]; local?: { files: { path: string; status: string }[] } };
 }
-export type DevelopmentAction = "execution-select" | "execution-status" | "rename" | "activation-plan" | "activation-apply" | "activation-status" | "activation-list" | "activation-cancel" | "activation-resume" | "activation-return" | "app-dev-logs" | "app-dev-status" | "app-dev-plan" | "app-dev-apply" | "merge-upstream" | "remote-status" | "remote-connect" | "remote-fetch" | "remote-push-base" | "pr-push" | "app-local-status" | "app-local-accept" | "app-local-use" | "app-create" | "app-creation-status" | "app-creation-capabilities" | "app-creation-guide" | "workflow-status" | "workflow-complete" | "workflow-resume" | "workflow-pause" | "workflow-pause-confirm" | "workflow-defer" | "workflow-delete" | CoreEnvironmentAction | SandboxAction | "viewer" | "pr-resolve-review" | "pr-commit" | "pr-list" | "pr-connections" | "pr-status" | "pr-configure" | "pr-publish" | "pr-link" | "pr-ready" | "pr-merge" | "pr-complete" | "pr-corrective" | "list" | "prepare" | "status" | "diff" | "commit" | "refresh" | "merge" | "abort-merge" | "cleanup" | "references" | "lease" | "release-lease";
+export interface WorkspaceParticipation {
+  id: string; revision: number; role: "owner" | "contributor" | "operator";
+  members: { userId: string; name: string; role: string; worktreeIds: string[]; revoked: boolean }[];
+  sessions: { appId: string; userId: string; sessionId: string; title: string; attached: boolean; canOpen: boolean; viewerPath: string | null; status: string; activityAt: string | null }[];
+  eligibleUsers: { id: string; name: string }[];
+}
+export type DevelopmentAction = "delete-workspace" | "workspace-inventory" | typeof feedbackActions[number] | typeof taskActions[number] | ContextAction | "association" | "attach" | "detach" | "participants" | "commit-review" | "execution-select" | "execution-status" | "rename" | "activation-plan" | "activation-apply" | "activation-status" | "activation-list" | "activation-cancel" | "activation-resume" | "activation-return" | "app-dev-logs" | "app-dev-status" | "app-dev-plan" | "app-dev-apply" | "merge-upstream" | "remote-status" | "remote-connect" | "remote-fetch" | "remote-push-base" | "pr-push" | "app-local-status" | "app-local-accept" | "app-local-use" | "app-create" | "app-creation-status" | "app-creation-capabilities" | "app-creation-guide" | "workflow-status" | "workflow-complete" | "workflow-resume" | "workflow-pause" | "workflow-pause-confirm" | "workflow-defer" | "workflow-delete" | CoreEnvironmentAction | "viewer" | "pr-resolve-review" | "pr-commit" | "pr-list" | "pr-connections" | "pr-status" | "pr-configure" | "pr-publish" | "pr-link" | "pr-ready" | "pr-merge" | "pr-complete" | "pr-corrective" | "list" | "prepare" | "status" | "diff" | "commit" | "refresh" | "merge" | "abort-merge" | "cleanup" | "references" | "lease" | "release-lease";
 export interface RetentionSnapshot {
   kind: "chat" | "workspace" | "sandbox";
   workflow: { state: string; revision: number; completedAt?: string | null; closure?: string | null } | null;
   resourcesFinished: boolean;
   workspaceAbsent?: boolean;
+  sessionDetached?: boolean;
+  independentEnvironments?: boolean;
 }
 export class DevelopmentClient {
+  private readonly coreCalls = new AsyncLocalStorage<{ context: () => LegacyCoreContext; invoke: (call: CanonicalCall) => Promise<unknown> } | undefined>();
+  withCoreMcp<T>(context: () => LegacyCoreContext, invoke: (call: CanonicalCall) => Promise<unknown>, action: () => Promise<T>): Promise<T> {
+    return this.coreCalls.run({ context, invoke }, action);
+  }
+  captureCall(sessionId: string, credential: string, action: DevelopmentAction | "workflow-pause-confirm", input: Record<string, unknown>): () => Promise<unknown> {
+    const retained = this.coreCalls.getStore();
+    return () => this.coreCalls.run(retained, () => this.call(sessionId, credential, action, input));
+  }
+  private async canonical(action: string, input: Record<string, unknown>): Promise<{ value: unknown } | null> {
+    const active = this.coreCalls.getStore();
+    if (!active) return null;
+    const call = canonicalAlias(action, input, active.context());
+    return call ? { value: await active.invoke(call) } : null;
+  }
   constructor(private readonly origin: string | null, private readonly appId: string, private readonly token: string | null) {}
   ownsApplication(appId: string): boolean { return this.appId === appId; }
   get available(): boolean { return Boolean(this.origin && this.token); }
@@ -37,14 +64,15 @@ export class DevelopmentClient {
     return result;
   }
 
+  async activity(sessionId: string, credential: string, input: { status: string; leaseId?: string; stopped?: boolean; title?: string; sequence?: number }): Promise<{ workspaceId: string | null; revision: number | null; stopRequested: boolean; state: string }> {
+    return this.inspection(credential, `/api/internal/apps/${encodeURIComponent(this.appId)}/sessions/${encodeURIComponent(sessionId)}/workspace-activity`, input, true) as Promise<{ workspaceId: string | null; revision: number | null; stopRequested: boolean; state: string }>;
+  }
+
   async environment(credential: string, action: CoreEnvironmentAction, input: Record<string, unknown>): Promise<unknown> {
+    const canonical = await this.canonical(action, input);
+    if (canonical) return canonical.value;
     if (!this.available) throw new AppContextError(503, "environments_unavailable", "Child Core environments require a Core-managed app identity.");
     try { return await new CoreEnvironmentClient(async () => credential, { coreOrigin: this.origin!, appId: this.appId, serviceToken: this.token! }).call(action, input); }
-    catch (error) { if (error instanceof SandboxError) throw new AppContextError(error.status ?? 503, error.code, error.message); throw error; }
-  }
-  async sandbox(credential: string, action: SandboxAction, input: Record<string, unknown>): Promise<unknown> {
-    if (!this.available) throw new AppContextError(503, "sandboxes_unavailable", "Sandbox operations require a Core-managed app identity.");
-    try { return await new SandboxClient(async () => credential, { coreOrigin: this.origin!, appId: this.appId, serviceToken: this.token! }).call(action, input); }
     catch (error) { if (error instanceof SandboxError) throw new AppContextError(error.status ?? 503, error.code, error.message); throw error; }
   }
   async inspectionEvents(credential: string, signal: AbortSignal): Promise<Response> {
@@ -83,7 +111,46 @@ export class DevelopmentClient {
     return value;
   }
   async call(sessionId: string, credential: string, action: DevelopmentAction, input: Record<string, unknown>): Promise<unknown> {
+    const canonical = await this.canonical(action, input);
+    if (canonical) {
+      // The retained list alias still means this conversation's allocated/attached worktrees.
+      // Core's canonical collection intentionally has broader, explicitly authorized scope.
+      if (action === "list") {
+        const legacy = await this.coreCalls.run(undefined, () => this.call(sessionId, credential, action, input)) as { workspaces: DevelopmentWorkspace[] };
+        const ids = new Set(legacy.workspaces.map(w => w.id));
+        const result = canonical.value as { workspaces: DevelopmentWorkspace[] };
+        return { ...result, workspaces: result.workspaces.filter(w => ids.has(w.id)) };
+      }
+      if (action === "pr-list") {
+        const legacy = await this.coreCalls.run(undefined, () => this.call(sessionId, credential, action, input)) as { publications: { workspaceId: string }[] };
+        const ids = new Set(legacy.publications.map(p => p.workspaceId));
+        const result = canonical.value as { publications: { workspaceId: string }[] };
+        return { ...result, publications: result.publications.filter(p => ids.has(p.workspaceId)) };
+      }
+      if (action === "workspace-inventory") return this.coreCalls.run(undefined, () => this.call(sessionId, credential, action, input));
+      return canonical.value;
+    }
     if (!this.available) throw new AppContextError(503, "workspaces_unavailable", "Workspaces require a Core-managed assistant.");
+    if (action === "workspace-inventory") return this.inspection(credential);
+    if (action === "delete-workspace") {
+      if (input.workspaceId !== undefined) {
+        if (typeof input.workspaceId !== "string" || !/^[a-f0-9]{64}$/.test(input.workspaceId) || input.all || input.workspaceIds)
+          throw new AppContextError(400, "workspace_invalid", "Choose an aggregate workspaceId, workspaceIds or all.");
+        return this.inspection(credential, `/${input.workspaceId}/delete`, { requestId: input.requestId });
+      }
+      return this.inspection(credential, "/delete", input);
+    }
+    if (["association", "attach", "detach"].includes(action)) {
+      const root = `/api/internal/apps/${encodeURIComponent(this.appId)}/sessions/${encodeURIComponent(sessionId)}/workspace-association`;
+      if (action === "association") return this.inspection(credential, root, undefined, true);
+      if (typeof input.workspaceId !== "string" || !/^[a-f0-9]{64}$/.test(input.workspaceId))
+        throw new AppContextError(400, "workspace_invalid", "Supply the aggregate workspace ID.");
+      return this.inspection(credential, `${root}/${input.workspaceId}/${action}`, input, true);
+    }
+    if (action === "participants") {
+      const current = await this.call(sessionId, credential, "association", {}) as { workspace: WorkspaceParticipation | null };
+      return current.workspace;
+    }
     if (action.startsWith("execution-")) {
       if (typeof input.appId !== "string" || !/^[a-z0-9][a-z0-9._-]{0,62}$/.test(input.appId)
           || typeof input.requestId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.requestId))
@@ -137,7 +204,7 @@ export class DevelopmentClient {
     const root = `/api/internal/apps/${encodeURIComponent(this.appId)}/sessions/${encodeURIComponent(sessionId)}/${publication ? "publications" : "workspaces"}`;
     const id = typeof input.workspaceId === "string" ? input.workspaceId : "";
     if (!["list", "prepare", "pr-list", "pr-connections"].includes(action) && !/^[a-f0-9]{64}$/.test(id)) throw new AppContextError(400, "workspace_invalid", "A workspace ID is required.");
-    const suffix = publication ? (action === "pr-list" ? "" : action === "pr-connections" ? "/connections" : `/${id}` + (action === "pr-status" ? "" : `/${action.slice(3)}`)) : action === "list" || action === "prepare" ? "" : `/${id}` + (action === "status" ? "" : action === "viewer" ? "/viewer" : action === "diff" ? "/diff" : `/operations/${action}`);
+    const suffix = publication ? (action === "pr-list" ? "" : action === "pr-connections" ? "/connections" : `/${id}` + (action === "pr-status" ? "" : `/${action.slice(3)}`)) : action === "list" || action === "prepare" ? "" : `/${id}` + (action === "status" ? "" : action === "viewer" ? "/viewer" : action === "diff" ? "/diff" : action === "commit-review" ? "/commit-review" : `/operations/${action}`);
     const read = ["list", "status", "viewer", "pr-list", "pr-status", "pr-connections"].includes(action);
     let response: Response;
     try {
@@ -151,6 +218,12 @@ export class DevelopmentClient {
   }
 }
 
+const publicationPolicySchema = { type: "object", properties: {
+    requiredChecks: { type: "array", items: { type: "string" } },
+    requiredWorkflows: { type: "array", items: { type: "integer" } },
+    artifacts: { type: "array", items: { type: "object", properties: { kind: { type: "string", enum: ["release", "npm", "ghcr"] }, tag: { type: "string" }, asset: { type: "string" }, package: { type: "string" }, version: { type: "string" } } } },
+  }, required: ["requiredChecks", "requiredWorkflows", "artifacts"] };
+
 const toolProperties = {
 
   ...Object.fromEntries(["expectedRemoteHead", "repository", "name", "description", "workspaceId", "appId", "requestId", "targetBranch", "expectedTargetHead", "expectedHead", "message", "authorName", "authorEmail", "path", "view", "connectionId", "title", "body", "mergeMethod", "outcome", "threadId"].map(k => [k, { type: "string" }])),
@@ -159,14 +232,12 @@ const toolProperties = {
   allowUnrelatedHistories: { type: "boolean" },
   bootstrapCommit: { type: "boolean" },
   iconPng: { type: "string", maxLength: 174764, description: "Optional base64 PNG, at most 128 KiB and 1024×1024 pixels." },
+  reviewId: { type: "string", description: "Selected-file receipt id returned by commit_review; required for shared-workspace commit and pr_commit." },
   expectedRevision: { type: "integer" },
   draft: { type: "boolean" }, fork: { type: "boolean" }, cleanup: { type: "boolean" }, number: { type: "integer" },
   dependencies: { type: "array", items: { type: "string" } },
-  policy: { type: "object", properties: {
-    requiredChecks: { type: "array", items: { type: "string" } },
-    requiredWorkflows: { type: "array", items: { type: "integer" } },
-    artifacts: { type: "array", items: { type: "object", properties: { kind: { type: "string", enum: ["release", "npm", "ghcr"] }, tag: { type: "string" }, asset: { type: "string" }, package: { type: "string" }, version: { type: "string" } } } },
-  }, required: ["requiredChecks", "requiredWorkflows", "artifacts"] },
+  policy: publicationPolicySchema,
+  policyAmendment: { type: "object", properties: { previousPolicy: publicationPolicySchema, reason: { type: "string", minLength: 1, maxLength: 2000 } }, required: ["previousPolicy", "reason"] },
   paths: { type: "array", items: { type: "string" } },
   pullRequests: { type: "array", items: { type: "string" } },
 };
@@ -179,7 +250,7 @@ const devToolProperties = {
   appId: { type: "string" },
   requestId: { type: "string" },
 };
-const actions = ["execution-select", "execution-status", "rename", "activation-plan", "activation-apply", "activation-status", "activation-list", "activation-cancel", "activation-resume", "activation-return", "app-dev-status", "app-dev-plan", "app-dev-apply", "merge-upstream", "remote-status", "remote-connect", "remote-fetch", "remote-push-base", "pr-push", "app-local-status","app-creation-guide", "app-create", "app-creation-status", "app-creation-capabilities", "workflow-status", "workflow-complete", "workflow-resume", "workflow-pause", ...harnessEnvironmentActions, ...sandboxActions, "list", "prepare", "status", "diff", "commit", "refresh", "merge", "abort-merge", "cleanup", "references", "pr-resolve-review", "pr-commit", "pr-list", "pr-connections", "pr-status", "pr-configure", "pr-publish", "pr-link", "pr-ready", "pr-merge", "pr-complete", "pr-corrective"] as const;
+const actions = ["delete-workspace", "workspace-inventory",...feedbackActions, ...taskActions, ...contextActions, "participants", "commit-review","execution-select", "execution-status", "rename", "activation-plan", "activation-apply", "activation-status", "activation-list", "activation-cancel", "activation-resume", "activation-return", "app-dev-status", "app-dev-plan", "app-dev-apply", "merge-upstream", "remote-status", "remote-connect", "remote-fetch", "remote-push-base", "pr-push", "app-local-status","app-creation-guide", "app-create", "app-creation-status", "app-creation-capabilities", "workflow-status", "workflow-complete", "workflow-resume", "workflow-pause", ...harnessEnvironmentActions, "list", "prepare", "status", "diff", "commit", "refresh", "merge", "abort-merge", "references", "pr-resolve-review", "pr-commit", "pr-list", "pr-connections", "pr-status", "pr-configure", "pr-publish", "pr-link", "pr-ready", "pr-merge", "pr-complete", "pr-corrective"] as const;
 const descriptions: Partial<Record<(typeof actions)[number], string>> = {
   "execution-select": "Select the app execution target in one operation on this Core's ordinary users/data. Supply appId, UUID requestId and kind package or workspace. Package optionally selects a release runtime; workspace selects this session's aggregate workspaceId and optional worktreeId. Dev profiles are internal recipes. Switching workspaces preserves the Core-owned package baseline. Additional authority returns review-required with a concrete operator approval destination. Follow Ask/Run unprompted/Disabled policy. During an active turn, finish the turn after queueing so Harness releases writers before dispatch. Preserve exact request arguments after uncertainty; use execution_status to observe readiness.",
   "execution-status": "Observe an app target-selection operation with appId and its original UUID requestId. Reports running, succeeded, review-required or failed, including the additional-access approval destination when required. Does not retry, start or stop anything.",
@@ -214,7 +285,7 @@ const descriptions: Partial<Record<(typeof actions)[number], string>> = {
   "pr-list": "List Core publication facts, including completed contributions and release status.",
   "pr-connections": "List the current user's available GitHub connections, without credentials.",
   "pr-status": "Refresh PR head, CI, review, merge and configured post-merge evidence from GitHub.",
-  "pr-configure": "Before publication, bind a workspace to a user connectionId. Supply requestId, explicit policy (requiredChecks, requiredWorkflows, artifacts: release tag/asset or public npm/ghcr package/version with merge commit metadata), dependencies (workspace IDs), and fork if needed. Empty policy means merge itself completes publication.",
+  "pr-configure": "Before publication, bind a workspace to a user connectionId with explicit policy and dependencies. requiredChecks run on the merge commit, not the PR head; requiredWorkflows verify release publication on that merge and support reused artifacts. Empty policy requires only merge. To repair an unfinished merged publication, supply the published expectedHead, replacement policy and policyAmendment { previousPolicy, reason }; retain the original requestId when retrying. This preserves connection, destination and dependencies and never completes or cleans up.",
   "pr-publish": "Push the exact clean expectedHead and create/update a PR. Supply UUID requestId, title, body, draft. Recover uncertain operations with identical arguments and the same requestId; never create duplicate PRs.",
   "pr-link": "Attach an existing GitHub PR by number. Core verifies its repository, branch, target and head.",
   "pr-ready": "Mark an existing draft PR ready for review. Supply requestId and expectedHead.",
@@ -223,14 +294,17 @@ const descriptions: Partial<Record<(typeof actions)[number], string>> = {
   "pr-corrective": "After a merged PR needs repair, preserve its history and start a corrective publication cycle in this workspace. Supply requestId and expectedHead; next publish creates a new PR.",
   list: "List this session's registered Core worktrees.",
   rename: "Rename this session workspace when its scope changes materially. Supply a short purpose-based name (at most 120 plain-text characters) and UUID requestId. Reuse both after uncertainty. Changes display metadata only; source, branches, grants and active runtimes stay intact.",
-  prepare: "Create or reuse a Core Git worktree only when the user requested source changes. Use this before editing; never edit the original app checkout. Supply the appId, a UUID requestId, a short meaningful purpose-based name and optionally targetBranch. Do not use agent names, IDs or generated branch names as the name.",
+  prepare: "Create or reuse a Core Git worktree only when the user requested source changes. App context selection is not required and is unchanged by preparation. Core source and participant authority remain required. Use this before editing; never edit the original app checkout. Supply the appId, a UUID requestId, a short meaningful purpose-based name and optionally targetBranch. Do not use agent names, IDs or generated branch names as the name.",
   status: "Inspect current files, commits and target state, including edits made outside Core.",
   diff: "Read a changed file's session-base or local uncommitted diff. Supply path and view: session or local.",
-  commit: "Commit selected paths through Core. Supply requestId, expectedHead, paths, message, authorName and authorEmail. Follow repository commit instructions, including co-author trailers.",
+  participants: "Read the workspace participants and factual session activity. This contains no conversation history. Recheck before changing shared files.",
+  "commit-review": "Freeze explicitly selected files for a shared-workspace commit. Supply workspaceId, UUID requestId, expectedHead and paths. Inspect the selection before requesting review; pass the returned id as reviewId to commit or pr-commit. Changed content invalidates review.",
+  commit: "Commit selected paths through Core. Supply requestId, expectedHead, paths, message, authorName and authorEmail, plus reviewId from commit_review for a shared workspace. Follow repository commit instructions, including co-author trailers.",
   refresh: "Fetch the latest target branch without moving the session branch. Supply requestId.",
   merge: "Explicitly integrate the target branch into this worktree. Requires a clean tree, requestId, expectedHead, message and author identity. Reports conflicts without rewriting history.",
   "abort-merge": "Abort a pending local target integration. Supply requestId and expectedHead.",
-  cleanup: "Request cleanup of merged clean work. Active turns block removal; request cleanup from the session UI after finishing the turn.",
+  "delete-workspace": "Delete logical workspaces including unfinished source and activity leases. Supply requestId and either aggregate workspaceId, workspaceIds or all:true. No Pause, Complete, commit or Core confirmation is required. Bulk acceptance fixes the targets; reuse the original request after uncertainty. MCP Ask/Run unprompted/Disabled controls dispatch. Published remote work and ordinary app data are retained. Inspect deletion and consumer-stop outcomes.",
+  "workspace-inventory": "List all registered workspaces available to this app and initiating user, including work created by other sessions, apps and credentials. No primary workspace is required.",
   references: "Attach HTTPS pull request links for session history; these links do not prove merge. Supply requestId and pullRequests.",
 };
 
@@ -250,14 +324,15 @@ const activationToolProperties = {
 
 export const DEVELOPMENT_PROVIDER = "hosty:development";
 export const DEVELOPMENT_IDENTITY = "hosty-development-v1";
-export const developmentTools = () => [...coreEnvironmentTools(), ...sandboxTools(), ...actions.filter(action => !action.startsWith("sandbox-") && !action.startsWith("environment-")).map(action => ({ name: action.replaceAll("-", "_"), description: descriptions[action]!,
-  inputSchema: { type: "object", ...(action.startsWith("execution-") ? { required: action === "execution-select" ? ["appId", "requestId", "kind"] : ["appId", "requestId"] } : {}), ...(["prepare", "rename"].includes(action) ? { required: action === "prepare" ? ["appId", "requestId", "name"] : ["requestId", "name"] } : {}), properties: action.startsWith("execution-") ? executionToolProperties : action.startsWith("activation-") ? activationToolProperties : action.startsWith("app-dev-") ? devToolProperties : toolProperties, additionalProperties: false },
-  annotations: { readOnlyHint: ["execution-status", "activation-plan", "activation-status", "activation-list", "app-dev-status", "app-dev-plan", "remote-status", "app-local-status","app-creation-guide", "app-creation-status", "app-creation-capabilities", "workflow-status", "list", "status", "diff", "pr-list", "pr-status", "pr-connections"].includes(action), destructiveHint: ["execution-select", "activation-apply", "activation-return", "activation-resume", "app-dev-apply", "cleanup", "pr-merge"].includes(action), openWorldHint: false } }))];
+export const developmentTools = () => [...feedbackTools(), ...taskTools(), ...contextTools(), ...coreEnvironmentTools(), ...actions.filter(action => !action.startsWith("feedback-") && !action.startsWith("task-") && !action.startsWith("environment-") && !action.startsWith("context-")).map(action => ({ name: action.replaceAll("-", "_"), description: descriptions[action]!,
+  inputSchema: { type: "object", ...(action === "delete-workspace" ? { required: ["requestId"] } : {}), ...(action.startsWith("execution-") ? { required: action === "execution-select" ? ["appId", "requestId", "kind"] : ["appId", "requestId"] } : {}), ...(["prepare", "rename"].includes(action) ? { required: action === "prepare" ? ["appId", "requestId", "name"] : ["requestId", "name"] } : {}), properties: action === "delete-workspace" ? { requestId: { type: "string", format: "uuid" }, workspaceId: { type: "string", description: "Logical workspace ID from workspace_inventory." }, workspaceIds: { type: "array", items: { type: "string" } }, all: { type: "boolean" } } : action === "workspace-inventory" ? {} : action.startsWith("execution-") ? executionToolProperties : action.startsWith("activation-") ? activationToolProperties : action.startsWith("app-dev-") ? devToolProperties : toolProperties, additionalProperties: false },
+  annotations: { readOnlyHint: ["workspace-inventory", "execution-status", "activation-plan", "activation-status", "activation-list", "app-dev-status", "app-dev-plan", "remote-status", "app-local-status","app-creation-guide", "app-creation-status", "app-creation-capabilities", "workflow-status", "list", "status", "diff", "pr-list", "pr-status", "pr-connections"].includes(action), destructiveHint: ["delete-workspace", "execution-select", "activation-apply", "activation-return", "activation-resume", "app-dev-apply", "cleanup", "pr-merge"].includes(action), openWorldHint: false } }))];
 
 /** Session-key authenticated local MCP surface; Core credentials never enter the agent config. */
 export class DevelopmentMcp {
   policy?: McpToolPolicy;
   allowRemoteWorker = false;
+  prepareCatalog?: (sessionId: string) => Promise<void>;
   project: (value: unknown) => Promise<unknown> = async value => value;
   private readonly keys = new Map<string, string>();
   constructor(private readonly invoke: (sessionId: string, action: DevelopmentAction, input: Record<string, unknown>, dispatchGuard?: () => Promise<void>) => Promise<unknown>) {}
@@ -292,38 +367,64 @@ export class DevelopmentMcp {
     const answer = (result: unknown) => send(200, { jsonrpc: "2.0", id: rpc.id, result });
     if (rpc.method === "initialize") answer({ protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "hosty-workspaces", version: "1" } });
     else if (rpc.method === "ping") answer({});
-    else if (rpc.method === "tools/list") answer({ tools: this.policy ? await this.policy.catalog(DEVELOPMENT_PROVIDER, DEVELOPMENT_IDENTITY, developmentTools()) : developmentTools() });
+    else if (rpc.method === "tools/list") {
+      try {
+        await this.prepareCatalog?.(sessionId);
+        const tools = this.policy ? await this.policy.localCatalog(developmentTools()) : developmentTools();
+        answer({ tools: this.policy?.canonicalCore ? tools.filter(t => !Object.hasOwn(coreAliases, t.name)) : tools });
+      } catch (error) { send(200, { jsonrpc: "2.0", id: rpc.id, error: { code: -32001,
+        message: error instanceof Error ? error.message : "Core catalog is unavailable." } }); }
+    }
     else if (rpc.method === "tools/call") {
       const action = (typeof rpc.params?.name === "string" ? rpc.params.name.replaceAll("_", "-") : "") as (typeof actions)[number];
       try {
         if (!actions.includes(action)) throw new Error("Unknown workspace tool.");
         const input = rpc.params?.arguments ?? {};
-        if (typeof input !== "object" || Array.isArray(input)) throw new Error("Tool arguments must be an object.");
+        if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("Tool arguments must be an object.");
         const abort = new AbortController();
         const cancel = () => abort.abort();
         response.once("close", cancel);
         let result: unknown;
         try {
-          await this.policy?.catalog(DEVELOPMENT_PROVIDER, DEVELOPMENT_IDENTITY, developmentTools());
-          const dispatchGuard = await this.policy?.authorize(sessionId, DEVELOPMENT_PROVIDER, DEVELOPMENT_IDENTITY, JSON.stringify(rpc.id), rpc.params!.name!, input, abort.signal);
+          await this.prepareCatalog?.(sessionId);
+          await this.policy?.localCatalog(developmentTools());
+          const dispatchGuard = await this.policy?.authorizeLocal(sessionId, JSON.stringify(rpc.id), rpc.params!.name!, input, abort.signal);
           if (abort.signal.aborted || !this.keys.has(sessionId)) throw new Error("Session ended before dispatch.");
           await dispatchGuard?.();
-          result = (action.startsWith("activation-") || action === "execution-select") ? await this.invoke(sessionId, action, input, dispatchGuard) : await this.invoke(sessionId, action, input);
+          result = dispatchGuard ? await this.invoke(sessionId, action, input, dispatchGuard) : await this.invoke(sessionId, action, input);
         } finally { response.off("close", cancel); }
-        answer({ content: [{ type: "text", text: JSON.stringify(await this.project(result)) }] });
-      } catch (error) { answer({ isError: true, content: [{ type: "text", text: error instanceof Error ? error.message : "Workspace operation failed." }] }); }
+        if (action === "feedback-image") answer(result);
+        else answer({ content: [{ type: "text", text: JSON.stringify(await this.project(result)) }] });
+      } catch (error) { answer({ isError: true, content: [{ type: "text", text: error instanceof AppContextError && error.details ? JSON.stringify({ code: error.code, message: error.message, ...error.details }) : error instanceof Error ? error.message : "Workspace operation failed." }] }); }
     } else send(200, { jsonrpc: "2.0", id: rpc.id, error: { code: -32601, message: "Method not found" } });
     return true;
   }
 }
 
-export function workspaceInstructions(workspaces: DevelopmentWorkspace[]): string {
+export function workspaceInstructions(workspaces: DevelopmentWorkspace[], coreContext?: { sessionId: string; leaseId?: string }): string {
+  if (coreContext) return "Hosty platform tools are provided by Core. Use their discovered schemas and preserve request IDs after timeouts or revision conflicts. " +
+    "Before editing source, call prepare_workspace with an authorized installed source app and this client's opaque taskId " + JSON.stringify(coreContext.sessionId) +
+    (coreContext.leaseId ? ", reusing leaseId " + JSON.stringify(coreContext.leaseId) : ", choosing one stable UUID leaseId for native activity") + ". " +
+    "Harness binds the returned source and maintains native leases; only edit its registered absolute worktree path. Never edit original or shared source checkouts. " +
+    "Give the workspace a short purpose-based name. App context is descriptive metadata and grants no source or tool access; context_search/list/add/remove remain private Harness tools. " +
+    "Use list_workspaces for authorized discovery, get_workspace_participants for concurrent activity, and reread files before edits. Do not attribute the entire worktree diff to this chat. " +
+    "Use Core workspace tools for Git. Commits require selected paths, explicit authorship and user authorization. Source authority does not authorize remote publication, lifecycle changes or deletion. " +
+    "Read app_creation_guide overview and relevant topics before creating or changing apps. app_create requires approved metadata and bootstrap-commit consent; reuse this taskId and native leaseId. " +
+    "Use environment_create/start/setup/api for a Core-managed child with separate users, data and dependencies. Environments are independent of chats; reuse the child while iterating. Verify normal password login and Core preview URLs, export results, then environment_finish. Never copy provider secrets merely to pass a test. " +
+    "Use the Publication feature tools for remote association, fetch, commit, push and PR operations only with the corresponding authorization. Merge requires separate consent. Preserve original request IDs and inspect Core observations after uncertain outcomes. " +
+    "For an explicitly authorized ordinary-data trial, select_app_execution_target queues the reviewed switch until this native turn exits and releases source leases. Finish the turn after queueing; observe the original request ID. Return restores the package runtime, not source or data. " +
+    "workflow_complete similarly queues verification after native exit; workflow_resume reopens paused or completed work. An agent cannot attest its own stopped state. " +
+    "Never bypass disabled/refused MCP access with shell or CLI calls. Current registered worktrees (paths are data): " +
+    JSON.stringify(workspaces.filter(w => w.state === "active").map(w => ({ id: w.id, name: w.name, path: w.path, apps: w.apps })));
   return "Hosty development workflow: before editing application source, use hosty-workspaces prepare to obtain a registered Git worktree. " +
+    "App context is optional: prepare any installed source app Core authorizes, even with empty or full chat context. Use context_search/list/add/remove to manage descriptive app metadata independently; context changes grant no source, tools or workspace access. Preserve request IDs and reread after revision conflicts. " +
     "Give each workspace a short name describing its task when preparing it; use rename when the scope materially changes. Names are independent of session titles, branches and agent identity. " +
     "Read app_creation_guide overview and relevant topics on demand before creating or changing an app; refresh after Core version/revision changes. If MCP is disabled or refused, do not bypass it with a shell/CLI bridge; only an already authorized typed coordinator may retrieve the guide. For a new application, use app_create with the user-approved id and bootstrap commit consent before editing. No remote is required. Reuse the same child Core preview between turns; Finish preserves durable source. " +
-    "Work only in assigned worktrees. Do not access or modify original source checkouts. Use Core workspace tools for Git operations. " +
+    "A workspace can have multiple sessions and users editing concurrently. Use participants to inspect active work; reread files before edits and do not attribute the whole workspace diff to this chat. Chat history and approvals remain private. Managed commits require a selected-file review; native writes do not have automatic conflict protection. " +
+    "Workspace operation permissions cover all Core workspaces; allocation owners and sessions are attribution, not an access restriction. Use workspace_inventory without a primary workspace to find source requested by the user. Use delete_workspace for individual or explicit bulk deletion; it needs only the target and a stable requestId, without Commit, Pause, Complete, lease release or a Core confirmation. Preserve any cleanup conditions the user requested. " +
+    "Work in registered worktrees relevant to the user's request. Do not access or modify original source checkouts. Use Core workspace tools for Git operations. " +
     "Use environment_create/start for a full child Core with separate users and data. No workspace is required; environment_api operates only on that child after explicit normal password setup. environment_finish deletes its temporary resources. " +
-    "Use sandbox_plan/prepare to test an attached app in separate Core-owned containers with empty/synthetic data. Artifact QA does not need a workspace. sandbox_dispose deletes its temporary resources; export needed results first. Preserve request IDs through reconnects. " +
+    "Test apps in a child Core using environment_create/start/setup/api with separate accounts and data. Use ordinary app installation and role APIs. Artifact QA does not need a workspace. Export needed results before environment_finish; preserve lifecycle request IDs through reconnects. " +
     "These are workflow instructions, not filesystem isolation. Context selection alone does not allocate source. " +
     "Local commits need no publication: use commit for reviewed paths and explicit authorship. For a local-git app, connect an existing remote with remote_connect only when authorized; remote_fetch observes upstream without pulling. A missing target needs explicit remote_push_base of accepted main; unrelated or diverged history needs reviewed merge_upstream, never overwrite. " +
     "When publication is authorized, configure it with pr_configure before pr_commit; use pr_commit for verified/user-configured authorship. Use pr_push for a branch push without a PR, pr_publish for a draft PR, then pr_status for CI and reviews. Merge and completion require their own authorization. Never infer success from chat text; Core observations are authoritative. Preserve operation requestIds after timeouts. " +

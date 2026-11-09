@@ -1,9 +1,9 @@
 ---
 status: Draft
 created: 2026-10-22
-updated: 2026-10-22
+updated: 2026-10-26
 summary: Draft ownership and compatibility design for isolating SDK chrome styles from app content while preserving authentication and retained UI contracts.
-components: [packages/app-sdk, apps/harness, apps/shell, apps/marketplace, apps/plans, apps/demo-app, apps/telemetry-ui]
+components: [packages/app-sdk, apps/harness, apps/shell, apps/marketplace, apps/documents, apps/demo-app, apps/telemetry-ui]
 ---
 
 # SDK Style Isolation

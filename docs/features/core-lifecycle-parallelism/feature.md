@@ -1,6 +1,6 @@
 ---
 created: 2026-08-26
-updated: 2026-09-27
+updated: 2026-10-25
 summary: Core runs per-app lifecycle work concurrently and queries Docker in batches.
 components: [apps/core]
 ---
@@ -17,8 +17,8 @@ M1 of the 2026-08-25 Core performance review, since superseded; see
 `CoreLifecycleService.StartAutostartAppsAsync` groups autostart apps by
 `PlatformCapabilities.StartPriority` and runs the capability tiers **strictly in sequence**.
 Within each tier, apps start **concurrently**, at most `MaxConcurrentAutostarts` (4) at a time.
-The queue places system apps first, then ordinary apps, with each category sorted by ordinal
-app id. System priority follows the installed role, independent of app id or install origin,
+The queue selects dependency-ready system apps first, then eligible ordinary apps, with each
+category sorted by ordinal app id. System priority follows the installed role, independent of app id or install origin,
 and does not override a disabled autostart setting. Already-adopted live local processes are
 excluded from autostart.
 
@@ -38,8 +38,9 @@ start holds only its own app's operation lock, the port allocator serializes on 
 expected failures are captured per app by `RunBackgroundLifecycleActionAsync` without blocking
 other starts. Concurrency is bounded because simultaneous image pulls compete for bandwidth.
 
-Reported results follow capability priority, system preference, then app id, regardless of
-completion order. `Task.WhenAll` waits for every submitted task even when one faults. Cancellation
+Reported results follow admission order: capability priority, dependency eligibility, system
+preference, then app id, regardless of completion order. `Task.WhenAll` waits for every submitted
+task even when one faults. Cancellation
 prevents queued starts from proceeding and waits for active lifecycle operations to settle, so
 no detached start outlives boot cancellation. Stops also run concurrently (`StopRuntimeAppsAsync`).
 
@@ -48,11 +49,9 @@ starts can still fill every slot, and a stalled capability provider holds its ti
 supervisor begins periodic health observation only after all autostarts finish. The readiness
 budget does not limit setup commands or image pulls.
 
-**Cross-app dependency order is still not honoured.** Declared dependencies do not gate this
-queue, and system queue preference does not guarantee that a system provider is ready before an
-ordinary consumer. Dependency URL injection reads the provider's persisted record, not its
-running state. Dependency-aware scheduling and the `waiting` state are tracked in
-[dependency-ordered-autostart](../dependency-ordered-autostart/plan.md).
+Required dependencies gate queue admission. Unresolved consumers become `waiting` and do not
+prevent later capability tiers from starting their providers. The event-driven coordinator resumes
+them after readiness changes; see [Dependency-Ordered Startup](../dependency-ordered-autostart/feature.md).
 
 ## Supervision observes apps concurrently and inspects containers in batches
 

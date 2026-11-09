@@ -27,6 +27,11 @@ public sealed partial class CoreLifecycleServiceTests
             if (BeforeValidate is not null) await BeforeValidate();
             if (Revoked) throw PrivateSourceService.Denied();
         }
+        public Task ValidateLocalAsync(PrivateSourceAccess? access, CancellationToken ct)
+        {
+            if (Revoked) throw PrivateSourceService.Denied();
+            return Task.CompletedTask;
+        }
         public async Task<string> GitWithConnectionAsync(SourceReadGrant grant, string repository, string? directory, IReadOnlyList<string> args, UserProviderConnection connection, CancellationToken ct)
         {
             Assert.Equal(grant.OwnerId, connection.UserId); Assert.Equal(grant.ConnectionId, connection.Id);
@@ -61,6 +66,21 @@ public sealed partial class CoreLifecycleServiceTests
     }
     private static LocalRemoteCommand RemoteRequest() => new(Guid.NewGuid().ToString(), "test.created", RemoteGitFixture.Url, "connection", "qa/base");
 
+    private static async Task<AppDevOperation> ActiveLocalRemoteWorkspace(LifecycleFixture fixture, DevelopmentWorkspace tree)
+    {
+        var app = (await fixture.Apps.GetAppAsync("test.created"))!;
+        var operation = new AppDevOperation(Guid.NewGuid().ToString(), app.Id, app.InstalledAt,
+            new(tree.Owner.UserId, "test", tree.Owner), "dev", tree.Path, tree.Id, "manifest", app.ManifestPath!,
+            app.SelectedRuntime, app.SourceState, app.ArtifactLocks, true, "configuration", "active");
+        await AppDevStore.SaveAsync(fixture.Paths, operation, default);
+        await fixture.Apps.UpdateAppAsync(app.Id, current => current with
+        {
+            DevModeId = operation.Id, SelectedRuntime = operation.TargetRuntime, RuntimeState = "running",
+            SourceState = current.SourceState! with { LocalOverridePath = tree.Path }
+        });
+        return operation;
+    }
+
     [Fact]
     public async Task LocalRemote_ConnectFetchAndNewSessionPreserveLocalIdentityAndDirtyFiles()
     {
@@ -84,10 +104,13 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.Equal(w.RepositoryId, second.RepositoryId);
     }
 
-    [Fact]
-    public async Task LocalRemote_LostBasePushResponseRecoversOnceAfterServiceRestart()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task LocalRemote_LostBasePushResponseRecoversOnceAfterServiceRestart(bool activeWorkspace)
     {
         var f = await LocalRemoteFixture(); var w = f.W;
+        if (activeWorkspace) await ActiveLocalRemoteWorkspace(f.F, w);
         await f.Service.RemoteCommandAsync(w.Id, w.Owner, "connect", RemoteRequest(), default);
         var input = new LocalRemoteCommand(Guid.NewGuid().ToString(), "test.created", ExpectedTargetHead: w.OriginalBase);
         f.Git.LosePush = true;
@@ -144,14 +167,23 @@ public sealed partial class CoreLifecycleServiceTests
         await f.Service.RequireRemotePublicationAsync(integrated, "owner/repo", "qa/base", "connection", GitHubPublicationProvider.Repository, default);
     }
 
-    [Fact]
-    public async Task LocalRemote_PublicationKeepsCanonicalTargetAndTracksSeparatePushPrCiAndReview()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task LocalRemote_PublicationKeepsCanonicalTargetAndTracksSeparatePushPrCiAndReview(bool activeWorkspace)
     {
         var f = await LocalRemoteFixture(); var w = f.W;
+        if (activeWorkspace) await ActiveLocalRemoteWorkspace(f.F, w);
+        var before = (await f.F.Apps.GetAppAsync("test.created"))!;
+        var starts = f.F.Adapter.StartCount;
+        var stops = f.F.Adapter.StopCount;
+        var data = Path.Combine(f.F.Paths.AppsRoot, before.Id, "data", "sentinel");
+        Directory.CreateDirectory(Path.GetDirectoryName(data)!);
+        await File.WriteAllTextAsync(data, "ordinary data");
         await f.Service.RemoteCommandAsync(w.Id, w.Owner, "connect", RemoteRequest(), default);
         await f.Service.RemoteCommandAsync(w.Id, w.Owner, "push-base", new(Guid.NewGuid().ToString(), "test.created", ExpectedTargetHead: w.OriginalBase), default);
         var app = (await f.F.Apps.GetAppAsync("test.created"))!;
-        await f.F.Apps.UpsertAppAsync(app with { Id = w.Owner.AppId, InstalledAt = w.Owner.Installation, GrantedCorePermissions = [CoreAppPermissions.Sources] });
+        await f.F.Apps.UpsertAppAsync(app with { Id = w.Owner.AppId, InstalledAt = w.Owner.Installation, DevModeId = null, GrantedCorePermissions = [CoreAppPermissions.Sources] });
         var users = new UserDirectoryStore(f.F.Paths);
         await users.WriteAsync(new(1, [new(w.Owner.UserId, "admin@example.test", "Admin", "host.admin", false, f.F.Clock.UtcNow, f.F.Clock.UtcNow)], [], [], [],
             ProviderConnections: [new("connection", w.Owner.UserId, "GitHub", "github", "", "", "42", "owner", "pat", "secret-for-fixture", null, null, null, f.F.Clock.UtcNow, null, "connected", "r1")]));
@@ -182,6 +214,7 @@ public sealed partial class CoreLifecycleServiceTests
             f.Service.RemoteStatusAsync(w.Id, w.Owner, "test.created", deadline.Token));
         Assert.Equal(1, provider.Created); Assert.Equal(42, result.Number);
         Assert.Equal("SUCCESS", Assert.Single(result.Observation!.Checks!).State); Assert.NotEmpty(result.Observation.Reviews!);
+        f.Git.BeforeValidate = () => throw new InvalidOperationException("Inspection must use local grant validation.");
         var inspection = new WorkspaceInspectionService(f.Service, f.F.Apps, f.F.Clock, publications, users, connections);
         var detail = await inspection.ReadAsync(w.WorkspaceId, w.Id, w.Owner.UserId, default);
         var shown = Assert.Single(detail.PullRequests);
@@ -190,9 +223,56 @@ public sealed partial class CoreLifecycleServiceTests
         f.Git.Revoked = true;
         Assert.Null(Assert.Single((await inspection.ReadAsync(w.WorkspaceId, w.Id, w.Owner.UserId, default)).PullRequests).Observation);
         f.Git.Revoked = false;
+        f.Git.BeforeValidate = null;
         Assert.Equal("main", (await f.Service.Read(w.Id, w.Owner, default)).TargetBranch);
         Assert.Equal(w.OriginalBase, (await f.Service.ObserveAsync(w.Id, w.Owner, default)).Observation!.TargetHead);
         Assert.True(File.Exists(Path.Combine(w.Path, "feature.txt")));
         Assert.False(File.Exists(Path.Combine(f.Source, "feature.txt")));
+        var after = (await f.F.Apps.GetAppAsync(before.Id))!;
+        Assert.Equal(before.SourceState, after.SourceState! with { Remote = before.SourceState!.Remote });
+        Assert.Equal(before.SelectedRuntime, after.SelectedRuntime);
+        Assert.Equal(before.RuntimeState, after.RuntimeState);
+        Assert.Equal(before.DevModeId, after.DevModeId);
+        Assert.Equal(starts, f.F.Adapter.StartCount); Assert.Equal(stops, f.F.Adapter.StopCount);
+        Assert.Equal("ordinary data", await File.ReadAllTextAsync(data));
+    }
+
+    [Theory]
+    [InlineData("installation")]
+    [InlineData("worktree")]
+    [InlineData("source-path")]
+    [InlineData("transition")]
+    [InlineData("runtime")]
+    [InlineData("canonical-source")]
+    [InlineData("pending-git")]
+    [InlineData("unknown-git")]
+    [InlineData("unreadable-journal")]
+    public async Task LocalRemote_ActiveWorkspaceRefusesUnverifiedDevelopmentBinding(string changed)
+    {
+        var f = await LocalRemoteFixture(); var w = f.W;
+        var operation = await ActiveLocalRemoteWorkspace(f.F, w);
+        var app = (await f.F.Apps.GetAppAsync("test.created"))!;
+        operation = changed switch
+        {
+            "installation" => operation with { Installation = operation.Installation.AddSeconds(1) },
+            "worktree" => operation with { WorktreeId = new string('a', 64) },
+            "source-path" => operation with { SourcePath = f.Source },
+            "transition" => operation with { Phase = "restarting" },
+            "canonical-source" => operation with { PreviousSource = operation.PreviousSource! with { Commit = new string('a', 40) } },
+            _ => operation
+        };
+        await AppDevStore.SaveAsync(f.F.Paths, operation, default);
+        if (changed == "runtime") await f.F.Apps.UpdateAppAsync(app.Id, current => current with { SelectedRuntime = "another" });
+        if (changed is "pending-git" or "unknown-git")
+            await JsonStorage.WriteAsync(Path.Combine(f.F.Paths.CoreRoot, "development", "workspaces", w.Id + ".json"),
+                w with { Operations = [.. w.Operations, new(Guid.NewGuid().ToString(), "commit", "arguments", changed == "pending-git" ? "pending" : "unknown")] });
+        if (changed == "unreadable-journal") await File.WriteAllTextAsync(AppDevStore.Record(f.F.Paths, app.Id, operation.Id), "invalid json");
+
+        await Assert.ThrowsAsync<AppLifecycleException>(() => f.Service.RemoteStatusAsync(w.Id, w.Owner, app.Id, default));
+        await Assert.ThrowsAsync<AppLifecycleException>(() => f.Service.RemoteCommandAsync(w.Id, w.Owner, "connect", RemoteRequest(), default));
+        Assert.Null((await f.F.Apps.GetAppAsync(app.Id))!.SourceState!.Remote);
+        Assert.Equal(0, f.Git.Pushes);
+        Assert.Equal(0, f.F.Adapter.StartCount); Assert.Equal(0, f.F.Adapter.StopCount);
+        Assert.Equal(w.OriginalBase, (await DevelopmentWorkspaceService.Git(f.Source, ["rev-parse", "HEAD"], default)).StandardOutput.Trim());
     }
 }

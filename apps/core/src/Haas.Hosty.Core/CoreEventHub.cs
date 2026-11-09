@@ -16,6 +16,8 @@ namespace Haas.Hosty.Core;
 internal sealed class CoreEventHub
 {
     // Domain events. Names are the wire contract for the SSE `event:` field.
+    public const string SandboxSnapshot = "sandbox.snapshot";
+    public const string ToolActivityChanged = "tool.activity.changed";
     public const string WorkspaceChanged = "workspace.changed";
     public const string AppChanged = "app.changed";
     public const string AppRemoved = "app.removed";
@@ -29,15 +31,22 @@ internal sealed class CoreEventHub
     private readonly object gate = new();
     private readonly List<CoreEventSubscription> subscriptions = [];
 
-    public CoreEventSubscription Subscribe(string userId, bool isAdmin, string? sessionId = null, bool resources = false, bool workspaces = false)
+    public CoreEventSubscription Subscribe(string userId, bool isAdmin, string? sessionId = null, bool resources = false, bool workspaces = false, bool toolActivity = false, bool sandboxes = false)
     {
-        var subscription = new CoreEventSubscription(userId, isAdmin, this, sessionId, resources && isAdmin, workspaces);
+        var subscription = new CoreEventSubscription(userId, isAdmin, this, sessionId, resources && isAdmin, workspaces, toolActivity, sandboxes && isAdmin);
         lock (gate)
         {
             subscriptions.Add(subscription);
         }
 
         return subscription;
+    }
+
+    internal void PublishSandboxChange(string userId)
+    {
+        CoreEventSubscription[] targets;
+        lock (gate) targets = subscriptions.Where(s => s.Sandboxes && s.IsActive && s.UserId == userId).ToArray();
+        foreach (var target in targets) target.SandboxesChanged();
     }
 
     internal void PublishWorkspaceChange(string id)
@@ -62,9 +71,12 @@ internal sealed class CoreEventHub
         CoreEventSubscription[] targets;
         lock (gate) targets = subscriptions.Where(s => s.Resources && s.IsActive).ToArray();
         if (targets.Length == 0) return;
-        var envelope = new CoreEventEnvelope(ResourcesSample,
-            JsonSerializer.Serialize(sample, CoreJsonSerializerContext.Default.ResourceUsageEvent));
-        foreach (var subscription in targets) subscription.TryWrite(envelope);
+        foreach (var subscription in targets)
+        {
+            var scoped = sample with { Frame = sample.Frame.ForUser(subscription.UserId, subscription.Sandboxes) };
+            subscription.TryWrite(new(ResourcesSample,
+                JsonSerializer.Serialize(scoped, CoreJsonSerializerContext.Default.ResourceUsageEvent)));
+        }
     }
 
     // End the streams a credential currently holds open, so revoking it stops delivery now rather than
@@ -100,7 +112,11 @@ internal sealed class CoreEventHub
     // session would leak the existence of apps a user was never assigned.
     public void PublishAppEvent(string name, string? appId = null)
     {
-        if (name is AppChanged or AppRemoved) PublishWorkspaceChange("*");
+        if (name is AppChanged or AppRemoved)
+        {
+            PublishWorkspaceChange("*");
+            PublishToolActivity();
+        }
         CoreEventSubscription[] targets;
         lock (gate)
         {
@@ -120,6 +136,21 @@ internal sealed class CoreEventHub
         {
             subscription.TryWrite(envelope);
         }
+    }
+
+    // Empty hints disclose no panel, user or activity data; reads revalidate the actor's catalogue.
+    public void PublishToolActivity(string? userId = null)
+    {
+        CoreEventSubscription[] targets;
+        lock (gate) targets = subscriptions.Where(s => s.IsActive && s.ToolActivity && (userId is null || s.UserId == userId)).ToArray();
+        foreach (var target in targets) target.TryWrite(new(ToolActivityChanged, "{}"));
+    }
+
+    public void PublishDecision(string userId)
+    {
+        CoreEventSubscription[] targets;
+        lock (gate) targets = subscriptions.Where(s => s.IsActive && s.UserId == userId).ToArray();
+        foreach (var target in targets) target.TryWrite(new("decisions.changed", "{}"));
     }
 
     public void PublishNotification(NotificationRecord record)
@@ -171,13 +202,15 @@ internal sealed class CoreEventSubscription : IDisposable
     private readonly CoreEventHub owner;
     private int completed;
 
-    public CoreEventSubscription(string userId, bool isAdmin, CoreEventHub owner, string? sessionId = null, bool resources = false, bool workspaces = false)
+    public CoreEventSubscription(string userId, bool isAdmin, CoreEventHub owner, string? sessionId = null, bool resources = false, bool workspaces = false, bool toolActivity = false, bool sandboxes = false)
     {
         UserId = userId;
         IsAdmin = isAdmin;
         SessionId = sessionId;
         Resources = resources;
         Workspaces = workspaces;
+        ToolActivity = toolActivity;
+        Sandboxes = sandboxes && isAdmin;
         this.owner = owner;
         channel = Channel.CreateBounded<CoreEventEnvelope>(
             new BoundedChannelOptions(64) { FullMode = BoundedChannelFullMode.DropOldest, SingleReader = true },
@@ -189,6 +222,17 @@ internal sealed class CoreEventSubscription : IDisposable
     public bool IsAdmin { get; }
     public bool Resources { get; }
     internal bool Workspaces { get; }
+    internal bool ToolActivity { get; }
+    internal bool Sandboxes { get; }
+    private long sandboxRevision = 1;
+    internal long SandboxRevision => Interlocked.Read(ref sandboxRevision);
+    internal void SandboxesChanged()
+    {
+        Interlocked.Increment(ref sandboxRevision);
+        // The revision survives channel overflow. The endpoint projects current actor-owned data
+        // once per drained batch (and checks the revision on keep-alive), never these internal hints.
+        TryWrite(new(CoreEventHub.SandboxSnapshot, "{}"));
+    }
     public bool IsActive => Volatile.Read(ref completed) == 0;
 
     // Which credential opened this stream, so revoking that credential can close it. Null when the

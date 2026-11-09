@@ -13,13 +13,23 @@
     <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="ModelContextProtocol.AspNetCore" Version="2.2.0" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.20.1" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.20.2" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.20.2" />
+    <PackageReference Include="YamlDotNet" Version="18.1.0" />
+    <PackageReference Include="ModelContextProtocol.AspNetCore" Version="2.4.0" />
   </ItemGroup>
   <ItemGroup>
     <Compile Include="../../../../shared/*.cs" Link="%(Filename)%(Extension)" />
+    <EmbeddedResource Include="../../../../distribution-apps.json" LogicalName="Hosty.DistributionApps.json" />
+    <EmbeddedResource Include="../../../../distribution/platform-release.json" LogicalName="Hosty.PlatformDistribution.json" />
+    <EmbeddedResource Include="../../../../distribution/app-source-migrations.json" LogicalName="Hosty.AppSourceMigrations.json" />
     <EmbeddedResource Include="Browser/*" />
+    <EmbeddedResource Include="../../../../assets/hosty-brand/svg/hosty-favicon*.svg" LogicalName="Haas.Hosty.Core.Browser.%(Filename)%(Extension)" />
+    <EmbeddedResource Include="../../../../assets/hosty-brand/favicon.ico" LogicalName="Haas.Hosty.Core.Browser.favicon.ico" />
+    <EmbeddedResource Include="../../../../skills/hosty-platform/**/*" LogicalName="Hosty.AgentSkills/hosty-platform/%(RecursiveDir)%(Filename)%(Extension)" />
+    <EmbeddedResource Include="../../../../skills/hosty-app-skill/**/*" LogicalName="Hosty.AgentSkills/hosty-app-skill/%(RecursiveDir)%(Filename)%(Extension)" />
     <EmbeddedResource Include="AppBootstrap/*" LogicalName="Hosty.AppBootstrap.%(Filename)%(Extension)" />
     <EmbeddedResource Include="AppDevelopmentGuide/*.md" LogicalName="Hosty.AppDevelopmentGuide.%(Filename)%(Extension)" />
-    <EmbeddedResource Include="../../sandbox-browser/seccomp.json" LogicalName="Hosty.SandboxBrowser.seccomp.json" />
   </ItemGroup>
 </Project>

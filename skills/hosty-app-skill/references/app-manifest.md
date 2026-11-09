@@ -11,7 +11,7 @@ Use this reference when authoring or reviewing Hosty runtime app manifests, stor
 
 ## Required Contract
 
-- `schemaVersion` must be `app.0.1`.
+- Use `app.0.1` for compatible authored/local manifests. Generated immutable releases use `app.0.2`: every Docker image is a `{repository, digest}` pair, and production local source carries a full commit. Core reads both; an app version bump alone never changes the contract schema.
 - Store repository-local manifests as `apps/{app-name}/manifest.json`.
 - Local installs can pass the app directory that contains `manifest.json`; from inside a runtime app repository, use `hosty apps install .`.
 - Remote installs must pass an HTTP(S) URL that points directly to the manifest file.
@@ -66,7 +66,7 @@ A profile with `development: true` can use `type: docker` or `type: mixed`. Mixe
 
 Docker source recipes declare `sourceMount: { path: ".", target: "/workspace", mode: "ro", caches: ["bin", "obj"] }`, a `command`, and either `image` or `build: { context: ".", dockerfile: "Dockerfile.dev", revision: "1" }`. Paths are contained in the authorized checkout; workingDirectory is relative to the source mount. Cache directories use isolated Docker volumes. Core creates missing empty mountpoint directories in the host checkout before mounting it read-only; its account needs permission to create them. Existing files are preserved and symlink/file collisions are rejected. Setup/command become CMD, preserving the image entrypoint (including VPN initialization). Build environments lock by image ID; change the build revision through manifest review to rebuild. Source mounts require a local Docker engine. Image/build/mount/privilege/network edits require review even in development.
 
-`source.paths` optionally lists source files or directories relative to the repository root for source inspection/discard; do not include unrelated monorepo code. Service-specific data/cache targets use `service` alongside the profile's `runtime` key. See [Mixed Development Runtimes](../../../docs/features/mixed-development-runtimes/feature.md) for the full contract and example.
+`source.paths` optionally lists source files or directories relative to the repository root for source inspection/discard; do not include unrelated monorepo code. Service-specific data/cache targets use `service` alongside the profile's `runtime` key. See [Mixed Development Runtimes](https://github.com/alex-de-haas/docker-host/blob/main/docs/features/mixed-development-runtimes/feature.md) for the full contract and example.
 
 ### Service Dependencies
 
@@ -149,7 +149,7 @@ path values (container paths in Docker, host paths in Local), not the operator-b
 Core exposes development trees and read-only repository metadata; no operator path or global-mount
 assignment is accepted. It exposes all managed trees, not a session sandbox. Use ordinary specific
 workspace activity leases while processes use a tree. `agentWorker` is retired and rejected.
-See [Harness services](../../../docs/features/assistant-shared-docker-runtime/feature.md).
+See [Harness services](https://github.com/alex-de-haas/docker-host/blob/main/docs/features/assistant-shared-docker-runtime/feature.md).
 
 ## External Mounts
 
@@ -225,7 +225,7 @@ Declare platform interfaces the app exposes for other components to discover wit
 }
 ```
 
-Core validates names and keys as kebab tokens, unique keys per interface and absolute paths. An `assistant`, `speech-to-text` or `translation` declaration also requires a positive integer `version` and a list of unique capability names; clients support version 1 and refuse unsupported versions. Core preserves these fields through installation, persistence, update and discovery, and surfaces the declarations on the apps API with each declaration resolved to a ready-to-call URL, so clients can gate features on an installed provider — e.g. Shell identifies assistants by the confirmed `assistant` role plus the `assistant` interface. Declaring an interface does not grant the app anything; it is discovery metadata. See `docs/features/ai-agent-bridge/feature.md` ("Manifest Interfaces And Registry").
+Core validates names and keys as kebab tokens, unique keys per interface and absolute paths. An `assistant`, `speech-to-text`, `translation`, `tasks`, `task-executor`, `conversation-history` or `agent-sessions` declaration also requires a positive integer `version` and a list of unique capability names (kebab tokens or dot-qualified tokens such as `history.search.text`, at most 200 characters); clients support version 1 and refuse unsupported versions. Core preserves these fields through installation, persistence, update and discovery, and surfaces the declarations on the apps API with each declaration resolved to a ready-to-call URL, so clients can gate features on an installed provider — e.g. Shell identifies assistants by the confirmed `assistant` role plus the `assistant` interface. Declaring an interface does not grant the app anything; it is discovery metadata. See `docs/features/ai-agent-bridge/feature.md` ("Manifest Interfaces And Registry").
 
 The version-1 base contract accepts prompt text and app IDs through prepare/finalize, returning a conversation reference and provider-owned UI destination. `attachments` adds raw uploads of any type, with a guaranteed floor of ten files of 10,000,000 bytes each. Use `@hosty-sdk/app/assistant` and retain request/upload identities across retries. See `docs/features/hosty-harness-rename/feature.md` for routes, expiry and recovery. Interface metadata is separate from endpoint transport and UI navigation.
 
@@ -250,6 +250,11 @@ authority. Shell must not request full-source authority for profile or connectio
 
 Missing or unsupported required grants do not prevent launch; per-call checks refuse operations
 without effective authority. Optional permissions remain optional.
+Unknown required or optional names are compatibility warnings during install, update and workspace
+restart. Core retains their declarations but never grants them. Explain that the app or Core may
+need updating and some features may not work; do not infer which one is older from an unknown name.
+Removing unsupported declarations does not block updating the app. If a later Core recognizes a
+previously unknown required name, obtain normal explicit approval; restarting never grants it.
 Retired grants are removed without erasing manifest requirements. A blocked Shell can be reviewed
 on Core at `/install/permissions/hosty.shell`; approval still requires the Core confirmation page.
 
@@ -277,6 +282,16 @@ against Core using the server SDK; service tokens never go to callers or another
 baseline recording format is 16 kHz mono PCM16 WAV. See
 `docs/features/provider-consumption/feature.md` for routes, limits, cancellation and assistant usage.
 `providers.agent` is not an accepted permission or interface in this release.
+
+### Tasks And Task Execution
+
+A task store declares `provides: ["tasks"]` and `interfaces.tasks`; an executor independently declares
+`provides: ["task-executor"]` and `interfaces["task-executor"]`. Each entry has an endpoint, path, key,
+version 1 and capabilities. Consumers request `providers.tasks` and/or `providers.task-executor`.
+Core defines the common contract and checks current installation/user/app authority; apps own storage
+and execution. Do not infer an executor from its app ID or expose another app's private profiles.
+Use the TypeScript `/tasks/server` or .NET task clients and preserve request/execution IDs on replay.
+See `docs/features/basic-tasks/feature.md` for the HTTP protocol, explicit outcome and stop confirmation.
 
 ### MCP Interface
 
@@ -383,50 +398,31 @@ delegated token is an app authenticating differently from every other, not a sup
 While the app is stopped its tabs remain, dimmed and saying so, rather than disappearing — a surface
 that vanished with its app would read as uninstalled.
 
-## Agent Skill
+## Agent Skills
 
-An app may ship the prose an agent needs to use it well, as a sibling of `interfaces`:
+Apps may supply several complete portable skill packages:
 
-```jsonc
+```json
 "agent": {
-  "skillFile": "docs/agent.md"   // manifest-relative markdown, inside the app's own folder
+  "skills": [{ "key": "default", "path": "skills/my-app" }]
 }
 ```
 
-Deliberately **not** in `catalogMetadata` beside `descriptionFile`. That block is display-only and
-outside runtime validation; this is prose a model acts on, so its path is validated at install —
-relative, contained in the manifest folder, `.md` — and a declaration that escapes is refused there
-rather than resolving to nothing later. Core vendors the file with the other assets, under the same
-byte budget.
+Each manifest-relative directory contains `SKILL.md` with YAML `name` (matching the directory)
+and `description`, plus optional references, scripts and assets. Preserve the complete directory
+in publication artifacts. Stable keys preserve existing selections; new keys remain unselected.
+Keys/paths must be unique and directories must not overlap. Core validates metadata, containment,
+regular files and size limits; symbolic links and reserved data/runtime locations are refused.
 
-**One per app.** An app with several `interfaces.mcp` entries still has one story about how it is
-worked; division is sections in the file, not another axis here.
+Core adds packages to its shared library when the app is installed or updated and removes them
+with the supplying app. Consumers select stable IDs independently of MCP permissions and standing
+instructions, then discover files through native exports. There is no digest approval or prompt
+concatenation step. Skills grant no permission to tools or bundled scripts.
 
-### Who reads it
+`agent.skillFile` is retired: move its content into `skills/<name>/SKILL.md`, add YAML metadata and
+declare a stable `default` key to preserve migrated Harness choices. New installs and updates reject
+the old field; existing installed apps remain manageable until upgraded.
 
-| Reader | When |
-| --- | --- |
-| The Hosty assistant | the app's MCP provider is enabled, and the session actually got its tools |
-| `hosty mcp` | the app contributed tools to the connector's catalog |
-
-There is **no separate switch**. Enabling an app's MCP provider already accepts that its text enters
-the model's context — a tool arrives with its description and there is no version of it that does
-not — so a second toggle would ask the operator the same question twice.
-
-Wherever it lands, the skill is fenced and attributed, under a preamble naming it as documentation an
-app wrote about its own tools, which speaks for nobody else and grants nothing. Write it accordingly:
-guidance for calling *this* app.
-
-### What belongs in it
-
-Procedure, not inventory. Restating tool descriptions duplicates what MCP already carries and goes
-stale separately. Worth writing:
-
-- which tool to call first, and what its answer decides;
-- what the app's domain words mean, especially where they collide with Hosty's (an app role is not a
-  host role);
-- what a refusal means and whether retrying can fix it;
-- what the app does **not** know, so an agent stops guessing.
-
-Capped when delivered (8,000 characters), so one app cannot crowd out the operator's own instructions
-or another app's.
+Write procedures, domain vocabulary, tool sequencing and failure handling rather than repeat the
+tool inventory. See the repository's shared skills and app-provided skills feature documents for
+the Core API, package limits and native delivery contract.

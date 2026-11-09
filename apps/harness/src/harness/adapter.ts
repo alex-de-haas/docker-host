@@ -13,7 +13,10 @@ export interface HarnessAvailability {
 // Both flags exist because the harnesses genuinely differ, and a UI that claims one behavior for
 // both would be lying about one of them.
 export interface HarnessCapabilities {
+  /** Native next-message predictions; account availability is determined by the native response. */
+  promptSuggestions?: boolean;
   /** The harness can ask the operator a question and receive the answer back as a tool result. */
+  usage?: { snapshots: boolean; events: boolean; kinds: import("./provider-usage.js").UsageKind[] };
   questions: boolean;
   /**
    * The harness can be given app MCP servers at all. False means enabled providers reach it in no
@@ -45,14 +48,23 @@ export interface HarnessCapabilities {
 // (verified against the shipped types, not assumed) so nothing is lost in translation: 1-4
 // questions, each with 2-4 options carrying a label and a description.
 export interface HarnessQuestion {
+  /** Stable within the native request; absent only in legacy persisted events. */
+  id?: string;
+  allowText?: boolean;
   question: string;
   /** Very short chip label, max ~12 chars. */
   header: string;
   multiSelect: boolean;
-  options: Array<{ label: string; description: string; preview?: string }>;
+  options: Array<{ id?: string; label: string; description: string; preview?: string }>;
 }
 
 export type HarnessEvent =
+  | import("./prompt-suggestion.js").PromptSuggestion
+  | { type: "answer_complete" }
+  /** Private execution evidence used only for task barriers, never transcript display. */
+  | { type: "native_effect"; id: string; state: "started" | "settled" | "unknown" }
+  | { type: "execution_parked"; runId: string; barrier?: import("../worker/contracts.js").WorkerBarrier }
+  | { type: "provider_usage"; usage: import("./provider-usage.js").ProviderUsage }
   | { type: "context_usage"; usage: import("./context-usage.js").ContextUsage | null }
   | { type: "execution_model"; requested: { model: string | null; reasoningEffort: string | null }; reported: { model: string | null; reasoningEffort: string | null } }
   | { type: "activity"; activity: import("./activity.js").HarnessActivity }
@@ -85,7 +97,7 @@ export type HarnessEvent =
    * approval: approving the act of being asked a question is nonsense, and the resolution carries
    * answers rather than a verdict.
    */
-  | { type: "question_request"; questionId: string; questions: HarnessQuestion[] }
+  | { type: "question_request"; questionId: string; questions: HarnessQuestion[]; blocking?: boolean; native?: { threadId?: string; turnId?: string; itemId?: string } }
   | {
       type: "result";
       status: string;
@@ -103,7 +115,13 @@ export type HarnessEvent =
   | { type: "error"; message: string };
 
 export interface HarnessStartOptions {
+  promptSuggestions?: boolean;
+  operation?: "chat" | "translation" | "task";
+  skillExportId?: string;
+  /** Worker-owned isolated discovery home; never supplied by an API caller. */
+  nativeHome?: string;
   workerRunId?: string;
+  onWorkerUsage?: (runId: string, usage: NonNullable<import("../worker/contracts.js").WorkerReceipt["usage"]>) => void | Promise<void>;
   onWorkerEvent?: (frame: import("../worker/contracts.js").WorkerEvent) => Promise<void>;
   onWorkerPending?: (events: import("../worker/contracts.js").WorkerEvent[]) => Promise<void>;
   model?: string | null;
@@ -115,6 +133,7 @@ export interface HarnessStartOptions {
   cwd: string;
   /** Operator-authored instructions, appended to the harness's own sources — never replacing them. */
   systemPrompt?: string;
+  instructionSources?: import("./context-sources.js").InstructionText[];
   /** Enabled app MCP providers, already carrying a token scoped to each app. */
   mcpServers?: Record<string, unknown>;
   /**
@@ -126,15 +145,23 @@ export interface HarnessStartOptions {
   isAutoAllowed?: (toolName: string) => boolean;
   /** Harness-native session id to resume after a gateway restart, when the harness supports it. */
   resumeHarnessSessionId?: string;
+  /** Refuse a missing native thread; never silently reconstruct a decision continuation. */
+  requireNativeResume?: boolean;
   onEvent: (event: HarnessEvent) => void;
 }
 
 export interface HarnessRun {
+  /** Wait only for durable remote admission, independently of coordinator event callbacks. */
+  waitForAdmission?(): Promise<void>;
+  /** Cancel optional collection and observe confirmed completion, outside the coordinator queue. */
+  finishSuggestions?(): Promise<void>;
+  disableSuggestions?(): Promise<void>;
+  readUsage?(): Promise<import("./provider-usage.js").ProviderUsage>;
   send(text: string): void;
   /** Returns false when the approval id is unknown (already resolved or never issued). */
   resolveApproval(approvalId: string, decision: "allow" | "deny", message?: string): boolean | Promise<boolean>;
   /**
-   * Answers a pending question, keyed by question text (the SDK's own keying). Returns false when
+   * Answers a pending question by stable question ID (legacy events retain text keys). Returns false when
    * the id is unknown — already answered, or never asked.
    */
   resolveQuestion(questionId: string, answers: Record<string, string>): boolean | Promise<boolean>;
@@ -157,6 +184,7 @@ export interface HarnessAdapter {
   readonly capabilities: HarnessCapabilities;
   probe(): Promise<HarnessAvailability>;
   dispose?(): Promise<void>;
+  readUsage?(): Promise<import("./provider-usage.js").ProviderUsage>;
   models?(): Promise<import("../worker/contracts.js").ModelCatalog>;
   start(options: HarnessStartOptions): HarnessRun;
 }

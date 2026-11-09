@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-16
-updated: 2026-10-18
+updated: 2026-10-27
 summary: Epic for prompt-driven app creation, live iteration, integration with installed apps and optional publication.
 components: [apps/core, apps/harness, apps/shell]
 ---
@@ -11,7 +11,7 @@ components: [apps/core, apps/harness, apps/shell]
 ## Development Session Direction (2026-09-24)
 
 [Shared assistant development sessions](../assistant-development-sessions/plan.md) captures the
-new owner direction for Git-backed work and links independently scoped plans for shared history,
+owner direction for Git-backed work and links independent owners for session recovery/context handoffs,
 session workspaces, source selection and PR lifecycle. It owns cross-feature session acceptance;
 those child features own implementation, while this umbrella retains authoring integration and adaptation.
 The earlier direct-source iteration below remains a manual external-folder recipe. For Git-backed work,
@@ -258,7 +258,7 @@ a discard, save or publish operation. Pinned starts refuse dirty checkouts.
 - Owner clarification, 2026-10-10: [workspaces](../assistant-session-workspaces/feature.md),
   [PR lifecycle](../assistant-pr-lifecycle/feature.md) and [Sandbox](../app-sandbox-runtimes/plan.md)
   replace the separate AI Agent Bridge D12 workflow. General scheduled source jobs remain within
-  [Bridge D11](../ai-agent-bridge/plan.md#step-11--durable-jobs-and-notifications). Their Git and
+  [Durable Agent Jobs](../durable-agent-jobs/plan.md). Their Git and
   disposable-validation prerequisites do not gate a local interactive prototype; Core owns source
   and runtime operations, not model execution.
 - [Assistant entry points](../assistant-entry-points/plan.md) owns generic panel and context handoff.

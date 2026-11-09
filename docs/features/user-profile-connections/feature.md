@@ -1,6 +1,6 @@
 ---
 created: 2026-09-28
-updated: 2026-10-07
+updated: 2026-11-09
 summary: Shell manages personal GitHub accounts and Git identity through Core-owned connections and narrow app permissions.
 components: [apps/core, apps/shell, apps/harness]
 ---
@@ -28,12 +28,13 @@ cannot be used or checked and may be explicitly disconnected. Migration does not
 Source-provider settings store an optional Git author name/email separately from display name and provider login.
 Saving both empty selects provider-verified attribution. Publication commits use this explicit identity
 or a verified primary GitHub email; Core does not invent an email from the account login. GitHub device
-sign-in requests `user:email` in addition to repository access. Existing connections without that
-scope can reconnect or use explicit Git attribution. Git identity edits require `sources.connections` for app callers, the current administrator, and owner checks. Direct Core browser mutations require CSRF. Ordinary profile edits cannot change Git identity.
+sign-in requests `user:email` and `workflow` in addition to repository access. Connections without
+email-read access can reconnect or use explicit Git attribution. Missing workflow permission
+requires renewed authorization; explicit Git attribution does not grant workflow access. Git identity edits require `sources.connections` for app callers, the current administrator, and owner checks. Direct Core browser mutations require CSRF. Ordinary profile edits cannot change Git identity.
 
 ## Account Operations
 
-Connections support add, rename, check and disconnect. GitHub offers device authorization and an
+Connections support add, reconnect, rename, check and disconnect. GitHub offers device authorization and an
 explicit personal access token fallback. Multiple accounts coexist; no connection becomes a global
 default and repository host names never select an account implicitly.
 
@@ -58,7 +59,7 @@ again and renews expiring OAuth credentials first. It persists token rotation be
 provider calls. Observed states are `connected`, `unavailable`, `reconnect-required` and `unsupported`; these are
 checks at a point in time, not continuous provider monitoring or proof of permission to a repository.
 A PAT's provider permissions, expiry and organization policies still apply. A revoked or expired
-credential needs an explicit new connection. Rename changes only the user's label.
+credential can be renewed with **Reconnect**. Rename changes only the user's label.
 
 Disconnect deletes Core's stored credential. Provider-side authorization is separate: the confirmation
 explains how to revoke it in the provider's account settings. Disconnect requires an existing connection owned by the caller; missing or foreign IDs return 404
@@ -67,6 +68,29 @@ continue independently during provider requests; an already running request fini
 user removes their connections; disabling the user prevents credential operations and completion of
 in-flight authorization. Atomic persistence revalidates the owner, so a late provider response cannot
 restore credentials for a deleted or disabled user.
+
+## Reconnect Without Rebinding
+
+**Reconnect** opens the existing connection modal for the selected account. OAuth device authorization
+and PAT replacement verify the same provider/account before atomically updating credentials. The
+connection ID, owner, label and creation time stay unchanged, preserving source grants, remotes,
+publication records and pending request IDs. Another account needs a separate connection.
+
+The old credential remains usable while authorization is pending. Cancellation, expiry, provider
+failure and account mismatch leave it intact. Core allows one renewal attempt per connection and
+checks its saved revision before replacement; a concurrent disconnect, rename, check, refresh or
+replacement refuses stale completion instead of recreating or overwriting the connection. A transient
+poll failure retains the attempt ID and pauses polling until Retry or Cancel, so the owner can recover
+without waiting for expiration.
+
+GitHub's returned OAuth scopes are stored as bounded non-secret `grantedScopes` metadata when
+available. Known private repository access is retained during OAuth reauthorization. Legacy or
+provider responses without scope evidence remain unknown; renewal requires an explicit public-only
+or public-and-private access choice before starting authorization. When an OAuth renewal supplies explicit scope evidence, Core requires workflow and repository
+access, including previously known or explicitly requested private access, before replacing the
+credential. Insufficient grants leave the old connection intact. Scope metadata never proves access
+to a particular repository. Refresh
+retains previous scope evidence when its response omits scopes.
 
 ## Provider Registration
 
@@ -85,7 +109,7 @@ when the current registration changes. Retired Entra configuration has no active
 
 For a custom GitHub registration, register an OAuth App and enable device authorization. Public repository scope is
 `public_repo`; the optional private-repository checkbox requests `repo` instead. Both request
-`offline_access` for token renewal where supported. See
+`workflow` for Actions files, `user:email` for attribution and `offline_access` for token renewal where supported. See
 [GitHub device authorization and refresh](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps).
 
 Only fixed GitHub API and authorization authorities receive credentials. HTTP redirects are disabled.
@@ -106,6 +130,8 @@ account/Git-identity mutations require `sources.connections`:
 - `PUT /api/source-connections/identity` sets or clears `gitIdentity` without changing the display name.
 - `POST /api/source-connections/pat` verifies and adds a PAT connection.
 - `POST /api/source-connections/device` starts authorization.
+- `POST /api/source-connections/{id}/device` starts same-account OAuth renewal.
+- `POST /api/source-connections/{id}/pat` replaces credentials for the same provider account.
 - `POST /api/source-connections/device/{id}/poll` advances authorization.
 - `DELETE /api/source-connections/device/{id}` cancels a local attempt.
 - `PUT /api/source-connections/{id}` changes `label`.
@@ -146,6 +172,7 @@ endpoint or automatic exposure to assistants/apps.
 
 ## Testing Expectations
 
+- Verify workflow scope, same-ID OAuth/PAT renewal, binding retention, account/provider mismatch, foreign-owner denial, concurrent changes, cancellation and failure without deleting existing credentials.
 - Protocol fixtures verify GitHub device requests, PAT identity, pending/slow-down, cancellation,
   expiry, denial, refresh rotation, unavailable/malformed responses and credential non-disclosure.
 - Registration tests cover Hosty's default GitHub client, operator overrides, ignored retired Entra configuration,

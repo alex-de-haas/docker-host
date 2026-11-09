@@ -1,3 +1,4 @@
+import { resolveSkillExport, skillAdapter } from "./skills.js";
 import path from "node:path";
 import { conversationDirectory, storeAttachment } from "./resources.js";
 import { mkdir, realpath, stat, chown, chmod } from "node:fs/promises";
@@ -15,7 +16,7 @@ import { isolatedAdapter, prepareNativeProfile } from "./native.js";
 import { WorkerClient } from "./client.js";
 
 /** Hosty-specific composition lives here; the HTTP engine/client remain endpoint-only. */
-export async function createProviderService(options: { data: string; cache: string; auth: string; mode: "native" | "docker"; trees?: string; files?: string }) {
+export async function createProviderService(options: { data: string; cache: string; auth: string; mode: "native" | "docker"; trees?: string; skills?: string; files?: string }) {
   let coordinator: WorkerClient | undefined;
   const secrets: ConnectionSecrets = {
     get: async key => (await secret("get", key) as { value: string | null }).value,
@@ -57,17 +58,18 @@ export async function createProviderService(options: { data: string; cache: stri
     adapter: async request => {
       if (request.operation === "translation") return translationAdapter(connections, request, options.mode === "docker" ? executionUid : undefined);
       const adapter = await connections.adapter(request.binding);
-      if (options.mode !== "docker") return adapter;
+      const skills = await resolveSkillExport(options.skills, request.skillExportId);
+      if (options.mode !== "docker") return skills ? skillAdapter(adapter, await connections.executionHome(request.binding), request.binding.harnessKind, skills) : adapter;
       const health = await adapter.probe();
       if (!health.available) throw new Error(health.reason);
-      return isolatedAdapter(adapter, await prepareNativeProfile(await connections.executionHome(request.binding), request.binding.harnessKind, executionUid));
+      return isolatedAdapter(adapter, await prepareNativeProfile(await connections.executionHome(request.binding), request.binding.harnessKind, executionUid, skills));
     },
   };
   const engine = new WorkerEngine(journal, execution, capacity);
   const text = (value: unknown): string => { if (typeof value !== "string" || !safeIdentity(value)) throw new WorkerApiError(400, "invalid_arguments", "Invalid provider identity."); return value; };
   const binding = (value: unknown): ConnectionBinding => {
     const b = value as ConnectionBinding;
-    if (!b || !safeIdentity(b.connectionId) || !Number.isSafeInteger(b.connectionRevision) || !["codex", "claude"].includes(b.harnessKind))
+    if (!b || !safeIdentity(b.connectionId) || !Number.isSafeInteger(b.connectionRevision) || !["codex", "claude", "ollama"].includes(b.harnessKind))
       throw new WorkerApiError(400, "invalid_arguments", "Invalid connection binding.");
     return b;
   };
@@ -78,7 +80,7 @@ export async function createProviderService(options: { data: string; cache: stri
       if (options.mode === "docker") await chown(result.path, executionUid, executionUid);
       return result;
     },
-    capabilities: async () => ({ resources: { trees: options.trees }, providers: ["codex", "claude"], operations: ["chat", "translation"], modelSelection: true, reasoningEffort: true, capacity, ready: Boolean(coordinator) }),
+    capabilities: async () => ({ resources: { trees: options.trees }, providers: ["codex", "claude", "ollama"], operations: ["chat", "translation"], modelSelection: true, reasoningEffort: true, capacity, ready: Boolean(coordinator) }),
     configure: async value => {
       const input = value as { callbackUrl?: unknown };
       if (typeof input?.callbackUrl !== "string") throw new WorkerApiError(400, "invalid_coordinator", "Coordinator callback URL required.");
@@ -89,6 +91,7 @@ export async function createProviderService(options: { data: string; cache: stri
     models: id => connections.models(id),
     connection: async (operation, args) => {
       switch (operation) {
+        case "usage": return connections.usage(String(args[0]), args[1] === true);
         case "list": return connections.list();
         case "get": return connections.get(text(args[0]));
         case "binding": return connections.binding(args[0]);

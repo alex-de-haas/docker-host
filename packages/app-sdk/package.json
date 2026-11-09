@@ -1,6 +1,6 @@
 {
   "name": "@hosty-sdk/app",
-  "version": "0.34.1",
+  "version": "0.47.0",
   "description": "Hosty app auth: session state machine, recovery bridge, Core revalidation, and the embedder responder.",
   "license": "AGPL-3.0-only",
   "type": "module",
@@ -35,7 +35,17 @@
     "./continuity/browser": "./src/continuity-browser.ts",
     "./next": "./src/next.tsx",
     "./sandbox/server": "./src/sandbox-server.ts",
-    "./sandbox/react": "./src/sandbox-react.tsx"
+    "./sandbox/react": "./src/sandbox-react.tsx",
+    "./tool-activity/server": "./src/tool-activity-server.ts",
+    "./tasks": "./src/tasks.ts",
+    "./tasks/server": "./src/tasks-server.ts",
+    "./feedback": "./src/feedback-types.ts",
+    "./feedback/server": "./src/feedback-server.ts",
+    "./agent-sessions": "./src/agent-sessions.ts",
+    "./history": "./src/history.ts",
+    "./feedback/client": "./src/feedback-client.ts",
+    "./decisions": "./src/decisions.ts",
+    "./decisions/server": "./src/decisions-server.ts"
   },
   "scripts": {
     "test": "vitest run",
@@ -43,7 +53,9 @@
   },
   "dependencies": {
     "@noble/hashes": "^2.4.0",
-    "server-only": "^0.0.1"
+    "lucide-react": "^1.55.0",
+    "server-only": "^0.0.1",
+    "undici": "^8.12.3"
   },
   "peerDependencies": {
     "next": "^16.4.0",

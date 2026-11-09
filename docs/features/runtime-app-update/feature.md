@@ -1,6 +1,6 @@
 ---
 created: 2026-06-04
-updated: 2026-10-22
+updated: 2026-11-07
 summary: Reviewed update plans and their apply behavior, including permission changes and routine updates.
 components: [apps/core, apps/shell]
 ---
@@ -20,7 +20,7 @@ Existing approved grants are preserved during live-source projection and runtime
 
 ## Description
 
-Runtime app updates are reviewed changes from the currently installed `app.0.1` manifest to a new manifest or source snapshot, including a manifest resolved from the app's followed feed. Core owns the update check, plan, digest, classification, backup, apply, and failure state.
+Runtime app updates are reviewed changes from the currently installed `app.0.1` or `app.0.2` manifest to a new manifest or source snapshot, including a manifest resolved from the app's followed feed. Core owns the update check, plan, digest, classification, backup, apply, and failure state.
 
 Update checking is **plan-first**: a check does not run a lighter probe than the update itself — it builds the real reviewed plan and caches it. That one resolution pass then answers everything: whether an update exists, whether it needs a human, and what an apply would do.
 
@@ -30,13 +30,14 @@ Update checking is **plan-first**: a check does not run a lighter probe than the
 2. Core resolves the target manifest from the installed app's stored feed, explicit manifest, or source snapshot.
 3. Core creates an update plan with changed version, runtime, services, images, commands, ports, environment keys, settings, endpoints, storage, dependencies, and capabilities; classifies it as routine or review-required; and caches it as the app's pending plan.
 4. The caller applies the reviewed plan by passing its plan digest.
-5. Core creates a `pre-update` backup when the app has a primary data directory.
-6. Core applies runtime changes and records the final lifecycle state.
+5. Core pulls/materializes every exact reviewed image/source artifact before stopping a working app; a preparation failure preserves the runtime.
+6. Core creates a `pre-update` backup when the app has a primary data directory.
+7. Core applies runtime changes and records the final lifecycle state.
 
 The browser surface runs step 4 in the background (see [Background Apply](#background-apply)); the CLI control plane applies synchronously.
 
 The browser uses a [single Core review](../core-update-review/feature.md) for changes requiring
-consent. Routine updates apply directly. Feed selection is in app Settings → Source.
+consent. Routine updates apply directly. Feed selection is available in app Settings → Source; full publisher/source migration is in Host → Updates.
 
 ## Digest Semantics
 
@@ -107,6 +108,14 @@ The `changes` list is a human-review summary of the update plan. Core reports sp
 
 Core-owned `HOSTY_PORT_*` host-port overrides and `HOSTY_LOCAL_NAME_*` local browser names are never reported as `setting:*:removed`: an update carries them forward, so reporting a removal would promise a change apply does not make — a same-version plan that could never converge. Both update and runtime-switch plans use the same preservation rule as apply. Removed app settings remain reviewable, including other `HOSTY_*` keys.
 
+The existing native-preference migrations retain the last launch value for Harness session retention
+and Marketplace source selection after their settings move into the apps. The first removal from an
+installed manifest remains review-required. Once the installed manifest no longer declares that
+setting, its retained migration value is excluded from subsequent update and runtime-switch removal
+summaries. A same-version recheck, including after a Core restart, does not offer that completed
+removal again. Other apps using the same key and later declarations or schema changes still undergo
+normal review; the retained value is not deleted to clear an update offer.
+
 ## Classification (`requiresReview`)
 
 Every plan carries `requiresReview`, derived from its change list. It is the gate for one-click updating: a client may apply a routine plan without showing it, but must never silently apply a review-class one.
@@ -121,13 +130,26 @@ Every plan carries `requiresReview`, derived from its change list. It is the gat
 
 The classification is deliberately conservative and not operator-tunable: it is a security boundary, not a preference. The cost of a false review is one extra click.
 
-`updateAvailable` is a separate question from the same list: any change except an `artifact:*->unknown` entry, which means "cannot tell", not "update available".
+`updateAvailable` requires a fully verified candidate. Any unresolved required artifact blocks the complete app offer, even when its manifest or version changed.
 
 ## Update Availability (`update-status`)
 
 `GET /api/apps/{appId}/update-status` reports availability and per-service digest detail. It is a **projection of the app's cached plan**: with a fresh plan it does no network work at all. Without one it builds a plan (caching it) and projects that. `?refresh=true` forces a single-app rebuild — the app row's More > Check for updates action and Manage's Check now.
 
 The candidate is whatever the reviewed plan would use: the followed feed's current `manifestRef` for feed-bound apps, or a refetch of the stored manifest URL for non-feed URL installs. Refetching the external manifest matters for candidates that move to new *versioned* image tags: comparing the registry against the installed copy's old tags would report "up to date" forever. Resolution failures degrade service detail to `unknown` and set an explicit error on the summary verdict; the installed app is left untouched.
+
+Typed readiness includes `ready`, `pending-publication` and explicit failure states/codes for missing
+images, malformed content, platform mismatch, registry access, rate limits and transport failures.
+Core checks the OCI index, requested platform manifest/config and required layers; authenticated
+Docker verification can use the host's existing registry access. The check does not copy publisher
+credentials or enable emulation. Failed checks retain the last-success timestamp as history but clear
+actionable target digests/plan identity. Shell, Marketplace, SDK, CLI and MCP share that verdict.
+An error-bearing plan cannot be approved, submitted or applied.
+
+Published app.0.2 images carry repository/digest pairs and production source profiles use full commit
+pins. Legacy app.0.1 tags remain readable. A missing authored source commit cannot fall back to the
+repository's moving branch. Different content can be a new release without a version bump;
+lower/unknown ordering requires explicit review and source selection itself never downgrades.
 
 ## Fleet Check
 
@@ -190,7 +212,9 @@ Manage application's Updates tab displays an applicable cached Core plan without
 entry. It shows installed/target version, check time, review classification, reported changes and
 known permission additions. Check now explicitly rebuilds through the existing Shell plan handler;
 Update and Review update delegate to the same queue/confirmation handler as Dashboard. Source/feed
-and account editors remain available alongside the plan. A failed check stays incomplete rather
+and account editors remain available alongside the plan. The app’s Updates tab selects channels
+from its publisher-provided feed index; it does not edit that index. Host settings retain reviewed
+publisher migration suggestions and recovery, without a manual publisher/feed URL editor. A failed check stays incomplete rather
 than current, mismatched base/digest evidence is not displayed as a fresh offer, and live source
 explains its supported restart behavior. Download size and automatic-update policies are not
 inferred. Dashboard retains all existing update entries.
@@ -204,10 +228,16 @@ additionally wait for their restart before reloading the page into the new asset
 
 Rows render from the app summary's `updateCheck` verdict, so the affordances survive navigation and reloads without re-probing:
 
-- **routine** — Update applies the cached plan by digest through Core's queue, without a confirmation dialog;
+- **routine** — Update checks the configured source again and applies the fresh routine plan by digest through Core's queue, without a confirmation dialog;
 - **review-required** — the existing review path opens Core confirmation; there is no silent path;
 - **check failed** — the problem icon after the app name carries the error;
 - **applying** — active update progress appears beneath the current runtime/health status in the Status column, driven by `updateProgress` and `operationStatus`.
+
+Individual and bulk update actions rebuild the plan before submission, so an earlier offer does not
+pin the action to an older source head. A refreshed individual plan requiring review opens Core
+confirmation. Bulk updates check each app in order, with Shell last; a candidate newly requiring
+review is skipped with a review notice while the remaining apps continue. A fresh empty plan clears
+the old offer without applying anything. Failed checks never fall back to an older cached candidate.
 
 Package metadata shows the installed and available versions as `current → target`, including a
 new build with the same version. Revision/build tooltips distinguish those builds. A verdict with
@@ -220,9 +250,14 @@ Both version values are tooltip triggers, marked with a dotted underline rather 
 Update activity does not add a line beneath version/source metadata. The primary Status label
 uses actual runtime state and applicable health; update operation progress occupies the line below it.
 
-App actions > Check updates triggers or joins the fleet sweep. "Update all (N)" applies every routine verdict, leaving review-class ones on their rows and counting them in the summary toast; the Shell's own app goes last, because its apply restarts the Shell serving the page.
+App actions > Check updates triggers or joins the fleet sweep. "Update all (N)" applies every routine verdict, leaving review-class ones on their rows; the Shell's own app goes last, because its apply restarts the Shell serving the page.
 
-An accepted update follows the existing queue/Core-confirmation flow. A rejected enqueue (stale, expired, consumed, or already updating) keeps the existing error/recovery handling and refreshes state; uncertain submissions do not authorize replay. Manage reads the applicable cached pending plan; explicit Check now, a source/feed change or a definite stale-preparation refusal uses the existing rebuild path. Progress needs no poll: every app-record commit publishes a hint on Core's event stream, and the page re-reads the list from it.
+An accepted update follows the existing queue/Core-confirmation flow. An explicit stale, expired or
+digest-mismatch refusal before acceptance permits one fresh preparation and submission, using the
+new classification. Already-updating, authorization and transport failures do not authorize replay;
+neither do errors after acceptance. Manage reads the applicable cached pending plan for display;
+Update, Check now and source/feed changes rebuild it. Progress needs no poll: every app-record
+commit publishes a hint on Core's event stream, and the page re-reads the list from it.
 
 ### Update stages and check feedback
 
@@ -239,7 +274,7 @@ beneath the primary status, without a service suffix. Other supported phases sho
 Preparing update, Creating backup, Installing, Downloading or Checking readiness, with the reported
 service when present. Queueing or preparation can coexist with Running; readiness checking can
 coexist with a newly running runtime.
-Terminal update outcomes add no row message or expiry timer. Existing success/error/readiness
+Terminal update outcomes add no row message or expiry timer. Only error/readiness-problem
 toasts use the same app-state outcomes rather than treating installation as proof of readiness.
 Readiness warnings retain affected service states and an addressable console-log action; problem
 icons and Manage keep failure/interruption diagnostics. Healthy recovery clears the readiness warning.
@@ -250,15 +285,16 @@ update skips failed verdicts. A fleet check with failures and no offers reports 
 
 Core's detached updater does not expose download percentages or internal stages. Shell shows
 installing, reconnecting and verifying based on live status reads. It confirms completion only when
-Core is running and a fresh release-hash check reports no remaining update, then displays Updated
-briefly. A five-minute deadline yields an unconfirmed result, without claiming success. Failed Core
+Core is running and the accepted update operation reports completion. The progress line then
+disappears immediately, with no terminal label or expiry timer, matching ordinary app rows.
+A five-minute deadline yields an unconfirmed result, without claiming success. Failed Core
 checks retain the previous offer only for the same installed version and release channel.
 
 ## System Apps
 
 System apps (Shell, Telemetry, Marketplace) update through this same reviewed flow, gated on `host.admin` alone. Lifecycle operations are inherent to Core managing an app and are authorized on the endpoint, never by the manifest `capabilities` list — an app cannot opt out of being updated by omitting a token (see [Core App Shell](../core-app-shell/feature.md)).
 
-Core startup never applies updates: the boot reconcile installs missing distribution apps, re-applies Hosty-owned provisioning, and migrates a moved http(s) distribution manifest reference (pointer only — no content change, no restart). A Shell self-update briefly restarts the Shell serving the page; the apply survives the tab, so the UI warns, keeps the tab alive through the swap, and reloads into the new build — after two signals, in this order: Core's record settling the apply **and** the restart it hands off to, and then the page's own document URL answering again (the new server is listening). Settled means `"started"` after the post-update restart, `"updated"` when no restart is needed, or `"failed"` with an error. Core keeps `"updating"` throughout installation, runtime preparation and readiness. Shell also tolerates older Core versions that use an intermediate `"updated"` before starting the runtime. Both signals are needed because the enqueue returns before anything is torn down — the old Shell keeps serving its origin for the whole apply, so an origin probe on its own resolves immediately and reloads the old bundle. The record arrives on the event stream the page already holds (Core stays up across the swap), so no poll is involved; a `"failed"` record toasts the error instead of reloading, and a record that never settles — the deadline passed, the app was removed, or the page never saw the flip — leaves the operator on the working old page with a note to check the row and reload once the Shell answers. Deferred hardening — staged apply, automatic rollback, immutable Shell image tags, a Core compatibility range and a skew notice — is tracked in the [plan](plan.md).
+Core startup never applies updates or silently migrates an existing app source. Distribution seeding installs the selected defaults and retries only retained pending installs; source changes use the reviewed migration flow. A Shell self-update briefly restarts the Shell serving the page; the apply survives the tab, so the UI warns, keeps the tab alive through the swap, and reloads into the new build — after two signals, in this order: Core's record settling the apply **and** the restart it hands off to, and then the page's own document URL answering again (the new server is listening). Settled means `"started"` after the post-update restart, `"updated"` when no restart is needed, or `"failed"` with an error. Core keeps `"updating"` throughout installation, runtime preparation and readiness. Shell also tolerates older Core versions that use an intermediate `"updated"` before starting the runtime. Both signals are needed because the enqueue returns before anything is torn down — the old Shell keeps serving its origin for the whole apply, so an origin probe on its own resolves immediately and reloads the old bundle. The record arrives on the event stream the page already holds (Core stays up across the swap), so no poll is involved; a `"failed"` record toasts the error instead of reloading, and a record that never settles — the deadline passed, the app was removed, or the page never saw the flip — leaves the operator on the working old page with a note to check the row and reload once the Shell answers. The [release publisher](../repository-release-model/feature.md) provides publication, selective builds and digest reuse; the reviewed update/source flows provide staged preparation and source migration. The separate [recovery and compatibility plan](../runtime-app-update-recovery/plan.md) tracks automatic rollback, Core version ranges and compatibility notices.
 
 ## Live Source Runtimes
 
@@ -277,6 +313,32 @@ hosty apps update <app-id> --plan-digest <digest> --manifest apps/demo-app
 
 Failed updates leave enough state for diagnosis and retry. Runtime state and app data are not deleted automatically. Restore uses normal app backup restore behavior.
 
+## Release feed acceptance
+
+The repository's apps publish complete digest-pinned releases through the
+[publisher workflow](../repository-release-model/feature.md#first-publication-and-existing-installations).
+Canonical daily/stable indexes and catalog defaults are public; publisher-defined names and defaults
+remain generic. Source selection does not itself update or downgrade an installed application.
+A completed development Return retains its journal for recovery but no longer blocks an explicit
+feed source review. An old folder-install path is historical when the installation now has a URL
+update source. Active development, local overrides, folder-only installations and private source
+grants remain protected; missing or inconsistent development journals fail closed for that app.
+Suggestion collection skips an unavailable journal without hiding other installations or batch recovery.
+
+Managed sandbox acceptance uses separate accounts, normal password login and Core-assigned app
+origins. An unavailable image yields pending-publication with no actionable offer while the installed
+app keeps running. A two-service app updates from 1.0.0 to 1.1.0 with a new web digest and the previous
+backend digest; Core's reviewed plan changes only the web artifact, and both resulting services are
+healthy with exact artifact locks. Separate Shell acceptance preserves a stopped installed 1.1.0
+when switching to a feed offering 1.0.0, completes Core-owned source confirmation and preserves the
+old binding when confirmation is cancelled. Only the disposable test Shell receives the source
+permission needed for that trial. Core Finish removes the owned processes, containers and data.
+
+The [native acceptance matrix](https://github.com/alex-de-haas/docker-host/actions/runs/41801218739)
+also passes paired Core/CLI replacement and frozen recovery on Windows x64, Linux x64/ARM64 and
+macOS ARM64. The separate [recovery and compatibility plan](../runtime-app-update-recovery/plan.md)
+retains D2, D4 and D5: app-data rollback and compatibility policy are not delivered by release feeds.
+
 ## Testing Expectations
 
 - App-authenticated routine updates succeed without a Core confirmation request; callers without
@@ -292,6 +354,7 @@ Failed updates leave enough state for diagnosis and retry. Runtime state and app
 - **Plan and classification** — change detection per contract category, `requiresReview` routine/review split (including `role: system` escalation and a cross-repository `image` move), `updateAvailable` treating `->unknown` as "cannot tell", and plan-digest stability across a rebuild.
 - **Apply** — digest mismatch, expiry, and stale-base rejection; verbatim consumption of the cached plan; `update_in_progress`; the interrupted-apply boot sweep.
 - **Core-owned settings** — host-port overrides and local browser names survive apply and a fresh check after recreating Core reports no phantom update; removal of ordinary app settings still requires review.
+- **Retired native preferences** — the first same-version manifest removal requires review; retained migration values do not reappear in update availability or runtime-switch changes after apply/restart. The same keys in unrelated apps and subsequent schema changes remain reviewable.
 - **Shell self-update wait** — the page stays put through `"updating"` and through the intermediate `"updated"` while the restart is still to report, settles on that restart's `"started"` (and on `"updated"` when no restart is coming), reports a `"failed"` record with its error, treats a failed read as no outcome at all, and gives up on its deadline (and when the app is gone) without reloading.
 - **Fleet check** — availability projected into summaries (target version and revisions alongside the verdict, and nothing named for a probe that did not resolve), live-source apps skipped and an earlier verdict suppressed, per-app failures captured without failing the sweep, an app with no update source reported as an error rather than as up to date (and cleared by a plan from an explicit manifest), per-app timeout recorded as that app's error while the rest of the fleet still completes, shutdown not recorded as timeouts, single-flight joining, and the finish announced only once the run no longer reports running.
 - **Version metadata** — the target version shown whether or not it advances, and nothing shown when the verdict names no version; installed revisions read from the app record alone, so the tooltip stands without an update.
@@ -322,6 +385,10 @@ Digest resolution is covered offline against a stub transport — the suite must
   stopping/starting phases, specific other phases and optional service, absent terminal row labels
   and timers, unknown/failed/empty checks, and bulk-update exclusion of failed, review-required,
   expired and already-updating offers.
+- Update actions recheck an older offer before their first submission, route fresh review-required
+  changes to Core review, and never apply an older candidate after a failed check. Bulk checks each
+  candidate sequentially with Shell last and continues after a skipped or failed app; definite
+  pre-acceptance stale refusals permit one rebuild while uncertain or accepted mutations never replay.
 - Shell distinguishes installed-but-unready updates from successful readiness: a terminal warning
   names affected services and opens logs, while persistent details survive page reloads. A separate
   available update remains visible; healthy recovery clears stale readiness feedback.

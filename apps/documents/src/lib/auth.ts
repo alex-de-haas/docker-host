@@ -1,0 +1,42 @@
+import { getAppId, getRecoveryParams, readAppIdentityToken, resolveAppSession, type HostyAppConfig } from "@hosty-sdk/app/server";
+
+export const config: HostyAppConfig = { appIdFallback: "hosty.documents", identityCookieName: "hosty_documents_identity" };
+export async function getIdentity(headers: Headers) {
+  const token = readAppIdentityToken(headers, config);
+  const session = await resolveAppSession(token, config);
+  const base = { tokenPresent: Boolean(token), appId: getAppId(config), recovery: await getRecoveryParams(config) };
+  return session.status === "active" ? { ...base, status: "active" as const, ...session.identity } : { ...base, status: session.status, error: session.error };
+}
+export class DocumentsError extends Error {
+  constructor(message: string, public status = 503, public code = "plans_unavailable") { super(message); }
+}
+export function requireSameOriginJson(request: Request, message: string): void {
+  const destination = new URL(request.url), origin = request.headers.get("origin");
+  let sameOrigin = false;
+  try {
+    const supplied = new URL(origin ?? "");
+    const effective = new URL(`${supplied.protocol}//${request.headers.get("host") ?? destination.host}`).origin;
+    sameOrigin = origin === supplied.origin && ["http:", "https:"].includes(supplied.protocol) && origin === effective
+      && (supplied.protocol === destination.protocol || request.headers.get("sec-fetch-site") === "same-origin");
+  } catch { /* Missing or malformed Origin cannot initiate translation. */ }
+  if (!sameOrigin || request.headers.get("content-type")?.split(";", 1)[0].trim() !== "application/json")
+    throw new DocumentsError(message, 403, "origin_denied");
+}
+export async function requireAdministrator(headers: Headers): Promise<string> {
+  return (await requireAdministratorIdentity(headers)).token;
+}
+export async function requireAdministratorIdentity(headers: Headers): Promise<{ token: string; userId: string }> {
+  const token = readAppIdentityToken(headers, config);
+  const session = await resolveAppSession(token, config);
+  if (session.status === "active") {
+    if (session.identity.hostRole !== "host.admin") throw new DocumentsError("Documents is available only to Hosty administrators.", 403, "administrator_required");
+    return { token: token!, userId: session.identity.userId };
+  }
+  if (session.status === "not-present" || session.status === "expired") throw new DocumentsError("Sign in through Hosty to read plans.", 401, "app_identity_required");
+  if (session.status === "forbidden") throw new DocumentsError(session.error?.message ?? "This app session is not allowed.", 403, session.error?.code);
+  throw new DocumentsError(session.error?.message ?? "Hosty could not verify this session.", 503, session.error?.code);
+}
+export function errorResponse(error: unknown) {
+  const known = error instanceof DocumentsError ? error : new DocumentsError("Documents could not read the source documents. Try again.");
+  return Response.json({ code: known.code, message: known.message }, { status: known.status, headers: { "Cache-Control": "no-store" } });
+}

@@ -59,6 +59,9 @@ internal static class CoreEnvironmentEndpoints
         routes.MapPost(root + "/{id}/setup-link", async (string id, HttpRequest request,
             UserDirectoryStore users, IClock clock, CoreEnvironmentAccess access, CancellationToken ct) =>
             await Admin(request, users, clock, false, actor => access.InitializationAsync<AuthBootstrapTokenResponse>(actor, id, "setup-link", ct), ct));
+        routes.MapPost(root + "/{id}/access-link", async (string id, HttpRequest request,
+            UserDirectoryStore users, IClock clock, CoreEnvironmentAccess access, CancellationToken ct) =>
+            await Admin(request, users, clock, false, actor => access.AccessLinkAsync(actor, id, ct), ct));
         routes.MapGet(root + "/{id}/apps", async (string id, HttpRequest request,
             UserDirectoryStore users, IClock clock, CoreEnvironmentAccess access, CancellationToken ct) =>
             await Admin(request, users, clock, true, actor => access.ApplicationsAsync(actor, id, ct), ct));
@@ -75,12 +78,21 @@ internal static class CoreEnvironmentEndpoints
         routes.MapPost(root + "/{id}/api", async (string id, CoreEnvironmentApiRequest input, HttpRequest request,
             UserDirectoryStore users, IClock clock, CoreEnvironmentAccess access, CancellationToken ct) =>
             await Admin(request, users, clock, false, actor => access.SendAsync(actor, id, input, ct), ct));
+        routes.MapPost(root + "/{id}/consumers/register", async (string id, CoreEnvironmentConsumerRegister input, HttpRequest request,
+            UserDirectoryStore users, IClock clock, CoreEnvironmentService service, CancellationToken ct) =>
+            await Admin(request, users, clock, false, actor => service.RegisterConsumerAsync(actor, id, input, ct), ct));
+        routes.MapPost(root + "/{id}/consumers/release", async (string id, CoreEnvironmentConsumerRelease input, HttpRequest request,
+            UserDirectoryStore users, IClock clock, CoreEnvironmentService service, CancellationToken ct) =>
+            await Admin(request, users, clock, false, actor => service.ReleaseConsumerAsync(actor, id, input, false, ct), ct));
+        routes.MapPost(root + "/{id}/consumers/reconcile", async (string id, CoreEnvironmentConsumerRelease input, HttpRequest request,
+            UserDirectoryStore users, IClock clock, CoreEnvironmentService service, CancellationToken ct) =>
+            await Admin(request, users, clock, false, actor => service.ReleaseConsumerAsync(actor, id, input, true, ct), ct));
         const string internalRoot = "/api/internal/apps/{appId}/core-environments";
         routes.MapPost(internalRoot + "/consent", async (string appId, CoreEnvironmentCreate input, HttpRequest request,
             CoreEnvironmentAuthorization auth, CoreEnvironmentService service, CoreEnvironmentConsentService consent,
             InstallationApprovalStore approvals, InstallationApprovalService approvalService,
             CorePublicOriginResolver origins, IClock clock, CancellationToken ct) =>
-            await SandboxEndpoints.Handle(async () =>
+            await Handle(async () =>
             {
                 var actor = await auth.RequireAsync(request, appId, false, ct);
                 if (actor.GrantId is not null) throw new AppIdentityException("interactive_required", "Review new consent with an interactive administrator.");
@@ -113,37 +125,81 @@ internal static class CoreEnvironmentEndpoints
                 finally { consent.RequestGate.Release(); }
             }));
         routes.MapGet(internalRoot, async (string appId, HttpRequest request, CoreEnvironmentAuthorization auth, CoreEnvironmentService service, CancellationToken ct) =>
-            await SandboxEndpoints.Handle(async () => await service.ListAsync(await auth.RequireAsync(request, appId, true, ct), ct)));
+            await Handle(async () => await service.ListAsync(await auth.RequireAsync(request, appId, true, ct), ct)));
         routes.MapGet(internalRoot + "/{id}", async (string appId, string id, HttpRequest request, CoreEnvironmentAuthorization auth, CoreEnvironmentService service, CancellationToken ct) =>
-            await SandboxEndpoints.Handle(async () => await service.ReadAsync(await auth.RequireAsync(request, appId, true, ct), id, ct)));
+            await Handle(async () => await service.ReadAsync(await auth.RequireAsync(request, appId, true, ct), id, ct)));
         routes.MapPost(internalRoot, async (string appId, CoreEnvironmentCreate input, HttpRequest request, CoreEnvironmentAuthorization auth, CoreEnvironmentService service, CancellationToken ct) =>
-            await SandboxEndpoints.Handle(async () => await service.CreateAsync(await auth.RequireAsync(request, appId, false, ct), input, ct)));
+            await Handle(async () => await service.CreateAsync(await auth.RequireAsync(request, appId, false, ct), input, ct)));
         routes.MapPost(internalRoot + "/{id}/operations/{kind}", async (string appId, string id, string kind, CoreEnvironmentCommand input,
             HttpRequest request, CoreEnvironmentAuthorization auth, CoreEnvironmentService service, CancellationToken ct) =>
-            await SandboxEndpoints.Handle(async () => await service.CommandAsync(await auth.RequireAsync(request, appId, false, ct), id, kind, input, ct)));
+            await Handle(async () => await service.CommandAsync(await auth.RequireAsync(request, appId, false, ct), id, kind, input, ct)));
         routes.MapGet(internalRoot + "/{id}/initialization", async (string appId, string id, HttpRequest request,
             CoreEnvironmentAuthorization auth, CoreEnvironmentAccess access, CancellationToken ct) =>
-            await SandboxEndpoints.Handle(async () => await access.InitializationAsync<Haas.Hosty.Initialization.InitializationStatus>(await auth.RequireAsync(request, appId, true, ct), id, "status", ct)));
+            await Handle(async () => await access.InitializationAsync<Haas.Hosty.Initialization.InitializationStatus>(await auth.RequireAsync(request, appId, true, ct), id, "status", ct)));
         routes.MapPost(internalRoot + "/{id}/initialization/resume", async (string appId, string id, HttpRequest request,
             CoreEnvironmentAuthorization auth, CoreEnvironmentAccess access, CancellationToken ct) =>
-            await SandboxEndpoints.Handle(async () => await access.InitializationAsync<Haas.Hosty.Initialization.InitializationStatus>(await auth.RequireAsync(request, appId, false, ct), id, "resume", ct)));
+            await Handle(async () => await access.InitializationAsync<Haas.Hosty.Initialization.InitializationStatus>(await auth.RequireAsync(request, appId, false, ct), id, "resume", ct)));
         routes.MapPost(internalRoot + "/{id}/setup-link", async (string appId, string id, HttpRequest request,
             CoreEnvironmentAuthorization auth, CoreEnvironmentAccess access, CancellationToken ct) =>
-            await SandboxEndpoints.Handle(async () => await access.InitializationAsync<AuthBootstrapTokenResponse>(await auth.RequireAsync(request, appId, false, ct), id, "setup-link", ct)));
+            await Handle(async () => await access.InitializationAsync<AuthBootstrapTokenResponse>(await auth.RequireAsync(request, appId, false, ct), id, "setup-link", ct)));
         routes.MapPost(internalRoot + "/{id}/setup", async (string appId, string id, CoreEnvironmentSetup input,
             HttpRequest request, CoreEnvironmentAuthorization auth, CoreEnvironmentAccess access, CancellationToken ct) =>
-            await SandboxEndpoints.Handle(async () => await access.SetupAsync(await auth.RequireAsync(request, appId, false, ct), id, input, ct)));
+            await Handle(async () => await access.SetupAsync(await auth.RequireAsync(request, appId, false, ct), id, input, ct)));
         routes.MapPost(internalRoot + "/{id}/api", async (string appId, string id, CoreEnvironmentApiRequest input,
             HttpRequest request, CoreEnvironmentAuthorization auth, CoreEnvironmentAccess access, CancellationToken ct) =>
-            await SandboxEndpoints.Handle(async () => await access.SendAsync(await auth.RequireAsync(request, appId, false, ct), id, input, ct)));
+            await Handle(async () => await access.SendAsync(await auth.RequireAsync(request, appId, false, ct), id, input, ct)));
     }
-    private static Task<IResult> Admin<T>(HttpRequest request, UserDirectoryStore users, IClock clock, bool read,
+    private static async Task<IResult> Admin<T>(HttpRequest request, UserDirectoryStore users, IClock clock, bool read,
         Func<SandboxActor, Task<T>> action, CancellationToken ct)
-        => !read && AppManagementAuthorization.Caller(request) is { } caller
-            ? AppAccessPolicy.IsAdmin(caller.User) ? SandboxEndpoints.Handle(() => action(new(caller.User.Id)))
-                : Task.FromResult<IResult>(CoreJson.Json(new ErrorResponse("admin_required", "Administrator required."), 403))
-            : read ? CoreSessionAuthorization.RequireSessionAsync(request, users, clock, user => AppAccessPolicy.IsAdmin(user)
-            ? SandboxEndpoints.Handle(() => action(new(user.Id)))
+    {
+        var services = request.HttpContext.RequestServices;
+        var bearer = CoreSessionAuthorization.ReadBearerToken(request);
+        var scoped = bearer is null ? null : ScopedCredentials.Resolve(await users.ReadAsync(ct), bearer, clock.UtcNow,
+            services.GetRequiredService<CoreSettingsService>().AuthLifetimes, AccessTokenScopes.CoreAudience);
+        if (scoped is not null)
+            return await Handle(async () =>
+            {
+                var scopes = new List<string> { AccessTokenScopes.McpEnvironmentsRead };
+                if (!read) scopes.Add(AccessTokenScopes.McpEnvironmentsManage);
+                if (FullApi(request.Path)) scopes.Add(AccessTokenScopes.McpEnvironmentApi);
+                var caller = await services.GetRequiredService<CoreCapabilityAuthorization>().RequireAsync(request, scopes, [], ct);
+                return await action(caller.EnvironmentActor());
+            });
+        if (FullApi(request.Path) && AppManagementAuthorization.RequireAdditional(request, CoreAppPermissions.CoreEnvironmentsApi) is { } denied)
+            return denied;
+        SandboxActor Actor(HostUserRecord user)
+        {
+            var app = AppManagementAuthorization.Caller(request)?.App;
+            var credentialHash = app is null ? AppIdentityService.HashToken(CoreSessionAuthorization.ReadSessionCredential(request).Value!) : null;
+            var caller = new CoreCapabilityCaller(user, app is null ? CoreCapabilityAuthorization.OperatorPrincipal(user.Id, credentialHash!) : CoreCapabilityAuthorization.AppPrincipal(app), app, null, app is null)
+            { Authority = app is null
+                ? new("operator", CredentialHash: credentialHash)
+                : new("app", AppId: app.Id, Installation: app.InstalledAt, PermissionRevision: app.PermissionRevision,
+                    IdentityHash: AppIdentityService.HashToken(request.Headers[AppManagementAuthorization.IdentityHeader].ToString())) };
+            // Retain existing create fingerprints, while request-local capability checks keep source
+            // authority and consumer attribution separate from the resource owner's user identity.
+            return new(user.Id) { Capability = caller };
+        }
+        // Preserve existing browser/installed-operator create replay identities and legacy consent.
+        return !read && AppManagementAuthorization.Caller(request) is { } app
+            ? AppAccessPolicy.IsAdmin(app.User) ? await Handle(() => action(Actor(app.User)))
+                : CoreJson.Json(new ErrorResponse("admin_required", "Administrator required."), 403)
+            : read ? await CoreSessionAuthorization.RequireSessionAsync(request, users, clock, user => AppAccessPolicy.IsAdmin(user)
+            ? Handle(() => action(Actor(user)))
             : Task.FromResult<IResult>(CoreJson.Json(new ErrorResponse("admin_required", "Administrator required."), 403)), cancellationToken: ct)
-        : CoreSessionAuthorization.RequireAdminBrowserAsync(request, users, clock, user => SandboxEndpoints.Handle(() => action(new(user.Id))), ct);
+            : await CoreSessionAuthorization.RequireAdminBrowserAsync(request, users, clock, user => Handle(() => action(Actor(user))), ct);
+    }
+    private static bool FullApi(PathString path) => path.Value?.EndsWith("/api", StringComparison.Ordinal) == true
+        || path.Value?.EndsWith("/setup", StringComparison.Ordinal) == true
+        || path.Value?.EndsWith("/setup-link", StringComparison.Ordinal) == true
+        || path.Value?.EndsWith("/access-link", StringComparison.Ordinal) == true
+        || path.Value?.EndsWith("/initialization/resume", StringComparison.Ordinal) == true;
+    internal static async Task<IResult> Handle<T>(Func<Task<T>> action)
+    {
+        try { return CoreJson.Json(await action()); }
+        catch (SandboxException ex) { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), ex.Status); }
+        catch (AppIdentityException ex) { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), AuthEndpoints.MapIdentityErrorStatus(ex.Code)); }
+        catch (AppLifecycleException ex) { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), 409); }
+        catch (AppManifestException ex) { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), 409); }
+    }
 }

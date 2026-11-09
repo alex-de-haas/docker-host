@@ -1,3 +1,15 @@
+import { DecisionsService } from "./decisions/service.js";
+import { decisionsRoute } from "./decisions/routes.js";
+import { DecisionError } from "@hosty-sdk/app/decisions";
+import { AgentSessionService } from "./agent-sessions/service.js";
+import { agentSessionRoute } from "./agent-sessions/routes.js";
+import { HistoryService } from "./history/service.js";
+import { historyRoute } from "./history/routes.js";
+import { FeedbackService } from "./feedback/service.js";
+import { FeedbackError } from "@hosty-sdk/app/feedback";
+import { pullRequestsRoute, requestPullRequests } from "./pull-requests-proxy.js";
+import { TaskService } from "./tasks/service.js";
+import { isSkillManagementRoute, manageSkills, migrateSkillSelection, validSkillIds } from "./skills.js";
 import { createHash } from "node:crypto";
 import { WorkerApiError } from "./worker/contracts.js";
 import { EventStreamTransport } from "./event-stream-transport.js";
@@ -36,9 +48,8 @@ const APP_SESSION_STREAM_SECONDS = 3600;
 import { SessionBusyError, SessionNotFoundError, type SessionManager } from "./sessions/manager.js";
 import type { HarnessAdapter } from "./harness/adapter.js";
 import { MAX_SYSTEM_PROMPT_CHARS, type SettingsStore } from "./settings/store.js";
-import { validRetention, validSkillAcceptances } from "./settings/store.js";
+import { validRetention } from "./settings/store.js";
 import { DEFAULT_WORKFLOW_PROMPT } from "./settings/workflow.js";
-import type { PendingSkill } from "./mcp/skills.js";
 import type { ProviderDirectory } from "./settings/providers.js";
 import { serverName } from "./mcp/exchange.js";
 import type { McpProxy } from "./mcp/proxy.js";
@@ -67,11 +78,16 @@ export function createGatewayServer(
   facade: McpFacade | null = null,
   connections: ConnectionService | null = null,
   internal?: (request: IncomingMessage, response: ServerResponse) => Promise<boolean>,
-): Server {
+): Server & { stopTaskDispatch: () => Promise<void> } {
+  if (process.env.HOSTY_APP_SERVICE_TOKEN) manager.decisions ??= new DecisionsService(manager);
+  const tasks = new TaskService(manager);
+  const history = new HistoryService(manager.store, { appId: process.env.HOSTY_APP_ID ?? "hosty.harness", installationId: process.env.HOSTY_APP_INSTALLATION_ID ?? "standalone", key: "default" });
+  const execution = new AgentSessionService(manager, history.provider);
+  const feedback = new FeedbackService(manager, undefined, providers);
   const handoffs = new HandoffStore(manager, settings, providers);
-  const eventStreams = new EventStreamTransport(manager);
+  const eventStreams = new EventStreamTransport(manager, Date.now, connections, tasks);
   const translations = connections && settings ? new TranslationService(connections, settings) : null;
-  const recovered = handoffs.sweep().then(() => manager.recoverWorkerRuns()).then(() => manager.recoverMcpApprovals()).catch(error => {
+  const recovered = handoffs.sweep().then(() => manager.recoverWorkerRuns()).then(() => manager.recoverMcpApprovals()).then(() => manager.recoverMessageQueues()).catch(error => {
     // A transient directory/storage failure is retried by the periodic sweep. Keep unrelated
     // endpoints available and attach the handler immediately, before the first request arrives.
     console.error("[handoff] startup recovery failed", error);
@@ -79,14 +95,14 @@ export function createGatewayServer(
   const timer = setInterval(() => { void handoffs.sweep().catch(error => console.error("[handoff] cleanup failed", error)); }, 60_000);
   timer.unref();
   const server = createServer((request, response) => {
-    void recovered.then(async () => { if (await internal?.(request, response)) return; return route(request, response, manager, adapter, settings, providers, proxy, facade, connections, handoffs, translations, eventStreams); }).catch((error) => {
+    void recovered.then(async () => { if (await internal?.(request, response)) return; return route(request, response, manager, adapter, settings, providers, proxy, facade, connections, handoffs, translations, eventStreams, tasks, feedback, history, execution); }).catch((error) => {
       if (response.destroyed) return;
-      if (error instanceof ProviderError) { sendJson(response, error.status, { code: error.code, message: error.message }); return; }
+      if (error instanceof ProviderError || error instanceof FeedbackError) { sendJson(response, error.status, { code: error.code, message: error.message }); return; }
       if (error instanceof SessionBusyError) {
         sendJson(response, 409, { code: "session_busy", message: error.message });
         return;
       }
-      if (error instanceof AppContextError || error instanceof ConnectionError || error instanceof WorkerError || error instanceof WorkerApiError) {
+      if (error instanceof DecisionError || error instanceof AppContextError || error instanceof ConnectionError || error instanceof WorkerError || error instanceof WorkerApiError) {
         sendJson(response, error.status, { code: error.code, message: error.message });
         return;
       }
@@ -107,10 +123,11 @@ export function createGatewayServer(
     });
   });
   eventStreams.attach(server);
+  const taskServer = Object.assign(server, { stopTaskDispatch: async () => { await manager.decisions?.close(); await tasks.close(); await feedback.close(); } });
   const close = server.close.bind(server);
-  server.close = ((callback?: (error?: Error) => void) => { eventStreams.close(); return close(callback); }) as typeof server.close;
-  server.on("close", () => clearInterval(timer));
-  return server;
+  server.close = ((callback?: (error?: Error) => void) => { void tasks.close(); eventStreams.close(); return close(callback); }) as typeof server.close;
+  server.on("close", () => { void manager.decisions?.close(); history.close(); clearInterval(timer); tasks.close(); void feedback.close(); });
+  return taskServer;
 }
 
 class PayloadTooLargeError extends Error {}
@@ -128,6 +145,10 @@ async function route(
   handoffs: HandoffStore,
   translations: TranslationService | null,
   eventStreams: EventStreamTransport,
+  tasks: TaskService,
+  feedback: FeedbackService,
+  history: HistoryService,
+  execution: AgentSessionService,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", "http://gateway.local");
   const method = request.method ?? "GET";
@@ -140,6 +161,8 @@ async function route(
 
   // This surface accepts only its exact Core provider credential, never operator cookies.
   if (await translationRoute(request, response, url, translations)) return;
+  if (await historyRoute(request, response, url, history)) return;
+  if (await agentSessionRoute(request, response, url, execution)) return;
 
   // Outside /api and ahead of the operator gate, like the proxy below and for the same kind of
   // reason: an external agent client authenticates with a scoped access token of its own, which
@@ -171,11 +194,12 @@ async function route(
     const session = await resolveAppSession(token);
     const headers = new Headers();
     for (const [name, value] of Object.entries(request.headers)) if (value !== undefined) headers.set(name, Array.isArray(value) ? value.join(", ") : value);
-    const body = method === "POST" ? JSON.stringify(await readJson(request)) : undefined;
+    const body = method === "POST" ? JSON.stringify(await readJson(request, url.pathname.includes("/feedback") ? 12 * 1024 * 1024 : MAX_BODY_BYTES)) : undefined;
     const incoming = new Request(url, { method, headers, body });
     const result = await createHostyUiResponse(incoming, { session, token }, { administratorOnly: true, appId: process.env.HOSTY_APP_ID ?? "hosty.harness" });
-    response.setHeader("Cache-Control", "no-store");
-    sendJson(response, result.status, await result.json());
+    const bytes = Buffer.from(await result.arrayBuffer());
+    response.writeHead(result.status, Object.fromEntries(result.headers));
+    response.end(bytes);
     return;
   }
 
@@ -266,6 +290,16 @@ async function route(
     return;
   }
 
+  // Task provider credentials are valid only on their declared category surface. Cookie writes
+  // retain the same origin check as all other operator APIs.
+  if (url.pathname.startsWith("/api/tasks/v1") || url.pathname.startsWith("/api/task-executor/v1")) {
+    const bearer = readBearer(request);
+    if (!bearer && method !== "GET" && method !== "HEAD" && !isSameOriginRequest(request)) {
+      sendJson(response, 403, { code: "cross_site_request_blocked", message: "Use the Harness origin for cookie-authenticated changes." }); return;
+    }
+    if (await tasks.route(request, response, url, () => readJson(request))) return;
+  }
+
   // Everything under /api is operator surface: admin-only by decision, no anonymous reads. Two
   // credential shapes: the browser presents its app grant; existing direct clients may present
   // a delegated token. Both must resolve to an administrator.
@@ -303,10 +337,39 @@ async function route(
     return;
   }
 
+  if (await tasks.operatorRoute(request, response, url, actor.userId, actor.via === "app-session", () => readJson(request))) return;
+
+  if (url.pathname === "/api/decisions" || url.pathname.startsWith("/api/decisions/")) {
+    const token = actor.via === "app-session" ? readAppCredential(request) : null;
+    if (!token || !manager.decisions) throw new DecisionError("app_session_required", "Open Harness through Core to use Decisions.", 403);
+    manager.decisions.authorize(actor.userId, token);
+    if (await decisionsRoute(request, response, url, manager.decisions, actor.userId, () => readJson(request))) return;
+  }
+
+  if (url.pathname.startsWith("/api/feedback")) {
+    const token = actor.via === "app-session" ? readAppCredential(request) : null;
+    if (!token) throw new FeedbackError("app_session_required", "Open Harness through Core to manage feedback.", 403);
+    if (await feedback.route(request, response, url, token, actor.userId, () => readJson(request, 128 * 1024))) return;
+  }
+
+  if (url.pathname === "/api/preferences/prompt-suggestions" && (method === "GET" || method === "PUT")) {
+    if (actor.via !== "app-session") throw new AppContextError(403, "app_session_required", "Open Harness through Core to manage your preferences.");
+    response.setHeader("Cache-Control", "no-store");
+    sendJson(response, 200, method === "GET" ? await manager.suggestionPreference(actor.userId)
+      : await manager.setSuggestionPreference(actor.userId, await readJson(request))); return;
+  }
+
   if (method === "POST" && url.pathname === "/api/event-stream-tickets") {
     if (actor.via === "provider-token") throw new AppContextError(403, "admin_session_required", "Open Harness through Core to read events.");
     response.setHeader("Cache-Control", "no-store");
     sendJson(response, 200, await eventStreams.issue(await readJson(request), request, actor)); return;
+  }
+
+  if (isSkillManagementRoute(method, url.pathname)) {
+    if (actor.via !== "app-session") throw new AppContextError(403, "app_session_required", "Open Harness through Core to manage skills.");
+    response.setHeader("cache-control", "no-store");
+    const result = await manageSkills(method, url, readAppCredential(request), method === "POST" ? await readJson(request) : undefined);
+    sendJson(response, result.status, result.body); return;
   }
 
   if (isSourceConnectionRoute(method, url.pathname)) {
@@ -383,6 +446,10 @@ async function route(
   }
 
   if (method === "GET" && url.pathname === "/api/health") {
+    const healthSession = url.searchParams.get("sessionId");
+    if (healthSession && (await manager.getSession(healthSession))?.createdBy !== actor.userId) {
+      sendJson(response, 404, { code: "session_not_found", message: "Session not found." }); return;
+    }
     const health = url.searchParams.get("sessionId") ? await manager.sessionHealth(url.searchParams.get("sessionId")!)
       : connections ? await connections.summary() : { name: adapter.name, capabilities: { ...adapter.capabilities, appContext: true }, ...await adapter.probe() };
     // Capabilities travel with health because the client needs them to decide what to render: a
@@ -393,6 +460,36 @@ async function route(
       harness: health,
     });
     return;
+  }
+
+  if (url.pathname.startsWith("/api/profiles")) response.setHeader("cache-control", "no-store");
+  if (manager.profiles && url.pathname === "/api/profiles") {
+    if (method === "GET") { sendJson(response, 200, await manager.profiles.read()); return; }
+    if (method === "POST") {
+      const body = await readJson(request);
+      const config = await manager.validateProfile(body.profile);
+      sendJson(response, 201, await manager.profiles.save(config, body.expectedRevision)); return;
+    }
+  }
+  if (manager.profiles && url.pathname === "/api/profiles/default" && method === "PUT") {
+    const body = await readJson(request);
+    sendJson(response, 200, await manager.profiles.setDefault(body.profileId, body.expectedRevision)); return;
+  }
+  const profileMatch = url.pathname.match(/^\/api\/profiles\/([a-f0-9-]{36})$/);
+  if (manager.profiles && profileMatch && (method === "PUT" || method === "DELETE")) {
+    const body = await readJson(request);
+    if (method === "DELETE") sendJson(response, 200, await manager.profiles.remove(profileMatch[1]!, body.expectedRevision));
+    else sendJson(response, 200, await manager.profiles.save(await manager.validateProfile(body.profile), body.expectedRevision, profileMatch[1]!));
+    return;
+  }
+  const connectionUsage = url.pathname.match(/^\/api\/connections\/([a-zA-Z0-9-]+)\/usage$/);
+  if (connections && connectionUsage && method === "GET") {
+    sendJson(response, 200, await connections.usage(connectionUsage[1]!, url.searchParams.get("refresh") === "true")); return;
+  }
+
+  const connectionModels = url.pathname.match(/^\/api\/connections\/([a-zA-Z0-9-]+)\/models$/);
+  if (connections && connectionModels && method === "GET") {
+    sendJson(response, 200, await connections.models(connectionModels[1]!)); return;
   }
 
   if (connections && url.pathname === "/api/connections") {
@@ -441,7 +538,7 @@ async function route(
     const body = await readJson(request);
     const current = await settings.read();
     if (body.revision !== mcpPreferencesRevision(current)) throw new AppContextError(409, "settings_changed", "Invocation preferences changed. Reload before saving.");
-    if (!validSkillAcceptances(body.skills) || !Array.isArray(body.resetProviders) || body.resetProviders.some(p => typeof p !== "string"))
+    if (!Array.isArray(body.resetProviders) || body.resetProviders.some(p => typeof p !== "string"))
       throw new AppContextError(400, "mcp_preferences_invalid", "Invalid MCP preferences.");
     const removeRules = body.removeRules ?? [];
     if (!Array.isArray(removeRules) || removeRules.length > 2000 || removeRules.some(key => typeof key !== "string" || !Object.hasOwn(current.mcpToolRules ?? {}, key)))
@@ -452,14 +549,13 @@ async function route(
     const prepared = manager.mcpPolicy.preparePreferences(body.defaults as never, body.rules as never);
     if (body.resetProviders.some(p => !Object.hasOwn(prepared.defaults, p)))
       throw new AppContextError(400, "mcp_preferences_invalid", "A provider reset needs its reviewed default.");
-    const skills = body.skills, resetProviders = body.resetProviders as string[];
-    await providers.validateInstructions(skills, current.mcpSkillApprovals);
+    const resetProviders = body.resetProviders as string[];
+
     await settings.transform(latest => {
       if (body.revision !== mcpPreferencesRevision(latest)) throw new AppContextError(409, "settings_changed", "Invocation preferences changed. Reload before saving.");
       const rules = { ...latest.mcpToolRules };
       for (const key of Object.keys(rules)) if (rules[key]?.mode === "disabled" ? migratedDenials.has(key) || JSON.parse(key)[0] === "hosty:development" && removeRules.includes(key) : resetProviders.includes(JSON.parse(key)[0]) || removeRules.includes(key)) delete rules[key];
-      return { mcpDefaults: { ...latest.mcpDefaults, ...prepared.defaults }, mcpToolRules: { ...rules, ...prepared.rules },
-        mcpSkillApprovals: skills, mcpSkillsMigrated: true };
+      return { mcpDefaults: { ...latest.mcpDefaults, ...prepared.defaults }, mcpToolRules: { ...rules, ...prepared.rules } };
     });
     sendJson(response, 200, { revision: mcpPreferencesRevision(await settings.read()) }); return;
   }
@@ -468,12 +564,17 @@ async function route(
     const credential = await delegationCredential(request);
     if (!credential) throw new AppContextError(401, "credentials_required", "Refresh your Hosty session.");
     const unavailable = await manager.discoverMcpTools(credential);
-    sendJson(response, 200, { unavailable, catalogs: manager.mcpPolicy.snapshot(), settings: await settings.read() }); return;
+    const discoveredSettings = await settings.read();
+    sendJson(response, 200, { unavailable, catalogs: manager.mcpPolicy.snapshot(), settings: discoveredSettings,
+      mcpRevision: mcpPreferencesRevision(discoveredSettings) }); return;
   }
 
   if (url.pathname === "/api/settings" && settings && (method === "GET" || method === "PUT")) {
+    if (method === "GET") await migrateSkillSelection(settings).catch(() => {});
     if (method === "PUT") {
       const body = await readJson(request);
+      if (manager.profiles && body.skillIds !== undefined) throw new AppContextError(409, "skill_selection_moved", "Choose skills in Agent profiles or supply an explicit session selection.");
+      if (body.skillIds !== undefined && !validSkillIds(body.skillIds)) throw new AppContextError(400, "skills_invalid", "Choose stable skill IDs from the Core catalog.");
       if (body.retention !== undefined && !validRetention(body.retention)) {
         sendJson(response, 400, { code: "retention_invalid", message: "Choose Off or whole days from 1 to 3650 for both retention policies." }); return;
       }
@@ -514,6 +615,7 @@ async function route(
       }
       if (body.executionMode !== undefined) await manager.setExecutionMode(body.executionMode);
       await settings.update({
+        skillIds: validSkillIds(body.skillIds) ? body.skillIds : undefined,
         workflowPrompt: typeof body.workflowPrompt === "string" ? body.workflowPrompt : undefined,
         retention: validRetention(body.retention) ? body.retention : undefined,
         immediateHandoffs: typeof body.immediateHandoffs === "boolean" ? body.immediateHandoffs : undefined,
@@ -538,14 +640,13 @@ async function route(
     const discovered = providers ? await providers.read() : null;
     if (discovered) {
       await settings.prune(discovered.installedAppIds);
-      await providers?.migrateInstructions(settings);
     }
     // Core is governed by the same host offer policy as app targets.
     const core = providers?.core() ?? null;
 
     const current = await settings.read();
     // Legacy field remains empty; instructions and review are exposed together below.
-    const pendingSkills: PendingSkill[] = [];
+    const pendingSkills: never[] = [];
     // Capabilities ride along so the page can say what a change actually does on this harness
     // instead of one wording that is false on one of them.
     sendJson(response, 200, {
@@ -555,7 +656,7 @@ async function route(
       toolCatalogs: manager.mcpPolicy.snapshot(),
       mcpReviewBaseUrl: process.env.HOSTY_CORE_PUBLIC_ORIGIN
         ? `${process.env.HOSTY_CORE_PUBLIC_ORIGIN.replace(/\/$/, "")}/install/agents/${encodeURIComponent(process.env.HOSTY_APP_ID ?? "hosty.harness")}` : null,
-      instructions: await providers?.instructions(current) ?? [],
+      instructions: [],
       pendingSkills,
       providers: [...(core ? [core] : []), ...(discovered?.providers ?? [])],
       discovery: discovered ? "ok" : "unavailable",
@@ -585,19 +686,25 @@ async function route(
   if (url.pathname === "/api/sessions" && method === "POST") {
     const body = await readJson(request);
     const record = await manager.createSession({
+      profileId: body.profileId,
+      profileRevision: body.profileRevision,
+      skillIds: body.skillIds,
       title: typeof body.title === "string" ? body.title : undefined,
       context: isStringRecord(body.context) ? body.context : undefined,
       createdBy: actor.userId,
       appIds: body.appIds,
       clientRequestId: body.clientRequestId,
       connectionId: body.connectionId,
+      executionSelection: body.executionSelection,
+      autonomy: body.autonomy,
+      browserDefaults: body.browserDefaults,
     });
     sendJson(response, 200, record);
     return;
   }
 
   if (url.pathname === "/api/sessions" && method === "GET") {
-    const records = await manager.listSessions();
+    const records = (await manager.listSessions()).filter(record => record.createdBy === actor.userId);
     const roster = records.some(record => record.appIds?.length)
       ? await readContextApps(providers).catch(() => null) : [];
     sendJson(response, 200, { sessions: records.map(record => ({
@@ -613,13 +720,32 @@ async function route(
     return;
   }
 
+  if (url.pathname === "/api/workspace-sessions" && method === "POST") {
+    const credential = actor.via === "app-session" ? readAppCredential(request) : null;
+    if (!credential) throw new AppContextError(401, "reauth_required", "Open Harness through Core to join a workspace.");
+    const body = await readJson(request);
+    sendJson(response, 200, await manager.newWorkspaceSession(actor.userId, credential, {
+      workspaceId: body.workspaceId as string, requestId: body.requestId as string, expectedRevision: body.expectedRevision as number,
+      browserDefaults: body.browserDefaults })); return;
+  }
+
   if (url.pathname === "/api/building-sessions" && method === "POST") {
     const credential = actor.via === "app-session" ? readAppCredential(request) : null;
     if (!credential) throw new AppContextError(401, "reauth_required", "Open Harness through Core to continue building.");
     const body = await readJson(request);
     sendJson(response, 200, await manager.newBuildingSession(actor.userId, credential, {
-      appId: body.appId as string, requestId: body.requestId as string, expectedLocalHead: body.expectedLocalHead as string }));
+      appId: body.appId as string, requestId: body.requestId as string, expectedLocalHead: body.expectedLocalHead as string,
+      browserDefaults: body.browserDefaults }));
     return;
+  }
+
+  if (pullRequestsRoute(method, url.pathname)) {
+    const credential = actor.via === "app-session" ? readAppCredential(request) : null;
+    if (!credential) throw new AppContextError(401, "reauth_required", "Open Harness through Core to read pull requests.");
+    response.setHeader("cache-control", "no-store");
+    const result = await requestPullRequests(method, url.pathname + url.search, credential,
+      method === "POST" ? await readJson(request, 32768) : undefined);
+    sendJson(response, result.status, result.body); return;
   }
 
   if (url.pathname === "/api/development-workspaces/events" && method === "GET") {
@@ -645,14 +771,14 @@ async function route(
       method === "POST" ? await readJson(request) : undefined)); return;
   }
 
-  const inspection = url.pathname.match(/^\/api\/development-workspaces(\/local-apps|\/[a-f0-9]{64}(?:\/name|\/execution-target(?:\/[a-f0-9-]{36})?|\/discard\/(?:plan|apply|status)|\/activation\/(?:plan|apply|list|status|cancel|resume|return)|\/(?:environments|sandboxes)\/[a-f0-9]{32}\/(?:start|stop|finish|dispose)|\/previews(?:\/[a-f0-9]{32}\/[a-zA-Z0-9._-]+\/(?:checks|run|restart|logs))?|\/worktrees\/[a-f0-9]{64}(?:\/(?:diff|recover-lease|review(?:\/diff)?|reviews\/(?:reply|resolve|comment)))?|\/workflow(?:\/(?:complete|resume|pause|defer|delete|close))?)?)?$/);
+  const inspection = url.pathname.match(/^\/api\/development-workspaces(\/delete|\/local-apps|\/[a-f0-9]{64}(?:\/participants(?:\/(?:grant|revoke))?|\/name|\/execution-target(?:\/[a-f0-9-]{36})?|\/delete(?:\/(?:details|status))?|\/discard\/(?:plan|apply|status)|\/activation\/(?:plan|apply|list|status|cancel|resume|return)|\/environments\/[a-f0-9]{32}\/(?:start|stop|finish)|\/previews(?:\/[a-f0-9]{32}\/[a-zA-Z0-9._-]+\/(?:checks|run|restart|logs))?|\/worktrees\/[a-f0-9]{64}(?:\/(?:diff|recover-lease|review(?:\/diff)?|reviews\/(?:reply|resolve|comment)))?|\/workflow(?:\/(?:complete|resume|pause|defer|delete|close))?)?)?$/);
   if (inspection && (method === "GET" || method === "POST")) {
     const credential = actor.via === "app-session" ? readAppCredential(request) : null;
     if (!credential) throw new AppContextError(401, "reauth_required", "Open Harness through Core to inspect workspaces.");
-    const discard = /\/discard\/(plan|apply|status)$/.exec(inspection[1] ?? "");
+    const discard = /\/(?:discard|delete)\/(plan|apply|details|status)$/.exec(inspection[1] ?? "");
     if (discard && method !== (discard[1] === "apply" ? "POST" : "GET"))
       throw new AppContextError(405, "workspace_method_invalid", "Removal review and status require GET; removal apply requires POST.");
-    if (method === "POST" && !/\/(?:name|execution-target|discard\/apply|activation\/(?:plan|apply|list|status|cancel|resume|return)|(?:environments|sandboxes)\/[a-f0-9]{32}\/(?:start|stop|finish|dispose)|worktrees\/[a-f0-9]{64}\/(?:recover-lease|reviews\/(?:reply|resolve|comment))|workflow\/(?:complete|resume|pause|defer|delete|close)|previews\/[a-f0-9]{32}\/[a-zA-Z0-9._-]+\/(?:checks|run|restart|logs))$/.test(inspection[1] ?? ""))
+    if (method === "POST" && !/\/(?:participants\/(?:grant|revoke)|name|execution-target|delete|discard\/apply|activation\/(?:plan|apply|list|status|cancel|resume|return)|environments\/[a-f0-9]{32}\/(?:start|stop|finish)|worktrees\/[a-f0-9]{64}\/(?:recover-lease|reviews\/(?:reply|resolve|comment))|workflow\/(?:complete|resume|pause|defer|delete|close)|previews\/[a-f0-9]{32}\/[a-zA-Z0-9._-]+\/(?:checks|run|restart|logs))$/.test(inspection[1] ?? ""))
       throw new AppContextError(400, "workspace_action_invalid", "Choose a workspace lifecycle action.");
     if (method === "GET" && /\/reviews\/(?:reply|resolve|comment)$/.test(inspection[1] ?? ""))
       throw new AppContextError(405, "workspace_method_invalid", "Review actions require POST.");
@@ -672,12 +798,20 @@ async function route(
   }
 
   const sessionId = sessionMatch[1]!;
+  const ownedSession = await manager.getSession(sessionId);
+  if (!ownedSession || ownedSession.createdBy !== actor.userId) {
+    sendJson(response, 404, { code: "session_not_found", message: "Session not found." }); return;
+  }
+  if (sessionMatch[2] === "/profile" && method === "PUT") {
+    sendJson(response, 200, await manager.setProfile(sessionId, await readJson(request))); return;
+  }
   if (sessionMatch[2] === "/workspaces" && method === "POST") {
     const body = await readJson(request, 256 * 1024);
     const action = body.action;
     if (typeof action !== "string") throw new AppContextError(400, "workspace_action_invalid", "Workspace action is required.");
     sendJson(response, 200, await manager.workspaceAction(sessionId, action as import("./sessions/development.js").DevelopmentAction,
-      body, (actor.via === "app-session" ? readAppCredential(request) : readBearer(request)) ?? undefined, actor.userId)); return;
+      action.startsWith("context-") ? Object.fromEntries(Object.entries(body).filter(([key]) => key !== "action")) : body,
+      (actor.via === "app-session" ? readAppCredential(request) : readBearer(request)) ?? undefined, actor.userId)); return;
   }
 
   const rest = sessionMatch[2] ?? "";
@@ -749,7 +883,7 @@ async function route(
       sendJson(response, 400, { code: "invalid_request", message: "A title string is required." });
       return;
     }
-    const record = await manager.renameSession(sessionId, body.title);
+    const record = await manager.renameSession(sessionId, body.title, actor.via === "app-session" ? readAppCredential(request) ?? undefined : undefined);
     if (!record) {
       sendJson(response, 404, { code: "session_not_found", message: "Session not found." });
       return;
@@ -759,7 +893,7 @@ async function route(
   }
 
   if (rest === "" && method === "DELETE") {
-    const deleted = await manager.deleteSession(sessionId, actor.userId, await delegationCredential(request, false));
+    const deleted = await manager.deleteSession(sessionId, actor.userId, (actor.via === "app-session" ? readAppCredential(request) : await delegationCredential(request, false)) ?? undefined);
     if (!deleted) {
       sendJson(response, 404, { code: "session_not_found", message: "Session not found." });
       return;
@@ -777,6 +911,35 @@ async function route(
     return;
   }
 
+  if (rest === "/message-queue" && method === "GET") {
+    response.setHeader("Cache-Control", "no-store");
+    sendJson(response, 200, await manager.messageQueue(sessionId, actor.userId)); return;
+  }
+  if (rest === "/message-queue/commands" && method === "POST") {
+    response.setHeader("Cache-Control", "no-store");
+    sendJson(response, 200, await manager.messageQueueCommand(sessionId, actor.userId, await readJson(request, 256 * 1024), await delegationCredential(request, false))); return;
+  }
+  const queueUpload = rest.match(/^\/message-queue\/uploads\/([^/]+)$/);
+  if (queueUpload && method === "PUT") {
+    response.setHeader("Cache-Control", "no-store");
+    sendJson(response, 201, { attachment: await manager.uploadQueueAttachment(sessionId, actor.userId, queueUpload[1]!, url.searchParams.get("name") ?? "attachment", request) }); return;
+  }
+  const queueAttachment = rest.match(/^\/message-queue\/attachments\/([^/]+)$/);
+  if (queueAttachment && method === "GET") {
+    const { attachment, bytes } = await manager.queuedAttachment(sessionId, actor.userId, queueAttachment[1]!);
+    response.setHeader("Cache-Control", "no-store"); response.setHeader("Content-Type", "application/octet-stream"); response.setHeader("X-Content-Type-Options", "nosniff");
+    response.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(attachment.displayName ?? attachment.name)}`);
+    response.end(bytes); return;
+  }
+  if (rest === "/suggestions" && method === "GET") {
+    response.setHeader("Cache-Control", "no-store"); sendJson(response, 200, await manager.historicalSuggestions(sessionId, actor.userId)); return;
+  }
+  const suggestionActionMatch = rest.match(/^\/suggestions\/([^/]+)\/actions$/);
+  if (suggestionActionMatch && method === "POST") {
+    if (actor.via !== "app-session") throw new AppContextError(403, "app_session_required", "Open Harness through Core to choose a prompt suggestion.");
+    response.setHeader("Cache-Control", "no-store");
+    sendJson(response, 200, await manager.suggestionAction(sessionId, actor.userId, suggestionActionMatch[1]!, await readJson(request))); return;
+  }
   const messageReceiptMatch = rest.match(/^\/messages\/([^/]+)$/);
   if (messageReceiptMatch && method === "GET") {
     response.setHeader("Cache-Control", "no-store");
@@ -798,7 +961,7 @@ async function route(
       // The presented token seeds the session's delegation chain; see SessionManager.postMessage.
       const receipt = await manager.postMessage(sessionId, body.text, await delegationCredential(request, false), attachments, { selectionRevision: body.selectionRevision, expectedRevision: body.appContextRevision, withoutDetails: body.withoutAppDetails === true,
         workspaceCredential: actor.via === "app-session" ? readAppCredential(request) : undefined,
-        clientRequestId: body.clientRequestId, actorUserId: actor.userId });
+        clientRequestId: body.clientRequestId, actorUserId: actor.userId, promptSuggestions: body.promptSuggestions === true });
       response.setHeader("Cache-Control", "no-store");
       sendJson(response, 202, { accepted: true, ...receipt });
       return;
@@ -868,6 +1031,19 @@ async function route(
       return;
     }
     sendJson(response, 200, { resolved: true });
+    return;
+  }
+
+  if (rest === "/execution-recovery" && (method === "GET" || method === "POST")) {
+    const credential = readAppCredential(request);
+    if (actor.via !== "app-session" || !credential)
+      throw new AppContextError(403, "recovery_operator_required", "Sign in through Core as the owning operator to recover an execution.");
+    response.setHeader("Cache-Control", "no-store");
+    if (method === "GET") sendJson(response, 200, await manager.executionRecovery(sessionId, actor.userId));
+    else {
+      await manager.recoverExecution(sessionId, actor.userId, await readJson(request), credential);
+      sendJson(response, 200, { recovered: true });
+    }
     return;
   }
 
@@ -1163,5 +1339,5 @@ function sendJson(response: ServerResponse, status: number, body: unknown): void
 }
 
 function mcpPreferencesRevision(settings: import("./settings/store.js").AssistantSettings): string {
-  return createHash("sha256").update(JSON.stringify([settings.mcpDefaults ?? {}, settings.mcpToolRules ?? {}, settings.mcpSkillApprovals ?? {}])).digest("hex");
+  return createHash("sha256").update(JSON.stringify([settings.mcpDefaults ?? {}, settings.mcpToolRules ?? {}])).digest("hex");
 }

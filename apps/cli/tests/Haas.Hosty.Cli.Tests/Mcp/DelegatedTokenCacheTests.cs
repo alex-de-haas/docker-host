@@ -13,14 +13,6 @@ public class DelegatedTokenCacheTests
     private static readonly DateTimeOffset Now = new(2026, 8, 15, 12, 0, 0, TimeSpan.Zero);
 
     [Fact]
-    public async Task SkillDirectoryPayloadHasAotMetadata()
-    {
-        using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes("""{"appId":"notes","displayName":"Notes","markdown":"Reviewed skill"}"""));
-        var skill = await CliJson.DeserializeAsync<AppSkill>(stream);
-        Assert.Equal("Reviewed skill", skill?.Markdown);
-    }
-
-    [Fact]
     public async Task FreshModeNeverReusesAnAliveTokenDuringCoreOutage()
     {
         var online = true;

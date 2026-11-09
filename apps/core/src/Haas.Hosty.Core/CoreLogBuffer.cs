@@ -49,9 +49,9 @@ internal sealed class CoreLogBuffer
 
     public CoreLogRing Ring(CoreLogRingKind kind) => kind == CoreLogRingKind.Framework ? framework : hosty;
 
-    public void Add(DateTimeOffset timestamp, LogLevel level, string category, string message, string? exception)
+    public void Add(DateTimeOffset timestamp, LogLevel level, string category, string message, string? exception, string? traceId = null, string? spanId = null, string? callerAppId = null)
         => Ring(IsFrameworkCategory(category) ? CoreLogRingKind.Framework : CoreLogRingKind.Hosty)
-            .Add(timestamp, level, category, message, exception);
+            .Add(timestamp, level, category, message, exception, traceId, spanId, callerAppId);
 }
 
 internal enum CoreLogRingKind
@@ -89,7 +89,7 @@ internal sealed class CoreLogRing(int capacity)
     // store would keep the first occurrence's count of 1 and its original timestamp, and that row would
     // age out of retention while the failure was still happening. Re-sequencing on a heartbeat exports
     // the failure as ongoing at about a row a minute, instead of either a row per repeat or nothing.
-    public void Add(DateTimeOffset timestamp, LogLevel level, string category, string message, string? exception)
+    public void Add(DateTimeOffset timestamp, LogLevel level, string category, string message, string? exception, string? traceId = null, string? spanId = null, string? callerAppId = null)
     {
         lock (gate)
         {
@@ -99,7 +99,8 @@ internal sealed class CoreLogRing(int capacity)
                 if (newest.Level == level
                     && string.Equals(newest.Category, category, StringComparison.Ordinal)
                     && string.Equals(newest.Message, message, StringComparison.Ordinal)
-                    && string.Equals(newest.Exception, exception, StringComparison.Ordinal))
+                    && string.Equals(newest.Exception, exception, StringComparison.Ordinal)
+                    && newest.TraceId == traceId && newest.SpanId == spanId && newest.CallerAppId == callerAppId)
                 {
                     newest.Count++;
                     newest.LastSeen = timestamp;
@@ -123,6 +124,7 @@ internal sealed class CoreLogRing(int capacity)
                 Category = category,
                 Message = message,
                 Exception = exception,
+                TraceId = traceId, SpanId = spanId, CallerAppId = callerAppId,
                 Count = 1,
                 LastSeen = timestamp,
             };
@@ -204,6 +206,7 @@ internal sealed class CoreLogRing(int capacity)
         public string Category = string.Empty;
         public string Message = string.Empty;
         public string? Exception;
+        public string? TraceId, SpanId, CallerAppId;
         public int Count;
         public DateTimeOffset LastSeen;
 
@@ -215,7 +218,7 @@ internal sealed class CoreLogRing(int capacity)
             Message,
             Exception,
             Count,
-            LastSeen);
+            LastSeen, TraceId, SpanId, CallerAppId);
     }
 }
 
@@ -230,4 +233,5 @@ internal sealed record CoreLogRecord(
     string Message,
     string? Exception,
     int Count,
-    DateTimeOffset LastSeen);
+    DateTimeOffset LastSeen,
+    string? TraceId = null, string? SpanId = null, string? CallerAppId = null);

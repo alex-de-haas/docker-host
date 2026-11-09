@@ -110,10 +110,24 @@ internal static class AppManagementAuthorization
     private static IReadOnlyDictionary<string, string[]> BuildPolicies()
     {
         var result = new Dictionary<string, string[]>(StringComparer.Ordinal);
+        result["GET /api/storage"] = [CoreAppPermissions.ReadCore, CoreAppPermissions.ReadStorage];
+        result["POST /api/storage/refresh"] = [CoreAppPermissions.ConfigureCore, CoreAppPermissions.ReadStorage];
         void Add(string permission, params string[] routes)
         {
             foreach (var route in routes) result.Add(route, [permission]);
         }
+        Add(CoreAppPermissions.Sources, PullRequestEndpoints.Routes);
+        foreach (var route in new[] { "POST /api/workspaces/v1/prepare", "POST /api/workspaces/v1/query",
+            "GET /api/workspaces/v1/{worktreeId}", "POST /api/workspaces/v1/{worktreeId}/diff",
+            "POST /api/workspaces/v1/{worktreeId}/commands/{kind}", "POST /api/workspaces/v1/{worktreeId}/commit-review",
+            "GET /api/workspaces/v1/{workspaceId}/participants" }) result[route] = [CoreAppPermissions.Sources];
+        foreach (var route in new[] { "GET /api/publications/v1/connections", "POST /api/publications/v1/query", "POST /api/publications/v1/get",
+            "POST /api/publications/v1/commands/{kind}", "POST /api/publications/v1/remote/get", "POST /api/publications/v1/remote/{kind}" }) result[route] = [CoreAppPermissions.Sources];
+        foreach (var route in new[] { "GET /api/app-creations/v1/capabilities", "GET /api/app-creations/v1/guide", "POST /api/app-creations/v1/get",
+            "POST /api/app-creations/v1/local/get", "POST /api/app-creations/v1/local/{kind}" }) result[route] = [CoreAppPermissions.Sources];
+        result["POST /api/app-creations/v1/create"] = [CoreAppPermissions.Sources, CoreAppPermissions.Install];
+        result["POST /api/workflows/v1/get"] = [CoreAppPermissions.Sources];
+        result["POST /api/workflows/v1/commands/{kind}"] = [CoreAppPermissions.Sources];
         result["GET /api/development/activation-workspaces"] = [CoreAppPermissions.WorkspacesRead];
         result["GET /api/core/execution-targets"] = [CoreAppPermissions.ReadCore, CoreAppPermissions.WorkspacesRead];
         result["POST /api/development/workspaces/{workspaceId}/execution-recipe"] = [CoreAppPermissions.Sources];
@@ -127,17 +141,39 @@ internal static class AppManagementAuthorization
         result["GET /api/apps/{appId}/dev-mode"] = [CoreAppPermissions.AppLifecycle];
         result["POST /api/apps/{appId}/dev-mode/{kind}"] = [CoreAppPermissions.AppLifecycle];
         Add(CoreAppPermissions.CoreEnvironmentsInspect, "GET /api/core-environments", "GET /api/core-environments/{id}", "GET /api/core-environments/{id}/apps", "GET /api/core-environments/{id}/initialization");
-        Add(CoreAppPermissions.CoreEnvironmentsOperate, "POST /api/core-environments", "POST /api/core-environments/{id}/setup-link", "POST /api/core-environments/{id}/initialization/resume", "POST /api/core-environments/{id}/operations/{kind}", "POST /api/core-environments/{id}/setup", "POST /api/core-environments/{id}/consent/revoke", "POST /api/core-environments/consents/{id}/revoke");
+        Add(CoreAppPermissions.CoreEnvironmentsOperate, "POST /api/core-environments", "POST /api/core-environments/{id}/setup-link", "POST /api/core-environments/{id}/access-link", "POST /api/core-environments/{id}/initialization/resume", "POST /api/core-environments/{id}/operations/{kind}", "POST /api/core-environments/{id}/setup", "POST /api/core-environments/{id}/consent/revoke", "POST /api/core-environments/consents/{id}/revoke");
+        foreach (var route in new[] { "GET /api/history/v1/providers", "POST /api/history/v1/capabilities", "POST /api/history/v1/conversations/query",
+            "POST /api/history/v1/conversations/get", "POST /api/history/v1/entries/query", "POST /api/history/v1/entries/get", "POST /api/history/v1/search",
+            "POST /api/history/v1/shares/query", "GET /api/history/v1/operations/{requestId}", "POST /api/history/v1/attachments/resolve", "GET /api/history/v1/attachments/{handle}", "POST /api/history/v1/subscriptions", "GET /api/history/v1/subscriptions/{handle}" })
+            result[route] = [CoreAppPermissions.HistoryProviders, CoreAppPermissions.HistoryRead];
+        foreach (var route in new[] { "POST /api/history/v1/shares/create", "POST /api/history/v1/shares/revoke" })
+            result[route] = [CoreAppPermissions.HistoryProviders, CoreAppPermissions.HistoryRead, CoreAppPermissions.HistoryShare];
+        foreach (var operation in new[] { "create", "revoke", "snapshot", "changes" })
+            result["POST /api/history/v1/exports/" + operation] = [CoreAppPermissions.HistoryProviders, CoreAppPermissions.HistoryRead, CoreAppPermissions.HistoryExport];
+        foreach (var operation in new[] { "get", "acknowledge" })
+            result["POST /api/history/v1/exports/" + operation] = [CoreAppPermissions.HistoryProviders];
+        foreach (var route in new[] { "GET /api/tasks/v1/providers", "POST /api/tasks/v1/options", "POST /api/tasks/v1/list", "POST /api/tasks/v1/get" })
+            result[route] = [CoreAppPermissions.TaskProviders, CoreAppPermissions.TasksRead];
+        foreach (var route in new[] { "POST /api/tasks/v1/create", "POST /api/tasks/v1/edit", "POST /api/tasks/v1/action" })
+            result[route] = [CoreAppPermissions.TaskProviders, CoreAppPermissions.TasksRead, CoreAppPermissions.TasksWrite];
+        foreach (var route in new[] { "GET /api/agent-sessions/v1/providers", "POST /api/agent-sessions/v1/sessions/query", "POST /api/agent-sessions/v1/sessions/get", "POST /api/agent-sessions/v1/runs/get", "POST /api/agent-sessions/v1/runs/subscriptions", "GET /api/agent-sessions/v1/runs/subscriptions/{handle}" })
+            result[route] = [CoreAppPermissions.AgentSessionProviders, CoreAppPermissions.AgentSessionsRead];
+        result["POST /api/agent-sessions/v1/runs/cancel"] = [CoreAppPermissions.AgentSessionProviders, CoreAppPermissions.AgentSessionsRead, CoreAppPermissions.AgentSessionsControl];
+        Add(CoreAppPermissions.CoreEnvironmentsOperate, "POST /api/core-environments/{id}/consumers/register", "POST /api/core-environments/{id}/consumers/release", "POST /api/core-environments/{id}/consumers/reconcile");
+        result["POST /api/core-environments/{id}/api"] = [CoreAppPermissions.CoreEnvironmentsInspect, CoreAppPermissions.CoreEnvironmentsOperate, CoreAppPermissions.CoreEnvironmentsApi];
         result["POST /api/core-environments/from-workspace"] = [CoreAppPermissions.CoreEnvironmentsOperate, CoreAppPermissions.WorkspacesRead];
-        Add(CoreAppPermissions.SandboxesInspect, "GET /api/sandbox-instances", "GET /api/sandbox-instances/{id}",
-            "GET /api/sandbox-instances/{id}/browser-runs/{jobId}", "GET /api/sandbox-instances/{id}/preview", "GET /api/sandbox-instances/{id}/diagnostics");
-        Add(CoreAppPermissions.SandboxesOperate, "POST /api/sandbox-instances/{id}/operations/{kind}",
-            "POST /api/sandbox-instances/{id}/users", "POST /api/sandbox-instances/{id}/seeds", "POST /api/sandbox-instances/{id}/browser-runs",
-            "POST /api/sandbox-instances/{id}/users/delete", "POST /api/sandbox-instances/{id}/viewers", "POST /api/sandbox-instances/{id}/evidence/clear", "POST /api/sandbox-instances/{id}/browser-runs/cancel");
+        Add(CoreAppPermissions.ReadSkills, "GET /api/skills", "GET /api/skills/", "GET /api/skills/{id}/content");
+        Add(CoreAppPermissions.ManageSkills, "POST /api/skills/discover", "POST /api/skills/install", "POST /api/skills/check-updates", "POST /api/skills/update", "DELETE /api/skills/{id}");
         Add(CoreAppPermissions.ReadApps,
             "GET /api/apps/{appId}/preview-checks",
             "GET /api/apps", "GET /api/apps/permissions", "GET /api/apps/{appId}/health", "GET /api/apps/{appId}/update-status",
             "GET /api/apps/{appId}/assets/{**assetPath}", "GET /api/apps/{id}/permissions");
+        Add(CoreAppPermissions.ReadApps, "GET /api/apps/update-source/suggestions");
+        foreach (var route in new[] { "POST /api/apps/{appId}/update-source/plan", "POST /api/apps/{appId}/update-source/apply",
+            "POST /api/apps/update-source/apply", "GET /api/apps/{appId}/update-source/operations/{requestId}" })
+            result[route] = [CoreAppPermissions.Sources, CoreAppPermissions.Install];
+        Add(CoreAppPermissions.ReadCore, "GET /api/core/update-feed", "GET /api/core/updates/{id}");
+        Add(CoreAppPermissions.ConfigureCore, "PUT /api/core/update-feed");
         Add(CoreAppPermissions.AppLogs, "GET /api/apps/{appId}/logs");
         Add(CoreAppPermissions.Notifications, "GET /api/notifications", "POST /api/notifications/read");
         Add(CoreAppPermissions.AppLifecycle,
@@ -181,12 +217,14 @@ internal static class AppManagementAuthorization
         Add(CoreAppPermissions.RevokeCredentials, "PATCH /api/auth/credentials/{fingerprint}/label", "DELETE /api/auth/credentials/{fingerprint}", "DELETE /api/auth/background-grants/{id}", "POST /api/auth/background-grants/revoke-all-authorizations");
         Add(CoreAppPermissions.ConfigureCore, "GET /api/auth/oauth/clients", "DELETE /api/auth/oauth/clients/{clientId}");
         Add(CoreAppPermissions.ManageUsers,
+            "POST /api/auth/users",
             "POST /api/auth/invitations", "DELETE /api/auth/invitations/{invitationId}",
             "PATCH /api/auth/users/{userId}", "DELETE /api/auth/users/{userId}",
             "DELETE /api/auth/users/{userId}/record", "PUT /api/auth/users/{userId}/assignments");
         Add(CoreAppPermissions.SourceConnections,
             "PUT /api/source-connections/identity",
             "POST /api/source-connections/pat", "POST /api/source-connections/device",
+            "POST /api/source-connections/{id}/pat", "POST /api/source-connections/{id}/device",
             "POST /api/source-connections/device/{id}/poll", "DELETE /api/source-connections/device/{id}",
             "PUT /api/source-connections/{id}", "POST /api/source-connections/{id}/check", "DELETE /api/source-connections/{id}");
         Add(CoreAppPermissions.Sources,

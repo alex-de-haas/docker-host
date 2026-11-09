@@ -288,9 +288,9 @@ it("distinguishes an unavailable trace from a successful detail read with no sto
   await act(async () => detail.resolve(json({ message: "Trace query failed" }, 503)));
   expect(requestFailure().textContent).toBe("Trace query failed");
   expect(container.textContent).toContain("Trace unavailable");
-  expect(container.textContent).not.toContain("Trace not found");
+  expect(container.textContent).not.toContain("Trace not retained");
   await click(button("Refresh"));
-  expect(container.textContent).toContain("Trace not found");
+  expect(container.textContent).toContain("Trace not retained");
   expect(container.textContent).not.toContain("Trace unavailable");
   expect(appFetch.mock.calls[1][0]).toBe("/api/observability/traces/trace-123");
   expect(appFetch.mock.calls[2][0]).toBe(appFetch.mock.calls[1][0]);
@@ -438,5 +438,43 @@ describe("Telemetry metrics", () => {
     expect(retainedResults()).toBeUndefined();
     expect(container.querySelector('output[aria-label="worker.completed"]')?.textContent).toBe("5");
     expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+});
+
+describe("Core caller filters and correlation navigation", () => {
+  it("filters by the calling app independently of the resource and preserves capture coverage", async () => {
+    const coverage = { contractVersion: 1, runId: "run", capturing: true, rootSampleRatio: .1,
+      observedAt: "2026-10-27T10:00:00Z", captureStartedAt: "2026-10-27T09:59:00Z", firstAvailableSequence: 2,
+      lastSequence: 4, droppedSpans: 1, truncatedSpans: 0, state: "receiving", lastGapReason: "cursor_expired", gapCount: 1 };
+    appFetch.mockImplementation(async () => json({ ...emptyTraces, coreTracing: coverage }));
+    await render(createElement(ObservabilityTracesPage, { apps }));
+    await advanceDebounce();
+    await search("Calling app ID", "example.caller");
+    await advanceDebounce();
+    expect(String(appFetch.mock.calls.at(-1)?.[0])).toContain("callerAppId=example.caller");
+    expect(container.textContent).toContain("10%");
+    expect(container.textContent).toContain("cursor expired");
+  });
+
+  it("opens a trace deep link and offers the matching log query", async () => {
+    appFetch.mockImplementation(async (url: string) => json(url.endsWith("/trace-123")
+      ? { traceId: "trace-123", startUnixMs: 1000, durationMs: 10, spans: [], unavailableReason: "The trace was sampled out or expired." }
+      : emptyTraces));
+    await render(createElement(ObservabilityTracesPage, { apps, initialTraceId: "trace-123" }));
+    expect(appFetch).toHaveBeenCalledWith("/api/observability/traces/trace-123");
+    expect(container.textContent).toContain("Trace not retained");
+    expect(container.textContent).toContain("sampled out or expired");
+    expect(container.querySelector('a[href="/logs?traceId=trace-123"]')).not.toBeNull();
+  });
+
+  it("queries all retained logs for the linked trace and provides a return link", async () => {
+    appFetch.mockResolvedValue(json({ ...emptyLogs, rangeSeconds: 0 }));
+    await render(createElement(ObservabilityStructuredLogsPage, { apps, initialTraceId: "trace-123", initialCaller: "example.caller" }));
+    await advanceDebounce();
+    const query = new URL(String(appFetch.mock.calls[0][0]), "http://test").searchParams;
+    expect(query.get("traceId")).toBe("trace-123");
+    expect(query.get("callerAppId")).toBe("example.caller");
+    expect(container.querySelector('a[href="/traces?traceId=trace-123"]')).not.toBeNull();
+    expect(container.textContent).toContain("No retained logs match this trace");
   });
 });

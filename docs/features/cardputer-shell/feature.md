@@ -1,6 +1,6 @@
 ---
 created: 2026-10-23
-updated: 2026-10-23
+updated: 2026-11-04
 summary: Native Cardputer ADV console with early app status, explicit refresh and bounded Core operations.
 components: [apps/shell-cardputer]
 ---
@@ -93,7 +93,10 @@ Core restart reads `/api/core/development`, sends its instance/source revision
 with a random 32-hex request ID, and observes `/api/core/operations/{id}`. Only
 completed receipts count as success. An uncertain restart retains its ID for
 another explicit recovery attempt during the same firmware session. Core update
-is presented as accepted, with explicit refresh to inspect the resulting version.
+sends the offer captured at confirmation and retains its request ID across uncertain retries. A
+recovery verdict reuses Core's durable operation ID, including after a device restart. Missing or
+invalid offers are read-only. An accepted response is presented as accepted, with explicit refresh
+to inspect the resulting version.
 Development and receipt parsers have non-overlapping lifetimes, so only one large
 parser occupies the command stack at a time. Native and host adapter compilation
 reject stack frames larger than 5 KiB; this is a frame-size regression guard,

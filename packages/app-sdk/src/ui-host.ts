@@ -1,3 +1,5 @@
+import { FeedbackHost, FEEDBACK_CAPABILITY, feedbackOperation, validCapabilities, type FeedbackEvent, type FeedbackPort } from "./feedback-channel";
+import { FeedbackRpc } from "./feedback-rpc";
 import { UiCompositionModel, validChromeOverrides, withChromeHints } from "./ui-composition";
 import { DEFAULT_WORKSPACE, ROOT_VIEW, workspace, type UiPresentation, type UiWorkspace, type UiWorkspaceSnapshot,
   type UiWorkspaceRenderer, type UiViewDescriptor, type UiPlacementResolver } from "./ui-workspaces";
@@ -13,7 +15,7 @@ export type UiHostSnapshot = { bootstrap: UiBootstrap | null; catalog: UiPanel[]
   selected: PanelRef | null; selectedPresentationId?: string | null; workspaces?: UiWorkspaceSnapshot[]; expanded: boolean; width: number; error: { code: string; message: string } | null };
 type Frame = { element: HTMLIFrameElement; surface: UiFrameSurface; generation: string; nonce: string | null;
   connected: boolean; actor: string | null; live: boolean; cleanup: () => void; waitForReadiness: () => void;
-  routeReport?: { route: string | null; pending?: Promise<void> };
+  navigationRoot?: string; routeReport?: { route: string | null; currentRoute?: string | null; pending?: Promise<void> };
   onConnection?: (connected: boolean) => void; view: UiViewDescriptor; chrome: UiChromeOverrides; policyRevision: number; composition: boolean };
 type Ledger = { input: string; result?: PresentationResult; pending?: Promise<PresentationResult>; frame?: Frame; openingSurface?: UiFrameSurface };
 function immutable<T>(value: T): T {
@@ -35,6 +37,13 @@ export function createUiHost(options: { uiPath?: string; active?: boolean; chrom
 }
 
 export class UiHost implements UiClient {
+  readonly feedback = new FeedbackHost();
+  private readonly feedbackRpc = new FeedbackRpc();
+  connectFeedback = (receive: (event: FeedbackEvent) => void): FeedbackPort => {
+    const allowed = () => this.active && this.activityReady && this.snapshot.catalog.some(p => p.feedbackComposer && p.panel.appId === this.snapshot.bootstrap?.app.appId
+      && p.panel.installationId === this.snapshot.bootstrap?.app.installationId && p.origin === location.origin && routeWithin(location.pathname, p.route));
+    return this.feedback.connect('root-composer', {workspaceId:'default',visible:allowed,receive});
+  };
   private snapshot: UiHostSnapshot = { bootstrap: null, catalog: [], tools: [], selected: null, expanded: false, width: 360, error: null };
   private environment: UiEnvironment = { mode: "standalone", connection: "connecting" };
   private readonly windowId = createPresentationRequestId();
@@ -81,6 +90,7 @@ export class UiHost implements UiClient {
     if (this.disposed || this.active === active) return;
     for (const move of this.moves.values()) move.abort();
     this.active = active; this.activityReady = false;
+    this.feedbackRpc.clear(); this.feedback.clear();
     this.activityGeneration++; for (const state of this.workspaces.values()) state.generation++;
     this.invalidateRendererWork();
     if (!active) {
@@ -108,11 +118,13 @@ export class UiHost implements UiClient {
     state.owner = owner;
     return () => { if (state.owner === owner) state.owner = undefined; };
   };
-  registerWorkspace = ({ workspaceId, renderer }: { workspaceId: string; renderer: UiWorkspaceRenderer }) => {
+  registerWorkspace = ({ workspaceId, renderer, multiple = false }: { workspaceId: string; renderer: UiWorkspaceRenderer; multiple?: boolean }) => {
     if (!workspaceId || workspaceId.length > 256) throw new Error("Invalid workspace ID.");
     const state = this.workspaces.get(workspaceId) ?? workspace(workspaceId);
     if (state.renderer && state.renderer !== renderer) throw new Error("A workspace already has a renderer.");
-    state.renderer = renderer; this.workspaces.set(workspaceId, state); this.publishWorkspaces();
+    state.renderer = renderer; state.multiple = multiple;
+    if (!multiple) state.visibleIds = state.selectedId ? [state.selectedId] : [];
+    this.workspaces.set(workspaceId, state); this.publishWorkspaces();
     return () => {
       if (!this.disposed && this.snapshot.tools.some(t => t.workspaceId === workspaceId)) throw new Error("Close or move presentations before disposing their workspace.");
       if (state.renderer === renderer) {
@@ -126,7 +138,7 @@ export class UiHost implements UiClient {
     const selected = this.snapshot.tools.find(t => t.presentationId === state.selectedId);
     this.update({ selected: selected?.target.panel ?? null, selectedPresentationId: state.selectedId,
       expanded: state.expanded, width: state.width,
-      workspaces: [...this.workspaces.values()].map(({ workspaceId, selectedId, expanded, width }) => ({ workspaceId, selectedId, expanded, width })) });
+      workspaces: [...this.workspaces.values()].map(({ workspaceId, selectedId, expanded, width, visibleIds, multiple }) => ({ workspaceId, selectedId, expanded, width, visibleIds: [...visibleIds ?? []], multiple })) });
   }
   setPlacementResolver = (resolver?: UiPlacementResolver) => { this.placement = resolver; };
   getViewChrome = (viewId: string): UiChromeOverrides | undefined => {
@@ -149,16 +161,35 @@ export class UiHost implements UiClient {
     if (!this.getChrome().tools.enabled || frame?.chrome.tools?.enabled === false)
       throw new UiError("tools_disabled", "Tools are disabled in this view.");
   }
-  focusPresentation = (id: string) => {
+  private showPresentation(state: UiWorkspace, id: string) {
+    state.selectedId = id; state.expanded = true;
+    state.visibleIds = state.multiple ? [...new Set([...state.visibleIds ?? [], id])] : [id];
+  }
+  private hideFromWorkspace(state: UiWorkspace, id: string) {
+    state.visibleIds = (state.visibleIds ?? []).filter(item => item !== id);
+    if (state.selectedId === id) state.selectedId = state.visibleIds.at(-1) ?? null;
+    if (!state.visibleIds.length) { state.expanded = false; state.renderer?.collapse(); }
+  }
+  /** Hide one panel while retaining its frame, route and draft. */
+  hidePresentation = (id: string) => {
+    this.feedback.cancel();
+    const tool = this.snapshot.tools.find(t => t.presentationId === id); if (!tool) return;
+    const state = this.workspaces.get(tool.workspaceId)!;
+    state.generation++; this.hideFromWorkspace(state, id); this.publishWorkspaces();
+    if (state.expanded && state.selectedId) state.renderer?.focus(state.selectedId);
+  };
+  /** Record observed focus without moving the active DOM control when focus is false. */
+  focusPresentation = (id: string, options?: { focus?: boolean }) => {
     const tool = this.snapshot.tools.find(t => t.presentationId === id);
     if (!tool) return false;
     this.requireTools();
     const state = this.workspaces.get(tool.workspaceId)!;
-    state.generation++; state.selectedId = id; state.expanded = true;
+    state.generation++; this.showPresentation(state, id);
     this.update({ tools: this.snapshot.tools.map(t => t === tool ? { ...t, focusedAt: ++this.focusSequence } : t) });
-    this.publishWorkspaces(); state.renderer?.focus(id); return true;
+    this.publishWorkspaces(); if (options?.focus !== false) state.renderer?.focus(id); return true;
   };
   collapseWorkspace = (id: string) => {
+    this.feedback.cancel();
     const state = this.workspaces.get(id); if (!state) return;
     state.generation++; state.expanded = false; state.renderer?.collapse(); this.publishWorkspaces();
   };
@@ -171,13 +202,13 @@ export class UiHost implements UiClient {
     if (supersede) state.generation++;
     state.renderer?.release(id);
     this.update({ tools: this.snapshot.tools.filter(t => t !== tool) });
-    if (state.selectedId === id) { state.selectedId = null; state.expanded = false; }
+    this.hideFromWorkspace(state, id);
     this.publishWorkspaces();
   }
   private resetPresentations() {
     for (const tool of this.snapshot.tools) this.closePresentation(tool.presentationId);
     for (const state of this.workspaces.values()) {
-      state.selectedId = null; state.expanded = false; state.generation++; state.renderer?.collapse();
+      state.selectedId = null; state.visibleIds = []; state.expanded = false; state.generation++; state.renderer?.collapse();
     }
     this.publishWorkspaces();
   }
@@ -204,7 +235,7 @@ export class UiHost implements UiClient {
         throw new Error("Movement was superseded.");
       stop(); previous.generation++;
       this.update({ tools: this.snapshot.tools.map(t => t.presentationId === id ? { ...t, workspaceId } : t) });
-      if (previous.selectedId === id) { previous.selectedId = null; previous.expanded = false; previous.renderer?.collapse(); }
+      this.hideFromWorkspace(previous, id);
       for (const frame of this.frames) if (frame.view.presentationId === id) frame.view = { ...frame.view, workspaceId };
       this.focusPresentation(id); return true;
     } catch {
@@ -319,8 +350,9 @@ export class UiHost implements UiClient {
   openSurface = (target: PanelTarget, options: PresentationOptions): Promise<PresentationResult> =>
     waitForPresentation(this.open(target, options, "local"), options.requestId, options.signal);
 
-  private open(target: PanelTarget, options: PresentationOptions, source: string, frame?: Frame, sourceWorkspace?: string): Promise<PresentationResult> {
+  private open(target: PanelTarget, options: PresentationOptions, source: string, frame?: Frame, sourceWorkspace?: string, selectionSignal?: AbortSignal): Promise<PresentationResult> {
     const id = options.requestId;
+    if (selectionSignal?.aborted) return Promise.resolve({ status: "blocked", requestId: id, code: "presentation_cancelled" });
     if (!this.active || !this.activityReady || this.disposed)
       return Promise.resolve({ status: "blocked", requestId: id, code: "activity_required" });
     if (!validId(id) || !validTarget(target) || options.placement !== "side" || options.reuse !== undefined && !["exact", "new"].includes(options.reuse))
@@ -357,6 +389,7 @@ export class UiHost implements UiClient {
       try {
         const own = await this.bootstrap(generation);
         const check = () => {
+          if (selectionSignal?.aborted) throw new UiError("presentation_cancelled", "This selection was cancelled.");
           this.checkActivity(generation); this.requireTools(frame);
           if (!own.canHost) throw new UiError("app_permission_required", "Allow this app to host panels.");
           if (!currentSource() || frame && frame.actor !== own.userId || this.snapshot.bootstrap?.userId !== own.userId
@@ -393,7 +426,7 @@ export class UiHost implements UiClient {
           if (!old) { renderer.release(tool.presentationId); this.update({ tools: this.snapshot.tools.filter(t => t.presentationId !== tool.presentationId) }); }
           throw error;
         }
-        state.selectedId = tool.presentationId; state.expanded = true;
+        this.showPresentation(state, tool.presentationId);
         this.update({ tools: this.snapshot.tools.map(t => t.presentationId === tool.presentationId ? { ...t, focusedAt: ++this.focusSequence } : t) });
         this.publishWorkspaces(); state.renderer?.focus(tool.presentationId);
         entry.openingSurface = resolved.surface;
@@ -544,7 +577,16 @@ export class UiHost implements UiClient {
       return result ?? { status: "unknown", requestId: id, code: "presentation_unknown" };
     } catch (error) { return failure(id, error); }
   }
-  selectPanel = async (ref: PanelRef, workspaceId = DEFAULT_WORKSPACE): Promise<PresentationResult> => {
+  // Host-owned selections may cancel before presentation without superseding another selection.
+  // PresentationOptions.signal still cancels only a protocol caller's wait.
+  selectPanel = async (ref: PanelRef, workspaceId = DEFAULT_WORKSPACE, signal?: AbortSignal): Promise<PresentationResult> => {
+    const cancel = () => this.invalidateRendererWork();
+    signal?.addEventListener("abort", cancel);
+    try { return await this.selectPanelWithSignal(ref, workspaceId, signal); }
+    finally { signal?.removeEventListener("abort", cancel); }
+  };
+  private selectPanelWithSignal = async (ref: PanelRef, workspaceId: string, signal?: AbortSignal): Promise<PresentationResult> => {
+    if (signal?.aborted) return { status: "blocked", requestId: createPresentationRequestId(), code: "presentation_cancelled" };
     const opened = this.snapshot.tools.filter(t => t.workspaceId === workspaceId && t.key === panelKey(ref)).sort((a, b) => b.focusedAt - a.focusedAt)[0];
     if (opened?.resolved.surface) {
       const requestId = createPresentationRequestId();
@@ -558,6 +600,7 @@ export class UiHost implements UiClient {
         const resolved = await uiRequest<UiResolvedPanel>(this.path, "panels/resolve", opened.target);
         this.checkActivity(generation);
         this.requireTools();
+        if (signal?.aborted) throw new UiError("presentation_cancelled", "This selection was cancelled.");
         if (selection !== state.generation) throw new UiError("presentation_superseded", "A newer action replaced this opening.");
         if (!resolved.available || !resolved.surface) throw new UiError(resolved.state, "The tool is unavailable.");
         const surface = opened.panelSurface;
@@ -575,14 +618,17 @@ export class UiHost implements UiClient {
       } catch (error) { return failure(requestId, error); }
     } else if (opened) this.closePresentation(opened.presentationId);
     const requestId = createPresentationRequestId();
-    return waitForPresentation(this.open({ panel: ref }, { placement: "side", requestId }, "local", undefined, workspaceId), requestId);
+    const opening = this.open({ panel: ref }, { placement: "side", requestId }, "local", undefined, workspaceId, signal);
+    return signal ? opening : waitForPresentation(opening, requestId);
   };
   setExpanded = (expanded: boolean, workspaceId = DEFAULT_WORKSPACE) => {
     if (!expanded) return this.collapseWorkspace(workspaceId);
     if (!this.active || !this.activityReady || !this.getChrome().tools.enabled) return;
     const state = this.workspaces.get(workspaceId);
     if (state) {
-      state.expanded = true; this.publishWorkspaces();
+      state.expanded = true;
+      if (state.selectedId && !state.visibleIds?.length) state.visibleIds = [state.selectedId];
+      this.publishWorkspaces();
       if (state.expanded && state.selectedId) state.renderer?.focus(state.selectedId);
     }
   };
@@ -592,10 +638,11 @@ export class UiHost implements UiClient {
   };
   setAttention = (panel: PanelRef | string, attention: number) => this.update({ tools: this.snapshot.tools.map(t =>
     (typeof panel === "string" ? t.presentationId === panel : t.key === panelKey(panel)) ? { ...t, attention: Math.max(0, Math.floor(attention)) } : t) });
-  reportSurfaceState = (_state: { route: string; state: "ready" | "blocked"; code?: string }) => {};
+  reportSurfaceState = (_state: { route: string; state: "ready" | "blocked"; code?: string; title?: string }) => {};
 
   private forgetFrameRequests(frame: Frame) {
-    frame.routeReport = undefined;
+    this.feedbackRpc.clear(frame); this.feedback.remove(frame.view.viewId);
+    frame.routeReport = undefined; frame.navigationRoot = undefined;
     for (const [controller, work] of this.rendererWork) if (work.frame === frame) controller.abort();
     for (const [key, entry] of this.ledger) if (entry.frame === frame) this.ledger.delete(key);
     for (const [key, entry] of this.actions) if (entry.frame === frame) this.actions.delete(key);
@@ -621,7 +668,9 @@ export class UiHost implements UiClient {
       this.reportFrame(frame, "loading");
       this.post(frame, { type: "hosty:ui:probe-request" }); frame.waitForReadiness();
     };
-    frame.cleanup = () => { frame.live = false; forget(); clearTimeout(timer); element.removeEventListener("load", loaded); this.frames.delete(frame); };
+    const visibility = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => this.feedback.refresh());
+    visibility?.observe(element);
+    frame.cleanup = () => { visibility?.disconnect(); frame.live = false; forget(); clearTimeout(timer); element.removeEventListener("load", loaded); this.frames.delete(frame); };
     this.frames.add(frame); element.addEventListener("load", loaded); loaded(); return frame.cleanup;
   };
   private post(frame: Frame, value: Record<string, unknown>) {
@@ -647,15 +696,19 @@ export class UiHost implements UiClient {
     }
   }
   private reportRoute(frame: Frame, value: unknown, entryKey: unknown) {
-    if (!frame.view.presentationId) return;
+    if (!frame.view.presentationId && !frame.view.onSurfaceState) return;
     const route = canonicalSurfaceRoute(value);
     if (frame.routeReport?.route === route && frame.routeReport.pending) return;
+    if (frame.surface.feedbackComposer && route && !routeWithin(route, frame.surface.route)) this.feedback.disconnect(frame.view.viewId);
     const report: NonNullable<Frame["routeReport"]> = { route }; frame.routeReport = report;
     const tool = this.snapshot.tools.find(t => t.presentationId === frame.view.presentationId);
     const declared = this.snapshot.catalog.find(p => p.panel.appId === frame.surface.appId && p.panel.panelId === frame.surface.panelId);
-    const roots = [tool?.navigationRoot, declared?.origin === frame.surface.origin && declared.endpoint === frame.surface.endpoint ? declared.route : undefined];
+    const roots = frame.view.presentationId
+      ? [tool?.navigationRoot, declared?.origin === frame.surface.origin && declared.endpoint === frame.surface.endpoint ? declared.route : undefined]
+      : [frame.navigationRoot, frame.surface.route];
     const currentRoute = route && roots.some(root => root && routeWithin(route, root)) ? route : null;
-    this.update({ tools: this.snapshot.tools.map(t => t.presentationId === frame.view.presentationId && t.currentRoute !== currentRoute
+    report.currentRoute = currentRoute;
+    if (frame.view.presentationId) this.update({ tools: this.snapshot.tools.map(t => t.presentationId === frame.view.presentationId && t.currentRoute !== currentRoute
       ? { ...t, currentRoute, readiness: "unreported" } : t) });
     if (currentRoute || !route || typeof entryKey !== "string" || !entryKey || entryKey.length > 256) return;
     const activity = this.activityGeneration, generation = frame.generation, nonce = frame.nonce, surface = frame.surface;
@@ -671,7 +724,8 @@ export class UiHost implements UiClient {
         if (!resolved.available || !next || next.appId !== surface.appId || next.installationId !== surface.installationId
           || next.origin !== surface.origin || next.endpoint !== surface.endpoint || !routeWithin(route, next.route)
           || JSON.stringify(next.framePolicy) !== JSON.stringify(surface.framePolicy)) return;
-        this.update({ tools: this.snapshot.tools.map(t => t.presentationId === frame.view.presentationId
+        report.currentRoute = route; frame.navigationRoot = next.route;
+        if (frame.view.presentationId) this.update({ tools: this.snapshot.tools.map(t => t.presentationId === frame.view.presentationId
           ? { ...t, navigationRoot: next.route, currentRoute: route, readiness: "unreported" } : t) });
       } catch { /* Local navigation remains usable when its host cannot verify new metadata. */ }
     })().finally(() => { report.pending = undefined; });
@@ -693,6 +747,7 @@ export class UiHost implements UiClient {
     if (msg.hostWindowId !== this.windowId || msg.generation !== frame.generation || msg.childNonce !== frame.nonce || !frame.nonce) return;
     // This is advisory state, accepted only from the mounted origin/document. It grants no authority.
     if (msg.type === "hosty:ui:auth-required") {
+      this.feedbackRpc.clear(frame); this.feedback.remove(frame.view.viewId);
       frame.connected = false; frame.actor = null; frame.onConnection?.(false);
       this.reportFrame(frame, "auth-required"); return;
     }
@@ -704,13 +759,35 @@ export class UiHost implements UiClient {
       if (frame.connected) { this.reportFrame(frame, "loading"); frame.waitForReadiness(); }
       this.post(frame, { type: "hosty:ui:connected", coreOrigin: own.coreOrigin, userId: own.userId,
         appId: own.app.appId, installationId: own.app.installationId, code: frame.connected ? null : "actor_mismatch", route: frame.surface.route,
-        ...(frame.composition ? { capabilities: [UI_COMPOSITION_CAPABILITY, UI_MAIN_NAVIGATION_CAPABILITY], chrome: frame.chrome, revision: ++frame.policyRevision,
+        ...(frame.composition ? { capabilities: [UI_COMPOSITION_CAPABILITY, UI_MAIN_NAVIGATION_CAPABILITY, FEEDBACK_CAPABILITY], chrome: frame.chrome, revision: ++frame.policyRevision,
           rootDisabled: !this.getChrome().tools.enabled, endpoint: frame.surface.endpoint } : {}) });
       if (frame.connected !== wasConnected) frame.onConnection?.(frame.connected);
       if (!frame.connected) this.reportFrame(frame, "auth-required");
       return;
     }
     if (!frame.connected) return;
+    const visible = () => frame.live && frame.connected && frame.actor === this.snapshot.bootstrap?.userId && !frame.element.closest('[hidden],[inert]') && frame.element.getBoundingClientRect().width > 0;
+    if (msg.type === "hosty:ui:feedback-source" && validCapabilities(msg.value)) {
+      const c = msg.value;
+      if (c.appId !== frame.surface.appId || c.installation !== frame.surface.installationId || c.userId !== own.userId) return;
+      this.feedback.register({id:frame.view.viewId,capabilities:c,workspaceId:frame.view.workspaceId,route:frame.surface.route,label:frame.element.title || c.appId,
+        visible, invoke:operation=>this.feedbackRpc.request(frame,requestId=>this.post(frame,{type:'hosty:ui:feedback-invoke',requestId,operation}))});
+      return;
+    }
+    if (msg.type === 'hosty:ui:feedback-source-close') {this.feedbackRpc.clear(frame);this.feedback.removeSource(frame.view.viewId);return;}
+    if (msg.type === 'hosty:ui:feedback-source-result') {this.feedbackRpc.receive(frame,msg.requestId,msg.value,msg.error);return;}
+    if (msg.type === 'hosty:ui:feedback-connect' && frame.surface.feedbackComposer && (!frame.routeReport?.route || routeWithin(frame.routeReport.route,frame.surface.route))) {
+      this.feedback.connect(frame.view.viewId,{workspaceId:frame.view.workspaceId,visible,receive:value=>this.post(frame,{type:'hosty:ui:feedback-event',value})});return;
+    }
+    if (msg.type === 'hosty:ui:feedback-disconnect') {this.feedback.disconnect(frame.view.viewId);return;}
+    if (msg.type === 'hosty:ui:feedback-request' && validId(msg.requestId) && feedbackOperation(msg.operation)) {
+      const generation=frame.generation,nonce=frame.nonce;
+      let value:unknown,error:string|undefined;
+      try { if(!frame.surface.feedbackComposer || frame.routeReport?.route && !routeWithin(frame.routeReport.route,frame.surface.route))throw new Error('This panel is not a declared feedback composer.');value=await this.feedback.request(frame.view.viewId,msg.operation); }
+      catch(e){error=e instanceof Error?e.message:'Capture failed.';}
+      if(frame.live&&frame.connected&&generation===frame.generation&&nonce===frame.nonce)this.post(frame,{type:'hosty:ui:feedback-result',requestId:msg.requestId,value,error});
+      return;
+    }
     const source = `${frame.surface.appId}:${frame.generation}:${frame.nonce}`;
     if (frame.composition && (msg.type === "hosty:ui:picker" || msg.type === "hosty:ui:navigate" || msg.type === "hosty:ui:navigate-main") && validId(msg.requestId)) {
       const result = msg.type === "hosty:ui:picker" ? await this.pickTools({ requestId: msg.requestId }, frame)
@@ -743,8 +820,13 @@ export class UiHost implements UiClient {
         this.post(frame, { type: "hosty:ui:result", requestId: msg.requestId, result: this.peerResult(frame, result) });
     } else if (msg.type === "hosty:ui:surface-state" && canonicalSurfaceRoute(msg.route) !== null
       && canonicalSurfaceRoute(msg.route) === canonicalSurfaceRoute(frame.view.presentationId
-        ? this.snapshot.tools.find(t => t.presentationId === frame.view.presentationId)?.currentRoute : frame.surface.route)) {
-      if (msg.state === "ready") this.reportFrame(frame, "ready");
+        ? this.snapshot.tools.find(t => t.presentationId === frame.view.presentationId)?.currentRoute : frame.routeReport ? frame.routeReport.currentRoute : frame.surface.route)) {
+      if (msg.state === "ready") {
+        this.reportFrame(frame, "ready");
+        frame.view.onSurfaceState?.({ route: canonicalSurfaceRoute(msg.route)!,
+          ...(typeof msg.title === "string" && msg.title.trim().length > 0 && msg.title.length <= 200
+            && !/[\u0000-\u001f\u007f]/.test(msg.title) ? { title: msg.title.trim() } : {}) });
+      }
       else if (msg.state === "auth-required" || msg.state === "blocked") this.reportFrame(frame, "auth-required");
     } else if (msg.type === "hosty:ui:dismiss") {
       const selected = this.snapshot.tools.find(t => t.presentationId === this.workspaces.get(frame.view.workspaceId)?.selectedId);
@@ -756,6 +838,7 @@ export class UiHost implements UiClient {
   dispose = () => {
     if (this.disposed) return;
     this.resetPresentations();
+    this.feedbackRpc.clear(); this.feedback.clear();
     this.disposed = true; this.composition.dispose(); this.actions.clear(); for (const frame of this.frames) frame.cleanup();
     window.removeEventListener("message", this.onMessage); window.removeEventListener("focus", this.onFocus);
     this.listeners.clear(); this.events.clear(); this.ledger.clear(); this.viewChrome.clear();

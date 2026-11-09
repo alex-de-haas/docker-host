@@ -1,15 +1,25 @@
 ---
 created: 2026-06-04
-updated: 2026-10-21
-summary: The app.0.1 manifest contract for installing and running runtime apps.
+updated: 2026-11-03
+summary: The app.0.1 authoring and app.0.2 immutable release contracts for installing and running runtime apps.
 components: [apps/core]
 ---
 
 # Runtime App Manifest
 
+## Immutable release format
+
+`app.0.2` keeps the runtime manifest shape and replaces Docker tag references with
+`{"repository":"registry.example/team/app","digest":"sha256:<64 lowercase hex>"}`.
+Tags, ambiguous repositories and malformed digests are rejected in that schema. Production local
+source releases also carry a full `source.commit`; the publisher retains their original qualified
+source. Ordinary app version bumps do not change schemaVersion. Core continues reading app.0.1
+tag/string image references for existing installations and local authoring. See
+[release publication](../repository-release-model/feature.md) for generated release metadata.
+
 ## Description
 
-Hosty installs user workloads from an app manifest with `schemaVersion: "app.0.1"`. The manifest is the only supported install contract for new local development, tests, and runtime app lifecycle work. Legacy Docker metadata files are not part of the current workflow.
+Hosty installs user workloads from an app manifest with `schemaVersion: "app.0.1"` or `"app.0.2"`. The manifest is the only supported install contract for new local development, tests, and runtime app lifecycle work. Legacy Docker metadata files are not part of the current workflow.
 
 ## Manifest Location
 
@@ -45,7 +55,7 @@ apps own any tabs or other navigation inside that surface. See
 
 ## Required Fields
 
-- `schemaVersion` - must be `app.0.1`.
+- `schemaVersion` - `app.0.1` for compatible authored manifests, or `app.0.2` for digest-pinned release manifests.
 - `id` - stable reverse-DNS app id.
 - `name` - display name shown by Shell and CLI.
 - `version` - app version.
@@ -304,9 +314,12 @@ declarations/grants before startup cleanup. `apps.workspaces.read` grants curren
 inspection of authorized workspace/worktree metadata and bounded source diffs, without source or
 lifecycle mutations; see [workspace inspection](../assistant-session-workspaces/feature.md). `apps.sources.read` grants administrator-only repository
 documentation reads and workspace document projections; it does not grant source or Git mutations.
-New installs and updates reject unknown or duplicate names. Installed unsupported declarations remain
-visible for compatibility diagnostics. Neither missing required grants nor unknown required names
-block launch; per-call authorization uses stored grants only. Unknown names cannot be approved.
+New installs, updates and workspace restarts accept unknown permission names as compatibility
+warnings. Empty, whitespace-padded and duplicate names remain invalid. Unsupported declarations stay
+visible but never become grants. Core review warns that the app or Core may need updating and some
+features may not work. Missing required grants and unknown required names do not block launch;
+per-call authorization uses stored grants only. Supporting a name in a later Core never grants it
+automatically: known required access still needs explicit approval.
 `apps.update`, `apps.workspaces.manage` and `apps.publications.manage` are retired; Core removes their
 stored grants without erasing the manifest's requirements. `optionalCorePermissions` declares optional operations;
 the required and optional lists must be disjoint. Installation review offers optional permissions

@@ -1,6 +1,6 @@
 ---
 created: 2026-08-14
-updated: 2026-10-10
+updated: 2026-10-26
 summary: The umbrella model for Hosty's AI integration, covering component boundaries, execution profiles, token mechanics and the decision log.
 ---
 
@@ -13,7 +13,7 @@ or hidden Core privileges.
 This document owns the **shared model** — component boundaries, execution profiles, the interface
 registry, token mechanics, approval posture — and the decisions that produced it. It owns no
 deliverables of its own. Each step of the rollout is built under its own feature and described there;
-the remaining steps live in [plan.md](plan.md).
+the remaining work has the explicit owners listed in [Ownership After Rollout](#ownership-after-rollout).
 
 Constituent features, in the order they landed:
 [access-tokens](../access-tokens/feature.md) ·
@@ -66,7 +66,7 @@ revocation primitives. Everything else belongs to an app.
 
 Stock Claude Code and Codex clients have exercised Core and app MCP paths, and external Core OAuth
 has been verified. The dated evidence and transport distinctions are recorded in rollout
-[step 6](plan.md#step-6--stock-client-validation).
+[step 6](#step-6--stock-client-validation).
 
 ## Execution Profiles
 
@@ -303,7 +303,112 @@ wonder why.
 - **Deferred work has explicit owners** (2026-10-10). The owner retains isolated ordinary-user
   conversations and independently provided agents/models; their plans own the unbuilt contracts.
   Workspace, publication, Sandbox and development-session features replace the separate Bridge D12.
-  See [vision decisions 28–30](../../vision.md) and the [rollout ownership map](plan.md).
+  See [vision decisions 28–30](../../vision.md) and the [ownership map](#ownership-after-rollout).
+
+## Ownership After Rollout
+
+On 2026-10-26 the owner closes the Bridge rollout plan by transferring its last open item, D11,
+to [Durable Agent Jobs](../durable-agent-jobs/plan.md). D11 is retired here, not checked as implemented;
+the new Draft retains all runner, scheduling/retry budget, notification and background-grant
+consumption work. The Bridge plan is removed because it owns no remaining deliverables. D1-D8's
+shipped behavior remains documented by its constituent features and the dated evidence below.
+
+| Retired item | Current owner |
+| --- | --- |
+| D9, ordinary-user conversations | [Isolated User Agent Sessions](../user-agent-sessions/plan.md), On Hold; verified isolation remains a prerequisite. |
+| D10, app-facing model/agent execution | [Agent Providers](../agent-provider-interface/plan.md), Draft; assistant handoff does not implement this contract. |
+| D11, durable jobs | [Durable Agent Jobs D1-D6](../durable-agent-jobs/plan.md#deliverables), Draft; Core background grants remain with [Continuous App Access](../continuous-app-access/feature.md). |
+| D12, separate development bridge | Existing workspace/publication mechanisms, [Sandbox acceptance](../app-sandbox-runtimes/plan.md) and [Development Sessions](../assistant-development-sessions/plan.md); no second checkout or development task registry. |
+
+General delegation and the old audit-visibility question for locally validated delegated app calls
+and direct connector calls are owned by [Cross-App Auth D7](../cross-app-auth/plan.md#deliverables).
+Scoped-token introspection has its own [verified audit behavior](../scoped-access-tokens/feature.md#introspection-is-the-audit-callback);
+it does not prove Core observes every direct app action. The ownership transfer adds no audit hook
+or write grant. The [MCP Facade](../mcp-facade/plan.md) retains its independent On Hold scope.
+
+## Step 6 — Stock client validation
+
+Initial HTTP probes on 2026-08-11 established server behavior, not stock-client compatibility.
+All four client/endpoint combinations below now have dated evidence; skill loading and the external
+Core OAuth path have separate records because they prove different claims.
+
+- **Claude Code → Core `/api/mcp`** (2026-08-15). Registered as an HTTP server with an admin
+      access token in an `Authorization` header; `claude mcp list` reports connected and a session
+      answered from the real fleet. Recorded in [core-mcp](../core-mcp/feature.md).
+- **Claude Code → demo-app `/api/mcp`** (2026-08-16), **through the connector, which is the only
+      way it was ever going to work**. A static header entry was not merely undone but unreachable:
+      the app endpoint wants a delegated token, which lives five minutes. `hosty mcp` holds the
+      credential instead, so the client config carries none at all. A session called
+      `get_my_app_role` and came back with demo-app's own `host-admin-bootstrap` and its seven
+      permissions — values that cannot be guessed, which is why they were the ones asked for.
+      Recorded in [hosty-mcp-connector](../hosty-mcp-connector/feature.md).
+- **Codex → Core `/api/mcp`** (2026-09-06). A stock `codex exec` with `-c` overrides — no
+      gateway code, and the operator's own `~/.codex/config.toml` untouched — called
+      `get_host_status` over HTTP with a credential scoped to `hosty:core`, and answered with Core
+      `0.97.1` and 9 running, 0 stopped, 0 errored apps: values matching `hosty apps list` and the
+      version `initialize` reports, which is the unguessable standard the Claude cell set. The run
+      carried `approval: never`, the condition the earlier attempt died under with "user cancelled
+      MCP tool call". Core's annotations were confirmed on the wire first — the five read tools
+      carry `readOnlyHint: true`, the five mutating ones `destructiveHint`/`idempotentHint` and no
+      read-only claim. That the annotation was the **only** cause remains unproven: the Codex CLI
+      moved between the two runs as well, and no isolating experiment was made.
+- **Codex → demo-app `/api/mcp`** (2026-08-20), through the connector, exactly as Claude reached
+      it. A stock `codex exec` with `-c` overrides — no gateway code, and the operator's own
+      `~/.codex/config.toml` untouched — called `com_dhaas_ddemo-app__get_my_app_role` and returned
+      role `admin` with its seven permissions, matching what Shell's demo-app panel shows. Values
+      that cannot be guessed, which is the standard the Claude cell set.
+- **A Hosty skill** telling a client how to discover apps and which tools need confirmation
+      (2026-08-20). `packages/hosty-claude-plugin/skills/hosty-mcp-connector`, installed as a
+      user-scoped plugin, demonstrably reaches the client: asked why a running app's tool is missing
+      from the connector, a headless `claude -p` answered with the connector's own fail-closed rule —
+      only `readOnlyHint: true` is exported, anything else is treated as potentially mutating. Run
+      **outside the repository and told not to read files**, so the source could not be the answer;
+      the rule is a Hosty design choice, not general MCP knowledge. What this proves is that a loaded
+      skill supplies facts the model otherwise lacks — the assumption
+      [app-provided-skills](../app-provided-skills/feature.md) rests on.
+- **A non-loopback origin** (2026-09-06). A stock Claude Code reached Core `/api/mcp` at the
+      prod host's public origin — external ingress, TLS and Cloudflare's proxy in the path, the
+      client arriving over IPv6 — and completed the whole OAuth flow with no credential in its
+      config; recorded in [mcp-oauth](../mcp-oauth/feature.md). What this does **not** cover is the
+      facade over such an origin, which [mcp-facade](../mcp-facade/plan.md) still owns and states.
+
+The corresponding feature documents retain the evidence for each connection.
+
+The initial validation cost was a full-role administrator token in plaintext client configuration,
+printed back by `claude mcp get`. At that baseline, scopes did not exist and the endpoint's read-only
+behavior did not limit the credential's authority elsewhere. The changes below supersede that cost.
+
+**Paid off for the app path on 2026-08-16, and for Core MCP on 2026-08-24.** The connector's entry is
+`{"command":"hosty","args":["mcp","--user","…"],"env":{}}` — `claude mcp get` prints it back with
+nothing to redact. The two Core MCP entries above carried admin tokens in plaintext, because Core MCP
+is reached as an HTTP server rather than through the connector; the fix was the second of the two
+options recorded here — [scoped-access-tokens](../scoped-access-tokens/feature.md) shipped, and a
+credential with audience `hosty:core` and scope `mcp:read` is refused as a Core session everywhere
+else. An
+existing client config keeps working; it is an admin token until it is replaced with a scoped one.
+
+Credential paths differ: an already-issued delegated token can validate locally until its TTL
+expires; scoped-token introspection checks live Core state. The connector obtains a fresh token per
+request and cannot fall back to a saved token during a Core outage. The isolated user-session plan
+owns the choice and verification of revocation semantics for that new profile.
+
+## Step 7 — The `hosty mcp` connector
+
+The local connector and plugin are shipped; their current discovery, per-request credentials,
+read-only filtering and client configuration are owned by
+[Hosty MCP connector](../hosty-mcp-connector/feature.md). The original proposed context/keychain,
+remote-login and tool-routing design is superseded by that feature's implementation.
+
+Topologies retain their original numbers for references from the facade plan:
+
+1. On the Core host: stdio plus the trusted local control channel, with an explicit `--user` actor.
+2. Remote CLI login: dropped on 2026-08-17; the CLI remains local-only.
+3. Remote operator: run `hosty mcp --user <actor>` on the server through SSH, with a separate client
+   server entry for each host. There is no saved remote CLI context.
+4. External clients needing one hosted app-MCP entry: a separate
+   [MCP facade](../mcp-facade/plan.md), On Hold. Core supplies the
+   [agent MCP directory](../agent-mcp-directory/feature.md), not the app-tool proxy. Clients of
+   host-resident agent conversations have their own [AHP investigation](../assistant-ahp/plan.md).
 
 ## Testing Expectations
 

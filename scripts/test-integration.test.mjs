@@ -4,7 +4,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { main, suitePlan, suites } from './test-integration.mjs';
 
-const manifest = () => ({ services: [{ key: 'worker', runtimes: { docker: { image: 'example/worker:1.2.3' } } }] });
+const manifest = () => ({ services: [{ key: 'api', runtimes: { docker: { image: 'example/harness:1.2.3' } } }, { key: 'worker', runtimes: { docker: { image: 'example/worker:1.2.3' } } }] });
 const options = { platform: 'darwin', env: {}, log() {}, readManifest: manifest };
 
 test('help, invalid input and dry-run never start processes', () => {
@@ -22,6 +22,7 @@ test('unsupported Windows acceptance refuses before any process starts', () => {
   const plan = suitePlan('windows', { platform: 'win32' });
   assert.equal(plan.steps.length, 2);
   assert.match(plan.steps[0].args.at(-1), /WindowsProcessControlTests/);
+  assert.match(plan.steps[0].args.at(-1), /WorkspaceDelete_/);
   assert.match(plan.steps[1].args.at(-1), /SharedReceiptSharingTests/);
 });
 
@@ -40,6 +41,13 @@ test('worker uses the declared service image, without an npm install or host tsx
   assert.equal(plan.steps[0].args[4], 'example/worker:1.2.3');
   assert.deepEqual(plan.steps[1], { file: '/path with space/node', args: ['scripts/check-harness-worker.mjs'], env: {} });
   assert.throws(() => suitePlan('worker', { readManifest: () => ({}) }), /worker image/);
+});
+
+test('skills builds Core and CLI before running selected imports in a managed child', () => {
+  const plan = suitePlan('skills', { platform: 'darwin' });
+  assert.deepEqual(plan.steps.slice(0, 2).map(step => step.args[0]), ['build', 'build']);
+  assert.deepEqual(plan.steps[2].args, ['scripts/check-workspace-activation.py', '.', 'skills', '--managed']);
+  assert.ok(plan.prerequisites.some(step => step.file === 'docker'));
 });
 
 test('preflight failure prevents builds and runtime work, preserves exit status and never retries', () => {
@@ -83,6 +91,14 @@ test('native inference is opt-in and preserves caller environment without modify
   assert.equal(env.HOSTY_WHISPER_INTEGRATION, undefined);
 });
 
+test('OPUS builds before inference, uses uv, and opts in without requiring Docker', () => {
+  const plan = suitePlan('opus', { node: '/node with spaces' });
+  assert.deepEqual(plan.prerequisites.map(step => step.file), ['/node with spaces', 'uv']);
+  assert.deepEqual(plan.steps[0].args, ['apps/opus/scripts/build.mjs']);
+  assert.equal(plan.steps[1].env.HOSTY_OPUS_INTEGRATION, '1');
+  assert.ok(plan.steps.every(step => step.file === '/node with spaces'));
+});
+
 test('GitHub Actions cannot accidentally opt into the local runtime suites', () => {
   assert.equal(main(['activation'], { ...options, env: { GITHUB_ACTIONS: 'true' }, run: () => assert.fail('unexpected process') }), 2);
 });
@@ -91,4 +107,36 @@ test('console entry point returns a nonzero exit for an invalid suite', () => {
   const result = spawnSync(process.execPath, [fileURLToPath(new URL('./test-integration.mjs', import.meta.url)), 'all'], { encoding: 'utf8' });
   assert.equal(result.status, 2);
   assert.match(result.stdout, /Unknown integration suite/);
+});
+
+test('Harness local acceptance uses managed Core and the native runtime without building Docker app images', () => {
+  const plan = suitePlan('harness-local', { platform: 'darwin' });
+  assert.deepEqual(plan.steps.slice(0, 2).map(step => step.args[0]), ['build', 'build']);
+  assert.deepEqual(plan.steps[2].args, ['scripts/check-workspace-activation.py', '.', 'harness-local', '--managed']);
+  assert.ok(plan.prerequisites.some(step => step.args.some(arg => arg.includes('npm --version'))));
+  assert.ok(!plan.steps.some(step => step.file === 'docker'));
+});
+
+test('tasks builds both local-only Harness images and runs inside a managed child Core', () => {
+  const plan = suitePlan('tasks', { readManifest: manifest });
+  assert.deepEqual(plan.steps.slice(0, 2).map(step => step.args[0]), ['build', 'build']);
+  const images = plan.steps.slice(2, 4).map(step => step.args[4]);
+  assert.match(images[0], /^hosty-harness-api-acceptance:[a-f0-9-]{36}$/);
+  assert.equal(images[1], images[0].replace('-api-', '-worker-'));
+  assert.deepEqual(plan.steps.at(-1).env, { HOSTY_TASKS_API_IMAGE: images[0], HOSTY_TASKS_WORKER_IMAGE: images[1] });
+  assert.notEqual(suitePlan('tasks').steps[2].args[4], images[0]);
+  assert.deepEqual(plan.steps.at(-1).args, ['scripts/check-workspace-activation.py', '.', 'tasks', '--managed']);
+});
+
+test('observability builds all affected images and uses the managed child fixture', () => {
+  const plan = suitePlan('observability');
+  assert.equal(plan.steps.filter(step => step.file === 'docker' && step.args[0] === 'build').length, 3);
+  assert.deepEqual(plan.steps.at(-1).args, ['scripts/check-workspace-activation.py', '.', 'observability', '--managed']);
+});
+
+
+test('feedback uses native Harness and managed Core with browser acceptance', () => {
+  const plan = suitePlan('feedback', { platform: 'darwin' });
+  assert.deepEqual(plan.steps[2].args, ['scripts/check-workspace-activation.py', '.', 'feedback', '--managed']);
+  assert.equal(plan.steps.some(step => step.bin === 'docker' && step.args.includes('build')), false);
 });

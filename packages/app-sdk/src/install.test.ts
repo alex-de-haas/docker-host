@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createInstallationClient, InstallationError, InstallationFlow, type InstallationClient, type InstallationRequest } from "./install";
+import { presentInstallationConfirmation, createInstallationClient, InstallationError, InstallationFlow, type InstallationClient, type InstallationRequest } from "./install";
 
 const draft: InstallationRequest = { id: "a".repeat(48), status: "draft", plan: null,
   approvalUrl: "https://core.example/install/confirm/test", expiresAt: "2099-01-01T00:00:00Z" };
@@ -169,4 +169,34 @@ describe("installation flow", () => {
     await pending;
     expect(flow.snapshot().request).toBeNull();
   });
+});
+
+it("presents standalone confirmation directly and delegates only its receipt from an embedded frame", () => {
+  const open = vi.fn(), postMessage = vi.fn();
+  const browser = { open, parent: null as unknown };
+  browser.parent = browser; vi.stubGlobal("window", browser);
+  try {
+    presentInstallationConfirmation(draft);
+    expect(open).toHaveBeenCalledExactlyOnceWith(draft.approvalUrl, "_blank", "popup,width=640,height=720,noopener");
+    open.mockClear(); browser.parent = { postMessage };
+    presentInstallationConfirmation(draft);
+    expect(postMessage).toHaveBeenCalledExactlyOnceWith({ type: "hosty:request-installation-confirmation", requestId: draft.id }, "*");
+    expect(open).not.toHaveBeenCalled();
+    expect(() => presentInstallationConfirmation({ ...draft, id: "../escape" })).toThrow("Invalid Core confirmation ID");
+    expect(() => presentInstallationConfirmation({ ...draft, approvalUrl: "javascript:alert(1)" })).toThrow("Invalid Core confirmation URL");
+  } finally { vi.unstubAllGlobals(); }
+});
+
+it("never submits an unresolved update candidate and permits a fresh readiness review", async () => {
+  const api = client();
+  vi.mocked(api.prepare).mockResolvedValueOnce({ ...draft, updatePlan: {
+    appId: "third.party", targetVersion: "2.0.0", targetRuntime: "docker", changes: ["version:1->2"],
+    error: "Required image is not published", errorCode: "image_missing", readiness: "pending-publication",
+  } });
+  const flow = new InstallationFlow(api);
+  await flow.review({ updateAppId: "third.party" });
+  expect(await flow.submit()).toBeNull(); expect(api.submit).not.toHaveBeenCalled();
+  expect(flow.snapshot().error).toBe("Required image is not published");
+  flow.clearReview(); await flow.review({ updateAppId: "third.party" });
+  await flow.submit(); expect(api.submit).toHaveBeenCalledTimes(1);
 });

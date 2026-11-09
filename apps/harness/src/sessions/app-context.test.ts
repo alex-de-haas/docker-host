@@ -154,6 +154,9 @@ it("resynchronizes current state and distinguishes historical transitions during
   const subscription = await manager.subscribe(record.id, current.lastEventSeq, () => {});
   expect(subscription.replay).toEqual([
     expect.objectContaining({ type: "session_activity", seq: -1, activity: null }),
+    expect.objectContaining({ type: "session_suggestion", seq: -2, state: "empty", sessionId: record.id, userId: "admin" }),
+    expect.objectContaining({ type: "session_message_queue", seq: -3, sessionId: record.id,
+      queue: expect.objectContaining({ ownerId: "admin", entries: [], revision: 0 }) }),
     expect.objectContaining({ type: "session_status", status: "idle", seq: current.lastEventSeq }),
   ]);
   subscription.unsubscribe();

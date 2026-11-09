@@ -1,8 +1,8 @@
 ---
 created: 2026-10-08
-updated: 2026-10-11
+updated: 2026-10-30
 summary: SDK-owned React overlay combines session and required-permission readiness, hides blocked content and preserves same-user state through recovery.
-components: [packages/app-sdk, apps/shell, apps/marketplace, apps/plans, apps/demo-app, apps/harness, apps/telemetry-ui]
+components: [packages/app-sdk, apps/shell, apps/marketplace, apps/documents, apps/demo-app, apps/harness, apps/telemetry-ui]
 ---
 
 # Hosty Overlay
@@ -68,7 +68,8 @@ between separate identity and permission responses. Unknown or failed readiness 
 | Sign-in or activity renewal required | Action opens the existing Core-owned flow |
 | Required permissions missing, administrator | Core review action, with a direct link while review is pending |
 | Required permissions missing, regular user | Administrator setup explanation without buttons or permission details |
-| Unsupported required permission or incompatible session endpoint | Compatibility explanation |
+| Unsupported required permission | Non-blocking compatibility warning; no access is granted, and app content remains available |
+| Incompatible session endpoint | Compatibility explanation with protected content blocked |
 | Optional permission missing | No general warning or gate |
 | Access denied | Explanation without repeated automatic sign-in |
 | Core unavailable | Retry while retaining the mounted application state |
@@ -78,6 +79,10 @@ between separate identity and permission responses. Unknown or failed readiness 
 Review remains Core-owned and uses the existing verified embedder message where available. Focus and
 pending review refresh readiness; there is no background identity keepalive polling. Missing or
 malformed permission data does not become successful readiness.
+The session adapter separates known missing requirements from unsupported declarations.
+Unknown-only declarations return ready setup with an additive `hosty.permissionWarning` marker;
+this warning never changes identity or activity readiness. Older ambiguous unsupported-setup
+responses retain their existing blocked behavior.
 
 The fixed design follows Hosty's light/dark theme and uses a transparent background in embedded
 mode, with a neutral standalone surface. Its heading uses the official Shell's connected-node mark
@@ -112,7 +117,7 @@ continuous sessions; older Core retains its fixed activity deadline. The optiona
 slot exposes explicitly public/local UI during an outage outside the protected root. See
 [session lifecycle](../auth-session-lifecycle/feature.md) and [activity window](../app-activity-window/feature.md).
 Element picking, screenshots and assistant evidence belong to
-[App Feedback Inbox](../app-feedback-inbox/plan.md), separately from this overlay.
+[App Feedback Inbox](../app-feedback-inbox/feature.md), separately from this overlay.
 
 ## Shared Panel Composition
 

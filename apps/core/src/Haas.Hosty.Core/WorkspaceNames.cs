@@ -11,7 +11,7 @@ internal sealed partial class DevelopmentWorkspaceService
         => System.IO.Path.Combine(Root, "metadata", WorkspaceIdFor(owner) + ".json");
 
     internal Task<WorkspaceMetadata?> ReadMetadataAsync(WorkspaceOwner owner, CancellationToken ct)
-        => JsonStorage.ReadAsync<WorkspaceMetadata>(MetadataPath(owner), ct);
+        => recordCache.ReadAsync<WorkspaceMetadata>(MetadataPath(owner), ct);
 
     internal async Task<WorkspaceMetadata> MetadataAsync(WorkspaceOwner owner, CancellationToken ct)
         => await ReadMetadataAsync(owner, ct) ?? new();
@@ -45,16 +45,16 @@ internal sealed partial class DevelopmentWorkspaceService
         observationState?.CatalogChanged();
     }
 
-    internal Task<WorkspaceMetadata> RenameAsync(WorkspaceOwner owner, WorkspaceNameCommand input, CancellationToken ct)
+    internal Task<WorkspaceMetadata> RenameAsync(WorkspaceOwner owner, WorkspaceNameCommand input, CancellationToken ct, string? actorUserId = null)
         => Locked(Hash(OwnerIdentity(owner)), async () =>
         {
             RequestId(input.RequestId);
             ValidateWorkspaceName(input.Name);
             // Source authority is checked even during replay. The identity comes from authenticated
             // caller context; neither request IDs nor display names grant access to another owner.
-            var trees = (await ListAsync(owner, true, ct)).Workspaces;
+            var trees = (await ListAsync(null, true, ct)).Workspaces.Where(t => t.Owner.SameIdentity(owner)).ToArray();
             if (trees.Length == 0) throw Error("not_found", "Workspace not found.");
-            foreach (var tree in trees) await Read(tree.Id, owner, ct);
+            if (actorUserId is not null) await RequireWorkspaceUserAsync(actorUserId, ct);
             var metadata = await MetadataAsync(owner, ct);
             var previous = metadata.Operations?.FirstOrDefault(o => o.Id == input.RequestId);
             if (previous is not null)

@@ -2,8 +2,10 @@
 import { useState, useSyncExternalStore } from "react";
 import { CheckCircle2, CircleHelp, Clock3, XCircle, X, MinusCircle } from "lucide-react";
 import type { PullRequest } from "@/lib/development-api";
+import { hasRetainedCi, completionPresentation } from "@/lib/pull-request-presentation";
 import { checkResult } from "@/lib/pull-request-checks";
-import { checkCounts } from "@/lib/pull-request-presentation";
+import { PullRequestCheckSummary } from "./pull-request-check-summary";
+import type { PrCheck } from "@/lib/pull-requests-api";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverDescription, PopoverHeader, PopoverTitle, PopoverTrigger } from "@/components/ui/popover";
@@ -28,14 +30,17 @@ export function PullRequestChecks({ pr, stale, label, segmented = false }: { pr:
   const checks = pr.unavailable ? undefined : pr.observation?.checks;
   const completed = checks?.filter(check => checkResult(check.state).completed).length ?? 0;
   const summary = checks ? `${completed}/${checks.length}` : "unknown";
-  const counts = checkCounts(pr), cached = stale || !!pr.historical;
-  const triggerContent = segmented ? <span className="flex min-w-0 flex-1 flex-col gap-2"><span className="flex items-center justify-between gap-2 text-xs"><span>CI {summary}</span><span className="text-muted-foreground">Show checks</span></span><span className="flex h-1.5 w-full gap-0.5 overflow-hidden rounded-full" aria-hidden>
-    {checks?.length ? checks.map((check, index) => { const kind = checkResult(check.state).kind, skipped = ["SKIPPED", "NEUTRAL"].includes(check.state.toUpperCase()); return <span key={`${index}:${check.name}`} className={cn("min-w-px flex-1", cached || skipped ? "bg-muted-foreground/30" : kind === "passed" ? "bg-success-foreground" : kind === "failed" ? "bg-destructive" : kind === "pending" ? "bg-info-foreground" : "bg-muted-foreground/30")} />; }) : <span className="flex-1 bg-muted-foreground/20" />}
-  </span><span className="text-left text-xs font-normal text-muted-foreground">{checks ? `${counts.passed} passed · ${counts.pending} in progress · ${counts.skipped} skipped${counts.failed ? ` · ${counts.failed} failed` : ""}${counts.unknown ? ` · ${counts.unknown} unknown` : ""}` : "Check results unavailable"}</span></span> : <>CI {summary}</>;
+  const cached = stale || !!pr.historical, retainedCi = hasRetainedCi(pr, stale);
+  const normalized: PrCheck[] = (checks ?? []).map((check, index) => ({ id: String(index), name: check.name,
+    state: check.state.toUpperCase() === "NEUTRAL" ? "neutral" : check.state.toUpperCase() === "SKIPPED" ? "skipped" :
+      check.state.toUpperCase() === "CANCELLED" ? "cancelled" : checkResult(check.state).kind }));
+  const triggerContent = segmented ? <PullRequestCheckSummary checks={{ items: normalized, total: checks?.length ?? null, completeness: checks ? "complete" : "unknown" }} stale={cached} retained={retainedCi} /> : <>CI {summary}</>;
   const triggerClass = segmented ? "h-auto w-full justify-start p-0 hover:bg-transparent" : "h-auto p-0";
+  const completion = completionPresentation(pr, stale);
   const content = <>
-      {stale && <p className="text-xs text-muted-foreground">These results are outdated or have not been observed yet.</p>}
-      {(pr.unavailable || pr.observation?.error) && <p className="text-xs text-destructive-foreground">{pr.unavailable || pr.observation?.error}</p>}
+      {retainedCi ? <p className="text-xs text-muted-foreground">These are the last observed check results.</p> : stale && <p className="text-xs text-muted-foreground">These results are outdated or have not been observed yet.</p>}
+      {completion ? <p className={`text-xs ${completion.color}`}>{completion.message}</p>
+        : (pr.unavailable || pr.observation?.error) && <p className="text-xs text-muted-foreground">{pr.unavailable || pr.observation?.error}</p>}
       {!checks ? <p className="text-sm text-muted-foreground">Check results are unavailable.</p> : checks.length === 0
         ? <p className="text-sm text-muted-foreground">No CI checks reported.</p>
         : <ul className="flex flex-col gap-2 text-sm">{checks.map((check, index) => {

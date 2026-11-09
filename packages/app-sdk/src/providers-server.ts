@@ -1,5 +1,8 @@
+import type { HistoryExportGrant, HistoryExportAcknowledge, HistoryExportQuery, HistoryExportSnapshot, HistoryChangePage } from "./history.js";
+import { createHash } from "node:crypto";
+import { Agent, fetch as speechFetch } from "undici";
 import { AssistantClient } from "@hosty-sdk/app/assistant";
-import { ProviderError, type AppPermissionState, type ProviderDescriptor, type ProviderInvocation, type ProviderKind, type SpeechCapabilities, type SpeechResult, type TranslationRequest, type TranslationResult, type TranslationCapabilities } from "@hosty-sdk/app/providers";
+import { ProviderError, type AppPermissionState, type ProviderDescriptor, type ProviderInvocation, type ProviderKind, type MediatedProviderInvocation, type MediatedProviderRequest, type SpeechCapabilities, type SpeechResult, type TranslationRequest, type TranslationResult, type TranslationCapabilities } from "@hosty-sdk/app/providers";
 
 export type ProviderServerOptions = {
   appId?: string; coreOrigin?: string; serviceToken?: string;
@@ -29,6 +32,25 @@ export class ProviderClient {
     });
     return read<T>(response);
   }
+  /** Recover only an already-authorized immutable task attempt; service identity alone grants no user authority. */
+  taskDispatch<T>(input: import("./providers.js").TaskDispatchRequest, signal?: AbortSignal): Promise<T> {
+    return this.coreRequest("/task-dispatch", input, signal);
+  }
+  /** No general user/source credential is minted; the original attempt and grants remain authoritative. */
+  taskWorkspace<T>(input: import("./providers.js").TaskWorkspaceRequest, signal?: AbortSignal): Promise<T> {
+    return this.coreRequest("/task-workspace", input, signal);
+  }
+  taskWorkflow<T>(input: import("./providers.js").TaskWorkflowRequest, signal?: AbortSignal): Promise<T> {
+    return this.coreRequest("/task-workflow", input, signal);
+  }
+  taskDispatchAuthority(dispatch: import("./providers.js").TaskDispatchRef, signal?: AbortSignal): Promise<{ dispatch: import("./providers.js").TaskDispatchRef; scope: import("./providers.js").TaskDispatchScope }> {
+    return this.coreRequest("/task-dispatch-authority", { dispatch }, signal);
+  }
+  /** The service identity accesses only export grants explicitly approved for this installation. */
+  historyExportGet(exportGrantId: string, signal?: AbortSignal): Promise<HistoryExportGrant> { return this.coreRequest("/history-exports/get", { exportGrantId }, signal); }
+  historyExportAcknowledge(input: HistoryExportAcknowledge, signal?: AbortSignal): Promise<HistoryExportGrant> { return this.coreRequest("/history-exports/acknowledge", input, signal); }
+  historyExportSnapshot(input: HistoryExportQuery, signal?: AbortSignal): Promise<HistoryExportSnapshot> { return this.coreRequest("/history-exports/snapshot", input, signal); }
+  historyExportChanges(input: HistoryExportQuery, signal?: AbortSignal): Promise<HistoryChangePage> { return this.coreRequest("/history-exports/changes", input, signal); }
   permissions(signal?: AbortSignal): Promise<AppPermissionState> { return this.coreRequest("/permissions", undefined, signal); }
   async list(kind: ProviderKind, signal?: AbortSignal): Promise<ProviderDescriptor[]> {
     return (await this.coreRequest<{ providers: ProviderDescriptor[] }>(`/providers/${kind}`, undefined, signal)).providers;
@@ -50,13 +72,26 @@ export class ProviderClient {
     return read(await fetch(`${binding.url}/capabilities`, { redirect: "error", signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000), headers: { authorization: `Bearer ${binding.token}` } }));
   }
   async transcribe(provider: Pick<ProviderDescriptor, "appId" | "key">, audio: Blob,
-    options: { language?: string; signal?: AbortSignal } = {}): Promise<SpeechResult> {
-    const signal = options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(300_000)]) : AbortSignal.timeout(300_000);
+    options: { language?: string; signal?: AbortSignal; /** Total deadline, 1–930000 ms; defaults to five minutes. */ timeoutMs?: number } = {}): Promise<SpeechResult> {
+    const timeoutMs = options.timeoutMs ?? 300_000;
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 930_000)
+      throw new ProviderError("speech_timeout_invalid", "Use a transcription timeout between 1 and 930000 milliseconds.", 400);
+    const deadline = AbortSignal.timeout(timeoutMs);
+    const signal = options.signal ? AbortSignal.any([options.signal, deadline]) : deadline;
     const binding = await this.connect({ ...provider, kind: "speech-to-text" }, signal);
     const url = new URL(`${binding.url}/transcriptions`);
     if (options.language) url.searchParams.set("language", options.language);
-    return read(await fetch(url, { method: "POST", redirect: "error", signal,
-      headers: { authorization: `Bearer ${binding.token}`, "content-type": audio.type || "audio/wav" }, body: audio }));
+    const body = new Uint8Array(await audio.arrayBuffer());
+    signal.throwIfAborted();
+    // Node fetch has an independent response-header timeout. A request-owned dispatcher keeps it
+    // aligned with the caller's bounded deadline without changing any other consumer's transport.
+    const dispatcher = new Agent({ headersTimeout: timeoutMs, bodyTimeout: timeoutMs });
+    const init: NonNullable<Parameters<typeof speechFetch>[1]> = { method: "POST", redirect: "error", signal, dispatcher,
+      headers: { authorization: `Bearer ${binding.token}`, "content-type": audio.type || "audio/wav" }, body };
+    // Use fetch from the same Undici version as the dispatcher; Node's bundled fetch can expose
+    // a different handler ABI when an app upgrades its Undici dependency independently.
+    try { return await read(await speechFetch(url, init)); }
+    finally { await dispatcher.close(); }
   }
   async translationCapabilities(provider: Pick<ProviderDescriptor, "appId" | "key">, signal?: AbortSignal): Promise<TranslationCapabilities> {
     const binding = await this.connect({ ...provider, kind: "translation" }, signal);
@@ -82,15 +117,46 @@ export class ProviderClient {
       return { token: fresh.token };
     });
   }
+  /** Bounded task protocol transport. The selected installation is checked on every operation. */
+  async taskRequest<T>(provider: import("./tasks.js").TaskProviderRef, kind: "tasks" | "task-executor",
+    route: string, method: string, input?: unknown, userToken?: () => Promise<string>, signal?: AbortSignal): Promise<T> {
+    const allowed = kind === "tasks"
+      ? /^(?:\/capabilities|\/requests\/[a-zA-Z0-9-]+|\/tasks(?:\?[a-zA-Z0-9%=&_-]*|\/[a-zA-Z0-9-]+(?:\/actions)?)?)$/
+      : /^(?:\/options|\/executions\/[a-zA-Z0-9-]+(?:\/cancel)?)$/;
+    if (!allowed.test(route) || !["GET", "POST", "PATCH", "PUT"].includes(method))
+      throw new ProviderError("task_route_invalid", "Use a version-one task operation.", 400);
+    const binding = await this.connect({ ...provider, kind }, signal, await userToken?.());
+    return read<T>(await fetch(`${binding.url}${route}`, { method, redirect: "error", cache: "no-store",
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000),
+      headers: { authorization: `Bearer ${binding.token}`, "content-type": "application/json" },
+      body: input === undefined ? undefined : JSON.stringify(input) }));
+  }
+  /** Validate an operation-bound Core credential against this exact request. Source ACL checks remain mandatory. */
+  async validateMediated(token: string, kind: ProviderKind, request: MediatedProviderRequest,
+    key = "default", signal?: AbortSignal): Promise<MediatedProviderInvocation> {
+    if (!token.startsWith("hosty_provider.2.") || !request.path.startsWith("/") || request.path.startsWith("//")
+      || !["GET", "POST", "PATCH", "PUT", "DELETE"].includes(request.method) || Buffer.byteLength(request.body) > 1024 * 1024)
+      throw new ProviderError("token_invalid", "A bounded, exact Core-mediated provider request is required.", 401);
+    const invocation = await this.coreRequest<MediatedProviderInvocation>("/provider/introspect-v2", {
+      token, kind, key, operation: request.operation, method: request.method, path: request.path,
+      bodyHash: createHash("sha256").update(request.body).digest("hex"),
+    }, signal);
+    if (invocation.version !== 2 || invocation.kind !== kind || invocation.key !== key || invocation.operation !== request.operation
+      || !invocation.userId || !invocation.principalId || !Array.isArray(invocation.resourceIds))
+      throw new ProviderError("token_invalid", "Core returned an invalid mediated invocation.", 401);
+    return invocation;
+  }
+
   /** Provider-side validation checks live grants on every request; never cache this result. */
   validate(token: string, kind: ProviderKind, key = "default", signal?: AbortSignal): Promise<ProviderInvocation> {
     return this.coreRequest("/provider/introspect", { token, kind, key }, signal);
   }
 }
 
-async function read<T>(response: Response): Promise<T> {
-  const body = await response.json().catch(() => null) as { code?: string; message?: string } | null;
-  if (!response.ok) throw new ProviderError(body?.code ?? "provider_failed", body?.message ?? `Provider request failed (${response.status}).`, response.status);
+async function read<T>(response: Pick<Response, "json" | "ok" | "status">): Promise<T> {
+  const body = await response.json().catch(() => null) as { code?: string; message?: string; error?: { code?: string; message?: string } } | null;
+  const error = body?.error ?? body;
+  if (!response.ok) throw new ProviderError(error?.code ?? "provider_failed", error?.message ?? `Provider request failed (${response.status}).`, response.status);
   if (body === null) throw new ProviderError("provider_response_invalid", "Provider returned an invalid response.", 502);
   return body as T;
 }

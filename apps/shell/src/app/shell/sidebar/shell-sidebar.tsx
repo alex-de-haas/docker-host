@@ -27,7 +27,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
-import { getAccountInitials, getAppPageLinks, resolveAssetSrc } from "../app-helpers";
+import { findDeclaredAppPage, getAccountInitials, getAppPageLinks, resolveAssetSrc } from "../app-helpers";
 import { AppIcon } from "../app-icon";
 import { isAppBusy } from "../runtime-states";
 import { SettingsNavigation } from "./settings-navigation";
@@ -196,6 +196,7 @@ function AppNavigationItem({
 }) {
   const [expanded, setExpanded] = useState(false);
   const pages = getAppPageLinks(app);
+  const activePage = workspace?.appId === app.id ? findDeclaredAppPage(pages, workspace.path) : undefined;
   const primaryPage = pages[0] ?? null;
   const running = app.runtimeState === "running";
   const active = workspace?.appId === app.id;
@@ -340,7 +341,7 @@ function AppNavigationItem({
               type="button"
               className={cn(
                 "flex min-h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-                workspace?.appId === app.id && workspace.path === page.path && "bg-sidebar-accent text-sidebar-accent-foreground",
+                activePage === page && "bg-sidebar-accent text-sidebar-accent-foreground",
               )}
               disabled={busyAction === `${app.id}:open` || !resolveLaunchGate(app, page.service).allowed}
               onClick={() => void onLaunch(app, page, "workspace")}
@@ -359,10 +360,7 @@ function AppNavigationItem({
   );
 }
 
-// Compact-rail item for a running app with more than one page: the icon triggers a flyout instead
-// of launching directly, because the rail has no room for the page list or the standalone-open
-// control. The flyout opens on click (Radix's own path — also keyboard and touch) and on hover
-// after a delay as a mouse-only accelerator.
+// Compact app icons launch the first page; hover or ArrowDown exposes all pages.
 function CompactAppMenu({
   app,
   coreOrigin,
@@ -383,6 +381,7 @@ function CompactAppMenu({
   getStandaloneHref: (app: CoreApp, page: AppPageLink) => string;
 }) {
   const menu = useCompactMenu();
+  const selectedPage = workspace?.appId === app.id ? findDeclaredAppPage(pages, workspace.path) : undefined;
 
   return (
     <DropdownMenu {...menu.menuProps}>
@@ -398,6 +397,22 @@ function CompactAppMenu({
           title={app.displayName}
           aria-label={app.displayName}
           {...menu.triggerProps}
+          disabled={busyAction === `${app.id}:open`}
+          onPointerDown={event => {
+            // Prevent Radix's pointer toggle while preserving keyboard menu access.
+            if (event.button === 0 && !event.ctrlKey) event.preventDefault();
+          }}
+          onKeyDown={event => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              menu.menuProps.onOpenChange(false);
+              void onLaunch(app, pages[0], "workspace");
+            }
+          }}
+          onClick={() => {
+            menu.menuProps.onOpenChange(false);
+            void onLaunch(app, pages[0], "workspace");
+          }}
         >
           <AppIcon src={resolveAssetSrc(coreOrigin, app.iconUrl)} name={app.icon} fallback={LayoutGrid} className="h-5 w-5 shrink-0 rounded-sm" alt="" />
         </button>
@@ -412,7 +427,7 @@ function CompactAppMenu({
         <DropdownMenuSeparator />
         {pages.map((page) => {
           const busy = busyAction === `${app.id}:open`;
-          const activePage = workspace?.appId === app.id && workspace.path === page.path;
+          const activePage = selectedPage === page;
           return (
             <DropdownMenuItem
               key={`${app.id}:${page.path}`}

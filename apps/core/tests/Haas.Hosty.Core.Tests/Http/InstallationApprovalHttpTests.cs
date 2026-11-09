@@ -258,19 +258,23 @@ public sealed class InstallationApprovalHttpTests
         Assert.Equal(HttpStatusCode.Forbidden, page.StatusCode);
     }
 
-    [Fact]
-    public async Task CoreConfirmationInstallsOnlyTheFrozenManifest_AndRecordsApprovedPermissions()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CoreConfirmationInstallsOnlyTheFrozenManifest_AndRecordsApprovedPermissions(bool unknownPermissions)
     {
         await using var harness = await CoreHttpHarness.StartAsync();
         var session = await SeedAdmin(harness);
         var paths = harness.Services.GetRequiredService<CoreDataPaths>();
         var manifestPath = Path.Combine(paths.DataRoot, "fixture.json");
-        const string manifest = """
+        var manifest = """
             {"schemaVersion":"app.0.1","id":"example.fixture","name":"Fixture","version":"1.0.0",
              "provides":[],"corePermissions":["apps.install"],
              "runtimeProfiles":[{"key":"dev","type":"localCommand","default":true}],"defaultRuntime":"dev",
              "services":[{"key":"app","runtimes":{"dev":{"type":"localCommand","command":"echo unused","workingDirectory":"."}}}]}
             """;
+        if (unknownPermissions) manifest = manifest.Replace("\"apps.install\"", "\"apps.install\",\"future.required\"")
+            .Replace("\"provides\":[]", "\"provides\":[],\"optionalCorePermissions\":[\"retired.optional\"]");
         await File.WriteAllTextAsync(manifestPath, manifest);
         using var api = harness.CreateClient();
         api.DefaultRequestHeaders.Authorization = new("Bearer", session);
@@ -281,7 +285,7 @@ public sealed class InstallationApprovalHttpTests
         using var submitted = await api.PostAsJsonAsync($"/api/installations/{id}/submit", new { autostart = false });
         Assert.True(submitted.IsSuccessStatusCode, await submitted.Content.ReadAsStringAsync());
         // The publisher changes its source while the user reads the plan. This cannot add rights.
-        await File.WriteAllTextAsync(manifestPath, manifest.Replace("[\"apps.install\"]", "[\"apps.install\",\"apps.read\"]").Replace("\"provides\":[]", "\"provides\":[\"assistant\"]"));
+        await File.WriteAllTextAsync(manifestPath, manifest.Replace("\"apps.install\"", "\"apps.install\",\"apps.read\"").Replace("\"provides\":[]", "\"provides\":[\"assistant\"]"));
         using var browser = harness.CreateClient();
         browser.DefaultRequestHeaders.Add("Cookie", $"hosty_session={session}");
         var path = $"/install/confirm/{id}";
@@ -289,6 +293,13 @@ public sealed class InstallationApprovalHttpTests
         var html = await page.Content.ReadAsStringAsync();
         Assert.DoesNotContain("Request updates", html);
         Assert.DoesNotContain("Provide an assistant", html);
+        if (unknownPermissions)
+        {
+            Assert.Contains("Unknown required permission (not granted)", html);
+            Assert.Contains("Unsupported optional permission (not granted)", html);
+            Assert.Contains("app features may not work", html);
+            Assert.DoesNotContain("value=\"retired.optional\"", html);
+        }
         var nonce = Regex.Match(html, "name=nonce value=\"([^\"]+)\"").Groups[1].Value;
         Assert.NotEmpty(nonce);
         using var decision = new HttpRequestMessage(HttpMethod.Post, path)

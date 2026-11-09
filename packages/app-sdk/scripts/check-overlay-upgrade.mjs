@@ -4,11 +4,13 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, 
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { verifyChromeHydration } from "./check-chrome-hydration.mjs";
 
 const sdk = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const root = resolve(sdk, "../..");
+const require = createRequire(join(sdk, "package.json"));
 const sandbox = realpathSync(mkdtempSync(join(tmpdir(), "hosty-overlay-upgrade-")));
 // This consumer has no SDK-internal import, copy of the UI, or app-side presentation prop.
 const consumer = `
@@ -33,8 +35,14 @@ try {
     pkg.exports = Object.fromEntries(Object.entries(pkg.exports).map(([key, source]) =>
       [key, source.replace("./src/", "./dist/").replace(/\.tsx?$/, ".js")]));
     writeFileSync(join(dependency, "package.json"), JSON.stringify(pkg));
-    for (const name of ["react", "react-dom", "@noble"]) {
-      symlinkSync(join(root, "node_modules", name), join(directory, "node_modules", name), "dir");
+    // Mirror every declared runtime dependency plus the unchanged consumer's React peers.
+    // Resolve installed package directories without assuming workspace hoisting or package exports.
+    for (const name of new Set([...Object.keys(pkg.dependencies ?? {}), "react", "react-dom"])) {
+      const installed = (require.resolve.paths(name) ?? []).map(path => join(path, name)).find(existsSync);
+      assert.ok(installed, `SDK fixture dependency is not installed: ${name}`);
+      const target = join(directory, "node_modules", name);
+      mkdirSync(dirname(target), { recursive: true });
+      symlinkSync(realpathSync(installed), target, "dir");
     }
     if (revision === "update") {
       // Model a compatible SDK-owned palette revision in the dependency only.

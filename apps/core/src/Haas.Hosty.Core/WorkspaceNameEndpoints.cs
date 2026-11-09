@@ -7,7 +7,7 @@ internal static class WorkspaceNameEndpoints
         const string session = "/api/internal/apps/{appId}/sessions/{sessionId}/workspaces/name";
         app.MapPost(session, (string appId, string sessionId, WorkspaceNameCommand input,
             HttpRequest request, WorkspaceAuthorization auth, DevelopmentWorkspaceService workspaces, CancellationToken ct)
-            => Handle(async () => await workspaces.RenameAsync(await auth.RequireAsync(request, appId, sessionId, ct), input, ct)));
+            => Handle(async () => await workspaces.RenameAsync(await workspaces.SessionResourceOwnerAsync(await auth.RequireAsync(request, appId, sessionId, ct), ct, ownerOnly: true), input, ct)));
         const string inspected = "/api/internal/apps/{appId}/workspace-inspection/{workspaceId}/name";
         app.MapGet(inspected, (string appId, string workspaceId, HttpRequest request,
             WorkspaceInspectionAuthorization auth, WorkspaceInspectionService inspection, DevelopmentWorkspaceService workspaces, CancellationToken ct)

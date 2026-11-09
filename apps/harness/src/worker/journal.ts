@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, open, unlink } from "node:fs/promises";
 import path from "node:path";
-import { MAX_EVENT_BYTES, REPLAY_MS, WorkerApiError, safeIdentity, terminal, type WorkerEvent, type WorkerReceipt, type WorkerRunRequest } from "./contracts.js";
+import { MAX_EVENT_BYTES, REPLAY_MS, WorkerApiError, safeIdentity, terminal, type WorkerEvent, type WorkerReceipt, type WorkerRecovery, type WorkerRunRequest } from "./contracts.js";
 import type { HarnessEvent } from "../harness/adapter.js";
 import { sanitizeToolResult } from "../harness/tool-result.js";
 import { sanitizeCommandResult } from "../harness/command-result.js";
@@ -10,10 +10,39 @@ import { sanitizeWorkerCommandFrame, sanitizeWorkerCommandReceipt } from "./comm
 type StoredRun = { version: 1; hash: string; receipt: WorkerReceipt; events: WorkerEvent[]; bytes: number; replayExpired?: boolean; controls: Record<string, { hash: string; applied: boolean }> };
 export const digest = (value: unknown): string => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
+async function retrySharingViolation<T>(action: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try { return await action(); }
+    catch (error) {
+      if (attempt >= 3 || !["EACCES", "EPERM", "EBUSY"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
+      await new Promise(resolve => setTimeout(resolve, 25 * 2 ** attempt));
+    }
+  }
+}
+type UsageClock = { at: number; active: boolean; carry: number };
+
 /** Atomic per-run records retain acceptance tombstones independently from bounded replay data. */
 export class WorkerJournal {
   readonly generation = randomUUID();
   private tail: Promise<unknown> = Promise.resolve();
+  private readonly usageClocks = new Map<string, UsageClock>();
+  private readonly chargedClocks = new WeakMap<StoredRun, UsageClock>();
+  private activeState(state: WorkerReceipt["state"]) { return ["accepted", "running", "parking", "cancelling"].includes(state); }
+  private charge(record: StoredRun, next = record.receipt.state): void {
+    const now = performance.now(), anchor = this.usageClocks.get(record.receipt.runId);
+    const usage = record.receipt.usage ??= { sequence: 0, activeMs: 0, unknown: true };
+    const elapsed = anchor?.active ? Math.max(0, now - anchor.at) + anchor.carry : anchor?.carry ?? 0;
+    const whole = Math.floor(elapsed);
+    usage.activeMs += whole; usage.sequence++;
+    // Commit the clock only with its durable charge. A failed write must not lose elapsed usage.
+    this.chargedClocks.set(record, { at: now, active: this.activeState(next), carry: elapsed - whole });
+  }
+  async sample(id: string): Promise<void> {
+    await retrySharingViolation(async () => {
+      const record = await this.load(id); if (terminal(record.receipt.state)) return;
+      this.charge(record); await this.save(record);
+    });
+  }
   private listeners = new Map<string, Set<() => void>>();
   constructor(private readonly directory: string, private readonly replayMs = REPLAY_MS, private readonly maxBytes = MAX_EVENT_BYTES, private readonly boundary: "container" | "local" = "local") {}
   exclusive<T>(action: () => Promise<T>): Promise<T> {
@@ -25,7 +54,7 @@ export class WorkerJournal {
   }
   async load(id: string): Promise<StoredRun> {
     try {
-      const record = JSON.parse(await readFile(this.file(id), "utf8")) as StoredRun;
+      const record = JSON.parse(await retrySharingViolation(() => readFile(this.file(id), "utf8"))) as StoredRun;
       if (record.version !== 1 || record.receipt.runId !== id || !Array.isArray(record.events) || !record.controls) throw new Error("Invalid worker journal record.");
       // Normalize retained command metadata and bounded tool output before replay; discard envelope fields.
       record.events = record.events.flatMap(frame => {
@@ -34,7 +63,7 @@ export class WorkerJournal {
       });
       record.receipt = sanitizeWorkerCommandReceipt(record.receipt);
       record.bytes = record.events.reduce((bytes, frame) => bytes + Buffer.byteLength(JSON.stringify(frame)), 0);
-      if (terminal(record.receipt.state) && Date.now() - Date.parse(record.receipt.updatedAt) > this.replayMs) {
+      if (terminal(record.receipt.state) && record.receipt.state !== "parked" && Date.now() - Date.parse(record.receipt.updatedAt) > this.replayMs) {
         record.events = []; record.bytes = 0; record.replayExpired = true;
       }
       return record;
@@ -43,13 +72,16 @@ export class WorkerJournal {
   }
   private async save(record: StoredRun): Promise<void> {
     const file = this.file(record.receipt.runId), temp = `${file}.${randomUUID()}.tmp`;
-    const handle = await open(temp, "wx", 0o600);
-    try { await handle.writeFile(JSON.stringify(record)); await handle.sync(); }
-    finally { await handle.close(); }
-    try { await rename(temp, file); }
-    finally { await unlink(temp).catch(() => {}); }
-    if (process.platform !== "win32") { const directory = await open(this.directory, "r"); try { await directory.sync(); } finally { await directory.close(); } }
-    this.listeners.get(record.receipt.runId)?.forEach(listener => listener());
+    try {
+      const handle = await open(temp, "wx", 0o600);
+      try { await handle.writeFile(JSON.stringify(record)); await handle.sync(); }
+      finally { await handle.close(); }
+      await retrySharingViolation(() => rename(temp, file));
+      const clock = this.chargedClocks.get(record);
+      if (clock) { this.usageClocks.set(record.receipt.runId, clock); this.chargedClocks.delete(record); }
+      if (process.platform !== "win32") { const directory = await open(this.directory, "r"); try { await directory.sync(); } finally { await directory.close(); } }
+      this.listeners.get(record.receipt.runId)?.forEach(listener => listener());
+    } finally { await unlink(temp).catch(() => {}); }
   }
   async initialize(): Promise<void> {
     await mkdir(this.directory, { recursive: true, mode: 0o700 });
@@ -57,12 +89,32 @@ export class WorkerJournal {
       if (!file.endsWith(".json")) continue;
       const record = await this.load(file.slice(0, -5));
       if (!terminal(record.receipt.state)) {
+        const usage = record.receipt.usage ??= { sequence: 0, activeMs: 0, unknown: true };
+        if (this.activeState(record.receipt.state)) usage.unknown = true;
+        usage.sequence++;
         record.receipt.exitConfirmed = this.boundary === "container" && record.receipt.boundary === "container";
-        record.receipt.state = "interrupted"; record.receipt.error = "Worker restarted; the previous run was not repeated.";
-        record.receipt.pending = [];
+        const calls = new Set<string>(); let unknownCall = false;
+        for (const { event } of record.events) {
+          if (event.type === "native_effect" && event.state === "settled") calls.delete(event.id);
+          if (event.type === "tool_use") {
+            if (event.toolUseId) calls.add(event.toolUseId);
+            else if (event.toolName !== "FileChange") unknownCall = true;
+          }
+          if (event.type === "tool_result" || event.type === "command_result") {
+            if (event.status === "unknown") unknownCall = true;
+            else calls.delete(event.toolUseId);
+          }
+        }
+        const parked = !calls.size && !unknownCall && record.receipt.exitConfirmed && record.receipt.state === "parking"
+          && (record.receipt.barrier && record.receipt.snapshot?.nativeSessionId || record.receipt.pending?.length && record.receipt.pending.every(frame => frame.event.type === "question_request" && frame.event.blocking !== false))
+          && !Object.keys(record.receipt.effects ?? {}).length
+          && Object.values(record.controls).every(control => control.applied);
+        record.receipt.state = parked ? "parked" : "interrupted";
+        record.receipt.error = parked ? undefined : "Worker restarted; the previous run was not repeated.";
+        if (!parked) record.receipt.pending = [];
         record.receipt.revision++; record.receipt.updatedAt = new Date().toISOString();
       }
-      if (Date.now() - Date.parse(record.receipt.updatedAt) > this.replayMs) { record.events = []; record.bytes = 0; record.replayExpired = true; }
+      if (record.receipt.state !== "parked" && Date.now() - Date.parse(record.receipt.updatedAt) > this.replayMs) { record.events = []; record.bytes = 0; record.replayExpired = true; }
       await this.save(record);
     }
   }
@@ -71,7 +123,7 @@ export class WorkerJournal {
       for (const file of await readdir(this.directory)) {
         if (!file.endsWith(".json")) continue;
         const record = JSON.parse(await readFile(path.join(this.directory, file), "utf8")) as StoredRun;
-        if (!record.replayExpired && terminal(record.receipt.state) && Date.now() - Date.parse(record.receipt.updatedAt) > this.replayMs) {
+        if (!record.replayExpired && terminal(record.receipt.state) && record.receipt.state !== "parked" && Date.now() - Date.parse(record.receipt.updatedAt) > this.replayMs) {
           record.events = []; record.bytes = 0; record.replayExpired = true; await this.save(record);
         }
       }
@@ -86,17 +138,61 @@ export class WorkerJournal {
     }
     const time = new Date().toISOString();
     const receipt: WorkerReceipt = { runId: id, conversationId: request.conversationId, generation: this.generation,
-      boundary: this.boundary, state: "accepted", revision: 0, selection: request.selection, createdAt: time, updatedAt: time };
+      boundary: this.boundary, usage: { sequence: 1, activeMs: 0, unknown: false }, state: "accepted", revision: 0, selection: request.selection, createdAt: time, updatedAt: time };
     // Provider credentials and MCP callback configuration are never retained in the journal.
     await this.save({ version: 1, hash, receipt, events: [], bytes: 0, controls: {} });
+    this.usageClocks.set(id, { at: performance.now(), active: true, carry: 0 });
     return { receipt, fresh: true };
   }
   async update(id: string, state: WorkerReceipt["state"], error?: string): Promise<WorkerReceipt> {
-    const record = await this.load(id); record.receipt.state = state;
-    if (terminal(state)) { record.receipt.pending = []; record.receipt.exitConfirmed = state !== "interrupted"; }
+    const record = await this.load(id); this.charge(record, state); record.receipt.state = state;
+    if (terminal(state)) { if (state !== "parked") record.receipt.pending = []; record.receipt.exitConfirmed = state !== "interrupted"; }
     record.receipt.revision++; record.receipt.updatedAt = new Date().toISOString();
     if (error) record.receipt.error = error;
     await this.save(record); return record.receipt;
+  }
+  /** Operator attestation and its replay receipt commit together; no native action is replayed. */
+  async recover(id: string, input: WorkerRecovery): Promise<WorkerReceipt> {
+    if (!input || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.requestId)
+      || !safeIdentity(input.generation) || !Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0
+      || input.consumerExitConfirmed !== true || typeof input.actorId !== "string" || !input.actorId.trim() || input.actorId.length > 512)
+      throw new WorkerApiError(400, "recovery_invalid", "Review the exact run and confirm that its agent and commands have stopped.");
+    const hash = digest({ kind: "recover", ...input });
+    let record = await this.load(id).catch(error => {
+      if (error instanceof WorkerApiError && error.code === "run_not_found") return null;
+      throw error;
+    });
+    if (!record) {
+      if (!safeIdentity(input.conversationId) || input.generation !== this.generation || input.expectedRevision !== 0)
+        throw new WorkerApiError(409, "recovery_stale", "The missing run review changed. Refresh its recovery review.");
+      const now = new Date().toISOString();
+      // Explicit operator exit attestation is required even when a legacy admission never reached
+      // the journal. A tombstone prevents a delayed PUT from executing after recovery.
+      record = { version: 1, hash: digest({ kind: "recovered_missing_run", id }), events: [], bytes: 0,
+        receipt: { runId: id, conversationId: input.conversationId, generation: this.generation, state: "cancelled", revision: 1,
+          boundary: this.boundary, exitConfirmed: true, selection: { model: null, reasoningEffort: null }, createdAt: now, updatedAt: now,
+          recovery: { requestId: input.requestId, actorId: input.actorId, confirmedAt: now } },
+        controls: { [input.requestId]: { hash, applied: true } } };
+      await this.save(record); return record.receipt;
+    }
+    if (input.conversationId !== undefined && input.conversationId !== record.receipt.conversationId)
+      throw new WorkerApiError(409, "recovery_stale", "The run does not belong to this conversation.");
+    const prior = record.controls[input.requestId];
+    if (prior) {
+      if (prior.hash !== hash || !prior.applied) throw new WorkerApiError(409, "recovery_conflict", "Reuse the original recovery request.");
+      return record.receipt;
+    }
+    if (record.receipt.state !== "interrupted" || record.receipt.exitConfirmed || record.receipt.generation !== input.generation
+      || record.receipt.revision !== input.expectedRevision)
+      throw new WorkerApiError(409, "recovery_stale", "The run changed. Refresh its recovery review.");
+    if (Object.keys(record.controls).length >= 10000) throw new WorkerApiError(413, "control_limit", "Run control limit exceeded.");
+    const now = new Date().toISOString();
+    record.receipt = { ...record.receipt, state: "cancelled", exitConfirmed: true, pending: [],
+      revision: record.receipt.revision + 1, updatedAt: now,
+      recovery: { requestId: input.requestId, actorId: input.actorId, confirmedAt: now } };
+    record.controls[input.requestId] = { hash, applied: true };
+    await this.save(record);
+    return record.receipt;
   }
   async append(id: string, event: HarnessEvent): Promise<WorkerEvent | null> {
     if (event.type === "command_result" || event.type === "tool_result") {
@@ -110,6 +206,7 @@ export class WorkerJournal {
       && event.input && typeof event.input === "object" && !Array.isArray(event.input))
       event = { ...event, input: { ...event.input, password: "[redacted]" } };
     const record = await this.load(id);
+    this.charge(record);
     const frame: WorkerEvent = { runId: id, generation: record.receipt.generation, sequence: record.receipt.revision + 1, event };
     const bytes = Buffer.byteLength(JSON.stringify(frame));
     if (bytes > 1024 * 1024 || record.bytes + bytes > this.maxBytes) throw new WorkerApiError(413, "event_limit", "Run event retention limit exceeded.");
@@ -118,6 +215,10 @@ export class WorkerJournal {
       const text = snapshot.text ? snapshot.text + "\n\n" + event.text : event.text;
       if (Buffer.byteLength(text) > 1024 * 1024) throw new WorkerApiError(413, "result_limit", "Final response exceeds the snapshot limit.");
       snapshot.text = text;
+    }
+    if (event.type === "native_effect") {
+      if (event.state === "settled") delete record.receipt.effects?.[event.id];
+      else (record.receipt.effects ??= {})[event.id] = event.state;
     }
     if (event.type === "context_usage") snapshot.contextUsage = frame;
     if (event.type === "harness_session") snapshot.nativeSessionId = event.harnessSessionId;
@@ -136,8 +237,12 @@ export class WorkerJournal {
     record.controls[controlId] = { hash, applied: false }; await this.save(record); await apply(record);
     record.controls[controlId]!.applied = true;
     const eventId = (value as { eventId?: number }).eventId;
-    if (eventId !== undefined) record.receipt.pending = record.receipt.pending?.filter(event => event.sequence !== eventId);
+    if (eventId !== undefined && (value as { kind?: string }).kind !== "park") record.receipt.pending = record.receipt.pending?.filter(event => event.sequence !== eventId);
     await this.save(record); return true;
+  }
+  async controlOutcome(id: string, controlId: string): Promise<{ state: "missing" | "unknown" | "applied" }> {
+    const control = (await this.load(id)).controls[controlId];
+    return { state: control ? control.applied ? "applied" : "unknown" : "missing" };
   }
   subscribe(id: string, listener: () => void): () => void {
     const listeners = this.listeners.get(id) ?? new Set(); listeners.add(listener); this.listeners.set(id, listeners);

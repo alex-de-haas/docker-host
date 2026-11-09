@@ -1,6 +1,6 @@
 ---
 created: 2026-10-15
-updated: 2026-10-21
+updated: 2026-11-07
 summary: Harness runs declared API and Worker services over authenticated HTTP and SSE, with shared Core-owned source access and native model and reasoning-effort selection.
 components: [apps/harness, apps/core, apps/shell]
 ---
@@ -18,9 +18,14 @@ Retired `agentWorker` manifests fail validation explicitly.
 
 The API image contains the web export and conversation/MCP coordinator. The Worker image contains
 the provider SDKs, Codex CLI 0.162.1, Claude SDK 0.3.296 and its packaged Claude CLI, Node 24, Git
-2.56.0, Python, ripgrep and .NET SDK 10. Images and Harness packages share version 0.65.2. Worker
+2.56.0, Python, ripgrep and .NET SDK 10. Images and Harness packages share version 0.78.0. Worker
 does not need host agent CLIs, a Docker socket or another Docker daemon. `tini` supplies ordinary
 container signal/reaping behavior; the application starts known child processes directly.
+
+The Ollama adapter calls an external server over HTTP; Worker contains no Ollama server, CLI or
+model weights. Its command/file helpers use the same unprivileged execution identity and process
+cleanup boundary. Native and Docker defaults, scoped tools and durable adapter state are described
+in [provider connections](../ai-gateway-providers/feature.md#ollama-agent-adapter).
 
 Docker admits one execution at a time, including translation and waiting for input. Local admits
 up to 32, subject to provider connection claims. Worker refusal is an explicit error. Normal and
@@ -30,16 +35,23 @@ Child Core admission supplies its existing Core-owned service budgets without a 
 reservation or credit. An adopted running container retains its existing Docker configuration
 until the operator recreates it through ordinary lifecycle.
 
+An admission fence rejects new run IDs but still resolves existing durable acceptance receipts.
+The coordinator treats a definitive pre-admission stopping refusal as a failed turn, without a
+second submission during cleanup. Temporary sharing violations receive bounded retries before
+a journal write fails. Usage clocks advance only with their durable charge; a persistent sampling
+failure fences admission, stops known execution conservatively and logs a bounded error code.
+Health and capabilities expose the fence instead of reporting a usable worker.
+
 ## Direct HTTP And SSE
 
-`src/worker/contracts.ts` defines protocol version 1. The endpoint client depends on a URL,
+`src/worker/contracts.ts` defines protocol version 2. The endpoint client depends on a URL,
 installation identity and credential; its run engine does not depend on Core or container names.
 Hosty connection/resource composition is confined to the provider service. The independently
 listening test fixture exercises the same client with its own journal and no Core connection.
 
 | Endpoint | Behavior |
 | --- | --- |
-| `GET /healthz` | Public process liveness, including before service-secret bootstrap |
+| `GET /healthz` | Public availability, including before service-secret bootstrap; returns 503 when admission is fenced |
 | `GET /v1/capabilities` | Authenticated provider, resource, concurrency and readiness capabilities |
 | `PUT /v1/coordinator` | Authenticate the coordinator callback before enabling provider secrets |
 | `POST /v1/connections/operations/:operation` | Whitelisted private connection operations |
@@ -49,6 +61,7 @@ listening test fixture exercises the same client with its own journal and no Cor
 | `GET /v1/runs/:id/events` | SSE run events with stable run/generation/sequence and cursor replay |
 | `POST /v1/runs/:id/responses` | Correlated approval/question decision with control ID and revision |
 | `POST /v1/runs/:id/cancel` | Idempotent cancellation of known execution |
+| `POST /v1/runs/:id/disable-suggestions` | Suppress optional prediction without cancelling the primary answer |
 | `POST /v1/runs/:id/configuration` | Replace declared MCP callbacks and current auto-approval prefixes |
 | `PUT /v1/conversations/:id/attachments/:name` | Bounded, content-idempotent attachment upload |
 
@@ -70,7 +83,17 @@ Docker service process can confirm the previous container execution boundary end
 does not assume that an old native child exited. Source leases and occupied claims remain when
 termination cannot be confirmed. Cancellation during startup waits for the terminal receipt within a bounded deadline; timeout
 retains the specific source lease. Ordinary cancellation waits for the known CLI and its process
-group; no UID-wide process scan or per-turn container restart is involved.
+group; no UID-wide process scan or per-turn container restart is involved. A later Stop retries
+cleanup through a retained native handle even after an earlier attempt marked the run interrupted.
+For orphaned Local receipts, the owning signed-in operator can use
+[interrupted session recovery](../harness-session-recovery/feature.md) after verifying process exit.
+The attestation is explicit, exact-run and durable; restart alone never releases source leases.
+
+Opted-in interactive chat runs separate successful answer completion from confirmed native exit.
+The optional `suggesting` phase collects one native next-message suggestion for at most five
+seconds. Foreground submissions preempt this phase before admission, and cancellation preserves
+the successful answer. Connection claims and capacity remain held until native exit is confirmed.
+Task and translation runs cannot opt in. See [Contextual prompt suggestions](../assistant-prompt-suggestions/feature.md).
 
 Commands are limited to 1 MiB, attachments to 20 MiB, individual events/final text to 1 MiB and
 retained run events to 64 MiB. Detailed replay expires after seven days; pruning retains the
@@ -134,7 +157,8 @@ events, keyed by run ID and terminal receipt revision. This identity survives re
 sequence, leaving the receipt revision exclusively for terminal delivery.
 Temporary write failures retry without repeating execution or duplicating transcript entries;
 the run receipt stays recoverable until terminal status and cleanup are saved. New turns and model
-changes stay blocked while that receipt remains. Coordinator shutdown
+changes stay blocked while that receipt remains. During optional prediction, a new turn or model
+change first ends collection and awaits that same terminal persistence and cleanup. Coordinator shutdown
 detaches retrying observers. Failed provider runs retain their original error message.
 
 ## Clean Update And Compatibility
@@ -160,6 +184,11 @@ Docker source sharing are outside the first supported matrix.
 Independent provider extraction remains in the [Agent Provider plan](../agent-provider-interface/plan.md).
 This private HTTP/SSE seam does not create `providers.agent`, file synchronization, a public protocol
 or cross-app grants. [Containment](../assistant-runtime-containment/plan.md) retains stricter isolation.
+
+
+The worker also owns [provider usage snapshots](../harness-provider-usage-limits/feature.md).
+Authenticated connection operations expose cached or bounded refreshed observations independently
+of run event retention; diagnostics use the existing connection credential claims.
 
 ## Testing Expectations
 

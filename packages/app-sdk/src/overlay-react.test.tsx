@@ -113,6 +113,13 @@ describe("HostyOverlay", () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json(active(setup)))); await render();
     expect(node.querySelector("input")).toBeNull(); expect(document.querySelector("dialog[open]")).not.toBeNull();
   });
+  it("keeps app content accessible with a non-blocking unsupported permission warning", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ...active(), hosty: { version: 1, setup: "ready", permissionWarning: "unsupported" } }))); await render();
+    expect(node.querySelector("input")?.value).toBe("Unsaved work");
+    expect(document.querySelector("dialog[open]")).toBeNull();
+    expect(document.body.textContent).toContain("Update the app or Core");
+    expect(document.body.textContent).toContain("some app features may not work");
+  });
   it("keeps the administrator review in Core and refreshes on return", async () => {
     let setup = "missing";
     vi.stubGlobal("fetch", vi.fn(async () => Response.json(active(setup, "alice", true))));

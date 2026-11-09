@@ -43,7 +43,7 @@ it("does not render administrator actions for ordinary viewers", async () => {
   expect(container.textContent).toBe("");
 });
 it("shows unsupported required names without review button", async () => {
-  vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => Response.json({ ...missing, permissions: { ...missing.permissions, unsupportedRequired: ["old.name"] } })));
+  vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => Response.json({ ...missing, permissions: { ...missing.permissions, required: ["old.name"], unsupportedRequired: ["old.name"] } })));
   await act(async () => root.render(<MissingPermissionsNotice />));
   expect(container.textContent).toContain("Update the app or Core");
   expect(container.textContent).not.toContain("Request permissions");

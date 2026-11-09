@@ -9,10 +9,16 @@ import { ShellPanelWorkspace } from "../src/app/shell/chrome/shell-panel-workspa
 import { usePanelExpanded } from "../src/app/shell/chrome/use-panel-expanded";
 import { ShellMobileTabs } from "../src/app/shell/chrome/shell-mobile-tabs";
 import { ShellTopStrip } from "../src/app/shell/chrome/shell-top-strip";
+import { toggleAssistantPanel } from "../src/app/shell/assistant/assistant-client";
 import { useAssistantSessionLink } from "../src/app/shell/assistant/use-assistant-session-link";
+import { PanelPreferencesProvider, panelPreferenceKey } from "../src/app/shell/chrome/panel-preferences";
+import { panelKey } from "@hosty-sdk/app/ui/types";
 import { RIGHT_PANEL_OPEN_PREF_KEY } from "../src/app/shell/shell-routes";
 
-vi.mock("@hosty-sdk/app/browser-auth", () => ({ appFetch: (...args: Parameters<typeof fetch>) => fetch(...args) }));
+vi.mock("@hosty-sdk/app/browser-auth", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@hosty-sdk/app/browser-auth")>(),
+  appFetch: (...args: Parameters<typeof fetch>) => fetch(...args),
+}));
 const policy = { microphone: false, popupEscape: false };
 const bootstrap: UiBootstrap = { version: 1, coreOrigin: "https://core.test", userId: "alice", canHost: true, pinnedOpen: true,
   app: { appId: "shell", installationId: "shell-1", origins: ["http://localhost:3000"] } };
@@ -29,17 +35,17 @@ function Shell({ initialOpen, link }: { initialOpen: boolean | null; link: boole
   useEffect(() => { host = panelHost; }, [panelHost]);
   const expanded = usePanelExpanded(panelHost, initialOpen, link);
   useAssistantSessionLink({ host: panelHost, appId: "assistant", assistantIds: ["assistant"], sessionId: link ? "existing" : null, userId: "alice", onOpened: () => {} });
-  return <>
+  return <PanelPreferencesProvider coreOrigin={bootstrap.coreOrigin} userId="alice" assistantAppId="assistant">
     <ShellTopStrip title="Plans" navigationWidth={60} leftRailExpanded={false} onToggleLeftRail={() => {}}
-      rightRailExpanded={expanded} onToggleRightRail={() => panelHost?.setExpanded(!expanded)} showNotifications={false} onBrandClick={() => {}} />
+      rightRailExpanded={expanded} showNotifications={false} onBrandClick={() => {}} />
     <ShellMobileTabs active="dashboard" canManage onNavigate={() => {}} onOpenApps={() => {}} />
     <ShellPanelWorkspace onExpandedChange={persisted}><div>Document<input aria-label="Document draft" defaultValue="" /></div></ShellPanelWorkspace>
-  </>;
+  </PanelPreferencesProvider>;
 }
 async function render(initialOpen: boolean | null, link = false) {
   await act(async () => root.render(<HostyUiRoot panelLayout="slot"><Shell initialOpen={initialOpen} link={link} /></HostyUiRoot>));
 }
-const toggle = (open: boolean) => container.querySelector<HTMLButtonElement>(`button[aria-label="${open ? "Hide" : "Show"} the panel"]`)!;
+const toggle = (open: boolean) => container.querySelector<HTMLButtonElement>(`button[aria-label="${open ? "Hide" : "Open"} assistant — assistant"][aria-pressed="${open}"]`)!;
 beforeEach(() => {
   catalog = panels; host = null; catalogGate = null; resolutionGate = null; refused = false; persisted.mockReset(); localStorage.clear();
   document.cookie = `${RIGHT_PANEL_OPEN_PREF_KEY}=; max-age=0; path=/`;
@@ -70,7 +76,8 @@ it("shows the real collapsed state during a delayed/refused session link and ope
   let release!: () => void;
   catalogGate = new Promise(resolve => { release = resolve; }); refused = true;
   await render(true, true);
-  expect(toggle(false)?.getAttribute("aria-pressed")).toBe("false");
+  expect(container.querySelector('[aria-label="Tools"]')).not.toBeNull();
+  expect(toggle(false)).toBeNull();
   await act(async () => { release(); await host!.refresh(); });
   expect(host!.getSnapshot().selected).toBeNull();
   expect(persisted).not.toHaveBeenCalled();
@@ -78,18 +85,72 @@ it("shows the real collapsed state during a delayed/refused session link and ope
   refused = false;
   await act(async () => toggle(false).click());
   expect(toggle(true)?.getAttribute("aria-pressed")).toBe("true");
-  expect(container.querySelector("aside")?.hidden).toBe(false);
+  expect(container.querySelector("aside")?.closest<HTMLElement>("[data-shell-tool-column]")?.hidden).toBe(false);
 });
-it("applies a legacy open preference to the workspace and collapses on the first toggle", async () => {
+it("applies a legacy open preference and toggles its pinned tool without replacing its frame", async () => {
   localStorage.setItem(RIGHT_PANEL_OPEN_PREF_KEY, "true");
   await render(null);
   expect(toggle(true)?.getAttribute("aria-pressed")).toBe("true");
-  expect(container.querySelector("aside")?.hidden).toBe(false);
+  expect(container.querySelector("aside")?.closest<HTMLElement>("[data-shell-tool-column]")?.hidden).toBe(false);
   expect(document.cookie).toContain(`${RIGHT_PANEL_OPEN_PREF_KEY}=true`);
+  const frame = container.querySelector("iframe");
+  const requests = vi.mocked(fetch).mock.calls.length;
+  expect(toggle(true).className).toContain("bg-brand-soft");
   await act(async () => toggle(true).click());
   expect(host!.getSnapshot().expanded).toBe(false);
+  expect(toggle(false).className).not.toContain("bg-brand-soft");
+  expect(vi.mocked(fetch).mock.calls).toHaveLength(requests);
+  expect(container.querySelector("iframe")).toBe(frame);
+  await act(async () => toggle(false).click());
+  expect(toggle(true)).not.toBeNull();
+  expect(host!.getSnapshot().tools).toHaveLength(1);
+  expect(container.querySelector("iframe")).toBe(frame);
+});
+
+it("hides a visible pinned tool independently of the focused tool and reopens its retained view", async () => {
+  await render(false);
+  await act(async () => { await host!.selectPanel(panels[1].panel); await host!.selectPanel(panels[0].panel); });
+  const frames = [...container.querySelectorAll("iframe")];
+  const [assistant, notes] = host!.getSnapshot().tools;
+  expect(host!.getSnapshot().selectedPresentationId).toBe(notes.presentationId);
+  expect(toggle(true)).not.toBeNull();
+  await act(async () => toggle(true).click());
+  expect(host!.getSnapshot().workspaces?.[0].visibleIds).toEqual([notes.presentationId]);
+  expect(host!.getSnapshot().expanded).toBe(true);
   expect(toggle(false)).not.toBeNull();
-  expect(container.querySelector("aside")?.hidden).toBe(true);
+  expect([...container.querySelectorAll("iframe")]).toEqual(frames);
+  await act(async () => toggle(false).click());
+  expect(host!.getSnapshot().workspaces?.[0].visibleIds).toEqual([notes.presentationId, assistant.presentationId]);
+  expect([...container.querySelectorAll("iframe")]).toEqual(frames);
+});
+
+it("opens a retained pinned tool after workspace collapse instead of hiding its remembered visibility", async () => {
+  await render(false);
+  await act(async () => { await host!.selectPanel(panels[1].panel); host!.collapseWorkspace("default"); });
+  const frame = container.querySelector("iframe");
+  expect(toggle(false)).not.toBeNull();
+  await act(async () => toggle(false).click());
+  expect(toggle(true)).not.toBeNull();
+  expect(host!.getSnapshot().expanded).toBe(true);
+  expect(container.querySelector("iframe")).toBe(frame);
+});
+
+it("hides the last focused visible instance of a tool while retaining its siblings", async () => {
+  await render(false);
+  await act(async () => {
+    await host!.selectPanel(panels[1].panel);
+    await host!.openSurface({ panel: panels[1].panel }, { placement: "side", reuse: "new", requestId: createPresentationRequestId() });
+  });
+  const [first, second] = host!.getSnapshot().tools;
+  const frames = [...container.querySelectorAll("iframe")];
+  await act(async () => host!.focusPresentation(first.presentationId));
+  await act(async () => toggle(true).click());
+  expect(host!.getSnapshot().workspaces?.[0].visibleIds).toEqual([second.presentationId]);
+  expect(toggle(true)).not.toBeNull();
+  await act(async () => toggle(true).click());
+  expect(host!.getSnapshot().workspaces?.[0].visibleIds).toEqual([]);
+  expect(toggle(false)).not.toBeNull();
+  expect([...container.querySelectorAll("iframe")]).toEqual(frames);
 });
 it("defers a legacy open preference to the explicit session link instead of selecting the first tool", async () => {
   localStorage.setItem(RIGHT_PANEL_OPEN_PREF_KEY, "true"); refused = true;
@@ -125,18 +186,18 @@ it("performs one resolution for the first top-strip opening after catalog discov
   await act(async () => release());
   expect(select).toHaveBeenCalledTimes(1);
   expect(requests()).toHaveLength(1);
-  expect(host!.getSnapshot().selected).toEqual(panels[0].panel);
-  expect(container.querySelector("aside")?.hidden).toBe(false);
+  expect(host!.getSnapshot().selected).toEqual(panels[1].panel);
+  expect(container.querySelector("aside")?.closest<HTMLElement>("[data-shell-tool-column]")?.hidden).toBe(false);
 });
 
-it("retains tool frames across rail toggles, switching and the drawer breakpoint", async () => {
+it("retains tool frames across rail toggles, switching and the compact breakpoint", async () => {
   const originalWidth = window.innerWidth;
   await render(false);
   await act(async () => { await host!.selectPanel(panels[1].panel); });
   const assistant = container.querySelector<HTMLIFrameElement>('iframe[title="assistant"]')!;
   expect(assistant).not.toBeNull();
   expect(container.querySelector(".hosty-panel-workspace")).toBeNull();
-  expect(container.querySelector('#workspace')?.firstElementChild?.className).toContain("border");
+  expect(container.querySelector('[data-shell-document]')?.className).toContain("border");
   expect(container.querySelector('[aria-label="Open separately"]')).not.toBeNull();
   expect(container.querySelector('[aria-label="Minimize panel"]')).toBeNull();
   expect(container.querySelector('[aria-label="Close tool"]')).toBeNull();
@@ -149,11 +210,11 @@ it("retains tool frames across rail toggles, switching and the drawer breakpoint
   try {
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 600 });
     await act(async () => resizeWorkspace());
-    expect(container.querySelector('[data-shell-panel-layout="drawer"]')).not.toBeNull();
-    expect(container.querySelector('aside[role="dialog"]')?.getAttribute("aria-modal")).toBe("true");
+    expect(container.querySelector('[data-shell-panel-layout="tabs"]')).not.toBeNull();
+    expect(container.querySelector('[role="tablist"][aria-label="Open tools"]')).not.toBeNull();
     expect(container.querySelector('nav[aria-label="Tools"]')).toBeNull();
     expect(container.querySelector('iframe[title="assistant"]')).toBe(assistant);
-    await act(async () => container.querySelector("aside")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    await act(async () => host!.collapseWorkspace("default"));
     expect(host!.getSnapshot().expanded).toBe(false);
     expect(container.querySelector('iframe[title="assistant"]')).toBe(assistant);
   } finally { Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth }); }
@@ -207,14 +268,14 @@ it.each(["disabled", "hidden"])("honors %s tool chrome and restores the rail whe
   expect(toggle(false)).toBeNull();
   expect(toggle(true)).toBeNull();
   expect(container.querySelector('nav[aria-label="Tools"]')).toBeNull();
-  expect(container.querySelector('#right-panel')?.hasAttribute("hidden")).toBe(true);
+  expect(container.querySelectorAll('[data-shell-tool-column]:not([hidden])')).toHaveLength(0);
   if (mode === "disabled") {
     expect(document.querySelector('[role="dialog"]')).toBeNull();
     await act(async () => { expect((await ui.openToolPicker({ requestId: createPresentationRequestId() })).status).not.toBe("accepted"); });
   }
   await act(async () => host!.setViewChrome("root", {}));
   expect(container.querySelector('[aria-label="Tools"]')).not.toBeNull();
-  expect(container.querySelector('#right-panel')?.hasAttribute("hidden")).toBe(true);
+  expect(container.querySelectorAll('[data-shell-tool-column]:not([hidden])')).toHaveLength(0);
 });
 
 
@@ -292,60 +353,166 @@ it("retains page drafts and the same selected tool through the 599/600 phone bou
       await act(async () => resizeWorkspace());
       expect(container.querySelector('iframe[title="assistant"]')).toBe(frame);
       expect(container.querySelector('[aria-label="Document draft"]')).toBe(draft); expect(draft.value).toBe("Unsaved document text");
-      expect(container.querySelector('[data-shell-panel-layout]')?.getAttribute("data-shell-panel-layout")).toBe(width < 904 ? "drawer" : "dock");
+      expect(container.querySelector('[data-shell-panel-layout]')?.getAttribute("data-shell-panel-layout")).toBe(width < 852 ? "tabs" : "columns");
     }
     await act(async () => host!.collapseWorkspace("default"));
     expect(container.querySelector('iframe[title="assistant"]')).toBe(frame); expect(draft.value).toBe("Unsaved document text");
   } finally { Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth }); }
 });
 
-it("changes only the selected tool presentation through Open views while retaining both frames", async () => {
-  HTMLElement.prototype.scrollIntoView = vi.fn();
+it("shows multiple tools and retains both frames while closing one and switching compact tabs", async () => {
+  const originalWidth = window.innerWidth;
+  try {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1800 });
+    await render(false);
+    await act(async () => { await host!.selectPanel(panels[0].panel); await host!.selectPanel(panels[1].panel); });
+    const frames = [...container.querySelectorAll("iframe")];
+    const [first, second] = host!.getSnapshot().tools;
+    expect(container.querySelectorAll('[data-shell-tool-column]:not([hidden])')).toHaveLength(2);
+    await act(async () => toggleAssistantPanel(host!, "assistant"));
+    expect(host!.getSnapshot().workspaces?.[0].visibleIds).toEqual([first.presentationId]);
+    expect([...container.querySelectorAll("iframe")]).toEqual(frames);
+    await act(async () => toggleAssistantPanel(host!, "assistant"));
+    expect(host!.getSnapshot().workspaces?.[0].visibleIds).toEqual([first.presentationId, second.presentationId]);
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 600 });
+    await act(async () => resizeWorkspace());
+    const tabs = [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+    expect(tabs.map(t => t.textContent)).toEqual(["notes", "assistant"]);
+    await act(async () => tabs[1].dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true, cancelable: true })));
+    expect(document.activeElement).toBe(tabs[0]);
+    expect(host!.getSnapshot().selectedPresentationId).toBe(first.presentationId);
+    expect(container.querySelector(`[data-shell-tool-column="${first.presentationId}"]`)?.hasAttribute("hidden")).toBe(false);
+    expect([...container.querySelectorAll("iframe")]).toEqual(frames);
+    await act(async () => host!.hidePresentation(first.presentationId));
+    expect(host!.getSnapshot().workspaces?.[0].visibleIds).toEqual([second.presentationId]);
+    expect([...container.querySelectorAll("iframe")]).toEqual(frames);
+    await act(async () => host!.focusPresentation(first.presentationId));
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1800 });
+    await act(async () => resizeWorkspace());
+    expect(container.querySelectorAll('[data-shell-tool-column]:not([hidden])')).toHaveLength(2);
+    expect([...container.querySelectorAll("iframe")]).toEqual(frames);
+    await act(async () => host!.closePresentation(first.presentationId));
+    expect([...container.querySelectorAll("iframe")]).toEqual([frames[1]]);
+  } finally { Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth }); }
+});
+it("distinguishes multiple instances of the same tool in compact tabs", async () => {
   await render(false);
-  await act(async () => { await host!.selectPanel(panels[1].panel); });
-  const firstId = host!.getSnapshot().tools[0].presentationId;
-  await act(async () => { await host!.openSurface({ panel: panels[1].panel }, { placement: "side", reuse: "new", requestId: createPresentationRequestId() }); });
-  const frames = [...container.querySelectorAll<HTMLIFrameElement>('iframe[title="assistant"]')];
-  expect(frames).toHaveLength(2);
-  const trigger = container.querySelector<HTMLButtonElement>('[aria-label="Tool instance"]')!;
-  expect(trigger.getAttribute("role")).toBe("combobox");
-  expect(trigger.textContent).toBe("assistant 2");
-  const requests = vi.mocked(fetch).mock.calls.length;
-  await act(async () => trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })));
-  const first = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(node => node.textContent === "assistant 1")!;
-  await act(async () => first.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
-  expect(host!.getSnapshot().workspaces?.find(item => item.workspaceId === "default")?.selectedId).toBe(firstId);
-  expect(trigger.textContent).toBe("assistant 1");
-  expect([...container.querySelectorAll('iframe[title="assistant"]')]).toEqual(frames);
-  expect(frames[0].closest('[data-shell-panel-frame]')?.hasAttribute("hidden")).toBe(false);
-  expect(frames[1].closest('[data-shell-panel-frame]')?.hasAttribute("hidden")).toBe(true);
-  expect(vi.mocked(fetch).mock.calls).toHaveLength(requests);
+  await act(async () => { await host!.selectPanel(panels[1].panel); await host!.openSurface({ panel: panels[1].panel }, { placement: "side", reuse: "new", requestId: createPresentationRequestId() }); });
+  const frames = [...container.querySelectorAll("iframe")];
+  const tabs = [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+  expect(tabs.map(t => t.textContent)).toEqual(["assistant 1", "assistant 2"]);
+  await act(async () => tabs[0].click());
+  expect(tabs[0].getAttribute("aria-selected")).toBe("true");
+  expect([...container.querySelectorAll("iframe")]).toEqual(frames);
 });
 
-it("closes the portaled Open views menu before Escape dismisses the narrow tool sheet", async () => {
-  const originalWidth = window.innerWidth;
+const pinLabel = (name: string) => `Pin ${name} — ${name} to top bar`;
+async function openTools() {
+  await act(async () => container.querySelector<HTMLElement>('header [aria-label="Tools"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })));
+}
+async function pinWithKeyboard(name: string) {
+  const pin = document.querySelector<HTMLElement>(`[role="menuitemcheckbox"][aria-label="${pinLabel(name)}"]`)!;
+  expect(pin).not.toBeNull();
+  await act(async () => pin.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+}
+it("unpins all launchers through Tools without closing retained views and restores a pin without opening it", async () => {
+  HTMLElement.prototype.scrollIntoView = vi.fn(); await render(false);
+  await act(async () => { await host!.selectPanel(panels[1].panel); });
+  const frame = container.querySelector('iframe[title="assistant"]');
+  await openTools(); await pinWithKeyboard("assistant");
+  expect(document.querySelector('[role="menu"]')).not.toBeNull();
+  expect(container.querySelectorAll('[data-pinned-tools] button')).toHaveLength(0);
+  expect(container.querySelector('iframe[title="assistant"]')).toBe(frame); expect(host!.getSnapshot().expanded).toBe(true);
+  const requests = vi.mocked(fetch).mock.calls.length;
+  await pinWithKeyboard("notes");
+  expect(container.querySelector('button[aria-label="Open notes — notes"]')).not.toBeNull();
+  expect(vi.mocked(fetch).mock.calls).toHaveLength(requests); expect(host!.getSnapshot().selected).toEqual(panels[1].panel);
+});
+it("opens an unpinned target from Tools and a session link without silently pinning it or selecting another assistant", async () => {
+  localStorage.setItem(panelPreferenceKey(bootstrap.coreOrigin, "alice"), JSON.stringify({ version: 1, pins: { [panelKey(panels[1].panel)]: false } }));
+  HTMLElement.prototype.scrollIntoView = vi.fn(); await render(true);
+  expect(host!.getSnapshot().selected).toBeNull();
+  await openTools();
+  const item = document.querySelector<HTMLElement>('[role="menuitemcheckbox"][title="Open assistant — assistant"]')!;
+  await act(async () => item.click());
+  expect(host!.getSnapshot().selected).toEqual(panels[1].panel); expect(container.querySelectorAll('[data-pinned-tools] button')).toHaveLength(0);
+  await act(async () => host!.collapseWorkspace("default"));
+  await render(false, true);
+  expect(host!.getSnapshot().selected).toEqual(panels[1].panel); expect(host!.getSnapshot().expanded).toBe(true);
+  expect(container.querySelectorAll('[data-pinned-tools] button')).toHaveLength(0);
+});
+
+it("highlights and toggles an unpinned tool from Tools without hiding another tool or losing frames", async () => {
   HTMLElement.prototype.scrollIntoView = vi.fn();
-  try {
-    Object.defineProperty(window, "innerWidth", { configurable: true, value: 600 });
-    await render(false);
-    await act(async () => { await host!.selectPanel(panels[1].panel); });
-    await act(async () => { await host!.openSurface({ panel: panels[1].panel }, { placement: "side", reuse: "new", requestId: createPresentationRequestId() }); });
-    const selectedId = host!.getSnapshot().workspaces?.find(item => item.workspaceId === "default")?.selectedId;
-    const frames = [...container.querySelectorAll('iframe[title="assistant"]')];
-    const trigger = container.querySelector<HTMLButtonElement>('[aria-label="Tool instance"]')!;
-    expect(container.querySelector('aside[role="dialog"]')?.hasAttribute("hidden")).toBe(false);
-    await act(async () => trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })));
-    const option = document.querySelector<HTMLElement>('[role="option"]')!;
-    expect(option).not.toBeNull();
-    expect(container.querySelector("aside")?.contains(option)).toBe(false);
-    await act(async () => option.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
-    expect(document.querySelector('[role="listbox"]')).toBeNull();
-    expect(container.querySelector('aside[role="dialog"]')?.hasAttribute("hidden")).toBe(false);
-    expect(host!.getSnapshot().workspaces?.find(item => item.workspaceId === "default")).toMatchObject({ expanded: true, selectedId });
-    expect([...container.querySelectorAll('iframe[title="assistant"]')]).toEqual(frames);
-    await act(async () => { await vi.waitFor(() => expect(document.activeElement).toBe(trigger)); });
-    await act(async () => trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
-    expect(host!.getSnapshot().expanded).toBe(false);
-    expect([...container.querySelectorAll('iframe[title="assistant"]')]).toEqual(frames);
-  } finally { Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth }); }
+  localStorage.setItem(panelPreferenceKey(bootstrap.coreOrigin, "alice"), JSON.stringify({ version: 1, pins: { [panelKey(panels[1].panel)]: false } }));
+  await render(false);
+  await act(async () => { await host!.selectPanel(panels[0].panel); });
+  const notes = host!.getSnapshot().tools[0];
+  await openTools();
+  const menuTool = (action: string) => document.querySelector<HTMLElement>(`[role="menuitemcheckbox"][title="${action} assistant — assistant"]`)!;
+  expect(menuTool("Open").getAttribute("aria-checked")).toBe("false");
+  await act(async () => menuTool("Open").click());
+  const frames = [...container.querySelectorAll("iframe")];
+  const assistant = host!.getSnapshot().tools[1];
+  await openTools();
+  expect(menuTool("Hide").getAttribute("aria-checked")).toBe("true");
+  expect(menuTool("Hide").className).toContain("bg-brand-soft");
+  await act(async () => menuTool("Hide").dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+  expect(host!.getSnapshot().workspaces?.[0].visibleIds).toEqual([notes.presentationId]);
+  expect([...container.querySelectorAll("iframe")]).toEqual(frames);
+  await openTools();
+  expect(menuTool("Open").getAttribute("aria-checked")).toBe("false");
+  expect(menuTool("Open").className).not.toContain("bg-brand-soft");
+  await act(async () => menuTool("Open").click());
+  expect(host!.getSnapshot().workspaces?.[0].visibleIds).toEqual([notes.presentationId, assistant.presentationId]);
+  expect([...container.querySelectorAll("iframe")]).toEqual(frames);
+  expect(container.querySelectorAll('[data-pinned-tools] button')).toHaveLength(0);
+});
+it("removes inaccessible launchers, preserves an explicit panel pin through metadata updates and ignores old installations", async () => {
+  localStorage.setItem(panelPreferenceKey(bootstrap.coreOrigin, "alice"), JSON.stringify({ version: 1, pins: { [panelKey(panels[0].panel)]: true } }));
+  await render(false); expect(container.querySelector('button[aria-label="Open notes — notes"]')).not.toBeNull();
+  catalog = [panels[1]]; await act(async () => host!.refresh()); expect(container.querySelector('button[aria-label="Open notes — notes"]')).toBeNull();
+  catalog = [{ ...panels[0], label: "Renamed", route: "/new" }, panels[1]]; await act(async () => host!.refresh()); expect(container.querySelector('button[aria-label="Open notes — Renamed"]')).not.toBeNull();
+  catalog = [{ ...panels[0], panel: { ...panels[0].panel, installationId: "notes-2" } }, panels[1]]; await act(async () => host!.refresh()); expect(container.querySelector('button[aria-label="Open notes — notes"]')).toBeNull();
+});
+it("ignores legacy iframe attention and honors the unpinned assistant shortcut without changing pins", async () => {
+  localStorage.setItem(panelPreferenceKey(bootstrap.coreOrigin, "alice"), JSON.stringify({ version: 1, pins: { [panelKey(panels[1].panel)]: false } }));
+  HTMLElement.prototype.scrollIntoView = vi.fn(); await render(false);
+  await act(async () => { await toggleAssistantPanel(host!, "assistant"); });
+  expect(host!.getSnapshot().selected).toEqual(panels[1].panel);
+  const frame = container.querySelector('iframe[title="assistant"]');
+  await act(async () => { host!.collapseWorkspace("default"); host!.setAttention(panels[1].panel, 3); });
+  expect(container.querySelector('header [aria-label="Tools"]')?.textContent).not.toContain("3");
+  await openTools(); expect(document.querySelector('[aria-label="Needs attention"]')).toBeNull();
+  expect(document.querySelector(`[role="menuitemcheckbox"][aria-label="${pinLabel("assistant")}"]`)?.getAttribute("aria-checked")).toBe("false");
+  expect(container.querySelectorAll('[data-pinned-tools] button')).toHaveLength(0); expect(container.querySelector('iframe[title="assistant"]')).toBe(frame);
+});
+it("does not turn a pin action into an automatic open when restoring an all-unpinned workspace", async () => {
+  localStorage.setItem(panelPreferenceKey(bootstrap.coreOrigin, "alice"), JSON.stringify({ version: 1, pins: { [panelKey(panels[1].panel)]: false } }));
+  HTMLElement.prototype.scrollIntoView = vi.fn(); await render(true);
+  expect(host!.getSnapshot().selected).toBeNull();
+  await openTools(); await pinWithKeyboard("notes");
+  expect(container.querySelector('button[aria-label="Open notes — notes"]')).not.toBeNull();
+  expect(host!.getSnapshot().selected).toBeNull();
+  await act(async () => host!.refresh()); expect(host!.getSnapshot().selected).toBeNull();
+});
+
+it.each(["local", "another tab"])("cancels an in-flight automatic restore when pins change in %s, then permits an explicit open", async source => {
+  let release!: () => void;
+  resolutionGate = new Promise(resolve => { release = resolve; });
+  HTMLElement.prototype.scrollIntoView = vi.fn(); await render(true);
+  expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith("resolve"))).toBe(true);
+  expect(host!.getSnapshot().selected).toBeNull();
+  if (source === "local") { await openTools(); await pinWithKeyboard("assistant"); }
+  else await act(async () => {
+    const key = panelPreferenceKey(bootstrap.coreOrigin, "alice");
+    localStorage.setItem(key, JSON.stringify({ version: 1, pins: { [panelKey(panels[1].panel)]: false } }));
+    window.dispatchEvent(new StorageEvent("storage", { key }));
+  });
+  await act(async () => release());
+  expect(host!.getSnapshot().selected).toBeNull();
+  expect(container.querySelectorAll("iframe")).toHaveLength(0);
+  await act(async () => { await host!.selectPanel(panels[0].panel); });
+  expect(host!.getSnapshot().selected).toEqual(panels[0].panel);
+  expect(container.querySelector('iframe[title="notes"]')).not.toBeNull();
 });

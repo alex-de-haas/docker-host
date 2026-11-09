@@ -96,10 +96,8 @@ html[data-hosty-navigation="hide"] [data-hosty-navigation-boundary] {
 .dark { --chart-1: #FB923C; --chart-4: #4D8BFF; }
 
 /* The same conversation stays mounted while a workspace or review covers it on a phone. */
-@media (max-width: 899px) {
-  .harness-workspace-sheet { position: fixed; inset: max(8%, env(safe-area-inset-top)) 0 0; padding-bottom: env(safe-area-inset-bottom); overscroll-behavior: contain; z-index: 40; background: var(--background); border-radius: 16px 16px 0 0; box-shadow: 0 -10px 40px #0003; display: flex; flex-direction: column; }
-  .harness-workspace-sheet > aside { min-height: 0; flex: 1; }
-}
+.harness-workspace-sheet { position: fixed; inset: max(8%, env(safe-area-inset-top)) 0 0; padding-bottom: env(safe-area-inset-bottom); overscroll-behavior: contain; z-index: 40; background: var(--background); border-radius: 16px 16px 0 0; box-shadow: 0 -10px 40px #0003; display: flex; flex-direction: column; }
+.harness-workspace-sheet > aside { min-height: 0; flex: 1; }
 
 @media (pointer: coarse) {
   input, select, textarea, [data-slot="app-mention-mirror"] {

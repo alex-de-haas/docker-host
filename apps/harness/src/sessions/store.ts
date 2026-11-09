@@ -11,6 +11,7 @@ import path from "node:path";
 export type SessionStatus =
   | "idle"
   | "running"
+  | "suggesting"
   | "awaiting_approval"
   | "awaiting_question"
   | "cancelled"
@@ -27,9 +28,40 @@ export type SessionStatus =
 export type SessionAutonomy = "normal" | "autonomous";
 
 export interface SessionRecord {
+  messageQueue?: import("./message-queue.js").MessageQueueRecord;
+  suggestionHistoryVersion?: 1;
+  /** Provider-owned execution attempt identity; distinct from chat and native session IDs. */
+  agentRunId?: string;
+  taskExecutionId?: string;
+  taskDispatch?: import("@hosty-sdk/app/providers").TaskDispatchRef;
+  autonomyRevision?: number;
+  taskAdoptionApplied?: { id: string; executionId: string; before: string; after: string };
+  taskInputGeneration?: number;
+  taskCancellationRequested?: string;
+  taskBarrier?: {
+    id: string; kind: import("../worker/contracts.js").WorkerBarrier["kind"]; generation: number; owner: string;
+    snapshot: string; runId: string; state: "armed" | "parked" | "resuming"; commandId: string;
+    origin?: "coordinator"; acknowledgedSequence?: number; nativeSessionId?: string; sourceBefore?: SessionRecord["taskWorkspace"]; control?: import("../worker/contracts.js").WorkerBarrier;
+  };
+  taskContext?: {
+    taskRef: import("@hosty-sdk/app/tasks").TaskRef;
+    rootTaskRef: import("@hosty-sdk/app/tasks").TaskRef;
+    parentTaskRef: import("@hosty-sdk/app/tasks").TaskRef | null;
+    executor: { kind: "option" | "configuration"; id: string; revision: number; name: string; rationale?: string };
+  };
+  taskConfiguration?: { id: string; revision: number; rationale: string };
+  taskDecisionReference?: import("@hosty-sdk/app/decisions").DecisionReference;
+  taskRun?: { started: boolean; exitConfirmed: boolean; error?: string };
+  agentProfile?: import("../profiles/types.js").AgentProfile | null;
+  profileLocked?: boolean;
+  /** Standing instructions captured once; skill package contents remain current. */
+  instructionSnapshot?: string;
+  skillIds?: string[];
+  skillExportId?: string;
   executionSelection?: import("../worker/contracts.js").ExecutionSelection;
   selectionRevision?: number;
   workerRun?: { id: string; sequence: number; generation?: string };
+  workerRecovery?: { runId: string; input: import("../worker/contracts.js").WorkerRecovery; state: "pending" | "completed" };
   retentionVersion?: 1;
   retention?: import("./retention.js").RetentionStatus;
   retentionCleanup?: { requestId: string; expectedRevision: number };
@@ -38,6 +70,11 @@ export interface SessionRecord {
   autonomy?: SessionAutonomy;
   developmentWorkspaces?: import("./development.js").DevelopmentWorkspace[];
   developmentLease?: string;
+  taskWorkspace?: { source?: import("@hosty-sdk/app/providers").TaskSourceReference; dispatch: import("@hosty-sdk/app/providers").TaskDispatchRef; executionId: string; workspaceId: string; leaseId: string };
+  developmentLeaseState?: "admitting" | "stopped";
+  taskHistoryAssociation?: { workspaceId: string; associatedAt: string };
+  workspaceAssociation?: { id: string; revision: number } | null;
+  associationRequests?: { id: string; action: "attach" | "detach"; input: Record<string, unknown>; state: "pending" | "succeeded" | "rejected" }[];
   /** Freeze omitted prepare names before dispatch so a mutable conversation title cannot change replay. */
   developmentPreparationNames?: { requestId: string; name?: string }[];
   workspaceActivation?: { action: "execution-select" | "activation-apply" | "activation-return" | "activation-resume"; input: Record<string, unknown>; state: "queued" | "blocked" | "dispatched"; error?: string };
@@ -45,20 +82,21 @@ export interface SessionRecord {
   coreEnvironments?: import("@hosty-sdk/app/sandbox/server").CoreEnvironment[];
   appCreations?: { input: Record<string, unknown>; state: "pending" | "observed" | "rejected"; prompt?: string }[];
   coreEnvironmentOperations?: { action: string; input: Record<string, unknown>; state: "pending" | "observed" }[];
-  sandboxPlans?: import("@hosty-sdk/app/sandbox/server").SandboxPlan[];
-  sandboxInstances?: import("@hosty-sdk/app/sandbox/server").SandboxInstance[];
-  sandboxOperations?: { action: string; input: Record<string, unknown>; state: "pending" | "observed" }[];
   handoffPending?: boolean;
   handoffDraft?: { text: string; attachments: { name: string; size: number }[] };
   handoffDispatch?: { id: string; state: "queued" | "running" | "completed" | "failed" | "unknown"; error?: string };
 
   id: string;
+  decisionGeneration?: number;
+  decisionRunIds?: Record<string, string>;
+  decisionWaitIds?: string[];
+  parkedQuestionRun?: { id: string; confirmedAt: string };
   mcpPendingApprovals?: { id: string; tool: string }[];
   publicationReferences?: { workspaceId: string; repository: string; url: string; head?: string }[];
   connectionId?: string;
   connectionRevision?: number;
   connectionIdentity?: string;
-  harnessKind?: "claude" | "codex";
+  harnessKind?: "claude" | "codex" | "ollama";
   providerLocked?: boolean;
   title: string | null;
   /**
@@ -71,6 +109,9 @@ export interface SessionRecord {
   context: Record<string, string> | null;
   appIds?: string[];
   appContextRevision?: number;
+  appContextRequests?: import("./app-context-tools.js").ContextReceipt[];
+  /** Durable outbox committed atomically with the selection and replay receipt. */
+  appContextEvent?: StoredEvent;
   creationRequest?: { id: string; fingerprint: string };
   status: SessionStatus;
   createdAt: string;
@@ -78,6 +119,7 @@ export interface SessionRecord {
   createdBy: string;
   harnessSessionId: string | null;
   lastEventSeq: number;
+  workspaceActivitySequence?: number;
 }
 
 /** A dispatch receipt is admission evidence, not a promise that the model completed successfully. */
@@ -183,7 +225,16 @@ export class SessionStore {
     await this.saveRecord(record);
   }
 
+  messageQueueDirectory(id: string): string { return path.join(this.sessionDir(id), "message-queue"); }
+
   private readonly writes = new Map<string, Promise<void>>();
+  private readonly observers = new Set<(id: string) => Promise<void>>();
+  /** Source projections observe durable writes and deletion; they never become source authority. */
+  observeChanges(observer: (id: string) => Promise<void>): () => void {
+    this.observers.add(observer); return () => this.observers.delete(observer);
+  }
+  private async changed(id: string): Promise<void> { for (const observer of this.observers) await observer(id); }
+
 
   async saveRecord(record: SessionRecord): Promise<void> {
     const content = JSON.stringify(record, null, 2);
@@ -194,7 +245,7 @@ export class SessionStore {
       await rename(`${target}.tmp`, target);
     });
     this.writes.set(record.id, task);
-    try { await task; } finally { if (this.writes.get(record.id) === task) this.writes.delete(record.id); }
+    try { await task; await this.changed(record.id); } finally { if (this.writes.get(record.id) === task) this.writes.delete(record.id); }
   }
 
   private messageReceiptPath(id: string, requestId: string): string {
@@ -264,6 +315,7 @@ export class SessionStore {
       `${JSON.stringify(event)}\n`,
       "utf8",
     );
+    await this.changed(id);
   }
 
   async readEvents(id: string, afterSeq = 0): Promise<StoredEvent[]> {
@@ -296,6 +348,7 @@ export class SessionStore {
   async deleteSession(id: string): Promise<void> {
     await this.removeWorkspace(id);
     await rm(this.sessionDir(id), { recursive: true, force: true });
+    await this.changed(id);
   }
 
 }

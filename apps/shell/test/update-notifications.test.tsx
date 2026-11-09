@@ -41,10 +41,11 @@ it("does not replay old warnings on reload or turn recovery into a new update", 
   expect(notifications.success).not.toHaveBeenCalled();
 });
 
-it("reports a new completed operation even when the intermediate snapshots were missed", async () => {
+it("keeps completed updates quiet even when the intermediate snapshots were missed", async () => {
   await render({ ...base, lastOperation: "start", operationStatus: "started" });
   await render({ ...base, operationStatus: "updated", updateProgress: { stage: "completed", changedAt: "new" } });
-  expect(notifications.success).toHaveBeenCalledOnce();
+  expect(notifications.success).not.toHaveBeenCalled();
+  expect(notifications.error).not.toHaveBeenCalled();
   expect(notifications.warning).not.toHaveBeenCalled();
 });
 

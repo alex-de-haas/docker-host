@@ -6,7 +6,7 @@ using System.Text.RegularExpressions;
 
 namespace Haas.Hosty.Core;
 
-internal sealed partial class GitHubPublicationProvider(HttpClient http, IClock clock) : IPublicationProvider
+internal sealed partial class GitHubPublicationProvider(HttpClient http, IClock clock, PullRequestProviderBudget? budget = null, PullRequestObservationCache? observationCache = null) : IPublicationProvider
 {
     public string NormalizeRepository(string url) => Repository(url);
     public string PullRequestUrl(string repository, int number) => $"https://github.com/{Slug(repository)}/pull/{number}";
@@ -28,7 +28,13 @@ internal sealed partial class GitHubPublicationProvider(HttpClient http, IClock 
     private static string Escape(string value) => Uri.EscapeDataString(value);
     private async Task<JsonNode> Request(UserProviderConnection c, HttpMethod method, string path, JsonNode? body, CancellationToken ct)
     {
+        try { return await RequestBudgeted(c, method, path, body, ct); }
+        catch (PullRequestException e) { throw new PublicationException(e.Code, e.Message); }
+    }
+    private async Task<JsonNode> RequestBudgeted(UserProviderConnection c, HttpMethod method, string path, JsonNode? body, CancellationToken ct)
+    {
         if (c.Provider != "github") throw new PublicationException("provider_unsupported", "Select a GitHub connection.");
+        using var budgetLease = budget is null ? null : await budget.AcquireAsync(c, path == "/graphql", false, ct, waitForPacing: true);
         using var request = new HttpRequestMessage(method, "https://api.github.com" + path);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", c.AccessToken);
         request.Headers.UserAgent.ParseAdd("Hosty/1.0");
@@ -37,7 +43,10 @@ internal sealed partial class GitHubPublicationProvider(HttpClient http, IClock 
         if (body is not null) request.Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json");
         using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
         if (!response.IsSuccessStatusCode)
+        {
+            budgetLease?.Complete(response);
             throw new PublicationException("provider_unavailable", $"GitHub returned {(int)response.StatusCode}. Check connection permissions, repository rules and rate limits; recover uncertain operations with the same request ID.");
+        }
         if (response.Content.Headers.ContentLength > 4 * 1024 * 1024) throw new PublicationException("response_limit", "GitHub response is too large to verify.");
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
         using var buffer = new MemoryStream();
@@ -48,6 +57,7 @@ internal sealed partial class GitHubPublicationProvider(HttpClient http, IClock 
             if (buffer.Length > 4 * 1024 * 1024) throw new PublicationException("response_limit", "GitHub response is too large to verify.");
         }
         var result = JsonNode.Parse(buffer.ToArray()) ?? throw new PublicationException("response_invalid", "GitHub returned no data.");
+        budgetLease?.Complete(response, result);
         if (result is JsonObject obj && obj.ContainsKey("errors")) throw new PublicationException("provider_unavailable", "GitHub could not verify all requested facts. Check connection permissions.");
         return result;
     }
@@ -104,11 +114,10 @@ internal sealed partial class GitHubPublicationProvider(HttpClient http, IClock 
     {
         var url = "https://github.com/" + Slug(destination) + ".git";
         await PrivateSourceService.ValidateGitConfigAsync(w.Path, url, ct);
-        var start = AppSourceService.CreateGitStartInfo(w.Path, ["push", "--no-verify", url, head + ":refs/heads/" + branch]);
+        var start = AppSourceService.CreateGitStartInfo(w.Path, ["push", "--porcelain", "--no-verify", url, head + ":refs/heads/" + branch]);
         PrivateSourceService.ConfigureGit(start, url, "Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes("x-access-token:" + c.AccessToken)));
         var result = await ProcessRunner.RunAsync(start, TimeSpan.FromMinutes(5), ct, 256 * 1024);
-        if (result.TimedOut || result.ExitCode != 0)
-            throw new PublicationException("push_uncertain", "Push did not confirm success. Recover using the same request ID; remote history is never force-pushed.");
+        RequirePushSuccess(result, branch);
     }
     public async Task<PublicationReference?> FindAsync(UserProviderConnection c, PublicationRecord r, CancellationToken ct)
     {
@@ -170,6 +179,7 @@ internal sealed partial class GitHubPublicationProvider(HttpClient http, IClock 
                   }
                 }
               }
+              rateLimit { cost limit remaining resetAt }
             }
             """;
         var parts = Slug(r.Repository).Split('/');
@@ -197,10 +207,15 @@ internal sealed partial class GitHubPublicationProvider(HttpClient http, IClock 
         var checks = contexts?["nodes"]?.AsArray().Select(n => new PublicationCheck(Text(n, "name") is { Length: > 0 } name ? name : Text(n, "context"),
             Text(n, "status") is { Length: > 0 } status ? status == "COMPLETED" ? Text(n, "conclusion") : status : Text(n, "state"))).ToArray() ?? [];
         var state = Text(pr, "state").ToLowerInvariant(); var merge = Text(pr["mergeCommit"], "oid");
-        var complete = false; string? completionError = null;
+        var complete = false; string? completionError = null; PublicationCompletionIssue? completionIssue = null;
         if (state == "merged" && requireWorkspaceBranch)
         {
-            try { complete = await Completion(c, r, merge, ct); }
+            try
+            {
+                completionIssue = await Completion(c, r, merge, ct);
+                complete = completionIssue is null;
+                if (completionIssue is not null) completionError = $"PR merged; {completionIssue.Kind} '{completionIssue.Requirement}' is {completionIssue.State} for merge commit {merge}. Required checks must run on the merge commit; PR-head checks do not satisfy release policy.";
+            }
             catch (Exception ex) when (ex is PublicationException or HttpRequestException or JsonException)
             { completionError = "PR merged; configured release evidence is unavailable or not yet published."; }
         }
@@ -216,43 +231,12 @@ internal sealed partial class GitHubPublicationProvider(HttpClient http, IClock 
         return new(clock.UtcNow, state, Text(pr, "headRefOid"), Text(pr, "baseRefName"), merge,
             pr["isDraft"]?.GetValue<bool>() ?? false, Text(pr, "mergeStateStatus"), Text(pr, "reviewDecision"),
             threads["nodes"]!.AsArray().Count(t => t?["isResolved"]?.GetValue<bool>() != true), complete, checks, completionError, reviews, Text(pr, "title"), pr["comments"]?["totalCount"]?.GetValue<int>(), Text(pr, "baseRefOid"),
-            state == "merged" && DateTimeOffset.TryParse(Text(pr, "mergedAt"), out var mergedAt) ? mergedAt : null);
+            state == "merged" && DateTimeOffset.TryParse(Text(pr, "mergedAt"), out var mergedAt) ? mergedAt : null, completionIssue);
     }
     private static PublicationReviewComment ReviewComment(JsonNode? node) => new(Text(node, "id"), VisibleReviewBody(Text(node, "body")),
         Text(node?["author"], "login"), Text(node?["author"], "__typename"),
         DateTimeOffset.TryParse(Text(node, "createdAt"), out var created) ? created : null,
         Text(node, "url"), node?["databaseId"]?.GetValue<long>());
-    private async Task<bool> Completion(UserProviderConnection c, PublicationRecord r, string commit, CancellationToken ct)
-    {
-        if (string.IsNullOrEmpty(commit)) return false;
-        if (r.Policy.RequiredChecks.Length > 0)
-        {
-            var checks = await Request(c, HttpMethod.Get, $"/repos/{r.Repository}/commits/{commit}/check-runs?per_page=100&filter=latest", null, ct);
-            if (checks["total_count"]!.GetValue<int>() > 100) return false;
-            var runs = checks["check_runs"]!.AsArray();
-            if (r.Policy.RequiredChecks.Any(name => !runs.Any(n => Text(n, "name") == name && Text(n, "head_sha") == commit && Text(n, "conclusion") == "success" && Text(n, "status") == "completed"))) return false;
-        }
-        foreach (var workflow in r.Policy.RequiredWorkflows)
-        {
-            var runs = await Request(c, HttpMethod.Get, $"/repos/{r.Repository}/actions/workflows/{workflow}/runs?head_sha={commit}&per_page=100", null, ct);
-            if (runs["total_count"]!.GetValue<int>() > 100) return false;
-            var latest = runs["workflow_runs"]!.AsArray().Where(n => Text(n, "head_sha") == commit && Text(n, "head_branch") == r.TargetBranch && Text(n, "event") != "pull_request").OrderByDescending(n => n?["run_number"]?.GetValue<long>() ?? 0).FirstOrDefault();
-            if (latest is null || Text(latest, "conclusion") != "success") return false;
-        }
-        foreach (var artifact in r.Policy.Artifacts)
-        {
-            if (artifact.Kind != "release")
-            {
-                if (!await new PublicationArtifacts(http).Verify(artifact, r.Repository, commit, ct)) return false;
-                continue;
-            }
-            var tag = await Request(c, HttpMethod.Get, $"/repos/{r.Repository}/commits/{Escape(artifact.Tag!)}", null, ct);
-            if (Text(tag, "sha") != commit) return false;
-            var release = await Request(c, HttpMethod.Get, $"/repos/{r.Repository}/releases/tags/{Escape(artifact.Tag!)}", null, ct);
-            if (release["draft"]?.GetValue<bool>() != false || !release["assets"]!.AsArray().Any(a => Text(a, "name") == artifact.Asset && Text(a, "state") == "uploaded")) return false;
-        }
-        return true;
-    }
     public async Task MergeAsync(UserProviderConnection c, PublicationRecord r, string head, string method, CancellationToken ct)
     {
         if (method is not ("merge" or "squash" or "rebase")) throw new PublicationException("method_invalid", "Choose a repository-permitted merge method.");

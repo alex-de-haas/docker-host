@@ -523,9 +523,7 @@ internal sealed partial class LocalCommandRuntimeAdapter(
         if (context.PreparationOnly)
         {
             // Builds receive scratch data and no app identity, settings, mount or dependency grants.
-            startInfo.Environment.Clear();
-            foreach (var key in new[] { "PATH", "HOME", "SystemRoot", "TEMP", "TMP", "TMPDIR" })
-                if (Environment.GetEnvironmentVariable(key) is { } value) startInfo.Environment[key] = value;
+            NativeProcessEnvironment.ResetToSystemEssentials(startInfo);
             foreach (var pair in service.Runtime.Environment) startInfo.Environment[pair.Key] = pair.Value;
             startInfo.Environment["HOSTY_APP_DATA_DIR"] = context.AppDataPath;
             startInfo.Environment["HOSTY_APP_CACHE_DIR"] = context.AppCachePath;
@@ -534,11 +532,10 @@ internal sealed partial class LocalCommandRuntimeAdapter(
         if (service.Injection is not null)
         {
             // Opted-in filtering starts with OS essentials, not the Core process's credentials.
-            startInfo.Environment.Clear();
-            foreach (var key in new[] { "PATH", "HOME", "USERPROFILE", "SystemRoot", "WINDIR", "TEMP", "TMP", "TMPDIR", "LANG", "LC_ALL" })
-                if (Environment.GetEnvironmentVariable(key) is { } value) startInfo.Environment[key] = value;
+            NativeProcessEnvironment.ResetToSystemEssentials(startInfo);
         }
         startInfo.Environment["HOSTY_APP_ID"] = context.App.Id;
+        startInfo.Environment["HOSTY_APP_INSTALLATION_ID"] = PanelIdentity.Installation(context.App);
         startInfo.Environment["HOSTY_APP_SERVICE_KEY"] = service.Key;
         foreach (var environment in BuildCoreEnvironment(config, CorePublicOrigin))
         {

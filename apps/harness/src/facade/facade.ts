@@ -1,7 +1,7 @@
 // One MCP endpoint that is the whole host.
 //
 // An external agent client (Claude Code, an editor, a phone client) puts *one* entry in its config
-// and gets Core's control-plane tools, every enabled app's tools, and those apps' skills — over
+// and gets Core's control-plane tools and every enabled app's tools over
 // HTTPS, with no CLI or SSH anywhere on the path. That is the gap `hosty mcp` cannot close: the
 // connector is a process, so it has to run on the host.
 //
@@ -16,7 +16,6 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { buildProtectedResourceMetadata, buildWwwAuthenticate } from "@hosty-sdk/app/oauth-resource";
-import { composeSystemPrompt, partitionSkills, type AppSkill } from "../mcp/skills.js";
 import { PROTOCOL_VERSION, callTool, openSession } from "../mcp/upstream.js";
 import type { ProviderDirectory } from "../settings/providers.js";
 import type { SettingsStore } from "../settings/store.js";
@@ -348,7 +347,7 @@ export class McpFacade {
 
     const assembled: CachedCatalog = {
       catalog,
-      instructions: await this.instructionsFor(catalog, this.providers.approvedSkills()),
+      instructions: this.instructionsFor(),
       revision: discovered?.revision,
       expiresAtMs: Date.now() + CATALOG_TTL_MS,
     };
@@ -356,30 +355,14 @@ export class McpFacade {
     return assembled;
   }
 
-  /**
-   * The facade's own text first and unwrapped, then the skills of apps whose tools this client
-   * actually received — and only those the operator has approved.
-   *
-   * Skills use the same Core approval digest as sessions and the CLI connector.
-   */
-  private async instructionsFor(catalog: Catalog, approved: Record<string, string>): Promise<string | undefined> {
+  /** MCP supplies tools; native package provisioning uses Core's independent skills API. */
+  private instructionsFor(): string {
     const own =
       "You are connected to a Hosty host. The tools below come from the apps installed on it and " +
       "from Hosty Core itself; each tool's description names the app it belongs to. This surface is " +
       "read-only: anything that would change the host is not offered here.";
 
-    const skills: AppSkill[] = [];
-    for (const appId of catalog.contributingAppIds) {
-      if (appId === CORE_TARGET) {
-        continue;
-      }
-      const skill = await this.providers.readSkill(appId);
-      if (skill) {
-        skills.push(skill);
-      }
-    }
-
-    return composeSystemPrompt(own, partitionSkills(skills, approved).deliver);
+    return own;
   }
 }
 

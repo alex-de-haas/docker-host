@@ -1,9 +1,11 @@
 ---
 created: 2026-10-23
-updated: 2026-10-23
+updated: 2026-11-07
 ---
 
 # Ideas
+
+<!-- idea-id-high-water: 19 -->
 
 This living document collects early possibilities, questions and examples that may expand or
 complement the [vision](vision.md). The vision describes the system the owner wants to build;
@@ -49,6 +51,17 @@ across several ideas.
 
 ## I1. Memory As A Replaceable Provider
 
+**Owner boundary, 2026-10-26:** Keep learned long-term memory outside the current
+[composable-work investigation](features/composable-agent-systems/plan.md). Session context,
+explicitly shared materials, artifacts and skills should suffice for its first compositions.
+Do not add a memory implementation, automatic extraction or adaptive policy as a dependency.
+
+A later idea is to remember a person's recurring preferences or decisions so an agent does not
+repeat the same question. Its applicability, visibility, correction and forgetting need separate
+design: an old answer must not silently become a new permission or override changed circumstances.
+This remains an idea; the owner is concerned about unpredictable influence on subsequent behavior.
+Existing session history and explicit standing instructions are not excluded by this boundary.
+
 **Source:** Slides 12 and 17 describe chat search with embeddings, Qdrant and hybrid ranking.
 Slide 16 separately describes explicit save/recall/delete tools and user/chat memory in MongoDB.
 
@@ -73,6 +86,8 @@ The existing MCP direction places provider discovery and authority in Core and t
 apps. A new Core-hosted memory facade would require an explicit reconciliation with that boundary.
 Provider selection, unavailable providers and the scopes visible to each user/session also remain
 open. Neither a shared workspace nor a common index implies access to all users' knowledge.
+The 2026-10-30 conversation-history decision in I2 settles Core API/MCP exposure for that narrower
+source/history domain only; it does not select a learned-memory facade or move knowledge storage.
 
 **Vision exploration (moved 2026-10-23):** Knowledge is broader than project documentation:
 personal information, documents, selected conversation excerpts, requirements, decisions and
@@ -123,6 +138,16 @@ apply to retrieval and derived copies; indexing is not a new access grant.
   the model; recall never widens tool permissions.
 
 ## I2. Search Across Knowledge Providers
+
+**Conversation-history direction, 2026-10-30:** The owner selects the concrete chat-history slice
+for [Conversation History](features/conversation-history/feature.md): Core-owned common schemas and
+API/MCP reads, explicit sharing and search over provider-owned source records, including declared
+provider extensions and an indexer-compatible change/deletion contract. The owner confirms Qdrant
+as the intended future indexing integration and explicitly defers connecting it now. That plan
+verifies compatibility with a test consumer; no Qdrant deployment, embedding model or vector schema
+is selected for implementation. This promotes only the history slice: general knowledge ingestion,
+learned memory and automatic context insertion remain ideas. The historical options below are
+comparison material, not competing ownership for the new plan.
 
 **Owner exploration:** A separate search provider might search knowledge stored by another provider.
 The difficult part is supplying information through a common contract without exposing a database's
@@ -205,6 +230,19 @@ already delivered to a conversation.
   the extracted text.
 
 ## I3. Shared Artifacts, External References And Configurable Storage
+
+**Selected minimal investigation, 2026-10-26:** The
+[composable-work Draft](features/composable-agent-systems/plan.md#basic-artifacts-and-explicit-context-handoffs)
+coordinates basic artifacts for handing work between sessions and agents; the separate [Shared Artifacts Draft](features/shared-artifacts/plan.md) owns that minimal capability. A worker can return a
+summary and described/versioned reports, scripts or prepared documents; another authorized worker
+can find and read those results without sharing a complete transcript. People can contribute input
+materials too. Preserve provenance and the intended lifetime beyond temporary execution resources.
+
+Keep session context, explicitly selected shared context, artifacts, skills and learned memory
+distinct. Memory remains deferred under I1. The initial artifact investigation does not require
+session/workspace/global tiers, automatic promotion, semantic indexing or a storage-provider choice.
+An agent or configured workflow can select useful outputs to save. The external-storage and broader
+knowledge possibilities below remain ideas, not additional deliverables for that Draft.
 
 **Source:** Slides 6 and 7 describe lazy tool-result loading and files stored separately from their
 database metadata. Slide 20 describes extracting text from audio, images and documents.
@@ -435,6 +473,11 @@ plan. Serialized work can be scoped to a task or resource where needed rather th
 - Feedback loops: an agent triggered by a comment event writes a comment, which triggers it again.
   Record the originating actor on events, suppress self-triggering and cap chain depth.
 
+**Scoped planning, 2026-10-29:** [Assistant Events And Session Continuation](features/assistant-events-and-continuation/plan.md)
+owns activity/result delivery into a bound assistant conversation. It consumes Notifications D6 and
+Durable Agent Jobs D7; scheduling and automation applications retain their existing owners. The plan
+remains Draft and creates no live automation.
+
 ## I7. Personal Speech Correction And A Reusable Dataset
 
 **Owner exploration:** Preserve raw recognition output, let the speaker correct names such as
@@ -575,6 +618,11 @@ need to be identified as its own execution mechanism. This idea adds no new impl
 - Deep fan-out makes a flat trace unreadable. Collapse children by default and show one summary
   line per child.
 
+**Related planning, 2026-10-29:** [Assistant Events And Session Continuation](features/assistant-events-and-continuation/plan.md)
+addresses cross-app task-result delivery to a parent wait. Native subagent lifecycle stays with its
+provider; a completion must not be injected twice. This does not select a general subagent UI/control
+contract or complete the capability investigation above.
+
 ## I10. Interactive Sessions That Wait For User Actions
 
 **Owner exploration:** A user could ask an assistant to start an interactive activity, act in an
@@ -635,6 +683,13 @@ sampling is deprecated.
 - MCP clients apply tool-call timeouts, so an open tool call cannot wait at a person's pace.
 - Every action that starts a model run costs latency and money. Decide per activity whether to run
   on every action, on request, or only on significant events.
+
+**Scoped planning, 2026-10-29:** The owner requested
+[Assistant Events And Session Continuation](features/assistant-events-and-continuation/plan.md) for
+activity/conversation bindings, authorized reactions, context recovery and delegated-task results.
+The interactive example uses app-owned state and chat history in the selected compatible assistant.
+The independent Chess application plan was withdrawn on 2026-11-07; a bounded platform fixture
+retains interactive contract acceptance. Broader interactive activities remain ideas.
 
 ## I11. Application-Provided Roles, Instructions And Interaction Profiles
 
@@ -714,11 +769,22 @@ addition to any feature plan.
   review of changed instructions on update, as manifests are reviewed today.
 - Personas drift over long conversations. Keep profiles short and send them again each turn.
 
+**Owner decision, 2026-11-07:** The independent Hosty Chess application plan was withdrawn and its
+unpublished local draft removed. The chess examples above remain exploratory illustrations of
+roles and interaction profiles, with no application delivery commitment.
+[Assistant Events And Session Continuation](features/assistant-events-and-continuation/plan.md)
+retains its generic platform scope and bounded interactive acceptance fixture.
+
 ## I12. Workspace, Session And Material Lifetimes
 
 **Moved from the vision on 2026-10-23.** The vision keeps decision 52's direction: workspaces are
 optional, sessions are independent, and their association is a separate relationship. This section
 keeps the details that still need design.
+
+The [Multiple Sessions In A Shared Workspace feature](features/workspace-sessions/feature.md)
+implements the approved 2026-10-25 scope of explicit administrator membership, concurrent internal
+sessions, independent source identity and lifecycle/retention compatibility. Shared materials,
+broader team roles and knowledge lifetimes remain exploration here.
 
 | Resource | Intended lifetime and relationship |
 | --- | --- |
@@ -794,6 +860,41 @@ ask an authorized agent to propose a fix, and a developer may inspect, adjust an
 changes. Users can exchange responsibility or work concurrently. None of those roles or transitions
 is a mandatory platform workflow, and a single person can use the same capabilities.
 
+**Selected investigation, 2026-10-25:** [vision decision 54](vision.md) and the
+[Composable Human And Agent Work Draft](features/composable-agent-systems/plan.md) now track
+the reusable capability/gap map, ownership questions and investigation order behind these
+compositions. Specific QA application designs and collaboration forms below remain ideas.
+The umbrella and the separate [capability Drafts](features/composable-agent-systems/plan.md#separate-owners-and-initial-packaging-2026-10-26) preserve existing feature ownership and authorize no implementation.
+
+**Owner refinement, 2026-10-26:** [Vision decision 55](vision.md) and that Draft capture the
+preferred shared task/agent-participant model, explicit artifact handoffs and a common Decisions
+surface. One document can initiate one task, whose responsible participant creates visible child
+tasks and assignments. A coordinator keeps its extra workflow state and agent hierarchy separately.
+Task and agent hierarchies are independent. Decisions 62-64 select existing users/apps and opaque
+executor choices; Harness profiles remain internal configurations with lifetimes distinct from runs.
+
+Related delegated work normally reuses a selected workspace. An unrelated defect discovered during
+feature work can instead have an explicit independent workspace and PR, with a human decision about
+urgency or hotfix targeting. Avoid accidental duplicate workspace creation; do not enforce one
+workspace on every task tree. Choosing child versus related task remains an app workflow decision.
+
+The [Basic Tasks](features/basic-tasks/feature.md) feature provides the first manual/API task journey.
+The [Harness Work Orchestration Draft](features/harness-work-orchestration/plan.md) retains the later
+combined Tasks, Decisions and Artifacts experience; separate clients can also consume the contracts. Decisions can reach a responsible human or a team reviewer rather than only
+the person watching a chat. A quick reply continues live work; an overnight wait preserves the
+question and resumable state, and the eventual answer triggers continuation. Exact packaging,
+schema and resource-wait policy remain Draft questions. Basic artifacts support these handoffs;
+learned memory stays only in I1 and outside the current work.
+
+**Skill-library boundary, 2026-10-26:** [Vision decisions 57-60](vision.md) and the
+[Shared Skills](features/agent-skills/feature.md) select one administrator-managed Core pool,
+profile selections and current installed content, without retained session revisions. Automatic Git skill updates and personal
+skill libraries remain possible later ideas, without a commitment or current deliverable. The first
+slice has Git/app packages, manual Git updates, app-coupled updates and editable instructions/profiles;
+it excludes a package editor/fork workflow. Manual skill package upload is deferred as a possible
+later idea, without a delivery commitment. These possibilities must not reintroduce
+per-user pools or in-product package editing as dependencies of the initial orchestration UI.
+
 It should be possible to distinguish earlier implementation work from later QA/agent changes and
 review a particular change before committing it. Commits and PRs provide some evidence; reviewable
 uncommitted changes and links to sessions/runs are also candidates. Their representation is open,
@@ -820,9 +921,11 @@ point, not proof that this proposed QA application or automatic scenario pipelin
 - Playwright Test Agents (planner, generator and healer, since Playwright 1.56) together with
   Playwright MCP follow the same path: describe a scenario, generate a test, review it, run it.
   Reports can use Playwright's HTML reporter or Allure.
-- Attribution with several writers: one worktree per session, which Hosty already uses, plus
-  commit trailers such as `Hosty-Session: <id>`. Jujutsu (jj), whose working copy is always a
-  commit with an operation log, is a model for reviewable uncommitted changes.
+- Attribution with several writers: isolated worktrees and commit trailers such as
+  `Hosty-Session: <id>` are possible approaches. Hosty's
+  [shared-workspace feature](features/workspace-sessions/feature.md) permits cooperative concurrent
+  sessions; their activity alone does not prove authorship. Jujutsu (jj), whose working copy is
+  always a commit with an operation log, is a model for reviewable uncommitted changes.
 - Joint planning by voice: LiveKit Agents or Pipecat.
 
 **Known pitfalls:**
@@ -967,6 +1070,67 @@ explicit reads/reports, already excludes automatic Codex synchronization, and is
 approved by this note.
 
 
+## I18. Active Pull Request Inbox And Repository Observation
+
+**Owner clarification, 2026-10-29:** Provide one convenient Harness view of active pull requests
+in repositories of installed Hosty applications, including Dependabot and PRs created outside Hosty
+conversations/workspaces. Derive the set automatically from installed app source metadata, including
+stopped apps, and deduplicate shared repositories. No favorites or manual repository selection is
+needed. The owner selects this browsing feature first: a dedicated Harness navigation page with
+PR list and detailed description/status view, plus a separate list-only side panel with compact
+CI summaries following workspace cards. Neither surface requires an assistant chat. The owner also
+selects adaptive Core polling with a shared cache and demand-based cadence, without webhooks for the
+first version. Relevant live stream subscriptions request minute discovery and faster updates for
+active PRs, equally for a compact list or workspace. Without subscribers, discovery and PR reads use
+the five-minute baseline. Reuse existing personal connections and track only accessible installed-app
+repositories; retained metadata or local files do not establish provider access. The owning plan
+records stream lifetime, selection rules, cadence transitions and budgets.
+
+**Developed into a Draft, 2026-10-29:** The owner requested the separate
+[Harness Pull Request Inbox plan](features/harness-pull-request-inbox/plan.md). That plan now owns
+installed-app repository derivation, observation, active PR browsing, page/panel presentation, optional
+related-work links and their open design decisions. I18 retains the origin without duplicating its
+deliverables. The owner subsequently delegated the remaining technical decisions and requested
+Ready on 2026-10-29, then explicitly authorized implementation without commits. The
+[read-only page and panel](features/harness-pull-request-inbox/feature.md) now have local implementation
+and managed fixture acceptance; real GitHub acceptance remains open at the owner’s request. No live
+routine, watch or commit is authorized by this record.
+
+**Possible observation alternative:** The owner has public production origins and wants to preserve
+webhooks as a later option. The ready PR plan separates polling from a shared cache/invalidation input
+so a future authorized receiver can reuse the same UI stream. Callback registration, secrets,
+signature/delivery validation, recovery and deployment need their own scoped implementation plan
+when selected. This idea creates no receiver/relay/tunnel deliverable in the first browsing version.
+
+**General mechanism, separate consumer:** PR events are one example among arbitrary application
+events. [Assistant Events](features/assistant-events-and-continuation/plan.md),
+[Durable Agent Jobs](features/durable-agent-jobs/plan.md) and
+[Shared Decisions](features/shared-decisions/feature.md) retain the general contracts and behavior.
+The PR view can work without them. A Dependabot routine could later analyze a revision and report,
+ask or merge under configured authority. PR browsing is selected first, while live automation and
+the first event producer remain separately scoped decisions. External PR mutations require their
+own scope; green CI is not merge authority.
+
+## I19. Feedback Follow-Up And Automated Handling
+
+**Owner exploration, 2026-10-30:** Ordinary users might later browse their own submitted feedback
+and its progress, possibly through a separate feedback application. No reporter client, notifications or
+post-submission user access is selected for the current
+[Feedback Inbox](features/app-feedback-inbox/feature.md) delivery; it supports draft capture/submission
+and administrator-only records in Harness.
+
+A future orchestrator or routine could inspect unprocessed reports and route related groups to
+specialized agents, for example implementation or design. The execution owner, trigger, grouping,
+concurrency, cancellation and recovery semantics need a separate proposal once that orchestration
+exists. General prompt queues are likewise a separate session capability, not a hidden queue in
+Feedback. This overlaps the event/schedule exploration in [I6](#i6-events-schedules-and-optional-automation-applications)
+and the independently scoped [Harness orchestration](features/harness-work-orchestration/plan.md)
+and [Durable Agent Jobs](features/durable-agent-jobs/plan.md) plans.
+
+Former Feedback D6 was retired by this explicit scope revision, not implemented or silently counted
+as complete. These possibilities are not a delivery commitment. The owner keeps feedback and tasks
+independent: no task conversion, attachment or task-domain dependency is selected.
+
 ## Platform Precedents
 
 Hosty is meant to work like an operating system for its own applications. These precedents from
@@ -1009,7 +1173,7 @@ itself can evolve and is not a frozen review of that commit.
 - [Agent/model provider interface](features/agent-provider-interface/plan.md) is Draft and already
   considers multiple models, Ollama, bounded inference and full agent execution. Agent connections
   in Harness are not yet a generally available `providers.agent` contract.
-- [AI Agent Bridge](features/ai-agent-bridge/plan.md#step-11--durable-jobs-and-notifications) owns
+- [Durable Agent Jobs](features/durable-agent-jobs/plan.md) owns the former Bridge D11 scope of
   remaining durable jobs; [Core events](features/core-event-bus/feature.md) do not supply their
   persistence contract. This collection does not change either plan's scope or status.
 - [SpeechEngine](../apps/whisper/Hosty.Whisper/SpeechEngine.cs) and the

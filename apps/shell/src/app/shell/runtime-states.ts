@@ -34,7 +34,7 @@ export function matchesAppStateFilter(
     case "running": return isAppUp(app.runtimeState);
     case "transitioning": return isAppBusy(app.runtimeState);
     case "updates": return Boolean(app.updateCheck?.updateAvailable);
-    case "attention": return Boolean(app.configurationReadiness?.required || app.permissionState?.error || (app.permissionState?.status === "known" && app.permissionState.missingRequired.length > 0) || app.restartRequired || app.updateCheck?.error || app.lastError || app.operationStatus === "failed" || app.runtimeState === "unknown" ||
+    case "attention": return Boolean(app.configurationReadiness?.required || app.permissionState?.error || (app.permissionState?.status === "known" && app.permissionState.missingRequired.length > 0) || app.restartRequired || app.updateCheck?.error || app.lastError || app.operationStatus === "failed" || app.runtimeState === "unknown" || app.runtimeState === "waiting" ||
       (app.operationStatus !== "updating" && !isAppBusy(app.runtimeState) && app.health?.status !== "healthy" &&
         ((isAppUp(app.runtimeState) && ["degraded", "unhealthy"].includes(app.health?.status ?? "")) ||
           (app.lastOperation === "update" && app.updateProgress?.stage === "needs-attention"))));

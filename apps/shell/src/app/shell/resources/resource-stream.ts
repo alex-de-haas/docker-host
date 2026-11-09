@@ -13,7 +13,7 @@ function isSample(data: unknown): data is ResourceEvent {
     event.frame?.sequence === event.sequence && event.frame.timestamp === event.timestamp && Array.isArray(event.frame.services);
 }
 function fromEvent(event: ResourceEvent): ResourceSnapshot {
-  return { runId: event.runId, sequence: event.sequence, now: event.timestamp, logicalProcessors: event.logicalProcessors, history: [event.frame] };
+  return { runId: event.runId, sequence: event.sequence, now: event.timestamp, logicalProcessors: event.logicalProcessors, history: [event.frame], apiActivity: event.frame.apiActivity };
 }
 
 /** Owns one Dashboard's history. No timers fetch on a healthy supported stream. */

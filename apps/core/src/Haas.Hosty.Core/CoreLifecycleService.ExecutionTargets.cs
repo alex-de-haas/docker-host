@@ -4,12 +4,32 @@ namespace Haas.Hosty.Core;
 
 internal sealed partial class CoreLifecycleService
 {
+    private static RuntimeProfileManifest[] PackageRuntimeProfiles(IReadOnlyList<RuntimeProfileManifest> installed, string? defaultRuntime)
+    {
+        var releases = installed.Where(profile => !profile.Development).ToArray();
+        if (releases.Length != 0) return releases;
+        // A source-only installation still has its reviewed installed baseline. Retain only its
+        // resolved default profile for Return; other development recipes require a workspace.
+        var baseline = !string.IsNullOrWhiteSpace(defaultRuntime)
+            ? installed.FirstOrDefault(profile => profile.Key == defaultRuntime)
+            : installed.FirstOrDefault(profile => profile.Default) ?? installed.FirstOrDefault();
+        return baseline is null ? [] : [baseline];
+    }
+
+    private const string ManualPackageSourceMessage = "Clear the manually configured Source override using the supported source controls before selecting this installed package. Current source and data are retained.";
+
+    private bool HasManualPackageSourceOverride(AppRecord app, AppDevOperation? operation)
+        => operation is not { Active: true } && app.SourceState?.LocalOverridePath is { } source &&
+            (app.SourceState.Type != "local-git" || source != paths.ResolveManagedCheckoutPath(app.Id));
+
     internal async Task<string?> PackageRuntimeAsync(AppRecord app, CancellationToken ct)
     {
-        var installed = await manifests.ReadRuntimeProfilesAsync(app.ManifestPath!, ct);
-        var releases = installed.Where(p => !p.Development).ToArray();
-        if (releases.Any(p => p.Key == app.SelectedRuntime)) return app.SelectedRuntime;
+        var (installed, defaultRuntime) = await manifests.ReadRuntimeProfilesAndDefaultAsync(app.ManifestPath!, ct);
+        var releases = PackageRuntimeProfiles(installed, defaultRuntime);
+        // Validate retained recovery state even when the current package is selectable. Inventory
+        // isolates corrupt per-app state; a direct request must retain its underlying diagnosis.
         var saved = await JsonStorage.ReadAsync<AppPackageBaseline>(Path.Combine(AppExecutionStore.DirectoryFor(paths, app.Id), "package.json"), ct);
+        if (releases.Any(p => p.Key == app.SelectedRuntime)) return app.SelectedRuntime;
         if (saved?.Installation == app.InstalledAt && releases.Any(p => p.Key == saved.Runtime)) return saved.Runtime;
         var active = await AppDevStore.ReadAsync(paths, app, ct);
         if (releases.Any(p => p.Key == active?.PreviousRuntime)) return active!.PreviousRuntime;
@@ -20,11 +40,19 @@ internal sealed partial class CoreLifecycleService
         IReadOnlySet<string>? selectableWorktrees = null)
     {
         var app = await RequireAppAsync(appId, ct);
-        var installed = await manifests.ReadRuntimeProfilesAsync(app.ManifestPath!, ct);
-        var choices = installed.Where(p => !p.Development)
-            .Select(p => new AppExecutionChoice("package", p.Key, null, null, p.Key)).ToList();
+        var (installed, defaultRuntime) = await manifests.ReadRuntimeProfilesAndDefaultAsync(app.ManifestPath!, ct);
+        var packages = PackageRuntimeProfiles(installed, defaultRuntime);
         var operation = await AppDevStore.ReadAsync(paths, app, ct);
-        AppExecutionChoice current = new(installed.Any(p => p.Key == app.SelectedRuntime && !p.Development)
+        var manualOverride = HasManualPackageSourceOverride(app, operation);
+        var choices = packages
+            .Select(p => new AppExecutionChoice("package", p.Key, null, null, p.Key,
+                !p.Development || !manualOverride, p.Development && manualOverride ? ManualPackageSourceMessage : null)).ToList();
+        // The recovery journal remains active before entry binds and while package Return starts.
+        // Describe the persisted runtime/source binding, not the unfinished operation's worktree.
+        var workspaceBound = operation is { Active: true } && operation.Installation == app.InstalledAt &&
+            app.SelectedRuntime == operation.TargetRuntime && app.SourceState?.LocalOverridePath == operation.SourcePath;
+        var currentWorktreeId = workspaceBound ? operation!.WorktreeId : null;
+        AppExecutionChoice current = new(!workspaceBound && packages.Any(p => p.Key == app.SelectedRuntime && (!p.Development || !manualOverride))
             ? "package" : "legacy", app.SelectedRuntime, null, null, app.SelectedRuntime ?? "Unknown runtime");
         foreach (var workspace in inventory.Workspaces.Where(w => w.State != "released"))
         {
@@ -32,7 +60,7 @@ internal sealed partial class CoreLifecycleService
             if (candidates.Length == 0) continue;
             var allowed = candidates.Where(t => selectableWorktrees is null || selectableWorktrees.Contains(t.Id)).ToArray();
             var resolved = await ResolveWorkspaceTreeAsync(app, workspace.Id, allowed.Select(t => t.Id).ToArray(),
-                null, operation is { Active: true } ? operation.WorktreeId : null, ct);
+                null, currentWorktreeId, ct);
             var tree = allowed.SingleOrDefault(t => t.Id == resolved.WorktreeId);
             var recipe = tree is null ? null : await ReadWorkspaceRecipeAsync(app, installed, tree.Id, ct, resolved.Runtime);
             var reason = tree is null ? resolved.Unavailable
@@ -41,7 +69,7 @@ internal sealed partial class CoreLifecycleService
             var choice = new AppExecutionChoice("workspace", recipe, workspace.Id, tree?.Id,
                 workspace.Name ?? workspace.Owner.Label, reason is null, reason);
             if (allowed.Length > 0) choices.Add(choice);
-            if (operation is { Active: true } && candidates.SingleOrDefault(t => t.Id == operation.WorktreeId) is { } activeTree)
+            if (currentWorktreeId is not null && candidates.SingleOrDefault(t => t.Id == currentWorktreeId) is { } activeTree)
                 current = new("workspace", app.SelectedRuntime, workspace.Id, activeTree.Id, choice.Name,
                     allowed.Any(t => t.Id == activeTree.Id), allowed.Any(t => t.Id == activeTree.Id) ? null
                         : "This workspace belongs to another user or credential.");
@@ -120,8 +148,13 @@ internal sealed partial class CoreLifecycleService
         {
             var target = request.Runtime ?? packageRuntime ?? throw DevError("package_unavailable", "This app has no installed release runtime.");
             var selection = await manifests.LoadAsync(app.ManifestPath!, target, ct);
-            if (selection.RuntimeProfile.Development)
+            var (profiles, defaultRuntime) = await manifests.ReadRuntimeProfilesAndDefaultAsync(app.ManifestPath!, ct);
+            if (!PackageRuntimeProfiles(profiles, defaultRuntime).Any(profile => profile.Key == target))
                 throw DevError("package_invalid", "A development recipe is only available through a registered workspace.");
+            // A legacy manual override has no captured transition to Return. Keep its source and
+            // runtime untouched instead of claiming a package switch that still executes that code.
+            if (selection.RuntimeProfile.Development && HasManualPackageSourceOverride(app, active))
+                throw DevError("package_source_override", ManualPackageSourceMessage);
             await ClaimAsync();
             if (active is { Active: true })
             {
@@ -156,19 +189,19 @@ internal sealed partial class CoreLifecycleService
             t.WorkspaceId == request.WorkspaceId && t.State == "active" &&
             t.Apps.Any(a => a.AppId == app.Id && a.Installation == app.InstalledAt)).ToArray();
         var explicitTree = request.WorktreeId is { } requestedTree ? await DevWorkspaces.Read(requestedTree, null, ct) : null;
-        if (explicitTree is not null && (explicitTree.WorkspaceId != request.WorkspaceId || explicitTree.Owner.UserId != journal.Actor.UserId))
-            throw DevError("workspace_forbidden", "This workspace does not belong to the acting user.");
+        if (explicitTree is not null && (explicitTree.WorkspaceId != request.WorkspaceId))
+            throw DevError("workspace_forbidden", "The selected worktree is outside this workspace.");
         var resolvedTree = await ResolveWorkspaceTreeAsync(app, request.WorkspaceId!, candidates.Select(t => t.Id).ToArray(),
             explicitTree?.Id, active is { Active: true } ? active.WorktreeId : null, ct);
         var candidateTree = candidates.SingleOrDefault(t => t.Id == resolvedTree.WorktreeId)
             ?? throw DevError("worktree_required", resolvedTree.Unavailable ?? "Configure this application's worktree in the workspace.");
-        if (candidateTree.WorkspaceId != request.WorkspaceId || candidateTree.Owner.UserId != journal.Actor.UserId)
-            throw DevError("workspace_forbidden", "This workspace does not belong to the acting user.");
-        if (journal.Actor.Principal is { } principal && (principal.StartsWith("oauth:", StringComparison.Ordinal) || principal.StartsWith("manual:", StringComparison.Ordinal))
-            && candidateTree.Owner.External?.PrincipalId != principal)
-            throw DevError("workspace_forbidden", "This direct credential does not own the workspace.");
+        if (candidateTree.WorkspaceId != request.WorkspaceId)
+            throw DevError("workspace_forbidden", "The selected worktree is outside this workspace.");
+        var sourceActor = journal.Actor.AppId is { } callerApp && journal.Actor.Installation is { } installation
+            ? new WorkspaceOwner(callerApp, installation, journal.Actor.UserId, journal.Request.RequestId)
+            : WorkspaceOwner.ForExternal(journal.Actor.UserId, journal.Actor.Principal ?? "local-control", journal.Request.RequestId, "Runtime selection");
         // The operator deliberately selects editable workspace source; an editing lease is not a lifecycle lock.
-        await DevWorkspaces.CheckDevTreeAsync(candidateTree, app, candidateTree.Owner, ct);
+        await DevWorkspaces.CheckDevTreeAsync(candidateTree, app, sourceActor, ct);
         var installedRecipe = await manifests.ReadRuntimeProfilesAsync(app.ManifestPath!, ct);
         var runtime = request.Runtime ?? await ReadWorkspaceRecipeAsync(app, installedRecipe, candidateTree.Id, ct, resolvedTree.Runtime)
             ?? throw DevError("recipe_required", "Configure a development runtime during workspace setup.");
@@ -179,7 +212,7 @@ internal sealed partial class CoreLifecycleService
             await ClaimAsync();
             return journal with { State = "completed", Phase = "completed" };
         }
-        var actor = new AppDevActor(journal.Actor.UserId, journal.Actor.Via, candidateTree.Owner, TrustedLocalOperator: journal.Actor.Principal == "local-control");
+        var actor = new AppDevActor(journal.Actor.UserId, journal.Actor.Via, sourceActor, TrustedLocalOperator: journal.Actor.Principal == "local-control");
         var candidate = await PrepareExecutionCandidateAsync(app, candidateTree.Path, runtime, actor, ct);
         try { await EnsureExecutionCandidateApprovedAsync(candidate, app, ct); }
         catch (AppLifecycleException ex) when (ex.Code == "dev_review_required")
@@ -269,7 +302,7 @@ internal sealed partial class CoreLifecycleService
             }
             await apps.UpdateAppAsync(app.Id, current => current with { DevModeId = retained.Id }, ct);
         }
-        await DevWorkspaces.WithDevAdmissionAsync(candidateTree.Id, await RequireAppAsync(app.Id, ct), candidateTree.Owner,
+        await DevWorkspaces.WithDevAdmissionAsync(candidateTree.Id, await RequireAppAsync(app.Id, ct), sourceActor,
             async () => { await EnterDevAsync(retained, request.RequestId, ct); return true; }, ct);
         var configuredRecipe = await JsonStorage.ReadAsync<WorkspaceExecutionRecipe>(WorkspaceRecipePath(app.Id, candidateTree.Id), ct);
         await JsonStorage.WriteAsync(WorkspaceRecipePath(app.Id, candidateTree.Id), new WorkspaceExecutionRecipe(app.Id, app.InstalledAt, runtime,

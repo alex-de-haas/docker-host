@@ -7,11 +7,13 @@ internal static class CoreAppPermissions
     public const string Install = "apps.install";
     public const string ReadApps = "apps.read";
     public const string ReadPanels = "apps.panels.read";
+    public const string FeedbackManage = "apps.feedback.manage";
     public const string AppLogs = "apps.logs";
     public const string Notifications = "apps.notifications";
     public const string AppLifecycle = "apps.lifecycle";
     public const string ConfigureApps = "apps.configure";
     public const string ReadCore = "core.read";
+    public const string ReadStorage = "core.storage.read";
     public const string UpdateCore = "core.update";
     public const string WorkspaceCore = "core.workspace.activate";
     public const string CoreLifecycle = "core.lifecycle";
@@ -28,19 +30,33 @@ internal static class CoreAppPermissions
     public const string CoreEnvironmentsOperate = "core.environments.operate";
     public const string CoreEnvironmentsRead = "core.environments.read";
     public const string CoreEnvironmentsManage = "core.environments.manage";
-    public const string SandboxesRead = "apps.sandboxes.read";
-    public const string SandboxesInspect = "apps.sandboxes.inspect";
-    public const string SandboxesOperate = "apps.sandboxes.operate";
-    public const string SandboxesManage = "apps.sandboxes.manage";
     public const string SourcesRead = "apps.sources.read";
     public const string LegacySources = "apps.sources";
     public const string SourceConnections = "sources.connections";
     public const string RequestMcpAccess = "apps.mcp.access.request";
+    public const string ManageSkills = "skills.manage";
     public const string ReadSkills = "apps.skills.read";
     public const string SpeechProviders = "providers.speech-to-text";
     public const string TranslationProviders = "providers.translation";
+    public const string TaskProviders = "providers.tasks";
+    public const string TaskExecutors = "providers.task-executor";
     public const string AssistantProviders = "providers.assistant";
-    public static readonly string[] Known = [ReadCredentials, RevokeCredentials, RequestMcpAccess, WorkspaceCore, Install, ReadApps, ReadPanels, AppLogs, Notifications, AppLifecycle, ConfigureApps, ReadCore, UpdateCore, CoreLifecycle, ConfigureCore, CoreLogs, ReadUsers, ManageUsers, Sources, SourcesRead, WorkspacesRead, WorkspacesCleanup, SandboxesRead, SandboxesManage, CoreEnvironmentsRead, CoreEnvironmentsManage, CoreEnvironmentsInspect, CoreEnvironmentsOperate, SandboxesInspect, SandboxesOperate, SourceConnections, ReadSkills, SpeechProviders, TranslationProviders, AssistantProviders];
+    public const string CoreEnvironmentsApi = "core.environments.api";
+    public const string PublicationWrite = "core.publications.write";
+    public const string DecisionsRequest = "decisions.request";
+    public const string DecisionsRead = "decisions.read";
+    public const string DecisionsRespond = "decisions.respond";
+    public const string TasksRead = "core.tasks.read";
+    public const string TasksWrite = "core.tasks.write";
+    public const string TasksExecute = "core.tasks.execute";
+    public const string HistoryProviders = "providers.conversation-history";
+    public const string HistoryRead = "core.history.read";
+    public const string HistoryShare = "core.history.share";
+    public const string HistoryExport = "core.history.export";
+    public const string AgentSessionProviders = "providers.agent-sessions";
+    public const string AgentSessionsRead = "core.agent-sessions.read";
+    public const string AgentSessionsControl = "core.agent-sessions.control";
+    public static readonly string[] Known = [DecisionsRequest, DecisionsRead, DecisionsRespond, CoreEnvironmentsApi, PublicationWrite, TasksRead, TasksWrite, TasksExecute, HistoryProviders, HistoryRead, HistoryShare, HistoryExport, AgentSessionProviders, AgentSessionsRead, AgentSessionsControl, FeedbackManage, ReadCredentials, RevokeCredentials, RequestMcpAccess, WorkspaceCore, Install, ReadApps, ReadPanels, AppLogs, Notifications, AppLifecycle, ConfigureApps, ReadCore, ReadStorage, UpdateCore, CoreLifecycle, ConfigureCore, CoreLogs, ReadUsers, ManageUsers, Sources, SourcesRead, WorkspacesRead, WorkspacesCleanup, CoreEnvironmentsRead, CoreEnvironmentsManage, CoreEnvironmentsInspect, CoreEnvironmentsOperate, SourceConnections, ReadSkills, ManageSkills, SpeechProviders, TranslationProviders, AssistantProviders, TaskProviders, TaskExecutors];
 
     // The old name grants exactly the same authority. Other retired permissions remain unsupported.
     public static string Normalize(string permission) => permission == LegacySources ? Sources : permission;
@@ -55,28 +71,40 @@ internal static class CoreAppPermissions
         optional = Normalize(optional);
         selected = selected is null ? null : Normalize(selected);
         previous = previous is null ? null : Normalize(previous);
-        var unsupported = required.Concat(selected ?? []).Where(p => !Known.Contains(p, StringComparer.Ordinal)).ToArray();
-        if (unsupported.Length > 0)
-            throw new AppLifecycleException("app_permissions_unsupported", $"Unsupported permission declarations: {string.Join(", ", unsupported)}. Update the app manifest before approving permissions.");
         var choices = selected ?? (previous ?? []).Intersect(optional, StringComparer.Ordinal).Where(p => Known.Contains(p, StringComparer.Ordinal)).ToArray();
         if (choices.Any(p => !optional.Contains(p, StringComparer.Ordinal)))
             throw new AppLifecycleException("permission_selection_invalid", "An optional permission was not part of the reviewed declarations.");
-        return required.Concat(choices).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+        // Unknown declarations remain diagnostic metadata, never dormant grants
+        // that could gain authority automatically after a Core upgrade.
+        return required.Concat(choices).Where(p => Known.Contains(p, StringComparer.Ordinal))
+            .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
     }
 
     public static string Describe(string permission) => permission switch
     {
-        Sources => "Access and modify application source code, including code Hosty executes on this host in development mode; manage workspaces and use selected source-provider connections",
+        CoreEnvironmentsApi => "Set up test identity and access the full JSON API of an authorized child Core",
+        PublicationWrite => "Push source and create or change pull requests with the acting user’s reviewed repository access",
+        DecisionsRequest => "Create and manage your own addressed questions and receive their responses",
+        DecisionsRead => "Read decisions currently addressed to you",
+        DecisionsRespond => "Submit answers to decisions currently addressed to you; no security permissions are granted",
+        TasksRead => "Read provider-owned tasks as the acting user",
+        TasksWrite => "Create and modify provider-owned tasks as the acting user",
+        TasksExecute => "Dispatch or cancel authorized task execution",
+        HistoryProviders => "Discover and use declared conversation history providers",
+        HistoryRead => "Read and search your own or explicitly shared conversation history",
+        HistoryShare => "Provide or revoke named-user access to your conversation history",
+        HistoryExport => "Export an explicitly approved conversation corpus to its designated index consumer",
+        AgentSessionProviders => "Discover and use declared agent session providers",
+        AgentSessionsRead => "Observe authorized agent sessions and execution runs",
+        AgentSessionsControl => "Cancel authorized execution runs",
+        FeedbackManage => "Read user feedback and screenshots, reassign reports and record agent processing as the initiating administrator",
+        Sources => "Access and modify application source code, including code Hosty executes on this host in development mode; create, read, edit and delete all Core workspaces as the initiating user; use separately authorized source-provider connections",
         WorkspacesCleanup => "Delete this assistant installation's explicitly completed workspaces and owned temporary resources in the background after fresh Core verification",
-        WorkspacesRead => "Inspect authorized development workspaces, worktrees, source diffs and recorded publication facts as the current administrator; no mutations",
-        SandboxesInspect => "Inspect the current administrator's sandbox instances across their creating apps",
-        SandboxesOperate => "Operate the current administrator's sandboxes across creating apps, including replacing test fixtures and deleting temporary resources",
+        WorkspacesRead => "Read all Core development workspaces and retained source as the initiating administrator; no mutations",
         CoreEnvironmentsInspect => "Inspect child Core environments and application status across creating apps as an administrator",
-        CoreEnvironmentsOperate => "Create and control trusted child Core environments across creating apps, set up test accounts and permanently delete their temporary resources",
+        CoreEnvironmentsOperate => "Create and control trusted child Core environments across creating apps and permanently delete their temporary resources",
         CoreEnvironmentsRead => "Inspect owned child Core environments and their local preview addresses",
         CoreEnvironmentsManage => "Launch trusted child Core processes sharing Docker, configure their full API, and finish their temporary resources",
-        SandboxesRead => "Inspect authorized sandbox instances, preview destinations and sanitized verification results",
-        SandboxesManage => "Create and manage isolated sandbox instances, temporary test users and synthetic data within reviewed runtime and resource limits",
         SourcesRead => "Read repository documentation and development workspace document changes as the current administrator; no source edits or workspace mutations",
         SourceConnections => "Manage your own source-provider accounts and Git identity; select connections for reviewed installations",
         ReadApps => "List applications and read their state",
@@ -86,6 +114,7 @@ internal static class CoreAppPermissions
         AppLifecycle => "Start, stop and restart applications; change autostart and select reviewed runtimes and managed dev mode. Other source folder changes require Core confirmation",
         ConfigureApps => "Read and change application settings, including sensitive values, mounts and backups",
         ReadCore => "Read Core state",
+        ReadStorage => "Read host-wide disk usage, resource labels, relative paths and app/workspace associations as the initiating administrator; no file contents or source mutations",
         UpdateCore => "Update Core",
         WorkspaceCore => "Activate and Return reviewed workspace Core builds on ordinary host data, including Core interruption and recovery",
         CoreLifecycle => "Restart Core",
@@ -97,9 +126,12 @@ internal static class CoreAppPermissions
         ManageUsers => "Manage users and their access",
         SpeechProviders => "List and use all current and future speech-to-text providers",
         TranslationProviders => "Send text to all current and future translation providers, using their configured accounts",
+        TaskProviders => "Create, read and manage tasks through authorized task providers",
+        TaskExecutors => "Submit tasks to authorized executors and observe or cancel their executions",
         AssistantProviders => "Create draft assistant conversations on your behalf",
         RequestMcpAccess => "Request user-reviewed changes to this assistant installation’s MCP access; cannot approve changes",
-        ReadSkills => "Read agent skills published by installed apps",
+        ReadSkills => "Read shared agent skills and prepare native skill exports",
+        ManageSkills => "Manage the shared skill library as an administrator",
         Install => "Install, update and remove applications; routine updates need no confirmation, other changes require Core review",
         _ => permission,
     };

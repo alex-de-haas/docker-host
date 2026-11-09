@@ -36,11 +36,8 @@ internal sealed class AppExecutionTargetService(CoreDataPaths paths, AppRegistry
 
     private async Task<HashSet<string>> SelectableWorktreesAsync(string userId, string? principal, CancellationToken ct)
     {
-        var direct = principal is not null && (principal.StartsWith("oauth:", StringComparison.Ordinal) ||
-            principal.StartsWith("manual:", StringComparison.Ordinal));
-        return (await workspaces.ListAsync(null, false, ct)).Workspaces
-            .Where(tree => tree.Owner.UserId == userId && (!direct || tree.Owner.External?.PrincipalId == principal))
-            .Select(tree => tree.Id).ToHashSet(StringComparer.Ordinal);
+        await workspaces.RequireWorkspaceUserAsync(userId, ct);
+        return (await workspaces.ListAsync(null, false, ct)).Workspaces.Select(tree => tree.Id).ToHashSet(StringComparer.Ordinal);
     }
 
     internal async Task<AppExecutionStatus> SubmitAsync(string appId, AppExecutionTargetRequest input,
@@ -95,10 +92,8 @@ internal sealed class AppExecutionTargetService(CoreDataPaths paths, AppRegistry
             : null;
         var owner = recorded is null ? await inspection.WorkflowOwnerAsync(workspaceId, actor.UserId, ct)
             : recorded.FirstOrDefault()?.Owner ?? throw DevelopmentWorkspaceService.Error("not_found", "Workspace not found.");
-        if (owner.UserId != actor.UserId || recorded?.Any(t => !t.Owner.SameIdentity(owner)) == true)
-            throw DevelopmentWorkspaceService.Error("forbidden", "Only the workspace owner can manage its lifecycle.");
-        if (actor.Principal is { } principal && (principal.StartsWith("oauth:", StringComparison.Ordinal) || principal.StartsWith("manual:", StringComparison.Ordinal))
-            && owner.External?.PrincipalId != principal) throw new AppIdentityException("workspace_forbidden", "This credential does not own the workspace.");
+        if (recorded?.Any(t => !t.Owner.SameIdentity(owner)) == true)
+            throw DevelopmentWorkspaceService.Error("forbidden", "Workspace allocation metadata is inconsistent.");
         var path = AppExecutionStore.GroupFile(paths, workspaceId, input.RequestId);
         var gate = gates.GetOrAdd(path, _ => new(1, 1));
         await gate.WaitAsync(ct);
@@ -109,7 +104,7 @@ internal sealed class AppExecutionTargetService(CoreDataPaths paths, AppRegistry
             if (prior is not null && prior.Fingerprint != fingerprint)
                 throw new AppLifecycleException("execution_request_conflict", "Keep the original workspace selection and requestId.");
             if (prior?.State == "completed") return await WorkspaceStatusAsync(workspaceId, input.RequestId, actor.UserId, ct);
-            var trees = recorded ?? (await workspaces.ListAsync(owner, false, ct)).Workspaces;
+            var trees = recorded ?? (await workspaces.ListAsync(null, false, ct)).Workspaces.Where(t => t.WorkspaceId == workspaceId).ToArray();
             var installed = await apps.ListAppRecordsAsync(ct);
             var bound = trees.SelectMany(t => t.Apps)
                 .Where(binding => installed.Any(app => app.Id == binding.AppId && app.InstalledAt == binding.Installation))

@@ -1,3 +1,4 @@
+import { linkSkillDirectory } from "./skills.js";
 import { spawn } from "node:child_process";
 import { cp, mkdir, mkdtemp, readFile, readdir, lstat, chown, chmod, rm, copyFile } from "node:fs/promises";
 import path from "node:path";
@@ -7,14 +8,14 @@ import { isNodeEntry, resolveCodexCommand } from "../harness/codex-binary.js";
 
 /** Normal Linux credentials separate the control backend from the selected provider CLI.
  * Profiles are staged in the container layer, so NTFS bind permission reporting is not a gate. */
-export async function prepareNativeProfile(home: string, kind: "claude" | "codex", uid: number) {
+export async function prepareNativeProfile(home: string, kind: "claude" | "codex" | "ollama", uid: number, skills?: string) {
   const parent = "/run/hosty-execution";
   await mkdir(parent, { recursive: true, mode: 0o711 }); await chmod(parent, 0o711);
   const root = await mkdtemp(path.join(parent, "profile-"));
-  const histories = kind === "codex" ? ["sessions", "archived_sessions"] : ["projects"];
+  const histories = kind === "codex" ? ["sessions", "archived_sessions"] : kind === "claude" ? ["projects"] : [];
   try {
     // Only the selected account and its native history cross the control boundary.
-    for (const name of ["auth.json", ...histories]) {
+    for (const name of [...(kind === "ollama" ? [] : ["auth.json"]), ...histories]) {
       const source = path.join(home, name);
       const info = await lstat(source).catch(() => null);
       if (!info) continue;
@@ -25,11 +26,19 @@ export async function prepareNativeProfile(home: string, kind: "claude" | "codex
       }
     }
     await own(root, uid);
+    if (skills) await linkSkillDirectory(root, kind, skills);
   } catch (error) { await rm(root, { recursive: true, force: true }); throw error; }
   const groups = new Set<number>();
-  const transport: AgentProcessTransport = { spawn(provider, args, options) {
+  const transport: AgentProcessTransport = {
+    spawnTool(args, options) {
+      const child = spawn(process.execPath, args, { cwd: options.cwd, env: { ...options.env, GIT_OPTIONAL_LOCKS: "0", GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "safe.directory", GIT_CONFIG_VALUE_0: options.cwd, HOME: root }, uid, gid: uid, detached: true, stdio: "pipe" });
+      if (child.pid) groups.add(child.pid);
+      child.once("close", () => { if (child.pid) groups.delete(child.pid); });
+      return child;
+    },
+    spawn(provider, args, options) {
     const executable = provider === "codex" ? resolveCodexCommand() : "/opt/hosty-worker/claude";
-    const env = Object.fromEntries(Object.entries(options.env).filter(([key]) => !key.startsWith("HOSTY_") && !["HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR"].includes(key)));
+    const env = nativeEnvironment(options.env, args);
     const child = spawn(isNodeEntry(executable) ? process.execPath : executable, isNodeEntry(executable) ? [executable, ...args] : args,
       { cwd: options.cwd, env: { ...env, GIT_OPTIONAL_LOCKS: "0", GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "safe.directory", GIT_CONFIG_VALUE_0: options.cwd, HOME: root, [provider === "codex" ? "CODEX_HOME" : "CLAUDE_CONFIG_DIR"]: root }, uid, gid: uid, detached: true, stdio: "pipe" });
     if (child.pid) groups.add(child.pid);
@@ -42,7 +51,7 @@ export async function prepareNativeProfile(home: string, kind: "claude" | "codex
     for (const group of groups) await stopGroup(group);
     // No arbitrary symlink, profile script or configuration is copied back into trusted storage.
     const auth = path.join(root, "auth.json");
-    if ((await lstat(auth).catch(() => null))?.isFile()) {
+    if (kind !== "ollama" && (await lstat(auth).catch(() => null))?.isFile()) {
       if ((await lstat(auth)).size > 64000) throw new Error("Provider authorization exceeds its limit.");
       const value = await readFile(auth, "utf8"); JSON.parse(value);
       const { writeFile } = await import("node:fs/promises"); await writeFile(path.join(home, "auth.json"), value, { mode: 0o600 });
@@ -68,7 +77,7 @@ async function own(root: string, uid: number): Promise<void> {
 export function isolatedAdapter(adapter: HarnessAdapter, profile: Awaited<ReturnType<typeof prepareNativeProfile>>): HarnessAdapter {
   return { name: adapter.name, capabilities: adapter.capabilities, probe: async () => ({ available: true }), dispose: profile.close, start: options => {
     let run: HarnessRun;
-    try { run = adapter.start({ ...options, processTransport: profile.transport }); }
+    try { run = adapter.start({ ...options, nativeHome: profile.root, processTransport: profile.transport }); }
     catch (error) { void profile.close(); throw error; }
     const stop = async () => { if (run.stopAndWait) await run.stopAndWait(); else await run.stop(); await profile.close(); };
     return { send: text => run.send(text), resolveApproval: (...args) => run.resolveApproval(...args), resolveQuestion: (...args) => run.resolveQuestion(...args),
@@ -88,4 +97,14 @@ async function stopGroup(group: number): Promise<void> {
     await new Promise(resolve => setTimeout(resolve, 100));
   }
   if (signal(0)) throw new Error("The known agent process group has not exited; retain its execution claim.");
+}
+
+/** Only session MCP bearers explicitly referenced by the native command cross the Worker boundary. */
+export function nativeEnvironment(environment: NodeJS.ProcessEnv, args: string[]): NodeJS.ProcessEnv {
+  const proxyVariables = new Set(args.flatMap(arg => {
+    const match = /^mcp_servers\.[A-Za-z0-9_-]+\.bearer_token_env_var="(HOSTY_MCP_BEARER_[A-Z0-9_]+)"$/.exec(arg);
+    return match ? [match[1]!] : [];
+  }));
+  return Object.fromEntries(Object.entries(environment).filter(([key]) =>
+    (!key.startsWith("HOSTY_") || proxyVariables.has(key)) && !["HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR"].includes(key)));
 }

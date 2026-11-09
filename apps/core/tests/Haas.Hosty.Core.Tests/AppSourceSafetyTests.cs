@@ -236,7 +236,7 @@ public sealed partial class CoreLifecycleServiceTests
     }
 
     [Fact]
-    public async Task SourceSafety_RemovalFencesNewLeaseUntilTheInstallationIsGone()
+    public async Task SourceSafety_RemovalSerializesNewLeaseButRetainsOrphanWorkspaceAccess()
     {
         var (f, owner, service, tree, _, _) = await LocalHandoffFixture();
         Task<DevelopmentWorkspace>? lease = null;
@@ -247,8 +247,10 @@ public sealed partial class CoreLifecycleServiceTests
             return Task.CompletedTask;
         };
         await f.Service.RemoveAsync("test.created", new());
-        Assert.Equal("workspace_source_app_missing", (await Assert.ThrowsAsync<AppLifecycleException>(() => lease!)).Code);
-        Assert.Empty((await service.Read(tree.Id, null, default)).Leases);
+        Assert.NotNull(lease);
+        Assert.Single((await lease!).Leases);
+        Assert.Single((await service.Read(tree.Id, owner, default)).Leases);
+        Assert.True(Directory.Exists(tree.Path));
     }
 
     [Fact]

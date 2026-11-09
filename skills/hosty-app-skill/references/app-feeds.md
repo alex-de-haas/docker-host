@@ -45,11 +45,9 @@ Do not copy `feeds[]` into the catalog entry. Marketplace may display the refere
 
 ## Validation
 
-Test the feed through Core-managed lifecycle, not by parsing it only in app code:
-
-```bash
-hosty core start
-```
+Test the feed through Core-managed lifecycle in an isolated test instance with separate data
+and normal password login, not by parsing it only in app code. Reuse the prepared child Core;
+do not start another Core against the ordinary instance's data root.
 
 Use Shell's feed install review for an end-to-end check. For repository fixtures, also keep the feed identity synchronized with `manifest.json`; the first-party Demo App is the reference.
 

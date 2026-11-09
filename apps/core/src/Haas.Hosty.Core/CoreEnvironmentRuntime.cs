@@ -144,7 +144,7 @@ internal sealed class CoreEnvironmentRuntime(HostyCoreRuntimeConfig config, IDoc
             if (!Version.TryParse(versionText, out var parsed) || parsed < new Version(0, 133, 0))
                 throw new SandboxException("environment_core_version", "Child Core 0.133.0 or newer is required for resource limits and resumable cleanup. Finish or upgrade this environment.", 409);
             using var process = Process.GetProcessById(discovery.ProcessId);
-            return new(process.Id, process.StartTime.ToUniversalTime());
+            return new(process.Id, process.StartTime.ToUniversalTime(), version.GetString());
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or ArgumentException or InvalidOperationException) { return null; }
     }
@@ -164,14 +164,13 @@ internal sealed class CoreEnvironmentRuntime(HostyCoreRuntimeConfig config, IDoc
         var log = Path.Combine(root, "core", "logs", "environment-" + Guid.NewGuid().ToString("N") + ".log");
         if (record.Request.Initialization is not null)
             await Haas.Hosty.Initialization.InitializationCapability.RequireAsync(record.Executable!, ct);
+        // The launcher can fail before shell redirection opens its output. Keep a real diagnostic
+        // file even then, without attaching the durable child to parent-owned stdout/stderr pipes.
+        await File.WriteAllTextAsync(log, "[hosty] Starting child Core.\n", ct);
         var start = new ProcessStartInfo { UseShellExecute = false, WorkingDirectory = root, CreateNoWindow = true };
         // Core code is trusted, but ambient app/provider secrets and Git credentials are not copied.
-        var inherited = start.Environment.ToDictionary(p => p.Key, p => p.Value);
-        start.Environment.Clear();
-        foreach (var key in new[] { "PATH", "SystemRoot", "WINDIR", "TEMP", "TMP", "TMPDIR", "DOTNET_ROOT", "DOTNET_ROOT_ARM64", "LANG" })
-            if (inherited.TryGetValue(key, out var value)) start.Environment[key] = value;
-        var home = Path.Combine(root, "home"); Directory.CreateDirectory(home);
-        start.Environment["HOME"] = home; start.Environment["USERPROFILE"] = home;
+        var home = Path.Combine(root, "home");
+        NativeProcessEnvironment.ResetToSystemEssentials(start, home);
         start.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
         start.Environment["GIT_CONFIG_GLOBAL"] = OperatingSystem.IsWindows() ? "NUL" : "/dev/null";
         start.Environment["GIT_TERMINAL_PROMPT"] = "0";
@@ -203,17 +202,27 @@ internal sealed class CoreEnvironmentRuntime(HostyCoreRuntimeConfig config, IDoc
         start.Environment["HOSTY_CLI_PATH"] = CoreCliLauncher.ResolveCliPath();
         if (OperatingSystem.IsWindows())
         {
-            start.FileName = Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe";
-            start.ArgumentList.Add("/d"); start.ArgumentList.Add("/s"); start.ArgumentList.Add("/c");
-            start.ArgumentList.Add($"\"\"{record.Executable}\" > \"{log}\" 2>&1\"");
+            ConfigureWindowsLaunch(start, record.Executable!, log);
         }
         else
         {
             start.FileName = "/bin/sh"; start.ArgumentList.Add("-c");
-            start.ArgumentList.Add("exec nohup \"$1\" > \"$2\" 2>&1"); start.ArgumentList.Add("hosty-child");
+            start.ArgumentList.Add("exec nohup \"$1\" >> \"$2\" 2>&1"); start.ArgumentList.Add("hosty-child");
             start.ArgumentList.Add(record.Executable!); start.ArgumentList.Add(log);
         }
-        using var launched = Process.Start(start) ?? throw new SandboxException("environment_launch_failed", "Unable to start the child Core.", 409);
+        Process launched;
+        try
+        {
+            launched = Process.Start(start) ?? throw new InvalidOperationException("No launcher process was created.");
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            var reason = ex is System.ComponentModel.Win32Exception native
+                ? $"operating-system error {native.NativeErrorCode}" : "no process was created";
+            await File.AppendAllTextAsync(log, $"[hosty] Unable to start the child Core launcher ({reason}). Check that the launcher is installed and executable.\n", ct);
+            throw new SandboxException("environment_launch_failed", $"Unable to start the child Core launcher ({reason}). See {log}", 409);
+        }
+        using var launcher = launched;
         var spawned = new CoreEnvironmentProcess(launched.Id, launched.StartTime.ToUniversalTime());
         if (generation is not null) CoreBuildRetention.Mark(generation, "starting", record.Request.ProjectPath, spawned.Pid, spawned.StartedAt);
         await saveProcess(spawned);
@@ -237,11 +246,19 @@ internal sealed class CoreEnvironmentRuntime(HostyCoreRuntimeConfig config, IDoc
             if (launched.HasExited)
             {
                 var collision = File.Exists(log) && (await File.ReadAllTextAsync(log, ct)).Contains("Hosty Core cannot bind ", StringComparison.Ordinal);
-                throw new SandboxException(collision ? "environment_port_collision" : "environment_launch_failed", "Child Core exited before readiness. See " + log, 409);
+                await File.AppendAllTextAsync(log, $"[hosty] Child Core launcher exited before readiness (exit code {launched.ExitCode}). Check the executable and preceding output.\n", ct);
+                throw new SandboxException(collision ? "environment_port_collision" : "environment_launch_failed", $"Child Core exited before readiness (exit code {launched.ExitCode}). See {log}", 409);
             }
             await Task.Delay(100, deadline.Token);
         }
         throw new SandboxException("environment_start_timeout", "Child Core readiness timed out. See " + log, 409);
+    }
+    internal static void ConfigureWindowsLaunch(ProcessStartInfo start, string executable, string log)
+    {
+        start.FileName = Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe";
+        // cmd /s /c consumes shell syntax, not CRT-escaped argv. ArgumentList would turn the
+        // embedded quotes into backslash-quotes and fail before creating the output file.
+        start.Arguments = $"/d /s /c \"\"{executable}\" >> \"{log}\" 2>&1\"";
     }
     public async Task StopAsync(CoreEnvironmentRecord record, string root, bool remove, CancellationToken ct)
     {

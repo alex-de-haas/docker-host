@@ -1,3 +1,4 @@
+import { taskTools } from "../tasks/tools.js";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
@@ -104,6 +105,64 @@ it("scopes RPC replay checks to the native client lifetime and invalidates old d
   await expect(call("1")).rejects.toThrow("already received");
 });
 
+it("hands off only the issued review while canceling sibling guards and pending approvals", async () => {
+  await policy.catalog("app", "install-1", [write, { name: "pending" }]);
+  await policy.update({ [ruleKey("app", "merge")]: { identity: "install-1", mode: "run" } });
+  const retained = await call("retained"), sibling = await call("sibling");
+  const pending = policy.authorize("session", "app", "install-1", "pending", "pending", {}, new AbortController().signal);
+  const refused = expect(pending).rejects.toThrow("denied");
+  await vi.waitFor(() => expect(notify).toHaveBeenCalled());
+  policy.disconnect("session", retained);
+  await retained(); await refused;
+  await expect(sibling()).rejects.toThrow("canceled before dispatch");
+  policy.cancel("session", "app");
+  await expect(retained()).rejects.toThrow("canceled before dispatch");
+});
+
+it.each(["canceled", "aborted"])("does not resurrect a review already %s before handoff", async state => {
+  await policy.update({ [ruleKey("app", "merge")]: { identity: "install-1", mode: "run" } });
+  const abort = new AbortController(), guard = await call("retained", abort.signal);
+  if (state === "canceled") policy.cancel("session", "app"); else abort.abort();
+  policy.disconnect("session", guard);
+  await expect(guard()).rejects.toThrow("canceled before dispatch");
+});
+
+it("cannot transfer another session's review or a guard issued by another policy", async () => {
+  await policy.update({ [ruleKey("app", "merge")]: { identity: "install-1", mode: "run" } });
+  const own = await call();
+  const otherSession = await policy.authorize("other", "app", "install-1", "other", "merge", {}, new AbortController().signal);
+  policy.disconnect("session", otherSession);
+  await expect(own()).rejects.toThrow("canceled before dispatch");
+  await otherSession();
+  policy.cancel("other"); policy.disconnect("session", otherSession);
+  await expect(otherSession()).rejects.toThrow("canceled before dispatch");
+  const foreign = new McpToolPolicy(settings, notify, settled, 200);
+  await foreign.catalog("app", "install-1", [write]);
+  const guard = await foreign.authorize("session", "app", "install-1", "foreign", "merge", {}, new AbortController().signal);
+  foreign.cancel("session"); policy.disconnect("session", guard);
+  await expect(guard()).rejects.toThrow("canceled before dispatch"); foreign.close();
+});
+
+it.each(["disabled", "definition", "identity"])("rechecks %s changes after a single-review handoff", async change => {
+  await policy.update({ [ruleKey("app", "merge")]: { identity: "install-1", mode: "run" } });
+  const guard = await call(); policy.disconnect("session", guard);
+  if (change === "disabled") await policy.update({ [ruleKey("app", "merge")]: { identity: "install-1", mode: "disabled" } });
+  else await policy.catalog("app", change === "identity" ? "new-installation" : "install-1", [{ ...write, description: "Changed" }]);
+  await expect(guard()).rejects.toThrow("policy changed");
+});
+
+it("observes cancellation that occurs while the retained provider check awaits", async () => {
+  await policy.update({ [ruleKey("app", "merge")]: { identity: "install-1", mode: "run" } });
+  let hold = false, release!: () => void;
+  const revalidate = vi.fn(async () => { if (hold) await new Promise<void>(resolve => { release = resolve; }); });
+  const guard = await policy.authorize("session", "app", "install-1", "retained", "merge", {}, new AbortController().signal, revalidate);
+  policy.disconnect("session", guard); hold = true;
+  const dispatch = guard();
+  const refused = expect(dispatch).rejects.toThrow("canceled before dispatch");
+  await vi.waitFor(() => expect(revalidate).toHaveBeenCalledTimes(2));
+  policy.cancel("session", "app"); release(); await refused;
+});
+
 it("autonomy skips Ask only for the selected session and still rechecks Disabled and revocation", async () => {
   let autonomous = true;
   policy.close();
@@ -160,4 +219,35 @@ it("enforces local development exclusions while refusing local app-access exclus
   await expect(policy.authorize("session", "hosty:development", "development-1", "local-1", "merge", {}, new AbortController().signal)).rejects.toThrow("disabled");
   expect(notify).not.toHaveBeenCalled();
   expect(() => policy.preparePreferences({}, { [ruleKey("app", "merge")]: { identity: "install-1", mode: "disabled" } })).toThrow("Core access review");
+});
+
+
+it.each([false, true])("honors explicit Delete Ask, Run and Disabled with autonomy=%s", async autonomous => {
+  policy.close();
+  policy = new McpToolPolicy(settings, notify, settled, 1000, () => autonomous);
+  const tool = { name: "delete_workspace", annotations: { readOnlyHint: false, destructiveHint: true } };
+  await policy.catalog("hosty:development", "v1", [tool]);
+  const key = ruleKey("hosty:development", tool.name);
+  const invoke = (id: string) => policy.authorize("session", "hosty:development", "v1", id, tool.name, { all: true, requestId: id }, new AbortController().signal);
+  await policy.update({ [key]: { identity: "v1", mode: "ask" } });
+  const pending = invoke("ask");
+  await vi.waitFor(() => expect(notify).toHaveBeenCalledOnce());
+  expect(policy.resolve("session", notify.mock.calls[0]![1].approvalId, true)).toBe(true);
+  const approved = await pending; await approved();
+  await policy.update({ [key]: { identity: "v1", mode: "run" } });
+  const automatic = await invoke("run"); await automatic();
+  expect(notify).toHaveBeenCalledOnce();
+  await policy.update({ [key]: { identity: "v1", mode: "disabled" } });
+  expect(await policy.catalog("hosty:development", "v1", [tool])).toEqual([]);
+  await expect(invoke("disabled")).rejects.toThrow("disabled");
+  await expect(automatic()).rejects.toThrow("changed");
+});
+
+it("keeps the session-owned executor directory discoverable when Core replaces generic task aliases", async () => {
+  await policy.catalog("hosty:core", "core-instance", [{ name: "task_options", _meta: { "io.hosty/core-tool": { schemaVersion: 1, owner: "hosty:core" } } }]);
+  expect(policy.canonicalCore).toBe(true);
+  const tools = await policy.localCatalog(taskTools());
+  expect(tools.some(tool => tool.name === "task_options")).toBe(false);
+  expect(tools.find(tool => tool.name === "task_executor_options")?.annotations?.readOnlyHint).toBe(true);
+  expect(tools.some(tool => tool.name === "task_request_input")).toBe(true);
 });

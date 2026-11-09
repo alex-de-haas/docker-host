@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
+import { randomUUID } from "node:crypto";
 import { WorkerClient } from "../worker/client.js";
 import { WorkerEngine } from "../worker/engine.js";
 import { WorkerJournal } from "../worker/journal.js";
@@ -16,7 +17,7 @@ async function fixture(reserve: () => Promise<() => void> = async () => () => {}
   const identity = await ensureServiceIdentity(path.join(root, "auth"));
   const journal = new WorkerJournal(path.join(root, "independent-provider-storage")); await journal.initialize();
   let options: HarnessStartOptions | undefined, stopped = 0, starts = 0;
-  const capabilities = { questions: true, appMcp: true, autoAllow: true, denyReason: true, liveReconfigure: true };
+  const capabilities = { promptSuggestions: true, questions: true, appMcp: true, autoAllow: true, denyReason: true, liveReconfigure: true };
   const engine = new WorkerEngine(journal, { validateSelection: async () => {}, cwd: async () => root, reserve,
     adapter: async () => ({ name: "fixture", capabilities, probe: async () => ({ available: true }), start: input => {
       options = input; starts++;
@@ -98,7 +99,7 @@ it("restores the real coordinator cursor without duplicating transcript events o
   await expect.poll(async () => (await store.readRecord(record.id))!.status).toBe("idle");
   expect((await store.readEvents(record.id)).filter(e=>e.type === "assistant_text").map(e=>e.text)).toEqual(["before restart", "after restart"]);
   expect(f.starts()).toBe(1); expect(f.stopped()).toBe(1);
-  expect((await store.readRecord(record.id))!.workerRun).toBeUndefined();
+  await expect.poll(async () => (await store.readRecord(record.id))!.workerRun).toBeUndefined();
 });
 
 it("reconnects after temporary SSE unavailability without starting another execution", async () => {
@@ -265,7 +266,7 @@ it.each([
   await first.postMessage(record.id, "work"); await expect.poll(f.starts).toBe(1);
   const runId = (await store.readRecord(record.id))!.workerRun!.id;
   await first.shutdown();
-  const usage = { usedTokens: 4200, maxTokens: 10000, estimated: true, observedAt: new Date().toISOString() };
+  const usage = { usedTokens: 4200, maxTokens: 10000, sources: { version: 1 as const, method: "local-estimate" as const, estimator: "o200k-base-chunks-1024-v1" as const, instructions: [{ source: "operator" as const, tokens: 12 }], omittedInstructions: 0, catalog: { state: "unavailable" as const, observedAt: "2026-11-04T12:00:00Z" } }, estimated: true, observedAt: new Date().toISOString() , mcp: { version: 1 as const, method: "provider-estimate" as const, omittedTools: 0, tools: [{ server: "fixture", name: "read", tokens: 20, inclusion: "loaded" as const }] }};
   f.options()!.onEvent({ type: "context_usage", usage });
   if (text) f.options()!.onEvent({ type: "assistant_text", text: "Retained final answer" });
   f.options()!.onEvent(type === "result" ? { type, status: "success" } : { type, message: "Retained provider error" });
@@ -323,4 +324,82 @@ it("recovers a command result appended before the worker cursor without duplicat
   expect(events.filter(event => event.type === "tool_use")).toHaveLength(1);
   expect(JSON.stringify(events)).not.toContain("never-store-output");
   expect(f.starts()).toBe(1); expect(f.stopped()).toBe(1);
+});
+
+it("persists suggestion history and preempts collection before a new user send", async () => {
+  const { SessionManager } = await import("./manager.js");
+  const { SessionStore } = await import("./store.js");
+  const { AuditReporter } = await import("../audit.js");
+  const f = await fixture();
+  const store = new SessionStore(path.join(f.root, "coordinator"), path.join(f.root, "cache"));
+  const manager = new SessionManager(store, f.adapter, new AuditReporter(null, null, "hosty.harness"), f.root,
+    null, null, null, null, null, null, null, null, f.client, "docker");
+  cleanups.push(() => manager.shutdown());
+  const record = await manager.createSession({ createdBy: "owner" });
+  await manager.postMessage(record.id, "first", undefined, [], { promptSuggestions: true }); await expect.poll(f.starts).toBe(1);
+  expect(f.options()?.promptSuggestions).toBe(true);
+  f.options()!.onEvent({ type: "assistant_text", text: "answer" });
+  f.options()!.onEvent({ type: "result", status: "success" });
+  await expect.poll(async () => (await store.readRecord(record.id))!.status).toBe("suggesting");
+  expect(f.stopped()).toBe(0);
+  await manager.postMessage(record.id, "second", undefined, [], { promptSuggestions: true });
+  await expect.poll(f.starts).toBe(2); expect(f.stopped()).toBe(1);
+  f.options()!.onEvent({ type: "result", status: "success" });
+  await expect.poll(async () => (await store.readRecord(record.id))!.status).toBe("suggesting");
+  f.options()!.onEvent({ type: "prompt_suggestion", text: "Next?" });
+  await expect.poll(async () => (await store.readRecord(record.id))!.status).toBe("idle");
+  const subscription = await manager.subscribe(record.id, 0, () => {});
+  expect(subscription.replay.find(e => e.type === "session_suggestion")).toMatchObject({ state: "available", text: "Next?", userId: "owner", sessionId: record.id });
+  subscription.unsubscribe();
+  expect((await store.readEvents(record.id)).some(e => ["prompt_suggestion", "session_suggestion", "answer_complete"].includes(e.type))).toBe(false);
+  const history = await manager.historicalSuggestions(record.id, "owner");
+  expect(history).toHaveLength(1);
+  expect(history[0]).toMatchObject({ state: "available", text: "Next?", userId: "owner", sessionId: record.id });
+  const choice = { requestId: randomUUID(), expectedRevision: 1, action: "selected-for-draft" };
+  const selected = await manager.suggestionAction(record.id, "owner", history[0]!.suggestionId, choice);
+  expect(selected.state).toBe("selected-for-draft");
+  expect(await manager.suggestionAction(record.id, "owner", history[0]!.suggestionId, choice)).toEqual(selected);
+  await manager.setSuggestionPreference("owner", { enabled: false, revision: 0 });
+  const cleared = await manager.subscribe(record.id, 0, () => {}); cleared.unsubscribe();
+  expect(cleared.replay.find(e => e.type === "session_suggestion")).toMatchObject({ state: "empty" });
+  expect(cleared.replay.find(e => e.type === "prompt_suggestion_created")).toMatchObject({ text: "Next?" });
+  expect(cleared.replay.find(e => e.type === "prompt_suggestion_resolved")).toMatchObject({ state: "selected-for-draft" });
+  expect(await manager.suggestionPreference("other-user")).toEqual({ enabled: true, revision: 0 });
+  await expect(manager.setSuggestionPreference("owner", { enabled: true, revision: 0 })).rejects.toMatchObject({ code: "preference_changed" });
+});
+
+it("does not re-enable predictions from a stale preference read during run admission", async () => {
+  const { SessionManager } = await import("./manager.js");
+  const { SessionStore } = await import("./store.js");
+  const { AuditReporter } = await import("../audit.js");
+  const f = await fixture();
+  const store = new SessionStore(path.join(f.root, "coordinator"), path.join(f.root, "cache"));
+  const manager = new SessionManager(store, f.adapter, new AuditReporter(null, null, "hosty.harness"), f.root,
+    null, null, null, null, null, null, null, null, f.client, "docker");
+  cleanups.push(() => manager.shutdown());
+  const record = await manager.createSession({ createdBy: "owner" });
+  const previous = await manager.suggestionPreference("owner");
+  let releaseRead!: (value: typeof previous) => void;
+  const staleRead = new Promise<typeof previous>(resolve => { releaseRead = resolve; });
+  const read = vi.spyOn(manager, "suggestionPreference").mockImplementationOnce(() => staleRead);
+  const sending = manager.postMessage(record.id, "first", undefined, [], { promptSuggestions: true });
+  try {
+    await expect.poll(() => read.mock.calls.length).toBe(1);
+    await manager.setSuggestionPreference("owner", { enabled: false, revision: 0 });
+  } finally { releaseRead(previous); }
+  await sending;
+  await expect.poll(f.starts).toBe(1);
+  expect(f.options()?.promptSuggestions).toBe(false);
+  f.options()!.onEvent({ type: "result", status: "success" });
+  await expect.poll(async () => (await store.readRecord(record.id))!.status).toBe("idle");
+  expect(f.stopped()).toBe(1);
+  expect(await manager.suggestionPreference("owner")).toEqual({ enabled: false, revision: 1 });
+  await manager.setSuggestionPreference("owner", { enabled: true, revision: 1 });
+  await manager.postMessage(record.id, "second", undefined, [], { promptSuggestions: true });
+  await expect.poll(f.starts).toBe(2);
+  expect(f.options()?.promptSuggestions).toBe(true);
+  f.options()!.onEvent({ type: "result", status: "success" });
+  await expect.poll(async () => (await store.readRecord(record.id))!.status).toBe("suggesting");
+  f.options()!.onEvent({ type: "prompt_suggestion", text: "Next?" });
+  await expect.poll(async () => (await store.readRecord(record.id))!.status).toBe("idle");
 });

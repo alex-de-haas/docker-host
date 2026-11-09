@@ -35,6 +35,10 @@ public sealed class McpCatalogReaderTests
             var result = await AssistantMcpDiscovery.ReadCatalogAsync(new("https://app.test/mcp"), "discovery-secret", client, timeout.Token);
             Assert.Equal("read_items", Assert.Single(result.Tools).Name);
             Assert.DoesNotContain("discovery-secret", CoreJson.Text(result));
+            var wire = AssistantMcpDiscovery.WireCatalog(result).GetProperty("tools")[0];
+            Assert.Equal("read_items", wire.GetProperty("name").GetString());
+            Assert.False(wire.TryGetProperty("title", out _));
+            Assert.False(wire.TryGetProperty("outputSchema", out _));
         }
         Assert.Equal(endless ? 20 : 1, calls.Count(method => method == "tools/list"));
         Assert.DoesNotContain("tools/call", calls);

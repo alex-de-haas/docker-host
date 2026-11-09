@@ -16,6 +16,7 @@ export function workflowLabel(workflow: Workflow): string {
 export type Change = { path: string; status: string; binary?: boolean; lineStats?: { additions: number; deletions: number } | null };
 export type PullRequest = { historical?: boolean; url: string; unavailable?: string; publishedHead?: string; observation?: {
   at: string; mergedAt?: string | null; state: string; complete?: boolean; title?: string; commentCount?: number; head?: string; draft: boolean;
+  completionIssue?: { kind: string; requirement: string; state: string; mergeCommit: string } | null;
   reviewDecision?: string; unresolvedThreads: number; checks?: { name: string; state: string }[]; error?: string;
 } | null };
 export type Worktree = { observationHealth?: string; observationRevision?: string; id: string; workspaceId: string; repository: string; branch: string; targetBranch?: string; state: string;
@@ -23,7 +24,14 @@ export type Worktree = { observationHealth?: string; observationRevision?: strin
   observation?: { at: string; state: string; conflict?: boolean; head?: string; ahead?: number; behind?: number; error?: string; sessionFiles?: string[];
     local?: { files: Change[]; truncated: boolean; lineStats?: { additions: number; deletions: number } } };
   detailError?: string; path?: string; hasSandboxConsumers?: boolean; consumers?: { kind: string; reference: string; name?: string; managementUrl?: string }[]; leases: string[]; };
-export type DevelopmentWorkspace = { name?: string; id: string; state: string; updatedAt?: string | null; workflow: Workflow;
+export type WorkspaceParticipation = {
+  id: string; revision: number; role: "operator" | "owner" | "contributor"; viewerUserId?: string;
+  members: { userId: string; name: string; role: string; worktreeIds: string[]; revoked: boolean }[];
+  sessions: { appId: string; userId: string; sessionId: string; title: string; attached: boolean; canOpen: boolean; viewerPath: string | null; status: string; activityAt: string | null; changedAt?: string | null }[];
+  eligibleUsers: { id: string; name: string }[];
+};
+export type WorkspacePullRequestSummary = { count: number; openCount?: number; draftCount?: number; state: string; checks: string; observedAt?: string | null; partial: boolean };
+export type DevelopmentWorkspace = { pullRequestSummary?: WorkspacePullRequestSummary | null; permissions?: { read: boolean; manage: boolean }; participation?: WorkspaceParticipation | null; name?: string; id: string; state: string; updatedAt?: string | null; workflow: Workflow;
   owner: { kind: string; label: string; reference: string; appId?: string }; worktrees: Worktree[] };
 export function orderWorkspaces(workspaces: readonly DevelopmentWorkspace[]): DevelopmentWorkspace[] {
   return [...workspaces].sort((left, right) => activityTime(right) - activityTime(left) || left.id.localeCompare(right.id));
@@ -53,11 +61,11 @@ export function useDevelopmentInventory(enabled: boolean) {
       try {
         const value = await developmentRequest<{ workspaces: DevelopmentWorkspace[] }>("", undefined, abort.signal);
         if (!abort.signal.aborted && generation === current) { setWorkspaces(value.workspaces); setError(""); setSettled(true); }
-      } catch (e) { if (!abort.signal.aborted && generation === current) { setWorkspaces([]); setError(e instanceof Error ? e.message : String(e)); setSettled(true); } return false; }
+      } catch (e) { if (!abort.signal.aborted && generation === current) { setError(e instanceof Error ? e.message : String(e)); setSettled(true); } return false; }
 
     };
     const unsubscribe = subscribeWorkspaceEvents("/api/development-workspaces/events", load, () => {
-      generation++; setWorkspaces([]); setError("Workspace updates disconnected. Reconnecting…"); setSettled(true);
+      generation++; setError("Workspace updates disconnected. Reconnecting…"); setSettled(true);
     });
     return () => { generation++; abort.abort(); unsubscribe(); };
   }, [enabled, revision]);

@@ -1,8 +1,8 @@
 ---
 created: 2026-10-21
-updated: 2026-10-25
+updated: 2026-11-03
 summary: Shared web tokens, local fonts and scoped SDK chrome, with Shell, Harness, Marketplace and Telemetry adoption and an in-place credential grid.
-components: [apps/shell, apps/harness, apps/marketplace, apps/plans, apps/telemetry, apps/telemetry-ui, apps/whisper, apps/demo-app, packages/app-sdk, shared/web]
+components: [apps/core, apps/shell, apps/desktop, apps/harness, apps/marketplace, apps/documents, apps/telemetry, apps/telemetry-ui, apps/whisper, apps/demo-app, packages/app-sdk, shared/web]
 ---
 
 # Design System
@@ -60,14 +60,27 @@ The Core brand mark and each app's own empty-state artwork remain inline illustr
 
 The web brand library in `assets/hosty-brand` generates its seven-cell geometry from
 `packages/app-sdk/src/core-mark-geometry.ts`, the same source consumed by SDK chrome and the
-Shell inline mark. Light/dark marks, baked ink tiles, small favicon cuts and Shell public icons
-use that geometry. Horizontal wordmarks contain IBM Plex Sans 600 paths from the bundled font,
+Shell inline mark. Light/dark marks, baked ink tiles, small Core favicon cuts use that geometry. Horizontal wordmarks contain IBM Plex Sans 600 paths from the bundled font,
 with a recorded font hash and reproducible outline helper. Web-only generation leaves native
 AppIcon outputs untouched; the stable light/dark/brand tile names remain compatibility aliases.
-Shell renders one SVG favicon link. Before hydration its adaptive SVG follows the browser
-preference; after hydration the fixed light/dark SVG follows the resolved Shell theme, including
-a saved manual choice and system-theme changes. Six cells are white in dark mode or ink in
-light mode, with a lime center in both. The fixed ICO is not a competing head icon.
+Core browser pages use the transparent Hosty mark with a lime center, including login, setup,
+account pages and action/sign-in popups. The embedded SVG follows the browser color preference
+without requiring an installed app or a session; Core also serves an ICO fallback.
+Shell, Desktop, Documents, Harness, Marketplace and Telemetry each use their own manifest icon's
+cell layout and accent, enlarged to the same transparent favicon cut. Neutral cells are ink on
+light surfaces and white on dark surfaces. Each app renders one SVG favicon link: before hydration
+the adaptive SVG follows the browser preference, then a fixed light/dark SVG follows the resolved
+app theme, including saved preferences and host theme changes. ICO fallbacks remain direct URLs
+and do not compete in the document head. Desktop has no separate file-convention icon overriding
+this link. The brand generator derives app favicons from their tile artwork and preserves each
+app's identity; Shell's Apple touch icon uses its own tile as well.
+
+## Harness Dialogs
+
+[Harness dialog layout](../harness-dialog-layout/feature.md) keeps modal titles and primary actions
+visible around a scrolling central body. Profile/provider forms, app and workspace operations,
+confirmations and choosers share this pattern. The narrow workspace sheet keeps its return action
+in a fixed footer. Short viewports use compact spacing; menus and anchored popovers remain distinct.
 
 ## Status Semantics And Motion
 
@@ -159,7 +172,8 @@ status is inferred from missing API facts. See
 
 ## Dashboard Adoption
 
-Core and app rows share identity, status, resources and actions columns. Runtime app icons have 4 px of extra space on each side; wrapped status and resource rows align with the app text.
+Core and app rows share identity, status, resources and actions columns. Sandbox rows align their
+unboxed state indicator with the same desktop status column; narrow rows place it below the identity. Core, app and environment rows share the sidebar theme lime hover background across the entire row, including resources and action controls; identity buttons keep that row background visible. Environment rows open Environment Details from their name or overflow menu, without an inline disclosure; Sign Up is the compact first-administrator action. Runtime app icons have 4 px of extra space on each side; wrapped status and resource rows align with the app text.
 Core and app rows use the same 4 px gap between the title and the second metadata line.
 Resource and action columns align across Core, app rows and the aggregate toolbar. Resource
 labels, bounded numeric values and sparklines occupy separate space without overlapping. Compact
@@ -322,6 +336,10 @@ SDK host. There is no permanently occupied right icon rail. Navigation folds bef
 an overlay: Dashboard reserves 440 px, Settings/embedded apps 560 px, and the tool 320 px. Below
 600 px, Dashboard, Apps, Tools and Settings use bottom tabs; Tools hides/reopens the last mounted
 presentation. Its sheet keeps All tools visible and uses the visual viewport above the keyboard.
+[Tool activity](../tool-activity/feature.md) comes from Core even for unopened panels. Tools and
+pinned buttons show per-user activity; the badge counts tools requiring the user, with failure
+before decisions. All tools groups attention, working and disconnected tools before its searchable
+catalogue. Reports renew presence and recover after Core restarts without remounting frames.
 
 Harness uses 264 px session and 344 px workspace columns around the conversation at desktop widths.
 Sessions retain combined workspace/title/app search, activity-state chips and their activity
@@ -391,8 +409,9 @@ and exact review actions. Current open PR icons carry CI color, running checks u
 merged is violet and drafts/closed/stale evidence are neutral. Historical summaries stay labelled
 as cached. CI checks expand in place on phones. Approval cards retain one-time allow and supported
 optional denial reasons; the autonomy menu explains each mode without adding grants or repeating
-its description below the composer. The right side of the conversation header places the current
-session activity badge immediately before the read-only Local or Docker execution badge. Local
+its description below the composer. The conversation header omits idle status and places other
+activity badges before a compact read-only execution icon. The Local/Docker label and explanation
+remain in its keyboard-accessible tooltip and accessible name. Local
 carries a host-access warning based
 on the native Harness process permissions; Docker describes the worker's container limits without
 claiming that enabled MCP tools are confined to that container. The full-page and embedded composers
@@ -404,10 +423,19 @@ Reasoning-effort-only and unchanged preference updates preserve the last usage o
 its timestamp and native conversation identity; an actual model change invalidates that observation.
 
 Compact bound-application rows place lifecycle status immediately after the app name and use a
-second line for package/runtime, hammer/workspace or Git/source identity. Per-app switching targets
-the exact bound worktree. Group actions show Use workspace, Return to packages or both according
-to factual selections; successful background refresh retains the last observation without flashing
-actions. Consumer and lease details stay under Activity diagnostics.
+second line for package/runtime, hammer/workspace or Git/source identity. Multi-app rows retain
+exact-worktree switching; a single app uses the primary action without a duplicate icon. One primary
+Use workspace or Return to packages action follows observed selections. Mixed selections keep
+package return in an alternative menu. Missing status offers refresh without guessing. A pending
+journal never adds competing actions. Switching shows one progress line; failure replaces the
+primary action with Try again and keeps details collapsed. Required Core confirmation opens
+automatically and resumes the same switch after explicit approval. A direct link remains available
+to reopen Core’s isolated confirmation window; explicit Cancel stops continuation. Successful
+switches leave no persistent success caption. Registered activity has a shield tooltip beside the
+workspace status; Used by's information tooltip summarizes source use once per application. Raw
+lease IDs, consumer kinds and source paths have no separate diagnostics block. Conversations have
+no retention banner. See [Harness Development](../harness-development-ui/feature.md) for
+recovery and authority boundaries.
 
 Workspace lifecycle failures distinguish an in-flight action from an uncertain retained request;
 a definite unadmitted refusal does not leave a misleading Retry action. Ordinary Delete physically
@@ -473,7 +501,7 @@ under reduced motion. Approval surfaces use semantic warning tokens; selected an
 Field labels use lime, while attachment actions retain one child focus indicator without a
 second parent halo.
 
-Harness source/diff/speech choices use the existing Radix Select; retention fields and provider/
+Harness source/diff/speech and feedback choices use the existing themed Radix Select; retention fields and provider/
 handoff confirmations use shared Input/Checkbox. Empty, detached, unavailable and unknown choices
 remain explicit, with no first-choice substitution. File upload retains its hidden native input.
 Provider/settings/app-roster/mention reads and workspace actions show labelled grid loading;
@@ -507,9 +535,20 @@ failure still clears protected content. Closing details restores the opener or s
 Catalog settings loads with explicit retry, saves against its observed source and retains the
 unsaved source on rejection. These presentation changes add no install or permission authority.
 
+Core account forms for access tokens, device connection, background grants and OAuth consent
+use the shared Core typography, theme tokens and controls. Their form styles are embedded with
+the page under the existing inline-style policy. Field labels stack above full-width inputs;
+permission labels wrap beside consistently aligned checkboxes inside named groups. Actions occupy
+the shared footer and stack on narrow screens. Hidden permission groups remain hidden, and issued
+tokens wrap inside a selectable monospace block. Error and success messages use Core status colors.
+
 ## Testing Expectations
 
-- Cover independently delayed sandbox inventories, first-read failure/retry, malformed refreshes
+- Check token, device, background-grant and OAuth account forms in light/dark themes at desktop
+  and narrow widths, including long labels/tokens, optional permission groups, errors and outcomes.
+  Confirm stylesheet delivery under the page CSP, keyboard focus and unchanged permission defaults.
+
+- Cover delayed environment inventories, first-read failure/retry, malformed refreshes
   with retained rows, service loading/unavailable/empty results and shared-folder search with retained
   assignments and keyboard focus. Preserve request identity, lifecycle actions and existing reads.
 - Verify the built artifacts through a Core-managed sandbox with normal password login, both themes
@@ -630,8 +669,12 @@ unsaved source on rejection. These presentation changes add no install or permis
   has one visible 2 px lime (`#A3E635`) indicator without a second ring, halo or ink edge on
   app-owned controls, including inside the SDK host. Check retained red invalid/error treatment
   and parent-only grouped-input focus separately from SDK-owned rail and chooser controls.
-- Verify the single Shell favicon through server rendering, system/manual theme changes and saved
-  preferences after reload, keeping six white/ink cells and the lime center in generated variants.
+- Verify a single favicon for Shell, Desktop, Documents, Harness, Marketplace and Telemetry through
+  server rendering, system/manual/host theme changes and saved preferences after reload. Generated
+  variants retain each manifest icon's cells and accent with no background tile.
+- Verify Core login/setup and approval pages link the Core favicon and serve embedded icons before
+  login with the expected content type, including when no runtime apps are installed. Restrictive
+  popup policies permit same-origin icons while retaining their existing script and frame rules.
 - Verify Harness error foregrounds in both themes, dialog/menu focus and retained fields, and
   live reduced-motion Jump to latest including cancellation, SSR hydration and listener cleanup.
 - Verify log/trace search-miss versus empty/loading/error priority, trace detail focus/return,

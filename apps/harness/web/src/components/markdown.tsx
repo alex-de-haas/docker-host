@@ -1,13 +1,13 @@
 "use client";
 
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { type Options } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { remarkSoftBreaks, transformChatUrl } from "@/lib/markdown";
 import { cn } from "@/lib/utils";
 import { ChatCodeBlock } from "@/components/chat-code-block";
 import { markdownCodeProps } from "@/components/reui/code-block/code-block-highlight";
 
-// Assistant prose, rendered the way Marketplace renders an app description
+// User and assistant prose, rendered the way Marketplace renders an app description
 // (`apps/marketplace/src/components/markdown-description.tsx`): react-markdown with remark-gfm, and
 // prose styling expressed as arbitrary descendant selectors so the output stays on the shell's
 // design tokens without a typography plugin. Sizing is the chat's own — this is a narrow panel, and
@@ -31,13 +31,19 @@ const PROSE_CLASS = [
   "[&_td]:border-b [&_td]:border-muted-foreground/15 [&_td]:px-2 [&_td]:py-1",
 ].join(" ");
 
-export function Markdown({ text, className, streaming = false }: { text: string; className?: string; streaming?: boolean }) {
+export function Markdown({ text, className, streaming = false, rehypePlugins }: {
+  text: string;
+  className?: string;
+  streaming?: boolean;
+  rehypePlugins?: Options["rehypePlugins"];
+}) {
   return (
     <div className={cn(PROSE_CLASS, className)}>
       <ReactMarkdown
         // Soft breaks after GFM, so a table's own line endings are already structured by the time
         // stray newlines become line breaks.
         remarkPlugins={[remarkGfm, remarkSoftBreaks]}
+        rehypePlugins={rehypePlugins}
         urlTransform={transformChatUrl}
         components={{
           pre: ({ children }) => <ChatCodeBlock {...markdownCodeProps({ children })} streaming={streaming} />,

@@ -4,6 +4,7 @@ import { LayoutDashboard, Grid2X2, PanelsTopLeft, Settings } from "lucide-react"
 import { useHostyUiHost, useHostyChrome } from "@hosty-sdk/app/ui/react";
 import type { UiHostSnapshot } from "@hosty-sdk/app/ui/host";
 import { Button } from "@/components/ui/button";
+import { useToolActivity, ToolsActivityBadge } from "./tool-activity";
 import { cn } from "@/lib/utils";
 const empty: UiHostSnapshot = { bootstrap: null, catalog: [], tools: [], selected: null, expanded: false, width: 360, error: null };
 const noop = () => () => {};
@@ -12,7 +13,7 @@ export function ShellMobileTabs({ active, canManage, onNavigate, onOpenApps }: {
   const snapshot = useSyncExternalStore(host?.subscribeSnapshot ?? noop, host?.getSnapshot ?? (() => empty), () => empty);
   const slot = snapshot.workspaces?.find(w => w.workspaceId === "default");
   const selected = snapshot.tools.find(t => t.presentationId === slot?.selectedId);
-  const attention = snapshot.tools.filter(t => t.workspaceId === "default").reduce((sum, item) => sum + item.attention, 0);
+  const activity = useToolActivity();
   const [error, setError] = useState<string | null>(null);
   const tools = chrome.tools.enabled && chrome.tools.launcher !== "hide";
   return <nav aria-label="Phone navigation" className="shell-mobile-tabs">
@@ -24,7 +25,7 @@ export function ShellMobileTabs({ active, canManage, onNavigate, onOpenApps }: {
       if (slot?.expanded) host?.collapseWorkspace("default");
       else if (selected) host?.focusPresentation(selected.presentationId);
       else void host?.openToolPicker({ requestId: crypto.randomUUID() }).then(result => { if (result.status !== "accepted") setError("Tools could not be opened. Try again."); });
-    }}><PanelsTopLeft /><span>Tools{attention > 0 && <span className="ml-1 rounded-full bg-warning-soft px-1.5 text-warning-foreground">{attention}</span>}</span></Button>}
+    }}><PanelsTopLeft /><span>Tools<ToolsActivityBadge values={snapshot.catalog.map(activity.read)} /></span></Button>}
     <Button variant="ghost" aria-current={active === "settings" ? "page" : undefined} onClick={() => onNavigate("settings")}><Settings /><span>Settings</span></Button>
   </nav>;
 }

@@ -21,7 +21,9 @@ it("retains workspace form state through desktop/sheet transitions and returns k
     const dialog = container.querySelector('[role="dialog"]')!;
     expect(dialog.getAttribute("aria-modal")).toBe("true");
     expect(document.activeElement?.textContent).toBe("Back to conversation");
-    field.focus(); await act(async () => field.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true })));
+    await act(async () => document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true })));
+    expect(document.activeElement).toBe(field);
+    await act(async () => field.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true })));
     expect(document.activeElement?.textContent).toBe("Back to conversation");
     await act(async () => field.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
     expect(container.querySelector('[role="dialog"]')).toBeNull(); expect(document.activeElement).toBe(opener);

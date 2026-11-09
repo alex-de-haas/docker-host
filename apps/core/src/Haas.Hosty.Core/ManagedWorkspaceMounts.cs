@@ -7,6 +7,7 @@ internal static class ManagedWorkspaceMounts
     // canonical collection roots on an installation that declares and is authorized for them.
     internal static bool IsOwnedRoot(CoreDataPaths paths, AppRecord app, string path)
     {
+        if (AgentSkillMounts.IsOwnedRoot(paths, app, path)) return true;
         if (app.MountSlots?.Any(slot => slot.Kind == "managed-workspaces") != true
             || !(app.GrantedCorePermissions ?? []).Contains(CoreAppPermissions.Sources)) return false;
         var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
@@ -38,6 +39,7 @@ internal static class ManagedWorkspaceMounts
                 mounts.Add(mount);
             }
         }
+        mounts.AddRange(AgentSkillMounts.Resolve(paths, app, manifest));
         return mounts;
     }
 
@@ -56,6 +58,8 @@ internal static class ManagedWorkspaceMounts
 
     internal static string Validate(CoreDataPaths paths, AppRecord app, RuntimeAppManifest manifest, RuntimeMount mount)
     {
+        if (manifest.ExternalMounts.TryGetValue(mount.Key, out var skillDeclaration) && skillDeclaration.Kind == "agent-skills")
+            return AgentSkillMounts.Validate(paths, app, manifest, mount);
         if (!mount.ManagedCollection || !manifest.ExternalMounts.TryGetValue(mount.Key, out var declaration)
             || declaration.Kind != "managed-workspaces" || declaration.Scope != "instance"
             || !(app.GrantedCorePermissions ?? []).Contains(CoreAppPermissions.Sources)

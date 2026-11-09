@@ -3,6 +3,8 @@
 // yields a distinct MCP-only target token. Legacy seeds can renew themselves but Core refuses
 // cross-app branching through the old delegated endpoint.
 
+import { openSession, callTool } from "./upstream.js";
+import { AppContextError } from "../sessions/app-context.js";
 import { createHash } from "node:crypto";
 import { CORE_PROVIDER_ID, type McpProvider } from "../settings/providers.js";
 import { PROXY_PATH_PREFIX } from "./proxy.js";
@@ -76,6 +78,18 @@ export class TokenExchange {
     }
   }
 
+  async task(binding: { dispatch: import("@hosty-sdk/app/providers").TaskDispatchRef; executionId: string; sessionId: string }, targetAppId: string): Promise<IssuedToken | null> {
+    if (!this.coreOrigin || !this.serviceToken) return null;
+    const response = await fetch(`${this.coreOrigin}/api/internal/apps/${encodeURIComponent(this.appId)}/task-mcp`, {
+      method: "POST", redirect: "error", headers: { authorization: `Bearer ${this.serviceToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ binding, targetAppId }), signal: AbortSignal.timeout(15000),
+    }).catch(() => { throw new CoreTemporarilyUnavailable(); });
+    if (response.status === 429 || response.status >= 500) throw new CoreTemporarilyUnavailable();
+    if (!response.ok) return null;
+    const result = await response.json() as IssuedToken;
+    return typeof result.token === "string" && typeof result.expiresAt === "string" ? result : null;
+  }
+
   /** Read a catalog through Core without creating a conversation or receiving an MCP token. */
   async catalog(presented: string, targetAppId: string): Promise<import("./upstream.js").UpstreamTool[]> {
     if (!this.coreOrigin || !this.serviceToken) throw new Error("Core discovery is unavailable.");
@@ -87,6 +101,31 @@ export class TokenExchange {
     const result = await response.json() as { tools?: import("./upstream.js").UpstreamTool[] };
     if (!Array.isArray(result.tools)) throw new Error("Core returned an invalid tool catalog.");
     return result.tools;
+  }
+
+  /** Retained local aliases use the same current Core MCP grant as canonical agent tools. */
+  async invokeCore(presented: string, sessionId: string, url: string, name: string, args: Record<string, unknown>, guard?: () => Promise<void>, task?: { dispatch: import("@hosty-sdk/app/providers").TaskDispatchRef; executionId: string; sessionId: string }): Promise<unknown> {
+    const issued = task ? await this.task(task, CORE_PROVIDER_ID) : await this.exchange(presented, CORE_PROVIDER_ID, sessionId);
+    if (!issued) throw new AppContextError(403, "mcp_access_denied", "Current Core MCP access is required for this platform tool.");
+    const session = await openSession(url, issued.token);
+    if (!session) throw new AppContextError(503, "core_unavailable", "Core MCP is unavailable; retain the original operation requestId.");
+    await guard?.();
+    const response = await callTool(url, issued.token, session, name, args);
+    if (!response) throw new AppContextError(503, "workspace_outcome_unknown", "Core disconnected; inspect or recover with the original operation requestId.");
+    if (response.error) throw new AppContextError(409, "core_mcp_failed", "Core refused this tool call. Refresh its catalog and access before retrying.");
+    const result = response.result as { isError?: boolean; structuredContent?: unknown; content?: { type: string; text?: string }[] };
+    let value = result?.structuredContent;
+    if (value === undefined) {
+      const text = result?.content?.find(c => c.type === "text")?.text;
+      try { value = text === undefined ? undefined : JSON.parse(text); } catch { value = text; }
+    }
+    const error = value && typeof value === "object" ? value as { code?: string; message?: string; error?: string } : undefined;
+    const legacyError = typeof error?.error === "string" && Object.keys(error).length === 1 ? error.error : undefined;
+    if (result?.isError || error?.code && error.message || legacyError) throw new AppContextError(
+      error?.code?.includes("permission") || error?.code?.includes("denied") ? 403 : 409,
+      error?.code ?? "core_tool_failed", error?.message ?? legacyError ?? (typeof value === "string" ? value : "Core tool failed."));
+    if (value === undefined) throw new AppContextError(502, "core_response_invalid", "Core returned no structured operation result.");
+    return value;
   }
 
   /** Revalidates the app session, or renews a same-audience legacy credential within its lifetime cap. */
@@ -115,6 +154,7 @@ export class TokenExchange {
     providers: readonly McpProvider[],
     enabled: Readonly<Record<string, boolean>>,
     sessionId?: string,
+    task?: { dispatch: import("@hosty-sdk/app/providers").TaskDispatchRef; executionId: string; sessionId: string },
   ): Promise<ExchangedServer[]> {
     const wanted = providers.filter(
       (provider) => enabled[provider.appId] === true && provider.running && provider.url,
@@ -122,7 +162,7 @@ export class TokenExchange {
 
     const issued = await Promise.all(
       wanted.map(async (provider) => {
-        const token = await this.exchange(presented, provider.appId, sessionId);
+        const token = task ? await this.task(task, provider.appId) : await this.exchange(presented, provider.appId, sessionId);
         return token
           ? {
               appId: provider.appId,

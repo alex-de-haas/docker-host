@@ -13,6 +13,7 @@ it("records scoped MCP errors and dynamic output once, omits envelopes and binar
     run.send("outputs"); await vi.waitFor(() => expect(events.filter(event => event.type === "result")).toHaveLength(1));
     const results = events.filter(event => event.type === "tool_result");
     expect(results).toHaveLength(6);
+    expect(results.map(event => event.durationMs)).toEqual([1250, 0, 1250, undefined, 42, undefined]);
     expect(results.map(event => event.status)).toEqual(["completed", "failed", "failed", "unknown", "completed", "unknown"]);
     expect(results[0]!.output).toContain("app output"); expect(results[0]!.output).toContain("demo");
     expect(results[1]!.output).toBe("app unavailable");

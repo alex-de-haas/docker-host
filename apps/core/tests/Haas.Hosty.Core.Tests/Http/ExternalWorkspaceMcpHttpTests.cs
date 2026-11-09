@@ -14,6 +14,186 @@ public sealed class ExternalWorkspaceMcpHttpTests
     private const string SourceApp = "com.example.external-source";
     private static readonly string[] WorkspaceScopes = [AccessTokenScopes.McpRead, AccessTokenScopes.McpWorkspaces];
 
+    [Fact]
+    public async Task CanonicalWorkspaceApi_AllowsAnIndependentSourceClientWithoutAnAssistantConversation()
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        await SeedAdminAsync(host);
+        await SeedSourceAsync(host);
+        var apps = host.Services.GetRequiredService<AppRegistryStore>();
+        var clientApp = AssistantMcpAccessHttpTests.Record("independent.source.editor", DateTimeOffset.UtcNow) with {
+            GrantedCorePermissions = [CoreAppPermissions.Sources], ConfirmedRoles = [], Interfaces = null };
+        await apps.UpsertAppAsync(clientApp);
+        var identity = await BrowserAuthorityFixture.Grant(host, clientApp.Id, "admin");
+        using var client = host.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new("Bearer", host.Services.GetRequiredService<AppServiceTokenService>().CreateToken(clientApp.Id));
+        client.DefaultRequestHeaders.Add(AppManagementAuthorization.IdentityHeader, identity.AccessToken);
+        var input = new CanonicalWorkspacePrepare(Guid.NewGuid().ToString(), "opaque-work-context", SourceApp,
+            Guid.NewGuid().ToString(), "Improve source behavior", "main");
+        using var response = await client.PostAsJsonAsync("/api/workspaces/v1/prepare", input);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var tree = (await response.Content.ReadFromJsonAsync<DevelopmentWorkspace>())!;
+        Assert.Equal(clientApp.Id, tree.Owner.AppId);
+        Assert.Equal(input.TaskId, tree.Owner.SessionId);
+        Assert.Null(tree.SessionPath);
+        Assert.True(Directory.Exists(tree.Path));
+        Assert.Equal(tree.Id, (await (await client.PostAsJsonAsync("/api/workspaces/v1/prepare", input)).Content.ReadFromJsonAsync<DevelopmentWorkspace>())!.Id);
+        var inventory = (await (await client.PostAsJsonAsync("/api/workspaces/v1/query", new CoreWorkspaceQuery())).Content.ReadFromJsonAsync<WorkspaceList>())!;
+        Assert.Equal(tree.Id, Assert.Single(inventory.Workspaces).Id);
+        using var direct = host.CreateClient();
+        var token = await IssueAsync(host, WorkspaceScopes);
+        Assert.Equal(tree.Id, (await ToolAsync(direct, token, "get_workspace", new { workspaceId = tree.Id })).GetProperty("id").GetString());
+        Assert.Equal(HttpStatusCode.Conflict, (await client.PostAsJsonAsync($"/api/workspaces/v1/{tree.Id}/commands/cleanup", new WorkspaceCommand(Guid.NewGuid().ToString()))).StatusCode);
+        await apps.UpsertAppAsync(clientApp with { GrantedCorePermissions = [] });
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync("/api/workspaces/v1/query", new CoreWorkspaceQuery())).StatusCode);
+        Assert.True(Directory.Exists(tree.Path));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AttachedSession_ContinuesRetainedSourceWithItsAuthenticatedMcpIdentity(bool external)
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        await SeedAdminAsync(host);
+        var origin = await SeedSourceAsync(host);
+        var now = host.Services.GetRequiredService<IClock>().UtcNow;
+        var assistant = AssistantMcpAccessHttpTests.Record("independent.source.assistant", now) with {
+            ConfirmedRoles = ["assistant"], GrantedCorePermissions = [CoreAppPermissions.Sources],
+            Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> {
+                ["assistant"] = [new("default", null, "/agent")] } };
+        await host.Services.GetRequiredService<AppRegistryStore>().UpsertAppAsync(assistant);
+        var grant = await BrowserAuthorityFixture.Grant(host, assistant.Id, "admin");
+        await host.Services.GetRequiredService<AgentPolicyStore>().ChangeAsync("hosty:core", new(null, true,
+            new Dictionary<string, string>(), new Dictionary<string, AssistantTargetGrant> {
+                [assistant.Id] = new(now, "workspace-continuation") }));
+        var serviceToken = host.Services.GetRequiredService<AppServiceTokenService>().CreateToken(assistant.Id);
+        var access = host.Services.GetRequiredService<AssistantMcpAccess>();
+        const string currentSession = "replacement-session";
+        var token = await access.IssueAsync(assistant.Id, "hosty:core", serviceToken, grant.AccessToken, default, currentSession);
+        var actor = new WorkspaceOwner(assistant.Id, assistant.InstalledAt, "admin", currentSession);
+        var creator = external ? WorkspaceOwner.ForExternal("admin", "manual:lost-client", "lost-external-task", "External client")
+            : actor with { SessionId = "lost-hosted-session" };
+        var service = host.Services.GetRequiredService<DevelopmentWorkspaceService>();
+        var originalLease = Guid.NewGuid().ToString();
+        var tree = await service.PrepareAsync(creator, new(Guid.NewGuid().ToString(), creator.SessionId, SourceApp,
+            external ? null : "/sessions/lost-hosted-session", "main", originalLease, Name: "Retained work"), default);
+        await File.WriteAllTextAsync(Path.Combine(tree.Path, "README.md"), "unfinished work survives the old session\n");
+        await File.WriteAllTextAsync(Path.Combine(tree.Path, "notes.txt"), "unrelated uncommitted work\n");
+        await service.CommandAsync(tree.Id, creator, "release-lease", new(Guid.NewGuid().ToString(), LeaseId: originalLease), default);
+
+        using var client = host.CreateClient();
+        using var sessionClient = host.CreateClient();
+        sessionClient.DefaultRequestHeaders.Authorization = new("Bearer", serviceToken);
+        sessionClient.DefaultRequestHeaders.Add("X-Hosty-User-Token", grant.AccessToken);
+        var root = $"/api/internal/apps/{assistant.Id}/sessions/{currentSession}";
+        var participation = await service.ParticipationAsync(tree.WorkspaceId, "admin", default);
+        using var attached = await sessionClient.PostAsJsonAsync(root + $"/workspace-association/{tree.WorkspaceId}/attach",
+            new WorkspaceSessionCommand(Guid.NewGuid().ToString(), participation.Revision, "Continue retained work", "/sessions/replacement-session"));
+        Assert.Equal(HttpStatusCode.OK, attached.StatusCode);
+        var leaseId = Guid.NewGuid().ToString();
+        using var leased = await sessionClient.PostAsJsonAsync(root + $"/workspaces/{tree.Id}/operations/lease",
+            new WorkspaceCommand(Guid.NewGuid().ToString(), LeaseId: leaseId));
+        Assert.Equal(HttpStatusCode.OK, leased.StatusCode);
+
+        // MCP review and the session API must agree on the current actor, even though the
+        // allocation still names a vanished external client or an earlier hosted conversation.
+        var review = await ToolAsync(client, token.Token, "get_workspace_commit_review", new {
+            workspaceId = tree.Id, input = new WorkspaceCommitReviewRequest(Guid.NewGuid().ToString(), tree.OriginalBase, ["README.md"]) });
+        Assert.Equal(currentSession, review.GetProperty("actor").GetProperty("sessionId").GetString());
+        var command = new WorkspaceCommand(Guid.NewGuid().ToString(), tree.OriginalBase, "Continue retained source",
+            ["README.md"], "Test Author", "author@example.test", ReviewId: review.GetProperty("id").GetString());
+        using var committed = await sessionClient.PostAsJsonAsync(root + $"/workspaces/{tree.Id}/operations/commit", command);
+        Assert.Equal(HttpStatusCode.OK, committed.StatusCode);
+        var saved = (await committed.Content.ReadFromJsonAsync<DevelopmentWorkspace>())!;
+        Assert.Equal("succeeded", saved.Operations.Last().State);
+        Assert.Equal("unrelated uncommitted work\n", await File.ReadAllTextAsync(Path.Combine(tree.Path, "notes.txt")));
+        File.Delete(Path.Combine(tree.Path, "notes.txt"));
+        await File.WriteAllTextAsync(Path.Combine(origin, "upstream.txt"), "new target content\n");
+        await GitAsync(origin, "add", "upstream.txt");
+        await GitAsync(origin, "-c", "user.name=Test Author", "-c", "user.email=author@example.test", "commit", "-m", "target update");
+        var merge = new { workspaceId = tree.Id, requestId = Guid.NewGuid().ToString(), expectedHead = saved.Observation!.Head,
+            message = "Integrate updated target", authorName = "Test Author", authorEmail = "author@example.test" };
+        var other = await access.IssueAsync(assistant.Id, "hosty:core", serviceToken, grant.AccessToken, default, "other-session");
+        var refused = await ToolAsync(client, other.Token, "merge_workspace_target", merge);
+        Assert.Contains("other source writers", refused.GetProperty("error").GetString());
+        var merged = await ToolAsync(client, token.Token, "merge_workspace_target", merge);
+        Assert.False(merged.TryGetProperty("error", out var error), error.ToString());
+        Assert.Equal("succeeded", merged.GetProperty("operations").EnumerateArray().Last().GetProperty("state").GetString());
+        var observed = await service.Read(tree.Id, actor, default);
+        Assert.Equal(actor, observed.Operations.Last().Actor);
+        Assert.Equal(actor, Assert.Single(observed.LeaseClaims!).Session);
+        Assert.Equal(creator, observed.Owner);
+        Assert.Equal(tree.Path, observed.Path);
+        Assert.Equal(tree.Branch, observed.Branch);
+        Assert.Equal(tree.OriginalBase, observed.OriginalBase);
+        Assert.Equal("unfinished work survives the old session\n", await File.ReadAllTextAsync(Path.Combine(tree.Path, "README.md")));
+        Assert.Equal("new target content\n", await File.ReadAllTextAsync(Path.Combine(tree.Path, "upstream.txt")));
+        var replay = await ToolAsync(client, token.Token, "merge_workspace_target", merge);
+        Assert.Equal(merged.GetProperty("observation").GetProperty("head").GetString(), replay.GetProperty("observation").GetProperty("head").GetString());
+        var listed = await ToolAsync(client, token.Token, "list_workspaces", new { });
+        Assert.Equal(currentSession, Assert.Single(listed.GetProperty("workspaces").EnumerateArray())
+            .GetProperty("operations").EnumerateArray().Last().GetProperty("actor").GetProperty("sessionId").GetString());
+    }
+
+    [Fact]
+    public async Task CommitWorkspace_SharedSelectionRequiresCurrentReceiptAndPreservesUnrelatedFiles()
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        await SeedAdminAsync(host);
+        await SeedSourceAsync(host);
+        using var client = host.CreateClient();
+        var token = await IssueAsync(host, WorkspaceScopes);
+        var prepared = await ToolAsync(client, token, "prepare_workspace", new {
+            requestId = Guid.NewGuid().ToString(), taskId = "reviewed-commit", appId = SourceApp,
+            leaseId = Guid.NewGuid().ToString(), targetBranch = "main", name = "Commit selected source changes" });
+        var id = prepared.GetProperty("id").GetString()!;
+        var directory = prepared.GetProperty("path").GetString()!;
+        var head = prepared.GetProperty("originalBase").GetString()!;
+        var workspaces = host.Services.GetRequiredService<DevelopmentWorkspaceService>();
+        var participation = await workspaces.ParticipationAsync(prepared.GetProperty("workspaceId").GetString()!, "admin", default);
+        var assistant = AssistantMcpAccessHttpTests.Record("independent.source.assistant", host.Services.GetRequiredService<IClock>().UtcNow)
+            with { GrantedCorePermissions = [CoreAppPermissions.Sources] };
+        await host.Services.GetRequiredService<AppRegistryStore>().UpsertAppAsync(assistant);
+        participation = await workspaces.ChangeSessionAsync(participation.Id,
+            new(assistant.Id, assistant.InstalledAt, "admin", "parallel-session"), "attach",
+            new(Guid.NewGuid().ToString(), participation.Revision, "Parallel source work", "/sessions/parallel-session"), default);
+        Assert.Equal(2, participation.Sessions.Length);
+        await File.WriteAllTextAsync(Path.Combine(directory, "README.md"), "reviewed contents\n");
+        await File.WriteAllTextAsync(Path.Combine(directory, "notes.txt"), "unrelated source work\n");
+
+        var missing = await ToolAsync(client, token, "commit_workspace", new {
+            workspaceId = id, requestId = Guid.NewGuid().ToString(), expectedHead = head,
+            message = "test: commit selected source", paths = new[] { "README.md" }, authorName = "Test Author", authorEmail = "author@example.test" });
+        Assert.Contains("Review the selected shared-workspace files", missing.GetProperty("error").GetString());
+        Assert.Equal(head, (await GitAsync(directory, "rev-parse", "HEAD")).Trim());
+
+        var review = await ToolAsync(client, token, "get_workspace_commit_review", new {
+            workspaceId = id, input = new WorkspaceCommitReviewRequest(Guid.NewGuid().ToString(), head, ["README.md"]) });
+        await File.WriteAllTextAsync(Path.Combine(directory, "README.md"), "changed after review\n");
+        var stale = await ToolAsync(client, token, "commit_workspace", new {
+            workspaceId = id, requestId = Guid.NewGuid().ToString(), expectedHead = head,
+            message = "test: commit selected source", paths = new[] { "README.md" }, authorName = "Test Author", authorEmail = "author@example.test",
+            reviewId = review.GetProperty("id").GetString() });
+        Assert.Contains("Source or membership changed since review", stale.GetProperty("error").GetString());
+        Assert.Equal(head, (await GitAsync(directory, "rev-parse", "HEAD")).Trim());
+
+        review = await ToolAsync(client, token, "get_workspace_commit_review", new {
+            workspaceId = id, input = new WorkspaceCommitReviewRequest(Guid.NewGuid().ToString(), head, ["README.md"]) });
+        var command = new { workspaceId = id, requestId = Guid.NewGuid().ToString(), expectedHead = head,
+            message = "test: commit selected source", paths = new[] { "README.md" }, authorName = "Test Author", authorEmail = "author@example.test",
+            reviewId = review.GetProperty("id").GetString() };
+        var committed = await ToolAsync(client, token, "commit_workspace", command);
+        Assert.False(committed.TryGetProperty("error", out var error), error.ToString());
+        Assert.Equal("succeeded", committed.GetProperty("operations").EnumerateArray().Last().GetProperty("state").GetString());
+        Assert.NotEqual(head, committed.GetProperty("observation").GetProperty("head").GetString());
+        Assert.Equal("changed after review\n", await GitAsync(directory, "show", "HEAD:README.md"));
+        Assert.Equal("?? notes.txt", (await GitAsync(directory, "status", "--porcelain")).Trim());
+        Assert.Equal("unrelated source work\n", await File.ReadAllTextAsync(Path.Combine(directory, "notes.txt")));
+        var replay = await ToolAsync(client, token, "commit_workspace", command);
+        Assert.Equal(committed.GetProperty("observation").GetProperty("head").GetString(), replay.GetProperty("observation").GetProperty("head").GetString());
+    }
+
     [Theory]
     [InlineData("read-only")]
     [InlineData("browser")]
@@ -92,7 +272,7 @@ public sealed class ExternalWorkspaceMcpHttpTests
     }
 
     [Fact]
-    public async Task ManualWorkspaceCredential_IsStableAcrossDisplayChangesButIsolatedFromOtherCredentials()
+    public async Task ManualWorkspaceCredential_PreservesAllocationAcrossDisplayChangesAndFreshCredentials()
     {
         await using var host = await CoreHttpHarness.StartAsync();
         await SeedAdminAsync(host);
@@ -126,11 +306,12 @@ public sealed class ExternalWorkspaceMcpHttpTests
         var filtered = await ToolAsync(client, token, "list_workspaces", new { taskId = "first-task" });
         Assert.Equal(id, Assert.Single(filtered.GetProperty("workspaces").EnumerateArray()).GetProperty("id").GetString());
         var other = await IssueAsync(host, WorkspaceScopes);
-        Assert.Empty((await ToolAsync(client, other, "list_workspaces", new { })).GetProperty("workspaces").EnumerateArray());
+        Assert.NotEmpty((await ToolAsync(client, other, "list_workspaces", new { })).GetProperty("workspaces").EnumerateArray());
         var refused = await ToolAsync(client, other, "get_workspace", new { workspaceId = id });
-        Assert.Equal("No owned workspace has that ID.", refused.GetProperty("error").GetString());
+        Assert.Equal(id, refused.GetProperty("id").GetString());
+        await File.WriteAllTextAsync(Path.Combine(first.GetProperty("path").GetString()!, "README.md"), "continued by a new credential");
         var diffRefused = await ToolAsync(client, other, "get_workspace_diff", new { workspaceId = id, path = "README.md" });
-        Assert.Equal("No owned workspace has that ID.", diffRefused.GetProperty("error").GetString());
+        Assert.True(diffRefused.TryGetProperty("combined", out _));
     }
 
     [Theory]
@@ -140,7 +321,7 @@ public sealed class ExternalWorkspaceMcpHttpTests
     [InlineData("cleared", true)]
     [InlineData("rebound", false)]
     [InlineData("rebound", true)]
-    public async Task WorkspaceListing_IsolatesInvalidPrivateSourceRecordsWithoutReturningCachedMetadata(string transition, bool released)
+    public async Task WorkspaceListingRetainsLocalSourceAfterProviderGrantChangesWithoutExposingCredentials(string transition, bool released)
     {
         await using var host = await CoreHttpHarness.StartAsync(configure: services =>
             services.AddSingleton(new SourceProviderRegistry([new WorkspaceListingSourceProvider()])));
@@ -161,17 +342,9 @@ public sealed class ExternalWorkspaceMcpHttpTests
         var workspace = JsonSerializer.Deserialize(prepared.GetRawText(), CoreJson.TypeInfo<DevelopmentWorkspace>())!;
         if (released)
         {
-            // Release through the actual managed workflow before attaching the fixture provider's
-            // private grant. Private Git transport is HTTPS-only; this test uses local Git solely
-            // to exercise catalog validation, not to change that transport boundary.
-            await ToolAsync(client, token, "release_workspace_lease", new { workspaceId = workspace.Id,
-                requestId = Guid.NewGuid().ToString(), privateRequest.leaseId });
-            var cleaned = await ToolAsync(client, token, "cleanup_workspace", new { workspaceId = workspace.Id,
-                requestId = Guid.NewGuid().ToString(), expectedHead = workspace.OriginalBase });
-            Assert.True(cleaned.TryGetProperty("state", out var releasedState), cleaned.GetRawText());
-            Assert.Equal("released", releasedState.GetString());
-            Assert.False(Directory.Exists(workspace.Path));
-            workspace = JsonSerializer.Deserialize(cleaned.GetRawText(), CoreJson.TypeInfo<DevelopmentWorkspace>())!;
+            var service = host.Services.GetRequiredService<DevelopmentWorkspaceService>();
+            await service.CommandAsync(workspace.Id, workspace.Owner, "release-lease", new(Guid.NewGuid().ToString(), LeaseId: privateRequest.leaseId), default);
+            workspace = await service.CommandAsync(workspace.Id, workspace.Owner, "cleanup", new(Guid.NewGuid().ToString(), ExpectedHead: workspace.Observation!.Head), default);
         }
         var users = host.Services.GetRequiredService<UserDirectoryStore>();
         var now = host.Services.GetRequiredService<IClock>().UtcNow;
@@ -200,28 +373,15 @@ public sealed class ExternalWorkspaceMcpHttpTests
                 ? null : new(Git: grant with { OwnerId = "another-administrator" }) });
 
         var listed = await ToolAsync(client, token, "list_workspaces", new { });
-        var retained = Assert.Single(listed.GetProperty("workspaces").EnumerateArray());
-        Assert.Equal(healthy.GetProperty("id").GetString(), retained.GetProperty("id").GetString());
-        Assert.Contains(healthyRequest.leaseId, retained.GetProperty("leases").EnumerateArray().Select(item => item.GetString()));
-        Assert.Contains(healthyRequest.requestId, retained.GetProperty("operations").EnumerateArray().Select(item => item.GetProperty("id").GetString()));
-        Assert.DoesNotContain(workspace.Id, listed.GetRawText());
-        Assert.DoesNotContain(privateRequest.requestId, listed.GetRawText());
+        Assert.Equal(2, listed.GetProperty("workspaces").GetArrayLength());
         Assert.DoesNotContain("private-connection", listed.GetRawText());
         Assert.DoesNotContain("private cached change", listed.GetRawText());
         var filtered = await ToolAsync(client, token, "list_workspaces", new { taskId = privateRequest.taskId });
-        Assert.Empty(filtered.GetProperty("workspaces").EnumerateArray());
-        foreach (var (name, arguments) in new (string, object)[]
-        {
-            ("get_workspace", new { workspaceId = workspace.Id }),
-            ("get_workspace_diff", new { workspaceId = workspace.Id, path = "README.md" }),
-            ("refresh_workspace", new { workspaceId = workspace.Id, requestId = Guid.NewGuid().ToString() }),
-        })
-        {
-            var denied = await ToolAsync(client, token, name, arguments);
-            Assert.True(denied.TryGetProperty("error", out _));
-            Assert.False(denied.TryGetProperty("observation", out _));
-            Assert.DoesNotContain("private cached change", denied.GetRawText());
-        }
+        Assert.Single(filtered.GetProperty("workspaces").EnumerateArray());
+        var readable = await ToolAsync(client, token, "get_workspace", new { workspaceId = workspace.Id });
+        Assert.Equal(workspace.Id, readable.GetProperty("id").GetString());
+        var remote = await ToolAsync(client, token, "refresh_workspace", new { workspaceId = workspace.Id, requestId = Guid.NewGuid().ToString() });
+        Assert.Equal(transition != "cleared" || released, remote.TryGetProperty("error", out _));
         Assert.True(Directory.Exists(healthy.GetProperty("path").GetString()));
     }
 
@@ -245,22 +405,19 @@ public sealed class ExternalWorkspaceMcpHttpTests
         var diff = await ToolAsync(client, token, "get_workspace_diff", new { workspaceId = id, path = "README.md" });
         Assert.Contains("+verified workspace progress", diff.GetProperty("combined").GetString());
         Assert.Equal("source\n", await File.ReadAllTextAsync(Path.Combine(source, "README.md")));
-        var leased = await ToolAsync(client, token, "cleanup_workspace", new { workspaceId = id,
-            requestId = Guid.NewGuid().ToString(), expectedHead = head });
-        Assert.Contains("activity lease", leased.GetProperty("error").GetString());
-        var releaseArgs = new { workspaceId = id, requestId = Guid.NewGuid().ToString(), leaseId };
-        var released = await ToolAsync(client, token, "release_workspace_lease", releaseArgs);
-        Assert.Empty(released.GetProperty("leases").EnumerateArray());
-        var replay = await ToolAsync(client, token, "release_workspace_lease", releaseArgs);
-        Assert.Equal(released.GetProperty("operations").GetArrayLength(), replay.GetProperty("operations").GetArrayLength());
-        var dirty = await ToolAsync(client, token, "cleanup_workspace", new { workspaceId = id,
-            requestId = Guid.NewGuid().ToString(), expectedHead = head });
-        Assert.Contains("changes", dirty.GetProperty("error").GetString());
-        Assert.True(Directory.Exists(path));
+        var other = await IssueAsync(host, WorkspaceScopes);
+        var requestId = Guid.NewGuid().ToString();
+        var deleted = await ToolAsync(client, other, "delete_workspace", new { workspaceId = workspace.GetProperty("workspaceId").GetString(), requestId });
+        Assert.Equal("removed", deleted.GetProperty("state").GetString());
+        Assert.False(Directory.Exists(path));
+        Assert.True(Directory.Exists(source));
+        var replay = await ToolAsync(client, other, "delete_workspace", new { workspaceId = workspace.GetProperty("workspaceId").GetString(), requestId });
+        Assert.Equal("removed", replay.GetProperty("state").GetString());
+
     }
 
     [Fact]
-    public async Task OAuthWorkspaceGrant_RefreshKeepsPrincipalAndANewGrantCannotClaimIt()
+    public async Task OAuthWorkspaceGrant_RefreshKeepsAllocationAndNewGrantCanContinueIt()
     {
         await using var host = await CoreHttpHarness.StartAsync();
         await SeedAdminAsync(host);
@@ -283,8 +440,8 @@ public sealed class ExternalWorkspaceMcpHttpTests
         Assert.Equal(id, (await ToolAsync(client, refreshedToken, "prepare_workspace", args)).GetProperty("id").GetString());
         var (_, otherTokens) = await OAuthTokensAsync(host, client, clientId);
         var other = otherTokens.GetProperty("access_token").GetString()!;
-        Assert.Empty((await ToolAsync(client, other, "list_workspaces", new { })).GetProperty("workspaces").EnumerateArray());
-        Assert.Equal("No owned workspace has that ID.", (await ToolAsync(client, other, "get_workspace", new { workspaceId = id })).GetProperty("error").GetString());
+        Assert.NotEmpty((await ToolAsync(client, other, "list_workspaces", new { })).GetProperty("workspaces").EnumerateArray());
+        Assert.Equal(id, (await ToolAsync(client, other, "get_workspace", new { workspaceId = id })).GetProperty("id").GetString());
         // Interrupt after durable OAuth revocation but before session cascade. Per-call grant
         // validation must refuse the otherwise-live access token immediately.
         await host.Services.GetRequiredService<OAuthStore>().UpdateAsync<object?>(state => (state with
@@ -358,11 +515,14 @@ public sealed class ExternalWorkspaceMcpHttpTests
         using var response = await McpAsync(client, "browser-admin", "tools/list", new { });
         var allTools = (await McpResultAsync(response)).GetProperty("tools").EnumerateArray().ToArray();
         var tools = allTools.Where(tool => tool.GetProperty("name").GetString()!.Contains("workspace", StringComparison.Ordinal)).ToArray();
-        string[] expected = ["workspace_activation", "prepare_workspace", "list_workspaces", "get_workspace", "rename_workspace",
+        string[] expected = ["get_workspace_participants", "get_workspace_commit_review", "merge_workspace_upstream", "workspace_activation", "prepare_workspace", "list_workspaces", "get_workspace", "rename_workspace",
             "get_workspace_diff", "refresh_workspace", "commit_workspace", "merge_workspace_target", "abort_workspace_merge",
-            "acquire_workspace_lease", "release_workspace_lease", "record_workspace_pull_requests", "cleanup_workspace",
+            "acquire_workspace_lease", "release_workspace_lease", "record_workspace_pull_requests", "delete_workspace",
             "select_workspace_execution", "get_workspace_execution_selection", "configure_workspace_runtime"];
         Assert.Equal(expected.Order(StringComparer.Ordinal), tools.Select(tool => tool.GetProperty("name").GetString()!).Order(StringComparer.Ordinal));
+        var commitSchema = tools.Single(tool => tool.GetProperty("name").GetString() == "commit_workspace").GetProperty("inputSchema");
+        Assert.True(commitSchema.GetProperty("properties").TryGetProperty("reviewId", out _));
+        Assert.DoesNotContain(commitSchema.GetProperty("required").EnumerateArray(), property => property.GetString() == "reviewId");
         var selectionProperties = allTools.Single(tool => tool.GetProperty("name").GetString() == "select_app_execution_target")
             .GetProperty("inputSchema").GetProperty("properties");
         Assert.Equal(new[] { "appId", "input" }, selectionProperties.EnumerateObject().Select(property => property.Name).Order(StringComparer.Ordinal));
@@ -425,7 +585,7 @@ public sealed class ExternalWorkspaceMcpHttpTests
             host.Services.GetRequiredService<IClock>(), host.Services.GetRequiredService<AuthLifetimes>(), default,
             audience: scopes is null ? null : AccessTokenScopes.CoreAudience, scopes: scopes)).Id;
 
-    private static async Task<string> SeedSourceAsync(CoreHttpHarness host)
+    internal static async Task<string> SeedSourceAsync(CoreHttpHarness host)
     {
         var paths = host.Services.GetRequiredService<CoreDataPaths>();
         var origin = Path.Combine(paths.CoreRoot, "external-source");
@@ -442,7 +602,7 @@ public sealed class ExternalWorkspaceMcpHttpTests
         return origin;
     }
 
-    private static async Task GitAsync(string directory, params string[] arguments)
+    private static async Task<string> GitAsync(string directory, params string[] arguments)
     {
         var start = new ProcessStartInfo("git") { WorkingDirectory = directory, RedirectStandardError = true,
             RedirectStandardOutput = true, UseShellExecute = false };
@@ -451,8 +611,9 @@ public sealed class ExternalWorkspaceMcpHttpTests
         var stdout = process.StandardOutput.ReadToEndAsync();
         var stderr = process.StandardError.ReadToEndAsync();
         await process.WaitForExitAsync();
-        await stdout;
+        var output = await stdout;
         Assert.True(process.ExitCode == 0, await stderr);
+        return output;
     }
 
     private static async Task<(string ClientId, JsonElement Tokens)> OAuthTokensAsync(CoreHttpHarness host, HttpClient client,
@@ -510,7 +671,7 @@ public sealed class ExternalWorkspaceMcpHttpTests
         Assert.Contains("original name", conflict.GetProperty("error").GetString());
         var otherToken = await IssueAsync(host, WorkspaceScopes);
         var denied = await ToolAsync(client, otherToken, "rename_workspace", input);
-        Assert.Contains("owned workspace", denied.GetProperty("error").GetString());
+        Assert.Equal(input.name, denied.GetProperty("name").GetString());
         var readToken = await IssueAsync(host, [AccessTokenScopes.McpRead]);
         denied = await ToolAsync(client, readToken, "rename_workspace", input);
         Assert.Contains("mcp:workspaces", denied.GetProperty("error").GetString());

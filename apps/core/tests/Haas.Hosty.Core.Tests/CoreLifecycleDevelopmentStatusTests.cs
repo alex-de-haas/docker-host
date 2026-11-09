@@ -15,7 +15,7 @@ public sealed partial class CoreLifecycleServiceTests
         var repo = await CreateGitRepositoryAsync(f.Root);
         var directory = Path.Combine(repo, "apps", "demo"); Directory.CreateDirectory(directory);
         var manifest = Path.Combine(directory, "manifest.json");
-        var json = JsonNode.Parse(await File.ReadAllTextAsync(await f.WriteLocalCommandManifestAsync()))!;
+        var json = JsonNode.Parse(await File.ReadAllTextAsync(await f.WriteLocalCommandManifestAsync(includeDependency: false)))!;
         json["runtimeProfiles"]![0]!["development"] = true;
         json["source"] = new JsonObject { ["type"] = "git", ["repository"] = fileUri ? new Uri(repo).AbsoluteUri : repo, ["branch"] = "main" };
         await File.WriteAllTextAsync(manifest, json.ToJsonString());

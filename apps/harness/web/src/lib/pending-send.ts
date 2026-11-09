@@ -8,6 +8,7 @@ const PREFIX = PENDING_SEND_PREFIX;
 const MAX_JOURNAL_CHARS = 1024 * 1024;
 export type PendingSend = {
   version: 1; clientRequestId: string; sessionId: string; text: string; draftText: string; attachments: StoredAttachment[];
+  promptSuggestions?: boolean;
   appContextRevision: number; withoutAppDetails: boolean; selectionRevision: number;
 };
 function valid(value: unknown, sessionId: string): value is PendingSend {
@@ -15,6 +16,7 @@ function valid(value: unknown, sessionId: string): value is PendingSend {
   return !!request && request.version === 1 && request.sessionId === sessionId
     && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(request.clientRequestId)
     && typeof request.text === "string" && typeof request.draftText === "string" && typeof request.withoutAppDetails === "boolean"
+    && (request.promptSuggestions === undefined || typeof request.promptSuggestions === "boolean")
     && Number.isSafeInteger(request.appContextRevision) && request.appContextRevision >= 0
     && Number.isSafeInteger(request.selectionRevision) && request.selectionRevision >= 0
     && Array.isArray(request.attachments) && request.attachments.every(file => typeof file?.name === "string" && !!file.name && Number.isFinite(file.size) && file.size >= 0);
@@ -58,11 +60,14 @@ export function forgetPendingSend(request: PendingSend): void {
   }
 }
 export function isMessageAdmissionRejection(error: unknown): error is AssistantApiError {
-  return error instanceof AssistantApiError && ["app_context_unavailable", "app_context_conflict", "selection_conflict", "provider_required", "workspace_closed", "session_busy", "cleanup_pending", "handoff_pending", "handoff_queued", "worker_recovery_required"].includes(error.code ?? "");
+  // Core's writer fence rejects before message admission or native execution. Keep the draft
+  // editable after that explicit refusal; an uncertain receipt GET still cannot settle a POST.
+  return error instanceof AssistantApiError && (["app_context_unavailable", "app_context_conflict", "selection_conflict", "provider_required", "workspace_closed", "session_busy", "cleanup_pending", "handoff_pending", "handoff_queued", "worker_recovery_required"].includes(error.code ?? "")
+    || error.status === 409 && error.code === "workspace_in_use");
 }
 export function dispatchPendingSend(request: PendingSend): Promise<MessageReceipt | void> {
   return postMessage(request.sessionId, request.text, request.attachments.map(file => file.name), request.appContextRevision,
-    request.withoutAppDetails, request.selectionRevision, request.clientRequestId);
+    request.withoutAppDetails, request.selectionRevision, request.clientRequestId, ...(request.promptSuggestions === true ? [true] : []));
 }
 /** Explicit user retry only: settle the original receipt before considering the exact original write. */
 export async function retryPendingSend(request: PendingSend): Promise<MessageReceipt | void> {

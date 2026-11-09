@@ -30,7 +30,7 @@ internal sealed record BackendFleetLogRecord(
 internal sealed record BackendFleetLogsResponse(
     long RangeSeconds,
     int AppCount,
-    IReadOnlyList<BackendFleetLogRecord> Records);
+    IReadOnlyList<BackendFleetLogRecord> Records, CoreTraceCoverage? CoreTracing = null);
 
 // One trace in the fleet list, spans collapsed to a summary. Root* describe the root span when stored
 // (HasRootSpan) else the earliest span. Timestamps are fractional unix-ms. AppIds are the contributing
@@ -50,7 +50,7 @@ internal sealed record BackendTraceSummary(
 internal sealed record BackendTracesResponse(
     long RangeSeconds,
     int AppCount,
-    IReadOnlyList<BackendTraceSummary> Traces);
+    IReadOnlyList<BackendTraceSummary> Traces, CoreTraceCoverage? CoreTracing = null);
 
 // One span of a trace-detail response, tagged with its source app id. Start/Duration are fractional
 // unix-ms; ParentSpanId is null for the root span.
@@ -70,4 +70,4 @@ internal sealed record BackendTraceDetailResponse(
     string TraceId,
     double StartUnixMs,
     double DurationMs,
-    IReadOnlyList<BackendTraceDetailSpan> Spans);
+    IReadOnlyList<BackendTraceDetailSpan> Spans, CoreTraceCoverage? CoreTracing = null, string? UnavailableReason = null);

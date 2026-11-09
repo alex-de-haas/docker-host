@@ -7,11 +7,12 @@ import { getAppSettingsTabs, type AppSurfaceTab } from "../src/app/shell/surface
 import { getManageAppHref, getSettingsHref } from "../src/app/shell/shell-routes";
 import type { CoreApp, CoreSettingItem, CoreStatus } from "../src/app/shell/types";
 
-const { push, copy, toast } = vi.hoisted(() => ({ push: vi.fn(), copy: vi.fn(),
+const { push, copy, toast, storage } = vi.hoisted(() => ({ push: vi.fn(), copy: vi.fn(), storage: vi.fn(),
   toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("../src/app/shell/clipboard", () => ({ copyTextToClipboard: copy }));
 vi.mock("../src/components/reui/operation-toast", () => ({ toast }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
+vi.mock("../src/app/shell/storage/storage-view", () => ({ StoragePage: storage }));
 vi.mock("../src/app/shell/pages/user-management-page", () => ({ UserManagementPanel: () => <p>User management</p> }));
 vi.mock("../src/app/shell/pages/user-profile-page", () => ({ UserProfilePage: () => <p>Personal profile</p> }));
 vi.mock("../src/app/shell/pages/settings-access-lists", () => ({ SettingsAccessList: () => null }));
@@ -43,6 +44,7 @@ let props: ComponentProps<typeof SettingsPage>;
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   push.mockReset(); copy.mockReset(); copy.mockResolvedValue(undefined); toast.success.mockReset(); toast.error.mockReset();
+  storage.mockReset().mockImplementation(() => <p>Hosty storage measurement</p>);
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
   props = {
     assistantSelection: null, onSelectAssistant: vi.fn(), activeTab: "users", appTabs: [],
@@ -86,6 +88,29 @@ it("places app permissions under Security and refuses direct non-admin navigatio
   expect(container.textContent).toContain("Permission catalogue");
   await render("permissions", false);
   expect(container.textContent).not.toContain("Permission catalogue");
+  expect([...container.querySelectorAll('[role="tab"]')].map(tab => tab.textContent)).toEqual(["Profile", "Tokens & devices"]);
+});
+
+it("places Storage under Host settings with canonical navigation and Core data-root context", async () => {
+  props.coreStatus = { dataRoot: "/hosty/test-root" } as CoreStatus;
+  await render("storage");
+  expect(container.querySelector("h1")?.textContent).toBe("Host");
+  expect(container.querySelector('nav[aria-label="Settings sections"] button[aria-current="page"]')?.textContent).toBe("Host");
+  expect(container.querySelector('[role="tablist"]')?.getAttribute("aria-label")).toBe("Host settings");
+  expect([...container.querySelectorAll('[role="tab"]')].map(tab => tab.textContent)).toEqual(["Updates", "Network", "Storage", "Shared folders", "Core source"]);
+  expect(container.querySelector('[role="tab"][data-state="active"]')?.textContent).toBe("Storage");
+  expect(container.textContent).toContain("Hosty storage measurement");
+  expect(storage.mock.calls[0][0]).toEqual(expect.objectContaining({ dataRoot: "/hosty/test-root", withinSettings: true }));
+  await render("ingress");
+  await act(async () => [...container.querySelectorAll('[role="tab"]')].find(tab => tab.textContent === "Storage")!
+    .dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+  expect(push).toHaveBeenCalledExactlyOnceWith("/settings?tab=host&section=storage", { scroll: false });
+});
+
+it("never mounts Storage for a direct non-admin settings tab", async () => {
+  await render("storage", false);
+  expect(storage).not.toHaveBeenCalled();
+  expect(container.textContent).not.toContain("Hosty storage measurement");
   expect([...container.querySelectorAll('[role="tab"]')].map(tab => tab.textContent)).toEqual(["Profile", "Tokens & devices"]);
 });
 
@@ -133,10 +158,16 @@ const factualStatus: CoreStatus = {
 };
 const coreInformation = () => container.querySelector<HTMLElement>('[aria-labelledby="core-host-information"]');
 
-it("preserves factual Core host information and address copy controls on General without network or configuration writes", async () => {
-  const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);
+it("preserves factual Core host information and address copy controls on General without extra requests or configuration writes", async () => {
+  const fetcher = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({
+    source: null, indexRef: "https://platform.test/feeds.json", index: { feeds: [] },
+  })));
+  vi.stubGlobal("fetch", fetcher);
   props.coreStatus = factualStatus;
   await render("general");
+  expect(fetcher.mock.calls.map(([url]) => url)).toEqual([expect.stringMatching(/\/api\/core\/update-feed$/)]);
+  expect(container.textContent).not.toContain("Application update sources");
+  fetcher.mockClear(); // Feed metadata loads once on entry; copying host facts performs no requests.
   const information = coreInformation()!;
   for (const value of [factualStatus.listenUrl, factualStatus.corePublicOrigin, factualStatus.dataRoot, factualStatus.runtimePublicHost, "Cloudflare"])
     expect(information.textContent).toContain(value);

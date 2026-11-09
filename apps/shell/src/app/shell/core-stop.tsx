@@ -66,7 +66,6 @@ export function useCoreStop(coreOrigin: string, state: CoreDevelopment | null, d
       if (stopped.status !== 202 || receipt.status !== "accepted" || receipt.instance !== current.instance || receipt.keepApps !== true)
         throw new Error("Core returned an unrecognized stop response.");
       update({ busy: true, phase: "Stop requested", error: null });
-      toast.info("Core stop requested", { description: "Runtime applications keep running. A new local Core start restores management access." });
     } catch (error) {
       if (signal.aborted || attempt.current !== own) return;
       if (isAuthRequiredRedirectError(error)) {

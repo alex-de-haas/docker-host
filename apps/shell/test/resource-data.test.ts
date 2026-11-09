@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cpuScale, elevatedCpu, mergeResources, resourceSeries, type ResourceSnapshot } from "../src/app/shell/resources/resource-data";
+import { currentApiActivity, apiActivitySeries, cpuScale, elevatedCpu, mergeResources, resourceSeries, type ResourceSnapshot } from "../src/app/shell/resources/resource-data";
 const time = "2026-09-25T12:00:00Z";
 function snapshot(): ResourceSnapshot {
   return { runId: "one", now: time, logicalProcessors: 8, history: [{ timestamp: time, services: [
@@ -40,4 +40,46 @@ describe("runtime resources", () => {
     points[12].cpu = 2;
     expect(elevatedCpu(points)).toBe(false);
   });
+});
+
+describe("Core API activity", () => {
+  const activity = { totalRequests: 100, totalEligibleRequests: 80, requests10s: 10, requests60s: 50,
+    eligibleRequests10s: 8, eligibleRequests60s: 40, warning: null, recoveredAt: null };
+  function withActivity(): ResourceSnapshot {
+    const data = snapshot();
+    data.apiActivity = { runId: "api", observedAt: time, enabled: true, coverage: "Core requests", sustainedThreshold: 50, burstThreshold: 200, recoverySeconds: 60, apps: { a: activity }, unattributed: {} };
+    data.history[0].apiActivity = data.apiActivity;
+    return data;
+  }
+  it("does not multiply an app count by its number of services", () => {
+    expect(currentApiActivity(withActivity(), "a")?.requests60s).toBe(50);
+    expect(currentApiActivity(withActivity())?.requests60s).toBe(50);
+  });
+  it("distinguishes unavailable and disabled from measured zero", () => {
+    expect(currentApiActivity(snapshot(), "a")).toBeNull();
+    const data = withActivity(); data.apiActivity!.apps.a = { ...activity, requests60s: 0 };
+    expect(currentApiActivity(data, "a")?.requests60s).toBe(0);
+    data.apiActivity!.enabled = false; expect(currentApiActivity(data, "a")).toBeNull();
+  });
+  it("delivers activity without CPU readings and keeps their original age", () => {
+    const data = withActivity(); data.history[0].services = [];
+    expect(resourceSeries(data, "a")[0].cpu).toBeNull();
+    expect(apiActivitySeries(data, "a")[0].calls).toBe(50);
+    data.now = "2026-09-25T12:01:00Z";
+    expect(currentApiActivity(data, "a")).toBeNull();
+  });
+});
+
+it("separates child Core usage from apps and discards a replaced or missing child process series", () => {
+  const data = snapshot();
+  const child = { appId: "core-environment:child", service: "core", runtime: "core", timestamp: time,
+    cpuPercent: 50, memoryBytes: 800, environmentId: "child", processIdentity: "123:before" };
+  data.history[0].services.push(child);
+  expect(resourceSeries(data)[0]).toMatchObject({ cpu: 140, memory: 700 });
+  expect(resourceSeries(data, child.appId)[0]).toMatchObject({ cpu: 50, memory: 800 });
+  data.history.push({ timestamp: "2026-09-25T12:00:03Z", services: [{ ...child, processIdentity: "123:after", cpuPercent: null }] });
+  expect(resourceSeries(data, child.appId)[0].memory).toBeNull();
+  expect(resourceSeries(data, child.appId)[1]).toMatchObject({ cpu: null, memory: 800 });
+  data.history.push({ timestamp: "2026-09-25T12:00:06Z", services: [] });
+  expect(resourceSeries(data, child.appId).every(point => point.memory === null)).toBe(true);
 });

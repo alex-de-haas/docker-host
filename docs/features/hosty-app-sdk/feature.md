@@ -1,6 +1,6 @@
 ---
 created: 2026-07-15
-updated: 2026-10-24
+updated: 2026-11-04
 summary: The shared app-side Host integration published as an npm package and a NuGet package.
 components: [packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -225,8 +225,10 @@ and the page reads them in a fixed precedence:
 2. **The value persisted for the tab** under `hosty.theme.resolved` / `hosty.theme.preference` in
    `sessionStorage`, written whenever a shell declared a theme. App-internal navigation carries no
    parameter and must not lose the theme.
-3. **The operating system**, followed live only while no shell has spoken. A declared theme is a
-   choice, and a choice is not overruled by the OS.
+3. **The operating system**, followed live while no shell has spoken. In a standalone tab, a
+   declared or retained `system` preference also follows the current OS on first paint, reload and
+   live changes, instead of freezing the last resolved color. Explicit `light` and `dark` choices
+   remain fixed. Embedded frames retain the shell's resolved theme and follow its messages.
 
 The `hosty:shell-theme` post (`{ type, theme, preference }`, built with `createShellThemeMessage`)
 is the shell's channel for **changes made while the frame is already up**; it is also posted when
@@ -257,7 +259,10 @@ passes `followSystem={false}` to the bridge and creates its head script with
 declared and leaves the standalone case — where the operator may have picked a theme with the app's
 own toggle — to the provider, whose stored choice the operating system must not overwrite. The
 bridge's `onTheme` callback hands the provider each declared theme, so the app's own components
-render in it too.
+render in it too. An explicit host `system` preference still follows the OS in standalone mode;
+`followSystem: false` delegates only the case where no host preference exists. Theme settings are
+not synchronized between unrelated top-level tabs on different app origins; standalone apps in
+system mode independently follow the same operating system.
 
 Shell consumes the sender half — `appendThemeLaunchParams` on every frame URL and
 `createShellThemeMessage` in its post — so the reference sender and the shipped one are the same
@@ -419,7 +424,27 @@ Standalone clicks open Core review directly. Embedded clicks send a credential-f
 the target from the mounted frame. Payload app ids and URLs never choose the target.
 See [permission management](../app-permission-management/feature.md) for first-party adoption.
 
+## Tool Activity Reporter
+
+The server-only `@hosty-sdk/app/tool-activity/server` helper reports per-user declared-panel
+activity with the managed installation identity. It renews working presence, retains decisions
+through transient failures and re-reports after Core restarts. The existing UI server adapter
+reads activity with the current app-user grant. See the [tool activity contract](../tool-activity/feature.md).
+
+## Child-environment coordination
+
+The sandbox/server module exports CoreEnvironmentClient for ordinary child Core lifecycle,
+consent, setup and bounded child API access. The sandbox/react module retains CoreEnvironmentPanel.
+Single-app SandboxClient and sandbox identity/target parsers and types are removed in 0.37.
+Apps use the same ordinary Core sessions and app roles in each environment. No legacy permission
+is promoted to core.environments.* authority. See [Core environments](../app-sandbox-runtimes/feature.md).
+
 ## Testing Expectations
+
+- Cover standalone system changes and reload with stale resolved storage, before hydration and in
+  the React bridge. Preserve explicit light/dark and embedded host precedence, provider delegation,
+  launch parameter cleanup and listener cleanup. Verify system transitions in a Core-managed
+  Harness preview both standalone and embedded in Shell.
 
 - Verify one same-actor restoration notification per blocked interval, retained mounted drafts,
   no notification on initial/routine readiness and no cross-actor restoration. Exercise initial,

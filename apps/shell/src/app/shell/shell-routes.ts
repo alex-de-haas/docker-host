@@ -52,7 +52,7 @@ export const HOST_SETTINGS_SECTIONS: {
   tabs: { id: HostSettingsTab; label: string }[];
 }[] = [
   { id: "profile", label: "My profile", tabs: [{ id: "profile", label: "Profile" }, { id: "connections", label: "Connections" }, { id: "tokens", label: "Tokens & devices" }] },
-  { id: "host", label: "Host", tabs: [{ id: "general", label: "Updates" }, { id: "ingress", label: "Network" }, { id: "mounts", label: "Shared folders" }, { id: "source", label: "Core source" }] },
+  { id: "host", label: "Host", tabs: [{ id: "general", label: "Updates" }, { id: "ingress", label: "Network" }, { id: "storage", label: "Storage" }, { id: "mounts", label: "Shared folders" }, { id: "source", label: "Core source" }] },
   { id: "security", label: "Users & security", tabs: [{ id: "users", label: "Users" }, { id: "permissions", label: "App permissions" }, { id: "policies", label: "Policies" }] },
   { id: "shell", label: "Shell", tabs: [{ id: "shell", label: "Shell" }] },
 ];
@@ -121,13 +121,12 @@ export function getShellAuthorizationRedirect(
 // The assistant rail can be requested from any Shell page. Moving to an authorized page must not
 // discard that request before the persistent layout has completed the handoff.
 function withAssistantContinuation(href: string, searchParams?: ShellSearchParams) {
-  const query = new URLSearchParams();
+  const target = new URL(href, "http://shell.invalid");
   for (const key of ["assistantSession", "assistantApp", "assistantPanel"]) {
     const value = searchParams?.get(key);
-    if (value !== undefined && value !== null) query.set(key, value);
+    if (value !== undefined && value !== null) target.searchParams.set(key, value);
   }
-  const search = query.toString();
-  return search ? `${href}?${search}` : href;
+  return `${target.pathname}${target.search}${target.hash}`;
 }
 
 export function readHostSettingsTab(value: string | null | undefined): HostSettingsTab {
@@ -170,7 +169,7 @@ export function readLegacySystemAppId(pathname: string): string | null {
 }
 
 const APP_DETAILS_SECTIONS = new Set<SettingsTab>([
-  "app", "parameters", "permissions", "publicOrigins", "mounts", "source", "backups", "logs",
+  "app", "parameters", "permissions", "publicOrigins", "mounts", "source", "backups", "logs", "services", "metrics", "storage",
 ]);
 
 function readAppDetailsSection(value: string | null | undefined): SettingsTab {
@@ -236,6 +235,10 @@ export function readShellRoute(pathname: string, searchParams: ShellSearchParams
     return { view: "settings", workspace: null, settingsTab };
   }
 
+  if (path === "/storage") {
+    return { view: "settings", workspace: null, settingsTab: "storage" };
+  }
+
   const legacyView = LEGACY_VIEW_PATHS[path];
   if (legacyView) {
     return { view: legacyView, workspace: null, settingsTab };
@@ -254,6 +257,7 @@ export function readCanonicalRedirect(
   const path = normalizeShellPath(pathname);
 
   if (path === "/apps") return withAssistantContinuation(getShellViewHref("home"), searchParams);
+  if (path === "/storage") return withAssistantContinuation(getSettingsHref("storage"), searchParams);
 
   if (path === "/settings") {
     const appDetails = readAppDetailsRoute(path, searchParams);

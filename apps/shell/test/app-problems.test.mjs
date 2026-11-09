@@ -238,6 +238,18 @@ test("optional declarations and stale observations never invent required failure
   assert.equal(problems[0].severity, "warning");
 });
 
+test("unknown required and optional names produce a compatibility warning without hiding known missing access", () => {
+  const permissionState = { status: "known", missingRequired: [], unsupportedRequired: ["retired.permission"], unsupportedOptional: ["future.permission"] };
+  const problems = collectAppProblems(app({ runtimeState: "running", permissionState }));
+  assert.equal(problems.length, 1);
+  assert.equal(problems[0].severity, "warning");
+  assert.match(problems[0].detail, /retired.permission, future.permission/);
+  assert.match(problems[0].detail, /Update the app or Core/);
+  assert.match(problems[0].detail, /not granted/);
+  const mixed = collectAppProblems(app({ runtimeState: "running", permissionState: { ...permissionState, missingRequired: ["apps.read"] } }));
+  assert.equal(mixed.filter(p => p.severity === "error").length, 1);
+});
+
 test("stopping a consumer hides dependency diagnostics but retains its own errors", () => {
   const dependencies = [
     dependency({ installed: false, running: false }),

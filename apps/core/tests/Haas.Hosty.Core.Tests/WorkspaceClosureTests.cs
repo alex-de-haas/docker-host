@@ -236,10 +236,10 @@ public sealed partial class CoreLifecycleServiceTests
         await service.CommandAsync(tree.Id, owner, "lease", new(Guid.NewGuid().ToString(), LeaseId: lease), default);
         var close = new WorkspaceWorkflowCommand(Guid.NewGuid().ToString(), 0);
         await Assert.ThrowsAsync<AppLifecycleException>(() => service.ChangeWorkflowAsync(owner, "admin", "close", close, heads, default));
-        await Assert.ThrowsAsync<AppLifecycleException>(() => service.CommandAsync(tree.Id, other, "release-lease", new(Guid.NewGuid().ToString(), LeaseId: lease), default));
+
         await Assert.ThrowsAsync<AppLifecycleException>(() => service.ChangeWorkflowAsync(owner, "retention", "delete", new(Guid.NewGuid().ToString(), 0), heads, default));
         Assert.True(Directory.Exists(tree.Path));
-        await service.CommandAsync(tree.Id, owner, "release-lease", new(Guid.NewGuid().ToString(), LeaseId: lease), default);
+        await service.CommandAsync(tree.Id, other, "release-lease", new(Guid.NewGuid().ToString(), LeaseId: lease), default);
         Assert.Equal("closed", (await service.ChangeWorkflowAsync(owner, "admin", "close", close, heads, default)).Closure);
         await Assert.ThrowsAsync<AppLifecycleException>(() => service.CommandAsync(tree.Id, owner, "lease", new(Guid.NewGuid().ToString(), LeaseId: lease), default));
         var resumed = await service.ChangeWorkflowAsync(owner, "admin", "resume", new(Guid.NewGuid().ToString(), 1), heads, default);

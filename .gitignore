@@ -63,6 +63,10 @@ next-env.d.ts
 **/bin/
 **/obj/
 
+# OPUS native app build and Python bytecode
+/apps/opus/dist/
+/apps/opus/runtime/__pycache__/
+
 # Built SDK package output (publish-time artifact, never committed)
 packages/*/dist/
 
@@ -79,3 +83,13 @@ apps/*/CLAUDE.md
 /docs/features/app-sandbox-runtimes/*-logs.zip
 /docs/features/app-sandbox-runtimes/*-source.patch
 /docs/features/assistant-runtime-containment/*-evidence.json
+
+# Isolated Harness production generations
+/apps/harness/.local-runtime/
+
+# Release workflow staging is not source input or build provenance dirt.
+/release-plan/
+/release-artifacts/
+/native-cli/
+/native-core/
+/scripts/__pycache__/

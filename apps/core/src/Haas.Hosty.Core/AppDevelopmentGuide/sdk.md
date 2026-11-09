@@ -33,3 +33,8 @@ Rust, Python and other stacks do not require an unofficial SDK. Implement the ex
 `identity`, using server-only injected credentials, bounded HTTP timeouts and redirects disabled.
 Keep browser and server responsibilities separate. A local server or health response is not a
 substitute for testing real Hosty login in standalone and embedded views.
+
+CoreEnvironmentClient remains available from @hosty-sdk/app/sandbox/server for environment
+coordinators. The single-app SandboxClient and readSandboxIdentity/readSandboxTarget exports are
+removed. Applications use ordinary Core session and directory contracts, with app-owned roles;
+no runtime-specific identity branch or HOSTY_SANDBOX_* variables are needed.

@@ -24,9 +24,9 @@ const trigger = () => container.querySelector<HTMLButtonElement>('.dashboard-sta
 const wide = (name: string) => container.querySelector<HTMLButtonElement>(`.dashboard-state-filters-wide [aria-label="${name}"]`)!;
 const menuItem = (name: string) => document.querySelector<HTMLElement>(`[role="menuitemradio"][aria-label="${name}"]`)!;
 const rows = () => [...container.querySelectorAll('[role="region"][aria-label="Installed apps"] .dashboard-table tbody tr')].map(row => row.textContent);
-async function render() {
+async function render(canManageApps = false) {
   await act(async () => root.render(<DashboardPage coreOrigin="https://core.test" apps={apps} status={null} coreUpdate={null} coreUpdating={false}
-    canManageApps={false} loading={false} busyAction={null} pendingAppActions={{}} updateCheck={null} shellAppId="shell.app"
+    canManageApps={canManageApps} loading={false} busyAction={null} pendingAppActions={{}} updateCheck={null} shellAppId="shell.app"
     onUpdateCore={() => {}} onRefresh={() => {}} onInstall={() => {}} onAction={onAction} onSwitchRuntime={() => {}}
     onUpdateApp={() => {}} onCheckUpdates={() => {}} onUpdateAll={() => {}} onOpenPanel={() => {}} />));
 }
@@ -109,4 +109,17 @@ it("opens with a touch pointer and selects without changing lifecycle state", as
   expect(rows()).toHaveLength(2);
   expect(onAction).not.toHaveBeenCalled();
   await vi.waitFor(() => expect(document.activeElement).toBe(trigger()));
+});
+
+
+it("shows dependency waiting as attention and lets an administrator cancel the pending start", async () => {
+  apps = [app("Waiting consumer", "waiting")];
+  await render(true);
+  expect(container.textContent).toContain("Waiting for dependencies");
+  const cancel = [...container.querySelectorAll("button")].find(button => button.textContent === "Cancel start")!;
+  expect(cancel.disabled).toBe(false);
+  await act(async () => cancel.click());
+  expect(onAction).toHaveBeenCalledWith(apps[0], "stop");
+  expect(wide("1 need attention")).not.toBeNull();
+  expect(container.querySelector(".animate-spin")).toBeNull();
 });

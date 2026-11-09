@@ -1,11 +1,15 @@
 ---
 created: 2026-09-27
-updated: 2026-10-21
-summary: Session-owned logical workspaces group repository worktrees with compatible Git operations and a separately authorized inspection API.
+updated: 2026-11-03
+summary: Logical workspaces group repository worktrees with explicit session membership, compatible Git operations and an authorized inspection API.
 components: [apps/core, apps/harness]
 ---
 
 # Assistant Session Workspaces
+
+Workspace preparation does not require an app to be selected as chat context. Empty, unrelated
+or full context selections leave Core source and participant admission unchanged. Context tools
+manage metadata separately and do not join, detach or expand a shared workspace.
 
 ## Ownership And Allocation
 
@@ -15,8 +19,9 @@ Core owns a shared bare Git repository per canonical source under
 and assistant transcript retention. The bare repository is shared infrastructure, not a separate
 clone for every session. Preparing a workspace does not change the installed app's runtime or data.
 
-A logical workspace belongs exclusively to one assistant installation, administrator and opaque
-session ID, or to one typed external principal/user/task reference. It contains one worktree per
+A logical workspace retains its original assistant allocation identity and supports independent
+[membership and session bindings](../workspace-sessions/feature.md), or belongs to one typed external
+principal/user/task reference. It contains one worktree per
 canonical repository under the existing allocation rule. Apps in the same repository share that
 worktree; their installation identities and manifest subpaths remain separate bindings. Another
 repository adds a child to the same logical workspace. A conflicting target branch is refused.
@@ -27,8 +32,8 @@ owner records and excludes external display labels. The legacy `DevelopmentWorks
 represents a worktree; its existing `id` remains the identifier in mutation, publication, document
 and external MCP APIs. Its additional `workspaceId` identifies the logical group. This additive
 projection preserves paths, branches, original/integration bases, grants, leases and replay IDs;
-no Git migration or new allocation store is needed. Different assistant installations, users,
-sessions or external grants remain separate. Public labels never grant authority.
+no Git migration or replacement allocation store is needed. Explicitly attached internal sessions
+reuse this identity; unrelated sessions and external grants remain separate. Public labels never grant authority.
 
 A group reports `released` only when every authorized child is released; otherwise an unavailable,
 preparing or partially released group reports `attention`. There is no aggregate HEAD or branch. A separate [workflow record](../workspace-lifecycle-controls/feature.md)
@@ -61,6 +66,42 @@ files, branch, source stamp, active consumer, lease, permission or runtime admis
 workspace observation stream invalidates readers after a rename; inventory exposes the latest name
 and metadata time across all of its repository bindings.
 
+## Workspace Branch Names
+
+New worktree allocations use `hosty/<task-slug>-<suffix>`, for example
+`hosty/shared-agent-skills-876c1c82d556`. Core derives the slug from the persisted
+logical workspace name at allocation. Unnamed compatible callers use a meaningful
+legacy task label or `workspace`. The slug uses NFC-normalized invariant lowercase
+letters, decimal digits and attached combining marks, with other runs replaced by
+hyphens. It preserves non-Latin text and fits within 32 UTF-8 bytes without splitting
+a scalar or retaining a trailing separator. Core performs no translation or model call.
+
+The suffix normally contains the first 12 hexadecimal characters of the full worktree
+ID, giving a maximum ordinary branch length of 51 UTF-8 bytes. Existing refs and pending
+reservations in the same managed repository extend the suffix by four characters at a
+time, up to the full ID. Ref namespace conflicts are included. Exhaustion refuses
+allocation without modifying an occupied ref.
+
+A versioned naming descriptor freezes the slug and suffix length in the worktree
+record before Git mutation. Git creates the branch and a private
+`refs/hosty/allocations/<worktree-id>` receipt in one ref transaction. That receipt
+binds the full allocation ID, branch and original base. Interrupted preparation only
+attaches a branch with matching receipt and base; an unrelated matching name or HEAD
+is insufficient. Cleanup removes the receipt using its expected object ID after
+removing the owned branch.
+
+Workspace and conversation renames leave the registered branch unchanged. A new
+repository added later uses the purpose name current at its own allocation; repositories
+already in the group keep their branches. Clients, inspection and publication use the
+exact registered branch instead of reconstructing it from an ID.
+
+Existing records without a naming descriptor retain
+`hosty/session/<64-character-worktree-id>` exactly. Preparation replay, restart,
+cleanup, Delete and Discard accept that legacy format without a branch or path migration.
+Unknown or inconsistent naming descriptors are refused. Full allocation identity,
+repository/path validation, actual Git HEAD checks and existing authority remain in force.
+Short branch names do not shorten internal IDs or change directory ownership.
+
 ## Authorization And APIs
 
 Core uses the reviewed `apps.sources.full` permission for workspace and publication operations.
@@ -71,18 +112,19 @@ authorize workspace operations. The manifest schema version is unchanged.
 
 Assistant requests use `/api/internal/apps/{assistant}/sessions/{session}/workspaces` with the app
 service bearer and `X-Hosty-User-Token`: a browser app identity with continuous authority and a live
-authorizing Core sign-in. The conversation ID scopes ownership; it requires no separate approval.
+authorizing Core sign-in. The conversation ID scopes its authenticated session binding; joining another workspace requires
+explicit membership and attachment.
 Delegated and read-only MCP credentials do not authorize preparation.
 Core checks the persisted permission and the user's current administrator/access state on every
-request. The interface or assistant role alone grants nothing. Bindings enforce installation, user
-and session ownership. Existing read-only Core MCP credentials confer no workspace mutation rights.
+request. The interface or assistant role alone grants nothing. Bindings enforce installation, user, membership
+and session association. Existing read-only Core MCP credentials confer no workspace mutation rights.
 
 | Method / suffix | Operation |
 | --- | --- |
 | GET collection | List this session's bindings, including released records |
 | POST collection | Prepare with `requestId`, `sessionId`, `appId`, `sessionPath`, purpose `name`, optional `targetBranch` / `leaseId` |
 | GET `/{id}` | Observe current source state |
-| GET `/{id}/viewer` | Resolve the current owning assistant session, or an explicit unavailable reason |
+| GET `/{id}/viewer` | Resolve an authorized session belonging to the current user, or an explicit unavailable reason |
 | POST `/{id}/diff` | Preview `{ path, view: "session" or "local" }` |
 | POST `/{id}/operations/{kind}` | Run a managed operation with a UUID `requestId` |
 
@@ -93,9 +135,9 @@ external Git activity does not acquire a fabricated managed-operation audit entr
 
 The [Harness development page](../harness-development-ui/feature.md) reads the Core inspection
 projection. The [standalone Workspaces app is retired](../workspaces-app/feature.md).
-Harness resolves viewer destinations through the owning session's existing Core authorization.
-The destination opens the current owning assistant's session, with Harness sessions using its
-Development page. Missing/replaced assistant installations and external owners return explicit
+Harness resolves viewer destinations through the current user's authorized session association.
+The destination opens that attached assistant session, with Harness sessions using its
+Development page. Another participant's conversation is never a fallback destination. Missing/replaced assistant installations and external owners return explicit
 unavailability instead of a fabricated conversation link.
 
 ## Read-Only Inspection Contract
@@ -116,11 +158,12 @@ inspection; inspection grants no source, Git or lifecycle mutation authority. Th
 `apps.workspaces.manage` name remains unsupported. Existing assistant and external mutation
 credentials retain their original checks; task IDs are not execution authorization boundaries.
 
-Every inventory, detail and diff revalidates effective private-source grants, current app bindings
-and source ownership. An inaccessible child is omitted entirely from inventory, including counts;
+Every inventory, detail and diff revalidates current membership, effective private-source grants,
+current app bindings and the repository-scoped sharing grant. An inaccessible child is omitted entirely from inventory, including counts;
 direct reads refuse access. Diff access is checked again before returning bytes. Historical source
-records do not revive a revoked or cleared connection. Administrators may inspect public-source
-worktrees across owners; private worktree reads remain with the source owner.
+records do not revive a revoked or cleared connection. An administrator role alone does not grant access to another internal workspace, even when its
+repository is public. An explicitly invited contributor can inspect the shared local private
+checkout without borrowing the source owner's provider credential.
 
 Responses use `Cache-Control: no-store`. The projection excludes source credentials, publication
 connection IDs, operation command bodies and transcript content. Local observations do not fetch,
@@ -146,7 +189,8 @@ arguments. A reused ID with changed arguments is refused. Pending operations blo
 until reconciled; the operation API exposes their durable commands for explicit recovery after reload.
 
 - `commit` takes selected repository-relative `paths`, `expectedHead`, `message`, `authorName` and
-  `authorEmail`. An isolated index creates one commit with the supplied attribution, preserving
+  `authorEmail`. Shared internal workspaces additionally require an actor-bound, expiring
+  selected-content review; stale reviewed bytes or HEAD are refused. An isolated index creates one commit with the supplied attribution, preserving
   unrelated staged paths. HEAD advances with compare-and-swap. No automatic message, squash or amend
   is applied. Interrupted commits with a recorded object at HEAD are recognized without replay;
   their index can require inspection. Unproven outcomes are marked `unknown` for explicit recovery.
@@ -234,6 +278,15 @@ Harness service, while specific consumers still prevent cleanup. The shared admi
 does not isolate one exposed worktree from another.
 
 ## Testing Expectations
+
+- Verify normalized, byte-bounded readable branches, non-Latin names and fallback labels;
+  exercise occupied refs, namespace conflicts and concurrent owners with the same purpose.
+- Recover preparation before and after the atomic ref transaction and worktree materialization.
+  Refuse missing, changed or symbolic allocation evidence without adopting or removing foreign refs.
+- Preserve legacy branch names through replay, rename, restart and partial Delete/Discard recovery;
+  validate both naming formats and remove new allocation receipts during authorized cleanup.
+- Verify exact registered branch values through Harness, external/Core-source preparation,
+  observation, publication and provider PR reads.
 
 - Harness preparation freezes a derived name before Core admission, then preserves it across lost
   responses, conversation renames and process restart without accepting changed explicit arguments.

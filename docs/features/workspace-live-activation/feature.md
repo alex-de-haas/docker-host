@@ -1,6 +1,6 @@
 ---
 created: 2026-10-19
-updated: 2026-10-23
+updated: 2026-11-07
 summary: Select named app workspaces or installed package runtimes with scoped access review, retained package choices and recoverable Core-owned transitions.
 components: [apps/core, apps/cli, apps/shell, apps/harness, shared]
 ---
@@ -12,8 +12,12 @@ Core exposes configurable development source, immutable build provenance and one
 ## Package And Workspace Selection
 
 Dashboard uses one execution selector for each app. Package entries are the installed manifest's
-release profiles. Workspace entries are named, explicitly app-bound worktrees with a supported
-development recipe. Raw development profiles are internal recipes and do not appear as independent
+release profiles. If the installed manifest has no release profile, its ordinary default runtime
+remains the installed baseline, including a newly created app's development-only bootstrap.
+The default follows the manifest selection order: top-level default, flagged profile, then first
+profile. This fallback uses the installed contract and canonical source; it does not expose other raw
+development recipes as package choices. Workspace entries are named, explicitly app-bound worktrees
+with a supported development recipe. Raw development profiles are internal recipes and do not appear as independent
 choices. Selectable workspace entries belong to the current user and, for direct credentials, the
 current principal. Public source inspection remains broader; another user's already active workspace
 keeps its current name without becoming a selectable target. A recipe uses its declared development default, the conventional `dev` profile when
@@ -33,7 +37,16 @@ Core retains the selected package release runtime independently of workspace exe
 workspace A and then B preserves that package choice. Selecting a package entry directly runs the
 current installed package with the selected release runtime. It never restores an old workspace,
 package manifest or data backup. A missing release profile is reported as unavailable.
-Source edits and current ordinary data remain intact.
+Source edits and current ordinary data remain intact. A development-only installed baseline stays
+selectable during failed or interrupted workspace entry, so recovery does not depend on a healthy
+workspace process. A manual source override without a retained development journal remains a legacy
+binding. Clear that override through the supported source controls before selecting this installed
+baseline; selection never reports a package return while alternate source remains bound.
+
+The current execution target follows the persisted runtime and source binding. A prepared workspace
+does not become current before binding. During Return, the installed package becomes current as soon
+as its binding is restored, including while it is starting or if its start fails. The retained
+development journal supports recovery without keeping the old workspace label on Dashboard.
 
 `GET /api/apps/execution-targets` returns one shared inventory; the app-specific variant is
 `GET /api/apps/{appId}/execution-targets`. Expected app metadata read failures, including missing or corrupt development journals and workspace
@@ -85,14 +98,21 @@ become package rights, and later revocations remain effective.
 
 A `review-required` result carries `review`, an `InstallationPrepare` with `workspaceManifest`.
 Shell/Harness prepare and submit it through the existing Core confirmation API and display the
-resulting approval request. They then retry the original execution choice. A local CLI selection
+resulting approval request. Harness opens the confirmation automatically and continues the original execution choice after approval; its compact controls and reload recovery are described in [Harness Development](../harness-development-ui/feature.md). Shell also retains the original execution choice through confirmation. A local CLI selection
 requiring additional rights directs the operator to select the workspace in Dashboard under their
 signed-in identity. It cannot manufacture approval for a synthetic operator.
+
+Before a workspace's source binding is applied, Stop uses the previous runtime contract; an
+entry journal alone does not apply the candidate's mounts or permissions to that runtime.
+Switching from a workspace without a skill collection to one with it preserves this boundary.
 
 Restart refreshes an admitted candidate and checks current access again. Stop uses the last
 launched snapshot, so invalid live JSON does not trap an app. Package return uses the current
 installed contract and strips temporary workspace authority. Native, system, Docker and mixed
-recipes retain their supported execution paths.
+recipes retain their supported execution paths. Exact admitted host/runtime access survives the
+Core-owned projection of approved workspace permissions and provider roles. Revalidation still
+checks the admitted contract, source/runtime, actor, current permission revision and configuration;
+revocation or a changed access contract requires review.
 
 ### Names And Automation
 
@@ -259,9 +279,18 @@ Harness exposes typed `activation_plan`, `activation_apply`, `activation_status`
 unprompted and Disabled policy applies. An agent's mutation is queued until its successful turn ends,
 native process exit (or Docker worker termination) is confirmed and source leases are released. The
 original reviewed payload and IDs are retained; policy and Core authority are rechecked at dispatch.
-A completed Docker turn revokes worker transport access while preserving that reviewed policy guard
-through worker shutdown and lease release. Cancellation, permission changes and revocation still
-invalidate the queued request.
+The primary-answer boundary and completed native and Docker turns close the agent's MCP proxy
+routes and cancel pending calls. Optional prompt-suggestion collection preserves the exact deferred
+review until confirmed exit and lease release; it grants no agent tool access during collection.
+Only the already-issued review for the exact deferred request survives confirmed shutdown and
+lease release; other reviews from the native turn remain canceled. A canceled, aborted or
+different-session review cannot be transferred. The retained review still checks current tool
+definitions, invocation policy and provider identity before Core admission, and final cleanup revokes
+it after dispatch or failure. Cancellation, permission changes and revocation still invalidate the
+queued request.
+An armed or parked task boundary also blocks queued activation and completion immediately before
+dispatch, including a boundary armed after the request was reviewed. Canonical Core tools and retained
+workspace aliases use the same fence. A resuming task continuation retains its normal tool access.
 A restarted Harness cannot reconstruct an in-memory approval: it marks the queue blocked for explicit
 review/retry. The detached helper owns an accepted transition even when Harness replaces itself.
 
@@ -438,6 +467,18 @@ selection keeps current-data compatibility acceptance for baseline Return; an al
 Release baseline needs no second restart. Original UUIDs and useful recovery actions remain
 internal to that friendly presentation.
 
+Status refusals show their error immediately; temporary connectivity/server failures show reconnect
+progress for the first two failed checks, then expose the error and Check progress. Dashboard shows
+a static Check switch action that opens recovery while keeping competing Core lifecycle actions
+guarded. A successful status read clears the warning. Missing Release receipts remain recoverable
+and do not count as proof of completion.
+
+A workspace_not_found response offers Dismiss saved switch. Dismissal reads a fresh Core execution
+catalog and removes only the browser journal if neither the workspace nor its activation remains
+listed. Catalog failures, retained owners, intervening successful status reads and user/origin
+changes preserve the original journal. Dismissal does not restart, cancel, Return or replay an
+operation, and reports that Core and applications were not changed.
+
 Original requests are retained by user/Core origin across menu closure, reconnect and remount. Core Source exposes
 repository URL, ref, relative project and optional source connection alongside the running build and
 update origin. Unsaved source fields retain their opening revision; background status cannot overwrite them.
@@ -550,6 +591,27 @@ activation records or snapshots. Finish removes the child, its processes and tes
 
 ## Testing Expectations
 
+- A local app can connect and publish its registered active worktree without a runtime switch. A remote connected during development survives grouped and package Return, including interrupted Return recovery while source edits and current data remain intact.
+
+- Exercise a development-only installed bootstrap through workspace entry, interrupted startup and
+  package Return. Keep its installed baseline visible even when the workspace uses the same runtime
+  key; reject raw development package choices when release profiles exist. Preserve source and data.
+- Approve a native workspace that also adds a provider role or Core permission, then verify entry,
+  retry and restart without another prompt for the unchanged admitted access. Refuse stale consent
+  after permission revocation, source/runtime or access-contract changes. Include the exact pending
+pre-projection configuration checkpoint when recovering an interrupted native snapshot update.
+
+- Verify execution-target inventory during workspace entry and package Return, including the live
+  starting callback, failed package startup and retry. Current workspace identity must match the
+  persisted runtime/source binding rather than the recovery journal's active flag.
+
+- Shell recovery covers deleted-workspace journals, explicit status refusals, sustained outages and
+  recovery, missing Release receipts, fresh-catalog dismissal guards and delayed responses across
+  successful status reads or actor/origin changes. Dashboard exposes a static recovery action while
+  retaining lifecycle guards. A refused apply before admission retains its original error even when
+  status has no activation record. Fresh review and retry preserve the original request ID and selection.
+
+
 - Verify URL/ref/project validation, canonical GitHub matching, fork distinction, stale revisions,
   dirty legacy migration, clone failure cleanup and offline source reuse without reset.
 - Verify private-source owner checks, changed/revoked connections and preservation after refusal.
@@ -607,6 +669,14 @@ activation records or snapshots. Finish removes the child, its processes and tes
 - Exercise Docker deferred apply, Return and resume with real policy generations, including Ask
   approval and policy disable/revocation while shutdown waits. Worker shutdown alone must not cancel
   an approved request; actual cancellation and revocation must still prevent dispatch.
+- Exercise native deferred Return, execution selection and workflow completion with a registered
+  canonical Core MCP proxy and real policy reviews. Verify native routes close before dispatch,
+  unrelated reviews are canceled, revoked or different-session reviews cannot survive handoff,
+  and final cleanup revokes the retained review on both successful and refused dispatch. Include
+  the primary-answer-to-suggesting-to-result sequence before native exit.
+- Arm a task boundary after activation or completion is queued and let the ordinary terminal result
+  arrive before parking. Canonical and retained alias transports refuse dispatch with the original
+  request retained; resuming task continuations remain allowed.
 - Replace a Core project file or ancestor with an escaping link after source Save or activation
   preparation. Preparation, participant planning and pre-build revalidation must refuse it without
   touching external files, compiling the substituted project or stopping participants.

@@ -47,12 +47,29 @@ describe("fixed panel adapter", () => {
   });
 });
 
-
-it.each(["sandbox", "core"] as const)("does not bridge a %s sandbox viewer into global UI authority", async identityRealm => {
-  const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);
-  const sandbox = { runtimeInstanceId: "a".repeat(32), generation: "b".repeat(32), dataRevision: "c".repeat(32), identityRealm, appRole: "admin", permissions: [] };
-  const response = await createHostyUiResponse(new Request("https://sandbox.test/api/hosty/ui/bootstrap"),
-    { ...context, session: { status: "active", identity: { hostRole: identityRealm === "core" ? "host.admin" : null, sandbox } } }, options);
-  expect(response.status).toBe(409); expect(await response.json()).toMatchObject({ code: "unsupported_sandbox_ui" });
+it('serves the declared own icon through the authenticated same-origin adapter', async () => {
+  const fetcher = vi.fn(async (_url: URL, _init?: RequestInit) => Response.json({ coreOrigin: 'https://core.test', app: {
+    appId: 'plans', iconUrl: 'https://core.test/api/apps/plans/assets/assets/icon.svg?v=1' } }));
+  vi.stubGlobal('fetch', fetcher);
+  const bootstrap = await createHostyUiResponse(new Request('https://independent.example/custom/ui/bootstrap'), context, { ...options, uiPath: '/custom/ui' });
+  expect((await bootstrap.json()).app.iconUrl).toBe('/custom/ui/icon');
+  fetcher.mockImplementation(async () => new Response('<svg/>', { headers: { 'Content-Type': 'image/svg+xml', 'Set-Cookie': 'private=never-forward' } }));
+  const response = await createHostyUiResponse(new Request('https://independent.example/custom/ui/icon'), context, { ...options, uiPath: '/custom/ui' });
+  expect(await response.text()).toBe('<svg/>'); expect(response.headers.get('cache-control')).toBe('no-store');
+  expect(response.headers.get('content-security-policy')).toBe("default-src 'none'; sandbox"); expect(response.headers.has('set-cookie')).toBe(false);
+  expect(fetcher).toHaveBeenLastCalledWith(new URL('https://core.test/api/internal/apps/plans/ui/icon'), expect.objectContaining({
+    redirect: 'error', headers: expect.objectContaining({ authorization: 'Bearer own-service', 'X-Hosty-User-Token': 'own-user' }),
+  }));
+  fetcher.mockClear();
+  expect((await createHostyUiResponse(new Request('https://independent.example/api/hosty/ui/icon?appId=other'), context, options)).status).toBe(400);
+  expect((await createHostyUiResponse(new Request('https://independent.example/api/hosty/ui/icon'), { session: { status: 'expired' }, token: null }, options)).status).toBe(401);
   expect(fetcher).not.toHaveBeenCalled();
+});
+it('preserves external icons and refuses a non-image icon response', async () => {
+  const fetcher = vi.fn(async () => Response.json({ coreOrigin: 'https://core.test', app: { appId: 'plans', iconUrl: 'https://cdn.example/icon.svg' } }));
+  vi.stubGlobal('fetch', fetcher);
+  const bootstrap = await createHostyUiResponse(new Request('https://plans.test/api/hosty/ui/bootstrap'), context, options);
+  expect((await bootstrap.json()).app.iconUrl).toBe('https://cdn.example/icon.svg');
+  fetcher.mockImplementation(async () => new Response('<html/>', { headers: { 'Content-Type': 'text/html' } }));
+  expect((await createHostyUiResponse(new Request('https://plans.test/api/hosty/ui/icon'), context, options)).status).toBe(502);
 });

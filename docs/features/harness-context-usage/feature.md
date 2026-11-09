@@ -1,7 +1,7 @@
 ---
 created: 2026-10-22
-updated: 2026-10-22
-summary: Current context-window usage for Claude and Codex conversations, with durable replay and a compact composer indicator.
+updated: 2026-11-06
+summary: Native context observations, recorded MCP calls and separate definition estimates in the Harness composer.
 components: [apps/harness]
 ---
 
@@ -9,10 +9,24 @@ components: [apps/harness]
 
 Harness shows the latest context observation as a compact circular indicator immediately after
 the provider selector in the composer, in both the full-page chat and the embedded assistant.
-The percentage sits beside the ring for readability.
+The ring contains a stacked-pages icon and the percentage sits beside it with a `used` suffix.
+The suffix hides below a 640 CSS px composer width while the icon and percentage stay visible.
+The neutral ring fills with context usage, turns warning-colored at 80% and destructive at 100%.
+The adjacent account-limit ring uses an hourglass and measures remaining allowance instead.
 The shared tooltip exposes used tokens, the provider-reported window, percentage, estimate status
-and measurement time, and remains available on keyboard focus. The indicator has no category
-breakdown.
+and measurement time, and remains available on keyboard focus. Claude observations with MCP metadata
+open a [server/tool detail dialog](../claude-mcp-context-detail/feature.md). Ollama uses the same dialog
+with explicitly labeled [local estimates and sent/catalog inclusion](../ollama-mcp-context-detail/feature.md).
+Codex adds [local estimates of Hosty instructions and MCP definitions](../codex-local-context-detail/feature.md)
+with explicit unknown inclusion, alongside its unchanged native total. Other context categories have no drill-down.
+
+## Recorded MCP Calls
+
+The dialog leads with [recorded MCP calls](../recorded-mcp-calls/feature.md) grouped by server and
+tool. It separates those historical records from definition loading and token attribution, remains
+available without a native context reading and keeps definition estimates in a collapsed disclosure.
+The diagnostic documents coverage and conservative outcome correlation separately; it adds no
+persistent accounting pipeline or additional provider requests.
 
 ## Provider Measurements
 
@@ -24,7 +38,11 @@ breakdown.
   `totalTokens` and `maxTokens`; the latter may be the provider's compaction limit. Reads follow
   initialization, distinct main-session assistant messages, compaction and turn completion.
   Subagent messages do not trigger readings for the main session.
-- Both readings are marked as estimates of current context. They describe the latest observation,
+- Ollama reads the reported `prompt_eval_count` for the latest ordinary chat request and the
+  configured `num_ctx` window. The total is provider-reported; its optional MCP definition detail
+  is a separate local estimate. Missing or invalid prompt counts clear the observation, while zero
+  remains valid. Auxiliary compaction calls do not replace the ordinary-request snapshot.
+- Claude and Codex readings are marked as estimates of current context. They describe the latest observation,
   rather than an exact prediction of the next request or cumulative billed tokens.
 
 Claude reads run alongside message processing, coalesce concurrent requests and discard readings
@@ -47,7 +65,10 @@ stops at 100%.
 ## Persistence And Delivery
 
 The common `context_usage` event carries either an unavailable value or a snapshot containing
-`usedTokens`, nullable `maxTokens`, `estimated` and `observedAt`. Native sessions persist these
+`usedTokens`, nullable `maxTokens`, `estimated` and `observedAt`, plus optional bounded MCP definition
+metadata described in [Claude MCP Context Detail](../claude-mcp-context-detail/feature.md) and
+[Ollama MCP Context Detail](../ollama-mcp-context-detail/feature.md), and optional local source metadata
+described in [Codex Local Context Detail](../codex-local-context-detail/feature.md). Native sessions persist these
 events in the existing session journal. The existing authenticated SSE stream delivers live
 changes and replays them on reload or reconnect; no polling endpoint or additional connection
 is used.
@@ -69,6 +90,10 @@ explanation uses the shared shadcn tooltip.
 See [Hosty Harness](../ai-gateway/feature.md) for the conversation surface and
 [Assistant Shared Docker Runtime](../assistant-shared-docker-runtime/feature.md) for execution and recovery.
 
+
+The adjacent [Limits control](../harness-provider-usage-limits/feature.md) describes account quota
+and credits. It does not change this context meter or use billed tokens as account allowance.
+
 ## Testing Expectations
 
 - Normalization tests distinguish current and cumulative counts, avoid double-counting cached
@@ -81,14 +106,16 @@ See [Hosty Harness](../ai-gateway/feature.md) for the conversation surface and
   stop preserves the selection and live callback authority. Worker recovery tests retain the context observation
   after detailed replay expires, with and without final text, for success and failure.
 - The worker Docker fixture exercises the real Claude summary control without submitting a prompt.
-- UI tests cover the circular indicator after the provider selector, estimates, unknown counts,
+- UI tests cover the stacked-pages circular indicator, used label, warning thresholds, estimates, unknown counts,
   missing limits, percentages above 100%, keyboard tooltip access, replay ordering and exclusion
   from the transcript. Check full-page and embedded composers at desktop and narrow widths.
+- Recorded-call tests cover explicit and legacy MCP identity, duplicate event delivery, turn-scoped
+  correlation, conflicting/unknown outcomes, and calls absent from the bounded catalog. Browser
+  acceptance checks the collapsed catalog, call outcomes and activity without a native reading.
 - Run `npm run harness:test`, `npm run harness:lint`, `npm run harness:build-web`,
   `npm run test:integration -- worker`, `node scripts/check-versions.mjs`,
   `node scripts/docs-index.mjs --check` and `git diff --check`.
   Build the web export before the full test suite; gateway tests serve its static pages.
 - Browser verification of Hosty login and embedding requires a supported Core-managed sandbox.
-  The external workspace MCP client used for this implementation exposes no sandbox lifecycle
-  adapter, so that runtime/browser check is not claimed. Isolated worker Docker tests use no
-  provider credentials and do not establish real-provider context accuracy.
+  Isolated Worker and Ollama HTTP fixtures use no provider credentials and do not establish
+  real-provider context accuracy. Keep native totals distinct from local source estimates.

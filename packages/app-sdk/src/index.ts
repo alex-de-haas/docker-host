@@ -387,28 +387,3 @@ export function chromeBootstrapScript(defaults: import("./ui-types").UiChromeOve
   if (navigation !== undefined && navigation !== "show" && navigation !== "hide") throw new Error("Invalid navigation default.");
   return `(()=>{try{const d=${JSON.stringify({ navigation })},p=new URLSearchParams(location.search),h=new URLSearchParams();for(const k of ["hosty_navigation","hosty_tools","hosty_tool_launcher","hosty_launch"])for(const v of p.getAll(k))h.append(k,v);document.documentElement.setAttribute('data-hosty-chrome-hints',h.toString());const one=k=>p.getAll(k).length===1?p.get(k):null,n=one('hosty_navigation'),l=one('hosty_launch');document.documentElement.setAttribute('data-hosty-navigation',n==='show'||n==='hide'?n:d.navigation??(l==='native'||l==='embedded'?'hide':'show'));}catch{}})();`;
 }
-/** Execution scope is independent of the principal's role. Never infer it from an app ID. */
-import type { SandboxTarget, SandboxIdentityContext } from "./sandbox-identity.js";
-export type { SandboxTarget, SandboxIdentityContext } from "./sandbox-identity.js";
-
-export function readSandboxTarget(environment: Record<string, string | undefined>): SandboxTarget | null {
-  const fields = [environment.HOSTY_SANDBOX_INSTANCE_ID, environment.HOSTY_SANDBOX_GENERATION, environment.HOSTY_SANDBOX_DATA_REVISION];
-  if (!environment.HOSTY_SANDBOX_PROTOCOL && fields.every(value => !value)) return null;
-  if (environment.HOSTY_SANDBOX_PROTOCOL !== "hosty-sandbox-v1" || fields.some(value => !/^[a-f0-9]{32}$/.test(value ?? "")))
-    throw new Error("The sandbox execution target is missing or unsupported.");
-  return { runtimeInstanceId: fields[0]!, generation: fields[1]!, dataRevision: fields[2]! };
-}
-
-export function readSandboxIdentity(payload: Record<string, unknown>, expected: SandboxTarget | null): SandboxIdentityContext | null {
-  if (!expected) {
-    if (payload.identityRealm === "sandbox" || payload.runtimeInstanceId != null || payload.generation != null || payload.dataRevision != null)
-      throw new Error("An installed app cannot accept a sandbox identity.");
-    return null;
-  }
-  if (payload.runtimeInstanceId !== expected.runtimeInstanceId || payload.generation !== expected.generation || payload.dataRevision !== expected.dataRevision
-      || (payload.identityRealm !== "sandbox" && payload.identityRealm !== "core") || typeof payload.appRole !== "string"
-      || !Array.isArray(payload.permissions) || !payload.permissions.every(value => typeof value === "string")
-      || (payload.identityRealm === "sandbox" && payload.hostRole != null))
-    throw new Error("The identity belongs to a different or unsupported sandbox target.");
-  return { ...expected, identityRealm: payload.identityRealm, appRole: payload.appRole, permissions: payload.permissions };
-}

@@ -105,6 +105,7 @@ int main(int argc, char** argv) {
     hosty::CoreSnapshot core_update = core;
     core_update.core_update.known = true;
     core_update.core_update.available = true;
+    core_update.core_update.offer_id.assign_truncated("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     hosty::ClientState update_state;
     update_state.install_snapshot(core_update, 1000);
     update_state.install_notifications(notifications);

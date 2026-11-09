@@ -127,7 +127,8 @@ function InstallationSession({ client, source, confirmationWindow, onClose, onCh
     const popup = openInstallationConfirmation();
     claimPopup(popup);
     // A known draft submit failure retries its existing identity, without resolving the feed again.
-    if (!request) await flow.review(initialSource ?? { manifestPath: manifestPath.trim() });
+    if (request?.updatePlan?.error) flow.clearReview();
+    if (!flow.snapshot().request) await flow.review(initialSource ?? { manifestPath: manifestPath.trim() });
     if (flow.snapshot().request?.status !== "draft") { closeUnusedPopup(popup); return; }
     showConfirmation(popup, await flow.submit());
   };

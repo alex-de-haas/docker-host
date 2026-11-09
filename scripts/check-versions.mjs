@@ -77,6 +77,10 @@ expectEqual("whisper version", {
 });
 expectEqual("whisper feed identity", { manifest: json("apps/whisper/manifest.json").id, feeds: json("apps/whisper/feeds.json").appId });
 
+expectEqual("opus version", { manifest: json("apps/opus/manifest.json").version, packageJson: json("apps/opus/package.json").version });
+expectEqual("opus feed identity", { manifest: json("apps/opus/manifest.json").id, feeds: json("apps/opus/feeds.json").appId });
+if (json("apps/opus/feeds.json").schemaVersion !== "app-feeds.0.1") problems.push("opus feeds schema must be app-feeds.0.1");
+
 // shell: manifest ↔ package.
 expectEqual("shell version", {
   manifest: json("apps/shell/manifest.json").version,
@@ -129,16 +133,26 @@ expectEqual("marketplace version", {
   marketplaceImageTag,
 });
 
-// plans: independently versioned runtime app and its first-party image/feed.
-const plansManifest = json("apps/plans/manifest.json");
-expectEqual("plans version", {
-  manifest: plansManifest.version,
-  packageJson: json("apps/plans/package.json").version,
-  imageTag: plansManifest.services?.find(service => service.key === "api")?.runtimes?.docker?.image?.tag,
-  healthz: capture(read("apps/plans/src/app/healthz/route.ts"), /version:\s*"([^"]+)"/),
+// Desktop starts its own release line; health reads package metadata directly.
+const desktopManifest = json("apps/desktop/manifest.json");
+expectEqual("desktop version", {
+  manifest: desktopManifest.version,
+  packageJson: json("apps/desktop/package.json").version,
+  imageTag: desktopManifest.services?.find(service => service.key === "web")?.runtimes?.docker?.image?.tag,
 });
-expectEqual("plans feed identity", { manifest: plansManifest.id, feeds: json("apps/plans/feeds.json").appId });
-if (json("apps/plans/feeds.json").schemaVersion !== "app-feeds.0.1") problems.push("plans feeds schema must be app-feeds.0.1");
+expectEqual("desktop feed identity", { manifest: desktopManifest.id, feeds: json("apps/desktop/feeds.json").appId });
+if (json("apps/desktop/feeds.json").schemaVersion !== "app-feeds.0.1") problems.push("desktop feeds schema must be app-feeds.0.1");
+
+// documents: independently versioned runtime app and its first-party image/feed.
+const documentsManifest = json("apps/documents/manifest.json");
+expectEqual("documents version", {
+  manifest: documentsManifest.version,
+  packageJson: json("apps/documents/package.json").version,
+  imageTag: documentsManifest.services?.find(service => service.key === "api")?.runtimes?.docker?.image?.tag,
+  healthz: capture(read("apps/documents/src/app/healthz/route.ts"), /version:\s*"([^"]+)"/),
+});
+expectEqual("documents feed identity", { manifest: documentsManifest.id, feeds: json("apps/documents/feeds.json").appId });
+if (json("apps/documents/feeds.json").schemaVersion !== "app-feeds.0.1") problems.push("documents feeds schema must be app-feeds.0.1");
 
 // Harness coordinator and worker images ship with the application.
 expectEqual("harness version", {

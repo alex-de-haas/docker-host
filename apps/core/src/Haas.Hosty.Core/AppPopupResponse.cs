@@ -19,14 +19,14 @@ internal static class AppPopupResponse
         var origin = new Uri(redirectUri).GetLeftPart(UriPartial.Authority);
         var nonce = Convert.ToBase64String(RandomNumberGenerator.GetBytes(24));
         response.Headers.CacheControl = "no-store";
-        response.Headers["Content-Security-Policy"] = $"default-src 'none'; script-src 'nonce-{nonce}'; frame-ancestors 'none'; base-uri 'none'";
+        response.Headers["Content-Security-Policy"] = $"default-src 'none'; img-src 'self'; script-src 'nonce-{nonce}'; frame-ancestors 'none'; base-uri 'none'";
         response.Headers["X-Frame-Options"] = "DENY";
         response.Headers["X-Content-Type-Options"] = "nosniff";
         response.Headers["Referrer-Policy"] = "no-referrer";
         // The cross-origin opener is deliberately retained for this one app-bound response.
         response.Headers["Cross-Origin-Opener-Policy"] = "unsafe-none";
         return Results.Content($$"""
-            <!doctype html><html lang="en"><meta charset="utf-8"><title>Hosty sign-in</title>
+            <!doctype html><html lang="en"><meta charset="utf-8"><title>Hosty sign-in</title>{{CoreBrowserPages.Favicon}}
             <p id="status">Completing sign-in. You can close this window.</p>
             <script nonce="{{nonce}}">
             if (window.opener) {

@@ -1,6 +1,6 @@
 ---
 created: 2026-09-22
-updated: 2026-10-09
+updated: 2026-11-09
 summary: The chat components Harness uses for messages, code blocks, attachments, the composer and collapsible activity.
 components: [apps/harness]
 ---
@@ -42,34 +42,78 @@ The viewport keeps a thin scrollbar and a stable gutter during automatic and man
 scrolling. Following the bottom does not hide the scrollbar: changing its width reflows
 messages and can trigger a resize/autoscroll loop even in an idle conversation.
 
+## Message Formatting
+
+Submitted user prompts and assistant replies use the same Markdown renderer. User bubbles retain
+their visual alignment while rendering headings, emphasis, lists, block quotes, tables, inline code
+and fenced code. Single line breaks remain visible. The composer and stored/sent message text retain
+the original Markdown source; formatting also applies to messages restored from history.
+
+Raw HTML stays inert. Links use the existing allowed URL schemes and open separately; Markdown
+image references remain links instead of fetching remote images. Uploaded attachments retain their
+existing message association, including attachment-only prompts.
+
+Reviewed feedback uses a compact [feedback card](../app-feedback-inbox/feature.md#feedback-cards-in-chat-history)
+with counts and observation summaries. Details and the exact original request expand separately;
+screenshots remain counts. Server-owned dispatch identity and authorized snapshots distinguish
+these cards from ordinary Markdown messages, including messages restored from older history.
+
 ## Code Blocks
 
-Assistant markdown fences, expanded tool input, command approvals, and fallback approval
+User and assistant Markdown fences, expanded tool input, command approvals, and fallback approval
 JSON use a shared code block. It supports syntax highlighting, copy, optional wrapping,
 and expansion beyond the initial 12 lines. Long lines scroll inside the block. Unknown
 languages remain readable, and unfinished fences render during streaming.
 
 Explicit copy values preserve commands and notation-like comments. Markdown extraction
 removes the parser's closing newline. Existing markdown link/image restrictions remain
-in force. User messages remain plain text, and file-change before/after views retain
+in force. File-change before/after views retain
 their existing diff presentation and limits.
 
 ## Composer and App Context
 
 One Input Group contains the full-width text field, selected attachments and a bottom
-action row. A single leftmost **+** menu contains **Add app context** and **Attach files**,
+action row. A single leftmost **+** menu contains **Add app context**, **Attach files** and the
+personal **Prompt suggestions** preference,
 followed by the provider selector. Dictation sits immediately
-before Send on the right. While the agent is running or waiting for approval/an answer, the same button
-shows Stop and cancels the active run through the existing session cancellation API.
+before Send on the right. While the agent is running or waiting for approval/an answer, a separate
+Stop action cancels the active run through the existing session cancellation API. Send remains
+available to enqueue the next message.
 Every SSE subscription finishes its persisted replay with the current session status, including
 when no new persisted events exist, so reconnecting cannot leave Stop stuck after a completed turn.
 The separate header Stop button is absent. History is retained, and the next message
-can continue the conversation after cancellation. The composer remains editable during
-a response, but neither Enter nor form submission sends another message until the run
-finishes or stops. Drafts are not queued or sent automatically. The messages API rejects
-busy sessions with HTTP 409 (`session_busy`) before recording another user message.
-When idle, Enter sends, Shift+Enter inserts a newline, and IME composition does not send.
-This layout does not change provider locking or add model selection or starter prompts.
+can continue the conversation after cancellation. A bounded message stack above the composer holds
+submitted snapshots while the next draft remains editable. The browser stages text and file blobs
+before clearing the submitted draft; late acknowledgements preserve newer content. Enter and form
+submission enqueue a message during a response, Shift+Enter inserts a newline, and IME composition
+does not send. The legacy immediate messages API still rejects busy sessions with HTTP 409
+(`session_busy`) and cannot overtake accepted queue entries.
+
+Waiting rows expose Edit, Delete and accessible move controls. Edit reserves the row, restores its
+text and attachments and stashes the existing draft. Save preserves position; Cancel restores the
+original row. Another view can explicitly recover an interrupted reservation. Sending rows show
+neutral inline progress; failed or uncertain rows retain their own Retry state. Queue advancement
+pauses on Stop or execution failure and requires explicit Resume queue. An approval or question
+holds the active turn; successful completion advances the eligible head. See
+[Harness Message Queue](../harness-message-queue/feature.md) for storage, authority and recovery.
+
+A confirmed workspace writer-admission refusal preserves the queued message and uploaded files for
+review and corrected retry. The operator can recover or Return the app transition and intentionally
+send again in the same chat without restarting Harness. A lost acknowledgement retains the original
+send UUID; Retry checks
+its serialized receipt before replaying that exact request. A receipt-read failure alone never
+settles an uncertain send, and an unknown or already accepted request is never dispatched again.
+Partial source lease admission retains its original lease until a retry admits the remaining
+workspaces or native-exit recovery confirms that release is safe.
+
+After a successful answer, the optional native prediction phase allows a new Send to preempt
+collection and wait for native cleanup. A suggestion appears as its own literal-text card in the
+conversation history. **Use suggestion** or Tab records Selected for draft and inserts an editable
+draft when its original empty draft generation still applies. Escape or **Dismiss** records dismissal.
+The original card and recorded choice survive reload and restart. Selection never sends automatically.
+Typed content, IME, pending decisions, attachments, restored drafts and queue edits take precedence.
+See [Contextual prompt suggestions](../assistant-prompt-suggestions/feature.md)
+for provider availability, personal preference and freshness rules.
 
 The app-context popover retains search, paging, the 16-app limit and revision-conflict
 recovery. Selected chips inside the popover retain unavailable-app labels and individual draft-removal controls.
@@ -93,16 +137,19 @@ undo/redo, with mention metadata saved alongside the local draft.
 ## Attachments
 
 Selected files show their name, size, local image preview where applicable, and removal
-action. Uploads begin on Send. The active upload shows progress; a failed upload shows
-an error and can be retried by sending again. Removal is disabled while sending.
-Successfully stored files survive a failed send and are not uploaded a second time.
+action. Send moves their snapshot into the browser outbox, whose row distinguishes uploading,
+saving to the server and sending to the agent. Transfer errors and Retry remain on that row; stable
+upload identities reconcile lost replies. Files in the next draft remain removable while earlier
+messages upload or wait. Editing a queued message restores its server snapshots and pending local
+files without overwriting the stashed draft.
 The composer attachment area is height-bounded and scrolls independently.
 
-Transcript cards use stored file names and sizes, associated with the message that names
+Transcript cards use attachment display names and sizes, associated with the message that names
 them. Claimed upload events do not render a duplicate card. Stored cards do not fetch
 remote images or imply a download action. Local preview object URLs are released when
 the selection changes or unmounts. The underlying
-[attachment API and limits](../assistant-attachments/feature.md) are unchanged.
+[attachment API and limits](../assistant-attachments/feature.md) describe the retained legacy
+upload endpoints and durable queue snapshots.
 
 ## Interactive Requests
 
@@ -127,6 +174,18 @@ input details. The group's identity remains stable when another adjacent call ar
 Messages, interactive requests and turn boundaries end a group; they retain their event
 order. Group labels do not assert execution success, because a recorded call alone does
 not establish its outcome.
+
+Command and tool rows share the same icon, text and disclosure alignment. Each matched result
+shows its own Completed, Failed, Cancelled or unavailable badge, including MCP failures. A group's
+failure count remains one per uniquely matched failed call.
+
+Available execution time appears in a separate clock badge. Codex supplies native command, MCP
+and dynamic-tool durations; Claude supplies tool durations through its PostToolUse and
+PostToolUseFailure hooks, excluding permission-prompt and hook time. Only a uniquely matched live
+main-agent call receives hook timing; subagent timing is omitted when the SDK identities cannot
+establish the corresponding parent call. Durations survive worker transport and transcript replay
+and are bounded numeric metadata, never inferred from chat timestamps. Older calls, missing timing and
+ambiguous or conflicting results show no fabricated duration.
 
 ## Current Activity
 
@@ -159,8 +218,8 @@ and waits for the authoritative status after replay before showing observed exec
 Terminal access failures remove the activity row. A quiet open stream is not treated as disconnected.
 
 This state is transient, separate from recorded tool groups and the proposed durable invocation
-history in [shared history](../assistant-shared-history/plan.md). It supplies no percentage, ETA or
-claim that a tool succeeded. Harness 0.47.0 adds this behavior without Core or Shell API changes.
+history tracked by [Action Summary D4](../assistant-action-summary/plan.md#deliverables). It supplies
+no percentage, ETA or claim that a tool succeeded. Harness 0.47.0 adds this behavior without Core or Shell API changes.
 
 Verification on 2026-10-09 used a real Codex connection in the Core-managed Harness embedded in
 Shell: a slow command, approval wait, completion, reload/reattach during execution and Stop. The
@@ -170,10 +229,21 @@ installation has only a Codex connection.
 
 ## Testing Expectations
 
+- User prompt rendering covers Markdown structure, literal code and preserved line breaks, allowed
+  links and inert HTML/image references, plus attachment-only turns and unchanged source text.
+- Feedback-card coverage checks exact message identity, historical/live loading, session and focus
+  recovery, unavailable-data fallback, collapsed details/original request and retained attachments.
+- Verify aligned command/MCP rows, per-call failure badges and a separately labeled execution-time
+  badge. Cover zero, missing, invalid and conflicting durations without deriving time from event
+  timestamps. Exercise Codex result fields, Claude success/failure hooks and ambiguous child calls,
+  then retain timing through worker journal reload and replay without exposing transport metadata.
+
 Composer tests cover running/waiting states, Enter and submit guards, draft retention,
 stop failure/retry, send failure, and completion before or after the HTTP response.
 Gateway API tests verify that busy sends are rejected without transcript changes and
-that sending resumes after cancellation.
+that sending resumes after cancellation. Workspace-fence tests cover initial and retained-send
+refusals, same-session recovery after Return, partial repository admission with the original lease,
+and preservation of unknown receipt outcomes without duplicate dispatch.
 
 - Run `npm run harness:test`, including chat-rendering tests for unfinished code fences,
   inline code and URL policy, attachment errors, and transcript association after replay.

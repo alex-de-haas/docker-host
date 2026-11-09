@@ -1,3 +1,7 @@
+import { ProfileStore } from "./profiles/store.js";
+import { hasSkillLibrary, migrateSkillSelection, skillRequest, type SkillCatalog } from "./skills.js";
+import { ToolActivityReporter } from "@hosty-sdk/app/tool-activity/server";
+import { startHarnessToolActivity, ToolActivityOwners } from "./tool-activity.js";
 import path from "node:path";
 import { WorkerClient } from "./worker/client.js";
 import { RemoteConnections } from "./worker/connections.js";
@@ -54,6 +58,12 @@ const proxy: McpProxy = new McpProxy((sessionId, appId) => manager.mintAppToken(
 // resolves to ::1 first has cost this project a hang before (docs/features/observability).
 proxy.allowRemoteWorker = Boolean(worker);
 const proxyBaseUrl = config.executionMode === "docker" ? "http://api:3400" : `http://127.0.0.1:${config.port}`;
+const profiles = new ProfileStore(config.dataDir, async () => {
+  await migrateSkillSelection(settings);
+  const previous = await settings.read();
+  return { name: "General", description: "General-purpose assistant", instructions: "", connectionId: null,
+    model: null, reasoningEffort: null, skillIds: previous.skillIds ?? [] };
+}, async () => hasSkillLibrary() ? (await skillRequest<SkillCatalog>("")).skills.map(skill => skill.id) : null);
 const manager: SessionManager = new SessionManager(
   store,
   adapter,
@@ -69,7 +79,16 @@ const manager: SessionManager = new SessionManager(
   new DevelopmentClient(config.coreOrigin, config.appId, config.serviceToken),
   worker,
   config.executionMode,
+  profiles,
 );
+
+// Older Core launches have no installation identity; activity becomes available after an app restart.
+const toolActivityOwners = new ToolActivityOwners(config.dataDir);
+const stopToolActivity = config.coreOrigin && config.serviceToken && process.env.HOSTY_APP_INSTALLATION_ID
+  ? startHarnessToolActivity(manager, new ToolActivityReporter({ coreOrigin: config.coreOrigin,
+    serviceToken: config.serviceToken, appId: config.appId,
+    onReported: (userId, panelId, value) => toolActivityOwners.acknowledge(userId, panelId, value) }), toolActivityOwners)
+  : async () => {};
 
 // Retention: once at boot, then daily. The manager reconciles Core resources and completion
 // before removal; running it in-process avoids a separate scheduler.
@@ -141,7 +160,7 @@ const shutdown = (): void => {
   clearInterval(sweepTimer);
   clearInterval(abandonTimer);
   server.close();
-  void manager.shutdown().then(() => connections?.shutdown()).finally(() => process.exit(0));
+  void stopToolActivity().then(() => server.stopTaskDispatch()).then(() => manager.shutdown()).then(() => connections?.shutdown()).finally(() => process.exit(0));
 };
 process.on("SIGTERM", shutdown);
 process.on("SIGINT", shutdown);

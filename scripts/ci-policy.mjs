@@ -5,22 +5,25 @@ import { pathToFileURL } from "node:url";
 
 export const BASE_JOBS = Object.freeze(["changes", "versions", "docs", "ci-policy"]);
 export const COMPONENTS = Object.freeze([
-  "shell", "app-sdk", "app-sdk-dotnet", "whisper", "demo-app", "core", "cli",
-  "telemetry-backend", "marketplace", "plans", "harness", "telemetry-ui", "swift-shell", "cardputer-shell",
+  "shell", "desktop", "app-sdk", "app-sdk-dotnet", "whisper", "opus", "demo-app", "core", "cli",
+  "telemetry-backend", "marketplace", "documents", "harness", "telemetry-ui", "swift-shell", "cardputer-shell",
 ]);
 export const PROFILES = Object.freeze(["core-aot"]);
 export const ALL_JOBS = Object.freeze([...BASE_JOBS, "actionlint", ...COMPONENTS, ...PROFILES]);
-const NODE_COMPONENTS = ["shell", "app-sdk", "demo-app", "marketplace", "plans", "harness", "telemetry-ui"];
+const NODE_COMPONENTS = ["opus", "shell", "desktop", "app-sdk", "demo-app", "marketplace", "documents", "harness", "telemetry-ui"];
 const DOTNET_COMPONENTS = ["app-sdk-dotnet", "whisper", "core", "cli", "telemetry-backend"];
 const COMPONENT_PATHS = [
-  ["apps/shell/", "shell"], ["apps/demo-app/", "demo-app"], ["apps/marketplace/", "marketplace"],
-  ["apps/plans/", "plans"], ["apps/harness/", "harness"], ["apps/telemetry-ui/", "telemetry-ui"],
+  ["apps/opus/", "opus"],
+  ["apps/shell/", "shell"], ["apps/desktop/", "desktop"], ["apps/demo-app/", "demo-app"], ["apps/marketplace/", "marketplace"],
+  ["apps/documents/", "documents"], ["apps/harness/", "harness"], ["apps/telemetry-ui/", "telemetry-ui"],
   ["apps/shell-swift/", "swift-shell"], ["apps/shell-cardputer/", "cardputer-shell"],
 ];
 const BUILD_CONFIG = /(?:^|\/)(?:[^/]+\.csproj|global\.json|[Nn]u[Gg]et\.[Cc]onfig|appsettings[^/]*\.json)$/;
 const WORKFLOW_COMPONENTS = {
-  "shell-image.yml": ["shell"], "demo-app-image.yml": ["demo-app"], "marketplace-image.yml": ["marketplace"],
-  "plans-image.yml": ["plans"], "telemetry-ui-image.yml": ["telemetry-ui"],
+  "ready-releases.yml": ["core", "cli", "shell", "desktop", "documents", "marketplace", "demo-app", "harness", "telemetry-backend", "telemetry-ui", "whisper", "opus"],
+  "promote-release.yml": [], "platform-bridge.yml": ["core", "cli"],
+  "shell-image.yml": ["shell"], "desktop-image.yml": ["desktop"], "demo-app-image.yml": ["demo-app"], "marketplace-image.yml": ["marketplace"],
+  "documents-image.yml": ["documents"], "telemetry-ui-image.yml": ["telemetry-ui"],
   "telemetry-backend-image.yml": ["telemetry-backend"], "publish-app-sdk.yml": ["app-sdk"],
   "publish-app-sdk-dotnet.yml": ["app-sdk-dotnet"], "cardputer-release.yml": ["cardputer-shell"],
   "cli-release.yml": ["core", "cli"], "harness-worker-image.yml": ["harness"],
@@ -70,11 +73,14 @@ export function classifyPaths(paths, { versionOnlyPaths = [] } = {}) {
       const name = path.slice(".github/workflows/".length);
       if (!(name in WORKFLOW_COMPONENTS) && !["ci.yml", "claude-code-review.yml"].includes(name)) all(reason("unrecognized workflow; validate all jobs"));
       add(WORKFLOW_COMPONENTS[name] ?? [], reason("artifact workflow"));
-      if (name === "cli-release.yml") add("core-aot", reason("platform publication workflow"));
+      if (["cli-release.yml", "ready-releases.yml", "platform-bridge.yml"].includes(name)) add("core-aot", reason("platform publication workflow"));
+    } else if (path.startsWith("scripts/releases/") || path === "distribution/release-publisher.json") {
+      // Publisher protocol changes run its complete fixture suite, not unrelated runtime checks.
+      add("ci-policy", reason("release publisher contract"));
     } else if (path.startsWith(".github/actions/")) {
       add("actionlint", reason("composite action"));
     } else if (path.startsWith("docs/") || /^scripts\/docs-index(?:\.test)?\.mjs$/.test(path)) {
-      add("plans", reason("canonical document parser contract"));
+      add("documents", reason("canonical document parser contract"));
     } else if (["README.md", "AGENTS.md", "CLAUDE.md", "LICENSE", ".gitignore", ".gitattributes", ".editorconfig", ".github/dependabot.yml"].includes(path)) {
       // These repository metadata files do not change a compiled/runtime input.
     } else if (path === "package-lock.json" || [".npmrc", ".node-version", ".nvmrc"].includes(path)) {
@@ -112,6 +118,10 @@ export function classifyPaths(paths, { versionOnlyPaths = [] } = {}) {
       add("ci-policy", reason("local integration command contract"));
     } else if (path === "scripts/check-workspace-activation.py") {
       add(["core", "cli"], reason("native acceptance fixture"));
+    } else if (path === "scripts/observability_acceptance.py") {
+      add(["core", "cli", "shell", "telemetry-backend", "telemetry-ui"], reason("managed observability acceptance fixture"));
+    } else if (path === "scripts/check-platform-native-update.py") {
+      add(["core", "cli", "core-aot"], reason("native paired-update acceptance"));
     } else if (path === "scripts/check-core-aot.mjs") {
       add(["core", "core-aot"], reason("NativeAOT compatibility gate"));
     } else if (path === "scripts/check-docker-core-transport.py") {

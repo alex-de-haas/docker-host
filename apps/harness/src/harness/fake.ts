@@ -37,6 +37,7 @@ export class FakeHarnessAdapter implements HarnessAdapter {
 }
 
 class FakeRun implements HarnessRun {
+  private stopped = false;
   private readonly pending = new Map<string, { toolName: string }>();
   private readonly pendingQuestions = new Map<string, { question: string }>();
 
@@ -46,11 +47,12 @@ class FakeRun implements HarnessRun {
     private readonly isAutoAllowed?: (toolName: string) => boolean,
   ) {
     // Emitted asynchronously like a real harness init message.
-    queueMicrotask(() => this.onEvent({ type: "harness_session", harnessSessionId: `fake-${sessionId}` }));
+    queueMicrotask(() => { if (!this.stopped) this.onEvent({ type: "harness_session", harnessSessionId: `fake-${sessionId}` }); });
   }
 
   send(text: string): void {
     queueMicrotask(() => {
+      if (this.stopped) return;
       if (text.includes("ask")) {
         const questionId = randomUUID();
         const question = "Which one?";
@@ -155,7 +157,10 @@ class FakeRun implements HarnessRun {
 
   async interrupt(): Promise<void> {}
 
+  async stopAndWait(): Promise<void> { await this.stop(); }
+
   async stop(): Promise<void> {
+    this.stopped = true;
     this.pending.clear();
     this.pendingQuestions.clear();
   }

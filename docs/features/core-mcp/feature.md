@@ -1,8 +1,8 @@
 ---
 created: 2026-08-09
-updated: 2026-10-19
-summary: Core MCP exposes app state, logs and bounded audit search, with explicit grants for lifecycle actions and reviewed updates.
-components: [apps/core]
+updated: 2026-11-03
+summary: Canonical Core tools group platform features and mediate provider-owned tasks, sessions and history with current authority and conservative Harness policy migration.
+components: [apps/core, apps/harness]
 ---
 
 # Core MCP
@@ -10,7 +10,7 @@ components: [apps/core]
 An embedded Model Context Protocol endpoint on Core, giving agent clients typed tools for the things
 Core already knows — which apps exist, what state they are in, what their logs say — instead of
 leaving them to guess at shell commands. This is step 5 of the
-[AI Agent Bridge](../ai-agent-bridge/plan.md) rollout; the umbrella's 2026-07-11
+[AI Agent Bridge](../ai-agent-bridge/feature.md) rollout; the umbrella's 2026-07-11
 [decisions](../ai-agent-bridge/feature.md#decision-log) govern it:
 Core MCP is embedded in Core rather than a separate service, and it stays control-plane only — it
 never performs or proxies work that belongs to a runtime app's own domain API.
@@ -89,6 +89,12 @@ so a follow-up call needs no disambiguation.
 - **Failures come back as results, not transport errors.** An unknown app id answers with a message
   naming the id and pointing at `list_apps`; an unreadable log answers with the reason alongside the
   app id and budget. A model can act on an explanation but can only give up on a JSON-RPC error.
+- Missing required arguments return an `isError` result with `mcp_argument_required` and the declared
+  argument name. Incorrect top-level JSON types return `mcp_argument_invalid` with the expected type.
+  These checks use the tool's published schema before argument binding; `workspaceId` remains required
+  for workspace observations. Optional defaults and nullable types retain their declared behavior.
+  Tool-specific validation still owns value and nested-object constraints. Unexpected tool exceptions
+  remain sanitized; these diagnostics include no supplied values or exception details.
 - `tail_app_logs` is named for what Core has: an on-demand read of container or process output, not a
   searchable store. Structured, queryable logs live in the telemetry backend — an optional app whose
   query API carries no authentication and which Core deliberately stopped proxying. It should declare
@@ -268,7 +274,87 @@ Return. Runtime consumers persist independently of workspace Close and sandbox F
 participation requires separate Core authority; ordinary source or lifecycle access is insufficient.
 Return preserves current data and live source edits.
 
+## Core-Owned Capability Metadata
+
+Every registered tool carries versioned `io.hosty/core-tool` metadata in MCP `tools/list`.
+CoreMcpCatalog assigns each tool to Host & Core, App management, Logs & audit, Workspaces,
+Git & pull requests, App creation, Runtime & development, Test environments, Agent sessions,
+History & search, Tasks or Work lifecycle. Existing public tool names remain valid.
+The metadata contains schemaVersion, platform owner `hosty:core`, stable operationId, feature ID/title
+and current direct-scope/app-permission requirements. Conditional requirements remain explicit;
+resource-specific guards belong to domain services.
+
+Feature membership and authority are not inferred from names or `readOnlyHint`. Source reads require
+workspace authority, history access has its own grant, and sharing, export and execution control
+require their respective additional grants. Metadata grants no permission. The catalog also owns
+assistant-app permission mappings and background-grant review.
+
+Core rejects invocation of a registered tool without a catalog entry and refuses incomplete catalogs.
+SDK descriptors are copied before decoration, preserving schemas, annotations and unrelated metadata.
+Only the reserved platform resource owns these declarations; runtime application IDs remain opaque.
+
+## Canonical Platform And Provider Boundaries
+
+Core exposes equivalent HTTP and MCP entry points for registered source, publication, app creation,
+workflow and independent environment operations. The HTTP families are `/api/workspaces/v1`,
+`/api/publications/v1`, `/api/app-creations/v1`, `/api/workflows/v1` and `/api/core-environments`.
+Callers retain the same domain request UUID and arguments after an uncertain response. Observation,
+revision conflicts, source admission, native consumers and publication heads retain their domain
+checks. Current application/user authority is revalidated at dispatch and before returning mediated
+provider content. API source mutations and MCP source mutations record their actual transport and actor.
+
+Tasks use `/api/tasks/v1` and the task MCP tools. Their records remain at independently selected
+providers. Core retains operation and execution-authority metadata, not the task collection. An
+executor can use a receipt-bound workspace broker for the selected existing workspace. The broker
+checks the current source attempt, executor installation, input revision and originating grants;
+it issues no general user credential. Stop acknowledgements after revocation release only the exact
+previously admitted session and lease. `task_result` belongs to the bound executor's private channel.
+
+The `agent-sessions` provider interface exposes minimal native-session references, current run
+observations, read/control capabilities, cancellation receipts and subject-bound notifications through
+`/api/agent-sessions/v1`. Conversation, native-session and run IDs are separate, provider-qualified
+identities. Core does not store the provider's transcript or reconstruct its execution. Harness
+persists its own observations and confirms native exit before recording a stopped run or releasing
+source. Unknown native exit remains unknown. Full recovery and agent invocation stay scoped in the
+[agent provider plan](../agent-provider-interface/plan.md).
+
+History, sharing, search and explicitly consented export use the separate
+[conversation history contract](../conversation-history/feature.md). Neither a conversation reference
+nor a history share grants source access or native execution control. Environment lifecycle is
+independent of conversations; deleting a chat does not dispose a child Core.
+
+## Harness Tool Settings And Compatibility
+
+Settings show two headings, **Hosty tools** and **Applications**. Hosty tools contains one expandable
+row per catalog feature. Applications contains one row per application, including Harness's private
+context, feedback and task-result tools under its actual installation identity. The headings do not
+add another accordion level. Feature controls affect only available tools in that feature; unavailable
+catalogs, unknown tools, effective counts and unsaved edits remain visible and preserved.
+
+A transactional version-one migration archives original rules and a receipt. Legacy alias denials
+are retained, restrictive choices win, and newly exposed or broadened tools start at Ask. Existing
+reviewed direct Core choices survive. The 69 retained platform aliases use explicit argument adapters
+and current canonical Core policy; discovery hides them once the canonical catalog is available.
+Aliases cannot restore a disabled tool or bypass a changed definition. Private tool policy keys bind
+the actual Harness installation. Saving after discovery uses the post-migration settings revision.
+
+Harness coordinates its native execution around canonical tools: preparing source binds the explicit
+conversation task ID and lease, while reviewed runtime switches and workflow completion wait for
+native exit. The original Core transport and policy review survive that handover; changed permission,
+restart or an uncertain native stop requires explicit recovery. Core contains no Harness route or
+conversation dependency for these canonical operations.
+
 ## Testing Expectations
+
+- Managed session acceptance verifies an empty Core, canonical MCP environment replay and disposal,
+  cross-user history sharing/revocation, actual application ownership and Core/Shell password login.
+  Browser checks cover independent feature controls, refresh with unsaved edits and persisted denial.
+- Core catalog metadata is verified over real MCP HTTP requests with an empty app registry. Cover
+  unchanged public names, scoped read operations, independent descriptor copies, schema/annotation
+  preservation and invocation denial before an unmapped registered tool body executes.
+- Argument diagnostics cover omitted argument bags and required workspace IDs, null and incorrect
+  JSON types, optional defaults and nullable arguments. Invalid calls do not execute the tool body;
+  unexpected body exceptions retain sanitized answers without supplied values or private details.
 
 - HTTP suite over the real pipeline: `initialize`, then `tools/list`, then `tools/call` for **every**
   tool. Listing alone is not enough — attribute-declared tools are discovered by reflection, so the
@@ -335,4 +421,4 @@ Return preserves current data and live source edits.
   was checked by the affected 49-test MCP suite and a source restart/live update.
 - Not covered: Codex as a client, a client carrying a Hosty skill, and any client reaching Core over
   a non-loopback origin. Tracked as unchecked items under step 6 of the
-  [AI Agent Bridge](../ai-agent-bridge/plan.md) rollout rather than as prose here.
+  [AI Agent Bridge](../ai-agent-bridge/feature.md) rollout rather than as prose here.

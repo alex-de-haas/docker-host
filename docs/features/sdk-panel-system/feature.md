@@ -1,8 +1,8 @@
 ---
 created: 2026-10-10
-updated: 2026-10-12
+updated: 2026-11-03
 summary: Shared SDK panels compose app-owned tools beside documents in Shell and standalone, with verified peers and pinned presentation targets.
-components: [packages/app-sdk, apps/core, apps/shell, apps/plans, apps/harness, apps/demo-app]
+components: [packages/app-sdk, apps/core, apps/shell, apps/documents, apps/harness, apps/demo-app]
 ---
 
 # SDK Panel System
@@ -11,6 +11,22 @@ Plans opens its completed assistant discussion beside the document. Shell owns t
 Plans is embedded; top-level Plans uses the same workspace supplied by Hosty Overlay. Opening,
 retrying, switching or focusing a tool does not submit its draft or start a model run. An explicit
 Open separately link opens an additional view of the same conversation.
+
+The separate [tool activity contract](../tool-activity/feature.md) reports server-owned state through
+Core, independently of mounted frames. Its producer uses only its app service identity.
+
+A panel can bind a contextual assistant action with `assistantKey`, referencing a key in its own
+app's `interfaces.assistant` declarations. Core validates and preserves the association in the panel
+catalog. A provider role alone does not classify its other panels as assistants. This declaration
+grants no provider permission.
+
+## Feedback Composer Tools
+
+A panel may declare `feedbackComposer: true`. Core includes this capability in its actor-scoped
+catalog and resolved surface; names and application IDs do not imply it. Hosts allow that mounted
+panel to use the SDK's `@hosty-sdk/app/feedback/client` contract within its workspace. The provider
+owns the form; source selection and intake remain verified SDK services. See
+[Feedback composer tools](../feedback-composer-tools/feature.md).
 
 ## Ownership And Identity
 
@@ -38,11 +54,12 @@ The fixed internal routes are scoped to the caller app:
 
 | Route below `/api/internal/apps/{callerAppId}/ui` | Result |
 | --- | --- |
-| `GET /bootstrap?parentOrigin=...` | Protocol version, own app/installation, actor, Core origin, hosting/pinned-open support and optional verified parent metadata |
+| `GET /bootstrap?parentOrigin=...` | Protocol version, own app/installation and optional display name/icon URL, actor, Core origin, hosting/pinned-open support and optional verified parent metadata |
 | `GET /panels` | Actor-filtered declared tools, stable identities, availability and minimal frame policy |
+| `GET /activity` | Actor-filtered current tool activity and service connection state |
 | `POST /panels/resolve` | Revalidated target, concrete frame surface and pinned standalone link |
 
-Every request requires the caller's own service credential and its current app-user grant. Bootstrap
+Each discovery/resolution request above requires the caller's own service credential and its current app-user grant. Bootstrap
 does not require catalog access. Hosting/discovery requires the optional `apps.panels.read` grant;
 existing `apps.read` also qualifies. A child without catalog permission can use an authorized host.
 Capabilities, UI roles and browser messages grant no API authority.
@@ -105,8 +122,13 @@ Request IDs are caller-generated UUIDs, distinct from handoff IDs. Presentation 
 SDK-created retained instances. The host keeps a bounded window-local ledger scoped to source
 document and orders selection per destination workspace. Matching replay
 revalidates authority and reuses the frame; conflicting payloads fail. Status rechecks the target.
-An aborted/timed-out wait is uncertain, not cancellation; retry/status uses the same ID. Message
-size and concurrent-request limits bound work. Core restart requires no browser-lease restoration.
+An aborted/timed-out protocol wait is uncertain, not cancellation; retry/status uses the same ID.
+The host's local `selectPanel(ref, workspaceId, signal)` accepts a separate optional cancellation
+signal for host-owned selections such as layout restoration. Aborting it before presentation
+returns `presentation_cancelled`, cancels pending renderer work and leaves retained views and
+newer selections intact. Signalled selections keep their operation pending until it settles;
+protocol wait timeouts do not detach ownership of the automatic restore.
+Message size and concurrent-request limits bound work. Core restart requires no browser-lease restoration.
 Immediate validation, conflict and concurrency refusals reach the embedded caller through the same
 response path as successful placement. The child reserves a request ID and target before asynchronous
 verification, coalesces identical in-flight calls and rejects conflicting targets locally. Status
@@ -141,7 +163,11 @@ chooses a provider nor performs I/O.
 
 The shared `HostyAppFrame` applies sandbox and clipboard/microphone policy, theme messages,
 attention, app-owned authentication and permission/MCP review. Reviews use the registered app
-identity and canonical Core URL, ignoring child-supplied identity/URLs; a visible link remains when
+identity and canonical Core URL, ignoring child-supplied identity/URLs. Prepared installation confirmations
+use `presentInstallationConfirmation`: a verified active frame sends only a 48-hex receipt ID, and
+the host opens its own Core confirmation URL outside the iframe sandbox. The requesting app owns
+receipt polling and the temporary retry link, so the host retains no operation state. Core retains ownership,
+authentication and explicit consent; the bridge never submits or approves a request. A visible link remains when
 popups are blocked. Shell uses explicit Core frame policy when present; with older Core metadata it
 derives microphone and popup-escape policy from the target app’s persisted speech/install grants.
 Missing or unrelated grants enable neither capability. No delegated-token responder is installed. HTTPS hosts refuse HTTP frames with
@@ -176,11 +202,13 @@ frame until a completed stop or an independently invalidated identity, destinati
 startup occurs. Reload clears the window-local tool selection; width/open preferences remain
 host-scoped. Separate opening preserves provider-persisted context, without promising transfer of
 unsent edits between windows.
-The standard header provides a minimize control (`−`) that preserves the mounted frame. Shell
-omits it in docked panels, where selecting the active rail icon minimizes the panel; its header
-retains the title and Open separately action. The SDK drawer keeps a minimize control; Shell’s drawer provides Return to document
-because the rail is inert while the drawer is open. Other host layouts can release a selected view
-through `UiHost.closePresentation`; the standard header has no close control. Shell renders its own ReUI workspace, rail and picker through the headless SDK workspace contract.
+The standard SDK header provides a minimize control (`−`) that preserves the mounted frame.
+Shell uses its own [concurrent tool columns](../concurrent-tool-panels/feature.md), with common
+headers for app tools and Feedback. Hide retains one panel, End this tool view releases it, and
+reopening an existing tool focuses it without hiding the others. `registerWorkspace({multiple:true})`
+opts a renderer into independent `visibleIds`; `selectedId` denotes focus. Omitted `multiple` retains
+the single-panel contract used by standalone and Desktop. Collapsing a workspace retains its visible
+set for restoration. Identity loss still clears presentations and visibility.
 It reuses the SDK frame transport and retains the unchanged authorization overlay.
 Retained frames receive current availability and runtime metadata, so degradation warnings appear
 and disappear with the catalog without navigating the iframe.
@@ -197,20 +225,24 @@ Legacy assistant-session notifications allocate an instance before sending their
 the outbound message names that presentation so it cannot retarget another retained draft.
 Shell chrome reads expansion from the host snapshot. Cookie or legacy localStorage preferences
 initialize the host once; an explicit session link defers default expansion until its placement.
-The top-strip toggle follows SDK changes and its first click acts on the actual host state.
+Top-strip launchers and Tools menu entries highlight open panels. Selecting an open tool hides
+its most recently focused visible instance; reopening a hidden tool retains its view and drafts.
 The assistant keyboard shortcut waits for catalog metadata and selects its requested tool directly;
-it does not concurrently expand a default tool. Repeating it on the visible assistant collapses it.
+it does not concurrently expand a default tool. Repeating it on the focused assistant hides only that instance, leaving other panels open.
 Shell retires obsolete or reinstallation-mismatched pending handoff records with an explicit error.
 The next operator retry creates a new request for the current installation; it never moves the old
 discussion. Completing an older request cannot erase the replacement's pending intent.
 
-The standard SDK renderer docks at 900 CSS pixels of inner workspace width: a 48-pixel rail,
+The standard SDK renderer docks at 900 CSS pixels of inner workspace width with a
 12-pixel gap, default 360-pixel body, 280–800 bounds and at least 480 pixels reserved for the
-document. Shell uses its own ReUI split layout and document-dependent width constraints, described
-in [Shell Panel Resize](../shell-panel-resize/feature.md). Both renderers use a drawer up to
-440 pixels wide below the docking breakpoint. Constraints do not overwrite the preferred width.
-Arrow keys resize in SDK-defined steps for the standard renderer; Shell uses its ReUI separator
-keyboard controls and double-click reset. Rail arrow/Home/End keys move focus. The drawer makes
+document. Its automatic standalone layout uses the [application header](../sdk-ui-composition/feature.md#standalone-application-header)
+with pinned tools and a Tools menu. Explicit host renderers retain the 48-pixel rail by default. Shell uses its own ReUI split layout and document-dependent width constraints, described
+in [Shell Panel Resize](../shell-panel-resize/feature.md). The standard SDK renderer uses a drawer
+up to 440 pixels wide below its docking breakpoint. A declared feedback composer instead stacks
+below the document without a backdrop or inert content, so visible sources remain selectable.
+Shell uses retained tabs and phone stacking.
+Constraints do not overwrite preferred widths. Arrow keys resize and double-click resets the
+Shell separators. Rail arrow/Home/End keys move focus. The drawer makes
 covered content inert, traps focus and restores it on dismissal; an unhandled Escape inside a
 cooperating child is forwarded through its verified channel. Breakpoints change CSS placement,
 not iframe identity.
@@ -259,10 +291,20 @@ host retain their legacy load-based delivery.
 
 [Default applications](../default-applications/plan.md) owns selection policy before a new operation;
 it does not reselect finalized results. [Replaceable UI clients](../replaceable-ui-clients/plan.md)
-owns full client roles/navigation and consumes this host protocol. [Panel visibility](../app-ui-surfaces/plan.md)
-owns persisted hide/restore preferences. [Embedding restrictions](../app-embedding-restrictions/plan.md)
+owns full client roles/navigation and consumes this host protocol. [Panel visibility](../app-ui-surfaces/feature.md#shells-chrome)
+owns Shell's persisted pin preferences. [Embedding restrictions](../app-embedding-restrictions/plan.md)
 remains On Hold: a designated standalone embedder is distinct from a full UI client, and this
 feature does not confer that deferred designation. Current CSP refusal has explicit recovery.
+
+## Document State Observations
+
+Embedded applications may include an optional `title` in `reportSurfaceState`. Hosts can observe
+ready routes and titles through `UiViewDescriptor.onSurfaceState`. The existing frame origin,
+nonce, actor and route checks still apply. Titles are trimmed and limited to 200 characters;
+control characters and oversized labels are omitted. Reported routes exclude Hosty's launch
+parameters. Main-document route changes stay within a verified route root or require a matching
+Core navigation resolution before a host receives the observation. Observations do not navigate
+or replace the document. Desktop uses them for window titles, restoration and destination reuse.
 
 ## Testing Expectations
 
@@ -307,8 +349,8 @@ queued-open timeouts, channel renewal and status/open ordering. Selection tests 
   paths and fragments.
   Shortcut tests verify that a non-assistant first catalog entry is never selected, including delayed
   metadata, and that toggling the selected assistant closed creates no new placement. Shell chrome
-  tests cover delayed/refused links, cookie/legacy preference migration and the first toggle in both
-  directions against the Shell renderer connected to the real SDK host. HTTPS Shell frame tests preserve explicit standalone
+  tests cover delayed/refused links, cookie/legacy preference migration, independent visible panels
+  and focus/hide actions against the Shell renderer connected to the real SDK host. HTTPS Shell frame tests preserve explicit standalone
   recovery for HTTP workspace, settings and legacy panel surfaces while continuing to embed HTTPS.
   Frame policy tests cover older-Core speech/install grants, missing/unrelated grants and the
   precedence of explicit Core policy over fallback grants.
@@ -325,6 +367,9 @@ queued-open timeouts, channel renewal and status/open ordering. Selection tests 
   Exercise Plans beside its finalized discussion in both modes, no implicit popup/nested rail,
   a non-assistant tool before discussion, retained drafts/document state, Shell-owned pages,
   keyboard/width/theme behavior, own-frame access recovery and explicit same-session opening.
+- Verify installation-confirmation presentation rejects foreign frames/origins and malformed receipts,
+  derives the Core URL locally, preserves sandbox policy and leaves consent/receipt recovery with Core
+  and the caller. Exercise a COOP-isolated confirmation from Shell without popup-escape permission.
 - Exercise actual CSP refusal, permission/MCP review and microphone policy with browser fixtures;
   fake media is sufficient for capture/delegation checks. Never claim that a protocol fixture proves
   a real speech provider transcribed audio or a model executed a prompt.

@@ -266,11 +266,21 @@ export function getAppPageLinks(app: CoreApp): AppPageLink[] {
   return [];
 }
 
+export function findDeclaredAppPage(pages: readonly AppPageLink[], path: string): AppPageLink | undefined {
+  const requested = new URL(normalizeAppPath(path), "https://app.invalid");
+  const pathname = (value: URL) => value.pathname.replace(/\/+$/, "") || "/";
+  const matches = (page: AppPageLink) => pathname(new URL(normalizeAppPath(page.path), "https://app.invalid")) === pathname(requested);
+  return pages.find(page => {
+    const declared = new URL(normalizeAppPath(page.path), "https://app.invalid");
+    return matches(page) && declared.search === requested.search && declared.hash === requested.hash;
+  }) ?? pages.find(page => matches(page) && new URL(normalizeAppPath(page.path), "https://app.invalid").search === requested.search)
+    ?? pages.find(matches);
+}
+
 export function findAppPageLink(app: CoreApp, path: string) {
   const targetPath = normalizeAppPath(path);
   const pages = getAppPageLinks(app);
-  const exact = pages.find((page) => normalizeAppPath(page.path) === targetPath)
-    ?? pages.find((page) => normalizeAppPath(page.path).split(/[?#]/, 1)[0] === targetPath.split(/[?#]/, 1)[0]);
+  const exact = findDeclaredAppPage(pages, targetPath);
   if (exact) {
     const requested = new URL(targetPath, "https://app.invalid");
     const destination = new URL(exact.redirectUri);
@@ -293,7 +303,15 @@ export function buildRedirectUriFromAppPath(app: CoreApp, path: string) {
 
   try {
     const url = new URL(base);
-    const basePath = url.pathname.endsWith("/") ? url.pathname.slice(0, -1) : url.pathname;
+    let basePath = url.pathname.endsWith("/") ? url.pathname.slice(0, -1) : url.pathname;
+    if (app.entryPath?.trim()) {
+      try {
+        // The embedded URL includes the declared entry route. Remove only that suffix,
+        // retaining any deployment prefix before resolving another app-relative route.
+        const entryPath = new URL(app.entryPath, "http://app.invalid").pathname.replace(/\/$/, "");
+        if (entryPath && basePath.endsWith(entryPath)) basePath = basePath.slice(0, -entryPath.length);
+      } catch { /* An unreadable optional declaration leaves the existing base path intact. */ }
+    }
     const appPath = path.startsWith("/") ? path : `/${path}`;
     // Parse the path separately so workspace selection stays a query, not an encoded pathname.
     // Only copy URL components; a protocol-relative input cannot replace the installed origin.

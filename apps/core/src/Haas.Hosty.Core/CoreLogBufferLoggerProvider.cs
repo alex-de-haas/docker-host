@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using System.Diagnostics;
 
 namespace Haas.Hosty.Core;
 
@@ -45,7 +46,10 @@ internal sealed class CoreLogBufferLoggerProvider(CoreLogBuffer buffer, IClock c
                 logLevel,
                 category,
                 formatter(state, exception) ?? string.Empty,
-                exception?.ToString());
+                exception?.ToString(),
+                Activity.Current?.TraceId.ToHexString(),
+                Activity.Current?.SpanId.ToHexString(),
+                CoreApiRequest.Caller ?? Activity.Current?.GetCustomProperty(CoreTracing.CallerAttribute) as string);
         }
     }
 }

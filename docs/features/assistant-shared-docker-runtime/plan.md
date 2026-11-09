@@ -1,7 +1,7 @@
 ---
 status: In Progress
 created: 2026-10-20
-updated: 2026-10-21
+updated: 2026-10-27
 summary: Make worker an ordinary Harness service with a direct API, native Windows support and shared Core-owned worktrees, without workspace migration or cleanup restarts.
 components: [apps/core, apps/harness, apps/shell]
 ---
@@ -209,8 +209,10 @@ Final typed fixtures are D16/D19 outputs; these are not a public provider standa
 
 Owner addition, 2026-10-20: expose both model and reasoning effort in the chat composer as part
 of this refactor, for Codex and Claude. This is model selection within the existing provider and
-account. Switching Codex to Claude or transferring native context remains owned by
-[shared history](../assistant-shared-history/plan.md); translation keeps its independent settings.
+account. The 2026-10-27 [owner decision](../../vision.md) retires switching Codex and Claude inside
+a started conversation. [Shared Artifacts](../shared-artifacts/plan.md) owns explicit selected-context
+handoffs between separate sessions; native context is not transferred. Translation keeps its
+independent settings.
 
 - Offer **Agent default** and model choices supplied by worker for the selected connection. The
   worker uses native catalog/capability APIs where available; any versioned fallback suggestions

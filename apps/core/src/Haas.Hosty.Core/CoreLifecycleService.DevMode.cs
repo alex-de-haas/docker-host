@@ -231,7 +231,9 @@ internal sealed partial class CoreLifecycleService
                 ExecutionConfigurationHash = current.ExecutionConfigurationHash,
                 PriorExecutionConfigurationHash = current.PriorExecutionConfigurationHash,
                 ReturnConfigurationHash = current.ReturnConfigurationHash,
-                ExecutionProjectionPending = current.ExecutionProjectionPending };
+                ExecutionProjectionPending = current.ExecutionProjectionPending,
+                ExecutionAccessPlan = current.ExecutionAccessPlan,
+                ExecutionPermissionRevision = current.ExecutionPermissionRevision };
         op = op with { Phase = phase, Error = completedRequestId is null ? op.Error : null,
             Receipts = completedRequestId is null ? op.Receipts : op.Receipts!.Select(r =>
                 r.RequestId == completedRequestId ? r with { State = "succeeded" } : r).ToArray() };
@@ -327,9 +329,14 @@ internal sealed partial class CoreLifecycleService
         return selection;
     }
 
-    private AppSourceState? ReturnDevSource(AppDevOperation operation)
+    private AppSourceState? ReturnDevSource(AppDevOperation operation, AppRecord app)
     {
         var source = operation.PreviousSource;
+        // A reviewed remote belongs to the local repository, independently of its runtime selection.
+        // Return restores execution without rolling back a connection made during development.
+        if (source is { Type: "local-git" } && app.SourceState is { Type: "local-git" } current &&
+            source.Repository == current.Repository && source.ManagedCheckoutPath == current.ManagedCheckoutPath)
+            source = source with { Remote = current.Remote };
         if (!operation.PackageReturn || source is null) return source;
         // Package selection drops historical workspace overrides without deleting their source.
         // Locally created apps keep their canonical Git binding, just like clearing an override.
@@ -357,7 +364,7 @@ internal sealed partial class CoreLifecycleService
             // for legacy recovery. Current settings, source edits and permission revocations survive.
             if (!op.PackageReturn) await manifests.SaveManifestCopyAsync(previous, GetAppRoot(op.AppId), ct);
             var restored = BuildAppRecord(previous, app.ManifestPath!, app.ManifestUrl, app.System, app) with
-            { InstallManifestPath = app.InstallManifestPath, SourceState = ReturnDevSource(op),
+            { InstallManifestPath = app.InstallManifestPath, SourceState = ReturnDevSource(op, app),
                 ArtifactLocks = op.PackageReturn ? null : op.PreviousArtifacts, DevModeId = op.Id,
                 GrantedCorePermissions = op.ExecutionManifest is null ? app.GrantedCorePermissions :
                     DevelopmentBaseGrants(app, op).Intersect(previous.Manifest.CorePermissions.Concat(previous.Manifest.OptionalCorePermissions), StringComparer.Ordinal).ToArray(),
@@ -397,7 +404,10 @@ internal sealed partial class CoreLifecycleService
         // Stop uses the last launched admitted contract, even when live source is invalid or
         // an execution refresh changed its service topology before an interrupted restart.
         var operation = await AppDevStore.ReadAsync(paths, app, ct);
+        // An entry journal can own the app before its source and manifest are bound. Its
+        // candidate mounts cannot describe the previous runtime being stopped at that point.
         var selection = operation is { Active: true } && app.SelectedRuntime == operation.TargetRuntime &&
+            app.SourceState?.LocalOverridePath == operation.SourcePath &&
             !operation.Phase.StartsWith("return-", StringComparison.Ordinal)
             ? await LoadDevExecutionSelectionAsync(operation, ct, running: true)
             : await manifests.LoadAsync(app.ManifestPath!, app.SelectedRuntime, ct);
@@ -430,7 +440,7 @@ internal sealed partial class CoreLifecycleService
             throw DevError("binding_changed", "Installation, settings or mounts changed. A stale return cannot overwrite a newer operator choice.");
         // Return projects the normalized package binding before Start; retries validate that same
         // binding, while entry still recognizes the source captured before workspace activation.
-        var previousSource = op.Phase.StartsWith("return-", StringComparison.Ordinal) ? ReturnDevSource(op) : op.PreviousSource;
+        var previousSource = op.Phase.StartsWith("return-", StringComparison.Ordinal) ? ReturnDevSource(op, app) : op.PreviousSource;
         var previous = app.SelectedRuntime == (op.PackageReturn ? op.PackageRuntime ?? op.PreviousRuntime : op.PreviousRuntime) &&
             app.SourceState?.LocalOverridePath == previousSource?.LocalOverridePath;
         var live = app.SelectedRuntime == op.TargetRuntime && app.SourceState?.LocalOverridePath == op.SourcePath;

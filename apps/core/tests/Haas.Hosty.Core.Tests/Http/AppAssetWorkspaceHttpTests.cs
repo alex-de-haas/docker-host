@@ -5,12 +5,14 @@ namespace Haas.Hosty.Core.Tests.Http;
 
 public sealed class AppAssetWorkspaceHttpTests
 {
-    [Fact]
-    public async Task ActiveWorkspaceIcon_UsesManifestFolderAndContentValidationWithoutChangingPackage()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ActiveWorkspaceIcon_UsesManifestFolderAndContentValidationWithoutChangingPackage(bool navigationIcon)
     {
-        await using var fixture = await Fixture.CreateAsync();
+        await using var fixture = await Fixture.CreateAsync(navigationIcon);
         using var client = fixture.Harness.CreateClient();
-        using var first = await fixture.GetAsync(client, "assets/icon.svg?v=1.0.0");
+        using var first = await fixture.GetAsync(client, $"{fixture.AssetPath}?v=1.0.0");
         Assert.Equal(HttpStatusCode.OK, first.StatusCode);
         Assert.Equal("<svg>new</svg>", await first.Content.ReadAsStringAsync());
         AssertPrivateNoCache(first);
@@ -19,12 +21,12 @@ public sealed class AppAssetWorkspaceHttpTests
         Assert.Equal("nosniff", first.Headers.GetValues("X-Content-Type-Options").Single());
         Assert.Equal("default-src 'none'; sandbox", first.Headers.GetValues("Content-Security-Policy").Single());
 
-        using var unchanged = await fixture.GetAsync(client, "assets/icon.svg?v=1.0.0", first.Headers.ETag.ToString());
+        using var unchanged = await fixture.GetAsync(client, $"{fixture.AssetPath}?v=1.0.0", first.Headers.ETag.ToString());
         Assert.Equal(HttpStatusCode.NotModified, unchanged.StatusCode);
         var stamp = File.GetLastWriteTimeUtc(fixture.SourceIcon);
         await File.WriteAllTextAsync(fixture.SourceIcon, "<svg>two</svg>");
         File.SetLastWriteTimeUtc(fixture.SourceIcon, stamp);
-        using var edited = await fixture.GetAsync(client, "assets/icon.svg?v=1.0.0", first.Headers.ETag.ToString(), DateTimeOffset.UtcNow.AddDays(1));
+        using var edited = await fixture.GetAsync(client, $"{fixture.AssetPath}?v=1.0.0", first.Headers.ETag.ToString(), DateTimeOffset.UtcNow.AddDays(1));
         Assert.Equal(HttpStatusCode.OK, edited.StatusCode);
         Assert.Equal("<svg>two</svg>", await edited.Content.ReadAsStringAsync());
         Assert.NotEqual(first.Headers.ETag, edited.Headers.ETag);
@@ -35,24 +37,30 @@ public sealed class AppAssetWorkspaceHttpTests
         await File.WriteAllTextAsync(Path.Combine(fixture.Tree.Path, "private.svg"), "repository private");
         Assert.Equal(HttpStatusCode.NotFound, (await fixture.GetAsync(client, "private.svg")).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await fixture.GetAsync(client, "apps/notes/private.svg")).StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound, (await fixture.GetAsync(client, "assets/icon.svg", session: "unassigned")).StatusCode);
-        Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync(fixture.Url("assets/icon.svg"))).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await fixture.GetAsync(client, fixture.AssetPath, session: "unassigned")).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync(fixture.Url(fixture.AssetPath))).StatusCode);
     }
 
     [Theory]
-    [InlineData("missing")]
-    [InlineData("oversized")]
-    [InlineData("linked-file")]
-    [InlineData("linked-directory")]
-    [InlineData("linked-app-folder")]
-    [InlineData("fifo")]
-    public async Task UnavailableWorkspaceIcon_FallsBackToInstalledPackage(string kind)
+    [InlineData("missing", false)]
+    [InlineData("missing", true)]
+    [InlineData("oversized", false)]
+    [InlineData("oversized", true)]
+    [InlineData("linked-file", false)]
+    [InlineData("linked-file", true)]
+    [InlineData("linked-directory", false)]
+    [InlineData("linked-directory", true)]
+    [InlineData("linked-app-folder", false)]
+    [InlineData("linked-app-folder", true)]
+    [InlineData("fifo", false)]
+    [InlineData("fifo", true)]
+    public async Task UnavailableWorkspaceIcon_FallsBackToInstalledPackage(string kind, bool navigationIcon)
     {
         if (OperatingSystem.IsWindows() && kind is "linked-file" or "linked-directory" or "linked-app-folder" or "fifo") return;
-        await using var fixture = await Fixture.CreateAsync();
+        await using var fixture = await Fixture.CreateAsync(navigationIcon);
         var privateDirectory = Path.Combine(fixture.Paths.DataRoot, "private-assets");
         Directory.CreateDirectory(privateDirectory);
-        var privateIcon = Path.Combine(privateDirectory, "icon.svg");
+        var privateIcon = Path.Combine(privateDirectory, Path.GetFileName(fixture.SourceIcon));
         await File.WriteAllTextAsync(privateIcon, "<svg>secret</svg>");
         switch (kind)
         {
@@ -78,7 +86,7 @@ public sealed class AppAssetWorkspaceHttpTests
                 break;
         }
         using var client = fixture.Harness.CreateClient();
-        using var result = await fixture.GetAsync(client, "assets/icon.svg?v=1.0.0");
+        using var result = await fixture.GetAsync(client, $"{fixture.AssetPath}?v=1.0.0");
         Assert.Equal(HttpStatusCode.OK, result.StatusCode);
         Assert.Equal("<svg>old</svg>", await result.Content.ReadAsStringAsync());
         AssertPrivateNoCache(result);
@@ -86,27 +94,38 @@ public sealed class AppAssetWorkspaceHttpTests
         if (kind == "missing")
         {
             await File.WriteAllTextAsync(fixture.SourceIcon, "<svg>back</svg>");
-            using var restored = await fixture.GetAsync(client, "assets/icon.svg?v=1.0.0", result.Headers.ETag!.ToString());
+            using var restored = await fixture.GetAsync(client, $"{fixture.AssetPath}?v=1.0.0", result.Headers.ETag!.ToString());
             Assert.Equal(HttpStatusCode.OK, restored.StatusCode);
             Assert.Equal("<svg>back</svg>", await restored.Content.ReadAsStringAsync());
         }
     }
 
     [Theory]
-    [InlineData("returned")]
-    [InlineData("starting")]
-    [InlineData("wrong-installation")]
-    [InlineData("wrong-source")]
-    [InlineData("wrong-runtime")]
-    [InlineData("missing-tree")]
-    [InlineData("wrong-app-binding")]
-    [InlineData("wrong-subpath")]
-    [InlineData("invalid-subpath")]
-    [InlineData("duplicate-binding")]
-    [InlineData("wrong-branch")]
-    public async Task InactiveOrMismatchedWorkspace_NeverSuppliesSourceBytes(string kind)
+    [InlineData("returned", false)]
+    [InlineData("returned", true)]
+    [InlineData("starting", false)]
+    [InlineData("starting", true)]
+    [InlineData("wrong-installation", false)]
+    [InlineData("wrong-installation", true)]
+    [InlineData("wrong-source", false)]
+    [InlineData("wrong-source", true)]
+    [InlineData("wrong-runtime", false)]
+    [InlineData("wrong-runtime", true)]
+    [InlineData("missing-tree", false)]
+    [InlineData("missing-tree", true)]
+    [InlineData("wrong-app-binding", false)]
+    [InlineData("wrong-app-binding", true)]
+    [InlineData("wrong-subpath", false)]
+    [InlineData("wrong-subpath", true)]
+    [InlineData("invalid-subpath", false)]
+    [InlineData("invalid-subpath", true)]
+    [InlineData("duplicate-binding", false)]
+    [InlineData("duplicate-binding", true)]
+    [InlineData("wrong-branch", false)]
+    [InlineData("wrong-branch", true)]
+    public async Task InactiveOrMismatchedWorkspace_NeverSuppliesSourceBytes(string kind, bool navigationIcon)
     {
-        await using var fixture = await Fixture.CreateAsync();
+        await using var fixture = await Fixture.CreateAsync(navigationIcon);
         var app = fixture.App;
         var operation = fixture.Operation;
         var tree = fixture.Tree;
@@ -131,7 +150,7 @@ public sealed class AppAssetWorkspaceHttpTests
         await AppDevStore.SaveAsync(fixture.Paths, operation, default);
         await JsonStorage.WriteAsync(Path.Combine(fixture.Paths.CoreRoot, "development", "workspaces", tree.Id + ".json"), tree);
         using var client = fixture.Harness.CreateClient();
-        using var result = await fixture.GetAsync(client, "assets/icon.svg");
+        using var result = await fixture.GetAsync(client, fixture.AssetPath);
         Assert.Equal(HttpStatusCode.OK, result.StatusCode);
         Assert.Equal("<svg>old</svg>", await result.Content.ReadAsStringAsync());
     }
@@ -147,8 +166,9 @@ public sealed class AppAssetWorkspaceHttpTests
         AppRecord App, DevelopmentWorkspace Tree, AppDevOperation Operation) : IAsyncDisposable
     {
         internal string AppRoot => Path.Combine(Tree.Path, "apps", "notes");
-        internal string SourceIcon => Path.Combine(AppRoot, "assets", "icon.svg");
-        internal string PackagedIcon => Path.Combine(Paths.AppsRoot, App.Id, "assets", "icon.svg");
+        internal string AssetPath => App.Ui is null ? "assets/icon.svg" : "assets/page.svg";
+        internal string SourceIcon => Path.Combine(AppRoot, AssetPath);
+        internal string PackagedIcon => Path.Combine(Paths.AppsRoot, App.Id, AssetPath);
         internal string Url(string path) => $"/api/apps/{App.Id}/assets/{path}";
         internal async Task<HttpResponseMessage> GetAsync(HttpClient client, string path, string? etag = null,
             DateTimeOffset? modifiedSince = null, string session = "assigned")
@@ -160,7 +180,7 @@ public sealed class AppAssetWorkspaceHttpTests
             return await client.SendAsync(request);
         }
 
-        internal static async Task<Fixture> CreateAsync()
+        internal static async Task<Fixture> CreateAsync(bool navigationIcon)
         {
             var harness = await CoreHttpHarness.StartAsync();
             var paths = harness.Services.GetRequiredService<CoreDataPaths>();
@@ -169,7 +189,7 @@ public sealed class AppAssetWorkspaceHttpTests
             var repository = Path.Combine(paths.DataRoot, "origin");
             var appRoot = Path.Combine(repository, "apps", "notes");
             Directory.CreateDirectory(Path.Combine(appRoot, "assets"));
-            await File.WriteAllTextAsync(Path.Combine(appRoot, "assets", "icon.svg"), "<svg>new</svg>");
+            await File.WriteAllTextAsync(Path.Combine(appRoot, "assets", navigationIcon ? "page.svg" : "icon.svg"), "<svg>new</svg>");
             await GitAsync(repository, ["init", "-b", "main"]);
             await GitAsync(repository, ["add", "."]);
             await GitAsync(repository, ["-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "-m", "Icon fixture"]);
@@ -180,8 +200,12 @@ public sealed class AppAssetWorkspaceHttpTests
                 Capabilities: ["open"], Settings: new Dictionary<string, AppSettingValue>(), StorageMappings: [], Dependencies: [], Endpoints: [],
                 InstalledAt: now, UpdatedAt: now, RuntimeProfiles: [new("dev", "localCommand", false, true)],
                 SourceState: new("git", repository, "main", null, null, repository, now, "apps/notes"),
+                Ui: navigationIcon ? new(null, null, "web", "/", [new("Notes", "/notes", "web", "assets/page.svg")]) : null,
                 CatalogMetadata: new(null, null, [], "assets/icon.svg", [], null, null, null, null, null, null));
             await apps.UpsertAppAsync(app);
+            var users = harness.Services.GetRequiredService<UserDirectoryStore>();
+            var admin = new HostUserRecord("admin", "admin@example.test", "Admin", "host.admin", false, now, now);
+            await users.WriteAsync(new UserDirectoryState(1, [admin], [], [], []));
             var owner = new WorkspaceOwner("hosty.harness", now, "admin", "asset-preview");
             var tree = await harness.Services.GetRequiredService<DevelopmentWorkspaceService>().PrepareAsync(owner,
                 new(Guid.NewGuid().ToString(), owner.SessionId, app.Id, "/assistant", "main", Guid.NewGuid().ToString()), default);
@@ -193,10 +217,9 @@ public sealed class AppAssetWorkspaceHttpTests
             var fixture = new Fixture(harness, paths, apps, app, tree, operation);
             Directory.CreateDirectory(Path.GetDirectoryName(fixture.PackagedIcon)!);
             await File.WriteAllTextAsync(fixture.PackagedIcon, "<svg>old</svg>");
-            var users = harness.Services.GetRequiredService<UserDirectoryStore>();
             var assigned = new HostUserRecord("assigned", "assigned@example.test", "Assigned", "host.user", false, now, now);
             var unassigned = assigned with { Id = "unassigned", Email = "unassigned@example.test" };
-            await users.WriteAsync(new UserDirectoryState(1, [assigned, unassigned], [], [new(app.Id, assigned.Id, now)],
+            await users.WriteAsync(new UserDirectoryState(1, [admin, assigned, unassigned], [], [new(app.Id, assigned.Id, now)],
                 [new("sess_assigned", assigned.Id, now, now.AddHours(1), null, now), new("sess_unassigned", unassigned.Id, now, now.AddHours(1), null, now)]));
             return fixture;
         }

@@ -3,12 +3,14 @@ import { useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExtern
 import { SdkChromeStyles, SdkIcon } from "./sdk-chrome";
 import { ui, createPresentationRequestId } from "./ui";
 import { INITIAL_CHROME, INITIAL_NAVIGATION } from "./ui-composition";
+import { StandaloneNavigationContext } from "./ui-standalone-context";
 import { UiCompositionContext } from "./ui-context";
 import { UI_COMPOSITION_CAPABILITY } from "./ui-types";
 export function useHostyChrome() { return useSyncExternalStore(ui.subscribeChrome, ui.getChrome, () => INITIAL_CHROME); }
 export function useHostyNavigation() { return useSyncExternalStore(ui.subscribeNavigation, ui.getNavigation, () => INITIAL_NAVIGATION); }
 export function HostyNavigationBoundary({ children, className }: { children: ReactNode; className?: string }) {
-  const chrome = useHostyChrome(), ref = useRef<HTMLDivElement>(null), hidden = chrome.navigation === "hide";
+  const chrome = useHostyChrome(), standalone = useContext(StandaloneNavigationContext), ref = useRef<HTMLDivElement>(null);
+  const hidden = chrome.navigation === "hide" || !!standalone?.collapsed && !standalone.narrow;
   const focused = useRef(false);
   useLayoutEffect(() => { if (hidden && focused.current) { document.querySelector<HTMLElement>('[data-hosty-content][tabindex="-1"]')?.focus(); focused.current = false; } }, [hidden]);
   return <div ref={ref} onFocusCapture={() => { focused.current = true; }} onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget as Node)) focused.current = false; }} className={className} data-hosty-navigation-boundary hidden={hidden} inert={hidden} style={hidden ? { display: "none" } : { display: "contents" }}>{children}</div>;
@@ -25,8 +27,11 @@ export function HostyToolLauncher() {
 export function HostyNavigation({ className = "" }: { className?: string }) {
   const composition = useContext(UiCompositionContext);
   const model = useHostyNavigation(), chrome = useHostyChrome();
-  const [expanded, setExpanded] = useState(false), [error, setError] = useState<string | null>(null);
-  const [narrow, setNarrow] = useState(false), dialog = useRef<HTMLDialogElement>(null), opener = useRef<HTMLButtonElement>(null);
+  const standalone = useContext(StandaloneNavigationContext);
+  const [localExpanded, setLocalExpanded] = useState(false), [error, setError] = useState<string | null>(null);
+  const [viewportNarrow, setNarrow] = useState(false), dialog = useRef<HTMLDialogElement>(null), localOpener = useRef<HTMLButtonElement>(null);
+  const narrow = standalone?.narrow ?? viewportNarrow, expanded = standalone?.open ?? localExpanded;
+  const setExpanded = standalone?.setOpen ?? setLocalExpanded, opener = standalone?.opener ?? localOpener;
   useEffect(() => { const resize = () => setNarrow(window.innerWidth < 900); resize(); window.addEventListener("resize", resize); return () => window.removeEventListener("resize", resize); }, []);
   useEffect(() => {
     const modal = (event: Event) => { if ((event as CustomEvent).detail !== "navigation") setExpanded(false); };
@@ -56,8 +61,8 @@ export function HostyNavigation({ className = "" }: { className?: string }) {
     {error && <p role="status">{error}</p>}
   </>;
   if (empty) return null;
-  return <HostyNavigationBoundary><SdkChromeStyles /><style>{navigationStyles}</style><div data-hosty-sdk className={`hosty-navigation ${className}`}>
-    {narrow ? <><button ref={opener} type="button" aria-label="Page navigation" aria-expanded={expanded} onClick={() => setExpanded(true)}><SdkIcon name="menu" /></button>
+  return <HostyNavigationBoundary><SdkChromeStyles /><style>{navigationStyles}</style><div data-hosty-sdk className={`hosty-navigation ${className}`} style={standalone && narrow ? { padding: 0, flex: "0 0 0" } : undefined}>
+    {narrow ? <>{!standalone && <button ref={opener} type="button" aria-label="Page navigation" aria-expanded={expanded} onClick={() => setExpanded(true)}><SdkIcon name="menu" /></button>}
       <dialog data-hosty-sdk ref={dialog} className="hosty-navigation-dialog" aria-label="Page navigation" onCancel={() => setExpanded(false)}>
         <button type="button" onClick={() => setExpanded(false)}>Close navigation</button><nav aria-label="App pages">{links}</nav>
       </dialog></> : <nav aria-label="App pages">{links}</nav>}

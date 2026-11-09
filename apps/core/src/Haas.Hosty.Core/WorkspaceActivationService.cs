@@ -286,7 +286,7 @@ internal sealed partial class WorkspaceActivationService(CoreDataPaths paths, Wo
     private async Task ValidateCoreTreeAsync(WorkspaceRuntimeActivation activation, CancellationToken ct)
     {
         var tree = await workspaces.ObserveAsync(activation.CoreWorktreeId!, null, ct);
-        if (tree.Owner.UserId != activation.UserId || tree.WorkspaceId != activation.WorkspaceId || tree.State != "active" ||
+        if (tree.WorkspaceId != activation.WorkspaceId || tree.State != "active" ||
             tree.Leases.Length != 0 || tree.Operations.Any(o => o.State is "pending" or "unknown") || tree.Observation?.State != "ok")
             throw Error("core_source_busy", "Pause workspace writers and resolve pending Git operations before switching Core.");
         var source = await core.SourceSettingsAsync(ct);

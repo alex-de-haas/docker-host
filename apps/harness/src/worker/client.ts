@@ -60,13 +60,13 @@ export class WorkerClient {
     if (!response.ok || !value.path) throw new WorkerApiError(response.status, "attachment_failed", value.message ?? "Worker attachment upload failed.");
     return value.path;
   }
-  async capabilities(): Promise<{ protocol: number; capacity: number; resources?: { trees?: string } }> {
-    const value = await this.request<{ protocol: number; capacity: number; resources?: { trees?: string } }>("/v1/capabilities");
+  async capabilities(): Promise<{ protocol: number; generation?: string; capacity: number; occupied?: number; resources?: { trees?: string } }> {
+    const value = await this.request<{ protocol: number; generation?: string; capacity: number; occupied?: number; resources?: { trees?: string } }>("/v1/capabilities");
     if (value.protocol !== WORKER_PROTOCOL) throw new WorkerApiError(409, "protocol_mismatch", "Harness and Worker versions are incompatible.");
     return value;
   }
   async events(id: string, onEvent: (event: WorkerEvent) => void | Promise<void>, signal: AbortSignal,
-    onNotice?: (message: string) => void | Promise<void>): Promise<WorkerReceipt> {
+    onNotice?: (message: string) => void | Promise<void>, onUsage?: (runId: string, usage: NonNullable<WorkerReceipt["usage"]>) => void | Promise<void>): Promise<WorkerReceipt> {
     let cursor = 0, generation: string | undefined;
     for (;;) {
       signal.throwIfAborted();
@@ -83,7 +83,14 @@ export class WorkerClient {
             const block = buffer.slice(0, index); buffer = buffer.slice(index + 2);
             const type = block.match(/^event: (.+)$/m)?.[1], data = block.match(/^data: (.+)$/m)?.[1];
             if (!data) continue;
-            if (type === "run") {
+            if (type === "usage") {
+              const value = JSON.parse(data) as Pick<WorkerReceipt, "runId" | "generation" | "usage">;
+              if (value.runId !== id || generation && value.generation !== generation || !value.usage
+                || !Number.isSafeInteger(value.usage.sequence) || value.usage.sequence < 1 || !Number.isSafeInteger(value.usage.activeMs) || value.usage.activeMs < 0
+                || typeof value.usage.unknown !== "boolean") throw new WorkerApiError(409, "usage_invalid", "Worker usage is malformed or belongs to another segment.");
+              generation = value.generation;
+              await onUsage?.(id, value.usage);
+            } else if (type === "run") {
               const frame = JSON.parse(data) as WorkerEvent;
               if ((frame.event?.type === "command_result" || frame.event?.type === "tool_result") && !validWorkerCommandEnvelope(frame))
                 throw new WorkerApiError(409, frame.event.type === "command_result" ? "invalid_command_frame" : "invalid_tool_frame", "Worker tool event identity or sequence is malformed.");
@@ -135,6 +142,7 @@ class RemoteRun implements HarnessRun {
   private stopped = false;
   private busy = false;
   private submitted?: WorkerRunRequest;
+  private admission?: Promise<WorkerReceipt>;
   private confirmed = true;
   private deliveringTerminal = false;
   constructor(private readonly client: WorkerClient, private readonly binding: ConnectionBinding | null, private readonly options: HarnessStartOptions) {
@@ -144,10 +152,10 @@ class RemoteRun implements HarnessRun {
     if (this.busy || this.stopped) throw new WorkerApiError(409, "run_busy", "Wait for the current turn to finish.");
     this.busy = true; this.id = this.options.workerRunId ?? randomUUID(); this.controller = new AbortController();
     const id = this.id, signal = this.controller.signal;
-    const request: WorkerRunRequest = { conversationId: this.options.sessionId, binding: this.binding!,
+    const request: WorkerRunRequest = { operation: this.options.operation ?? "chat", skillExportId: this.options.skillExportId, conversationId: this.options.sessionId, binding: this.binding!,
       selection: { model: this.options.model ?? null, reasoningEffort: this.options.reasoningEffort ?? null },
       resource: this.options.resource ?? { kind: "conversation", id: this.options.sessionId }, input,
-      options: { autonomy: this.options.autonomy, systemPrompt: this.options.systemPrompt, resumeHarnessSessionId: this.resume, mcpServers: this.options.mcpServers },
+      options: { requireNativeResume: this.options.requireNativeResume, promptSuggestions: this.options.promptSuggestions, autonomy: this.options.autonomy, systemPrompt: this.options.systemPrompt, instructionSources: this.options.instructionSources, resumeHarnessSessionId: this.resume, mcpServers: this.options.mcpServers },
       autoAllowedPrefixes: Object.keys(this.options.mcpServers ?? {}).map(name => `mcp__${name}__`).filter(prefix => this.options.isAutoAllowed?.(`${prefix}probe`)) };
     this.submitted = request; this.confirmed = false;
     this.observe(id, signal, request);
@@ -156,13 +164,16 @@ class RemoteRun implements HarnessRun {
     this.id = id; this.busy = true; this.confirmed = false; this.controller = new AbortController();
     this.observe(id, this.controller.signal);
   }
+  async waitForAdmission(): Promise<void> { await this.admission; }
   private observe(id: string, signal: AbortSignal, request?: WorkerRunRequest): void {
     this.finished = (async () => {
       let final: HarnessEvent | undefined, accepted = false;
       try {
-        const current = sanitizeWorkerCommandReceipt(request ? await this.client.request<WorkerReceipt>(`/v1/runs/${id}`, "PUT", request, true)
+        // Admission must resolve before usage/event callbacks can enter the coordinator queue.
+        const current = sanitizeWorkerCommandReceipt(request ? await (this.admission = this.client.request<WorkerReceipt>(`/v1/runs/${id}`, "PUT", request, true))
           : await this.client.request<WorkerReceipt>(`/v1/runs/${id}`));
         accepted = true;
+        if (current.usage) await this.options.onWorkerUsage?.(id, current.usage);
         for (const frame of current.pending ?? []) {
           const event = frame.event;
           if (event.type === "approval_request") this.pending.set(event.approvalId, frame);
@@ -177,12 +188,13 @@ class RemoteRun implements HarnessRun {
           if (event.type === "result" || event.type === "error") final = event;
           else if (this.options.onWorkerEvent) await this.options.onWorkerEvent(frame);
           else this.options.onEvent(event);
-        }, signal, message => this.options.onEvent({ type: "notice", message }));
+        }, signal, message => this.options.onEvent({ type: "notice", message }), this.options.onWorkerUsage);
+        if (receipt.usage) await this.options.onWorkerUsage?.(id, receipt.usage);
         final ??= receipt.snapshot?.result;
         if (receipt.snapshot?.nativeSessionId) this.options.onEvent({ type: "harness_session", harnessSessionId: receipt.snapshot.nativeSessionId });
         this.confirmed = receipt.exitConfirmed ?? receipt.state !== "interrupted"; this.busy = false; this.pending.clear();
         if (!this.stopped) {
-          const event: HarnessEvent = final && (receipt.state === "completed" || receipt.state === "failed" && final.type === "error") ? final
+          const event: HarnessEvent = receipt.state === "parked" ? { type: "execution_parked", runId: id, ...(receipt.barrier ? { barrier: receipt.barrier } : {}) } : final && (receipt.state === "completed" || receipt.state === "failed" && final.type === "error") ? final
             : { type: "error", message: receipt.error ?? `Worker run ${receipt.state}.` };
           if (this.options.onWorkerEvent && this.confirmed) {
             // The terminal receipt revision is stable even after detailed event replay expires.
@@ -197,7 +209,8 @@ class RemoteRun implements HarnessRun {
           } else this.options.onEvent(event);
         }
       } catch (error) {
-        if (request && !accepted && error instanceof WorkerApiError && error.status < 500 && error.code !== "run_conflict") this.confirmed = true;
+        if (request && !accepted && error instanceof WorkerApiError
+          && (error.code === "worker_stopping" || error.status < 500 && error.code !== "run_conflict")) this.confirmed = true;
         this.busy = false;
         if (!this.stopped) this.options.onEvent({ type: "error", message: error instanceof Error ? error.message : "Worker disconnected." });
       }
@@ -220,7 +233,21 @@ class RemoteRun implements HarnessRun {
   }
   async interrupt(): Promise<void> {
     if (!this.id || this.confirmed) return;
-    if (this.submitted) await this.client.request(`/v1/runs/${this.id}`, "PUT", this.submitted, true);
+    if (this.submitted) {
+      const current = await this.client.request<WorkerReceipt>(`/v1/runs/${this.id}`).catch(error => {
+        if (error instanceof WorkerApiError && error.code === "run_not_found") return null;
+        throw error;
+      });
+      if (current && (current.runId !== this.id || current.conversationId !== this.options.sessionId))
+        throw new WorkerApiError(409, "run_mismatch", "Worker receipt does not match this conversation.");
+      // Explicit recovery may have written a terminal tombstone after an uncertain admission.
+      // Only its attested exit proof bypasses the original PUT/hash check; ordinary reused run
+      // identities must still conflict when their accepted input differs.
+      if (current?.recovery && terminal(current.state) && current.exitConfirmed === true) {
+        this.confirmed = true; return;
+      }
+      await this.client.request(`/v1/runs/${this.id}`, "PUT", this.submitted, true);
+    }
     let receipt = await this.client.request<WorkerReceipt>(`/v1/runs/${this.id}/cancel`, "POST", { controlId: randomUUID() }, true);
     const unconfirmed = () => new WorkerApiError(503, "exit_unconfirmed", "Worker execution exit is not confirmed; keep source leases.");
     // Startup/reservation can still be unwinding after the cancellation command is acknowledged.
@@ -234,6 +261,15 @@ class RemoteRun implements HarnessRun {
     } catch { throw unconfirmed(); }
     if (receipt.state === "interrupted" && !receipt.exitConfirmed) throw unconfirmed();
     this.confirmed = true;
+  }
+  async disableSuggestions(): Promise<void> {
+    if (!this.id || this.confirmed) return;
+    if (this.submitted) await this.client.request(`/v1/runs/${this.id}`, "PUT", this.submitted, true);
+    await this.client.request(`/v1/runs/${this.id}/disable-suggestions`, "POST", { controlId: randomUUID() }, true);
+  }
+  async finishSuggestions(): Promise<void> {
+    await this.interrupt();
+    await this.finished;
   }
   async stop(): Promise<void> {
     await this.interrupt(); this.stopped = true;

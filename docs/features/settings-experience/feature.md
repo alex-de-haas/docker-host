@@ -1,7 +1,7 @@
 ---
 created: 2026-10-20
-updated: 2026-10-23
-summary: Shell unifies personal, host and application settings; Core confirms protected changes while Harness owns invocation preferences and instruction acceptance.
+updated: 2026-11-06
+summary: Shell unifies personal, host and application settings; Core confirms protected changes while Harness owns invocation preferences and skill selections.
 components: [apps/core, apps/shell, apps/harness, apps/marketplace]
 ---
 
@@ -16,7 +16,7 @@ embedded in Shell or standalone. Each field has one authoritative store and edit
 | Destination | Tabs and contents |
 | --- | --- |
 | My profile | Profile; Connections; Tokens & devices. Credential lists default to the current user, including browser sessions, device/manual tokens and OAuth grant metadata. |
-| Host | Updates; Network; Shared folders; Core source. Source uses the existing development/source checks and does not select an application runtime. |
+| Host | Updates; Network; Storage; Shared folders; Core source. Storage shows managed disk usage; Source uses the existing development/source checks and does not select an application runtime. |
 | Users & security | Users and invitations; App permissions; Policies. Authorized support for another user's credentials opens in that user's detail. OAuth client registrations stay in Policies. |
 | Shell | Shell preferences and tool presentation. |
 | Apps | One app-named entry per declared app-owned `ui.settings` surface. Internal tabs belong to the app; host-managed App Details is separate. |
@@ -31,6 +31,12 @@ Entries retain their existing role/permission checks. Ordinary users can open pe
 and Tokens & devices; host administration and app management remain administrator surfaces.
 Bookmarks using former settings tab names resolve to the corresponding destination.
 
+Host > Storage presents Core's cached [managed disk-usage snapshot](../storage-usage/feature.md)
+with category/resource bars and explicit recount. It lives at
+`/settings?tab=host&section=storage`, without a separate main-sidebar entry. Legacy `/storage`
+links redirect there while preserving assistant continuation. Application details retain their
+own Storage tab and link back to the Host settings overview.
+
 Host > Updates includes read-only Core information from Shell's existing status snapshot: listen
 address and public origin with copy buttons, data root, runtime host and ingress mode. It makes no
 additional requests or polling and does not change editable settings or reset their drafts. Missing
@@ -39,14 +45,24 @@ This block retains the same administrator access as the surrounding host setting
 status, resources, Logs and runtime/workspace, restart, update and Source settings actions remain
 on Dashboard.
 
+Host > Updates configures only the Core and CLI release feed. It contains no application update
+source section or publisher migration controls. Application update channels remain in each
+application's App Details > Updates tab.
+
 App Details/Manage is a standalone page at `/apps/<app-id>?section=<section>`, outside Settings.
 An administrator sees `Dashboard / <app name>` with a native Dashboard link to `/dashboard`.
 Former `/settings?tab=manage:<app-id>&section=<section>` bookmarks migrate to the same app and
 section on the canonical page. Dashboard app-row activation opens this view, replacing the former
 More > Manage application entry and runtime app service expander. Row actions, menus and source/version/resource disclosures
 retain their independent behavior. Core also has no Dashboard expander or inline detail panel.
-Applicable tabs expose Launch, Logs, Parameters, Folders, Network, Permissions, Updates and Backups.
+Applicable tabs expose Launch, Logs, Services, Metrics, Parameters, Folders, Network, Permissions,
+Updates and Backups.
 Logs follows Launch when the app declares the logs capability.
+Parameters appears only for app parameters, excluding public-origin and local-name settings.
+Folders appears only for declared mount slots, including unbound optional slots and managed workspace
+slots. Primary app data alone does not add a Folders tab. Permissions appears only when the app has
+requested or previously accepted/granted Core permissions, or confirmed/unconfirmed provider roles.
+An unavailable section link or a selected section whose data disappears falls back to Launch.
 Existing section IDs remain valid (`app`, `publicOrigins`, `mounts`, `source`); `parameters` addresses
 the typed manifest parameters, including secret replacement controls. Launch saves autostart
 independently. Parameters saves no autostart or public-origin values. A save in either section does
@@ -78,18 +94,22 @@ it does not change the active runtime and does not stop a running application.
 
 Settings uses line tabs and label/value/note rows; narrow forms stack their fields without changing
 store ownership. Manage keeps its mounted section forms across tab changes. Launch composes the
-existing autostart form, declared dependency readiness and a union of runtime, health, artifact-lock
-and cached update service inventory, including image-only workers. Service details retain full
-health/runtime messages, start/restart observations, locked/running/candidate image references and
+existing autostart form, runtime information and declared dependency readiness. Services owns the
+union of runtime, health, artifact-lock and cached update service inventory, including image-only
+workers. Service details retain full health/runtime messages, start/restart observations, locked/running/candidate image references and
 drift or matched-revision evidence. Missing observations stay Unknown rather than inheriting the
 app's runtime state; missing candidate/registry information is explicit.
 
-Launch reads detailed health and cached update status on entry, explicit Refresh services and
+Services reads detailed health and cached update status on entry, explicit Refresh services and
 relevant runtime/source/revision changes. These reads do not refresh the registry or poll repeatedly.
-Each read keeps its own visible error, and exit or identity changes abort stale results. Resources
-subscribe only while Launch needs observed active-service readings; stopped/exited/unknown services
-show none. CPU uses the existing one-logical-core convention. General app problems and the readiness
-logs action remain above the Manage tabs. Endpoint editing remains solely in Network.
+Each read keeps its own visible error, and exit or identity changes abort stale results. Metrics
+shows shared Core API activity followed by nested service tabs, each selecting that service's
+CPU/RAM history, including workers without endpoints. Only one service panel is shown at a time;
+a single-service app shows its panel directly. Its shared resource subscription exists only while Metrics is selected. Inactive
+or stale readings display a dash; retained charts are explicitly historical. CPU uses the existing
+one-logical-core convention. Launch and Services contain no resource displays or subscriptions.
+Both new sections have stable `services` and `metrics` deep links and preserve configuration drafts.
+General app problems and the readiness logs action remain above the Manage tabs. Endpoint editing remains solely in Network.
 
 Folders separates primary app data from declared host-folder slots and retains the authorized
 bindings through ReUI selects. Core does not project the primary-data path or size here; size is
@@ -256,9 +276,8 @@ Harness stores provider-wide Ask/Do not ask defaults and per-tool exceptions. Pr
 controls change these defaults without granting excluded tools. New tools inherit the provider's
 saved default. Built-in development tools keep their Harness-local disabled choices: Core does not
 serve these tools. Bulk invocation preferences preserve those exclusions, and the same editor
-can explicitly enable or disable an individual built-in tool. App instructions are accepted locally against their installation and exact content
-digest, without a Core popup. Changed content remains unaccepted. Instruction acceptance grants no
-MCP capabilities and does not approve instructions for other consumers.
+can explicitly enable or disable an individual built-in tool. Skills have a separate library screen and stable-ID defaults. Current packages reach native clients
+without repeated digest acceptance; choosing skills grants no MCP capabilities.
 
 Save submits all Core access changes as one installation-bound review and atomic policy update,
 then writes Harness preferences. This is not a distributed transaction: a local failure after Core
@@ -269,8 +288,7 @@ configuring another assistant requires the administrative permission. Neither pe
 
 External OAuth/facade discovery uses the current user's assignments and reviewed credential scope,
 without the former Offered switch. Target/audience bounds, expiry, revocation, per-tool scope and the
-facade's read-only filter remain effective. CLI instruction delivery retains its separate global
-digest contract. See [agent MCP directory](../agent-mcp-directory/feature.md).
+facade's read-only filter remain effective. Native skills use their independent library selection and export contract. See [agent MCP directory](../agent-mcp-directory/feature.md).
 
 ## Native Preferences And Migration
 
@@ -285,14 +303,19 @@ Typed manifest parameters remain supported for wrappers and headless apps. Whisp
 continues to use Shell's Launch form and needs no application-specific web UI.
 
 Legacy Harness tool exclusions migrate through Core review before the local disabled rule is removed.
-Accepted instructions transfer only when the old approved digest, enabled assistant relationship and
-provider installation match. Existing Ask/Run rules and other consumers' approvals are preserved.
-Default-app resolution, object links and the shared skills library have their own plans.
+Explicit previous Harness instruction choices migrate to stable app/default skill IDs, including
+apps upgraded later. Existing Ask/Run rules remain independent. See the
+[shared skill library](../agent-skills/feature.md). Default-app resolution and object links retain
+their own plans.
 
 A completed operation retains its captured status and response even when delivery to the caller
 fails. Retrying the same reviewed request replays that result without executing the mutation again.
 
 ## Testing Expectations
+
+- Verify empty Parameters, Folders and Permissions tabs are absent, including stale section links
+  and refreshed app data. Retain optional parameters/mounts/permissions and existing grants/roles;
+  network-only settings do not add Parameters, and available form drafts survive tab switches.
 
 - Exercise exact-payload review, replay, stale revisions, cancellation, revoked callers/users,
   CSRF/origin/nonce boundaries, duplicate/case-ambiguous JSON rejection and absence of legacy
@@ -307,7 +330,7 @@ fails. Retrying the same reviewed request replays that result without executing 
 - Cover independent assistant grants, both installation identities, discovery-only credentials,
   direct denied calls, future tools and persistent exclusions across catalog outages/removals.
 - Cover one batched Save, local-only saves, cancellation, partial-save recovery, stable operation IDs,
-  refresh with unsaved edits, bulk defaults and exact instruction digest migration.
+  refresh with unsaved edits, bulk defaults and stable skill-selection migration.
 - Run affected Core/CLI, Harness, Shell and Marketplace tests, builds, lint and version/docs checks.
   Use normal password login and Core-managed app lifecycle for browser acceptance; a standalone-only
   app test is not evidence of Shell identity or embedding.

@@ -1,6 +1,6 @@
 ---
 created: 2026-07-09
-updated: 2026-10-05
+updated: 2026-11-05
 summary: Apps publish named update sources in an app-owned feeds.json that Core validates and follows without a catalog or Marketplace.
 components: [apps/core]
 ---
@@ -36,7 +36,7 @@ Core requires:
 - the exact supported `schemaVersion`;
 - a non-empty `appId`;
 - at least one feed;
-- non-empty, unique feed ids of at most 128 characters;
+- non-empty, unique, case-sensitive feed IDs of at most 128 characters, without controls or surrounding whitespace;
 - at most one explicit default;
 - an HTTP(S) `manifestRef` for every feed;
 - a selected manifest whose app id equals the document's `appId`.
@@ -75,12 +75,40 @@ change. An app without a stored feed URL keeps direct-manifest or local-source r
 Catalog entries carry a `feedsUrl`; they do not embed or own feed entries. Marketplace may load the
 document to display feed choices, but Core loads it independently for every lifecycle operation.
 Stopping or removing Marketplace does not affect updates of an installed feed-bound app. There is no
-reader for catalog-inline `feeds[]`; direct installs stay feed-less until reinstalled from a feed.
+reader for catalog-inline `feeds[]`; direct installations can adopt a feed through a reviewed source-binding switch.
 
-The first-party Demo App publishes [its feed document](../../../apps/demo-app/feeds.json), pointing
-the `main` feed at its manifest on the repository's `main` branch. See also the
-[Marketplace](../runtime-app-marketplace/feature.md), [runtime app update](../runtime-app-update/feature.md)
-and [manifest](../runtime-app-manifest/feature.md) documents.
+## Reviewed source-binding changes
+
+The source-switch API can replace both the index URL and selected feed, or return to an explicit
+remote manifest. `POST /api/apps/{appId}/update-source/plan` validates the destination app identity,
+artifacts and source pin, then records old/new bindings, ordering, expected revision and plan digest.
+`POST /api/apps/{appId}/update-source/apply` consumes that exact plan and a persistent UUID;
+`GET /api/apps/{appId}/update-source/operations/{requestId}` recovers its result. Batch apply at
+`POST /api/apps/update-source/apply` retains independent per-app results and deterministic child IDs.
+
+The binding change preserves installed binaries, locks, runtime, permissions, settings and data.
+It invalidates old update reviews. Selecting a feed behind the installed version does not downgrade
+the application. Private, local and active-development sources use their own source controls.
+Distribution migrations additionally match exact historical URLs and require app.0.2 destinations;
+explicit source pins are excluded from automatic suggestions.
+
+Shell's App Details → Updates tab selects the channel published by the application and exposes
+exact source-migration suggestions for that application, including first-time feed binding,
+before/after review, durable recovery and return to the previous source. An installation without a
+feeds document is a normal state, not a retryable feed-read failure. Opening the tab does not select
+a source, update the app or restart it. Live and development installations retain their source
+controls without a migration action.
+
+Host → Updates contains no application source or migration section. Delegated source-switch
+clients need both `apps.install` and `apps.sources.full`; applying also requires Core's operator
+confirmation for the exact request.
+Ordinary app update permission alone cannot approve a publisher switch. Direct CLI and authorized
+Core MCP operations use the same durable domain plan and revision guards.
+
+The reusable publication workflow emits generated feeds on `app-releases`. Authored `main` manifests
+and historical `apps/*/feeds.json` remain compatibility/source inputs; new distribution defaults use
+the generated default feed. See [release publication](../repository-release-model/feature.md),
+[runtime updates](../runtime-app-update/feature.md) and the [manifest contract](../runtime-app-manifest/feature.md).
 
 ## Testing Expectations
 
@@ -91,3 +119,8 @@ and [manifest](../runtime-app-manifest/feature.md) documents.
 - The install plan carries the resolved feed, manifest URL and digests; the legacy apply route
   refuses with `approval_required`; the confirmed installation uses the cached selection.
 - Changing the followed feed does not restart the app; update planning resolves the followed feed.
+- App Details treats `app_feeds_not_configured` as an ordinary unbound installation, while actual
+  feed read failures retain retry and last-confirmed state. No source mutation occurs on entry.
+- Per-app source review filters suggestions by app identity, applies the exact plan/request ID,
+  survives an uncertain response and remount, and discards stale or cancelled reviews. A saved
+  source remains completed when refreshing details fails; source selection does not update binaries.

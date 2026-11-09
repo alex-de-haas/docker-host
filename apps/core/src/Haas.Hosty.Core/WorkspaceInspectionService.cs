@@ -9,13 +9,16 @@ internal sealed partial class WorkspaceInspectionService(DevelopmentWorkspaceSer
 {
     private readonly ConcurrentDictionary<string, (string Key, InspectionCommit[] Commits, bool Truncated, AppSourceFile[] Changes, string? Error)> details = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim[] detailGates = Enumerable.Range(0, 64).Select(_ => new SemaphoreSlim(1, 1)).ToArray();
-    public async Task<WorkspaceInventory> ListAsync(string userId, CancellationToken ct, bool ownedOnly = false)
+    public async Task<WorkspaceInventory> ListAsync(string userId, CancellationToken ct, bool ownedOnly = false, string callerAppId = "")
     {
+        using var scope = workspaces.ReadScope();
+        await workspaces.RequireWorkspaceUserAsync(userId, ct);
         var installed = await apps.ListAppRecordsAsync(ct);
+        var permission = new WorkspacePermissions(true, string.IsNullOrEmpty(callerAppId) ||
+            installed.Any(a => a.Id == callerAppId && AppManagementAuthorization.HasPermission(a, CoreAppPermissions.Sources)), userId, callerAppId);
         var allowed = new List<DevelopmentWorkspace>();
         foreach (var tree in (await workspaces.ListAsync(null, true, ct)).Workspaces)
         {
-            if (ownedOnly && tree.Owner.UserId != userId) continue;
             try { await RequireSourceAsync(tree, userId, installed, ct); allowed.Add(tree); }
             catch (AppLifecycleException) { /* Inaccessible source must not leak through metadata or counts. */ }
         }
@@ -39,7 +42,13 @@ internal sealed partial class WorkspaceInspectionService(DevelopmentWorkspaceSer
             var first = group.First();
             var owner = first.Owner;
             var assistant = installed.FirstOrDefault(a => a.Id == owner.AppId && a.InstalledAt == owner.Installation);
-            var destination = owner.IsExternal ? new WorkspaceDestination(null, null) : BrowserDestination(assistant, first.SessionPath);
+            var discard = discards.FirstOrDefault(d => d.WorkspaceId == group.Key);
+            var participation = discard is null ? await workspaces.ParticipationAsync(group.Key, userId, ct) : null;
+            var participants = participation is null ? null : await WorkspaceParticipationEndpoints.Project(participation, userId, callerAppId, users, apps, ct);
+            var ownSession = participants?.Sessions.FirstOrDefault(s => s.Attached && s.CanOpen);
+            var destination = owner.IsExternal ? new WorkspaceDestination(null, null)
+                : ownSession is null ? new WorkspaceDestination(null, "No accessible conversation is attached.")
+                : BrowserDestination(installed.FirstOrDefault(a => a.Id == ownSession.AppId), ownSession.ViewerPath);
             var projection = new InspectionOwner(owner.IsExternal ? "external" : "assistant",
                 owner.External?.Label ?? assistant?.DisplayName ?? owner.AppId, owner.SessionId,
                 owner.IsExternal ? null : owner.AppId, destination.Url, destination.Unavailable);
@@ -47,15 +56,31 @@ internal sealed partial class WorkspaceInspectionService(DevelopmentWorkspaceSer
             var state = children.All(w => w.State == "released") ? "released"
                 : children.Any(w => w.State != "active" || w.Observation?.State != "ok") ? "attention" : "active";
             var workflow = await workspaces.WorkflowAsync(owner, ct);
-            var discard = discards.FirstOrDefault(d => d.WorkspaceId == group.Key);
             if (discard is not null)
                 workflow = workflow with { State = "deleting", Closure = "closed", Operations = [.. (workflow.Operations ?? []).Where(o => o.Id != discard.Command.RequestId),
                     new(discard.Command.RequestId, "discard", discard.Command.ExpectedRevision, "pending", discard.Error)] };
             var metadata = await workspaces.MetadataAsync(owner, ct);
-            result.Add(new(group.Key, state, projection, children) { Name = first.Name ?? "Workspace", Workflow = workflow,
+            // Retained, authorized observations only. Inventory reads never fetch Git or providers.
+            var references = new List<InspectionPullRequest>();
+            foreach (var tree in group) references.AddRange(await PullRequestsAsync(tree, userId, ct));
+            var pullRequests = WorkspacePullRequestSummary.From(references);
+            result.Add(new(group.Key, state, projection, children) { Name = first.Name ?? "Workspace", Workflow = workflow, Participation = participants, Permissions = permission, PullRequestSummary = pullRequests,
                 UpdatedAt = group.Select(w => w.UpdatedAt ?? w.Observation?.At).Append(workflow.UpdatedAt ?? workflow.CompletedAt).Append(metadata.UpdatedAt).Max() });
         }
-        return new(result.ToArray(), clock.UtcNow);
+        return new(result.ToArray(), clock.UtcNow, permission);
+    }
+
+    internal async Task<WorkspaceOwner> ReadOwnerAsync(string workspaceId, string userId, CancellationToken ct)
+    {
+        var trees = (await workspaces.ListAsync(null, true, ct)).Workspaces.Where(t => t.WorkspaceId == workspaceId).ToArray();
+        if (trees.Length == 0) throw DevelopmentWorkspaceService.Error("not_found", "Workspace not found.");
+        var installed = await apps.ListAppRecordsAsync(ct);
+        foreach (var tree in trees)
+        {
+            try { await RequireSourceAsync(tree, userId, installed, ct); return tree.Owner; }
+            catch (AppLifecycleException) { }
+        }
+        throw DevelopmentWorkspaceService.Error("forbidden", "Workspace access is no longer available.");
     }
 
     internal async Task<WorkspaceOwner> WorkflowOwnerAsync(string workspaceId, string userId, CancellationToken ct)
@@ -65,7 +90,6 @@ internal sealed partial class WorkspaceInspectionService(DevelopmentWorkspaceSer
         var installed = await apps.ListAppRecordsAsync(ct);
         foreach (var tree in trees)
         {
-            if (tree.Owner.UserId != userId) throw DevelopmentWorkspaceService.Error("forbidden", "Only the workspace owner can manage its lifecycle.");
             await RequireSourceAsync(tree, userId, installed, ct);
         }
         return trees[0].Owner;
@@ -76,7 +100,7 @@ internal sealed partial class WorkspaceInspectionService(DevelopmentWorkspaceSer
         var owner = await WorkflowOwnerAsync(workspaceId, userId, ct);
         if (kind is null) return await workspaces.WorkflowAsync(owner, ct);
         var heads = kind is "complete" or "delete" && publications is not null
-            ? await publications.MergedWorkspaceHeadsAsync(owner, ct) : new Dictionary<string, string>();
+            ? await publications.MergedWorkspaceHeadsAsync(owner, ct, userId) : new Dictionary<string, string>();
         return await workspaces.ChangeWorkflowAsync(owner, userId, kind is "pause-confirm" or "close-confirm" or "defer-confirm" ? kind[..^8] : kind, input!, heads, ct, prepareOnly: kind is "pause" or "close");
     }
 
@@ -89,27 +113,8 @@ internal sealed partial class WorkspaceInspectionService(DevelopmentWorkspaceSer
         return await ReadAsync(workspaceId, id, userId, ct);
     }
 
-    private async Task RequireSourceAsync(DevelopmentWorkspace tree, string userId, IReadOnlyList<AppRecord> installed, CancellationToken ct)
-    {
-        await workspaces.RequireCoreSourceAsync(tree, userId, ct);
-        var repository = workspaces.LogicalRepositoryIdentity(tree.Repository);
-        if (tree.SourceGrant is not null)
-        {
-            var effective = await workspaces.WorkspaceGrantAsync(tree, ct);
-            if (tree.Owner.UserId != userId || effective is null || effective.OwnerId != userId || effective.Repository != repository)
-                throw DevelopmentWorkspaceService.Error("forbidden", "This worktree's private source grant is no longer available.");
-        }
-        // A later private-source review applies even to worktrees originally prepared anonymously.
-        foreach (var app in installed.Where(a => a.PrivateSources?.Git is not null &&
-            (tree.Apps.Any(b => b.AppId == a.Id && b.Installation == a.InstalledAt) ||
-             a.PrivateSources!.Git!.Repository == repository)))
-        {
-            var grant = app.PrivateSources!.Git!;
-            if (tree.Owner.UserId != userId || grant.OwnerId != userId || grant.Repository != repository)
-                throw DevelopmentWorkspaceService.Error("forbidden", "Private worktree access belongs to its source owner.");
-            await (privateSources ?? throw PrivateSourceService.Denied()).ValidateAsync(new(Git: grant), ct);
-        }
-    }
+    private Task RequireSourceAsync(DevelopmentWorkspace tree, string userId, IReadOnlyList<AppRecord> installed, CancellationToken ct)
+        => workspaces.RequireWorkspaceUserAsync(userId, ct);
 
     internal async Task<DevelopmentWorkspace> RequireAsync(string workspaceId, string id, string userId, CancellationToken ct)
     {
@@ -198,9 +203,9 @@ internal sealed partial class WorkspaceInspectionService(DevelopmentWorkspaceSer
             }).ToArray(), tree.Observation,
             tree.Operations.Select(o => new InspectionOperation(o.Id, o.Kind, o.State, o.Error)).ToArray(), tree.Leases,
             tree.PullRequests.Where(SafeUrl).Select(url => new InspectionPullRequest(url, null, null, "No verified provider observation.")).ToArray(), [], [])
-        { HasSandboxConsumers = tree.SandboxConsumers.Length > 0, ObservationRevision = tree.SourceStamp + ":" + (observationState?.Generation(tree.Id) ?? 0), ObservationHealth = observationState?.Health(tree.Id) ?? "unknown" };
+        { HasSandboxConsumers = tree.SandboxConsumers.Length > 0, ObservationRevision = tree.SourceStamp + ":" + (observationState?.Generation(tree.Id) ?? 0) + ":" + (observationState?.PublicationGeneration(tree.Id) ?? 0), ObservationHealth = observationState?.Health(tree.Id) ?? "unknown" };
 
-    private async Task<InspectionConsumer[]> ConsumersAsync(DevelopmentWorkspace tree, IReadOnlyList<AppRecord> installed, CancellationToken ct)
+    internal async Task<InspectionConsumer[]> ConsumersAsync(DevelopmentWorkspace tree, IReadOnlyList<AppRecord> installed, CancellationToken ct)
     {
         var result = installed.Where(a => a.SourceState?.LocalOverridePath is { } path && IsUnder(tree.Path, path))
             .Select(a => new InspectionConsumer("source-selection", a.Id)).ToList();
@@ -232,15 +237,15 @@ internal sealed partial class WorkspaceInspectionService(DevelopmentWorkspaceSer
     }
     private static bool SafeUrl(string url) => Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme == "https" && uri.UserInfo.Length == 0;
 
-    private async Task<InspectionPullRequest[]> PullRequestsAsync(DevelopmentWorkspace tree, string userId, CancellationToken ct)
+    internal async Task<InspectionPullRequest[]> PullRequestsAsync(DevelopmentWorkspace tree, string userId, CancellationToken ct)
     {
         if (tree.Owner.IsExternal && publications is not null)
             return await publications.ReadExternalReferencesAsync(tree, userId, ct);
         var result = tree.PullRequests.Where(SafeUrl).Distinct(StringComparer.Ordinal).ToDictionary(url => url,
             url => new InspectionPullRequest(url, null, null, "No verified provider observation."), StringComparer.Ordinal);
         if (publications is null || users is null || connections is null) return result.Values.ToArray();
-        var record = (await publications.ListAsync(null, ct)).Publications.FirstOrDefault(p => p.WorkspaceId == tree.Id && p.Owner.SameIdentity(tree.Owner));
-        if (record is null || record.Owner.UserId != userId) return result.Values.ToArray();
+        var record = await publications.ReadInspectionRecordAsync(tree.Id, ct);
+        if (record is null || record.WorkspaceId != tree.Id || !record.Owner.SameIdentity(tree.Owner) || record.Owner.UserId != userId) return result.Values.ToArray();
         foreach (var previous in record.History.Where(p => SafeUrl(p.Url)))
             result[previous.Url] = new(previous.Url, previous.Head, null, "Historical reference; no authorized retained observation.", Historical: true);
         if (record.Url is { } recordedUrl && SafeUrl(recordedUrl))
@@ -252,7 +257,7 @@ internal sealed partial class WorkspaceInspectionService(DevelopmentWorkspaceSer
         if (provider is null) return result.Values.ToArray();
         try
         {
-            var remote = await workspaces.PublicationRemoteAsync(tree, ct);
+            var remote = await workspaces.PublicationRemoteAsync(tree, ct, localOnly: true);
             if (provider.NormalizeRepository(remote?.Repository ?? tree.Repository) != record.Repository ||
                 (remote is not null && (remote.TargetBranch != record.TargetBranch || remote.Grant.ConnectionId != record.ConnectionId)))
                 return result.Values.ToArray();
@@ -289,6 +294,18 @@ internal sealed partial class WorkspaceInspectionService(DevelopmentWorkspaceSer
             return new(null, "The destination must stay on the application's browser origin.");
         return new(uri.AbsoluteUri, null);
     }
+    internal async Task<WorkspaceDestination> SessionDestinationAsync(DevelopmentWorkspace tree, WorkspaceOwner actor, CancellationToken ct)
+    {
+        await workspaces.RequireSessionAccessAsync(tree, actor, ct);
+        var state = await workspaces.ReadParticipationAsync(tree.WorkspaceId, ct);
+        if (state is null) return await DestinationAsync(tree, ct);
+        var binding = state.Sessions.FirstOrDefault(s => s.DetachedAt is null && s.Session.SameIdentity(actor));
+        var app = await apps.GetAppAsync(actor.AppId, ct);
+        if (binding is null || app?.InstalledAt != actor.Installation)
+            return new(null, "No accessible conversation is attached.");
+        return BrowserDestination(app, binding.ViewerPath);
+    }
+
     public async Task<WorkspaceDestination> DestinationAsync(DevelopmentWorkspace tree, CancellationToken ct)
     {
         if (tree.Owner.IsExternal)

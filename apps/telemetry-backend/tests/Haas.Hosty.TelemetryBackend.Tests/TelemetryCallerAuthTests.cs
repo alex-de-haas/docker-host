@@ -102,6 +102,15 @@ public class TelemetryCallerAuthTests
     }
 
     [Fact]
+    public void McpOnlyTokenCannotAuthorizeOrdinaryQueriesEvenWithAValidCoreSignature()
+    {
+        var token = Sign(Key, "hosty_mcp", new { caller = "test.assistant", audience = AppId,
+            userId = "user_admin", expires = DateTimeOffset.UtcNow.AddMinutes(5).ToUnixTimeSeconds() });
+        Assert.Null(Auth().Authenticate(Request(token)));
+        Assert.NotNull(Auth().Authenticate(Request(AppIdentity(AppId))));
+    }
+
+    [Fact]
     public void ATokenOfTheOtherTypeCannotBeReplayedAsThisOne()
     {
         // Both types are signed by the same key, so the prefix being part of the signed input is what

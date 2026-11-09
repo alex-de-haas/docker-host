@@ -75,6 +75,17 @@ it("guards a direct ordinary-user Dashboard route without rendering a replacemen
   expect(fixture.dashboard).not.toHaveBeenCalled();
 });
 
+it("guards Storage through Settings and preserves administrator access to the selected host tab", async () => {
+  fixture.settingsTab = "storage";
+  await act(async () => root.render(<ShellSettingsRoute />));
+  expect(container.innerHTML).toBe("");
+  expect(fixture.settings).not.toHaveBeenCalled();
+  fixture.canManageApps = true;
+  await act(async () => root.render(<ShellSettingsRoute />));
+  expect(container.textContent).toBe("Settings: storage");
+  expect(fixture.settings.mock.calls[0][0]).toEqual(expect.objectContaining({ activeTab: "storage", canManageApps: true }));
+});
+
 it.each(["users", "ingress", "hosty.private-settings"])(
   "keeps the forbidden ordinary-user settings tab %s empty",
   async tab => {

@@ -1,6 +1,6 @@
 ---
 created: 2026-09-09
-updated: 2026-09-21
+updated: 2026-10-25
 summary: Readiness is per-service health, probed by default and read by every consumer before it uses an endpoint.
 components: [apps/core, apps/shell]
 ---
@@ -129,17 +129,18 @@ alone.
 - **Dependencies** ([Cross-App Dependencies](../cross-app-dependencies/feature.md)):
   `AppDependencySummary` keeps `running` as the provider's lifecycle fact and gains `healthy` —
   whether the provider services behind the consumed endpoints answer — and the computed
-  `ready = running && healthy`; Shell raises a warning for a running provider that is not answering.
+  `ready = running && healthy && all requested endpoints resolved`; Shell raises a warning for a running provider that is not answering.
 - **`hosty mcp`** ([Hosty MCP Connector](../hosty-mcp-connector/feature.md)): an interface enters the
   catalog when the service that serves it answers, so a sibling's outage neither hides a working
   interface nor lets a silent one in; a Core that reports no readiness falls back to the state alone.
 - **CLI**: `hosty apps list` composes the state with the fold; `hosty apps health` shows the probe
   result per service.
 
+Required consumers wait for readiness through [Dependency-Ordered Startup](../dependency-ordered-autostart/feature.md).
+
 ## Out of scope, by decision
 
-Restarting an app for being `degraded` or `unhealthy` (restart policy stays crash-only); a `Waiting`
-state for dependents ([Dependency-Ordered Autostart](../dependency-ordered-autostart/plan.md));
+Restarting an app for being `degraded` or `unhealthy` (restart policy stays crash-only);
 `availability: "unavailable"` for a port another process holds
 ([Automatic Runtime App Ports](../automatic-runtime-app-ports/plan.md)); and realigning the health
 words with ASP.NET's severities, which the lifecycle document records as deliberately left alone.

@@ -41,7 +41,7 @@ export function transcriptFileEdits(toolName: string, input: unknown, sessionId:
     // The adapter supplies its factual execution cwd. Never treat a current UI selection as cwd.
     if (!flavor.isAbsolute(file) && (!cwd || !flavor.isAbsolute(cwd))) return unresolved;
     const absolute = flavor.resolve(cwd ?? "/", file);
-    const matches = workspaces.filter(tree => tree.state !== "deleted" && flavor.isAbsolute(tree.path)).flatMap(tree => {
+    const matches = workspaces.filter(tree => tree && tree.state !== "deleted" && typeof tree.path === "string" && flavor.isAbsolute(tree.path)).flatMap(tree => {
       const relative = flavor.relative(flavor.resolve(tree.path), absolute);
       return relative && relative !== ".." && !relative.startsWith(`..${flavor.sep}`) && !flavor.isAbsolute(relative)
         ? [{ tree, relative: relative.split(flavor.sep).join("/") }] : [];

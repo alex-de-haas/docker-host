@@ -1,6 +1,6 @@
 ---
 created: 2026-09-18
-updated: 2026-10-23
+updated: 2026-10-26
 summary: Run Core from source in Debug, restart into isolated build generations and switch back to the installed release.
 components: [apps/core, apps/cli, apps/shell]
 ---
@@ -295,6 +295,13 @@ request. Failed preparation exposes diagnostics and exact retry or explicit revi
 selection after source repair; resume and boundary pause reuse the retained operation. Actor/scope
 changes abort queued mutations and discard stale read results. Core's existing CLI/log recovery
 remains available when a returned older Core cannot serve these APIs.
+
+A successful Core Return to Release can be followed by a later workspace launch while a browser
+is closed or suspended. When Shell reads the successful Core-return receipt and a factual dev
+launch newer than the returned activation, it clears only that completed browser recovery entry.
+Dashboard lifecycle controls become available again; the current Core and application runtimes
+stay as they are. Pending/failed returns, an unconfirmed request, a dev Return baseline or the
+original launch keep their recovery state.
 
 ## Testing Expectations
 

@@ -15,6 +15,9 @@ internal interface ISourceGitAccess
     Task<T> WithConnectionAsync<T>(SourceReadGrant grant, Func<UserProviderConnection, Task<T>> action, CancellationToken ct);
     Task<SourceReadGrant> BindAsync(string owner, string id, string url, bool manifest, CancellationToken ct);
     Task ValidateAsync(PrivateSourceAccess? access, CancellationToken ct);
+    Task ValidateLocalAsync(PrivateSourceAccess? access, CancellationToken ct) => ValidateAsync(access, ct);
+    Task<SourceReadGrant> BindLocalAsync(string owner, string id, string repository, CancellationToken ct)
+        => BindAsync(owner, id, repository, false, ct);
     // Only callers already inside the selected connection's consumption lock may borrow it.
     void ValidateWithConnection(PrivateSourceAccess? access, UserProviderConnection connection)
         => throw PrivateSourceService.Denied("Borrowed source connection validation is unavailable.");
@@ -37,6 +40,21 @@ internal sealed class PrivateSourceService(UserConnectionService connections, Ht
             return Task.FromResult(new SourceReadGrant(owner, id, connection.Provider,
                 connection.AccountName, connection.Label, resource, manifest ? url : null));
         }, ct);
+    }
+
+    public async Task<SourceReadGrant> BindLocalAsync(string owner, string id, string repository, CancellationToken ct)
+    {
+        try { return await connections.LocalSourceReferenceAsync(owner, id, repository, ct); }
+        catch (UserConnectionException) { throw Denied(); }
+    }
+
+    public async Task ValidateLocalAsync(PrivateSourceAccess? access, CancellationToken ct)
+    {
+        foreach (var grant in new[] { access?.Manifest, access?.Git }.OfType<SourceReadGrant>())
+        {
+            var current = await BindLocalAsync(grant.OwnerId, grant.ConnectionId, grant.Repository, ct);
+            if (current.Provider != grant.Provider || current.Repository != grant.Repository) throw Denied();
+        }
     }
 
     public async Task ValidateAsync(PrivateSourceAccess? access, CancellationToken ct)

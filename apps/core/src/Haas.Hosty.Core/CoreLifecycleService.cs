@@ -65,7 +65,9 @@ internal sealed partial class CoreLifecycleService(
     AgentPolicyStore? agentPolicies = null,
     PrivateSourceService? privateSources = null,
     CorePublicOriginResolver? coreOrigins = null,
-    AuditStore? audit = null)
+    AuditStore? audit = null,
+    AppSkillPackages? appSkills = null,
+    DependencyStartAuthorization? dependencyAuthorization = null)
 {
     private async Task ValidatePrivateSelectionAsync(RuntimeAppManifestSelection selection, CancellationToken ct)
     {
@@ -109,10 +111,14 @@ internal sealed partial class CoreLifecycleService(
     // NOT reentrant: verbs that internally start an app (ApplyUpdate,
     // ApplyRuntimeSwitch, CreateManualBackup) call StartCoreAsync — the unlocked body — never StartAsync.
 
-    internal async Task<T> WithAppLockAsync<T>(string appId, Func<Task<T>> operation, CancellationToken cancellationToken, bool allowDevelopment = false, bool developmentOperation = false, bool startsDevelopmentRuntime = false)
+    internal async Task<T> WithAppLockAsync<T>(string appId, Func<Task<T>> operation, CancellationToken cancellationToken, bool allowDevelopment = false, bool developmentOperation = false, bool startsDevelopmentRuntime = false, bool resumeWaitingDevelopment = false)
     {
+        var capturedAuthority = dependencyAuthority.Value ?? (dependencyAuthorization is null ? null
+            : await dependencyAuthorization.CaptureAsync(cancellationToken));
         var mutex = apps.OperationLock(appId);
         await mutex.WaitAsync(cancellationToken);
+        var previousAuthority = dependencyAuthority.Value;
+        dependencyAuthority.Value = capturedAuthority;
         try
         {
             if (!developmentOperation && await apps.GetAppAsync(appId, cancellationToken) is { } installed &&
@@ -120,6 +126,10 @@ internal sealed partial class CoreLifecycleService(
             {
                 if (!allowDevelopment || development.Phase != "active")
                     throw new AppLifecycleException("dev_mode_active", "Return from development mode before changing this app. An interrupted transition must be recovered using its original requestId.");
+                // A deferred start retains the reviewed dev operation through DevModeId. Only the
+                // dependency scheduler can resume it, after revalidating that persisted authority.
+                if (resumeWaitingDevelopment && installed.RuntimeState == AppRuntimeStates.Waiting)
+                    return await ResumeWaitingDevelopmentAsync(installed, development, operation, cancellationToken);
                 // Generic lifecycle callers have no source-owner identity. Private development code
                 // must use the reviewed dev operation, which rechecks ownership and current grants.
                 if (startsDevelopmentRuntime && installed.PrivateSources is { Git: not null } or { Manifest: not null })
@@ -129,6 +139,7 @@ internal sealed partial class CoreLifecycleService(
         }
         finally
         {
+            dependencyAuthority.Value = previousAuthority;
             mutex.Release();
         }
     }
@@ -534,6 +545,7 @@ internal sealed partial class CoreLifecycleService(
 
         var grantedPermissions = CoreAppPermissions.ResolveGrants(selection.Manifest.CorePermissions, selection.Manifest.OptionalCorePermissions, request.OptionalPermissions);
         await ValidatePrivateSelectionAsync(selection, cancellationToken);
+        var preparedSkills = appSkills is null ? null : await appSkills.PrepareAsync(selection, cancellationToken);
         var appRoot = GetAppRoot(selection.Manifest.Id!);
         var manifestCopyPath = Path.Combine(appRoot, "manifest.json");
 
@@ -604,7 +616,9 @@ internal sealed partial class CoreLifecycleService(
             {
                 await LocalBrowserOrigins.ValidateAppAsync(candidate,
                     coreOrigins?.Effective ?? runtimeConfig?.EffectiveCorePublicOrigin ?? "http://core.hosty.localhost:7070", apps, ct);
-                return await apps.UpsertAppAsync(candidate, ct);
+                return preparedSkills is null ? await apps.UpsertAppAsync(candidate, ct)
+                    : await appSkills!.CommitAsync(selection, appRoot, preparedSkills,
+                        () => apps.UpsertAppAsync(candidate, ct), ct);
             }
             // Reserve ports before validating local names; new installs may not yet have endpoint URLs.
             document = portAllocator is not null && string.Equals(record.Kind, "runtime", StringComparison.Ordinal)
@@ -825,6 +839,7 @@ internal sealed partial class CoreLifecycleService(
         var document = await apps.UpdateAppAsync(appId, current => current with
         {
             FollowedFeedId = feedId,
+            UpdateSourceRevision = Guid.NewGuid().ToString("N"),
             ManifestUrl = manifestUrl ?? current.ManifestUrl,
             OperationStatus = "configured",
             LastOperation = "set-feed",
@@ -964,7 +979,12 @@ internal sealed partial class CoreLifecycleService(
         => OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
 
     public Task<AppLifecycleResponse> StartAsync(string appId, CancellationToken cancellationToken = default)
-        => WithAppLockAsync(appId, () => StartCoreAsync(appId, afterOwnStop: false, cancellationToken), cancellationToken, allowDevelopment: true, startsDevelopmentRuntime: true);
+        => WithAppLockAsync(appId, async () =>
+        {
+            await RequireAppAsync(appId, cancellationToken);
+            await apps.UpdateAppAsync(appId, app => app with { DependencyStart = null, DependencyBorrowedStart = false }, cancellationToken);
+            return await StartCoreAsync(appId, afterOwnStop: false, cancellationToken);
+        }, cancellationToken, allowDevelopment: true, startsDevelopmentRuntime: true);
 
     // `afterOwnStop` marks the start half of a stop->start pair this same operation performed (update
     // apply, runtime switch, dev-mode toggle, operator backup) — as opposed to a cold start, where the app
@@ -1009,6 +1029,9 @@ internal sealed partial class CoreLifecycleService(
             }
 
             await EnsureRequiredSettingsConfiguredAsync(app, cancellationToken);
+            // A repeated start/adoption must not turn an existing runtime into a fictitious wait.
+            if (!wasUp && await DeferDependencyStartAsync(app, cancellationToken, preserveOperationStatus) is { } waiting)
+                return waiting;
             // A reserved port that is still busy means two different things, and treating them alike was
             // the defect. On a cold start nothing of ours holds it, so it is a genuine conflict and the
             // structured, reassign-able error is exactly right. On the start half of a stop->start pair it
@@ -1084,6 +1107,8 @@ internal sealed partial class CoreLifecycleService(
             var updated = await apps.UpdateAppAsync(appId, current => current with
             {
                 RuntimeState = result.RuntimeState,
+                DependencyStart = null,
+                DependencyBorrowedStart = false,
                 AppliedConfigurationHash = configurationApplied ? appliedConfigurationHash : current.AppliedConfigurationHash,
                 ActiveMountPaths = configurationApplied ? context.Mounts.Where(m => !m.ManagedCollection).Select(m => m.HostPath).Distinct().ToArray() : current.ActiveMountPaths,
                 ActiveSourcePaths = configurationApplied ? HostPathAuthority.CodePaths(context.App with { ActiveSourcePaths = null }).Select(MountPathPolicy.ResolveRealPath).Distinct().ToArray() : current.ActiveSourcePaths,
@@ -1130,7 +1155,17 @@ internal sealed partial class CoreLifecycleService(
     }
 
     public Task<AppLifecycleResponse> StopAsync(string appId, CancellationToken cancellationToken = default)
-        => WithAppLockAsync(appId, () => StopCoreAsync(appId, cancellationToken), cancellationToken, allowDevelopment: true);
+        => WithAppLockAsync(appId, async () =>
+        {
+            await RequireAppAsync(appId, cancellationToken);
+            await apps.UpdateAppAsync(appId, app => app with
+            {
+                DependencyStart = null,
+                DependencyBorrowedStart = false,
+                DependencyStopVersion = Guid.NewGuid().ToString("N"),
+            }, cancellationToken);
+            return await StopCoreAsync(appId, cancellationToken);
+        }, cancellationToken, allowDevelopment: true);
 
     private async Task<AppLifecycleResponse> StopCoreAsync(string appId, CancellationToken cancellationToken)
     {
@@ -1155,6 +1190,7 @@ internal sealed partial class CoreLifecycleService(
                 // Health is meaningful only while the app is up; a stopped app must not keep its last
                 // `healthy` (the observation skips non-up apps, so nothing else would clear it).
                 Health = null,
+                LaunchProgress = null,
                 OperationStatus = "stopped",
                 LastOperation = "stop",
                 LastError = null,
@@ -1436,7 +1472,12 @@ internal sealed partial class CoreLifecycleService(
     }
 
     public Task<AppLifecycleResponse> RestartAsync(string appId, CancellationToken cancellationToken = default)
-        => WithAppLockAsync(appId, () => RestartCoreAsync(appId, cancellationToken), cancellationToken, allowDevelopment: true, startsDevelopmentRuntime: true);
+        => WithAppLockAsync(appId, async () =>
+        {
+            await RequireAppAsync(appId, cancellationToken);
+            await apps.UpdateAppAsync(appId, app => app with { DependencyStart = null, DependencyBorrowedStart = false }, cancellationToken);
+            return await RestartCoreAsync(appId, cancellationToken);
+        }, cancellationToken, allowDevelopment: true, startsDevelopmentRuntime: true);
 
     private async Task<AppLifecycleResponse> RestartCoreAsync(string appId, CancellationToken cancellationToken, bool preserveOperationStatus = false)
     {
@@ -1491,6 +1532,8 @@ internal sealed partial class CoreLifecycleService(
             }, cancellationToken);
             stopAttempted = true;
             _ = await stopAdapter.StopAsync(stopContext, cancellationToken);
+            if (await DeferDependencyStartAsync(app, cancellationToken, preserveOperationStatus) is { } waiting)
+                return waiting;
             _ = await apps.UpdateAppAsync(appId, current => current with
             {
                 RuntimeState = AppRuntimeStates.Starting,
@@ -1526,6 +1569,8 @@ internal sealed partial class CoreLifecycleService(
             var updated = await apps.UpdateAppAsync(appId, current => current with
             {
                 RuntimeState = start.RuntimeState,
+                DependencyStart = null,
+                DependencyBorrowedStart = false,
                 AppliedConfigurationHash = configurationApplied ? appliedConfigurationHash : current.AppliedConfigurationHash,
                 ActiveMountPaths = configurationApplied ? context.Mounts.Where(m => !m.ManagedCollection).Select(m => m.HostPath).Distinct().ToArray() : current.ActiveMountPaths,
                 ActiveSourcePaths = configurationApplied ? HostPathAuthority.CodePaths(context.App with { ActiveSourcePaths = null }).Select(MountPathPolicy.ResolveRealPath).Distinct().ToArray() : current.ActiveSourcePaths,
@@ -1893,7 +1938,7 @@ internal sealed partial class CoreLifecycleService(
             TargetVersion: plan.TargetVersion,
             TargetSourceCommit: resolvedSourceCommit,
             TargetArtifactDigests: BuildTargetArtifactDigests(artifactProbes),
-            LastSuccessfulCheckAt: clock.UtcNow);
+            LastSuccessfulCheckAt: clock.UtcNow, Readiness: "ready");
         // Without an external source the plan compared the app with Core's own copy, so an empty change
         // list says nothing about newer versions. Reported as the check's error rather than as "no
         // updates": the two looked identical in every client, and a record that never got a source
@@ -1908,9 +1953,12 @@ internal sealed partial class CoreLifecycleService(
                 .Select(probe => $"{probe.Service} ({selection.Services.First(service => service.Key == probe.Service).Image!.TagReference})");
             verdict = verdict with
             {
-                Error = $"Could not resolve Docker image revisions: {string.Join(", ", unresolvedImages)}. " +
-                    "An image tag may not be published yet, or registry access may have failed. " +
-                    "Retry after publication or check registry access. See Core logs for details.",
+                UpdateAvailable = false,
+                PlanDigest = null,
+                ErrorCode = artifactProbes.First(probe => string.IsNullOrEmpty(probe.CandidateDigest)).ErrorCode ?? "image_revision_unavailable",
+                Readiness = artifactProbes.Any(probe => probe.ErrorCode == "image_missing") ? "pending-publication" : "unavailable",
+                Error = $"Image verification incomplete: {string.Join(", ", unresolvedImages)}. " +
+                    string.Join(" ", artifactProbes.Where(probe => probe.Error is not null).Select(probe => probe.Error).Distinct()),
             };
         }
         // A failed older apply can leave the record at the new pin while the running app's checkout
@@ -1929,11 +1977,11 @@ internal sealed partial class CoreLifecycleService(
                     verdict = verdict with { Error = checkoutError };
             }
         }
-        cached = cached with { Plan = plan with { Error = verdict.Error } };
+        cached = cached with { Plan = plan with { Error = verdict.Error, ErrorCode = verdict.ErrorCode, Readiness = verdict.Error is null ? "ready" : verdict.Readiness ?? "unavailable" } };
         await updateSnapshots.ChangeAsync(appId, previous => new AppUpdateSnapshot(1,
             updateBase, cached, verdict.Error is null ? verdict
                 : AppUpdateAvailability.Failed((previous?.Base == updateBase ? previous.Verdict : null) ?? (verdict with { LastSuccessfulCheckAt = null }), clock.UtcNow, verdict.Error)
-                    with { PlanDigest = null }), cancellationToken);
+                    with { PlanDigest = null, ErrorCode = verdict.ErrorCode ?? "update_check_failed", Readiness = verdict.Readiness ?? "unavailable" }), cancellationToken);
         events?.PublishAppEvent(CoreEventHub.AppUpdateCheckChanged, appId);
         return cached;
     }
@@ -2049,6 +2097,8 @@ internal sealed partial class CoreLifecycleService(
 
         auditOperation ??= new LifecycleAuditOperation(appId, "update", null, "core");
         await auditOperation.AcceptAsync(audit, clock);
+        dependencyAuthority.Value ??= dependencyAuthorization is null ? new("operator")
+            : await dependencyAuthorization.CaptureAsync(cancellationToken);
         var run = ExecuteBackgroundUpdateAsync(appId, request, hostLifetime?.ApplicationStopping ?? CancellationToken.None, requireRoutine, auditOperation);
         runningBackgroundUpdates[appId] = run;
         _ = RemoveWhenCompleteAsync(appId, run);
@@ -2371,6 +2421,7 @@ internal sealed partial class CoreLifecycleService(
         // registry, so the recomputed digest routinely differed from the one just confirmed.
         var confirmed = await ResolveConfirmedUpdatePlan(appId, request.PlanDigest);
         var plan = confirmed.Plan;
+        if (plan.Error is not null) throw new AppLifecycleException("update_not_ready", plan.Error);
 
         var app = await RequireAppAsync(appId, cancellationToken);
         var currentSelection = await LoadSelectionForAppAsync(app, cancellationToken);
@@ -2400,6 +2451,8 @@ internal sealed partial class CoreLifecycleService(
             : CoreAppPermissions.ResolveGrants(selection.Manifest.CorePermissions, selection.Manifest.OptionalCorePermissions, request.OptionalPermissions, app.GrantedCorePermissions);
         await ValidatePrivateSelectionAsync(selection, cancellationToken);
 
+        var preparedSkills = appSkills is null ? null : await appSkills.PrepareAsync(selection, cancellationToken);
+
         // Check the target's managed checkout before any stop, backup, manifest replacement or pin
         // advancement. Checking only inside Start strands a running app and advertises the new version
         // even though its source never advanced. The start-time check still protects concurrent edits.
@@ -2419,8 +2472,18 @@ internal sealed partial class CoreLifecycleService(
                 ?? await sources.ResolveManifestCommitAsync(selection.Manifest.Source!, cancellationToken, selection.PrivateSources?.Git);
         }
 
-        if (selection.PrivateSources?.Git is not null && sourcePinCommit is not null)
-            await sources.PrefetchPrivateAsync(app, selection.PrivateSources.Git, sourcePinCommit, cancellationToken);
+        if (sourcePinCommit is not null)
+            await sources.PrefetchUpdateAsync(app, selection.Manifest.Source!.Repository!, sourcePinCommit,
+                selection.PrivateSources?.Git, cancellationToken);
+
+        // Freeze and materialize every selected image before touching the old runtime or its data.
+        var reviewedLocks = BuildReviewedArtifactLocks(selection, confirmed.ArtifactProbes, app.ArtifactLocks);
+        if (selection.Services.Any(service => service.Image is not null && service.Runtime.Build is null))
+        {
+            var staging = adapters.OfType<IImageArtifactPreparation>().FirstOrDefault()
+                ?? throw new AppLifecycleException("image_preparation_unavailable", "This runtime cannot prepare reviewed image artifacts.");
+            await staging.PrepareImagesAsync(selection, reviewedLocks, cancellationToken);
+        }
 
         var adapter = ResolveAdapter(currentSelection.RuntimeProfile.Type);
         var wasRunning = AppRuntimeStates.IsUp(app.RuntimeState);
@@ -2496,17 +2559,15 @@ internal sealed partial class CoreLifecycleService(
             };
         }
 
-        // The plan surfaced artifact:{svc}:{locked}->{candidate}; the operator confirmed exactly those
-        // candidates. Persist them as the run-locks so the next start pulls the reviewed digest — a tag
-        // re-pushed between apply and start no longer swaps unreviewed bytes in (C-CR1 Fix B). Services
-        // whose candidate was unresolvable at plan time carry no lock and TOFU-backfill at start.
-        var reviewedLocks = BuildReviewedArtifactLocks(selection, confirmed.ArtifactProbes, app.ArtifactLocks);
+        // Persist only the already prepared, reviewed image identities. Start uses the same bytes.
         if (reviewedLocks is not null)
         {
             next = next with { ArtifactLocks = reviewedLocks };
         }
 
-        var document = await PersistRuntimePortsAsync(next, selection, cancellationToken, allowIncompleteConfiguration: true);
+        Task<AppStateDocument> PersistUpdate() => PersistRuntimePortsAsync(next, selection, cancellationToken, allowIncompleteConfiguration: true);
+        var document = preparedSkills is null ? await PersistUpdate()
+            : await appSkills!.CommitAsync(selection, GetAppRoot(appId), preparedSkills, PersistUpdate, cancellationToken);
         // An endpoint the new manifest dropped (or made private) can never serve its hostname again, so the
         // route and DNS record go with it. Best-effort, and only for endpoints that are actually gone.
         await CleanUpOrphanedPublicationsAsync(appId, next, cancellationToken);
@@ -2516,7 +2577,8 @@ internal sealed partial class CoreLifecycleService(
             ? null : current);
         events?.PublishAppEvent(CoreEventHub.AppUpdateCheckChanged, appId);
         var configurationRequired = (await GetConfigurationReadinessAsync(document.App, cancellationToken)).Required;
-        var shouldRestart = wasRunning && !configurationRequired;
+        // A reviewed graph repair must retain a pending start just as it retains a running app.
+        var shouldRestart = (wasRunning || app.RuntimeState == AppRuntimeStates.Waiting) && !configurationRequired;
         if (shouldRestart)
         {
             await SetUpdateProgressAsync(appId, "preparing", null, cancellationToken);
@@ -2526,7 +2588,9 @@ internal sealed partial class CoreLifecycleService(
         var finished = await apps.UpdateAppAsync(appId, current => current with
         {
             // Keep the terminal status older Shell self-update waiters recognize.
-            OperationStatus = shouldRestart ? "started" : "updated", LastOperation = "update", LastError = null,
+            OperationStatus = current.RuntimeState == AppRuntimeStates.Waiting ? "waiting" : shouldRestart ? "started" : "updated",
+            LastOperation = "update",
+            LastError = current.RuntimeState == AppRuntimeStates.Waiting ? current.LastError : null,
             UpdateProgress = new AppUpdateProgress(shouldRestart && current.Health?.Status != "healthy" ? "needs-attention" : "completed", clock.UtcNow),
         }, cancellationToken);
         return new AppLifecycleResponse(await BuildAppSummaryAsync(finished.App, cancellationToken), backup, "updated");
@@ -2866,6 +2930,8 @@ internal sealed partial class CoreLifecycleService(
             else TryDelete(GetRetainedConfigPath(appId));
         }
 
+        if (appSkills is not null) await appSkills.RemoveAsync(appId, cancellationToken);
+
         // Removal revokes agent offers even when the operator retains runtime state.
         await (agentPolicies ?? new AgentPolicyStore(paths)).ChangeAsync(appId, null, cancellationToken);
         if (request.DeleteRuntimeState)
@@ -3102,10 +3168,10 @@ internal sealed partial class CoreLifecycleService(
             Runtime: cached.Selection.RuntimeProfile.Key,
             RuntimeType: cached.Selection.RuntimeProfile.Type,
             UpdatePolicy: DockerRuntimeAdapter.ResolveUpdatePolicy(app.UpdatePolicy),
-            UpdateAvailable: PlanIndicatesUpdateAvailable(cached.Plan.Changes),
+            UpdateAvailable: cached.Plan.Error is null && PlanIndicatesUpdateAvailable(cached.Plan.Changes),
             Services: cached.ArtifactProbes.Select(ToServiceUpdateStatus).ToList(),
             ManifestUpdateAvailable: !string.Equals(cached.CurrentManifestDigest, cached.Plan.ManifestDigest, StringComparison.Ordinal),
-            ManifestUnknown: false);
+            ManifestUnknown: false, Error: cached.Plan.Error, ErrorCode: cached.Plan.ErrorCode, Readiness: cached.Plan.Readiness);
 
     private static AppServiceUpdateStatus ToServiceUpdateStatus(AppServiceArtifactProbe probe)
         => new(
@@ -3115,7 +3181,8 @@ internal sealed partial class CoreLifecycleService(
             UpdateAvailable: !string.IsNullOrWhiteSpace(probe.LockedDigest)
                 && !string.IsNullOrWhiteSpace(probe.CandidateDigest)
                 && !string.Equals(probe.LockedDigest, probe.CandidateDigest, StringComparison.Ordinal),
-            Unknown: string.IsNullOrWhiteSpace(probe.LockedDigest) || string.IsNullOrWhiteSpace(probe.CandidateDigest));
+            Unknown: string.IsNullOrWhiteSpace(probe.LockedDigest) || string.IsNullOrWhiteSpace(probe.CandidateDigest),
+            ErrorCode: probe.ErrorCode, Error: probe.Error, Platform: probe.Platform);
 
     // Legacy live status computation, kept for the apps the plan path refuses (see
     // GetUpdateStatusAsync): resolves the candidate manifest per source with graceful per-source
@@ -3189,10 +3256,13 @@ internal sealed partial class CoreLifecycleService(
             Runtime: selection.RuntimeProfile.Key,
             RuntimeType: selection.RuntimeProfile.Type,
             UpdatePolicy: DockerRuntimeAdapter.ResolveUpdatePolicy(app.UpdatePolicy),
-            UpdateAvailable: manifestUpdateAvailable || services.Any(service => service.UpdateAvailable),
+            UpdateAvailable: !manifestUnknown && probes.All(p => p.CandidateDigest is not null) && (manifestUpdateAvailable || services.Any(service => service.UpdateAvailable)),
             Services: services,
             ManifestUpdateAvailable: manifestUpdateAvailable,
-            ManifestUnknown: manifestUnknown);
+            ManifestUnknown: manifestUnknown,
+            ErrorCode: manifestUnknown ? "manifest_unavailable" : probes.FirstOrDefault(p => p.CandidateDigest is null)?.ErrorCode ?? (probes.Any(p => p.CandidateDigest is null) ? "image_revision_unavailable" : null),
+            Error: manifestUnknown || probes.Any(p => p.CandidateDigest is null) ? "Update readiness could not be verified. Retry the check or inspect Core logs." : null,
+            Readiness: manifestUnknown || probes.Any(p => p.CandidateDigest is null) ? "unavailable" : "ready");
     }
 
     // Install-time port reservations: backfill service-scoped port assignments for existing
@@ -3618,86 +3688,45 @@ internal sealed partial class CoreLifecycleService(
     public async Task<IReadOnlyList<AppBackgroundLifecycleResult>> StartAutostartAppsAsync(CancellationToken cancellationToken = default)
     {
         var results = new List<AppBackgroundLifecycleResult>();
-        var records = await apps.ListAppRecordsAsync(cancellationToken);
-        // Capability start-priority is a hard barrier between tiers, not a sort key: the telemetry
-        // collector is the OTLP sink other apps point at, so its endpoint URL must be resolved and
-        // persisted before a lower tier's start-time env injection reads it (see
-        // ResolveTelemetryEndpointAsync). Tiers therefore run strictly in sequence.
-        // Within each capability priority, queue system apps first so Shell gets an early start
-        // opportunity, but do not wait for all system apps to finish before starting ordinary apps.
-        // A slow local-command setup (such as Hosty Harness's build) must occupy only its own slot.
-        // Use the installed role rather than a first-party id.
-        //
-        // Within a tier the apps are independent — each start holds only its own app's operation lock,
-        // the port allocator serializes on its own gate, and every failure is captured per app by
-        // RunBackgroundLifecycleActionAsync — so they run concurrently. Serially, boot took the SUM of
-        // every app's start (image pull, source checkout, port-release wait); one slow pull delayed
-        // every app behind it. Free slots immediately take the next queued app, even while a slower
-        // start remains in flight. Stops were parallelized for the same reason (StopRuntimeAppsAsync).
-        //
-        // NOTE: cross-app dependency order is still not honoured here — it never was (autostart has
-        // never consulted the dependency graph, so a consumer sorting before its provider already
-        // started first and came up against an address nothing was listening on yet). What changes is
-        // that the alphabetical accident which sometimes ordered a pair correctly is gone; both now
-        // start together. Fixing it properly is dependency-ordered-autostart's `waiting` state.
-        var tiers = records
-            .Where(app =>
-                string.Equals(app.Kind, "runtime", StringComparison.Ordinal) &&
-                (app.Autostart ?? true) && localProcesses?.HasApp(app.Id) != true)
-            .GroupBy(app => PlatformCapabilities.StartPriority(app.Provides))
-            .OrderByDescending(tier => tier.Key);
-
-        foreach (var tier in tiers)
+        bootDependencyAttempts.Value = new();
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            var tasks = new List<Task<AppBackgroundLifecycleResult>>();
-            var active = new List<Task<AppBackgroundLifecycleResult>>(MaxConcurrentAutostarts);
-            // One dispatcher admits apps in order; semaphore waiter fairness is not a queue contract.
-            // System role is a queue preference, not another barrier. WhenAll preserves submission
-            // order in the results regardless of which starts finish first.
-            try
+            var records = await apps.ListAppRecordsAsync(cancellationToken);
+            var admitted = new HashSet<string>(StringComparer.Ordinal);
+            // Preserve capability barriers. A blocked consumer does not hold its tier open, so a
+            // provider in a later tier can start; only already-admitted tiers may resume before boot ends.
+            var roots = records.Where(app => app.Kind == "runtime" && (app.Autostart ?? true)).ToArray();
+            var requested = roots.Select(app => app.Id).ToHashSet(StringComparer.Ordinal);
+            foreach (var root in roots) requested.UnionWith(RequiredProviders(root, records, includeRunning: true));
+            var tiers = records.Where(app => app.Kind == "runtime" && requested.Contains(app.Id) &&
+                    localProcesses?.HasApp(app.Id) != true)
+                .GroupBy(app => PlatformCapabilities.StartPriority(app.Provides))
+                .OrderByDescending(tier => tier.Key);
+            foreach (var tier in tiers)
             {
-                foreach (var app in tier.OrderByDescending(app => app.System).ThenBy(app => app.Id, StringComparer.Ordinal))
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    if ((await GetConfigurationReadinessAsync(app, cancellationToken)).Required)
-                    {
-                        results.Add(new(app.Id, "autostart", Succeeded: true, ErrorCode: null, Message: "configuration-required"));
-                        continue;
-                    }
-                    if (active.Count == MaxConcurrentAutostarts)
-                    {
-                        var completed = await Task.WhenAny(active).WaitAsync(cancellationToken);
-                        active.Remove(completed);
-                    }
-
-                    cancellationToken.ThrowIfCancellationRequested();
-                    var task = RunBackgroundLifecycleActionAsync(
-                        app.Id,
-                        "autostart",
-                        async () => await StartAsync(app.Id, cancellationToken),
-                        cancellationToken);
-                    tasks.Add(task);
-                    active.Add(task);
-                }
+                cancellationToken.ThrowIfCancellationRequested();
+                admitted.UnionWith(tier.Select(app => app.Id));
+                results.AddRange(await ScheduleDependencyStartsAsync(tier, "autostart", false, cancellationToken, roots));
+                await ResumeWaitingAppsAsync(cancellationToken, admitted);
             }
-            finally
-            {
-                // Cancellation can interrupt dispatch with starts still active. Always drain every
-                // admitted task, including adapter cleanup, before disposing the boot operation.
-                results.AddRange(await Task.WhenAll(tasks));
-            }
+            return results;
         }
-
-        return results;
+        finally
+        {
+            bootDependencyAttempts.Value = null;
+            dependencyStartupReady.TrySetResult();
+        }
     }
 
     public async Task<IReadOnlyList<AppBackgroundLifecycleResult>> StopAutostartDisabledAppsAsync(CancellationToken cancellationToken = default)
     {
         var results = new List<AppBackgroundLifecycleResult>();
         var records = await apps.ListAppRecordsAsync(cancellationToken);
+        var required = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var root in records.Where(app => app.Kind == "runtime" && (app.Autostart ?? true)))
+            required.UnionWith(RequiredProviders(root, records, includeRunning: true));
         foreach (var app in records.Where(app =>
-            string.Equals(app.Kind, "runtime", StringComparison.Ordinal) &&
+            string.Equals(app.Kind, "runtime", StringComparison.Ordinal) && !required.Contains(app.Id) &&
             !(app.Autostart ?? true) && localProcesses?.HasApp(app.Id) != true).OrderByDescending(app => app.Id, StringComparer.Ordinal))
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -3954,7 +3983,6 @@ internal sealed partial class CoreLifecycleService(
             Dependencies = manifest.Dependencies.Select(ToDependencyContract).ToArray(),
             Ui = AppUiContract.FromManifest(manifest.Ui),
             CatalogMetadata = AppCatalogMetadataContract.FromManifest(manifest.CatalogMetadata),
-            AgentSkillFile = string.IsNullOrWhiteSpace(manifest.Agent?.SkillFile) ? null : manifest.Agent!.SkillFile!.Trim(),
             Interfaces = AppInterfaceContract.FromManifest(manifest.Interfaces),
             RuntimeProfiles = BuildRuntimeProfileSummaries(manifest),
             MountSlots = BuildMountSlots(manifest),
@@ -4100,7 +4128,7 @@ internal sealed partial class CoreLifecycleService(
                 running,
                 endpoints,
                 Healthy: healthy,
-                Ready: running && healthy));
+                Ready: running && healthy && endpoints.All(endpoint => endpoint.Resolved)));
         }
 
         return summaries;
@@ -4218,6 +4246,10 @@ internal sealed partial class CoreLifecycleService(
         {
             await apps.UpdateAppAsync(appId, current => current with
             {
+                RuntimeState = operation == "dependency-start" && current.RuntimeState == AppRuntimeStates.Waiting
+                    ? AppRuntimeStates.Stopped : current.RuntimeState,
+                DependencyStart = operation == "dependency-start" ? null : current.DependencyStart,
+                DependencyBorrowedStart = operation == "dependency-start" ? false : current.DependencyBorrowedStart,
                 OperationStatus = "failed",
                 LastOperation = operation,
                 LastError = message,
@@ -4241,6 +4273,8 @@ internal sealed partial class CoreLifecycleService(
             await apps.UpdateAppAsync(appId, current => current with
             {
                 RuntimeState = runtimeState,
+                DependencyStart = null,
+                DependencyBorrowedStart = false,
                 Health = null,
                 OperationStatus = "failed",
                 LastOperation = operation,
@@ -4364,6 +4398,10 @@ internal sealed partial class CoreLifecycleService(
                 ? null
                 : NormalizeManifestSubpath(Path.GetRelativePath(Path.GetFullPath(localSourceRoot), manifestDirectory));
         }
+
+        // Generated release manifests live on a metadata branch; their source tree location is explicit.
+        if (selection.Manifest.Source?.ManifestPath is { } authoredManifestPath)
+            return NormalizeManifestSubpath(Path.GetDirectoryName(authoredManifestPath));
 
         // URL install: derive the in-repo manifest directory from the manifest URL, anchored on the
         // repository owner/repo and with the known ref stripped (best-effort; null when not confident).
@@ -5143,7 +5181,7 @@ internal sealed partial class CoreLifecycleService(
             return new(await LoadDevExecutionSelectionAsync(development, cancellationToken, running: true), false, null);
         // The reviewed installed copy remains separate from admitted workspace snapshots.
         // Retired contracts remain readable for stop/remove/update; new candidates and execution stay strict.
-        var lastGood = await manifests.LoadAsync(app.ManifestPath, app.SelectedRuntime, cancellationToken, allowUnsupportedPermissions: true, allowRetiredContracts: true);
+        var lastGood = await manifests.LoadAsync(app.ManifestPath, app.SelectedRuntime, cancellationToken, allowRetiredContracts: true);
         if (development is { Active: true })
         {
             // Launching code requires the reviewed live contract. Stop, logs and health use the
@@ -5180,7 +5218,7 @@ internal sealed partial class CoreLifecycleService(
         {
             // Same-size edits can retain the file timestamp on Linux. Operator-owned source must
             // be read again; only the immutable installed copy can rely on the stamp cache.
-            var live = await manifests.LoadAsync(liveManifestPath, app.SelectedRuntime, cancellationToken, validateAllProfiles: true, forceRead: true, allowUnsupportedPermissions: true);
+            var live = await manifests.LoadAsync(liveManifestPath, app.SelectedRuntime, cancellationToken, validateAllProfiles: true, forceRead: true);
             // A folder whose manifest now describes a different app is an operator mistake, not a
             // contract Core should adopt — treat it like an invalid edit and keep the last-good copy.
             if (!string.Equals(live.Manifest.Id, app.Id, StringComparison.Ordinal))
@@ -5229,6 +5267,7 @@ internal sealed partial class CoreLifecycleService(
                 ? []
                 : BuildUpdateChanges(app, load.Baseline, selection);
 
+            var preparedSkills = appSkills is null ? null : await appSkills.PrepareAsync(selection, cancellationToken);
             await manifests.SaveManifestCopyAsync(selection, GetAppRoot(app.Id), cancellationToken);
             await manifests.VendorDisplayAssetsAsync(selection, GetAppRoot(app.Id), cancellationToken);
 
@@ -5236,7 +5275,7 @@ internal sealed partial class CoreLifecycleService(
             // the stale `app` captured before the lock, so a setting/mount change applied concurrently
             // (ConfigureAsync / ConfigureMountsAsync) is carried forward by BuildAppRecord instead of being
             // overwritten with stale operator state. The lambda is pure and may re-run on a write conflict.
-            var updated = await apps.UpdateAppAsync(app.Id, current =>
+            Task<AppStateDocument> PersistContract() => apps.UpdateAppAsync(app.Id, current =>
             {
                 var reconciled = BuildAppRecord(selection, current.ManifestPath!, manifestUrl: current.ManifestUrl, system: current.System, existing: current);
                 // Manifest projections come from the shared choke point rather than a hand-copied field
@@ -5258,6 +5297,8 @@ internal sealed partial class CoreLifecycleService(
                     LiveChanges = changes.Count > 0 ? changes : null,
                 };
             }, cancellationToken);
+            var updated = preparedSkills is null ? await PersistContract()
+                : await appSkills!.CommitAsync(selection, GetAppRoot(app.Id), preparedSkills, PersistContract, cancellationToken);
             return updated.App;
         }
         finally { apps.HostPathMutationLock.Release(); }
@@ -5508,6 +5549,8 @@ internal sealed partial class CoreLifecycleService(
         if (!string.Equals(app.Version, targetSelection.Manifest.Version, StringComparison.Ordinal))
         {
             changes.Add($"version:{app.Version}->{targetSelection.Manifest.Version}");
+            if (Version.TryParse(app.Version, out var currentVersion) && Version.TryParse(targetSelection.Manifest.Version, out var targetVersion) && targetVersion < currentVersion)
+                changes.Add("version-downgrade:explicit-review-required");
         }
 
         if (!string.Equals(app.SelectedRuntime, targetSelection.RuntimeProfile.Key, StringComparison.Ordinal))
@@ -5529,7 +5572,7 @@ internal sealed partial class CoreLifecycleService(
         }
 
         AddUpdateServiceChanges(changes, currentSelection, targetSelection);
-        AddSettingChanges(changes, app.Settings, BuildSettingDefinitions(targetSelection));
+        AddSettingChanges(changes, app, currentSelection.Manifest.Settings, BuildSettingDefinitions(targetSelection));
         changes.AddRange(BuildExternalMountChanges(currentSelection.Manifest.ExternalMounts, targetSelection.Manifest.ExternalMounts));
         AddDependencyChanges(changes, app.Dependencies, targetSelection.Manifest.Dependencies);
         AddEndpointChanges(changes, app.Endpoints, BuildEndpointContracts(targetSelection));
@@ -5612,12 +5655,18 @@ internal sealed partial class CoreLifecycleService(
             {
                 var lockedDigest = currentLocks?.GetValueOrDefault(service.Key)?.ImageDigest;
                 string? candidateDigest = null;
+                ImageReadiness? readiness = null;
                 if (resolver is not null)
                 {
                     await artifactProbeGate.WaitAsync(cancellationToken);
                     try
                     {
-                        candidateDigest = await resolver.ResolveRemoteDigestAsync(service.Image!, cancellationToken);
+                        if (resolver is IImageReadinessResolver checkedResolver)
+                        {
+                            readiness = await checkedResolver.CheckImageAsync(service.Image!, cancellationToken);
+                            candidateDigest = readiness.Ready ? readiness.Digest : null;
+                        }
+                        else candidateDigest = await resolver.ResolveRemoteDigestAsync(service.Image!, cancellationToken);
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
@@ -5632,7 +5681,7 @@ internal sealed partial class CoreLifecycleService(
                     }
                 }
 
-                return new AppServiceArtifactProbe(service.Key, lockedDigest, candidateDigest);
+                return new AppServiceArtifactProbe(service.Key, lockedDigest, candidateDigest, readiness?.ErrorCode, readiness?.Error, readiness?.Platform);
             })
             .ToList());
     }
@@ -5650,7 +5699,9 @@ internal sealed partial class CoreLifecycleService(
     // from the operator's own folder (no pin to move), and a relative repository is rejected at
     // start time, so neither is probed or reconciled here.
     private static bool UpdateMovesSourcePin(AppRecord app, RuntimeAppManifestSelection selection)
-        => string.Equals(selection.RuntimeProfile.Type, "localCommand", StringComparison.Ordinal)
+        => selection.Services.Any(service => service.Runtime.Type == "localCommand" ||
+                string.IsNullOrEmpty(service.Runtime.Type) && selection.RuntimeProfile.Type == "localCommand")
+            && !selection.RuntimeProfile.Development
             && !string.IsNullOrWhiteSpace(app.ManifestUrl)
             && !string.IsNullOrWhiteSpace(selection.Manifest.Source?.Repository)
             && !IsRelativeSourceRepository(selection.Manifest.Source.Repository);
@@ -5829,7 +5880,7 @@ internal sealed partial class CoreLifecycleService(
 
         changes.Add($"development:{targetSelection.RuntimeProfile.Development.ToString().ToLowerInvariant()}");
         AddServiceChanges(changes, app.Id, instanceId, currentSelection, targetSelection);
-        AddSettingChanges(changes, app.Settings, BuildSettingDefinitions(targetSelection));
+        AddSettingChanges(changes, app, currentSelection.Manifest.Settings, BuildSettingDefinitions(targetSelection));
         AddDependencyChanges(changes, app.Dependencies, targetSelection.Manifest.Dependencies);
         AddEndpointChanges(changes, app.Endpoints, BuildEndpointContracts(targetSelection));
         AddDataTargetChanges(changes, app, targetSelection);
@@ -6094,9 +6145,11 @@ internal sealed partial class CoreLifecycleService(
 
     private static void AddSettingChanges(
         List<string> changes,
-        IReadOnlyDictionary<string, AppSettingValue> currentSettings,
+        AppRecord app,
+        IReadOnlyList<RuntimeAppSettingManifest> currentDeclarations,
         IReadOnlyList<RuntimeAppSettingManifest> targetSettings)
     {
+        var currentSettings = app.Settings;
         var targetByKey = targetSettings.ToDictionary(setting => setting.Key, StringComparer.Ordinal);
         foreach (var key in currentSettings.Keys.Concat(targetByKey.Keys).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal))
         {
@@ -6110,8 +6163,12 @@ internal sealed partial class CoreLifecycleService(
             {
                 // Match BuildAppRecord's carry-forward: host ports and local browser names survive
                 // apply, so reporting their removal would produce an update that never converges.
+                // A retired preference is also retained for migration, but its first removal from
+                // the installed manifest still needs review. Later checks see only the retained value.
                 // Declared target settings still undergo the normal type/secret checks below.
-                if (!IsPreservedCoreSetting(key))
+                var retainedMigrationValue = IsRetiredNativePreference(app.Id, key)
+                    && !currentDeclarations.Any(setting => string.Equals(setting.Key, key, StringComparison.Ordinal));
+                if (!IsPreservedCoreSetting(key) && !retainedMigrationValue)
                 {
                     changes.Add($"setting:{key}:removed");
                 }
@@ -6694,6 +6751,7 @@ internal sealed partial class CoreLifecycleService(
         // to advance instead of the app silently falling out of supervision after one tick.
         if (!string.Equals(app.Kind, "runtime", StringComparison.Ordinal) ||
             string.IsNullOrWhiteSpace(app.ManifestPath) ||
+            app.RuntimeState == AppRuntimeStates.Waiting ||
             (!AppRuntimeStates.IsUp(app.RuntimeState) && !supervised))
         {
             return null;
@@ -7156,6 +7214,8 @@ internal sealed record AppUpdatePlan(
     // Advisory from this check, excluded from the reviewed target digest. An empty change list
     // with an error is not evidence that the app is up to date.
     public string? Error { get; init; }
+    public string? ErrorCode { get; init; }
+    public string? Readiness { get; init; }
     public string? DisplayName { get; init; }
     // Null is a legacy unknown baseline, not an empty declaration list or a grant list.
     public IReadOnlyList<string>? PreviousRequiredCorePermissions { get; init; }
@@ -7218,7 +7278,7 @@ internal sealed record AppUpdateStatusResponse(
     bool UpdateAvailable,
     IReadOnlyList<AppServiceUpdateStatus> Services,
     bool ManifestUpdateAvailable = false,
-    bool ManifestUnknown = false);
+    bool ManifestUnknown = false, string? ErrorCode = null, string? Error = null, string? Readiness = null);
 
 // Per-service update status: the currently-locked digest, the remotely-resolved candidate digest, and
 // whether the candidate is a new build (lock present and differs). `Unknown` = the registry could not
@@ -7228,9 +7288,10 @@ internal sealed record AppServiceUpdateStatus(
     string? LockedDigest,
     string? CandidateDigest,
     bool UpdateAvailable,
-    bool Unknown);
+    bool Unknown, string? ErrorCode = null, string? Error = null, string? Platform = null);
 
 // One shared registry-probe result for a compiled service (see ProbeServiceArtifactsAsync). Rides the
 // cached update plan so the status projection reads the plan build's probe instead of re-hitting the
 // registry. Not serialized — internal plan/status plumbing only.
-internal sealed record AppServiceArtifactProbe(string Service, string? LockedDigest, string? CandidateDigest);
+internal sealed record AppServiceArtifactProbe(string Service, string? LockedDigest, string? CandidateDigest,
+    string? ErrorCode = null, string? Error = null, string? Platform = null);

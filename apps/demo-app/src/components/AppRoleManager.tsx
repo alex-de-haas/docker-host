@@ -126,7 +126,7 @@ export function AppRoleManager({
                   </div>
                   <div className="mt-2 flex flex-wrap gap-2">
                     <StateBadge tone={user.hostRole === "host.admin" ? "success" : "neutral"}>
-                      {user.sandboxRole ? `Sandbox · ${user.sandboxRole}` : user.hostRole || "Unknown host role"}
+                      {user.hostRole || "Unknown host role"}
                     </StateBadge>
                     <StateBadge tone={user.appRole.role === "admin" ? "success" : "neutral"}>
                       {user.appRole.roleLabel}

@@ -12,6 +12,7 @@ internal sealed class DevelopmentWorkspaceObserver(DevelopmentWorkspaceService w
     private readonly Dictionary<string, SourceWatch> sources = new(StringComparer.Ordinal);
     private readonly Dictionary<string, RepositoryWatch> repositories = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, byte> failed = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, byte> documentChanges = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, string[]> ignoredDirectories = new(StringComparer.Ordinal);
     private readonly object changeGate = new();
     private Dictionary<string, HashSet<string>> changes = new(StringComparer.Ordinal);
@@ -79,6 +80,8 @@ internal sealed class DevelopmentWorkspaceObserver(DevelopmentWorkspaceService w
                         catch (Exception ex) when (ex is not OperationCanceledException)
                         { logger.LogWarning(ex, "Cannot observe workspace {WorkspaceId}", id); Failed(id); }
                     }
+                    foreach (var id in documentChanges.Keys)
+                        if (documentChanges.TryRemove(id, out _) && sources.ContainsKey(id)) state.Publish(id);
                     // A busy owner gate or an event during a scan retains its generation.
                     if (state.Dirty.Any(id => sources.ContainsKey(id) && !failed.ContainsKey(id)))
                         state.Wake.Writer.TryWrite(true);
@@ -120,7 +123,7 @@ internal sealed class DevelopmentWorkspaceObserver(DevelopmentWorkspaceService w
         }
         foreach (var id in sources.Keys.Where(id => !active.ContainsKey(id)).ToArray())
         {
-            sources[id].Watcher.Dispose(); sources.Remove(id); ignoredDirectories.TryRemove(id, out _); lock (changeGate) changes.Remove(id); failed.TryRemove(id, out _);
+            sources[id].Watcher.Dispose(); sources.Remove(id); documentChanges.TryRemove(id, out _); ignoredDirectories.TryRemove(id, out _); lock (changeGate) changes.Remove(id); failed.TryRemove(id, out _);
             if (!all.Any(w => w.Id == id)) state.Remove(id);
         }
         foreach (var id in failed.Keys.Where(id => !active.ContainsKey(id) && !repositories.ContainsKey(id))) failed.TryRemove(id, out _);
@@ -193,6 +196,12 @@ internal sealed class DevelopmentWorkspaceObserver(DevelopmentWorkspaceService w
     {
         var relative = Path.GetRelativePath(root, path).Replace(Path.DirectorySeparatorChar, '/');
         if (relative == ".git") { Failed(id); return; }
+        // Documentation inventories include ignored Markdown too. Invalidate those summaries
+        // before Git's ignore filter; coalesced delivery does not force an ignored-file Git scan.
+        if (relative == "docs" || relative.StartsWith("docs/", StringComparison.Ordinal))
+        {
+            state.DocumentsChanged(id); documentChanges[id] = 0; state.Wake.Writer.TryWrite(true);
+        }
         if (relative == ".gitignore" || relative.EndsWith("/.gitignore", StringComparison.Ordinal)) ignoredDirectories.TryRemove(id, out _);
         if (ignoredDirectories.TryGetValue(id, out var ignored) && ignored.Any(directory => relative == directory || relative.StartsWith(directory + "/", StringComparison.Ordinal))) return;
         Queue(id, relative);

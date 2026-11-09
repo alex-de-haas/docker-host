@@ -33,7 +33,7 @@ function commandResults(events: readonly AssistantEvent[]) {
   return { results, matched };
 }
 /** Output is attached only to a unique preceding call within its recorded user turn. */
-function toolResults(events: readonly AssistantEvent[]) {
+export function toolResults(events: readonly AssistantEvent[]) {
   const results: Record<number, ToolOutput> = {}, matched = new Set<number>();
   let calls = new Map<string, AssistantEvent[]>();
   const outcomes = new Map<number, string>(), matchedByCall = new Map<number, number[]>();
@@ -74,7 +74,7 @@ export function transcriptItems(events: AssistantEvent[], claimed: ReadonlySet<s
     }
     activity = undefined;
     const visible = event.type === "attachment_added" ? !claimed.has(String(event.name ?? ""))
-      : ["user_message", "assistant_text", "app_context_changed", "approval_request", "question_request", "notice", "error", "command_result", "tool_result"].includes(event.type);
+      : ["user_message", "assistant_text", "prompt_suggestion_created", "app_context_changed", "approval_request", "question_request", "notice", "error", "command_result", "tool_result"].includes(event.type);
     if (visible) items.push({ kind: "event", key: `event-${event.seq}`, event });
   }
   return items;

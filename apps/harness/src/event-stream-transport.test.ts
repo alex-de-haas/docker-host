@@ -263,3 +263,47 @@ it("destroys refused upgrade sockets after flushing the response even when the p
     await vi.waitFor(() => expect(accepted.destroyed).toBe(true));
   } finally { peer.destroy(); }
 });
+
+it("admits the actual task stream ticket, forwards ready/change hints and releases its observer", async () => {
+  const { TaskStore } = await import("./tasks/store.js");
+  const unsubscribed = vi.fn(), subscribe = TaskStore.prototype.subscribe;
+  let changed!: () => void;
+  vi.spyOn(TaskStore.prototype, "subscribe").mockImplementation(function (this: import("./tasks/store.js").TaskStore, listener) {
+    changed = listener;
+    const stop = subscribe.call(this, listener);
+    return () => { unsubscribed(); stop(); };
+  });
+  const view = await connected(await ticket("/api/tasks/v1/events"));
+  await vi.waitFor(() => expect(view.chunks.join("")).toContain("event: stream.ready"));
+  const initial = view.chunks.join("").split("event: changed").length;
+  const created = await fetch(origin + "/api/tasks/v1/tasks", { method: "POST",
+    headers: { authorization: "Bearer hostyg_owner", origin, "content-type": "application/json" },
+    body: JSON.stringify({ requestId: crypto.randomUUID(), input: { title: "Task hint", markdown: "Work", assignee: null, resources: [] } }) });
+  expect(created.status).toBe(201);
+  await vi.waitFor(() => expect(view.chunks.join("").split("event: changed").length).toBeGreaterThan(initial));
+  expect(view.chunks.join("")).not.toContain("Task hint");
+  view.socket.close(); await vi.waitFor(() => expect(unsubscribed).toHaveBeenCalledTimes(1));
+  const revoked = await connected(await ticket("/api/tasks/v1/events"));
+  await vi.waitFor(() => expect(revoked.chunks.join("")).toContain("event: stream.ready"));
+  const beforeRevocation = revoked.chunks.join("");
+  validationStatus = 401; changed();
+  await vi.waitFor(() => expect(revoked.socket.readyState).toBe(WebSocket.CLOSED));
+  expect(revoked.chunks.join("")).toBe(beforeRevocation);
+  expect(unsubscribed).toHaveBeenCalledTimes(2);
+  expect((await mint("/api/tasks/v1/events")).status).toBe(401);
+});
+
+it("serves authenticated connection limits and their snapshot stream without a chat subscription", async () => {
+  const { absentUsage } = await import("./harness/provider-usage.js");
+  const connection = { id: "usage-connection", revision: 1 };
+  const usage = vi.fn(async () => ({ ...absentUsage("unsupported", "unsupported_auth"), connectionRevision: 1 }));
+  const connections = { usage, get: async () => connection } as unknown as import("./connections/service.js").ConnectionService;
+  await close(server);
+  server = createGatewayServer(manager, new FakeHarnessAdapter(), null, null, null, null, connections); origin = await listen(server);
+  expect((await fetch(origin + "/api/connections/usage-connection/usage")).status).toBe(401);
+  const snapshot = await fetch(origin + "/api/connections/usage-connection/usage?refresh=true", { headers: { authorization: "Bearer hostyg_owner" } });
+  expect(snapshot.status).toBe(200); expect(await snapshot.json()).toMatchObject({ state: "unsupported", rows: [] });
+  const { socket, chunks } = await connected(await ticket("/api/connections/usage-connection/usage/events"));
+  await vi.waitFor(() => expect(chunks.join("")).toContain('"state":"unsupported"'));
+  expect(usage).toHaveBeenCalledWith("usage-connection", false); socket.close();
+});

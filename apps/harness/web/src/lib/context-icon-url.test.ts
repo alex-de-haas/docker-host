@@ -18,3 +18,13 @@ it("rejects malformed URLs, non-web schemes and embedded credentials", () => {
   for (const value of [undefined, "", "bad url", "javascript:alert(1)", "data:image/svg+xml,test", "https://secret@localhost:7070" + asset])
     expect(contextIconUrl(value, "media", "127.0.0.1")).toBeUndefined();
 });
+
+it.each([
+  ["core.hosty.localhost", "harness.hosty.localhost"],
+  ["core.i-test.hosty.localhost", "harness.i-test.hosty.localhost"],
+  ["localhost", "harness.hosty.localhost"],
+  ["core.hosty.localhost", "localhost"],
+])("preserves the Core cookie origin across named local app hosts: %s", (core, page) => {
+  const url = `http://${core}:7070${asset}`;
+  expect(contextIconUrl(url, "media", page)).toBe(url);
+});

@@ -1,6 +1,6 @@
 ---
 created: 2026-08-19
-updated: 2026-10-24
+updated: 2026-11-04
 ---
 
 # Hosty Platform Vision
@@ -48,6 +48,13 @@ The owner clarified this broader direction on 2026-10-23. Decision 52 and the
 [exploration below](#personal-and-shared-environments-owner-exploration-2026-10-23) retain the
 direction without selecting a new architecture, creating plans or changing existing implementation
 status. Forms that are still raw live in [ideas](ideas.md).
+
+On 2026-10-25 the owner selected a bounded next step: map the universal capabilities needed for
+composable human and agent work and investigate their gaps. Decision 54 and the
+[composable-work Draft](features/composable-agent-systems/plan.md) record this planning scope;
+the broader exploration retains its separate open choices. Decision 55 records the 2026-10-26
+clarification of shared tasks, agent participants, decisions and basic artifact handoffs, with
+explicit workspace alternatives and learned memory deferred.
 
 ## App Creation And Development (owner direction, 2026-09-16)
 
@@ -204,14 +211,15 @@ Decisions 1–5: 2026-08-19.
    the implementation and completed browser acceptance.
 
 10. **Shared development sessions and clients (2026-09-24; clarified 2026-09-26).** A session owns
-    a shared conversation and optional registered source workspace. Switching connected agents
-    preserves visible context; clients control host-resident work. Keep source diffs and separate
+    a conversation and optional registered source workspace; clients control host-resident work.
+    Decision 61 retires the original in-conversation agent-switching requirement in favor of
+    separate sessions and explicit context handoffs. Keep source diffs and separate
     Publish, Merge and Complete. Prefer managed source with a verified migration from overrides.
     The [session umbrella](features/assistant-development-sessions/plan.md) coordinates independently
     approved feature plans, including rare explicit local external-agent context exchange.
     Decision 52 supersedes exclusive session ownership as the long-term direction: independent
-    sessions may share a workspace. It does not implement that change or require agent switching
-    within one conversation for collaboration.
+    sessions may share a workspace. [Workspace sessions](features/workspace-sessions/feature.md)
+    implements that collaboration; it does not share private transcripts.
 
 11. **Feedback intake before agent work (2026-09-25).** Users can capture a region or UI element,
     add a comment and submit an app/page-linked observation; screenshots and element context are
@@ -221,7 +229,7 @@ Decisions 1–5: 2026-08-19.
     own reviewed observation directly. Submission alone starts no agent and grants no source access;
     feedback items are input to sessions, not a second development task model. The capture mechanism,
     narrow user-facing authority, durable evidence and triage UX remain Draft work owned by
-    [app feedback inbox](features/app-feedback-inbox/plan.md).
+    [app feedback inbox](features/app-feedback-inbox/feature.md).
 
 12. **Dedicated native Harness client (2026-09-25).** Build a separate Swift client focused on
     Hosty Harness sessions over AHP, including remote conversation, permission/question requests,
@@ -234,8 +242,8 @@ Decisions 1–5: 2026-08-19.
 
 13. **AHP as a client interface (2026-09-26, revised after review).** Keep Hosty's existing
     session implementation and journal authoritative. Evaluate AHP as a replaceable external client
-    adapter, with a bounded Swift/auth/reconnect spike. Existing web REST/SSE remains; provider
-    switching and other internal features do not depend on AHP adoption. Swift targets the official
+    adapter, with a bounded Swift/auth/reconnect spike. Existing web REST/SSE remains; session
+    recovery and explicit context handoffs do not depend on AHP adoption. Swift targets the official
     SDK subject to the spike. This supersedes the earlier same-day AHP-first foundation/web-cutover
     decision; [client integration](features/assistant-ahp/plan.md) remains Draft.
 
@@ -350,7 +358,7 @@ Decisions 1–5: 2026-08-19.
 24. **A session workspace contains repository worktrees (2026-10-09).** One session has zero or
     one workspace, allocated for authorized source work; the workspace belongs only to that session.
     It may contain worktrees for several repositories and apps, each with its own branches and PR
-    history. Agent switching is deferred session work. The
+    history. Decision 61 later retires in-conversation agent switching. The
     [workspace model](features/assistant-session-workspaces/feature.md) documents compatible grouping
     of per-repository worktree records and the inspection authority boundary. This remains the
     current allocation baseline; decision 52 replaces the exclusive-session assumption in the
@@ -371,8 +379,9 @@ Decisions 1–5: 2026-08-19.
     direction mounts only the owning workspace's worktrees into its agent execution environment,
     excluding original sources and other workspaces. [Agent isolation](features/assistant-runtime-containment/plan.md)
     owns the source/Git metadata boundary; [lifecycle controls](features/workspace-lifecycle-controls/feature.md)
-    owns revocation, verified execution stop and safe cleanup. App Sandbox testing and agent switching
-    remain separate deferred work. Decision 35 later prioritizes a shared host boundary before
+    owns revocation, verified execution stop and safe cleanup. App Sandbox testing has its own
+    feature and remaining acceptance; decision 61 retires in-conversation agent switching.
+    Decision 35 later prioritizes a shared host boundary before
     this stricter session boundary. This direction is not implementation approval.
 
 27. **One SDK panel system for Shell and standalone (2026-10-10).** Share panel hosting and
@@ -415,7 +424,7 @@ Decisions 1–5: 2026-08-19.
     Retire Bridge D12 as a separate workstream. Session workspaces and PR lifecycle own source and
     publication; their pending authorization/lifecycle work stays with the respective plans.
     Sandbox owns isolated runtime/data/browser verification, and development sessions own the
-    integrated journey. General scheduled/non-interactive agent execution remains Bridge D11.
+    integrated journey. General scheduled/non-interactive agent execution was retained as Bridge D11; its scope now lives in [Durable Agent Jobs](features/durable-agent-jobs/plan.md) after the 2026-10-26 transfer.
     This transfers ownership without claiming Sandbox or automatic source jobs already work.
 
 31. **Retire the Core Extension Model umbrella (2026-10-10).** The owner agreed that its shipped
@@ -471,7 +480,7 @@ Decisions 1–5: 2026-08-19.
     App trust does not imply all user permissions, and browser activity is not background consent.
     [Continuous app access](features/continuous-app-access/feature.md) implements the session policy,
     SDK maintenance and durable Core grants after the owner's subsequent implementation approval
-    on 2026-10-11. Cross-App Auth D8 is retired by transfer; Bridge D11 retains its runner and consumes
+    on 2026-10-11. Cross-App Auth D8 is retired by transfer; the runner formerly tracked as Bridge D11 now belongs to [Durable Agent Jobs](features/durable-agent-jobs/plan.md) and consumes
     those grants. Container-based isolation and honest disclosure of unrestricted local commands
     remain separate from authentication UX. SDK UI composition remains deferred. Verification uses
     an isolated instance; this direction does not authorize changes to the operator's live grants.
@@ -509,7 +518,7 @@ Decisions 1–5: 2026-08-19.
     Follow-up on 2026-10-13: the owner approves the local network/resource profile and agent-created
     sandbox-only users with configurable roles and permissions, including administrators that
     cannot act outside their sandbox. The approved
-    [identity contract](features/app-sandbox-runtimes/plan.md#real-operators-sandbox-users-and-instance-authority)
+    [identity contract](features/app-sandbox-runtimes/feature.md#parent-managed-child-core-environments)
     retains real Core operator preview and adds a separately typed, Core-managed test realm per
     runtime instance. This revises the real-users-only testing assumption, not global Core login
     or administrative authority. The owner clarifies that users and temporary resources belong to
@@ -527,8 +536,9 @@ Decisions 1–5: 2026-08-19.
     session or explicitly let the assistant organize it into several tasks/sessions. Independent
     repositories can proceed in parallel; independent changes to one repository may use separate
     worktrees/PRs with overlap/merge-order handling. Every item keeps provenance and partial outcomes.
-    [Feedback Inbox](features/app-feedback-inbox/plan.md) owns intake/grouping/dispatch integration;
-    [Bridge D11](features/ai-agent-bridge/plan.md#step-11--durable-jobs-and-notifications) retains general
+    Decision 66 narrows the first delivery to manual one-session dispatch; automatic grouping is
+    deferred exploration. [Feedback Inbox](features/app-feedback-inbox/feature.md) owns intake/dispatch;
+    [Durable Agent Jobs](features/durable-agent-jobs/plan.md) retains general
     execution/delegation. Feedback remains optional for the local demonstration, and neither
     reporting nor approval alone launches an agent or grants source access.
 
@@ -578,7 +588,7 @@ Decisions 1–5: 2026-08-19.
     Public production URLs may be reachable with internet access; existing endpoint authentication
     and explicit grants, not the word sandbox, determine authority. Dependency discovery currently
     does not supply universal peer authorization. These qualifications refine decisions 35/36/40.
-    [Sandbox D13-D17](features/app-sandbox-runtimes/plan.md#permission-extension-owner-revision-2026-10-14)
+    [Sandbox D13-D17](features/app-sandbox-runtimes/feature.md#parent-managed-child-core-environments)
     owns the extension and its checks. The current verified implementation is still the offline profile.
 
 42. **Prefer dedicated sandbox dependencies and explore scoped Core state (2026-10-14).** In the
@@ -590,7 +600,7 @@ Decisions 1–5: 2026-08-19.
     principals, and cleans up owned resources rather than everything created by one user. Host-only
     operations and app-owned records need explicit treatment. This refines decision 41; it does not
     approve a blanket migration of all Core APIs or claim those namespaces already exist.
-    [Sandbox D14/D16-D19](features/app-sandbox-runtimes/plan.md#environment-scope-later-owner-discussion-2026-10-14)
+    [Sandbox D14/D16-D19](features/app-sandbox-runtimes/feature.md#parent-managed-child-core-environments)
     owns the contract review and implementation; shared installed providers stay deferred under D14.
 
 43. **Use trusted same-host test Core instances with shared Docker (2026-10-14).** The owner selects
@@ -601,7 +611,7 @@ Decisions 1–5: 2026-08-19.
     and operators requiring a physical boundary use a separate host. The primary Core should own
     environment lifecycle and cleanup, including graceful child stops. Process parentage alone does
     not implement that guarantee. The owner authorizes the local experiment now; its result and the
-    remaining parent manager are tracked by [sandbox D18-D21](features/app-sandbox-runtimes/plan.md#same-host-core-environments-owner-decision-2026-10-14).
+    remaining parent manager are tracked by [sandbox D18-D21](features/app-sandbox-runtimes/feature.md#parent-managed-child-core-environments).
 
 44. **Prefer SSE where a screen needs background updates (2026-10-16; clarified the same day).**
     The owner recommends SSE for screens whose architecture, user request or interaction model
@@ -677,7 +687,7 @@ Decisions 1–5: 2026-08-19.
     API boundary in decision 40 or granting publication/lifecycle rights through workspace access.
     [Source recovery](features/runtime-source-workflows/plan.md) is On Hold rather than becoming a
     permanent redesign of the old controls. [Development Controls D1](features/app-development-controls/plan.md#deliverables)
-    owns parity and conditional retirement; [external development](features/external-development-workspaces/plan.md)
+    owns parity and conditional retirement; [external development](features/external-development-workspaces/feature.md)
     owns missing direct-client adapters/authority; [Development Sessions D1-D2](features/assistant-development-sessions/plan.md#deliverables)
     owns integrated acceptance. Sandbox and PR services retain their own implementation ownership.
     This direction authorizes documentation alignment, not new implementation, experiments or
@@ -706,7 +716,7 @@ Decisions 1–5: 2026-08-19.
     use, with practical examples and actionable failures. External native publication must not
     corrupt workspace tracking or make a Core-only publish path a correctness prerequisite.
     [Sandbox D6/D9](features/app-sandbox-runtimes/plan.md#deliverables) owns client usability;
-    [external development](features/external-development-workspaces/plan.md) owns its adapters and
+    [external development](features/external-development-workspaces/feature.md) owns its adapters and
     external-action reconciliation acceptance. [Execution Authorization](features/assistant-execution-authorization/plan.md)
     and [Containment](features/assistant-runtime-containment/plan.md) own restricted-operator
     authority and execution prerequisites. Ordinary-user MCP-only sessions retain their separate
@@ -823,6 +833,557 @@ Decisions 1–5: 2026-08-19.
     [Core Extension Model](features/core-extension-model/feature.md) records the current boundary;
     its retired umbrella implementation plan stays retired.
 
+54. **Build reusable capabilities for composable human and agent work (2026-10-25).**
+    The owner wants a construction kit for autonomous systems of varying complexity, useful to
+    one person and to teams with different responsibilities. People and configured agents can
+    perform, delegate, review and accept work. An analyst, designer, developer or QA role is an
+    application-level responsibility, separate from Core permissions and from a model connection.
+    Humans may configure specialized agents and accept their results at any chosen stage.
+
+    Prioritize investigating a shared skill pool and delivery, with reusable packages from
+    standard sources, standing role instructions and optional skills selected for a project or
+    application. Core's delivery capability and an app's agent/profile configuration are distinct
+    building blocks. Reconcile role/project selection with the existing Shared Skills decisions;
+    selecting instructions does not grant tool access or establish enforcement.
+
+    Identify reusable contracts for authority, capability discovery and invocation, durable work,
+    events, versioned inputs/results, human decisions and resource lifetimes. Core supplies the
+    application-neutral mechanisms within its ownership; providers and ordinary apps own agent
+    execution, roles, task meaning and orchestration. Explicit calls, events, hooks/webhooks and
+    schedules remain options for initiating the same authorized work. No transport, workflow
+    language, universal task store, organization chart or packaging into Harness versus a separate
+    application is selected.
+
+    Idea-to-plan-and-mockup review, implementation, functional/visual QA, sandbox acceptance and
+    authorized PR/review/merge form one example composition. Iterations can reuse their test
+    environment and data, and acceptance refers to the reviewed versions. Non-development work
+    and simple direct use remain equally valid. Existing repository, resource, privacy and
+    publication boundaries apply; merge is distinct from production deployment.
+
+    The [Composable Human And Agent Work Draft](features/composable-agent-systems/plan.md) owns the
+    initial capability/gap map, missing ownership decisions and proposed investigation order.
+    This advances only that foundational investigation beyond decision 52's vision-only capture.
+    Existing feature plans keep their deliverables and statuses, including ordinary-user access
+    prerequisites. The owner authorizes documentation and Draft planning only, with no implementation
+    or operational changes; the retired Core Extension Model implementation umbrella stays retired.
+
+55. **Shared work records, deliberate workspace choices and explicit handoffs (2026-10-26).**
+    Decision 62 supersedes the Core-owned task-store preference and separate agent-principal
+    proposal below; it retains the common contract, optional resources and explicit handoffs.
+    The owner prefers investigating a small shared task model in Core, with replaceable executors
+    and app-owned orchestration. Other apps can create tasks, observe states and participants, and
+    inspect child tasks and resource/result links through a common contract. A task-provider model
+    remains an alternative to compare. Standardization and storage are separate choices; extra
+    executor state need not become Core fields. No wire schema or implementation is approved.
+
+    Persistent agent participants are distinct from profiles, model connections, sessions and runs.
+    They can have stable system identities, explicit access and a responsible human. Agent hierarchies
+    remain app-owned relationships between participants; task parentage is independent. A direct
+    agent invocation need not create a participant account. Existing user/session restrictions remain.
+
+    Shared task and decision state should be observable through authorized events. A decision can
+    be addressed to the responsible human or a role/project-specific reviewer, presented in a common
+    inbox and answered outside the original chat. Quick answers may resume a live run; longer waits
+    retain the question and recoverable state while releasing stopped execution resources. A saved
+    response can trigger durable continuation. Silence, decision expiry and process-wait time are
+    different outcomes; permission decisions retain their own enforcement and revalidation.
+
+    Reuse an existing workspace for related delegated work and prevent accidental duplicate allocation,
+    while allowing explicit independent workspaces. The owner does not select one workspace per whole
+    task tree: an unrelated bug discovered during feature work can have its own workspace and PR, with
+    a decision about urgency or hotfix targeting if needed. Exact binding/inheritance rules remain open.
+    Workspace sharing does not imply shared private conversations or safe unrestricted concurrent writes.
+
+    Basic artifacts are needed for work handoff and reuse: descriptions, versions, provenance and
+    access-controlled content/references for reports, scripts and prepared materials. A child can return
+    a summary plus artifact references for another agent to consume. Session context, explicitly shared
+    context, artifacts and skills remain distinct; no elaborate artifact tiers or automatic promotion
+    are selected. Source identity/version survives a change of location into a workspace.
+
+    Learned long-term memory stays outside this investigation. Keep recurring preferences and decisions
+    as a later [idea](ideas.md#i1-memory-as-a-replaceable-provider), with no implementation or automatic
+    policy learning. The [composable-work Draft](features/composable-agent-systems/plan.md) owns the
+    integration questions, including minimal artifacts; existing feature owners keep their scope and
+    status. These clarifications update the investigation under decision 54, not implementation approval.
+
+56. **Separate capability Drafts and a first composition inside Harness (2026-10-26).**
+    Decision 62 retires the agent-participant Draft and selects a manual/API task as the first
+    journey, with profile-backed Harness execution and no document prerequisite.
+    The owner requests independently refinable plans for the missing reusable blocks. Existing
+    Shared Skills, Agent Providers and Notifications D6 retain their scope; new Drafts own
+    the subsequently retired agent-participant proposal,
+    shared task work (split by decision 64 into [Basic Tasks](features/basic-tasks/feature.md) and
+    [Task Workspace Coordination](features/shared-tasks/plan.md)),
+    [artifacts](features/shared-artifacts/plan.md) and
+    [decisions](features/shared-decisions/feature.md). The
+    [composable-work umbrella](features/composable-agent-systems/plan.md) retains priorities and
+    integration boundaries rather than duplicating those deliverables.
+
+    The initial organizational experience is proposed within
+    [Harness](features/harness-work-orchestration/plan.md): app-owned profiles, optional agent
+    hierarchy, task coordination and a coherent Tasks/Decisions/Artifacts UI. A separate app and
+    its name remain open; cross-app widgets or a new UI composition framework are not prerequisites.
+    Shared contracts remain independent of Harness routes, app identity and private storage.
+    First prove one Documents task, one agent, an artifact, a human decision and continuation before
+    expanding hierarchy. Core stays usable without this application and learned memory stays deferred.
+
+    The owner also requests closing Bridge D11. Its entire unbuilt runner, scheduling/retry budget,
+    notification and background-grant consumption scope transfers to
+    [Durable Agent Jobs](features/durable-agent-jobs/plan.md), Draft. D11 is retired, not declared
+    implemented. The Bridge rollout plan closes with no remaining owned deliverables; its dated
+    validation and ownership transfers remain in the feature document. No implementation, Ready
+    status or runtime/publication action is authorized by this documentation split.
+
+57. **One skill pool, profile selections and full app packages (2026-10-26).**
+    Decision 59 supersedes revision pinning/retention; decision 60 removes manual uploads.
+    The owner selects one administrator-managed library per Hosty instance. Core stores package
+    bytes, provenance and immutable revisions and provides APIs/prepared exports. Harness owns
+    profiles, standing instructions and skill references, with its first management UI over Core.
+    Resolve a conversation's effective set from its profile or assistant default and retain those
+    revisions on resume, independently of model/provider credentials. This supersedes the earlier
+    installation-wide selection assumption. No personal pools or per-package user owners are added.
+
+    Git is the primary import/update source, with prepared uploads and app-supplied packages in the
+    same catalog. Reuse Core's Git-check mechanisms to show package updates; administrators apply
+    Git updates explicitly. App packages advance with their app version. Expose source kind and
+    revision, preserve standard package contents, and resolve native-name collisions explicitly.
+    Hosty package editing/forking is excluded; customization remains in instructions and profiles.
+
+    Replace agent.skillFile through a coordinated producer/reader migration. Each app can supply
+    several complete directories with SKILL.md, references, examples and supporting files; no
+    permanent single-file compatibility mode is selected. Decision 58 selects the manifest and
+    catalog shape; API and rollout details remain in the [Shared Skills](features/agent-skills/feature.md). Test both Harness native
+    runtimes, different profile selections and one explicitly provisioned external local client.
+    Supporting files must survive for pinned conversations under an explicit retention contract.
+    Existing tool/app authority remains separate from package selection. Automatic Git updates,
+    personal libraries and remote MCP Skills delivery remain later ideas; these answers settle
+    scope but do not approve implementation or change the Draft status.
+
+58. **Skill declarations and catalog identities (2026-10-26).**
+    Decision 59 supersedes immutable Revision records/session bindings; decision 60 removes uploads.
+    The owner accepts agent.skills as an array of stable app-local key and manifest-relative
+    directory path entries. One package contains one root SKILL.md and supporting files; name and
+    description come from the portable file rather than duplicate manifest fields. The declaration
+    describes installed resources, not a running-app endpoint.
+
+    Core keeps Source, Skill and immutable Revision records. Source kinds are git, app and upload;
+    a stable skill ID is distinct from its native name, source revision and complete-package content
+    hash. Profiles select skill IDs; new sessions resolve and retain skillId/revision pairs.
+    Existing sessions keep those revisions. New app skills enter the catalog without automatic
+    profile enrollment; conflicting native names in one selected set require an explicit choice.
+
+    The shared API covers catalog lookup, package reads, import, update checks/apply and prepared
+    execution sets. Harness keeps profiles/instructions. The
+    [Shared Skills](features/agent-skills/feature.md#api-and-delivery)
+    owns exact examples and remaining validation, API, storage/export and migration questions.
+    This records accepted design only; status remains Draft and implementation is not authorized.
+
+59. **Current skill contents, simple removal and native Core implementation (2026-10-26).**
+    The owner removes the requirement to pin skills to conversations or retain old package copies.
+    Core supplies current installed content. Native clients may discover updates during execution
+    when they support it; otherwise they use their normal loading behavior. Hosty does not add a
+    universal hot-reload or context-revocation mechanism. Source commit/app version may describe
+    current installed content without a historical Revision store or a session lifetime policy.
+
+    Removing a skill, including through removal of its supplying app, removes its availability
+    and supplied files everywhere. Missing references are omitted, without blocking a new/resumed
+    session or retaining deleted content. Only technical name collisions require validation;
+    contradictory guidance in different skills is an operator configuration concern, not something
+    Core detects or resolves. The source/skill identities and app directory declaration remain.
+
+    In a subsequent confirmation on the same date, the owner selects discovery of repository skills,
+    installation of chosen packages only, and manual per-skill updates plus Update all. Reuse one
+    source checkout/download across selected packages in an operation; keep only each skill's current
+    installed contents and source commit, with no archive for sessions. Download transport does not
+    dictate update granularity. Update all does not install unselected skills. The
+    [Shared Skills](features/agent-skills/feature.md) owns remaining integration details. Git checks
+    do not apply updates automatically. App packages continue to follow their supplying app.
+
+    The owner rejects adding a Node.js dependency for skills management. Implement the mechanism
+    natively in Core/.NET with suitable existing Git infrastructure; the skills CLI is an external
+    design reference only. This simplifies the Draft without authorizing product implementation.
+
+60. **Skill acceptance, private Git and initial source scope (2026-10-26).**
+    The owner accepts replacing repeated content-digest confirmation: administrator install/update
+    supplies current content to selected consumers, and app skills advance with their app without
+    another acceptance in each profile. Migrate both Harness and CLI/facade content gates while
+    preserving explicit selections and independent repository/tool permissions.
+
+    Private Git reuses explicitly selected existing administrator Source connections within
+    supported providers/transports. No separate skill credential store is added. Upstream deletion
+    is shown by a check and removes the skill only when the administrator applies that update;
+    unavailable sources and failed downloads preserve installed content.
+
+    Manual package upload is removed from the initial slice. Its only sources are Git and installed
+    apps; no archive-upload UI/API or upload replacement flow is required. Earlier upload references
+    in decisions 57-58 are superseded. The [Shared Skills](features/agent-skills/feature.md) now
+    tracks implementation/acceptance under D1-D6. Runtime verification belongs to delivery rather
+    than requiring finished code before Ready. This records scope, not implementation start or
+    promotion from Draft.
+
+61. **Separate agent sessions and explicit context handoffs (2026-10-27).**
+    The owner abandons the Shared Assistant History And Provider Switching plan. Independent
+    sessions already use a shared workspace, and upcoming orchestration coordinates separate
+    agents. Planning, implementation and review therefore use separate conversations with their
+    own profile, provider/account and history. Switching Codex and Claude inside one started
+    conversation and round-trip native-context migration are no longer product requirements.
+    This supersedes the switching direction in decision 10 and its old acceptance scenarios;
+    existing model/reasoning selection within a connection is unchanged.
+
+    [Shared Artifacts D2-D4](features/shared-artifacts/plan.md#deliverables) owns explicit handoffs:
+    goals, constraints, decisions/rationale, bounded attributed summaries, versioned materials,
+    unresolved questions and the next expected step. Workspace membership does not disclose
+    private conversations, attachments or credentials. Selected evidence retains provenance,
+    current access checks and visible gaps; recorded actions are not instructions to replay.
+
+    Necessary reliability work remains tracked: former Shared History D1 transfers to
+    [Action Summary D4](features/assistant-action-summary/plan.md#deliverables), with public
+    invocation semantics in [Agent Providers D2](features/agent-provider-interface/plan.md#deliverables).
+    Former D2-D4 session commands, same-provider continuation and bounded context transfer to
+    [Durable Agent Jobs D7](features/durable-agent-jobs/plan.md#deliverables), also usable by ordinary
+    chats without a scheduler. D4 cross-session materials belong to Shared Artifacts; D6 visibility
+    belongs to [Harness Orchestration D7](features/harness-work-orchestration/plan.md#deliverables)
+    and its material/client consumers. Keep private history private and revalidate access; no
+    blanket whole-conversation sharing is implied. D5 is abandoned, not implemented.
+
+    Delete the abandoned plan and reconcile living references and acceptance criteria. The
+    [development-session umbrella](features/assistant-development-sessions/plan.md#retired-switching-plan-and-requirement-owners-2026-10-27)
+    records the transfer map. Receiving work remains unchecked and Draft; this decision approves
+    documentation changes, not implementation, publication or a runtime migration.
+
+62. **Common task contracts, app providers and internal Harness profiles (2026-10-27).**
+    Core defines the universal task structure and interoperable provider/executor contract.
+    Applications supply task storage and execution; Core is not the initial task provider/store.
+    A producer, task provider and execution app are separate roles that one app may combine.
+    Harness is the first provider and executor; other compatible apps may replace either capability.
+    This replaces decision 55's preferred Core task store without moving workflow policy into Core.
+
+    A task describes work with a stable qualified ID, human-readable string number, Markdown and
+    assignments, plus optional typed resource/input/result references. Applications and artifacts
+    are resource kinds. Tasks do not depend on documents, repositories or workspaces; source work
+    can bind a workspace and expose reverse task links using existing resource APIs. Core owns the
+    common lifecycle meaning while providers may expose controlled status/phase details. Decision 63
+    selects numbering, statuses and launch behavior, now owned by
+    [Basic Tasks](features/basic-tasks/feature.md) after decision 64's split.
+
+    Assign work to an existing human or an execution app with an optional opaque executor choice.
+    Harness initially publishes choices backed by its profiles. Their names and configurations
+    already serve as its named agents; keep the Profile concept and existing editor, with no extra
+    agent record or Core principal. Profile instructions, model/connection settings and skills stay
+    internal to Harness and are not shared with other applications. Other executors need no profile
+    concept. An admitted session/run remains distinct from the profile used to configure it.
+
+    Agents use what their application can do under existing user/app authority and MCP/tool policy.
+    There are no new per-profile permissions, MCP partitions, workspace ACLs or enforced role fences.
+    Reviewer/developer specialization is instructional. Existing denials and invocation preferences
+    still apply; attaching a resource or assigning a task cannot grant access. Native/local execution
+    may have broader OS capabilities than MCP; this decision adds no new isolation requirement or
+    claim. Existing runtime modes, grants and private-session boundaries remain under their owners.
+
+    Retire the separate Persistent Agent Participants plan without claiming its deliverables shipped.
+    Its useful assignment/discovery/attribution requirements originally moved into Shared Tasks
+    D1-D2 and Harness Orchestration D1 using existing identities and profile choices; decision 64
+    transfers that work to [Basic Tasks D1-D4](features/basic-tasks/feature.md#requirement-transfer). The separate
+    new-principal, per-agent access and cross-app identity implementation is abandoned. Future hierarchy remains app-owned orchestration over these choices.
+
+    Start with manual/API creation, assignment, Ready, automatic Harness execution and an observable
+    result. Human-assigned tasks remain manually performed. Reliable attempt acceptance/recovery is
+    required, but document approval, a team hierarchy, general scheduling, parked decisions and public
+    model-provider extraction are not prerequisites. Artifact and decision integration stays tracked
+    after the basic journey, and Documents is an optional producer. The shipped Core skill library
+    stays unchanged; a general skill-provider extension is a separate undecided direction.
+
+    At this decision, the owning Drafts were Shared Tasks and Harness Work Orchestration; decision 64
+    moves basic delivery into [Basic Tasks](features/basic-tasks/feature.md), retains
+    [workspace coordination](features/shared-tasks/plan.md) and
+    [Harness orchestration](features/harness-work-orchestration/plan.md), and preserves linked execution,
+    event, artifact and decision owners. This records the selected architecture and documentation
+    changes, not implementation approval, completed deliverables or runtime/publication changes.
+
+63. **Provider task numbers, common statuses and direct execution (2026-10-27).**
+    The owner accepts provider-selected display prefixes and the proposed task lifecycle/launch
+    contract. A task provider returns an opaque complete number such as MS-42 or HRN-17, with its
+    own counter independent of executor/profile. Existing numbers remain unchanged, are never reused
+    and survive reassignment. Creation retries recover the original number. Core uses provider plus
+    UUID as identity; no global prefix registry is required. Ambiguous display numbers include the
+    provider's name. Prefixes and task numbers describe the supplying provider, not the executor.
+
+    Common statuses are Draft, Ready, InProgress, Blocked, Done and Cancelled. Blocked carries a reason
+    and explanation; internal display phases do not replace these semantics. Execution failures are
+    retained on attempts. requiresReview defaults to false; explicit successful task completion closes
+    work or waits in Blocked/needs_review for acceptance. A completed model turn is not a completed
+    task. Human-assigned Ready tasks are started manually and do not create agent runs.
+
+    Persist the Ready transition, executionId, immutable input snapshot and pending dispatch together.
+    The executor exposes versioned PUT /executions/{executionId}, GET of that execution and idempotent
+    POST cancellation. Accept durably before launch; identical requests recover the same receipt and
+    changed input under the same ID conflicts. HTTP uncertainty recovers the same execution; explicit
+    retry after a failed/stopped attempt uses a new ID. One task has at most one active or uncertain
+    attempt. Cancellation fences late dispatch and does not claim completion before execution stops.
+
+    Harness binds its current profile at first acceptance and retains that snapshot through replay,
+    edit and deletion. A missing pre-acceptance option is an explicit failure, never a default switch.
+    Existing app/user/MCP authority and private-session ownership apply. The public DTO carries task
+    data and opaque executor references, not profile configuration or credentials.
+
+    Direct task dispatch needs persisted request/receipt recovery over the existing Worker, with
+    HTTP reads and SSE UI refresh plus state reload. Completing Notifications D6, the general
+    Durable Agent Jobs scheduler or Shared Decisions is not a prerequisite. Their broader event,
+    scheduling/retry and overnight-wait work remains tracked with those owners. Basic task review
+    stays in the task lifecycle; richer hierarchy and human routing remain Harness orchestration.
+
+    At this decision the common contract/dispatch belonged to Shared Tasks and the execution/UI adapter
+    to Harness Orchestration. Decision 64 now combines that basic delivery in
+    [Basic Tasks](features/basic-tasks/feature.md), with explicit Ready approval and preserved deferred
+    source-allocation and richer-orchestration owners. This earlier decision recorded design/readiness
+    only and did not itself authorize implementation or completion.
+
+64. **Approve Basic Tasks as an independent Ready feature (2026-10-27).**
+    The owner explicitly requests a separate basic-task plan, updated links and Ready status.
+    [Basic Tasks And Execution](features/basic-tasks/feature.md) owns the complete first feature:
+    Core/SDK provider contracts, app-owned task storage, Harness profile execution, manual/API creation,
+    assignment, Ready dispatch, observable results and optional simple review/rework. It retains the
+    accepted provider-prefix numbering, six statuses and recoverable three-operation launch contract.
+    Optional existing resource references and an explicitly selected existing workspace are included;
+    no document, repository, artifact service, organization hierarchy or scheduler is required.
+
+    Automatic workspace allocation/reuse, inherited bindings and reverse task observation remain in
+    [Task Workspace Coordination](features/shared-tasks/plan.md), using the stable shared-tasks folder
+    and its surviving D3/D5 IDs. [Harness Work Orchestration](features/harness-work-orchestration/plan.md)
+    retains D3-D7's artifact/decision integration, parked waits, task decomposition, hierarchy and
+    cross-session material access. [Shared Artifacts](features/shared-artifacts/plan.md),
+    [Shared Decisions](features/shared-decisions/feature.md) and [Durable Agent Jobs](features/durable-agent-jobs/plan.md)
+    keep their unfinished content, addressed-response, scheduling and continuation contracts.
+
+    Transfer Shared Tasks D1-D2/D4 and the basic parts of D3/D5, plus Harness Orchestration D1-D2
+    and the base-UI/acceptance parts of D3/D5/D6, into Basic Tasks D1-D6. The owning plans record the
+    exact map. Retire transferred IDs without reusing them or marking them implemented. Existing
+    session privacy is preserved by the basic adapter; broader cross-session integration remains D7.
+
+    Only Basic Tasks becomes Ready. Deferred plans stay Draft and are outside this approved delivery;
+    no remaining requirements are hidden, deleted or counted as complete. Basic Tasks can be delivered
+    as one feature/PR independently of full orchestration, in accordance with repository versioning
+    and verification rules. The current documentation update does not claim implementation started,
+    runtime acceptance or publication.
+
+65. **Own the Ollama engine and separate agent provider applications (2026-10-28).**
+    The owner selects a Hosty-owned agent engine that calls Ollama directly, rather than using Codex
+    to execute Ollama-backed conversations. The target has independently installed Codex, Ollama and
+    Claude Code provider applications. One provider can expose multiple models; a model is not an app.
+    Harness is a consumer and conversation UI. Core supplies generic discovery, identity, grants and
+    authorized references; agent messages/events flow directly between consumer and provider.
+
+    The initial Ollama adapter uses the already installed host Ollama server through a configurable
+    URL with a runtime-appropriate local default. It does not install/start the inference server,
+    download models or place weights in Worker storage. Provider-app packaging and inference-server
+    packaging are separate decisions. The existing app-cache contract is available for reproducible
+    weights if a managed server is separately designed; no host model-store migration is implied.
+
+    Integrate the adapter into the existing Worker with explicit state and tool dependencies.
+    Do not require a new engine daemon or a switch from Docker to native execution in this feature.
+    This is preparation for extraction, not evidence that current agent processes survive a Harness restart. Shared implementation libraries are allowed; a mandatory
+    central agent runtime in Core or Harness would defeat the lifecycle boundary.
+
+    [Ollama Agent Adapter And Connections](features/ai-gateway-providers/feature.md) owns direct inference,
+    coding/MCP tools, context and durable execution in the initial integration.
+    [Agent And Model Provider Interface](features/agent-provider-interface/plan.md) owns the public
+    contract, separate applications, migration and reconnect acceptance. This decision fixes the
+    direction, superseding the combined-provider/Codex-backed suggestions. The owner subsequently
+    approved the initial external-server adapter for implementation on the same date. Separate
+    application extraction remains Draft; no live runtime switch is authorized.
+
+66. **Core feedback records, SDK annotations and Harness triage (2026-10-30).** Refine
+    decisions 11 and 37: one report can contain several related element/region annotations, comments
+    and images explaining one problem. Preserve reports as units when selecting a dispatch batch.
+    Core owns submitted reports, evidence and trusted current app/runtime context; SDK owns capture
+    and browser-local unsent drafts. Harness initially hosts a global Feedback page and a
+    workspace-details section. No separate feedback application or development UI extraction is required. Core remains client-neutral;
+    reporting does not require administrator-only Harness.
+    Workspace dispatch proposes the currently displayed chat, previews reports and any instruction,
+    and runs only after confirmation. Global dispatch defaults to a new session that normally
+    prepares a new workspace; an explicitly selected existing workspace/chat is also valid.
+    Observed origin and work destination remain distinct. Take available current context from Core
+    at first submission acceptance, with unknown fields and an update-time mismatch allowed; exact
+    served-build tracking is not required. Preserve this snapshot on retries. Unsent text and image
+    drafts survive reload in browser storage (IndexedDB is the selected technical default), and
+    remain until confirmed acceptance or explicit discard. Retry uses the same submission identity
+    to avoid duplicates. Permissions, capture feasibility and remaining visual details belong to
+    [Feedback Inbox](features/app-feedback-inbox/feature.md). The selected capture interaction places
+    comment entry beside the element and also permits editing the same annotation in the side panel.
+
+    The owner further limits this delivery to manually selected reports sent to one session.
+    Ordinary reporters get draft/submission feedback only, with no post-submission view, status or
+    notifications; administrators inspect records in Harness. Busy-chat sends are simply refused
+    with the selection preserved, without queuing or automatic retry. Address all excludes reports
+    already processed or accepted/in progress. A processing indication follows the exact dispatched
+    prompt and its per-report outcome. There is no separate Closed state. Retain processed reports
+    and screenshots for explicit Send again with additional explanations and a new attempt history.
+    Each report has zero or one current workspace binding; reassignment replaces it while preserving
+    the observed app version/context. Workspace deletion removes currently processed reports and
+    their evidence, but detaches every other report intact into the unassigned inbox. A historical
+    origin/dispatch reference is not another binding. PR state and app rollout neither gate
+    processing nor trigger deletion. Browser screenshots use Screen Capture API with user permission;
+    no DOM-renderer workaround is included. Automated pickup, multi-agent routing and possible
+    reporter access remain [ideas](ideas.md#i19-feedback-follow-up-and-automated-handling).
+    Feedback has no task association or task creation. The owner subsequently approved implementation
+    on October 30; the feature document records the delivered manual flow. Automatic agent triggers remain outside this scope.
+
+67. **Canonical platform MCP and provider-owned tasks (2026-10-30).**
+    The owner requests a review of platform operations exposed through Harness development MCP,
+    especially child Core environment lifecycle. Standard platform operations belong in Core MCP
+    and must be usable without a Harness conversation. Core already owns environment and publication
+    services; their missing direct-client adapters must reuse those services. Harness retains its
+    conversations, client context, execution integration and UI.
+
+    The owner explicitly selects provider-owned task storage with unified MCP access. Decision 62's
+    provider/executor split remains; no universal Core task store or task-data migration is selected.
+    The proposed common Core MCP adapter uses the platform task contract and an explicitly qualified
+    provider, preserving application/user authority and independent implementations. This narrows
+    the intended extension to standard provider capabilities; arbitrary app-domain proxying and
+    moving model runners or private Harness profiles into Core are outside this decision.
+
+    The owner also accepts separate identities for a user conversation, a provider-native
+    resumable session and an execution run. This need not create three user-facing objects.
+    Conversations remain application-owned; providers own native state/processes; Core knows the
+    shared references and resource-facing status/control contract without owning private transcripts.
+    Native resume and reconstruction from retained context are distinct recovery modes. The exact
+    same-provider/account recovery guarantees and UI behavior remain open under Agent Provider D2
+    and Durable Agent Jobs D7. Decision 61's exclusion of in-chat provider switching remains.
+
+    Environments have their own Core resource identity and lifecycle. Core owns deployment,
+    readiness, access mediation and cleanup; Harness is a client. Chat/session/run associations
+    are optional context, and a chat ending does not itself Stop or Finish an environment. Access
+    by additional agents, lifetime/consumer rules and existing-owner migration still need a concrete
+    contract; approval of the boundary does not broaden current grants.
+
+    The owner accepts feature-based tool sections with a separate Applications group. Display
+    grouping does not change tool authority or imply that Harness context belongs to Core.
+    [Core MCP Capability Boundaries](features/core-mcp/feature.md) owns the catalog, client migration,
+    task adapter and settings design. [External Development](features/external-development-workspaces/feature.md)
+    retains direct environment/publication authority and acceptance. Both plans remain Draft;
+    this direction does not approve unresolved contracts, implementation or a live runtime switch.
+
+68. **Common history contracts with provider-owned detail and future indexing (2026-10-30).**
+    The owner selects a common Core-owned interface for conversations, messages and history,
+    exposed through API and MCP for explicit sharing, cross-chat search and an independent indexer.
+    Core defines the exchange contract and authority; Harness and other history providers retain
+    original records, their own storage representation and richer native details. Optional typed
+    events and declared, namespaced/versioned extensions accommodate tool input/output, timings,
+    usage and dynamic provider data without requiring every assistant to support every capability.
+
+    This extends decision 67 beyond minimal references/status: shared history reads/search are now
+    an intended platform capability. It does not select a central Core transcript database, expose
+    all private native state or restore decision 61's abandoned in-chat provider switching. Sharing
+    remains explicit and authorized; workspace membership or an index is not a transcript grant.
+    Common display/search history does not promise a complete execution-recovery checkpoint.
+
+    The owner confirms Qdrant as the intended future indexing integration and explicitly defers
+    connecting it now. Prepare stable identities/revisions, bounded source reads, incremental
+    changes/deletions and current-access checks without installing a vector database or choosing
+    an embedding model. Source providers remain authoritative; derived indexes must follow source
+    edits, deletion and changed access. Automatic learned memory and context insertion are separate.
+
+    [Conversation History](features/conversation-history/feature.md) owns schemas, API/MCP sharing/search,
+    provider adapters and indexing compatibility. [Core MCP](features/core-mcp/feature.md) owns catalog
+    integration; [Agent Providers](features/agent-provider-interface/plan.md) retains native execution.
+    [Ideas I2](ideas.md#i2-search-across-knowledge-providers) retains the later Qdrant integration and
+    broader knowledge search. Detailed contracts remain Draft; this is direction approval, not
+    implementation, database installation or publication authorization.
+
+69. **Core MCP, history and direct-client v1 contracts approved (2026-10-31).**
+    The owner explicitly accepts the concrete candidate contracts proposed under decisions 66-67,
+    requests recording the decisions, promotes the corresponding plans to Ready, and authorizes
+    beginning implementation. This supersedes their earlier pending-contract wording: qualified
+    conversation/native-session/run references; separate history and execution interfaces;
+    provider-owned storage; optional event/extension support; independent read/share/export/control
+    grants; named-user live-reference sharing; provider lexical search; and a change/deletion
+    export contract for a later indexer are accepted. Qdrant integration remains deferred.
+
+    Core owns environment lifecycle independently of chats, with current-user cross-client
+    management, separate child-API/source/publication authority, registered-consumer stop evidence
+    and explicit recovery. Native resume stays bound to the same provider/account; reconstruction
+    is explicit, bounded and preserves the conversation without replaying prior tool effects.
+    Tasks retain provider storage and executor-bound result submission. Canonical tool migration
+    preserves Disabled and does not carry Run across broader authority.
+
+    [Core MCP](features/core-mcp/feature.md), [Conversation History](features/conversation-history/feature.md)
+    and [External Development](features/external-development-workspaces/feature.md) own implementation
+    and acceptance. The bounded agent-session and ordinary-chat recovery decisions are also recorded
+    in their owning plans; the wider provider extraction and durable scheduler remain Draft.
+    This approval authorizes development, not commits, publication or a live runtime switch.
+
+70. **Flat profile executors and task-based delegation (2026-11-04).**
+    The owner selects existing Harness profiles as the only configured agent abstraction. Do not
+    introduce named-agent principals, saved teams, virtual companies or a reporting hierarchy.
+    Manager, analyst, developer and QA are ordinary profiles; any profile may delegate to another.
+    Work forms a retained task tree with separate prerequisite relationships, shared source context,
+    independent execution conversations and coordinator verification of child results. Every chat
+    task start creates its root before any children; task-first execution reuses its existing root.
+    An executor may finish the root itself, without forced delegation or a required Manager role.
+    Task-list layout remains unchanged for this slice; root-only and expandable-tree presentation
+    are deferred to later design in Harness Work Orchestration D3.
+
+    New agent task sessions, including children, use Autonomous by default with visible metadata.
+    Adopting a Normal chat first requires that user's approval through Decisions, then switches at
+    a safe turn boundary. The approved mode stays with the session after completion; already-
+    Autonomous sessions do not ask again. No approval per child is required after root admission.
+    Existing Core authority and explicit MCP Ask/Disabled rules remain independent. Chat and task
+    entry points should converge on one coordination task without creating a duplicate manager.
+    Related source tasks reuse the selected logical workspace; task completion does not publish or
+    change ordinary app lifecycle. Durable child results continue the correct parent without a
+    browser or repeated inference while waiting.
+
+    Saved profile descriptions guide selection. The owner accepts a one-off instruction/installed-
+    skill configuration only when available profiles do not fit, with an observable reason and
+    retained execution snapshot. Agents do not mutate the profile catalog. Manual agent-task
+    assignment retains saved-profile selection. With an empty directory, a no-profile chat creates
+    the root using its existing configuration and may delegate one-off children. A single generalist
+    also remains usable; no mandatory role names or seeded profile are selected. Initially inherit
+    the parent model/connection for one-off children.
+
+    An unavailable selected executor produces retained failure evidence. A working coordinator may
+    reassign that same child to another suitable available executor after confirmed non-start/exit,
+    preserving its ancestry, workspace and failed attempt. Uncertain dispatch must reconcile before
+    another attempt. A coordinator with no working connection cannot select its own replacement;
+    recovery remains visible to the user rather than implying an independent supervisor.
+
+    The owner further requests separating task semantics from source resources. Tasks can run
+    without workspaces; Core workspaces retain session participation without knowing task-provider
+    storage. The proposed Draft connects task attempts to execution sessions, which optionally use
+    a workspace, with durable executor-owned source context for queued/restarted work. Retain
+    separate attempt histories on rework/reassignment. The owner subsequently confirms tasks
+    have not been used and explicitly permits replacing the task schema without backward
+    compatibility. The common interface must remain generic and include parent/child relationships;
+    source selection moves into execution context while current broker authority remains enforced.
+
+    The final workspace clarification makes selection optional initially, but once a development
+    root selects a workspace, all its root/descendant sessions belong there, including earlier
+    planning, review and QA. Workspace details show the root task and every authorized session,
+    identifying the executor primarily by its admitted profile name when one was used. Human
+    ownership remains separate; its further presentation is deferred. This scoped sidebar change
+    does not include global task-list regrouping. The owner explicitly requests recording the plan
+    only and not starting new development. A subsequent instruction below finalizes readiness
+    while retaining that implementation boundary.
+
+    The owner accepts configurable defaults of four concurrent executions per root, three levels
+    below the root, fifty total descendants and two retries beyond each task's initial attempt.
+    Time limits are optional; monetary caps require enforceable usage. Users may adjust defaults
+    and root limits; agents cannot raise their own allowance. Exhaustion retains work for recovery.
+    Distinct tasks use distinct sessions with fresh task context, even when they use the same
+    profile. A profile can run independent tasks concurrently; there is no per-profile session pool.
+    Retain separate historical attempts after failure/reassignment and allow only one active attempt
+    per task. Broader session redesign and multiple tasks in one conversation remain deferred.
+
+    The owner first requests completing the technical contracts without implementation, and
+    confirms that the unused task API is revised in place at version 1 without v2 routes or a
+    compatibility layer. The subsequent 2026-11-04 instruction explicitly authorizes updating the
+    registered worktree from main, marking the plan Ready and starting implementation.
+    [Profile-Based Task Delegation](features/profile-task-delegation/feature.md) implements the
+    bounded D1-D8 scope: generic task relationships, immutable attempts, retained root authority,
+    explicit Normal-mode consent, native continuation, optional source binding and editable limits.
+    The broader artifact/provider/event/scheduler plans retain their own remaining scope and status.
+    Commits, publication and an ordinary-data runtime switch remain outside this authorization.
+
 ## Personal And Shared Environments (owner exploration, 2026-10-23)
 
 ### Composition And Extension Boundaries
@@ -857,6 +1418,11 @@ an agent session can remain a convenient default: create the workspace and attac
 Creating another session in the same workspace should not require transferring a single conversation
 between agents. A workspace may also exist without a session, and a session without a workspace.
 
+The [Multiple Sessions In A Shared Workspace feature](features/workspace-sessions/feature.md) implements
+the approved 2026-10-25 scope: explicit administrator sharing, concurrent private sessions and
+independent workspace lifetimes. Broader roles, shared materials and knowledge lifetimes remain
+separate design questions; this direction grants no implementation authority for them.
+
 Treat their association as a separate relationship. A session may detach or survive deletion of a
 workspace; removing one session need not remove shared work. Workspace resources should not be kept
 merely to preserve conversation history or knowledge. Preserve unfinished source and actual resource
@@ -878,6 +1444,9 @@ pitfalls:
   [I2](ideas.md#i2-search-across-knowledge-providers).
 - Retention, transcription and summaries: [I13](ideas.md#i13-retention-transcription-and-summaries).
 - Collaboration and QA as optional compositions: [I14](ideas.md#i14-collaboration-and-qa-as-optional-compositions).
+  Decision 54 selects the underlying capability/gap investigation in the
+  [composable-work Draft](features/composable-agent-systems/plan.md); specific application forms
+  remain exploratory.
 - Bringing existing applications into Hosty: [I15](ideas.md#i15-bringing-existing-applications-into-hosty).
 - A portable environment and a dedicated Hosty OS: [I16](ideas.md#i16-a-portable-environment-and-a-dedicated-hosty-os).
 
@@ -961,6 +1530,16 @@ the manifest contract. Two standing consequences:
 
 ## Spanned Features
 
+[conversation-history](features/conversation-history/feature.md) ·
+[core-mcp](features/core-mcp/feature.md) ·
+[composable-agent-systems](features/composable-agent-systems/plan.md) ·
+[basic-tasks](features/basic-tasks/feature.md) ·
+[shared-tasks](features/shared-tasks/plan.md) ·
+[shared-artifacts](features/shared-artifacts/plan.md) ·
+[shared-decisions](features/shared-decisions/feature.md) ·
+[durable-agent-jobs](features/durable-agent-jobs/plan.md) ·
+[harness-work-orchestration](features/harness-work-orchestration/plan.md) ·
+[profile-task-delegation](features/profile-task-delegation/feature.md) ·
 [harness-development-ui](features/harness-development-ui/feature.md) ·
 [harness-session-retention](features/harness-session-retention/feature.md) ·
 [workspaces-app](features/workspaces-app/feature.md) ·
@@ -976,7 +1555,7 @@ the manifest contract. Two standing consequences:
 [core-extension-model](features/core-extension-model/feature.md) ·
 [assistant-provider-permissions](features/assistant-provider-permissions/feature.md) ·
 [agent-mcp-directory](features/agent-mcp-directory/feature.md) ·
-[ai-agent-bridge](features/ai-agent-bridge/plan.md) ·
+[ai-agent-bridge](features/ai-agent-bridge/feature.md) ·
 [user-agent-sessions](features/user-agent-sessions/plan.md) ·
 [agent-provider-interface](features/agent-provider-interface/plan.md) ·
 [app-ui-surfaces](features/app-ui-surfaces/feature.md) ·

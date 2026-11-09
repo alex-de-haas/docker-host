@@ -38,7 +38,7 @@ internal sealed class TelemetryQueryService(SqliteTelemetryStore store)
     }
 
     public BackendFleetLogsResponse GetFleetLogs(
-        int? rangeSeconds, int? minSeverity, int? limit, IReadOnlyCollection<string>? appIds, string? query)
+        int? rangeSeconds, int? minSeverity, int? limit, IReadOnlyCollection<string>? appIds, string? query, string? callerAppId = null, string? traceId = null)
     {
         var range = Math.Clamp(rangeSeconds ?? DefaultLogsRangeSeconds, 1, MaxLogsRangeSeconds);
         var cappedLimit = Math.Clamp(limit ?? DefaultLogsLimit, 1, MaxLogsLimit);
@@ -46,7 +46,7 @@ internal sealed class TelemetryQueryService(SqliteTelemetryStore store)
 
         var records = new List<BackendFleetLogRecord>();
         var present = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var parsed in store.QueryFleetLogs(sinceMs, minSeverity, cappedLimit, appIds, query))
+        foreach (var parsed in store.QueryFleetLogs(string.IsNullOrWhiteSpace(traceId) ? sinceMs : 0, minSeverity, cappedLimit, appIds, query, callerAppId, traceId))
         {
             var record = parsed.Record;
             records.Add(new BackendFleetLogRecord(
@@ -61,11 +61,11 @@ internal sealed class TelemetryQueryService(SqliteTelemetryStore store)
             present.Add(parsed.AppId);
         }
 
-        return new BackendFleetLogsResponse(range, CountApps(present), records);
+        return new BackendFleetLogsResponse(string.IsNullOrWhiteSpace(traceId) ? range : 0, CountApps(present), records, store.GetCoreTraceCheckpoint()?.Coverage);
     }
 
     public BackendTracesResponse GetFleetTraces(
-        int? rangeSeconds, int? limit, IReadOnlyCollection<string>? appIds, string? query)
+        int? rangeSeconds, int? limit, IReadOnlyCollection<string>? appIds, string? query, string? callerAppId = null)
     {
         var range = Math.Clamp(rangeSeconds ?? DefaultTracesRangeSeconds, 1, MaxTracesRangeSeconds);
         var cappedLimit = Math.Clamp(limit ?? DefaultTracesLimit, 1, MaxTracesLimit);
@@ -73,7 +73,7 @@ internal sealed class TelemetryQueryService(SqliteTelemetryStore store)
         var trimmedQuery = string.IsNullOrWhiteSpace(query) ? null : query.Trim();
 
         var groups = new Dictionary<string, TraceAccumulator>(StringComparer.OrdinalIgnoreCase);
-        foreach (var parsed in store.QueryInWindowSpans(sinceNano, appIds, MaxSpansScan))
+        foreach (var parsed in store.QueryInWindowSpans(sinceNano, appIds, MaxSpansScan, callerAppId))
         {
             if (!groups.TryGetValue(parsed.Span.TraceId, out var group))
             {
@@ -113,7 +113,7 @@ internal sealed class TelemetryQueryService(SqliteTelemetryStore store)
             }
         }
 
-        return new BackendTracesResponse(range, CountApps(present), summaries);
+        return new BackendTracesResponse(range, CountApps(present), summaries, store.GetCoreTraceCheckpoint()?.Coverage);
     }
 
     // The count is reported and rendered as a number of *apps*. Hosty Core contributes records under a
@@ -162,7 +162,8 @@ internal sealed class TelemetryQueryService(SqliteTelemetryStore store)
             }
         }
 
-        return new BackendTraceDetailResponse(trimmed ?? string.Empty, startMs, durationMs, spans);
+        return new BackendTraceDetailResponse(trimmed ?? string.Empty, startMs, durationMs, spans, store.GetCoreTraceCheckpoint()?.Coverage,
+            spans.Count == 0 ? "No retained spans. The trace may be sampled out, outside capture, dropped or past retention." : null);
     }
 
     // OTLP nanos exceed the JS safe-integer range, so the wire format is fractional unix-ms.

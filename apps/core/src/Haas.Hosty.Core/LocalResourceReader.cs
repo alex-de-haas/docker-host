@@ -8,7 +8,7 @@ namespace Haas.Hosty.Core;
 internal readonly record struct ResourceProcess(int Pid, int Parent, int Group);
 internal readonly record struct ProcessReading(int Pid, long Started, double CpuSeconds, long MemoryBytes);
 
-internal sealed class LocalResourceReader(LocalCommandProcessRegistry registry, IClock clock)
+internal sealed class LocalResourceReader(LocalCommandProcessRegistry registry, IClock clock, CoreEnvironmentStore? environments = null)
 {
     private Dictionary<int, ProcessReading> previous = new();
     private long previousTick;
@@ -73,6 +73,24 @@ internal sealed class LocalResourceReader(LocalCommandProcessRegistry registry, 
             current[own.Pid] = own;
             samples.Add(new("hosty.core", "core", "core", clock.UtcNow,
                 CpuPercent([own], previous, elapsed), own.MemoryBytes));
+        }
+        if (environments is not null)
+        {
+            IReadOnlyList<CoreEnvironmentRecord> children;
+            try { children = await environments.ListAsync(cancellationToken); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or SandboxException)
+            { children = []; }
+            foreach (var child in children.Where(e => e.Process is not null && e.State is not ("finished" or "stopped")))
+            {
+                var identity = child.Process!;
+                var reading = ReadProcess(identity.Pid);
+                if (reading is not { } observed || observed.Started != identity.StartedAt.UtcTicks) continue;
+                current[observed.Pid] = observed;
+                samples.Add(new("core-environment:" + child.Id, "core", "core", clock.UtcNow,
+                    CpuPercent([observed], previous, elapsed), observed.MemoryBytes,
+                    EnvironmentId: child.Id, ProcessIdentity: observed.Pid + ":" + observed.Started,
+                    OwnerUserId: child.Owner.UserId));
+            }
         }
         previous = current;
         previousTick = tick;

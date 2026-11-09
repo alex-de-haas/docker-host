@@ -4,6 +4,7 @@ internal static class LifecycleEndpoints
 {
     public static void Map(WebApplication app)
     {
+        AppUpdateSourceEndpoints.Map(app);
         var audited = app.MapGroup("").WithMetadata(new LifecycleAuditMarker()).AddEndpointFilter<LifecycleAuditFilter>();
         app.MapGet("/api/apps/{appId}/preview-checks", async (string appId, HttpRequest request,
             UserDirectoryStore users, IClock clock, CoreLifecycleService lifecycle, CancellationToken ct) =>
@@ -549,7 +550,7 @@ internal static class LifecycleEndpoints
                 return CoreJson.Json(new ErrorResponse("app_permission_required", "Telemetry collection requires apps.read and core.read."), 403);
 
             return Results.Text(exposition.CurrentPrometheusText, "text/plain; version=0.0.4");
-        });
+        }).WithMetadata(new CoreDiagnosticsTransport());
 
         // `refresh=true` forces a plan rebuild; otherwise a fresh cached plan is projected without
         // network work (plan-first updates, docs/features/runtime-app-update/feature.md).

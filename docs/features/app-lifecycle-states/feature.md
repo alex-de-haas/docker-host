@@ -1,6 +1,6 @@
 ---
 created: 2026-07-28
-updated: 2026-10-08
+updated: 2026-10-25
 summary: Intermediate starting and stopping runtime states, so every client sees a lifecycle action while it is in flight.
 components: [apps/core, apps/shell]
 ---
@@ -18,6 +18,7 @@ reads `starting` for its whole duration, and every client sees it — not just t
 | `running` | The runtime is up — the process or container exists. Whether it answers is health's question, not this one's (see [App Readiness](../app-readiness/feature.md)). |
 | `starting` | A start is in flight. Nothing is listening yet. |
 | `stopping` | A stop is in flight. The runtime may still hold its ports. |
+| `waiting` | A pending start waits for required dependencies; no lifecycle verb is in flight. Stop cancels it. |
 | `stopped` | Down, with nothing operating on it. |
 | `unknown` | Observed but not classifiable — a partial multi-service outage, a failed stop, or a state left behind by a Core that died mid-verb. |
 
@@ -27,6 +28,10 @@ this Core process, holding that app's operation lock. Nothing else may be inferr
 A restart reports its two halves — `stopping`, then `starting` — rather than a single `restarting`.
 Both are `IsBusy`, so clients behave identically either way, and the operator gets to see which half
 is slow.
+
+Waiting is durable startup intent. It is neither `IsUp`, `IsBusy` nor `IsIdle`, so controls stay
+available but destructive restore still requires Stop. Recovery and crash supervision leave it
+to the [dependency coordinator](../dependency-ordered-autostart/feature.md).
 
 ## Three predicates, not one boolean
 
@@ -39,7 +44,8 @@ different questions that only coincided while the vocabulary was binary, so `App
 | --- | --- | --- |
 | `IsUp` | is the runtime up? | `running` |
 | `IsBusy` | is a verb mid-flight, so keep hands off? | `starting`, `stopping` |
-| `IsIdle` | is it safe to do something destructive? | `stopped` |
+| `IsIdle` | is it safe to do something destructive? | `waiting` | A pending start waits for required dependencies; no lifecycle verb is in flight. Stop cancels it. |
+| `stopped` |
 
 **`IsIdle` is not `!IsUp`.** That is the whole reason the type exists. A gate meaning "only when
 nothing is happening" — restoring a backup over the app's data directory, say — silently widens to
@@ -121,6 +127,7 @@ processes decides first; probes only refine the all-alive case:
 | `starting` | every process alive, some probe still `starting` (Docker's word) |
 | `degraded` | every process alive, **some probe failing** |
 | `unhealthy` | **some process dead** — a mix of running and exited or stopped services |
+| `waiting` | A pending start waits for required dependencies; no lifecycle verb is in flight. Stop cancels it. |
 | `stopped` | every service stopped |
 
 So `degraded` and `unhealthy` are **not** ASP.NET's `Degraded` and `Unhealthy`. There, both describe
@@ -164,13 +171,15 @@ stays ready there.
   reloads without replaying the mutation. This is connection recovery, not a claim that a lost request
   succeeded. Explicit authorization or lifecycle errors remain visible. While Shell is stopped its
   Core proxy is unavailable too; an already-open page cannot start it through that proxy.
-- **CLI** — `ConsoleUi.State` already coloured `starting` and `stopping`, so `hosty apps list` needed
-  no change. `hosty apps start|stop` are synchronous and print the settled state.
+- **CLI** — `ConsoleUi.State` colours `starting`, `stopping` and `waiting`. `hosty apps start|stop`
+  print the settled state; a dependency wait returns promptly.
+- **Waiting in Shell** — an amber hourglass, Attention classification and Cancel start action
+  distinguish a dependency wait from an in-flight operation.
 
 ## Related
 
-- [dependency-ordered-autostart](../dependency-ordered-autostart/plan.md) — adds `waiting` to this
-  vocabulary once dependency-ordered autostart exists.
+- [dependency-ordered-autostart](../dependency-ordered-autostart/feature.md) — required-dependency
+  admission, waiting and automatic recovery.
 - [core-event-bus](../core-event-bus/feature.md) — how transitions reach clients without polling.
 
 ## Testing Expectations
