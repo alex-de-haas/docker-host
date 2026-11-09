@@ -41,6 +41,56 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.Equal(starts, f.Adapter.StartCount);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ActivationReturn_RetainsRemoteConnectedWhileActiveAndReconcilesReturnedChild(bool running)
+    {
+        var (f, owner, workspaces, tree, _, _) = await LocalHandoffFixture();
+        if (running) await f.Service.StartAsync("test.created");
+        var original = (await f.Apps.GetAppAsync("test.created"))!;
+        var service = ActivationService(f, workspaces);
+        var id = Guid.NewGuid().ToString();
+        await service.PrepareAsync(tree.WorkspaceId, new(id, owner.UserId, new(false)), default);
+        await service.ApplyAppsAsync(id, default);
+        var remotePath = Path.Combine(f.Root, "publication.git");
+        Directory.CreateDirectory(remotePath);
+        await DevelopmentWorkspaceService.Git(remotePath, ["init", "--bare"], default);
+        var remoteWorkspaces = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock, privateSources: new RemoteGitFixture(remotePath));
+        var active = (await f.Apps.GetAppAsync(original.Id))!;
+        var starts = f.Adapter.StartCount;
+        var stops = f.Adapter.StopCount;
+        var connected = await remoteWorkspaces.RemoteCommandAsync(tree.Id, owner, "connect", RemoteRequest(), default);
+        Assert.NotNull(connected.Remote);
+        Assert.Equal(active.SourceState! with { Remote = connected.Remote }, (await f.Apps.GetAppAsync(original.Id))!.SourceState);
+        Assert.Equal(starts, f.Adapter.StartCount); Assert.Equal(stops, f.Adapter.StopCount);
+        var data = Path.Combine(f.Paths.AppsRoot, original.Id, "data", "sentinel.txt");
+        await File.WriteAllTextAsync(data, "current ordinary data");
+        var edit = Path.Combine(tree.Path, "unfinished.txt");
+        await File.WriteAllTextAsync(edit, "keep current source edit");
+        var request = new WorkspaceReturnRequest(Guid.NewGuid().ToString(), [original.Id], false, true);
+        var pending = await service.PrepareReturnAsync(id, request, default);
+        await service.ReturnAppsAsync(id, default);
+        var restored = (await f.Apps.GetAppAsync(original.Id))!;
+        Assert.Equal(original.SourceState! with { Remote = connected.Remote }, restored.SourceState);
+        Assert.Equal(original.SelectedRuntime, restored.SelectedRuntime);
+        Assert.Equal(running, AppRuntimeStates.IsUp(restored.RuntimeState));
+        Assert.Equal("returned", (await f.Service.GetDevModeAsync(original.Id)).Phase);
+        Assert.Equal(new[] { original.Id }, WorkspaceRuntimeFiles.Read(f.Paths.DataRoot, id).ReturnedApps);
+
+        // Reconcile process loss after the child Return completed but before group progress persisted.
+        starts = f.Adapter.StartCount; stops = f.Adapter.StopCount;
+        WorkspaceRuntimeFiles.Save(f.Paths.DataRoot, pending);
+        await service.ReturnAppsAsync(id, default);
+        await service.ReturnAppsAsync(id, default);
+        Assert.Equal(new[] { original.Id }, WorkspaceRuntimeFiles.Read(f.Paths.DataRoot, id).ReturnedApps);
+        Assert.Equal(starts, f.Adapter.StartCount); Assert.Equal(stops, f.Adapter.StopCount);
+        Assert.Equal(restored.SourceState, (await f.Apps.GetAppAsync(original.Id))!.SourceState);
+        Assert.Equal("current ordinary data", await File.ReadAllTextAsync(data));
+        Assert.Equal("keep current source edit", await File.ReadAllTextAsync(edit));
+        Assert.Equal(connected.Remote, (await remoteWorkspaces.RemoteStatusAsync(tree.Id, owner, original.Id, default)).Remote);
+    }
+
     [Fact]
     public async Task ActivationReview_SourceContentDriftInvalidatesDigestBeforePreparation()
     {

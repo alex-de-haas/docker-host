@@ -6,7 +6,7 @@ import { fetchCore } from "../core-transport.js";
 
 
 import type { FormEvent } from "react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, CheckCircle2, LoaderCircle, MoreHorizontal, Trash2, UserCog, UserPlus, UserX } from "lucide-react";
 import { toast } from "@/components/reui/operation-toast";
 import { useConfirmation } from "@/components/reui/confirmation";
@@ -57,6 +57,7 @@ export function UserManagementPanel({
   const [search, setSearch] = useState("");
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteDisplayName, setInviteDisplayName] = useState("");
   const [inviteRole, setInviteRole] = useState<"host.admin" | "host.user">("host.user");
@@ -241,6 +242,10 @@ export function UserManagementPanel({
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Input className="min-w-0 flex-1 sm:w-60" placeholder="Search users" aria-label="Search users" value={search} onChange={(event) => setSearch(event.target.value)} />
+            <Button className="shrink-0" variant="outline" onClick={() => setCreateOpen(true)}>
+              <UserPlus className="h-4 w-4" />
+              Create User
+            </Button>
             <Button className="shrink-0" onClick={() => setInviteOpen(true)}>
               <UserPlus className="h-4 w-4" />
               Invite User
@@ -334,6 +339,11 @@ export function UserManagementPanel({
           </Table>
         </CardContent>
       </Card>
+      )}
+
+      {createOpen && (
+        <CreateUserDialog apps={apps} coreOrigin={coreOrigin} sendCsrfJson={sendCsrfJson}
+          onClose={() => setCreateOpen(false)} onCreated={() => { setCreateOpen(false); void reloadUsers(); }} />
       )}
 
       <Dialog open={inviteOpen} onOpenChange={setInviteOpen}>
@@ -432,6 +442,114 @@ export function UserManagementPanel({
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+function CreateUserDialog({ apps, coreOrigin, sendCsrfJson, onClose, onCreated }: {
+  apps: AssignableAppSummary[];
+  coreOrigin: string;
+  sendCsrfJson: (endpoint: string, body?: unknown, method?: string) => Promise<Response>;
+  onClose: () => void;
+  onCreated: () => void;
+}) {
+  const [email, setEmail] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const [role, setRole] = useState<"host.admin" | "host.user">("host.user");
+  const [appIds, setAppIds] = useState<string[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+  const submitting = useRef(false);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (submitting.current) return;
+    if (password !== confirmation) {
+      setError("Passwords do not match.");
+      return;
+    }
+    submitting.current = true;
+    setPending(true);
+    setError(null);
+    try {
+      const response = await sendCsrfJson(`${coreOrigin}/api/auth/users`, {
+        email, displayName: displayName || null, password, role,
+        assignedAppIds: role === "host.user" ? appIds : [],
+      });
+      if (!response.ok) throw new Error(await readCoreError(response));
+      setPassword("");
+      setConfirmation("");
+      toast.success("User created");
+      onCreated();
+    } catch (caught) {
+      if (!isAuthRequiredRedirectError(caught)) {
+        setError(caught instanceof Error ? caught.message : "Unable to create user.");
+      }
+    } finally {
+      submitting.current = false;
+      setPending(false);
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open && !submitting.current) onClose(); }}>
+      <DialogContent className="sm:max-w-2xl" showCloseButton={!pending}>
+        <DialogHeader>
+          <DialogTitle>Create User</DialogTitle>
+          <DialogDescription>Set a password and app access. The user can sign in immediately.</DialogDescription>
+        </DialogHeader>
+        <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col gap-4">
+          <DialogBody className="space-y-4">
+            {error && <InlineError message={error} />}
+            <fieldset disabled={pending} className="space-y-4">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="createEmail">Email</Label>
+                  <Input id="createEmail" type="email" autoComplete="off" value={email} onChange={(event) => setEmail(event.target.value)} required />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="createDisplayName">Display name</Label>
+                  <Input id="createDisplayName" autoComplete="off" value={displayName} onChange={(event) => setDisplayName(event.target.value)} />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="createPassword">Password</Label>
+                  <Input id="createPassword" type="password" autoComplete="new-password" minLength={8} maxLength={1024} aria-describedby="createPasswordHelp" value={password} onChange={(event) => setPassword(event.target.value)} required />
+                  <p id="createPasswordHelp" className="text-xs text-muted-foreground">Use 8–1024 characters.</p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="createConfirmation">Confirm password</Label>
+                  <Input id="createConfirmation" type="password" autoComplete="new-password" minLength={8} maxLength={1024} value={confirmation} onChange={(event) => setConfirmation(event.target.value)} required />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="createRole">Role</Label>
+                  <Select disabled={pending} value={role} onValueChange={(value) => {
+                    const nextRole = value === "host.admin" ? "host.admin" : "host.user";
+                    setRole(nextRole);
+                    if (nextRole === "host.admin") setAppIds([]);
+                  }}>
+                    <SelectTrigger id="createRole" className="w-full"><SelectValue /></SelectTrigger>
+                    <SelectContent><SelectGroup>
+                      <SelectItem value="host.user">User</SelectItem>
+                      <SelectItem value="host.admin">Admin</SelectItem>
+                    </SelectGroup></SelectContent>
+                  </Select>
+                </div>
+              </div>
+              {role === "host.user" ? <AppAccessPicker apps={apps} selectedAppIds={appIds} onChange={setAppIds} />
+                : <p className="text-sm text-muted-foreground">Administrators have access to all apps.</p>}
+            </fieldset>
+          </DialogBody>
+          <DialogFooter>
+            <Button type="button" variant="outline" disabled={pending} onClick={onClose}>Cancel</Button>
+            <Button type="submit" disabled={pending}>
+              {pending ? <LoaderCircle className="h-4 w-4 animate-spin motion-reduce:animate-none" /> : <UserPlus className="h-4 w-4" />}
+              Create User
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 

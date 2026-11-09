@@ -53,7 +53,7 @@ internal sealed class ProtectedSettingsChanges(IClock clock, CorePublicOriginRes
         return path is "/api/core/settings" or "/api/core/source" or "/api/core/cloudflare/connect" or "/api/core/cloudflare/disconnect"
             or "/api/core/update-feed" or "/api/apps/{appId}/update-source/apply" or "/api/apps/update-source/apply"
             or "/api/core/public-origin/publish" or "/api/core/public-origin/unpublish"
-            || path.StartsWith("/api/auth/users/", StringComparison.Ordinal)
+            || path == "/api/auth/users" || path.StartsWith("/api/auth/users/", StringComparison.Ordinal)
             || path is "/api/auth/invitations" || path.StartsWith("/api/auth/invitations/", StringComparison.Ordinal)
             || path == "/api/auth/background-grants/revoke-all-authorizations"
             || HttpMethods.IsDelete(request.Method) && (path.StartsWith("/api/auth/credentials/", StringComparison.Ordinal)

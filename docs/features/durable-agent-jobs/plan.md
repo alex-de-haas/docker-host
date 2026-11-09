@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-26
-updated: 2026-11-04
+updated: 2026-11-07
 summary: Durable jobs and recoverable Harness sessions with scheduling, bounded context, same-provider continuation, budgets and decision waits.
 components: [apps/harness, apps/core, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -128,8 +128,8 @@ and authorize no deletion during planning.
 [Assistant Events And Session Continuation](../assistant-events-and-continuation/plan.md) owns the
 cross-app activity/conversation binding, inbound-event receipt and admission contract. Its assistant
 adapter maps an eligible event to D7's common idempotent session command; it does not own a second
-recovery engine, transcript or scheduler. Interactive chess uses this path without creating a task
-or scheduled job for each turn. Delegated task results can satisfy a registered parent wait.
+recovery engine, transcript or scheduler. Interactive activities use this path without creating a
+task or scheduled job for each turn. Delegated task results can satisfy a registered parent wait.
 
 D7 here retains provider/account-bound recovery and bounded context, while D1-D5 retain job policy
 and parked waits. Coordinate source/receipt/command IDs, busy/paused/cancelled behavior and unknown
