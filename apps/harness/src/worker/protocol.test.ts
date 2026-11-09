@@ -360,7 +360,8 @@ it.each([true, false])("fences unhealthy usage storage without fabricating exit 
   expect(warning).toHaveBeenCalledWith("[worker] Usage persistence failed; admission fenced.", { code: "ENOSPC" });
   expect(JSON.stringify(warning.mock.calls)).not.toContain("private path");
   expect((await f.journal.load("usage-failure")).receipt).toMatchObject({ exitConfirmed: stopped, error: "Worker stopped after usage persistence failed. Check worker logs." });
-  expect(f.engine.occupied).toBe(stopped ? 0 : 1);
+  // The renamed receipt is readable before directory fsync finishes and releases capacity.
+  await expect.poll(() => f.engine.occupied, { timeout: 5000 }).toBe(stopped ? 0 : 1);
 });
 it("recovers a missing run only with exact-generation attestation and retains a late-admission tombstone", async () => {
   const f = await setup();

@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
 import { AssistantApiError, getSession, listContextApps, setSessionApps, type AssistantSession, type ContextApp } from "@/lib/assistant-api";
 import { editMentionDraft, insertMention, mentionQuery, readMentionDraft, writeMentionDraft, serializeMentions, type MentionDraft } from "@/lib/app-mentions";
 
-export type AppMentionInputHandle = { serialize: () => string; insertPlainText: (text: string) => void };
+export type AppMentionInputHandle = { serialize: () => string; insertPlainText: (text: string) => boolean };
 
 type Props = Omit<ComponentProps<"textarea">, "value" | "onChange" | "ref"> & {
   ref?: Ref<AppMentionInputHandle>;
@@ -96,9 +96,10 @@ export function AppMentionInput({ ref, value, onChange, session, inputRef, conte
     setDraft(nextDraft); onChange(nextDraft.text);
   };
   useImperativeHandle(ref, () => ({ serialize: () => serializeMentions(current), insertPlainText: text => {
-    if (value || composing || disabled || saving || pending.current) return;
+    if (value || composing || disabled || saving || pending.current) return false;
     record({ text, mentions: [] });
     requestAnimationFrame(() => { if (mounted.current) { inputRef.current?.focus(); inputRef.current?.setSelectionRange(text.length, text.length); } });
+    return true;
   } }));
   const undo = (redo: boolean) => {
     if (!redo && history.current[historyIndex.current].text !== current.text) {

@@ -1,6 +1,6 @@
 ---
 created: 2026-10-16
-updated: 2026-11-03
+updated: 2026-11-09
 summary: Harness expires reconciled chats, protects attached development sessions and recovers previously accepted cleanup without deleting shared source implicitly.
 components: [apps/harness, apps/core]
 ---
@@ -23,7 +23,10 @@ Automatic expiry does not delete workspaces. The diagnostic API retains eligibil
 information for operational recovery, without displaying internal cleanup states during chat.
 
 Ordinary inactive chats use their last activity time. Active turns, pending answers/approvals,
-queued completion, unresolved handoffs and resource operations prevent expiry. Sandbox-only chats
+queued completion, unresolved handoffs and resource operations prevent expiry. Any
+[message queue](../harness-message-queue/feature.md) entry also protects its conversation, including
+paused, editing, failed and uncertain sends. Queue mutations and retention share the session lock,
+so expiry cannot race an accepted enqueue or dispatch claim. Sandbox-only chats
 with live resources remain protected until explicit Finish; terminal resource ownership is reconciled
 before ordinary-chat expiry. A lack of currently displayed worktrees is not proof of an ordinary chat.
 
@@ -61,6 +64,9 @@ response does not authorize a replacement request. Native execution must stop su
 local removal. Published PRs and other assistants' conversations are not deleted.
 
 Manual conversation removal stops its execution, detaches that session and removes its history/cache.
+It also removes durable queue state, upload UUID receipts, queue snapshots and restored-draft pins.
+When no queue entries remain, ordinary eligibility applies to the conversation; retained upload
+receipts and restored-draft attachments follow its eventual removal rather than keeping it active.
 Dirty workspace source and other conversations remain. Live session resources and pending operations
 still require reconciliation. Retention never invokes unfinished-work discard or cancels unknown
 external processes. Harness keeps no hidden archive of a deleted conversation.
@@ -123,7 +129,8 @@ Pause alone never establishes completion or starts a completed-workspace retenti
   legacy migration, corrupt configuration and unavailable Core classification.
 - Preserve unfinished/deferred work regardless of age, including hidden resource history, a
   closed-unmerged PR, partial multi-repository integration, new edits and explicit resume.
-- Exclude active execution, pending questions/approvals, handoffs and resource operations; reconcile
+- Exclude active execution, pending questions/approvals, every pending queue state, editing
+  reservations, handoffs and resource operations; reconcile
   sandbox-only sessions before deleting their conversation.
 - Exercise service identity, current installation/session ownership, still-enabled administrator
   ownership, explicit cleanup permission and source/resource grants without saved browser tokens.

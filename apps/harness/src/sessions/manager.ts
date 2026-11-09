@@ -9,6 +9,9 @@ import { AgentObservations } from "../agent-sessions/observations.js";
 import { ollamaAttachments } from "../harness/ollama/attachments.js";
 import { SUGGESTION_TTL_MS, suggestionText } from "../harness/prompt-suggestion.js";
 import { SuggestionPreferences } from "./suggestion-preferences.js";
+import { SuggestionHistory } from "./suggestion-history.js";
+import { MessageQueue, type QueueAttempt, type QueueSnapshot } from "./message-queue.js";
+import type { Readable } from "node:stream";
 import { profileConfig, type ProfileStore } from "../profiles/store.js";
 import type { AgentProfileConfig } from "../profiles/types.js";
 import { prepareSkills, skillRequest, validSkillIds } from "../skills.js";
@@ -234,6 +237,10 @@ export class SessionManager {
   private readonly suggestionPreferenceGenerations = new Map<string, number>();
   private readonly operations = new Map<string, Promise<unknown>>();
   private readonly actorCredentialRefreshes = new Map<string, { credential: string }>();
+  private readonly queuePumps = new Map<string, Promise<void>>();
+  private readonly queueWakeRequested = new Set<string>();
+  private readonly messageQueues: MessageQueue;
+  private readonly suggestionHistory: SuggestionHistory;
   private serialize<T>(key: string, action: () => Promise<T>): Promise<T> {
     const previous = this.operations.get(key) ?? Promise.resolve();
     const next = previous.catch(() => undefined).then(action);
@@ -323,6 +330,8 @@ export class SessionManager {
     private readonly executionMode?: "native" | "docker",
     readonly profiles: ProfileStore | null = null,
   ) {
+    this.messageQueues = new MessageQueue(store);
+    this.suggestionHistory = new SuggestionHistory(store, (id, payload) => this.append(id, payload));
     this.observations = new AgentObservations(store);
     this.mcpPolicy = new McpToolPolicy(settings,
       (id, event) => this.serialize(id, async () => {
@@ -611,6 +620,201 @@ export class SessionManager {
     for (const record of await this.store.listRecords()) if (record.workerRun) await this.requireLive(record.id);
   }
 
+  async recoverMessageQueues(): Promise<void> {
+    for (const record of await this.store.listRecords()) if (record.messageQueue?.entries.length) {
+      await this.requireLive(record.id); this.wakeMessageQueue(record.id);
+    }
+  }
+
+  private queueEvent(session: LiveSession): StoredEvent {
+    return { type: "session_message_queue", seq: -3, ts: new Date().toISOString(), sessionId: session.record.id, queue: this.messageQueues.snapshot(session.record) };
+  }
+  private queueBinding(record: SessionRecord): string {
+    return createHash("sha256").update(JSON.stringify([record.connectionId, record.connectionRevision, record.connectionIdentity, record.harnessKind,
+      record.executionMode, record.autonomyRevision, record.autonomy, record.agentProfile?.id, record.agentProfile?.revision, record.skillIds,
+      record.workspaceAssociation, record.developmentWorkspaces?.map(tree => [tree.id, tree.state, tree.observation?.head])])).digest("hex");
+  }
+  private publishMessageQueue(session: LiveSession): void { this.fanOut(session, this.queueEvent(session)); }
+  async messageQueue(id: string, owner: string): Promise<QueueSnapshot> {
+    return this.serialize(id, async () => {
+      const session = await this.requireLive(id);
+      if (session.record.createdBy !== owner) throw new SessionNotFoundError(id);
+      return this.messageQueues.snapshot(session.record);
+    });
+  }
+  private assertQueueSession(record: SessionRecord): void {
+    if (record.taskExecutionId) throw new AppContextError(409, "task_managed_session", "Task attempts cannot accept an ordinary conversation queue.");
+    if (record.handoffPending || ["queued", "unknown"].includes(record.handoffDispatch?.state ?? ""))
+      throw new AppContextError(409, "handoff_pending", "Resolve the prepared handoff before queuing another message.");
+    if (record.retentionCleanup) throw new AppContextError(409, "cleanup_pending", "Conversation cleanup has already started.");
+  }
+  private async assertQueueWorkspace(session: LiveSession, credential?: string): Promise<void> {
+    const token = credential ?? session.workspaceCredential ?? session.credential;
+    if (this.development?.available && token) {
+      const workflow = token.startsWith("hosty_delegated.") ? (await this.development.retention(session.record.id, session.record.createdBy)).workflow
+        : await this.development.call(session.record.id, token, "workflow-status", {}) as { closure?: string | null; state?: string };
+      if (workflow?.closure || ["completed", "deferred", "deleting", "deleted"].includes(workflow?.state ?? ""))
+        throw new AppContextError(409, "workspace_closed", "Resume the retained workspace before accepting another queued agent message.");
+    } else if (session.record.developmentWorkspaces?.length || session.record.developmentLease)
+      throw new AppContextError(401, "workspace_credentials_required", "Refresh Hosty credentials to verify this workspace before queuing another agent message.");
+  }
+  async messageQueueCommand(id: string, owner: string, input: Record<string, unknown>, credential?: string) {
+    const result = await this.serialize(id, async () => {
+      const session = await this.requireLive(id);
+      if (session.record.createdBy !== owner) throw new SessionNotFoundError(id);
+      const replay = typeof input.requestId === "string" && this.messageQueues.state(session.record).receipts[input.requestId.toLowerCase()];
+      if (!replay) this.assertQueueSession(session.record);
+      const command = input.command as { type?: unknown } | undefined;
+      if (!replay && ["enqueue", "resume", "retry"].includes(String(command?.type))) await this.assertQueueWorkspace(session, credential);
+      if (credential) { session.workspaceCredential = credential; session.credential = credential; }
+      const result = await this.messageQueues.command(session.record, input); this.publishMessageQueue(session); return result;
+    });
+    this.wakeMessageQueue(id); return result;
+  }
+  async uploadQueueAttachment(id: string, owner: string, uploadId: string, name: string, body: Readable) {
+    return this.serialize(id, async () => {
+      const session = await this.requireLive(id);
+      if (session.record.createdBy !== owner) throw new SessionNotFoundError(id);
+      this.assertQueueSession(session.record);
+      const result = await this.messageQueues.upload(session.record, uploadId, name, body); this.publishMessageQueue(session); return result;
+    });
+  }
+  async queuedAttachment(id: string, owner: string, attachmentId: string) {
+    return this.serialize(id, async () => {
+      const session = await this.requireLive(id);
+      if (session.record.createdBy !== owner) throw new SessionNotFoundError(id);
+      return this.messageQueues.attachment(session.record, attachmentId);
+    });
+  }
+  async suggestionAction(id: string, owner: string, suggestionId: string, input: Record<string, unknown>) {
+    return this.serialize(id, async () => {
+      const session = await this.requireLive(id);
+      return this.suggestionHistory.action(session.record, owner, suggestionId, input, this.suggestionSignature(session));
+    });
+  }
+  async historicalSuggestions(id: string, owner: string) {
+    return this.serialize(id, async () => {
+      const session = await this.requireLive(id);
+      if (session.record.createdBy !== owner) throw new SessionNotFoundError(id);
+      await this.suggestionHistory.reconcile(session.record, this.suggestionSignature(session));
+      return [...(await this.suggestionHistory.read(session.record)).values()];
+    });
+  }
+  private wakeMessageQueue(id: string): void {
+    if (this.stopping) return;
+    if (this.queuePumps.has(id)) { this.queueWakeRequested.add(id); return; }
+    const work = new Promise<void>(resolve => setImmediate(resolve)).then(() => this.advanceMessageQueue(id));
+    this.queuePumps.set(id, work); this.inFlightEvents.add(work);
+    void work.catch(() => { /* The persisted claim remains recoverable; never replay a failed pump blindly. */ }).finally(() => {
+      if (this.queuePumps.get(id) === work) this.queuePumps.delete(id); this.inFlightEvents.delete(work);
+      if (this.queueWakeRequested.delete(id)) this.wakeMessageQueue(id);
+    });
+  }
+  private async queueWaiting(session: LiveSession, code: string, message: string): Promise<void> {
+    if (session.record.messageQueue?.waiting?.code === code && session.record.messageQueue.waiting.message === message) return;
+    await this.messageQueues.change(session.record, next => { next.waiting = { code, message }; }); this.publishMessageQueue(session);
+  }
+  private async advanceMessageQueue(id: string): Promise<void> {
+    let stopSuggestions = false, again = false;
+    const dispatch = await this.serialize(id, async (): Promise<{ entryId: string; attempt: QueueAttempt; credential: string } | undefined> => {
+      if (this.stopping) return;
+      const session = await this.requireLive(id), queue = this.messageQueues.state(session.record), entry = queue.entries[0];
+      if (!entry || queue.paused || entry.state === "editing" || entry.state === "failed") return;
+      if (entry.attempt && ["sending", "unknown"].includes(entry.state)) {
+        let receipt: StoredMessageReceipt | null;
+        try { receipt = await this.store.readMessageReceipt(id, entry.attempt.clientRequestId); }
+        catch {
+          await this.messageQueues.change(session.record, next => { const head = next.entries[0]!; head.state = "unknown";
+            head.error = { code: "queue_receipt_unavailable", message: "The saved admission receipt is unavailable. Preserve this message and inspect execution recovery." };
+            next.paused = true; next.reason = head.error.message; });
+          this.publishMessageQueue(session); return;
+        }
+        if (receipt) {
+          await this.messageQueues.settle(session.record, entry.id, this.publicMessageReceipt(receipt, session.record.createdBy));
+          this.publishMessageQueue(session); again = receipt.state === "accepted"; return;
+        }
+      }
+      if (session.record.status === "suggesting") { stopSuggestions = true; return; }
+      if (!session.run && !session.record.workerRun && session.record.agentRunId
+        && await this.observations.change(state => state.runs.some(run => run.id === session.record.agentRunId && !run.stopConfirmed))) {
+        await this.queueWaiting(session, "worker_recovery_required", "The previous native execution has no confirmed exit. Inspect execution recovery before continuing the queue."); return;
+      }
+      if (session.record.workerRun || ["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) return;
+      const credential = session.workspaceCredential ?? session.credential;
+      if (!credential || credential.startsWith("hosty_delegated.")) {
+        await this.queueWaiting(session, "queue_sign_in_required", "Sign in to Harness to continue this saved queue."); return;
+      }
+      const identity = await resolveAppSession(credential, AbortSignal.timeout(5_000));
+      if (identity.status !== "active" || identity.identity.userId !== session.record.createdBy || identity.identity.hostRole !== "host.admin") {
+        await this.queueWaiting(session, "queue_sign_in_required", identity.status === "unavailable" ? "Hosty identity is unavailable. Refresh the queue when Core is ready." : "Sign in to Harness to continue this saved queue."); return;
+      }
+      if (this.stopping) return;
+      try {
+        this.assertQueueSession(session.record);
+        if (session.record.workerRecovery?.state === "pending" || session.record.developmentLeaseState === "admitting")
+          throw new AppContextError(409, "worker_recovery_required", "Confirm the prior execution has stopped before continuing the queue.");
+        const next = structuredClone(queue), head = next.entries[0]!;
+        if (!head.attempt) {
+          head.attempt = { clientRequestId: randomUUID(), text: head.text, attachments: [], appContextRevision: session.record.appContextRevision ?? 0,
+            selectionRevision: session.record.selectionRevision ?? 0, withoutAppDetails: head.withoutAppDetails === true,
+            bindingKey: this.queueBinding(session.record),
+            ...(head.promptSuggestions ? { promptSuggestions: true } : {}) };
+          head.attempt.attachments = await this.messageQueues.materialize(session.record, head);
+        } else {
+          const materialized = await this.messageQueues.materialize(session.record, head);
+          if (JSON.stringify(materialized) !== JSON.stringify(head.attempt.attachments)) throw new Error("Retained attachment identities changed.");
+        }
+        if (head.attempt?.bindingKey && head.attempt.bindingKey !== this.queueBinding(session.record))
+          throw new AppContextError(409, "queue_settings_conflict", "Agent settings or workspace changed after this send was claimed. Review it before retrying.");
+        const { payloadFingerprint: previousFingerprint, ...payload } = head.attempt;
+        const payloadFingerprint = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+        if (previousFingerprint && previousFingerprint !== payloadFingerprint)
+          throw new AppContextError(409, "queue_claim_conflict", "The frozen send details changed. Preserve this attempt for recovery.");
+        head.attempt.payloadFingerprint = payloadFingerprint;
+        head.state = "sending"; delete head.error; delete next.waiting;
+        await this.messageQueues.save(session.record, next); this.publishMessageQueue(session);
+        return { entryId: head.id, attempt: structuredClone(head.attempt), credential };
+      } catch (error) {
+        const message = error instanceof AppContextError ? error.message : "The queued message could not be prepared. Reattach unavailable files or retry.";
+        await this.messageQueues.change(session.record, next => {
+          const head = next.entries[0]!; head.state = "failed"; head.error = { code: error instanceof AppContextError ? error.code : "queue_prepare_failed", message };
+          next.paused = true; next.reason = message;
+        }); this.publishMessageQueue(session); return;
+      }
+    });
+    if (stopSuggestions) { await this.endSuggestions(id); setImmediate(() => this.wakeMessageQueue(id)); return; }
+    if (again) { setImmediate(() => this.wakeMessageQueue(id)); return; }
+    if (!dispatch || this.stopping) return;
+    try {
+      const input = dispatch.attempt;
+      const receipt = await this.postMessage(id, input.text, dispatch.credential, input.attachments, { queueEntryId: dispatch.entryId,
+        clientRequestId: input.clientRequestId, actorUserId: (await this.getSession(id))!.createdBy,
+        expectedRevision: input.appContextRevision, selectionRevision: input.selectionRevision, withoutDetails: input.withoutAppDetails,
+        promptSuggestions: input.promptSuggestions, workspaceCredential: dispatch.credential });
+      if (!receipt) throw new Error("Missing queued admission receipt.");
+      await this.serialize(id, async () => { const session = await this.requireLive(id); await this.messageQueues.settle(session.record, dispatch.entryId, receipt); this.publishMessageQueue(session); });
+    } catch (error) {
+      await this.serialize(id, async () => {
+        const session = await this.requireLive(id);
+        let existing: StoredMessageReceipt | null;
+        try { existing = await this.store.readMessageReceipt(id, dispatch.attempt.clientRequestId); }
+        catch {
+          await this.messageQueues.change(session.record, next => {
+            const entry = next.entries.find(candidate => candidate.id === dispatch.entryId && candidate.attempt?.clientRequestId === dispatch.attempt.clientRequestId);
+            if (!entry) return;
+            entry.state = "unknown"; entry.error = { code: "queue_receipt_unavailable", message: "The saved admission receipt is unavailable. Preserve this message and inspect execution recovery." };
+            next.paused = true; next.reason = entry.error.message;
+          });
+          this.publishMessageQueue(session); return;
+        }
+        const receipt: MessageReceipt = existing ? this.publicMessageReceipt(existing, session.record.createdBy) : {
+          clientRequestId: dispatch.attempt.clientRequestId, state: "rejected", error: { code: error instanceof AppContextError || error instanceof ConnectionError || error instanceof WorkerError ? error.code : "queue_dispatch_failed",
+            message: error instanceof AppContextError || error instanceof ConnectionError || error instanceof WorkerError ? error.message : "The queued message was not admitted. Review it and retry." } };
+        await this.messageQueues.settle(session.record, dispatch.entryId, receipt); this.publishMessageQueue(session);
+      });
+    }
+  }
+
   async recoverMcpApprovals(): Promise<void> {
     for (const record of await this.store.listRecords()) {
       if (!record.mcpPendingApprovals?.length || this.live.has(record.id)) continue;
@@ -640,6 +844,7 @@ export class SessionManager {
       }
       session.credentialRefreshPending = false;
     });
+    this.wakeMessageQueue(id);
   }
 
   /** Identity readiness is independent of unrelated conversation queues; keep only the latest actor credential. */
@@ -669,8 +874,9 @@ export class SessionManager {
 
   /** Refresh every already-live conversation owned by this actor; never starts or replays a turn. */
   async refreshActorCredentials(userId: string, credential: string): Promise<void> {
+    for (const record of await this.store.listRecords()) if (record.createdBy === userId && record.messageQueue?.entries.length) await this.requireLive(record.id);
     const results = await Promise.allSettled([...this.live.values()]
-      .filter(s => s.record.createdBy === userId && (s.credential !== credential || s.workspaceCredential !== credential || s.credentialRefreshPending))
+      .filter(s => s.record.createdBy === userId && (s.credential !== credential || s.workspaceCredential !== credential || s.credentialRefreshPending || s.record.messageQueue?.waiting))
       .map(s => this.refreshSessionCredentials(s.record.id, userId, credential)));
     const failure = results.find(r => r.status === "rejected");
     if (failure?.status === "rejected") throw failure.reason;
@@ -751,8 +957,12 @@ export class SessionManager {
     try { return await this.workspaceActionInner(id, action, input, credential, userId, dispatchGuard); }
     finally {
       const session = this.live.get(id);
-      if (session?.suggestionContext !== undefined && session.suggestionContext !== this.suggestionSignature(session))
-        this.clearSuggestion(session);
+      if (session?.record.suggestionHistoryVersion) {
+        const reconcile = this.serialize(id, () => this.suggestionHistory.reconcile(session.record, this.suggestionSignature(session)));
+        this.inFlightEvents.add(reconcile);
+        void reconcile.finally(() => this.inFlightEvents.delete(reconcile)).catch(() => undefined);
+        if (session.suggestionContext !== undefined && session.suggestionContext !== this.suggestionSignature(session)) this.clearSuggestion(session);
+      }
     }
   }
 
@@ -2131,7 +2341,7 @@ export class SessionManager {
     });
   }
 
-  async postMessage(id: string, text: string, credential?: string, attachments: string[] = [], context: { feedback?: FeedbackMessageReference; taskContinuation?: { id: string; generation: number; owner: string; snapshot: string }; decisionContinuation?: Pick<DecisionWait, "id" | "owner" | "snapshot" | "cancellationGeneration">; promptSuggestions?: boolean; taskDispatch?: boolean; selectionRevision?: unknown; expectedRevision?: unknown; withoutDetails?: boolean; dispatchId?: string; workspaceCredential?: string | null; clientRequestId?: unknown; actorUserId?: string } = {}): Promise<MessageReceipt | void> {
+  async postMessage(id: string, text: string, credential?: string, attachments: string[] = [], context: { queueEntryId?: string; feedback?: FeedbackMessageReference; taskContinuation?: { id: string; generation: number; owner: string; snapshot: string }; decisionContinuation?: Pick<DecisionWait, "id" | "owner" | "snapshot" | "cancellationGeneration">; promptSuggestions?: boolean; taskDispatch?: boolean; selectionRevision?: unknown; expectedRevision?: unknown; withoutDetails?: boolean; dispatchId?: string; workspaceCredential?: string | null; clientRequestId?: unknown; actorUserId?: string } = {}): Promise<MessageReceipt | void> {
     const clientRequestId = context.clientRequestId === undefined ? undefined : this.messageRequest(context.clientRequestId);
     const actorUserId = clientRequestId ? this.messageActor(context.actorUserId) : undefined;
     if (context.feedback && (context.feedback.version !== 1 || typeof context.feedback.dispatchId !== "string"
@@ -2161,8 +2371,19 @@ export class SessionManager {
           return result;
         }
       }
+      if (this.stopping) throw new AppContextError(503, "harness_stopping", "Harness is stopping; the saved message was not dispatched.");
       if (context.decisionContinuation) this.checkDecisionRecord(session.record, context.decisionContinuation);
       if (context.taskContinuation) this.checkTaskContinuation(session.record, context.taskContinuation);
+      const queue = session.record.messageQueue;
+      // A validated continuation finishes the current turn; future queued messages must wait
+      // for it rather than preventing the parked question or task checkpoint from resuming.
+      if (!context.decisionContinuation && !context.taskContinuation && queue?.entries.length) {
+        const head = queue.entries[0]!;
+        if (!context.queueEntryId || head.id !== context.queueEntryId || head.attempt?.clientRequestId !== clientRequestId || queue.paused)
+          throw new AppContextError(409, "queue_pending", "Use the conversation queue while accepted messages are waiting.");
+        if (head.attempt?.bindingKey && head.attempt.bindingKey !== this.queueBinding(session.record))
+          throw new AppContextError(409, "queue_settings_conflict", "Agent settings or workspace changed after this send was claimed. Review it before retrying.");
+      } else if (context.queueEntryId) throw new AppContextError(409, "queue_entry_missing", "The claimed message is no longer queued.");
       if (session.record.taskExecutionId && (!context.taskDispatch || clientRequestId !== session.record.taskExecutionId && !context.decisionContinuation && !context.taskContinuation))
         throw new AppContextError(409, "task_managed_session", "Use the task lifecycle to start a new attempt. This conversation belongs to one immutable task execution.");
       if (session.record.workerRecovery?.state === "pending")
@@ -2304,6 +2525,12 @@ export class SessionManager {
           await this.store.saveMessageReceipt(id, receipt);
           messageReceipt = receipt;
         }
+        if (context.queueEntryId) {
+          for (const [index, file] of attached.entries()) {
+            const saved = session.record.messageQueue?.entries[0]?.attachments[index];
+            if (saved) await this.append(id, { type: "attachment_added", name: file.name, size: saved.size, displayName: saved.displayName ?? saved.name });
+          }
+        }
         if (this.connections) session.record.providerLocked = true;
         const messageEventSeq = await this.append(id, {
           type: "user_message",
@@ -2315,6 +2542,8 @@ export class SessionManager {
           text: context.taskContinuation ? "Continue the task with its saved child results." : context.decisionContinuation ? "Continue with the saved answer." : text,
           appContext: snapshot,
           ...(attached.length > 0 ? { attachments: attached.map((file) => file.name) } : {}),
+          ...(context.queueEntryId && attached.length ? { attachmentDisplayNames: Object.fromEntries(attached.map((file, index) => [file.name,
+            session.record.messageQueue?.entries[0]?.attachments[index]?.displayName ?? session.record.messageQueue?.entries[0]?.attachments[index]?.name ?? file.name])) } : {}),
         });
         if (messageReceipt) messageReceipt.eventSeq = messageEventSeq;
         session.activityRunStarted = true;
@@ -2927,6 +3156,13 @@ export class SessionManager {
   }
 
   async cancelSession(id: string): Promise<void> {
+    await this.serialize(id, async () => {
+      const session = await this.requireLive(id);
+      if (session.record.messageQueue?.entries.length) {
+        await this.messageQueues.change(session.record, next => { next.paused = true; next.reason = "Response stopped. Resume the queue when ready."; });
+        this.publishMessageQueue(session);
+      }
+    });
     const session = this.live.get(id);
     if (session?.record.status === "suggesting") {
       if (session.record.workspaceActivation?.state === "queued" || session.record.workflowCompletion?.state === "queued") this.mcpPolicy.cancel(id);
@@ -2969,7 +3205,10 @@ export class SessionManager {
     listener: SessionListener,
   ): Promise<{ replay: StoredEvent[]; unsubscribe: () => void }> {
     const session = await this.requireLive(id);
-    await this.serialize(id, () => this.flushAppContextEvent(session));
+    await this.serialize(id, async () => {
+      await this.flushAppContextEvent(session);
+      if (session.record.suggestionHistoryVersion) await this.suggestionHistory.reconcile(session.record, this.suggestionSignature(session));
+    });
     // Attach BEFORE reading the replay and buffer until the read finishes: an event persisted
     // mid-read could otherwise miss both the file snapshot and the listener — for an approval
     // request that gap would strand the harness on a pause nobody can see. The buffered tail is
@@ -3004,7 +3243,7 @@ export class SessionManager {
     // Historical statuses still close old approval cards, but only the final snapshot describes
     // current controls and signals replay readiness. Keep the flag out of the durable journal.
     const history = [...replay, ...tail].map(event => event.type === "session_status" ? { ...event, historical: true } : event);
-    return { replay: [...history, this.activityEvent(session), this.suggestionEvent(session), status], unsubscribe: () => session.listeners.delete(wrapped) };
+    return { replay: [...history, this.activityEvent(session), this.suggestionEvent(session), this.queueEvent(session), status], unsubscribe: () => session.listeners.delete(wrapped) };
   }
 
   async shutdown(): Promise<void> {
@@ -3268,7 +3507,11 @@ export class SessionManager {
           state: text ? "available" : "unavailable", ...(text ? { text, expiresAt } : { reason: event.reason ?? "unavailable" }) };
         session.suggestionAllowed = false;
         if (text) {
-          session.suggestionTimer = setTimeout(() => this.clearSuggestion(session), SUGGESTION_TTL_MS);
+          await this.suggestionHistory.create(session.record, { attemptId: event.workerRunId ?? session.record.workerRun?.id ?? session.runEpoch ?? randomUUID(), text,
+            contextKey: this.suggestionSignature(session), expiresAt });
+          session.suggestionTimer = setTimeout(() => {
+            void this.serialize(id, async () => { await this.suggestionHistory.reconcile(session.record, this.suggestionSignature(session)); this.clearSuggestion(session); }).catch(() => undefined);
+          }, SUGGESTION_TTL_MS);
           session.suggestionTimer.unref();
         }
         this.fanOut(session, this.suggestionEvent(session));
@@ -3429,6 +3672,12 @@ export class SessionManager {
 
     await this.flushAppContextEvent(session);
 
+    if (payload.type === "prompt_suggestion_created" && !session.record.suggestionHistoryVersion) {
+      session.record.suggestionHistoryVersion = 1; await this.store.saveRecord(session.record);
+    }
+    if (session.record.suggestionHistoryVersion && ["user_message", "app_context_changed", "model_selection_changed", "session_provider_changed", "session_profile_changed", "session_autonomy_changed", "workspace_changed"].includes(payload.type))
+      await this.suggestionHistory.invalidate(session.record);
+
     // Child setup is reviewed normally, but its password is not a transcript artifact.
     // The MCP policy retains the original in-memory call until dispatch.
     if (["approval_request", "tool_use"].includes(payload.type)
@@ -3577,6 +3826,10 @@ export class SessionManager {
       await this.finishExecution(session, session.record.workspaceActivation?.state === "queued" || session.record.workflowCompletion?.state === "queued");
     if (status === "running" && session.record.taskExecutionId) session.record.taskRun = { started: true, exitConfirmed: false };
     session.record.status = status;
+    if (["failed", "cancelled", "abandoned"].includes(status) && session.record.messageQueue?.entries.length) {
+      await this.messageQueues.change(session.record, next => { next.paused = true; next.reason = "Execution stopped. Review the conversation and resume the queue."; });
+      this.publishMessageQueue(session);
+    }
     if (["running", "awaiting_approval", "awaiting_question"].includes(status)) this.scheduleWorkspaceActivity(session);
     if (!["running", "awaiting_approval", "awaiting_question"].includes(status)) this.setActivity(session, null);
     session.record.updatedAt = new Date().toISOString();
@@ -3649,6 +3902,7 @@ export class SessionManager {
       type: "session_status",
       status,
     });
+    if (status === "idle") this.wakeMessageQueue(id);
   }
 
   private activityEvent(session: LiveSession): StoredEvent {

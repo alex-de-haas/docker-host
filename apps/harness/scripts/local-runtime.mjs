@@ -8,7 +8,7 @@ export const repository = path.resolve(path.dirname(fileURLToPath(import.meta.ur
 const inputs = [
   "package.json", "package-lock.json", "apps/harness/manifest.json", "apps/harness/package.json",
   "apps/harness/tsconfig.json", "apps/harness/scripts/local-runtime.mjs",
-  "apps/harness/scripts/build-local.mjs", "apps/harness/src",
+  "apps/harness/scripts/build-local.mjs", "apps/harness/src", "apps/harness/shared",
   "apps/harness/web/package.json", "apps/harness/web/next.config.ts", "apps/harness/web/tsconfig.json",
   "apps/harness/web/postcss.config.mjs", "apps/harness/web/src",
   "packages/app-sdk/package.json", "packages/app-sdk/src", "shared/web",

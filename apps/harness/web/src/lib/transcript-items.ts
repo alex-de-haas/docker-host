@@ -74,7 +74,7 @@ export function transcriptItems(events: AssistantEvent[], claimed: ReadonlySet<s
     }
     activity = undefined;
     const visible = event.type === "attachment_added" ? !claimed.has(String(event.name ?? ""))
-      : ["user_message", "assistant_text", "app_context_changed", "approval_request", "question_request", "notice", "error", "command_result", "tool_result"].includes(event.type);
+      : ["user_message", "assistant_text", "prompt_suggestion_created", "app_context_changed", "approval_request", "question_request", "notice", "error", "command_result", "tool_result"].includes(event.type);
     if (visible) items.push({ kind: "event", key: `event-${event.seq}`, event });
   }
   return items;
