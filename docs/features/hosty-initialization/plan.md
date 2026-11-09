@@ -1,8 +1,8 @@
 ---
 status: In Progress
 created: 2026-10-21
-updated: 2026-10-29
-summary: First-run hosty init installs Core, selects distribution apps, assigns automatic ports and opens administrator setup; Dashboard environments reuse the initialization services.
+updated: 2026-11-09
+summary: Published macOS and Linux CLI acceptance is recorded; owner-run Windows evidence and final documentation closure remain pending.
 components: [apps/core, apps/cli, apps/shell, packages/app-sdk, scripts]
 ---
 
@@ -260,7 +260,7 @@ It extends the approved Dashboard scope; D10 and D11 retain their original broad
 - [x] D7. Implement and verify initialization/setup-link authorization and child compatibility: current Shell app-auth mappings, ownership/consent, credential-free management observations, omitted-options empty behavior and independent identity/resource cleanup.
 - [x] D8. Update installed-root Start guards, legacy-root adoption, installer guidance and existing --start behavior; preserve explicit source/test workflows, supported setup commands and no-reset repeat semantics.
 - [x] D9. Pass affected CLI/Core/SDK/Shell tests and builds, covering state/replay, install failures, readiness, ports, migration, authorization and UI recovery; record the results for the exact candidate.
-- [ ] D10. Verify real first-install and Dashboard-child browser journeys with isolated test roots, normal administrator registration, selected-app readiness, resource limits, restart/retry and independently confirmed Finish cleanup; record platform coverage and every unavailable case.
+- [ ] D10. Record the owner's Windows first-install and browser acceptance result, or a further explicit scope decision, to complete the remaining verification under the recorded 2026-10-25 owner decisions; retain the macOS/Linux evidence and every unverified or waived case.
 - [ ] D11. Update README, CLI help and affected reality documents, publish this feature's reality document, apply required component versions, remove this plan on final completion and regenerate the documentation index.
 
 - [x] D12. Simplify Dashboard creation and sandbox rows as requested on 2026-10-29: persistent dialog actions, no stage indicators, immediate close with durable visible progress, one installed-app list, administrator-aware primary/menu actions, retained setup/recovery paths, affected component tests/builds and isolated browser acceptance; update reality docs and the Shell version.
@@ -291,8 +291,9 @@ contract and existing command compatibility above.
 
 D1-D9 are implemented and verified in the registered workspace. The current implementation is
 described in [feature.md](feature.md). The affected suites/builds and macOS/Linux ARM64 Native AOT
-gates pass. D10 retains unavailable publication/native-platform acceptance; the macOS native-linker
-blocker is resolved by the SDK floor documented below. D11 has updated implementation documentation
+gates pass. Published-artifact evidence and the remaining owner-run Windows acceptance are recorded
+below under D10; the macOS native-linker blocker is resolved by the SDK floor documented below.
+D11 has updated implementation documentation
 and component versions; final plan retirement depends on D10 and is not treated as complete while
 those checks remain outstanding.
 
@@ -524,13 +525,45 @@ dotnet test apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj -
 
 ### Outstanding verification owned by D10-D11
 
-D10 needs the coordinated published CLI/Core/Shell artifacts for the real CLI-only download
-journey and the default published-distribution child path with the new Shell manifest. Current rolling
-artifacts do not contain this candidate. Native macOS ARM64 and Ubuntu ARM64 recommended-child journeys
-pass with the candidate custom distribution; they do not establish the published download path.
-Native Windows and Linux x64 installer/browser coverage remains unverified, as does macOS Intel runtime
-execution. Portable PowerShell parsing and substituted installer downloads do not replace those cases.
-D11 keeps this plan until these outstanding deliverables are resolved.
+The [published-artifact acceptance on 2026-10-25](../../reviews/2026-10-25-published-initialization-acceptance.md)
+records the macOS ARM64 real CLI-only download and default published-distribution child paths with
+CLI/Core 0.152.3, Shell 0.112.5 and Marketplace 0.12.2. Ordinary primary/child registration, Core-only
+completion, link renewal, capacity refusal, actual Docker limits, child/parent restart, removed-app
+preservation and verified Finish/disposal pass within that report's boundaries. It records the
+terminal-session interruption and does not establish survival after closing a normal terminal.
+
+The retained workspace notes record the owner's acceptance-scope decisions on 2026-10-25:
+
+- macOS Intel is removed from this feature's required acceptance matrix.
+- Linux acceptance may use the authorized UTM QA guest; its observed architecture is recorded.
+- The owner performs Windows verification on the production target and reports the result.
+  This remains pending evidence and grants no authority to change that target in this work.
+
+The [UTM Linux CLI acceptance on 2026-10-25](../../reviews/2026-10-25-linux-published-initialization-cli-acceptance.md)
+verifies the real installer/Core download on Ubuntu 24.04.5 ARM64, recommended app readiness,
+survival after guest-command exit, same-root repeat, stable ports and container IDs across restart,
+and durable Marketplace removal. Its retained-fixture section describes the partial run at the
+guest login screen, before the subsequent cancellation; no administrator or guest login bypass
+is created. It does not verify browser registration, authenticated Shell or Dashboard children.
+
+The notes subsequently record the owner's cancellation of remaining agent-run platform checks
+on 2026-10-25 because the existing Ubuntu guest password is unavailable. Linux browser/child
+acceptance and the macOS terminal-lifetime observation are waived for that agent run, not reported
+as passes. No guest login, replacement VM or another runtime deployment is requested.
+
+At cancellation, the recorded UTM inventory is empty and the known QA VM UUID is not found.
+No running QEMU VM process or open guest disk is observed; the remaining QEMU helper has no guest
+disk or network listener open. Guest app removal, Core uninstall and guest filesystem deletion
+are not claimed as executed or verified after this disappearance. Selected evidence is already
+exported outside the VM and repository. The missing VM is not recreated for cleanup.
+
+D10 remains open for the owner's separately assigned Windows result or a further explicit scope
+decision. D11 retains the plan until that evidence and final documentation closure are resolved.
+Linux x64, the skipped browser/terminal cases and excluded macOS Intel carry no pass claim.
+Portable PowerShell parsing, substituted downloads, Linux in Docker and the observed ARM64 UTM
+guest do not establish another native target's behavior. The archived reports remain unchanged
+as dated evidence; the later D12 Dashboard verification above remains separate. This documentation
+reconciliation runs no new runtime acceptance and requires no version change.
 
 Implementation checks include:
 
