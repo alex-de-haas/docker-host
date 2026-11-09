@@ -107,12 +107,12 @@ internal sealed partial class PublicationService
         var observation = await connections.UseForSourceAsync(tree.Owner.UserId, binding.Connection.Id, async connection =>
         {
             if (provider is IPullRequestProvider reader)
-                return DisplayReferenceObservation((await reader.ReadPullRequestsAsync(connection, binding.Repository, "", [number], ct)).Single(), binding.Repository, tree.TargetBranch);
+                return DisplayReferenceObservation((await reader.ReadPullRequestsAsync(connection, binding.Repository, "", [number], ct)).Single(), binding.Repository, binding.TargetBranch);
             return await provider.ObserveReferenceAsync(connection, new() { WorkspaceId = tree.Id, Owner = tree.Owner,
                 Repository = binding.Repository, HeadRepository = binding.Repository, ConnectionId = connection.Id,
-                Provider = binding.Source.Descriptor.Id, Branch = tree.Branch, TargetBranch = tree.TargetBranch, Number = number, Url = url }, ct);
+                Provider = binding.Source.Descriptor.Id, Branch = tree.Branch, TargetBranch = binding.TargetBranch, Number = number, Url = url }, ct);
         }, ct);
         await RetainExternalReferenceAsync(tree, binding.Repository, binding.Connection.Id, binding.Source.Descriptor.Id,
-            url, number, new(url, observation.Head, observation, null), ct, background: true);
+            binding.TargetBranch, url, number, new(url, observation.Head, observation, null), ct, background: true);
     }
 }
