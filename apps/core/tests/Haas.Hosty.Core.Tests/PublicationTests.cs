@@ -69,10 +69,16 @@ public sealed partial class CoreLifecycleServiceTests
         public PublicationReference? Reference;
         public Task<string> DestinationAsync(UserProviderConnection c, string r, bool fork, CancellationToken ct) => Task.FromResult(r);
         public string? PushFailure;
+        public Action<UserProviderConnection>? BeforePush;
         public int Pushed;
         public Task PushAsync(UserProviderConnection c, DevelopmentWorkspace w, string destination, string branch, string head, CancellationToken ct)
         {
             Pushed++;
+            BeforePush?.Invoke(c);
+            if (PushFailure is "workflow" or "uncertain")
+                GitHubPublicationProvider.RequirePushSuccess(new(1, "", PushFailure == "workflow"
+                    ? "refusing to allow an OAuth App to create or update workflow without workflow scope"
+                    : "unrecognized failure", false), branch);
             if (PushFailure == "rejected") throw new PublicationException("push_rejected", "Remote rejected this push.");
             Head = head;
             if (PushFailure == "lost") throw new HttpRequestException("Push response lost.");

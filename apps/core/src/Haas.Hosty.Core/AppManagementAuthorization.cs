@@ -224,6 +224,7 @@ internal static class AppManagementAuthorization
         Add(CoreAppPermissions.SourceConnections,
             "PUT /api/source-connections/identity",
             "POST /api/source-connections/pat", "POST /api/source-connections/device",
+            "POST /api/source-connections/{id}/pat", "POST /api/source-connections/{id}/device",
             "POST /api/source-connections/device/{id}/poll", "DELETE /api/source-connections/device/{id}",
             "PUT /api/source-connections/{id}", "POST /api/source-connections/{id}/check", "DELETE /api/source-connections/{id}");
         Add(CoreAppPermissions.Sources,
