@@ -39,6 +39,31 @@ it("keeps other administrators out and excludes native state, tool inputs and ac
   expect(page.coverage.state).toBe("partial");
 });
 
+it("retains suggestion choices in owned exports and shares them only with explicit extension disclosure", async () => {
+  await event(3, "prompt_suggestion_created", { suggestionId: "suggestion", sessionId: record.id, userId: owner.userId,
+    attemptId: "native-attempt", answerSeq: 2, text: "Review <script>literally</script>", contextKey: "private-context", expiresAt: now + 900000 });
+  const initial = await history.read(owner, { conversation: ref() });
+  expect(initial.entries.at(-1)?.data).toMatchObject({ kind: "extension", payload: { state: "available" } });
+  await share({ selection: { entryIds: [entry(3).id] } });
+  await expect(history.get(recipient, { entry: entry(3) })).rejects.toMatchObject({ code: "not_found" });
+  await share({ selection: { entryIds: [entry(3).id] }, extensions: ["harness.prompt-suggestion"] });
+  expect((await history.get(recipient, { entry: entry(3) })).data).toMatchObject({ kind: "extension", fallbackText: expect.stringContaining("Review <script>literally</script>") });
+  await event(4, "prompt_suggestion_resolved", { suggestionId: "suggestion", state: "selected-for-draft", requestId: randomUUID(), expectedRevision: 1 });
+  const chosen = await history.get(owner, { entry: entry(3) });
+  expect(chosen.revision).not.toBe(initial.entries.at(-1)?.revision);
+  expect(chosen.data).toMatchObject({ kind: "extension", payload: { state: "selected-for-draft" }, fallbackText: expect.stringContaining("Selected for draft") });
+  const invocation = { ...owner, version: 2 as const, callerAppId: null, callerInstallation: null, kind: "conversation-history" as const,
+    key: provider.key, operation: "exports.snapshot", resourceIds: [], export: { grantId: "approved", revision: "1", ownerUserId: owner.userId, provider, conversationIds: [record.id] } };
+  const snapshot = await history.export(invocation, { scope: invocation.export }, false);
+  expect("entries" in snapshot && snapshot.entries.filter(entry => entry.data.kind === "extension")).toEqual([chosen]);
+  expect(JSON.stringify(snapshot)).not.toContain("private-context"); expect(JSON.stringify(snapshot)).not.toContain("native-attempt");
+});
+
+it("exports attachment display names without changing their resolvable stored identity", async () => {
+  await event(3, "user_message", { text: "queued", attachments: ["q-uuid-original.txt"], attachmentDisplayNames: { "q-uuid-original.txt": "original.txt" } });
+  expect((await history.get(owner, { entry: entry(3) })).data).toMatchObject({ kind: "message", parts: [expect.anything(), { type: "attachment", attachmentId: "q-uuid-original.txt", name: "original.txt", revision: "3", mediaType: "application/octet-stream" }] });
+});
+
 it("shares only selected live entries without adjacent text, private title, attachments or private activity", async () => {
   await share();
   const initial = await history.conversation(recipient, ref());

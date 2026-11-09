@@ -1,14 +1,16 @@
 ---
 created: 2026-11-03
-updated: 2026-11-05
-summary: One responsive composer action row with a shared agent-settings panel and catalog-driven reasoning controls.
+updated: 2026-11-09
+summary: Responsive composer controls with a durable message stack, transcript suggestions, shared agent settings and capability-aware dictation.
 components: [apps/harness]
 ---
 
 # Compact Harness Composer Controls
 
 The shared chat, workspace and embedded composer has one action row: Add, Agent settings,
-Autonomy, Provider limits when applicable, Context usage, Dictation and Send/Stop. The supported
+Autonomy, Provider limits when applicable, Context usage, Dictation and Send. While the agent is
+running, Send adds another message to the queue and a separate Stop button controls the current
+response. The supported
 minimum chat-pane width is 360 CSS px. The context ring and percentage remain visible. Independent
 pane scrolling and retained drafts follow [Harness Development](../harness-development-ui/feature.md).
 
@@ -18,8 +20,8 @@ narrow widths; the `used` and `left` suffixes appear from a 640 CSS px composer 
 neutral and limits blue until their respective warning thresholds. Unknown limits use a dashed
 ring and `?`; their popover retains detailed observations and Refresh.
 Both percentage labels use the same monospace font, size and regular weight, including inside the composer action row.
-Below 640 CSS px the action row uses 24 px icon controls, a 32 px Send/Stop button and
-20 px rings, leaving both percentages and the recording meter, Stop and Cancel visible together.
+Below 640 CSS px the action row uses 24 px icon controls, a 32 px Send button and
+20 px rings. Recording controls include the signal meter, elapsed/limit display, Stop and Cancel.
 
 ## Agent Settings
 
@@ -79,24 +81,69 @@ corrupt/oversized records and missing identity leave normal chat creation availa
 survive reloads in that browser; browser storage clearing removes them and they do not synchronize
 between browsers or origins.
 
+## Message Stack And Draft Recovery
+
+The message stack sits immediately above the composer. Send captures the current text and
+attachments; after that snapshot is safely staged, the composer accepts the next draft while
+uploads and server submission continue. Text entered after the captured snapshot remains in the
+composer. The stack shows uploading, saving and sending states on the corresponding message,
+with inline errors and Retry controls. The previous amber sending banner is absent. A message
+with an unconfirmed send stays locked while its original request is reconciled.
+
+The server owns accepted queued messages and their attachment bytes, and dispatches them in order
+after the active agent turn. Queued messages support moving up/down, deletion, editing and pausing
+the queue. Sending entries lose edit/delete controls. Browser outbox records preserve pending
+uploads and exact command identities across reloads, scoped to the Harness origin, installation,
+owner and conversation. Storage failures retain recoverable rows and preserve an unsaved composer.
+
+Editing first retains the current draft and attachments, reserves the queued entry, then restores
+that message in the composer. The edit buffer is separate from ordinary draft synchronization.
+Save or Cancel restores the stashed draft after confirmation; uncertain operations retain their
+original Retry identity. Each document has its own editor identity, and a reload or another view
+uses Recover edit explicitly. Stored edit text and file bytes support recovery without silently
+overwriting a newer draft. Submission or an edit-destination change also invalidates dictation
+results belonging to the previous composer destination.
+
+When another tab has a newer ordinary draft, finishing an edit keeps it in the composer and
+retains the earlier stashed draft under Saved drafts. Restore preserves the current draft before
+replacing it. A live reservation takeover also preserves the displaced editor's local buffer;
+the old view cannot continue saving against the transferred reservation.
+
+## Suggestions In The Transcript
+
+Suggestions appear as separate cards in the conversation history. Each card retains its literal
+text and selected-for-draft, dismissed, expired or superseded state. Use suggestion inserts into
+an empty ordinary draft, and Dismiss records that choice. Selection never sends a message by
+itself. A populated draft or active queue edit disables insertion and explains how to preserve
+the current work. The inline Tab hint follows the available card; suggestion text is absent
+from the input placeholder/overlay. See [Prompt suggestions](../assistant-prompt-suggestions/feature.md).
+
 ## Dictation
 
 The microphone button starts dictation immediately. Recording uses three compact inline icons:
 a five-bar microphone signal indicator, Stop and transcribe, and Cancel to discard the recording. Starting
 and transcription show a spinner and retain cancellation. Recording status is announced to assistive
-technology; there is no visible recording label or duration, and no dictation popover. Provider
+technology, and a compact elapsed/maximum timer remains visible during recording. There is no
+dictation popover. Provider
 selection appears inline only when multiple providers need an explicit choice. On a narrow composer
 its trigger is a compact chevron; the selected provider remains in its accessible value and tooltip.
 Permission guidance,
 errors, microphone release, conversation changes and late-result suppression retain their existing
 behavior.
 
+Chat capture waits for ready WAV capabilities from the selected provider and uses the smallest
+of its advertised duration, byte allowance and the 600-second Harness cap. An older two-minute
+provider retains its lower limit. Recording stops shortly before the effective maximum, and WAV
+conversion/upload enforce the same bound. Unavailable or invalid capabilities disable capture
+with an explanation. The separate feedback recorder retains its shorter limit. See
+[Longer chat recordings](../long-speech-recordings/feature.md).
+
 The meter analyses the existing microphone stream locally using Web Audio. Bar height follows the
 measured signal; a lightweight voice-activity estimate highlights likely speech using speech-band
 energy, an adaptive noise floor and hysteresis. It is an estimate, not a guarantee of speech
 recognition. It changes only the indicator, never trims or gates the recorded audio. No audio is
 uploaded for metering and there is no second microphone request. The silent analysis graph is
-released on stop, cancellation, send blocking and conversation changes. Metering failure leaves
+released on stop, cancellation, submission and conversation/edit-destination changes. Metering failure leaves
 recording available.
 
 ## Testing Expectations
@@ -109,11 +156,20 @@ recording available.
   isolation, profile/explicit-setting precedence, account-switch races, immutable creation replay,
   unavailable catalogs, corrupt/blocked storage and no writes from mounted profiles or failed saves.
 - Close settings during persistence: retain the Send interlock, confirmed result/error and draft.
+- While the agent runs, verify Send queues the next message and the separate Stop action remains
+  available. Check inline upload/send failures and Retry without an amber sending banner.
+- Verify FIFO with slow uploads, exact request replay after lost replies, actor/installation
+  isolation, storage failures, unchanged snapshot cleanup and newer drafts during submission.
+- Edit queued text/files with an existing draft, then Save/Cancel/reload/recover. Preserve stashed
+  and edited bytes, isolate other views, and reconcile uncertain operations before cleanup.
+- Verify transcript suggestion history and recorded choices, empty-draft insertion, disabled
+  insertion during edits, Tab/Escape behavior and no automatic send or composer overlay.
 - Check the real action row at 360, 390, 480 and 640 CSS px, including wide viewports with narrow
   panes, light/dark themes, long model names, unknown and over-limit context usage. All supported
   actions remain visible without wrapping, overlap or horizontal toolbar scrolling.
 - Check popover collision handling, focus return and nested model/provider menus in standalone and
   Shell-embedded Harness through normal Core login in a managed sandbox.
 - Verify dictation provider selection, microphone release, cancellation and late transcript
-  suppression through the compact entry point. Use controlled provider/model/usage fixtures when
+  suppression through the compact entry point, elapsed/limit feedback, a 600-second fixture and
+  lower provider duration/byte limits. Use controlled provider/model/usage fixtures when
   browser checks do not require real inference or credentials.

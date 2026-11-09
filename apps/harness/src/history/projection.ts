@@ -2,6 +2,7 @@ import { shouldRetainToolOutput } from "../harness/tool-result.js";
 import { createHash } from "node:crypto";
 import type { HistoryData, HistoryEntry, HistoryPart, ProviderRef } from "@hosty-sdk/app/history";
 import type { SessionRecord, StoredEvent } from "../sessions/store.js";
+import { historicalSuggestions } from "../sessions/suggestion-history.js";
 
 export const fingerprint = (value: unknown): string => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 export const fold = (value: string): string => value.normalize("NFKC").toLowerCase().replaceAll("ß", "ss").replaceAll("ς", "σ");
@@ -13,6 +14,7 @@ export type ProjectedEntry = Omit<HistoryEntry, "revision" | "sequence">;
 /** Project only public transcript fields. Native provider state and account diagnostics stay private. */
 export function project(record: SessionRecord, events: StoredEvent[], provider: ProviderRef): ProjectedEntry[] {
   const entries: ProjectedEntry[] = [];
+  const suggestions = historicalSuggestions(events);
   const add = (event: StoredEvent, data: HistoryData, actor: HistoryEntry["actor"]) => entries.push({
     ref: { conversation: { provider, id: record.id }, id: `event-${event.seq}` }, createdAt: event.ts,
     updatedAt: event.ts, actor, data,
@@ -26,13 +28,27 @@ export function project(record: SessionRecord, events: StoredEvent[], provider: 
     if (event.type === "user_message" && typeof event.text === "string") {
       finish("interrupted");
       const parts: HistoryPart[] = [{ type: "text", text: event.text, format: "plain" }];
+      const displayNames = event.attachmentDisplayNames && typeof event.attachmentDisplayNames === "object" && !Array.isArray(event.attachmentDisplayNames)
+        ? event.attachmentDisplayNames as Record<string, unknown> : {};
       for (const name of Array.isArray(event.attachments) ? event.attachments : []) {
         if (typeof name !== "string" || !name || /[\\/\u0000-\u001f]/.test(name) || name.startsWith(".")) continue;
         const added = events.find(e => e.type === "attachment_added" && e.name === name && e.seq <= event.seq);
-        parts.push({ type: "attachment", attachmentId: name, name, revision: String(added?.seq ?? event.seq), mediaType: "application/octet-stream",
+        const displayName = displayNames[name];
+        const label = typeof displayName === "string" && displayName.length > 0 && displayName.length <= 255 && !/[\\/\u0000-\u001f\u007f]/u.test(displayName) ? displayName : name;
+        parts.push({ type: "attachment", attachmentId: name, name: label, revision: String(added?.seq ?? event.seq), mediaType: "application/octet-stream",
           ...(typeof added?.size === "number" && added.size >= 0 ? { sizeBytes: added.size } : {}) });
       }
       add(event, { kind: "message", role: "user", parts, state: "complete" }, { kind: "user", id: record.createdBy });
+    } else if (event.type === "prompt_suggestion_created") {
+      const value = suggestions.get(String(event.suggestionId));
+      if (!value) continue;
+      finish("complete");
+      const label = { available: "Available", "selected-for-draft": "Selected for draft", dismissed: "Dismissed", expired: "Expired", superseded: "Superseded" }[value.state];
+      add(event, { kind: "extension", name: "harness.prompt-suggestion", version: 1,
+        payload: { suggestionId: value.suggestionId, answerSeq: value.answerSeq, text: value.text, state: value.state,
+          expiresAt: value.expiresAt, ...(value.resolvedAt ? { resolvedAt: value.resolvedAt } : {}) },
+        fallbackText: `Suggested next message: ${value.text}\n${label}`, disclosure: "complete" }, { kind: "system" });
+      if (value.resolvedAt) entries.at(-1)!.updatedAt = value.resolvedAt;
     } else if (event.type === "assistant_text" && typeof event.text === "string") {
       if (!assistant) {
         add(event, { kind: "message", role: "assistant", parts: [{ type: "text", text: event.text, format: "markdown" }], state: "streaming" }, { kind: "agent" });

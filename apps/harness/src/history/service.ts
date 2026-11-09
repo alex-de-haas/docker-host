@@ -26,7 +26,11 @@ export class HistoryService {
   private readonly deliveryGuards = new WeakMap<object, { acls: Record<string, number>; disclosures: Record<string, string>; entries: Array<{ conversation: string; id: string; revision: string }> }>();
   private readonly waiters = new Map<string, Set<() => void>>();
   private readonly unsubscribe: () => void;
-  readonly capabilities: HistoryCapabilities = { version: 1, entryKinds: ["message", "tool_call", "tool_result", "usage"], extensions: [], maxPageSize: 200, snapshotLifetimeSeconds: 900, changeRetentionSeconds: 604800 };
+  readonly capabilities: HistoryCapabilities = { version: 1, entryKinds: ["message", "tool_call", "tool_result", "usage", "extension"],
+    extensions: [{ name: "harness.prompt-suggestion", version: 1, schema: { type: "object", required: ["suggestionId", "text", "state"], properties: {
+      suggestionId: { type: "string" }, answerSeq: { type: "integer" }, text: { type: "string" },
+      state: { enum: ["available", "selected-for-draft", "dismissed", "expired", "superseded"] }, expiresAt: { type: "number" }, resolvedAt: { type: "string" },
+    } } }], maxPageSize: 200, snapshotLifetimeSeconds: 900, changeRetentionSeconds: 604800 };
   constructor(readonly sessions: SessionStore, readonly provider: ProviderRef, private readonly now: () => number = Date.now) {
     this.storage = new HistoryStorage(sessions.dataDir);
     this.exportCursors = new ExportCursors(this.storage.root);
@@ -409,10 +413,14 @@ export class HistoryService {
         const create = input as HistoryShareCreate, selection = create.selection;
         if (!selection || selection.includeFutureEntries === true && selection.entryIds != null || selection.includeFutureEntries !== true && (!Array.isArray(selection.entryIds) || selection.entryIds.length < 1 || selection.entryIds.length > 200 || new Set(selection.entryIds).size !== selection.entryIds.length)) fail("invalid_input", "Select fixed entries or explicitly include future entries.");
         if (!Array.isArray(create.recipientUserIds) || !create.recipientUserIds.length || create.recipientUserIds.length > 16 || new Set(create.recipientUserIds).size !== create.recipientUserIds.length || create.recipientUserIds.some(u => !u || u === actor.userId)) fail("invalid_input", "Select distinct existing recipients.");
-        if (typeof create.includeAttachments !== "boolean" || create.label != null && (typeof create.label !== "string" || create.label.length > 200) || create.expiresAt && (!Number.isFinite(Date.parse(create.expiresAt)) || Date.parse(create.expiresAt) <= this.now()) || create.extensions?.length) fail("invalid_input", "Select valid disclosure and expiration options; Harness declares no history extensions.");
+        if (typeof create.includeAttachments !== "boolean" || create.label != null && (typeof create.label !== "string" || create.label.length > 200) || create.expiresAt && (!Number.isFinite(Date.parse(create.expiresAt)) || Date.parse(create.expiresAt) <= this.now())) fail("invalid_input", "Select valid disclosure and expiration options.");
+        const extensions = create.extensions ?? [];
+        if (!Array.isArray(extensions) || extensions.length > this.capabilities.extensions.length || new Set(extensions).size !== extensions.length
+          || extensions.some(name => !this.capabilities.extensions.some(extension => extension.name === name)))
+          fail("invalid_input", "Select only declared history extensions for sharing.");
         for (const entry of selection.entryIds ?? []) if (!source.entries.some(e => e.ref.id === entry)) return missing();
         grant = { id: randomUUID(), ref: source.metadata.ref, revision: "1", ownerUserId: actor.userId, recipientUserIds: [...create.recipientUserIds].sort(), selection,
-          includeAttachments: create.includeAttachments, extensions: [], label: create.label ?? null, expiresAt: create.expiresAt ?? null, state: "active" };
+          includeAttachments: create.includeAttachments, extensions: [...extensions], label: create.label ?? null, expiresAt: create.expiresAt ?? null, state: "active" };
         state.shares.push(grant);
       }
       source.acl++; source.metadata.revision = String(BigInt(source.metadata.revision) + 1n);

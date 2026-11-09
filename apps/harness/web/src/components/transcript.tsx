@@ -1,6 +1,8 @@
 "use client";
 
 import { DecisionQuestion } from "./decision-question";
+import { PromptSuggestionCard } from "./prompt-suggestion";
+import { parseSuggestion, type PromptSuggestion } from "@/lib/prompt-suggestions";
 import { Fragment, useId, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, ChevronRight, Clock3, HelpCircle, Info, ShieldCheck, Wrench, X, FileCode2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -34,6 +36,10 @@ import { commandDuration, commandOutcome, isCommandTool, recordedEditGroups, rec
 import type { ToolOutput } from "@/lib/tool-output";
 export type TranscriptReviewContext = {
   sessionId: string; workspaces: readonly DevelopmentWorkspace[]; onOpen: (reference: TranscriptReviewReference) => void;
+};
+export type SuggestionTranscriptContext = {
+  cards: ReadonlyMap<string, PromptSuggestion>; canInsert: boolean; actionable: boolean; busy: boolean; tabHint?: boolean;
+  onSelect: (suggestionId: string) => void; onDismiss: (suggestionId: string) => void;
 };
 
 // The transcript, moved out of Shell with the rest of the panel. The gateway's event log is the
@@ -100,6 +106,7 @@ export function TranscriptEvent({
   feedbackCard,
   feedbackLoading = false,
   reviewContext,
+  suggestions,
 }: {
   event: AssistantEvent;
   decision: ApprovalDecision | null;
@@ -116,8 +123,16 @@ export function TranscriptEvent({
   feedbackCard?: FeedbackTranscriptCard;
   feedbackLoading?: boolean;
   reviewContext?: TranscriptReviewContext;
+  suggestions?: SuggestionTranscriptContext;
 }) {
   switch (event.type) {
+    case "prompt_suggestion_created": {
+      const value = suggestions ? suggestions.cards.get(String(event.suggestionId)) : parseSuggestion(event);
+      if (!value) return null;
+      return <PromptSuggestionCard text={value.text} state={value.state} canInsert={suggestions?.canInsert ?? false}
+        actionable={suggestions?.actionable ?? false} busy={suggestions?.busy} tabHint={suggestions?.tabHint}
+        onAccept={() => suggestions?.onSelect(value.suggestionId)} onDismiss={() => suggestions?.onDismiss(value.suggestionId)} />;
+    }
     case "app_context_changed": {
       const ids = Array.isArray(event.appIds) ? event.appIds.map(String) : [];
       return <div className="px-3 py-1 text-xs text-muted-foreground">{event.origin === "agent" ? "Assistant updated app context" : "App context"}: {ids.length ? ids.join(", ") : "General context"}</div>;
@@ -127,6 +142,8 @@ export function TranscriptEvent({
       // this event is the only one that knows which message they belong to. Their upload rows draw
       // nothing in return, so no name reaches the screen twice.
       const names = (Array.isArray(event.attachments) ? event.attachments : []).map(String);
+      const displayNames = event.attachmentDisplayNames && typeof event.attachmentDisplayNames === "object" && !Array.isArray(event.attachmentDisplayNames)
+        ? event.attachmentDisplayNames as Record<string, unknown> : {};
       const card = feedbackCardForEvent(event, feedbackCard ? [feedbackCard] : []);
       return (
         <div className="space-y-1">
@@ -135,7 +152,7 @@ export function TranscriptEvent({
             <Markdown text={String(event.text ?? "")} />
           </div>}
           {names.length > 0 && (
-            <AttachmentRow files={names.map((name) => ({ name, size: attachments?.sizes.get(name) ?? null }))} />
+            <AttachmentRow files={names.map((name) => ({ name, displayName: attachmentLabel(name, displayNames[name]), size: attachments?.sizes.get(name) ?? null }))} />
           )}
         </div>
       );
@@ -218,10 +235,13 @@ function TranscriptNotice({ message }: { message: string }) {
 }
 
 /** Stored metadata remains visible even when the session cache no longer contains the file. */
-function AttachmentRow({ files }: { files: { name: string; size: number | null }[] }) {
+function attachmentLabel(name: string, displayName: unknown): string {
+  return typeof displayName === "string" && displayName.length > 0 && displayName.length <= 255 && !/[\\/\u0000-\u001f\u007f]/u.test(displayName) ? displayName : name;
+}
+function AttachmentRow({ files }: { files: { name: string; displayName?: string; size: number | null }[] }) {
   return (
     <div className="ml-3 flex min-w-0 flex-col sm:ml-8 gap-2" aria-label="Message attachments">
-      {files.map((file, index) => <ChatAttachment key={`${file.name}-${index}`} name={file.name} size={file.size} />)}
+      {files.map((file, index) => <ChatAttachment key={`${file.name}-${index}`} name={file.name} displayName={file.displayName} size={file.size} />)}
     </div>
   );
 }

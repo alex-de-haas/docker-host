@@ -1,15 +1,16 @@
 ---
 created: 2026-10-28
-updated: 2026-11-04
-summary: Native next-message suggestions in the Harness composer with explicit draft acceptance, bounded collection and automatic Codex capability detection.
+updated: 2026-11-09
+summary: Native next-message suggestions retained in Harness conversation history with explicit recorded choices, guarded draft insertion and bounded collection.
 components: [apps/harness]
 ---
 
 # Contextual Prompt Suggestions
 
 Harness offers one optional next message after a successful interactive chat answer. It uses
-the selected provider's native conversation. Suggestions are composer assistance: accepting one
-creates an editable draft; the user still sends it explicitly.
+the selected provider's native conversation. Suggestions appear as separate cards in conversation
+history. Selecting one records the choice and inserts an editable draft when its guarded composer
+remains empty; the user sends it explicitly.
 
 ## Composer And Personal Preference
 
@@ -18,18 +19,22 @@ for the authenticated Harness user. It is independent of shared agent profiles, 
 reasoning effort and autonomy. Older clients that omit the opt-in retain ordinary turn completion.
 Task execution and translation cannot opt in to prediction work.
 
-An empty, connected composer displays a plain-text card with **Use suggestion** and **Dismiss**.
-Tab accepts while the textarea is focused; Shift+Tab keeps normal focus navigation. Escape dismisses.
+The transcript displays a plain-text card with **Use suggestion** and **Dismiss**. Its original text
+remains readable after selection, dismissal, expiry, context changes and Harness restart. Resolved
+cards show **Selected for draft**, **Dismissed**, **Expired** or **Superseded**. Selection records an
+operator choice; it is not evidence of local insertion or message delivery.
+
+Tab selects an actionable suggestion while an empty textarea is focused; Shift+Tab keeps normal
+focus navigation. Escape explicitly dismisses the current actionable suggestion.
 IME composition, mention menus, pending questions, approvals and other foreground actions retain
 their existing behavior. Acceptance preserves undo and draft restoration and does not create app
 mentions, attachments, tool calls, a task or another user message. Only explicit Send/Enter dispatches
 the resulting draft. Native text retains its original language.
 
-Typing, paste, dictation, attachments, a handoff draft or a context change takes precedence over a
-pending suggestion. Clearing a draft does not resurrect the accepted or dismissed attempt.
-Dismissal stores only an attempt identity in this browser, scoped to the user and conversation;
-same-origin tabs synchronize it. Other browsers can dismiss independently. Suggestions are hidden
-while the event stream is disconnected. Confirmed unsupported or unavailable results appear as
+Typing, paste, dictation, attachments, a handoff draft and queue editing take precedence over draft
+insertion. They do not record dismissal or erase historical cards. Existing content is preserved;
+insertion waits for an empty composer. Disconnected clients retain readable history with actions
+disabled. Turning off future suggestions retains existing history. Confirmed unsupported or unavailable results appear as
 concise preference feedback without a repeated error toast or a permanent loading indicator.
 
 ## Native Providers And Automatic Detection
@@ -84,19 +89,34 @@ generates a missed prediction.
 
 ## Delivery, Freshness And Retention
 
-The existing authenticated event transport delivers a transient `session_suggestion` projection
-with owner, session, server epoch, monotonic revision and worker attempt identity. The latest
-projection expires after 15 minutes. Reconnect restores only the still-current projection from that
-coordinator lifetime. A new coordinator starts empty, including when recovering an existing worker.
+The existing authenticated event transport delivers durable `prompt_suggestion_created` and
+`prompt_suggestion_resolved` events. A stable suggestion ID correlates the original literal text
+with its native attempt and completed answer. Actions expire after 15 minutes; expiry removes
+actions while preserving the card. Restart/read reconciliation closes overdue or superseded cards
+without generating another prediction. The transient `session_suggestion` projection carries
+optional collection/availability feedback, independent of historical retention.
 
-New messages, provider/model/effort changes, app context, workspace changes and expiry invalidate
-the projection. Session access is checked by the existing authenticated session routes. Preferences
+New messages, provider/model/effort changes, app context and workspace changes supersede an
+actionable suggestion. Session access is checked by the existing authenticated session routes. Preferences
 use app-session identity, atomic revision-checked writes and separate user files; a delegated provider
 token cannot change them.
 
-Suggestion text is absent from durable conversation events and transcript exports. Internal worker
-transport events use existing bounded journal retention and session cleanup. Browser storage keeps
-only dismissal identities until acceptance, when ordinary draft storage owns the text.
+Authenticated owner-only Harness routes read the current suggestions and record explicit choices.
+Actions carry a UUID and expected suggestion revision. Exact retries return the recorded result;
+competing choices conflict and clients refresh the authoritative card. A delegated provider token
+cannot record an operator choice.
+
+Browser selection and dismissal intents are saved before their API action, scoped to origin,
+installation, owner and conversation. A lost reply reuses the same UUID. Draft insertion occurs
+after confirmed selection and only in the same empty draft generation. Concurrent typing or clearing
+preserves the changed draft; **Retry insertion** permits deliberate recovery. Ordinary reload restores
+saved text/intent, never reconstructs a draft merely from a selected history card. Live insertion
+participates in editor undo; the undo stack itself is not persisted across reload.
+
+History exports project each suggestion as the `harness.prompt-suggestion` extension with literal
+fallback text and its current choice. Sharing that extension requires explicit disclosure. Neither
+the card nor its resolution creates a model turn or enters provider context. Internal worker
+transport events retain their existing bounded journal retention and session cleanup.
 
 ## Verified Native Baseline
 
@@ -119,11 +139,13 @@ acceptance or a live successful Codex prediction on the unavailable pinned binar
 - Adapter fixtures cover Claude post-result ordering, session correlation, suppression and errors;
   Codex fixtures cover experimental negotiation, exact turn matching, null/failure/refusal,
   duplicate notifications and an unavailable-version-to-working-version transition.
-- Worker and coordinator tests cover thirty-second expiry, confirmed-exit receipts, cancellation,
+- Worker and coordinator tests cover thirty-second collection expiry, confirmed-exit receipts, cancellation,
   disabling during the primary and optional phases, foreground preemption, failure recovery,
-  transient projection and task/translation exclusion. Mixed protocol versions fail explicitly.
-- Composer tests cover Tab/Shift+Tab, Escape, IME, literal mentions, undo, stale/foreign/expired
-  projections, draft precedence and dismissal across reload. Managed browser acceptance covers
+  durable correlation, choice UUID replay, ownership, expiry/context reconciliation,
+  transient availability and task/translation exclusion. Mixed protocol versions fail explicitly.
+- Composer tests cover Tab/Shift+Tab, Escape, IME, literal mentions, undo, foreign/expired
+  events, draft precedence, concurrent choices, lost replies, guarded insertion and dismissal across reload.
+  History tests cover extension capability, exports, safe attachment labels and explicit sharing disclosure. Managed browser acceptance covers
   normal Core login, draft-only acceptance, authenticated transport, mobile dark layout and restore.
   Its controlled prediction events are UI evidence, not live provider inference.
 - Run `npm run harness:build-web`, `npm run harness:test`, `npm run harness:lint`,
