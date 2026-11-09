@@ -1,8 +1,8 @@
 ---
 status: In Progress
 created: 2026-10-21
-updated: 2026-10-21
-summary: First-run hosty init installs Core, selects distribution apps, assigns automatic ports and opens administrator setup; Dashboard environments reuse the initialization services.
+updated: 2026-10-25
+summary: Owner-run Windows acceptance after published macOS and Linux CLI verification; remaining agent-run platform checks are waived.
 components: [apps/core, apps/cli, apps/shell, packages/app-sdk, scripts]
 ---
 
@@ -489,13 +489,43 @@ dotnet test apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj -
 
 ### Outstanding verification owned by D10-D11
 
-D10 needs the coordinated published CLI/Core/Shell artifacts for the real CLI-only download
-journey and the default published-distribution child path with the new Shell manifest. Current rolling
-artifacts do not contain this candidate. Native macOS ARM64 and Ubuntu ARM64 recommended-child journeys
-pass with the candidate custom distribution; they do not establish the published download path.
-Native Windows and Linux x64 installer/browser coverage remains unverified, as does macOS Intel runtime
-execution. Portable PowerShell parsing and substituted installer downloads do not replace those cases.
-D11 keeps this plan until these outstanding deliverables are resolved.
+The [published-artifact acceptance on 2026-10-25](../../reviews/2026-10-25-published-initialization-acceptance.md)
+closes the macOS ARM64 real CLI-only download and default published-distribution child gaps with
+CLI/Core 0.152.3, Shell 0.112.5 and Marketplace 0.12.2. Ordinary primary/child registration, Core-only
+completion, link renewal, capacity refusal, actual Docker limits, child/parent restart, removed-app
+preservation and verified Finish/disposal pass. No implementation change or version bump is needed.
+The report records the terminal-session interruption and the limits of its evidence.
+
+Owner acceptance-scope decision, 2026-10-25:
+
+- macOS Intel is removed from this feature's required acceptance matrix.
+- Linux acceptance may use UTM. The available Hosty QA Ubuntu VM is authorized for the published
+  installation/browser journey; its observed architecture must be recorded rather than inferred.
+- The owner performs Windows verification on the production target and reports the result. This
+  remains pending evidence, not an automated pass or authorization to change that target here.
+
+The [UTM Linux CLI acceptance on 2026-10-25](../../reviews/2026-10-25-linux-published-initialization-cli-acceptance.md)
+verifies the real installer/Core download on Ubuntu 24.04.5 ARM64, recommended app readiness,
+survival after guest-command exit, same-root repeat, stable ports and container IDs across restart,
+and durable Marketplace removal. The report records a partial run retained at the guest login
+screen; no Hosty administrator or guest authentication bypass is created.
+
+The owner subsequently cancels the remaining agent-run platform checks on 2026-10-25 because the
+existing Ubuntu guest password is unavailable. Linux browser/child acceptance and the macOS
+terminal-lifetime observation are waived for this agent run, not reported as passes. No guest login
+or another runtime deployment is requested. The earlier macOS/Ubuntu candidate evidence and the
+published-artifact reports remain valid within their recorded boundaries.
+
+At cancellation, UTM returns an empty VM inventory and reports the known QA VM UUID as not found.
+No running QEMU VM process or open guest disk is observed; the remaining QEMU helper has no guest
+disk or network listener open. The agent does not claim to have executed guest application removal,
+Core uninstall or verified guest filesystem deletion after this disappearance. Selected evidence
+has already been exported outside the VM and repository. The missing VM is not recreated for cleanup.
+
+D10 remains open only for the owner's separately assigned Windows result; D11 retains this plan
+until that result or a further explicit scope decision is recorded. Linux x64 and the skipped
+browser/terminal cases carry no pass claim. Portable PowerShell parsing, substituted downloads,
+Linux in Docker and the observed ARM64 UTM guest do not establish another native target's behavior.
 
 Implementation checks include:
 
