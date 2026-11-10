@@ -1,0 +1,1 @@
+{"appId":"hosty.harness","digest":"sha256:d61f268140e67ebc1771a0567b1807c84f0aa95ac38015d163eda7a9633343b2","platforms":["linux/amd64","linux/arm64"],"repository":"ghcr.io/alex-de-haas/hosty-harness-worker","version":"0.96.4"}
