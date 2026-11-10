@@ -20,7 +20,9 @@ Edit and Delete appear on row hover or keyboard focus, and remain visible on dev
 A handle at the left reorders eligible rows by mouse or touch drag, or by the Up and Down arrow keys.
 Reordering preserves every queue identity and cannot cross a sending, unknown or editing row.
 Escape, pointer cancellation and queue changes cancel an in-progress drag. Retry, edit recovery,
-sending status and error details remain available inline. Current agent settings apply to waiting
+sending status and error details remain available inline. Narrow queues use recovery icons with
+accessible labels and share remaining width between the message preview and its truncated status.
+Current agent settings apply to waiting
 messages without repeating that information on each row. Send and Stop remain
 separate actions. Successful completion advances the head in order; an approval or question holds
 the active turn. Stop and execution failure pause the queue, and Resume queue is explicit.

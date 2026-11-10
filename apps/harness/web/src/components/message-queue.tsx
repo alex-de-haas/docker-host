@@ -1,6 +1,6 @@
 "use client";
 import { useRef, useState, type PointerEvent } from "react";
-import { CircleAlert, GripVertical, Loader2, Paperclip, Pause, Pencil, Play, RotateCcw, Trash2 } from "lucide-react";
+import { CircleAlert, GripVertical, Loader2, Paperclip, Pause, Pencil, Play, RotateCcw, Trash2, Undo2 } from "lucide-react";
 import { Button } from "./ui/button";
 import { cn } from "@/lib/utils";
 import type { MessageQueue as QueueSnapshot, QueueCommand, QueueEntry } from "@/lib/message-queue-api";
@@ -65,7 +65,7 @@ export function MessageQueue({ queue, outbox, transcriptRequestIds, busy, editin
   };
   const activeDrop = drop?.signature === signature ? drop : null;
   if (!visible.length && !local.length && !legacySend && !error && !pendingOperation && !queue?.paused && !queue?.waiting) return null;
-  return <section aria-label="Message queue" className="mx-3 mb-2 min-w-0 shrink-0 rounded-lg border bg-muted/20 text-sm">
+  return <section aria-label="Message queue" className="@container/queue mx-3 mb-2 min-w-0 shrink-0 rounded-lg border bg-muted/20 text-sm">
     <p className="sr-only" role="status">{announcement}</p>
     <div className="flex min-w-0 items-center justify-between gap-2 border-b px-3 py-1">
       <span className="text-xs font-medium text-muted-foreground">{queue?.paused ? "Queue paused" : "Next messages"}</span>
@@ -116,11 +116,11 @@ export function MessageQueue({ queue, outbox, transcriptRequestIds, busy, editin
               if (offset) { event.preventDefault(); cancelDrag(); const target = visible[index + offset]; if (target) move(entry.id, target.id); }
             }}><GripVertical /></Button>
           {entry.state === "sending" && <Loader2 className="size-3.5 shrink-0 motion-safe:animate-spin" aria-label="Sending message" />}
-          <p className="min-w-0 flex-1 truncate">{inTranscript ? "Message in conversation" : entry.text || "Attachments"}</p>
+          <p className="min-w-0 flex-[3_1_0%] truncate">{inTranscript ? "Message in conversation" : entry.text || "Attachments"}</p>
           {!inTranscript && <QueueAttachments names={entry.attachments.map(file => file.displayName ?? queueFileLabel(file.name))} />}
-          {status && <span className="max-w-28 shrink truncate text-xs text-muted-foreground" title={status}>{status}</span>}
+          {status && <span className="min-w-0 max-w-28 flex-[1_1_0%] truncate text-xs text-muted-foreground" title={status}>{status}</span>}
           {entry.error && <span role="alert" className="shrink-0 text-destructive-foreground" title={entry.error.message}><CircleAlert className="size-4" aria-hidden /><span className="sr-only">{entry.error.message}</span></span>}
-          {(entry.state === "failed" || entry.state === "unknown") && <Button type="button" variant="ghost" size="sm" className="h-7 px-1.5 text-xs" disabled={busy || pendingOperation} onClick={() => onCommand({ type: "retry", entryId: entry.id })}><RotateCcw />Retry</Button>}
+          {(entry.state === "failed" || entry.state === "unknown") && <Button type="button" variant="ghost" size="sm" className="size-7 p-0 text-xs @sm/queue:w-auto @sm/queue:px-1.5" title="Retry" disabled={busy || pendingOperation} onClick={() => onCommand({ type: "retry", entryId: entry.id })}><RotateCcw /><span className="sr-only @sm/queue:not-sr-only">Retry</span></Button>}
           {otherEditor && <Button type="button" size="sm" className="h-7 px-1.5 text-xs" variant="ghost" disabled={busy || pendingOperation || !!editingId} onClick={() => onEdit(entry, true)}>Recover edit</Button>}
           {editable && <div className="flex shrink-0 items-center gap-0.5 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/queue-row:opacity-100 [@media(hover:hover)]:group-focus-within/queue-row:opacity-100">
             <Button type="button" size="icon-sm" className="size-7" variant="ghost" disabled={busy || pendingOperation || !!editingId} aria-label={`Edit queued message ${index + 1}`} title="Edit message" onClick={() => onEdit(entry, false)}><Pencil /></Button>
@@ -130,11 +130,11 @@ export function MessageQueue({ queue, outbox, transcriptRequestIds, busy, editin
       })}
       {local.map(row => <li key={row.id} className="flex min-w-0 items-center gap-2 px-3 py-1" aria-label="Message saving to queue">
         {!row.error && <Loader2 className="size-4 shrink-0 motion-safe:animate-spin" aria-hidden />}
-        <p className="min-w-0 flex-1 truncate">{row.draftText || row.text || "Attachments"}</p>
+        <p className="min-w-0 flex-[3_1_0%] truncate">{row.draftText || row.text || "Attachments"}</p>
         <QueueAttachments names={[...row.attachments.map(file => file.displayName ?? queueFileLabel(file.name)), ...row.files.map(file => file.name)]} />
-        <span className="max-w-28 truncate text-xs text-muted-foreground">{row.error ? "Not yet saved to server" : row.files.length ? "Uploading and saving…" : "Saving to queue…"}</span>
-        {row.error && <><span role="alert" title={row.error} className="shrink-0 text-destructive-foreground"><CircleAlert className="size-4" aria-hidden /><span className="sr-only">{row.error}</span></span><Button type="button" size="sm" className="h-7 px-1.5 text-xs" variant="ghost" onClick={() => onRetryLocal(row.id)}><RotateCcw />Retry</Button>
-          {(!row.command || row.recoverable) && <Button type="button" size="sm" className="h-7 px-1.5 text-xs" variant="ghost" onClick={() => onRecoverLocal(row.id)}>Recover draft</Button>}</>}
+        <span className="min-w-0 max-w-28 flex-[1_1_0%] truncate text-xs text-muted-foreground" title={row.error ? "Not yet saved to server" : row.files.length ? "Uploading and saving…" : "Saving to queue…"}>{row.error ? "Not yet saved to server" : row.files.length ? "Uploading and saving…" : "Saving to queue…"}</span>
+        {row.error && <><span role="alert" title={row.error} className="shrink-0 text-destructive-foreground"><CircleAlert className="size-4" aria-hidden /><span className="sr-only">{row.error}</span></span><Button type="button" size="sm" className="size-7 p-0 text-xs @sm/queue:w-auto @sm/queue:px-1.5" title="Retry" variant="ghost" onClick={() => onRetryLocal(row.id)}><RotateCcw /><span className="sr-only @sm/queue:not-sr-only">Retry</span></Button>
+          {(!row.command || row.recoverable) && <Button type="button" size="sm" className="size-7 p-0 text-xs @sm/queue:w-auto @sm/queue:px-1.5" title="Recover draft" variant="ghost" onClick={() => onRecoverLocal(row.id)}><Undo2 /><span className="sr-only @sm/queue:not-sr-only">Recover draft</span></Button>}</>}
       </li>)}
     </ol>
     {(error || pendingOperation) && <div className="border-t px-3 py-2 text-xs">
