@@ -118,7 +118,7 @@ try {
   assert.equal((await api('/connections/' + connection.id + '/models')).defaultModel, model);
   const createSession = title => api('/sessions', 'POST', { title, connectionId: connection.id, profileId: null, skillIds: [], appIds: [], clientRequestId: randomUUID() });
   const session = await createSession('Queue browser acceptance'); await command(session, { type: 'pause' }); await open(page, session);
-  const first = `First queued text ${token}\n${'Additional message text '.repeat(40)}`, second = `Second with file ${token}`, draft = `Unsent ordinary draft ${token}`;
+  const first = `First queued text ${token}\n${'Additional message text '.repeat(40).trimEnd()}`, second = `Second with file ${token}`, draft = `Unsent ordinary draft ${token}`;
   await fill(page, first); await page.getByRole('button', { name: 'Send', exact: true }).click();
   const one = await wait(() => queue(session), value => value.entries.length === 1, 'first queued entry');
   await expectText(page, ''); assert.equal(one.paused, true); assert.equal(one.entries[0].state, 'queued');
