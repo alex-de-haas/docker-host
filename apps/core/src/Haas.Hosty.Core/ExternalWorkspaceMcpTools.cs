@@ -136,7 +136,7 @@ internal sealed class ExternalWorkspaceMcpTools
             authorization, workspaces, accessor, audit, clock, cancellationToken);
 
     [McpServerTool(Name = "delete_workspace", ReadOnly = false, Destructive = true, Idempotent = true)]
-    [Description("Delete registered logical workspaces, including unfinished source, unmerged commits and activity leases. Requires current mcp:read and mcp:workspaces authority. Supply a UUID requestId and either workspaceId, workspaceIds, or all=true. No review or confirmation token is required. MCP Ask/Run unprompted/Disabled is the approval policy. Bulk targets are fixed on acceptance; retry the same request after uncertainty. Remote published source and ordinary app data are retained. Reports removal and consumer-stop outcomes separately.")]
+    [Description("Delete registered logical workspaces, including unfinished source, unmerged commits and activity leases. Requires current mcp:read and mcp:workspaces authority. Supply a UUID requestId and either workspaceId, workspaceIds, or all=true. No review or confirmation token is required. MCP Ask/Run unprompted/Disabled is the approval policy. Bulk targets are fixed on acceptance; retry the same request after uncertainty. Core or ordinary apps using the workspace block deletion; explicitly switch them away first. Owned test environments are finished before source removal. Remote published source and ordinary app data are retained.")]
     public static Task<string> DeleteAsync(string requestId, ExternalWorkspaceMcpAuthorization authorization,
         DevelopmentWorkspaceService workspaces, WorkspaceCleanupService cleanup, IHttpContextAccessor accessor,
         AuditStore audit, IClock clock, CancellationToken cancellationToken, string? workspaceId = null,

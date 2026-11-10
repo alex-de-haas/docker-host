@@ -471,7 +471,7 @@ public sealed partial class CoreLifecycleServiceTests
         public Task<DockerCommandResult> RunAsync(IReadOnlyList<string> args, IReadOnlyDictionary<string, string>? environment = null, CancellationToken cancellationToken = default)
         {
             if (Unavailable) throw new DockerUnavailableException("offline");
-            return Task.FromResult(new DockerCommandResult(0, args[0] == "ps" ? "abc123" :
+            return Task.FromResult(new DockerCommandResult(0, args[0] == "ps" ? "abc123\t" :
                 System.Text.Json.JsonSerializer.Serialize(Source is null ? Array.Empty<object>() : new object[] { new { Source } }), ""));
         }
     }
