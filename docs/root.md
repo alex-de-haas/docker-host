@@ -53,7 +53,7 @@ Plans: 14 In Progress · 1 Blocked · 45 Draft · 8 On Hold.
 - [Hosty Harness Chat Components](features/ai-gateway-chat-ui/feature.md) — The chat components Harness uses for messages, code blocks, attachments, the composer and collapsible activity.
 - [Hosty Harness Provider Connections](features/ai-gateway-providers/feature.md) — Named Claude, Codex and external Ollama agent connections with provider selection, scoped tools and durable conversation state.
 - [App Activity Window](features/app-activity-window/feature.md) — Legacy activity-window compatibility and current continuous authority for privileged app operations and assistant conversations.
-- [App Authoring In Hosty](features/app-authoring/plan.md) — Epic for prompt-driven app creation, live iteration, integration with installed apps and optional publication. · Draft, 0/8, updated 2026-10-27
+- [App Authoring In Hosty](features/app-authoring/plan.md) — Epic for prompt-driven app creation, live iteration, integration with installed apps and optional publication. · Draft, 0/8, updated 2026-11-10
 - [Feature: App Cache Storage](features/app-cache-storage/feature.md) — A Core-managed per-app cache directory that persists across restarts and updates but is never backed up.
 - [App Code Exchange](features/app-code-exchange/feature.md) — Authorization codes require target-app service identity and private S256 proof, with browser-origin and nonce-bound sign-in attempts. · [plan](features/app-code-exchange/plan.md): Blocked, 16/20, updated 2026-10-08
 - [App Installation And Configuration Experience](features/app-configuration-experience/feature.md) — Default-only installation, shared configuration readiness and optional app-author guidance for manifest and app-owned settings.
@@ -133,7 +133,7 @@ Plans: 14 In Progress · 1 Blocked · 45 Draft · 8 On Hold.
 - [Assistant MCP Delegation](features/delegated-token-exchange/feature.md) — Core grants individual assistants access to selected MCP targets through administrator-configured delegation.
 - [Demo App](features/demo-app/feature.md) — The repository-local reference app used to validate lifecycle, identity, directory access and app roles.
 - [Dependency-Ordered Startup](features/dependency-ordered-autostart/feature.md) — Starting an app starts its installed required dependencies, waits for readiness and resumes through durable, authorized startup intents.
-- [Design System](features/design-system/feature.md) — Shared web tokens, local fonts and scoped SDK chrome, with Shell, Harness, Marketplace and Telemetry adoption and an in-place credential grid. · [plan](features/design-system/plan.md): In Progress, 25/51, updated 2026-10-26
+- [Design System](features/design-system/feature.md) — Shared web tokens, local fonts and scoped SDK chrome, with Shell, Harness, Marketplace and Telemetry adoption and an in-place credential grid. · [plan](features/design-system/plan.md): In Progress, 25/51, updated 2026-11-10
 - [Desktop Shell](features/desktop-shell/feature.md) — Hosty Desktop provides movable application windows, a glass dock, personal appearance and role-aware app access beside the management Shell.
 - [Documentation Workflow](features/documentation-workflow/feature.md) — Workflow documents carry YAML frontmatter and stable deliverable IDs, checked by one validator shared by every Hosty repository.
 - [Documents App](features/documents-app/feature.md) — Read current application documentation, source-defined plans and workspace progress from Git, with version-aware links, attention and assistant drafts.
