@@ -3,7 +3,7 @@ import { LOCAL_BPE_ESTIMATOR, type LocalContextSources } from "./context-sources
 import type { ContextUsage } from "./context-usage.js";
 import type { McpContextDetail } from "./context-mcp.js";
 
-import { readNativeQuestions, questionAnswers } from "./questions.js";
+import { readNativeQuestions, readAsyncQuestions, questionAnswers } from "./questions.js";
 import { UsageReader, absentUsage, codexUsage } from "./provider-usage.js";
 import { cleanAgentEnvironment } from "../connections/codex-login.js";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
@@ -758,8 +758,11 @@ class CodexRun implements HarnessRun {
         ? commandToolUseId(this.commandRun, this.commandTurn, item.id, params.turnId as string) : undefined;
       if (toolUseId) this.completedToolCalls.add(item.id as string);
       if (type === "agentMessage") {
+        const question = this.asyncQuestion(item, params);
         const text = readItemText(item);
-        if (text) {
+        // The message text is Codex's plain rendering of the same question; show it only as a fallback.
+        if (question) this.emit(question);
+        else if (text) {
           this.emit({ type: "assistant_text", text });
         }
       } else if (type === "mcpToolCall") {
@@ -998,6 +1001,20 @@ class CodexRun implements HarnessRun {
   private write(message: unknown): void {
     if (!this.child.stdin.destroyed) {
       this.child.stdin.write(`${JSON.stringify(message)}\n`);
+    }
+  }
+
+  /** request_user_input_async returns at once; Codex publishes its questions on the agent message that follows. */
+  private asyncQuestion(item: Record<string, unknown>, params: Record<string, unknown>): HarnessEvent | null {
+    if (item.delivery !== "async" || item.questions == null) return null;
+    try {
+      if (typeof params.threadId !== "string" || params.threadId !== this.threadId || typeof params.turnId !== "string" || this.activityTurnId && params.turnId !== this.activityTurnId
+        || typeof item.id !== "string") throw new Error("The question does not belong to this live turn.");
+      return { type: "question_request", questionId: randomUUID(), questions: readAsyncQuestions(item), blocking: false, delivery: "message",
+        native: { threadId: params.threadId, turnId: params.turnId, itemId: item.id } };
+    } catch (error) {
+      this.emit({ type: "notice", message: "Codex question shown as text: " + (error instanceof Error ? error.message : "Unsupported question.") });
+      return null;
     }
   }
 

@@ -223,7 +223,8 @@ export class WorkerJournal {
     if (event.type === "context_usage") snapshot.contextUsage = frame;
     if (event.type === "harness_session") snapshot.nativeSessionId = event.harnessSessionId;
     if (event.type === "result" || event.type === "error") snapshot.result = event;
-    if (event.type === "approval_request" || event.type === "question_request") (record.receipt.pending ??= []).push(frame);
+    // A message-delivered question has no native callback left to answer.
+    if (event.type === "approval_request" || event.type === "question_request" && event.delivery !== "message") (record.receipt.pending ??= []).push(frame);
     record.bytes += bytes; record.events.push(frame); record.receipt.revision = frame.sequence;
     record.receipt.updatedAt = new Date().toISOString(); await this.save(record); return frame;
   }

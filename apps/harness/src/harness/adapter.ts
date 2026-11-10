@@ -96,8 +96,12 @@ export type HarnessEvent =
    * The harness is asking the operator, paused until resolveQuestion is called. Deliberately not an
    * approval: approving the act of being asked a question is nonsense, and the resolution carries
    * answers rather than a verdict.
+   *
+   * `delivery: "message"` marks a question whose native request already returned (Codex
+   * request_user_input_async): there is no callback to answer, and the saved answer starts a later
+   * turn in the same native thread instead.
    */
-  | { type: "question_request"; questionId: string; questions: HarnessQuestion[]; blocking?: boolean; native?: { threadId?: string; turnId?: string; itemId?: string } }
+  | { type: "question_request"; questionId: string; questions: HarnessQuestion[]; blocking?: boolean; delivery?: "message"; native?: { threadId?: string; turnId?: string; itemId?: string } }
   | {
       type: "result";
       status: string;
