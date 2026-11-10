@@ -67,6 +67,9 @@ const watch = page => {
 const message = page => page.getByRole('textbox', { name: 'Message', exact: true });
 const row = (page, index) => page.getByRole('listitem', { name: `Queued message ${index}`, exact: true });
 const rows = page => page.getByRole('list', { name: 'Queued messages', exact: true }).getByRole('listitem');
+const rowAction = async (page, index, name) => {
+  await row(page, index).hover(); await row(page, index).getByRole('button', { name, exact: true }).click();
+};
 const open = async (page, session) => {
   const url = new URL(config.preview || config.harness + '/assistant/');
   url.searchParams.set('session', session.id); url.searchParams.set('hosty_launch', 'standalone');
@@ -115,7 +118,7 @@ try {
   assert.equal((await api('/connections/' + connection.id + '/models')).defaultModel, model);
   const createSession = title => api('/sessions', 'POST', { title, connectionId: connection.id, profileId: null, skillIds: [], appIds: [], clientRequestId: randomUUID() });
   const session = await createSession('Queue browser acceptance'); await command(session, { type: 'pause' }); await open(page, session);
-  const first = `First queued text ${token}`, second = `Second with file ${token}`, draft = `Unsent ordinary draft ${token}`;
+  const first = `First queued text ${token}\n${'Additional message text '.repeat(40).trimEnd()}`, second = `Second with file ${token}`, draft = `Unsent ordinary draft ${token}`;
   await fill(page, first); await page.getByRole('button', { name: 'Send', exact: true }).click();
   const one = await wait(() => queue(session), value => value.entries.length === 1, 'first queued entry');
   await expectText(page, ''); assert.equal(one.paused, true); assert.equal(one.entries[0].state, 'queued');
@@ -132,8 +135,19 @@ try {
   } finally {
     await network.send('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 }); await network.detach();
   }
+  assert.equal(await row(page, 1).evaluate(element => element.getBoundingClientRect().height <= 40), true, 'Multiline queued text expanded its row.');
+  const editFirst = page.getByRole('button', { name: 'Edit queued message 1', exact: true });
+  const editIsPainted = () => editFirst.evaluate(element => {
+    for (let current = element; current; current = current.parentElement) if (Number(getComputedStyle(current).opacity) === 0) return false;
+    return true;
+  });
+  await message(page).focus(); await page.mouse.move(0, 0);
+  assert.equal(await editIsPainted(), false, 'Queue edit action must stay hidden until hover or focus.');
+  await row(page, 1).hover(); assert.equal(await editIsPainted(), true, 'Hover must reveal queue actions.');
+  await page.mouse.move(0, 0); await editFirst.focus(); assert.equal(await editIsPainted(), true, 'Keyboard focus must reveal queue actions.');
+  await message(page).focus();
   await expectText(page, draft); await file(page, 'stashed-local.txt', 'ordinary draft blob');
-  await page.getByRole('button', { name: 'Edit queued message 2', exact: true }).click(); await expectText(page, second);
+  await rowAction(page, 2, 'Edit queued message 2'); await expectText(page, second);
   const edited = `Edited second ${token}`;
   await fill(page, edited); await file(page, 'edit-local.txt', 'edit buffer blob');
   await localFiles(page, { 'stashed-local.txt': 'ordinary draft blob', 'edit-local.txt': 'edit buffer blob' });
@@ -143,21 +157,24 @@ try {
   await page.getByRole('button', { name: 'Cancel edit', exact: true }).click(); await expectText(page, draft);
   assert.ok((await page.getByLabel('Attachments to send', { exact: true }).textContent()).includes('stashed-local.txt'));
   assert.equal((await queue(session)).entries[1].text, second);
-  await page.getByRole('button', { name: 'Edit queued message 2', exact: true }).click(); await expectText(page, second);
+  await rowAction(page, 2, 'Edit queued message 2'); await expectText(page, second);
   await fill(page, edited); await file(page, 'edit-saved.txt', 'saved edit bytes');
   await page.getByRole('button', { name: 'Save queued message', exact: true }).click(); await expectText(page, draft);
   const saved = await wait(() => queue(session), value => value.entries[1]?.text === edited && value.entries[1]?.state === 'queued', 'saved edit');
   await checkFiles(session, saved.entries[1], { 'queued-original.txt': large, 'edit-saved.txt': 'saved edit bytes' });
-  await page.getByRole('button', { name: 'Move queued message 2 up', exact: true }).click();
+  const handle = await page.getByRole('button', { name: 'Reorder queued message 2', exact: true }).boundingBox();
+  const target = await row(page, 1).boundingBox(); assert.ok(handle && target, 'Queue reorder handle and target must be visible.');
+  await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2); await page.mouse.down();
+  await page.mouse.move(handle.x + handle.width / 2, target.y + target.height / 2, { steps: 8 }); await page.mouse.up();
   await wait(() => queue(session), value => value.entries[0]?.id === saved.entries[1].id, 'reorder');
-  await page.getByRole('button', { name: 'Delete queued message 2', exact: true }).click();
+  await rowAction(page, 2, 'Delete queued message 2');
   await wait(() => queue(session), value => value.entries.length === 1 && value.entries[0].text === edited, 'delete one queued row');
   await page.getByRole('button', { name: 'Send', exact: true }).click(); await expectText(page, '');
   await wait(() => queue(session), value => value.entries.length === 2, 'stashed draft queued with its blob');
   const secondTab = await context.newPage(); watch(secondTab); await open(secondTab, session);
-  await page.getByRole('button', { name: 'Edit queued message 1', exact: true }).click(); await expectText(page, edited);
+  await rowAction(page, 1, 'Edit queued message 1'); await expectText(page, edited);
   await fill(page, 'First tab edit'); await file(page, 'first-tab.txt', 'first tab bytes');
-  await secondTab.getByRole('button', { name: 'Edit queued message 2', exact: true }).click(); await expectText(secondTab, draft);
+  await rowAction(secondTab, 2, 'Edit queued message 2'); await expectText(secondTab, draft);
   await fill(secondTab, 'Second tab edit'); await file(secondTab, 'second-tab.txt', 'second tab bytes');
   await localFiles(page, { 'first-tab.txt': 'first tab bytes', 'second-tab.txt': 'second tab bytes' });
   await wait(() => queue(session), value => value.entries[0]?.edit?.text === 'First tab edit' && value.entries[1]?.edit?.text === 'Second tab edit', 'independent row autosaves');
@@ -174,7 +191,9 @@ try {
   await checkFiles(session, independent.entries[1], { 'second-tab.txt': 'second tab bytes', 'stashed-local.txt': 'ordinary draft blob' });
   await secondTab.close();
   await open(page, session); await page.setViewportSize({ width: 360, height: 800 }); await page.emulateMedia({ colorScheme: 'dark' });
+  await row(page, 2).waitFor();
   assert.equal(await rows(page).count(), 2);
+  assert.equal(await rows(page).evaluateAll(elements => elements.every(element => element.getBoundingClientRect().height <= 40)), true, 'Queued messages must stay compact at 360 px.');
   assert.equal(await page.locator('html').evaluate(element => element.scrollWidth <= innerWidth), true);
   assert.ok((await page.getByRole('region', { name: 'Message queue', exact: true }).textContent()).includes('Queue paused'));
   if (process.env.HOSTY_QUEUE_SCREENSHOT) await page.screenshot({ path: process.env.HOSTY_QUEUE_SCREENSHOT, fullPage: true });
