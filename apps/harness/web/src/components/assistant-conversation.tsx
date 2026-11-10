@@ -1224,7 +1224,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
       {fullPage && (!chatVisible || !session) && <div className={`shrink-0 items-center gap-2 border-b px-3 py-2 ${workspace ? "flex" : "flex md:hidden"}`}>{navigationToggle}<div className="ml-auto">{workspaceToggle}</div></div>}
       {fullPage && (!chatVisible || !session) ? <div className="min-h-0 flex-1" aria-label="Workspace center">
         {!workspace && <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-sm text-muted-foreground">
-          <p>Choose a workspace or session, create an app or continue building.</p>
+          <p>Choose a workspace or session, or create an app.</p>
           <Button variant="outline" disabled={!ready} onClick={() => void startNew()}>New session</Button>
         </div>}
         {workspace && <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-sm text-muted-foreground">

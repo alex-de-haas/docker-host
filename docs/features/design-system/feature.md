@@ -1,6 +1,6 @@
 ---
 created: 2026-10-21
-updated: 2026-11-03
+updated: 2026-11-10
 summary: Shared web tokens, local fonts and scoped SDK chrome, with Shell, Harness, Marketplace and Telemetry adoption and an in-place credential grid.
 components: [apps/core, apps/shell, apps/desktop, apps/harness, apps/marketplace, apps/documents, apps/telemetry, apps/telemetry-ui, apps/whisper, apps/demo-app, packages/app-sdk, shared/web]
 ---
@@ -343,11 +343,12 @@ catalogue. Reports renew presence and recover after Core restarts without remoun
 
 Harness uses 264 px session and 344 px workspace columns around the conversation at desktop widths.
 Sessions retain combined workspace/title/app search, activity-state chips and their activity
-ordering in one flat list, without a separate application selector. Icon-only Create app, Continue building and New session
+ordering in one flat list, without a separate application selector. Icon-only Create app and New session
 buttons sit to the right of the Sessions heading and count, in that order, with accessible names
 and tooltips. Each session uses one line; workspace-bound rows show a hammer and workspace name,
 while other rows show the conversation title. Running work has a circular indicator on the right,
-with distinct waiting and failure icons. Continue building retains its existing chooser. External workspaces is accessible
+with distinct waiting and failure icons. Retained development work opens from Sessions; another task
+uses New session and descriptive app context, with authorized source preparation separate. External workspaces is accessible
 from the session column footer. Its 264 px navigation column matches the compact session rows,
 with a hammer, one truncated workspace name and accent selection, without the external task ID.
 The conversation pins

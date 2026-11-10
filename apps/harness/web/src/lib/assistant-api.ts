@@ -120,10 +120,6 @@ export async function createSession(input: { profileId?: string | null; profileR
   return (await call("/sessions", { method: "POST", body: JSON.stringify({ ...input, browserDefaults: input.browserDefaults ?? await loadBrowserAgentDefaults() }) })).json() as Promise<AssistantSession>;
 }
 
-export async function newBuildingSession(input: { appId: string; requestId: string; expectedLocalHead: string }): Promise<AssistantSession> {
-  return (await call("/building-sessions", { method: "POST", body: JSON.stringify({ ...input, browserDefaults: await loadBrowserAgentDefaults() }) })).json();
-}
-
 /** Renames a session. An empty title clears the name, and the next message derives one again. */
 export async function renameSession(sessionId: string, title: string): Promise<AssistantSession> {
   return (

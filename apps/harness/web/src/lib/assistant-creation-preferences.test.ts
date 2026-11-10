@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { appFetch } from "@hosty-sdk/app/browser-auth";
-import { createSession, createWorkspaceSession, newBuildingSession } from "./assistant-api";
+import { createSession, createWorkspaceSession } from "./assistant-api";
 import { loadBrowserAgentDefaults } from "./browser-agent-preferences";
 
 vi.mock("@hosty-sdk/app/browser-auth", () => ({ appFetch: vi.fn(), APP_SESSION_RESTORED: "restored" }));
@@ -15,7 +15,6 @@ afterEach(() => vi.resetAllMocks());
 it.each([
   ["ordinary", () => createSession({ clientRequestId: "request" }), "/api/sessions"],
   ["workspace", () => createWorkspaceSession({ workspaceId: "workspace", requestId: "request", expectedRevision: 2 }), "/api/workspace-sessions"],
-  ["building", () => newBuildingSession({ appId: "app", requestId: "request", expectedLocalHead: "head" }), "/api/building-sessions"],
 ] as const)("sends optional browser defaults on %s creation without a settings mutation", async (_name, create, path) => {
   await expect(create()).resolves.toMatchObject({ id: "created" });
   expect(appFetch).toHaveBeenCalledTimes(1);

@@ -1,6 +1,6 @@
 ---
 created: 2026-10-16
-updated: 2026-11-07
+updated: 2026-11-10
 summary: Harness combines conversations and workspace groups in Sessions, with shared navigation, multi-repository details, environment previews and verified lifecycle actions.
 components: [apps/harness, apps/core, apps/shell, packages/app-sdk]
 ---
@@ -127,7 +127,7 @@ Other users' disclosed activity contributes to independent Working, Needs
 attention and Failed counts without exposing private conversation links. Unknown/stopping metadata
 has a separate indication.
 
-New session, Create app and Continue building are available together in Sessions. Create app is available before selecting
+Create app and New session are available together in Sessions. Create app is available before selecting
 a workspace or conversation; it creates an empty conversation and opens the existing form without
 sending a provider message. New session creates an unattached chat; the plus in Sessions
 creates a chat in that workspace. One search and the All, Needs attention, Working and
@@ -890,9 +890,10 @@ commit, preserves its browser draft and recovers the original allocation/dispatc
 Creation status and Recover actions remain inside the dialog, with a dot on the icon when recovery
 is available. The embedded Assistant places this icon in its header. There is no separate creation
 toolbar above the conversation.
-The Continue building icon beside the Sessions heading, immediately left of New session, opens
-the existing chooser for retained work or a new session from an installed local Git app. Repository
-panels expose reviewed commits, Accept locally, Use locally and optional existing-remote operations
+Retained development work opens through its workspace and conversation in Sessions. To start another
+task, use New session, add the app through Add app context and describe the change. App context is
+descriptive metadata; authorized workspace preparation remains separate and precedes source edits.
+Repository panels expose reviewed commits, Accept locally, Use locally and optional existing-remote operations
 without requiring publication to save or use the app. The
 [creation feature](../app-prototype-workspaces/feature.md) owns source retention, replay, authorization
 and verification; these controls reuse the same sessions, worktrees and child Core panels.
@@ -1098,9 +1099,10 @@ records the startup/recovery measurements; Linux and Windows lifecycle checks ar
 - Session-row deletion requires confirmation without selecting the row, preserves errors for retry,
   prevents duplicate pending requests and retains Core's workspace/resource guards. Verify selected
   session detachment, other drafts, single-row removal without resetting search or activity chips,
-  and compact-only history controls across reloads. Verify accessible icon-only Create app, Continue building
-  and New session actions beside the Sessions heading and count, in that order, with tooltips,
-  dialog focus restoration, retained creation drafts/recovery and the unchanged building chooser, and no separate application selector.
+  and compact-only history controls across reloads. Verify accessible icon-only Create app and
+  New session actions beside the Sessions heading and count, in that order, with tooltips,
+  dialog focus restoration, retained creation drafts/recovery and no separate application selector.
+  Retained work remains reachable in Sessions; New session plus app context does not allocate source.
 
 - Preserve editable workflow defaults, custom/empty text, instruction delivery, independent retention
   policies and unsaved settings drafts. Keep retention protection consistent with Core's

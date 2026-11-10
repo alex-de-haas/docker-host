@@ -1015,10 +1015,10 @@ it("keeps compact selection separate and exposes all creation actions before a w
   window.history.replaceState({}, "", "/development");
   await act(async () => root.render(<AssistantConversation fullPage />));
   expect(api.createSession).not.toHaveBeenCalled();
-  expect(container.textContent).toContain("Choose a workspace or session, create an app or continue building.");
+  expect(container.textContent).toContain("Choose a workspace or session, or create an app.");
   expect(button("Create app")?.disabled).toBe(false);
   expect(button("New session")).not.toBeNull();
-  expect(button("Continue building")).not.toBeNull();
+  expect(button("Continue building")).toBeNull();
   expect(container.querySelector('[aria-label="Message composer"]')).toBeNull();
   await act(async () => button("Create app")!.click());
   expect(api.createSession).toHaveBeenCalledOnce();
@@ -1034,7 +1034,7 @@ it.each([
   window.history.replaceState({}, "", path);
   await act(async () => root.render(<Page />));
   expect(input()).not.toBeNull(); expect(button("Create app")).not.toBeNull();
-  expect(button("Continue building")).not.toBeNull(); expect(button("New session")).not.toBeNull();
+  expect(button("Continue building")).toBeNull(); expect(button("New session")).not.toBeNull();
   expect(container.querySelector('nav[aria-label="Sessions"]')).not.toBeNull();
   expect(localStorage.getItem(WORK_SELECTION_STORAGE_KEY)).toBe(JSON.stringify({ sessionId: record.id }));
   expect(window.location.pathname).toBe(path); expect(window.location.search).toBe(`?session=${record.id}`);
