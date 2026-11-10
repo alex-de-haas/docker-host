@@ -123,12 +123,16 @@ public sealed partial class CoreLifecycleServiceTests
 
     private sealed class ResourceControlRuntime : ICoreEnvironmentRuntime
     {
-        public int Starts, Stops; public bool FailStop;
+        public int Starts, Stops; public bool FailStop; public Func<Task>? StopProbe;
         public Task<string> PrepareAsync(CoreEnvironmentRecord record, string root, CancellationToken ct) => Task.FromResult("test-core");
         public Task<CoreEnvironmentProcess?> ObserveAsync(CoreEnvironmentRecord record, string root, CancellationToken ct) => Task.FromResult(record.Process);
         public async Task StartAsync(CoreEnvironmentRecord record, string root, Func<CoreEnvironmentProcess, Task> save, CancellationToken ct)
         { Starts++; await save(new(1234567, DateTimeOffset.UtcNow)); }
-        public Task StopAsync(CoreEnvironmentRecord record, string root, bool remove, CancellationToken ct)
-        { if (FailStop) throw new IOException("Temporary Docker failure"); Stops++; return Task.CompletedTask; }
+        public async Task StopAsync(CoreEnvironmentRecord record, string root, bool remove, CancellationToken ct)
+        {
+            if (StopProbe is { } probe) await probe();
+            if (FailStop) throw new IOException("Temporary Docker failure");
+            Stops++;
+        }
     }
 }

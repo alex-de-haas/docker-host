@@ -143,7 +143,8 @@ internal sealed partial class DevelopmentWorkspaceService
                 if (tree.State != "released" || tree.Leases.Length != 0 || tree.SandboxConsumers.Length != 0
                     || tree.Operations.Any(o => o.State is "pending" or "unknown") || PathEntryExists(tree.Path))
                     throw Error("cleanup_pending", "Workspace still has source or unresolved activity.");
-                if (!direct && !journal.Direct) await CheckConsumers(tree, ct);
+                if (direct || journal.Direct) await RequireDeleteRuntimeIdleAsync(tree, ct);
+                else await CheckConsumers(tree, ct);
                 var repo = RepoPath(tree.RepositoryId);
                 if (Directory.Exists(repo))
                 {

@@ -437,6 +437,32 @@ try:
             ', '.join(format(value, '.3f') for value in timings))
         success = True
         sys.exit(0)
+    if managed and scenario == 'return':
+        delete_credential = request('/api/auth/credentials', {'label': 'Disposable workspace deletion acceptance',
+            'audience': 'hosty:core', 'scopes': ['mcp:read', 'mcp:workspaces']}, confirm_settings=True)
+        diagnostic_secrets.add(delete_credential['token'])
+        delete_request_id = str(uuid.uuid4())
+        def deletion_rpc(method, params):
+            rpc_id = uuid.uuid4().hex
+            payload = {'jsonrpc': '2.0', 'id': rpc_id, 'method': method, 'params': params}
+            req = urllib.request.Request(origin+'/api/mcp', data=json.dumps(payload).encode(), headers={
+                'Authorization': 'Bearer '+delete_credential['token'], 'Accept': 'application/json, text/event-stream',
+                'Content-Type': 'application/json'})
+            with urllib.request.urlopen(req, timeout=180) as response:
+                raw = response.read().decode()
+            envelopes = [json.loads(raw)] if raw.lstrip().startswith('{') else [
+                json.loads(line[5:]) for line in raw.splitlines() if line.startswith('data:')]
+            envelope = next(value for value in envelopes if value.get('id') == rpc_id)
+            assert 'error' not in envelope, envelope.get('error')
+            return envelope['result']
+        def delete_fixture_workspace():
+            result = deletion_rpc('tools/call', {'name': 'delete_workspace', 'arguments': {
+                'requestId': delete_request_id, 'workspaceId': tree['workspaceId']}})
+            assert not result.get('isError'), result
+            return result.get('structuredContent') or json.loads(next(
+                item['text'] for item in result['content'] if item['type'] == 'text'))
+        deletion_rpc('initialize', {'protocolVersion': '2025-03-26', 'capabilities': {},
+            'clientInfo': {'name': 'workspace-deletion-acceptance', 'version': '1'}})
     activation_id=str(uuid.uuid4())
     if scenario in ('return', 'direct'):
         review = request(f"/api/development/workspaces/{tree['workspaceId']}/activation/plan", {'selection':{'coreSelected':True}})
@@ -508,6 +534,15 @@ try:
     assert request('/control/v1/core/status',control=True)['launch']==status['launch']
     assert len(list((root/'core/workspace-snapshots').glob('*.zip')))==1
     say('PASS: exact replacement identity, one verified snapshot, source/user/session preserved, completed replay has no process change')
+    if managed and scenario == 'return':
+        # An explicit Delete cannot consume source selected by the factual Core, even though
+        # the workspace contains disposable unfinished files and has no external writer lease.
+        refused = delete_fixture_workspace()
+        assert 'running Core uses this worktree' in refused.get('error', ''), refused
+        assert sentinel.read_text() == 'preserve native fixture source'
+        assert request('/control/v1/core/status', control=True)['launch'] == status['launch']
+        assert read_receipt(activation_path)['phase'] == 'active'
+        say('PASS: direct Delete refused the active Core workspace and preserved its exact process, activation and source')
     if scenario == 'direct':
         baseline = final['previousCore']
         first_activation = activation_id
@@ -593,6 +628,25 @@ try:
         assert len(list((root/'core/workspace-snapshots').glob('*.zip')))==(2 if scenario == 'direct' else 1)
         if scenario == 'direct': assert_idle_preserved()
         say('PASS: reviewed HTTP Return restored exact prior target, kept current users/session/source/snapshot, and replay did not restart')
+        if managed and scenario == 'return':
+            attached = request('/api/core-environments/from-workspace', {'requestId': str(uuid.uuid4()),
+                'label': 'Workspace deletion child fixture', 'workspaceId': tree['workspaceId'], 'worktreeIds': [tree['id']]})
+            attached = request('/api/core-environments/'+attached['id']+'/operations/start',
+                {'requestId': str(uuid.uuid4()), 'expectedRevision': attached['revision']})
+            assert attached['state'] == 'running' and attached['process']['pid'] > 0, attached
+            attached_root = pathlib.Path(attached['dataRoot'])
+            assert attached_root.exists()
+            owned_pids.add(attached['process']['pid'])
+            removed = delete_fixture_workspace()
+            assert removed.get('state') == 'removed', removed
+            assert not pathlib.Path(tree['path']).exists()
+            finished = request('/api/core-environments/'+attached['id'])
+            assert finished['state'] == 'finished' and not attached_root.exists(), finished
+            assert not alive(attached['process']['pid'])
+            assert request('/control/v1/core/status', control=True)['launch'] == restored['launch']
+            assert delete_fixture_workspace()['state'] == 'removed'
+            request('/api/auth/credentials/'+delete_credential['id'], method='DELETE', confirm_settings=True)
+            say('PASS: the original Delete request succeeded after Return, Finished its running child, removed only owned source/test data, and replay preserved Core')
     success=True
 except BaseException as error:
     failure = error
