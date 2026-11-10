@@ -1,6 +1,6 @@
 ---
 created: 2026-11-04
-updated: 2026-11-05
+updated: 2026-11-10
 summary: Harness task trees select saved profiles or scoped configurations, retain execution history and coordinate optional source access through Core.
 components: [apps/harness, apps/core, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -157,8 +157,11 @@ Artifact versions are Platform 0.174.0, Harness 0.91.0, TypeScript SDK 0.44.0 an
 
 - Run both SDK suites, Core mediation/catalog/source tests, Harness task/Worker/adapter tests,
   TypeScript checks and the production web build.
-- Run managed `tasks`, `sessions` and `worker` integration suites with separate users, data and
-  dependencies. Verify actual child readiness and parent Finish resource removal.
+- The heavyweight `tasks` integration suite is optional under the
+  [explicit selection policy](../ci-feedback-loop/feature.md#local-integration-checks), including
+  when delegation changes. Run affected `sessions`/`worker` checks under the ordinary integration
+  policy. Selected managed runs use separate users, data and dependencies and verify actual child
+  readiness and parent Finish resource removal.
 - Exercise real configured Codex and Claude separately from scripted fixtures: profile discovery,
   delegation, exact child review, explicit final result, Normal consent/decline, native checkpoint
   restart and same-attempt continuation.

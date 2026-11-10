@@ -1,6 +1,6 @@
 ---
 created: 2026-10-07
-updated: 2026-11-09
+updated: 2026-11-10
 summary: Authorized external clients use registered Core worktrees, independent test environments, canonical publication and native Git/provider reconciliation.
 components: [apps/core, apps/harness, apps/documents]
 ---
@@ -394,7 +394,10 @@ Return preserves current data and live source edits.
   inspect the Core/Plans responses and UI, revoke authority and preserve source until authorized cleanup.
 - Exercise canonical source/publication callers, cross-creator same-user access, revoked admission, native
   commits, discovered-but-unlinked PRs and exact-head linking without fabricating remote mutations.
-- Run managed sessions/tasks/pull-requests integration with independent users, same-repository apps, an
-  additional dependency repository, reconnect/replay and owner-confirmed test-resource removal.
+- Run affected managed sessions/pull-requests integration with independent users, same-repository
+  apps, an additional dependency repository, reconnect/replay and owner-confirmed test-resource
+  removal. The heavyweight tasks journey is optional under the
+  [explicit selection policy](../ci-feedback-loop/feature.md#local-integration-checks), including
+  for external workspace changes.
 - Run affected Core/MCP and Plans tests, exact Core build, Native AOT publish, lint/production app build,
   version consistency, canonical documentation validation and repository diff checks.
