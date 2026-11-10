@@ -335,7 +335,7 @@ it("compacts a sending row after its correlated transcript message arrives and k
   expect(row?.textContent).toContain("Message in conversation"); expect(row?.textContent).not.toContain(current.text);
   expect(row?.textContent).not.toContain("queued.txt"); expect(row?.querySelector('[aria-label="Sending message"]')).not.toBeNull();
   expect(button("Edit queued message 1")).toBeUndefined(); expect(container.textContent?.split(current.text)).toHaveLength(2);
-  await click("Move queued message 3 up");
+  await act(async () => button("Reorder queued message 3").dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true })));
   expect(perform).toHaveBeenCalledWith({ type: "reorder", entryIds: [current.id, third.id, second.id] });
   await act(async () => update({ ...blank(), entries: [second, third] }));
   expect(container.querySelector('[aria-label="Message queue"]')?.textContent).not.toContain("Message in conversation");

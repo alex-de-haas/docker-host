@@ -1,6 +1,6 @@
 ---
 created: 2026-11-09
-updated: 2026-11-09
+updated: 2026-11-10
 summary: Harness persists ordered messages, immutable attachments and edit reservations while keeping the composer available during background delivery.
 components: [apps/harness]
 ---
@@ -14,8 +14,14 @@ stream. It does not create a Core queue, Task or general background job.
 
 ## Composer And Queue Rows
 
-The bounded stack shows waiting messages, attachment names and controls to edit, delete or move
-eligible rows up and down. Current agent settings apply to waiting messages. Send and Stop remain
+The bounded stack shows each message as one compact row with a single-line, ellipsized text preview.
+Attachments appear as a paperclip and count; their names are available on hover and to screen readers.
+Edit and Delete appear on row hover or keyboard focus, and remain visible on devices without hover.
+A handle at the left reorders eligible rows by mouse or touch drag, or by the Up and Down arrow keys.
+Reordering preserves every queue identity and cannot cross a sending, unknown or editing row.
+Escape, pointer cancellation and queue changes cancel an in-progress drag. Retry, edit recovery,
+sending status and error details remain available inline. Current agent settings apply to waiting
+messages without repeating that information on each row. Send and Stop remain
 separate actions. Successful completion advances the head in order; an approval or question holds
 the active turn. Stop and execution failure pause the queue, and Resume queue is explicit.
 
@@ -181,6 +187,9 @@ the parent verifies Finish and child resource removal.
 
 ## Testing Expectations
 
+- Verify single-line rows for long multiline text at desktop and 360 px widths, attachment counts,
+  hover/focus actions and touch visibility. Exercise pointer and keyboard reorder, locked-row
+  barriers, cancellation and concurrent queue changes without losing full reorder identities.
 - Exercise owner and same-origin guards, capacity refusal, command replay, revision races and
   retired-entry tombstones, including competing clients without browser locks.
 - Inject interruption around frozen claims, receipt persistence, provider dispatch and acceptance.

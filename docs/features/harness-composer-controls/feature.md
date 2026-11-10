@@ -1,6 +1,6 @@
 ---
 created: 2026-11-03
-updated: 2026-11-09
+updated: 2026-11-10
 summary: Responsive composer controls with a durable message stack, transcript suggestions, shared agent settings and capability-aware dictation.
 components: [apps/harness]
 ---
@@ -94,8 +94,9 @@ with inline errors and Retry controls. The previous amber sending banner is abse
 with an unconfirmed send stays locked while its original request is reconciled.
 
 The server owns accepted queued messages and their attachment bytes, and dispatches them in order
-after the active agent turn. Queued messages support moving up/down, deletion, editing and pausing
-the queue. Sending entries lose edit/delete controls. Browser outbox records preserve pending
+after the active agent turn. Queued messages use single-line previews, a left drag handle (also
+operable with arrow keys), hover/focus edit and delete actions, and compact attachment counts.
+The queue can be paused. Sending entries lose edit/delete controls. Browser outbox records preserve pending
 uploads and exact command identities across reloads, scoped to the Harness origin, installation,
 owner and conversation. Storage failures retain recoverable rows and preserve an unsaved composer.
 
