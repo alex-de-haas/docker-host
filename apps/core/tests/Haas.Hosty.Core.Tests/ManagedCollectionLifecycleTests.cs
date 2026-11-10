@@ -116,6 +116,6 @@ public sealed partial class CoreLifecycleServiceTests
     {
         public string Inspection { get; set; } = "{}";
         public Task<DockerCommandResult> RunAsync(IReadOnlyList<string> args, IReadOnlyDictionary<string, string>? environment = null, CancellationToken cancellationToken = default)
-            => Task.FromResult(new DockerCommandResult(0, args[0] == "ps" ? "abc123" : Inspection, ""));
+            => Task.FromResult(new DockerCommandResult(0, args[0] == "ps" ? "abc123\t" : Inspection, ""));
     }
 }

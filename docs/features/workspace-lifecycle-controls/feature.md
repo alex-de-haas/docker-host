@@ -1,7 +1,7 @@
 ---
 created: 2026-10-16
-updated: 2026-11-03
-summary: Core coordinates pause and verified completion independently from unconditional workspace deletion with one informational UI confirmation.
+updated: 2026-11-10
+summary: Core coordinates pause, verified completion and explicit workspace deletion while protecting source used by Core or ordinary applications.
 components: [apps/core, apps/harness]
 ---
 
@@ -219,8 +219,9 @@ completion checks, explicit workspace deletion and complete disposable-stand rem
 Harness shows one red **Delete workspace…** action for every workspace state, including running,
 paused, completed and failed work. The dialog describes files, local branches, temporary test data,
 unfinished changes and reported activity. Details are advisory: loading or unavailable inspection
-does not prevent confirmation. Cancel makes no mutation. Confirmation sends only the target and
-stable request UUID; no typed name, digest, Commit, Pause, Complete or manual lease release is needed.
+does not prevent confirmation. Known runtime dependencies appear with switch-away/Return guidance;
+Core rechecks them before admission and removal. Cancel makes no mutation. Confirmation sends only
+the target and stable request UUID; no typed name, digest, Commit, Pause, Complete or manual lease release is needed.
 
 Canonical routes beneath `/api/internal/apps/{appId}/workspace-inspection` are:
 
@@ -235,9 +236,13 @@ new confirmation. Legacy workflow Delete delegates to the canonical coordinator.
 
 Admission fences new managed source/resource consumers and records exact allocations and per-resource
 requests. Attached child Cores and app sandboxes finish through their existing lifecycle services,
-including legacy session context and resources created by another user. Known app source consumers
-receive lifecycle Stop or Return. Actual failures retain source and the same request for retry.
-Core itself and unknown external execution are reported separately when process exit is unconfirmed;
+including legacy session context and resources created by another user. Core refuses deletion while
+the running Core, a retained Core activation or an ordinary application consumes any selected worktree.
+The operator selects another runtime or completes Return before deleting; Delete does not stop or
+return ordinary applications. Admission, recovery and final removal recheck these dependencies.
+Attached sandbox source bindings are released through Finish before source removal, including
+environments associated by registered worktree IDs without workspace context. Unmatched sandbox
+bindings and cleanup failures retain source and the original request for retry. Unknown external execution is reported separately;
 source removal does not claim those processes were terminated. Removed worktree leases are retired
 with attributable delete evidence. No arbitrary process is killed based on a lease.
 
@@ -281,6 +286,8 @@ See [workspace branch names](../assistant-session-workspaces/feature.md#workspac
 
 - Retain pause/completion, exact-head merge evidence and private provider credential checks.
 - Cover direct deletion of dirty source, active/unknown leases, partial preparation and missing paths.
+- Refuse deletion before admission and during interrupted cleanup when the factual Core, retained Core activation or an ordinary app uses source; preserve its runtime, worktree and local branch.
+- Finish attached child Core environments before removing source, retaining cleanup failures and request identities.
 - Verify caller cancellation before admission preserves source, cancellation during managed shutdown
   completes single/batch cleanup, and Core shutdown retains a recoverable original request.
 - Cover Windows read-only files, directory links with preserved external targets, and recovery after

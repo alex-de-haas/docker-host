@@ -658,3 +658,60 @@ it("reconciles the completed Return when factual Core launch data arrives later"
   expect(localStorage.getItem(journalKey())).toBeNull();
   expect(mutations()).toHaveLength(0); expect(fixture.release).not.toHaveBeenCalled();
 });
+
+
+it.each([false, true])("offers an explicit Return when a newer Release follows a completed workspace switch (deleted workspace: %s)", async deleted => {
+  const candidate: CoreLaunch = { ...state.launch, mode: "dev", projectPath: `/managed/tree-a/${project}`,
+    generationPath: "/build/candidate", processId: 43, startedAt: "2026-10-22T13:00:00Z" };
+  current = { ...active("saved-activation"), previousCore: { mode: "release" }, activatedCore: candidate };
+  records[workspace.id] = [current];
+  const originalApply = { kind: "apply", workspaceId: workspace.id,
+    body: { requestId: current.id, selection: { coreSelected: true, coreWorktreeId: "tree-a" }, planDigest: "original-review" } };
+  const saved = { workspaceId: workspace.id, activationId: current.id,
+    target: { kind: "workspace", workspaceId: workspace.id, worktreeId: "tree-a", label: workspace.name }, originalApply };
+  localStorage.setItem(journalKey(), JSON.stringify(saved));
+  props.state = { ...state, instance: "44:release", launch: { ...state.launch, processId: 44, startedAt: "2026-10-22T14:00:00Z" } };
+  if (deleted) props.workspaces = [];
+
+  await render(); await click("Check switch");
+  expect(container.querySelector('[aria-label="Needs attention"]')?.textContent).toBe("true");
+  expect(document.querySelector('[role="dialog"] .animate-spin')).toBeNull();
+  expect(document.body.textContent).toContain("Core started a different runtime after this switch completed.");
+  expect(JSON.parse(localStorage.getItem(journalKey())!)).toEqual(saved);
+  expect(mutations()).toHaveLength(0); expect(fixture.release).not.toHaveBeenCalled();
+  expect(button("Return Core").disabled).toBe(true);
+  const compatibility = document.querySelector<HTMLButtonElement>('[role="checkbox"]')!;
+  expect(compatibility.disabled).toBe(false);
+  await act(async () => compatibility.click()); await click("Return Core");
+  expect(calls("return")).toHaveLength(1);
+  const returned = calls("return")[0][1];
+  expect(returned).toMatchObject({ activationId: "saved-activation", return: { apps: [], core: true, acceptDataChanges: true } });
+  expect(calls("apply")).toHaveLength(0); expect(fixture.release).not.toHaveBeenCalled();
+  current = { ...current!, phase: "returned", coreReturned: true,
+    returns: [{ request: { requestId: returned.return.requestId, core: true }, state: "succeeded" }] };
+  await refreshStatus();
+  expect(container.querySelector('[aria-label="Needs attention"]')?.textContent).toBe("false");
+  expect(container.querySelector('[aria-label="Busy"]')?.textContent).toBe("false");
+  expect(document.body.textContent).toContain("Core is now running the installed Release.");
+});
+
+it.each(["old-baseline", "same-runtime", "not-active", "missing-launch", "wrong-activation", "wrong-workspace"])("does not infer a later runtime change from %s", async evidence => {
+  const candidate: CoreLaunch = { ...state.launch, mode: "dev", projectPath: `/managed/tree-a/${project}`,
+    generationPath: "/build/candidate", processId: 43, startedAt: "2026-10-22T13:00:00Z" };
+  current = { ...active("saved-activation"), previousCore: { mode: "release" }, activatedCore: candidate };
+  const originalApply = { kind: "apply", workspaceId: workspace.id, body: { requestId: current.id } };
+  localStorage.setItem(journalKey(), JSON.stringify({ workspaceId: workspace.id, activationId: current.id,
+    target: { kind: "workspace", workspaceId: workspace.id, worktreeId: "tree-a", label: workspace.name }, originalApply }));
+  props.state = { ...state, instance: "44:release", launch: { ...state.launch, processId: 44, startedAt: "2026-10-22T14:00:00Z" } };
+  if (evidence === "old-baseline") props.state = state;
+  if (evidence === "same-runtime") props.state = { ...props.state, launch: { ...candidate, processId: 44, startedAt: "2026-10-22T14:00:00Z" } };
+  if (evidence === "not-active") current.phase = "core-starting";
+  if (evidence === "missing-launch") delete current.activatedCore;
+  if (evidence === "wrong-activation") current.id = "unrelated-activation";
+  if (evidence === "wrong-workspace") current.workspaceId = "unrelated-workspace";
+  await render(); await click("Check switch");
+  expect(container.querySelector('[aria-label="Needs attention"]')?.textContent).toBe("false");
+  expect(document.body.textContent).not.toContain("Core started a different runtime after this switch completed.");
+  expect(button("Return Core")).toBeUndefined();
+  expect(mutations()).toHaveLength(0); expect(fixture.release).not.toHaveBeenCalled();
+});
