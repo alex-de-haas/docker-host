@@ -37,6 +37,10 @@ Where the version lives:
   [local integration guide](docs/features/ci-feedback-loop/feature.md#local-integration-checks).
   Record commands, platforms and results in the PR's Verification section, including any
   checks that could not run and why. Documentation-only changes need no runtime suite.
+  The heavyweight `tasks` integration suite is an exception: run it only on the user's explicit
+  request or under a user-approved verification plan. It is not a routine PR prerequisite, even
+  for task/Harness changes. Run affected fast unit/component tests and builds as usual; describe
+  an unselected `tasks` suite as optional, not as a blocking missing check.
 - **PR descriptions track the plan.** When the work is driven by a `plan.md`, the
   description lists the deliverables this PR completes by ID (`D3`, `D5`) and
   links the feature folder. Always state the version outcome ("0.4.2 → 0.5.0" or "No version

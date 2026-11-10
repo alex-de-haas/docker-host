@@ -1,6 +1,6 @@
 ---
 created: 2026-10-27
-updated: 2026-11-06
+updated: 2026-11-10
 summary: Provider-owned tasks with qualified numbers, human or app assignment, durable execution, Harness profile options, review and a live Tasks UI.
 components: [apps/core, apps/harness, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -360,9 +360,11 @@ TypeScript SDK 0.44.0 → 0.45.0; .NET SDK 0.14.0 → 0.15.0.
 - UI tests cover SSE draft preservation, accessible discard/copy recovery after a background status
   change, and identical replay after a lost mutation response. Accepted task sessions lock their
   profile/model before dispatch and admit their first message only through the task executor.
-- `npm run test:integration -- tasks` builds Core/CLI and both Harness images, then exercises the
-  real API/Worker/MCP journey in a parent-managed child Core with separate password-authenticated
-  users and data. A scripted Codex protocol fixture avoids paid providers while using real session
+- The optional manual `npm run test:integration -- tasks` follows the
+  [explicit selection policy](../ci-feedback-loop/feature.md#local-integration-checks); it is not
+  required for routine task changes or PRs. When selected, it builds Core/CLI and both Harness
+  images, then exercises the real API/Worker/MCP journey in a parent-managed child Core with
+  separate password-authenticated users and data. A scripted Codex protocol fixture avoids paid providers while using real session
   transport, tool approval, native exit and workspace leases. An independent fixture consumes the
   SDK and executes work without profile concepts. This is not live-model quality evidence.
 - Optional `HOSTY_TASKS_BROWSER=1` runs the Chromium journey through normal password login and Core

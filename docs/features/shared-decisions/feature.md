@@ -196,8 +196,10 @@ Verification commands for this delivery:
   asynchronous Codex questions answered during a later turn,
   durable inbox-before-ack, unknown native acceptance, same-attempt continuation, cancellation and
   parking races, local/container exit proofs, shared drafts and uncertain submissions.
-- `npm run test:integration -- tasks` uses a disposable parent-managed Core, normal test login,
-  local-only Docker images and an explicitly scripted native provider. It exercises independent Core
+- The optional manual `npm run test:integration -- tasks` follows the
+  [explicit selection policy](../ci-feedback-loop/feature.md#local-integration-checks), rather than
+  running for every Decisions change or PR. When selected, it uses a disposable parent-managed
+  Core, normal test login, local-only Docker images and an explicitly scripted native provider. It exercises independent Core
   answers, five-minute parking, restart, same task attempt, explicit result and the existing Tasks
   journey. `HOSTY_TASKS_BROWSER=1` includes Chromium Tasks/Decisions acceptance; the existing
   `HOSTY_TASKS_PLAYWRIGHT_MODULE` override selects an installed Playwright module.
