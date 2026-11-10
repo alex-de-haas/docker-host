@@ -1,6 +1,6 @@
 ---
 created: 2026-11-03
-updated: 2026-11-06
+updated: 2026-11-10
 summary: Core-owned private questions with immutable answers, source delivery receipts and a shared Harness Decisions view.
 components: [apps/core, apps/harness, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -121,6 +121,14 @@ completion. Claude acceptance also verifies five-minute parking, a full child Co
 and exactly one successful continuation of the same native session. Scripted protocol checks
 separately cover duplicate wording, unsupported inputs and worker crash boundaries.
 
+Codex `request_user_input_async` returns at once and publishes its questions on the agent message
+that follows. Harness shows them as a nonblocking Decision with positional question/option IDs and
+free text, in place of that message's plain-text rendering. A shape beyond the Decision limits stays
+visible as text with a notice. No native callback remains, so the Worker keeps no pending frame and
+the saved answer starts the next turn of the same native thread with strict resume. That turn starts
+only when the conversation has no running or waiting turn; an answer saved during a turn waits for
+it to end and never interrupts it.
+
 ## Required Task Input
 
 Harness `task_request_input` creates a durable mandatory wait through this contract, independent of
@@ -185,6 +193,7 @@ Verification commands for this delivery:
   explicit content removal and private SSE revocation.
 - SDK tests cover current-user transport, exact request identity, conflicts and missing credentials.
 - Harness tests cover stable native IDs, duplicate labels, free text, secret/nonblocking handling,
+  asynchronous Codex questions answered during a later turn,
   durable inbox-before-ack, unknown native acceptance, same-attempt continuation, cancellation and
   parking races, local/container exit proofs, shared drafts and uncertain submissions.
 - `npm run test:integration -- tasks` uses a disposable parent-managed Core, normal test login,

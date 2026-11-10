@@ -123,6 +123,31 @@ describe("codex harness adapter", () => {
     expect(active.resolveQuestion(asked.questionId, { first: "again", second: "again" })).toBe(false);
   });
 
+  it("turns request_user_input_async messages into nonblocking message-delivered questions", async () => {
+    const active = start(); active.send("async-question");
+    await waitFor(() => events.find(e => e.type === "result"), "turn end");
+    const asked = events.filter(e => e.type === "question_request");
+    expect(asked).toHaveLength(1);
+    if (asked[0]?.type !== "question_request") throw new Error("Expected question");
+    expect(asked[0]).toMatchObject({ blocking: false, delivery: "message", native: { turnId: "async-turn", itemId: "async-call" } });
+    expect(asked[0].questions).toEqual([
+      { id: "q1", question: "Which branch?", header: "", multiSelect: false, allowText: true, options: [
+        { id: "o1", label: "Main", description: "" }, { id: "o2", label: "Main", description: "" }, { id: "o3", label: "Release", description: "" }] },
+      { id: "q2", question: "Anything else?", header: "", multiSelect: false, allowText: true, options: [] },
+    ]);
+    // The plain-text rendering of the same question is not repeated as an assistant message.
+    expect(events.filter(e => e.type === "assistant_text").map(e => e.text)).toEqual(["Independent work continued."]);
+    expect(active.resolveQuestion(asked[0].questionId, { q1: "Main", q2: "No" })).toBe(false);
+  });
+
+  it.each([["oversized", "Question 1"], ["options", "Pick a port"]])("keeps an unsupported async question (%s) visible as text", async (shape, text) => {
+    start().send(`async-question-${shape}`);
+    await waitFor(() => events.find(e => e.type === "result"), "turn end");
+    expect(events.some(e => e.type === "assistant_text" && e.text.includes(text))).toBe(true);
+    expect(events.some(e => e.type === "notice" && e.message.startsWith("Codex question shown as text:"))).toBe(true);
+    expect(events.some(e => e.type === "question_request")).toBe(false);
+  });
+
   it("rejects secret native questions without storing their content as a question", async () => {
     start().send("question-secret");
     await waitFor(() => events.find(e => e.type === "result"), "secret rejection");

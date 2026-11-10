@@ -257,6 +257,21 @@ function handle(msg) {
       if (currentTurnText === "question-nonblocking") send({ method: "item/completed", params: { threadId: activeThreadId, item: { type: "agentMessage", id: "independent", text: "Independent work continued." } } });
       return;
     }
+    if (currentTurnText.startsWith("async-question")) {
+      // request_user_input_async returns {"accepted":true}; its questions ride on the agent message.
+      send({ method: "turn/started", params: { threadId: activeThreadId, turn: { id: "async-turn" } } });
+      const asked = (id, turnId, questions) => send({ method: "item/completed", params: { threadId: activeThreadId, turnId, item: { type: "agentMessage", id,
+        text: questions.map(q => [q.title, ...(q.options ?? []).map(option => `- ${option}`)].join("\n")).join("\n\n"),
+        phase: "final_answer", memoryCitation: null, delivery: "async", questions } } });
+      asked("async-call", "async-turn", currentTurnText === "async-question-oversized"
+        ? Array.from({ length: 5 }, (_, index) => ({ title: `Question ${index + 1}`, options: null }))
+        : currentTurnText === "async-question-options" ? [{ title: "Pick a port", options: Array.from({ length: 9 }, (_, index) => String(8080 + index)) }]
+        : [{ title: "Which branch?", options: ["Main", "Main", "Release"] }, { title: "Anything else?", options: null }]);
+      send({ method: "item/completed", params: { threadId: activeThreadId, turnId: "async-turn", item: { type: "agentMessage", id: "independent",
+        text: "Independent work continued.", phase: "final_answer", memoryCitation: null, delivery: null, questions: null } } });
+      send({ method: "turn/completed", params: { threadId: activeThreadId, turn: { id: "async-turn", status: "completed" } } });
+      return;
+    }
     if (currentTurnText.startsWith("suggestion-")) {
       send({ method: "turn/started", params: { threadId: activeThreadId, turn: { id: "prediction-source" } } });
       send({ method: "item/completed", params: { item: { type: "agentMessage", id: "answer", text: "Primary answer" } } });
