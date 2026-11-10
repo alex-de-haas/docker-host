@@ -191,6 +191,7 @@ try {
   await checkFiles(session, independent.entries[1], { 'second-tab.txt': 'second tab bytes', 'stashed-local.txt': 'ordinary draft blob' });
   await secondTab.close();
   await open(page, session); await page.setViewportSize({ width: 360, height: 800 }); await page.emulateMedia({ colorScheme: 'dark' });
+  await row(page, 2).waitFor();
   assert.equal(await rows(page).count(), 2);
   assert.equal(await rows(page).evaluateAll(elements => elements.every(element => element.getBoundingClientRect().height <= 40)), true, 'Queued messages must stay compact at 360 px.');
   assert.equal(await page.locator('html').evaluate(element => element.scrollWidth <= innerWidth), true);
