@@ -50,7 +50,7 @@ async function fixture() {
     deliverDecision: vi.fn(async () => { outcome = "applied"; run.state = "running"; }),
     parkDecision: vi.fn(async () => { run = { ...run, state: "parked", exitConfirmed: true }; }),
     messageReceipt: vi.fn(async () => { throw new DecisionError("message_request_not_found", "Absent", 404); }),
-    resumeDecision: vi.fn(async () => { record.decisionRunIds = { [wait.commandId]: "resumed" }; run.state = "running"; run.exitConfirmed = false; }),
+    resumeDecision: vi.fn(async () => { record.decisionRunIds = { [wait.commandId]: "resumed" }; run.state = "running"; run.exitConfirmed = false; return true; }),
     worker: { request: vi.fn(async (url: string) => url.includes("/controls/") ? { state: outcome } : structuredClone(run)) },
   };
   const service = new DecisionsService(manager as unknown as SessionManager, () => client);

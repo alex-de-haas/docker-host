@@ -431,16 +431,31 @@ export class SessionManager {
       await this.worker.request(`/v1/runs/${wait.native.workerRunId}/park`, "POST", wait.park, true);
     });
   }
-  async resumeDecision(wait: DecisionWait, credential: string): Promise<void> {
-    await this.checkDecision(wait);
+  /** A message-delivered answer waits for the conversation's current turn instead of interrupting it. */
+  async decisionTurnAvailable(wait: DecisionWait): Promise<boolean> {
     const session = await this.getSession(wait.sessionId);
-    if (!session || session.parkedQuestionRun?.id !== wait.native.workerRunId || session.workerRun || !wait.native.sessionId)
+    return !!session && !session.workerRun && !["running", "awaiting_approval", "awaiting_question"].includes(session.status);
+  }
+  /** Returns false only while a message-delivered answer waits for the current turn. */
+  async resumeDecision(wait: DecisionWait, credential: string): Promise<boolean> {
+    await this.checkDecision(wait);
+    const session = await this.getSession(wait.sessionId), message = wait.event.delivery === "message";
+    if (message && !wait.native.sessionId) throw new AppContextError(409, "unsupported_resume", "This question has no saved native thread to continue. The answer is retained.");
+    if (!session || !message && (session.parkedQuestionRun?.id !== wait.native.workerRunId || session.workerRun || !wait.native.sessionId))
       throw new AppContextError(409, "unknown_stop", "Wait for confirmed parking and source release before resuming.");
-    await this.postMessage(wait.sessionId, continuationInput(wait), credential, [], {
-      clientRequestId: wait.commandId, actorUserId: wait.owner, taskDispatch: !!session.taskExecutionId,
-      expectedRevision: session.appContextRevision ?? 0, selectionRevision: session.selectionRevision ?? 0,
-      decisionContinuation: { id: wait.id, owner: wait.owner, snapshot: wait.snapshot, cancellationGeneration: wait.cancellationGeneration },
-    });
+    if (message && !await this.decisionTurnAvailable(wait)) return false;
+    try {
+      await this.postMessage(wait.sessionId, continuationInput(wait), credential, [], {
+        clientRequestId: wait.commandId, actorUserId: wait.owner, taskDispatch: !!session.taskExecutionId,
+        expectedRevision: session.appContextRevision ?? 0, selectionRevision: session.selectionRevision ?? 0,
+        decisionContinuation: { id: wait.id, owner: wait.owner, snapshot: wait.snapshot, cancellationGeneration: wait.cancellationGeneration },
+      });
+    } catch (error) {
+      // Another turn started after the availability check; the same command retries after it.
+      if (message && error instanceof SessionBusyError) return false;
+      throw error;
+    }
+    return true;
   }
   async stopDecisionExecution(wait: DecisionWait): Promise<void> {
     if (wait.event.blocking === false) return;
@@ -3599,7 +3614,7 @@ export class SessionManager {
           await this.store.saveRecord(session.record);
           // Registration is durable locally; the shared record appears only after its Core receipt.
           await this.append(id, { ...event, decisionWaitId: wait.id });
-          session.pendingQuestions.set(event.questionId, event.questions.map(q => q.id ?? q.question));
+          if (event.delivery !== "message") session.pendingQuestions.set(event.questionId, event.questions.map(q => q.id ?? q.question));
           if (event.blocking !== false) await this.setStatus(id, "awaiting_question");
           return;
         }
@@ -3834,6 +3849,8 @@ export class SessionManager {
     if (!["running", "awaiting_approval", "awaiting_question"].includes(status)) this.setActivity(session, null);
     session.record.updatedAt = new Date().toISOString();
     await this.store.saveRecord(session.record);
+    // An answer saved during this turn continues the conversation as soon as it is free.
+    if (status === "idle" && session.record.decisionWaitIds?.length) this.decisions?.kick();
     if (["running", "awaiting_approval", "awaiting_question"].includes(status) && session.record.developmentLease && this.development?.available) {
       const credential = session.workspaceCredential ?? session.credential;
       if (credential || session.record.taskWorkspace) {
