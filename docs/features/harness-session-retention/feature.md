@@ -1,6 +1,6 @@
 ---
 created: 2026-10-16
-updated: 2026-11-09
+updated: 2026-11-11
 summary: Harness expires reconciled chats, protects attached development sessions and recovers previously accepted cleanup without deleting shared source implicitly.
 components: [apps/harness, apps/core]
 ---
@@ -71,6 +71,13 @@ Dirty workspace source and other conversations remain. Live session resources an
 still require reconciliation. Retention never invokes unfinished-work discard or cancels unknown
 external processes. Harness keeps no hidden archive of a deleted conversation.
 
+The child Core lifecycle journal records a readable 4xx refusal of a fresh request (other than 408/429
+or an unknown outcome) as refused, so it no longer protects the conversation; an exact retry journals
+it as pending again. A refusal after an uncertain response cannot disprove that earlier request and
+leaves it pending. Core persists the session context Harness stamps on each creation before allocating
+anything, so manual removal and `environment_list` retire pending creations when Core's inventory
+lists no child for the session, except requests this Harness process is still sending.
+
 Core returns an explicit `workspaceAbsent` confirmation after checking stored worktree evidence and
 any unfinished deletion journal. Harness combines this with its local workspace history to reconcile
 a deleted workspace, including a lost Delete response followed by restart. It still requires finished
@@ -132,6 +139,8 @@ Pause alone never establishes completion or starts a completed-workspace retenti
 - Exclude active execution, pending questions/approvals, every pending queue state, editing
   reservations, handoffs and resource operations; reconcile
   sandbox-only sessions before deleting their conversation.
+- Release fresh child Core refusals and pending creations absent from Core's session inventory;
+  keep in-flight creations and refusals after an uncertain response pending.
 - Exercise service identity, current installation/session ownership, still-enabled administrator
   ownership, explicit cleanup permission and source/resource grants without saved browser tokens.
 - Recheck Core heads/leases/consumers before deletion. Recover lost responses and partial cleanup
