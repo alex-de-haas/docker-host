@@ -81,7 +81,7 @@ export interface SessionRecord {
   workflowCompletion?: { requestId: string; expectedRevision: number; state: "queued" | "blocked"; error?: string };
   coreEnvironments?: import("@hosty-sdk/app/sandbox/server").CoreEnvironment[];
   appCreations?: { input: Record<string, unknown>; state: "pending" | "observed" | "rejected"; prompt?: string }[];
-  coreEnvironmentOperations?: { action: string; input: Record<string, unknown>; state: "pending" | "observed" }[];
+  coreEnvironmentOperations?: { action: string; input: Record<string, unknown>; state: "pending" | "observed" | "rejected" }[];
   handoffPending?: boolean;
   handoffDraft?: { text: string; attachments: { name: string; size: number }[] };
   handoffDispatch?: { id: string; state: "queued" | "running" | "completed" | "failed" | "unknown"; error?: string };
