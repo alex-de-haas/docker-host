@@ -40,6 +40,7 @@ import { isValidCodeVerifier } from "@hosty-sdk/app/app-code";
 import { isSourceConnectionRoute, requestSourceConnection } from "./source-connections.js";
 import { isWorkspaceAccessReviewRoute, requestWorkspaceAccessReview } from "./workspace-access-reviews.js";
 import { workspaceApplicationsRoute } from "./workspace-applications.js";
+import { MAX_PROMPT_TEMPLATE_BYTES, PromptTemplateStore } from "./prompt-templates/store.js";
 import { serveStaticSite } from "./settings/static-site.js";
 
 // Upper bound for an event stream opened with an app session rather than a delegated token: the
@@ -84,6 +85,7 @@ export function createGatewayServer(
   const history = new HistoryService(manager.store, { appId: process.env.HOSTY_APP_ID ?? "hosty.harness", installationId: process.env.HOSTY_APP_INSTALLATION_ID ?? "standalone", key: "default" });
   const execution = new AgentSessionService(manager, history.provider);
   const feedback = new FeedbackService(manager, undefined, providers);
+  const promptTemplates = new PromptTemplateStore(manager.store.dataDir);
   const handoffs = new HandoffStore(manager, settings, providers);
   const eventStreams = new EventStreamTransport(manager, Date.now, connections, tasks);
   const translations = connections && settings ? new TranslationService(connections, settings) : null;
@@ -95,7 +97,7 @@ export function createGatewayServer(
   const timer = setInterval(() => { void handoffs.sweep().catch(error => console.error("[handoff] cleanup failed", error)); }, 60_000);
   timer.unref();
   const server = createServer((request, response) => {
-    void recovered.then(async () => { if (await internal?.(request, response)) return; return route(request, response, manager, adapter, settings, providers, proxy, facade, connections, handoffs, translations, eventStreams, tasks, feedback, history, execution); }).catch((error) => {
+    void recovered.then(async () => { if (await internal?.(request, response)) return; return route(request, response, manager, adapter, settings, providers, proxy, facade, connections, handoffs, translations, eventStreams, tasks, feedback, history, execution, promptTemplates); }).catch((error) => {
       if (response.destroyed) return;
       if (error instanceof ProviderError || error instanceof FeedbackError) { sendJson(response, error.status, { code: error.code, message: error.message }); return; }
       if (error instanceof SessionBusyError) {
@@ -149,6 +151,7 @@ async function route(
   feedback: FeedbackService,
   history: HistoryService,
   execution: AgentSessionService,
+  promptTemplates: PromptTemplateStore,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", "http://gateway.local");
   const method = request.method ?? "GET";
@@ -350,6 +353,15 @@ async function route(
     const token = actor.via === "app-session" ? readAppCredential(request) : null;
     if (!token) throw new FeedbackError("app_session_required", "Open Harness through Core to manage feedback.", 403);
     if (await feedback.route(request, response, url, token, actor.userId, () => readJson(request, 128 * 1024))) return;
+  }
+
+  if (url.pathname === "/api/preferences/prompt-templates") {
+    response.setHeader("Cache-Control", "no-store");
+    if (actor.via !== "app-session") throw new AppContextError(403, "app_session_required", "Open Harness through Core to manage your prompt templates.");
+    if (method === "GET") sendJson(response, 200, await promptTemplates.read(actor.userId));
+    else if (method === "PUT") sendJson(response, 200, await promptTemplates.save(actor.userId, await readJson(request, MAX_PROMPT_TEMPLATE_BYTES)));
+    else sendJson(response, 405, { code: "method_not_allowed", message: "Use GET or PUT for your prompt templates." });
+    return;
   }
 
   if (url.pathname === "/api/preferences/prompt-suggestions" && (method === "GET" || method === "PUT")) {

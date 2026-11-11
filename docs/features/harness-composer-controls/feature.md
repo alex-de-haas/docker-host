@@ -1,6 +1,6 @@
 ---
 created: 2026-11-03
-updated: 2026-11-10
+updated: 2026-11-11
 summary: Responsive composer controls with a durable message stack, transcript suggestions, shared agent settings and capability-aware dictation.
 components: [apps/harness]
 ---
@@ -131,6 +131,15 @@ an empty ordinary draft, and Dismiss records that choice. Selection never sends 
 itself. A populated draft or active queue edit disables insertion and explains how to preserve
 the current work. The inline Tab hint follows the available card; suggestion text is absent
 from the input placeholder/overlay. See [Prompt suggestions](../assistant-prompt-suggestions/feature.md).
+
+## Prompt Templates
+
+Personal [prompt templates](../harness-prompt-templates/feature.md) are available through
+**+ → Prompt template** and `!` shortcuts such as `!pr`. Selecting one inserts literal text
+at the caret or replaces the shortcut/selection while preserving the surrounding draft,
+attachments and untouched app mentions. Insertion participates in undo/redo and leaves the text
+editable before Send. The shortcut picker consumes Enter while open; app mentions and transcript
+suggestions keep their existing controls outside it.
 
 ## Dictation
 
