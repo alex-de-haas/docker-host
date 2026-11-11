@@ -1,6 +1,6 @@
 ---
 created: 2026-09-22
-updated: 2026-11-09
+updated: 2026-11-11
 summary: The chat components Harness uses for messages, code blocks, attachments, the composer and collapsible activity.
 components: [apps/harness]
 ---
@@ -48,6 +48,14 @@ Submitted user prompts and assistant replies use the same Markdown renderer. Use
 their visual alignment while rendering headings, emphasis, lists, block quotes, tables, inline code
 and fenced code. Single line breaks remain visible. The composer and stored/sent message text retain
 the original Markdown source; formatting also applies to messages restored from history.
+
+Long submitted user prompts initially show a five-line prose-height preview. **Show more** reveals
+the complete Markdown message and **Show less** restores the preview. Short prompts have no toggle.
+The preview follows rendered wrapping when the panel width changes. Keyboard focus on a clipped
+link or code control expands the message, keeping the focused control visible. Attachments remain
+outside the preview and each message has its own expansion state.
+Toggling a prompt pauses automatic following before its height changes; **Jump to latest message**
+resumes following new content.
 
 Raw HTML stays inert. Links use the existing allowed URL schemes and open separately; Markdown
 image references remain links instead of fetching remote images. Uploaded attachments retain their
@@ -231,6 +239,8 @@ installation has only a Codex connection.
 
 - User prompt rendering covers Markdown structure, literal code and preserved line breaks, allowed
   links and inert HTML/image references, plus attachment-only turns and unchanged source text.
+- Compact prompt coverage checks rendered overflow, width changes, independent expansion, keyboard
+  focus recovery and attachments outside the preview without changing the stored prompt.
 - Feedback-card coverage checks exact message identity, historical/live loading, session and focus
   recovery, unavailable-data fallback, collapsed details/original request and retained attachments.
 - Verify aligned command/MCP rows, per-call failure badges and a separately labeled execution-time
