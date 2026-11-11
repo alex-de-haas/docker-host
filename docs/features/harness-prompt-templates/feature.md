@@ -57,10 +57,11 @@ an error instead of silently resetting the user's templates.
 
 ## Verification
 
-After integrating `main` through `de6a586`, Windows verification passed: 104 affected unit/component
+After integrating `main` through `46f7894`, Windows verification passed: 104 affected unit/component
 tests with `NODE_ENV=test`, `npm run harness:lint`, `npm run harness:build-web`, version consistency
-and documentation checks. Another 29 checks for incoming message rendering, scrolling and local
-runtime changes passed. One incoming local-runtime test failed before exercising runtime behavior:
+and documentation checks. Another 186 checks for incoming message rendering, scrolling, session
+retention, environment reconciliation and local runtime changes passed. One incoming local-runtime
+test failed before exercising runtime behavior:
 Windows denied creation of its fixture symlink with `EPERM`. Edge also verified normal password
 login through the isolated child Core URL before the browser acceptance waiver.
 
