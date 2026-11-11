@@ -279,6 +279,44 @@ describe("development session coordination", () => {
     await expect(manager.deleteSession(record.id, "admin", "token")).resolves.toBe(true);
   });
 
+  it.each([
+    ["environment-create", "refused"], ["environment-create", "uncertain"], ["environment-create", "observed"],
+    ["environment-stop", "refused"], ["environment-stop", "uncertain"], ["environment-stop", "observed"],
+  ] as const)("prevents overlapping retries of %s (%s)", async (action, outcome) => {
+    const record = await manager.createSession({ createdBy: "admin" });
+    const environment = { id: "b".repeat(32), label: "QA", mode: "installed", state: "stopped", revision: 1,
+      port: 1234, previewUrl: "http://core.test/preview", operations: [], context: { sessionId: record.id } };
+    const input = { requestId: randomUUID(), ...(action === "environment-create" ? { label: "QA" } : { environmentId: environment.id, expectedRevision: 1 }) };
+    if (action === "environment-stop") {
+      record.coreEnvironments = [environment];
+      await store.saveRecord(record);
+    }
+    let respond!: (value: unknown) => void, fail!: (error: Error) => void;
+    const call = vi.spyOn(client, "environment").mockRejectedValue(new Error("response lost"))
+      .mockImplementationOnce(() => new Promise((resolve, reject) => { respond = resolve; fail = reject; }));
+    const attempt = manager.workspaceAction(record.id, action, input, "token", "admin").catch(error => error);
+    await vi.waitFor(() => expect(call).toHaveBeenCalledTimes(1));
+    await expect(manager.workspaceAction(record.id, action, input, "fresh-token", "admin"))
+      .rejects.toMatchObject({ code: "environment_request_in_flight" });
+    expect(call).toHaveBeenCalledTimes(1);
+    expect((await store.readRecord(record.id))!.coreEnvironmentOperations?.[0]?.state).toBe("pending");
+    if (outcome === "observed") respond(environment);
+    else fail(outcome === "refused" ? new AppContextError(409, "environment_consent_required", "Review consent") : new Error("response lost"));
+    const result = await attempt;
+    expect(result).toEqual(outcome === "observed" ? environment : expect.any(Error));
+    expect((await store.readRecord(record.id))!.coreEnvironmentOperations?.[0]?.state)
+      .toBe(outcome === "refused" ? "rejected" : outcome === "observed" ? "observed" : "pending");
+    // A settled attempt allows exact replay; a lost response protects its recovery journal.
+    call.mockRejectedValueOnce(new Error("retry response lost"));
+    await expect(manager.workspaceAction(record.id, action, input, "fresh-token", "admin")).rejects.toThrow("retry response lost");
+    expect(call).toHaveBeenCalledTimes(2);
+    if (outcome !== "observed") {
+      const saved = (await store.readRecord(record.id))!;
+      expect(saved.coreEnvironmentOperations?.[0]?.state).toBe("pending");
+      expect(retentionBusy(saved)).toBe(true);
+    }
+  });
+
   it("retires an uncertain creation only when Core lists no child for the session", async () => {
     vi.mocked(client.retention).mockResolvedValue({ kind: "chat", workflow: null, resourcesFinished: true, workspaceAbsent: true, independentEnvironments: true });
     const record = await manager.createSession({ createdBy: "admin" });

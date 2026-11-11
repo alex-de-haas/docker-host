@@ -74,7 +74,9 @@ external processes. Harness keeps no hidden archive of a deleted conversation.
 The child Core lifecycle journal records a readable 4xx refusal of a fresh request (other than 408/429
 or an unknown outcome) as refused, so it no longer protects the conversation; an exact retry journals
 it as pending again. A refusal after an uncertain response cannot disprove that earlier request and
-leaves it pending. Core persists the session context Harness stamps on each creation before allocating
+leaves it pending. Harness sends only one journaled lifecycle attempt per session and request UUID
+at a time; a concurrent exact replay is refused before dispatch and can be retried after that attempt
+settles. Core persists the session context Harness stamps on each creation before allocating
 anything, so manual removal and `environment_list` retire pending creations when Core's inventory
 lists no child for the session. Core may capture an inventory before an overlapping creation persists,
 so an inventory counts only when no creation this Harness process sent for the session was in flight
@@ -143,7 +145,8 @@ Pause alone never establishes completion or starts a completed-workspace retenti
   sandbox-only sessions before deleting their conversation.
 - Release fresh child Core refusals and pending creations absent from Core's session inventory;
   keep in-flight creations, creations overlapping the inventory request and refusals after an
-  uncertain response pending.
+  uncertain response pending. Refuse concurrent exact lifecycle replays before dispatch, release
+  the in-flight guard after success or failure, and preserve uncertain outcomes on later retries.
 - Exercise service identity, current installation/session ownership, still-enabled administrator
   ownership, explicit cleanup permission and source/resource grants without saved browser tokens.
 - Recheck Core heads/leases/consumers before deletion. Recover lost responses and partial cleanup

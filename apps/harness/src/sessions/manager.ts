@@ -232,6 +232,7 @@ export class SessionManager {
 
   private readonly queuedDevelopment = new Map<string, () => Promise<unknown>>();
   private readonly deferredGuards = new Map<string, () => Promise<void>>();
+  private readonly environmentRequests = new Map<string, Set<string>>();
   /** Per session: journaled creations this process is still sending, and the sequence of the last one to settle. */
   private readonly environmentCreations = new Map<string, { active: number; settled: number }>();
   private environmentSequence = 0;
@@ -1213,13 +1214,16 @@ export class SessionManager {
       } else if (action !== "environment-list" && !session.record.coreEnvironments?.some(e => e.id === input.environmentId))
         throw new AppContextError(403, "environment_forbidden", "The environment is not associated with this session; list environments to recover an uncertain create.");
       // Setup passwords and arbitrary child API bodies never enter the lifecycle recovery journal.
-      let journal: { creation: boolean; canConfirmRefusal: boolean } | null = null;
+      let journal: { requestId: string; creation: boolean; canConfirmRefusal: boolean } | null = null;
       if (action !== "environment-consent" && action !== "environment-setup" && action !== "environment-api" && typeof input.requestId === "string") {
         const operations = session.record.coreEnvironmentOperations ?? [];
         const prior = operations.find(o => o.input.requestId === input.requestId);
         if (prior && (prior.action !== action || stableSandboxInput(prior.input) !== stableSandboxInput(input)))
           throw new AppContextError(409, "environment_replay_conflict", "Reuse the original request UUID and arguments.");
-        journal = { creation: action === "environment-create", canConfirmRefusal: !prior || prior.state === "rejected" };
+        // One attempt's refusal cannot establish the outcome of a concurrent replay.
+        if (this.environmentRequests.get(id)?.has(input.requestId))
+          throw new AppContextError(409, "environment_request_in_flight", "Wait for the current attempt to finish before retrying its request UUID.");
+        journal = { requestId: input.requestId, creation: action === "environment-create", canConfirmRefusal: !prior || prior.state === "rejected" };
         if (!prior) {
           if (action !== "environment-finish" && operations.filter(o => o.state === "pending").length >= 32) throw new AppContextError(409, "environment_pending_limit", "Observe pending operations first.");
           session.record.coreEnvironmentOperations = [...operations.filter(o => o.state === "pending"), ...operations.filter(o => o.state !== "pending").slice(-99), { action, input, state: "pending" }];
@@ -1228,6 +1232,9 @@ export class SessionManager {
           prior.state = "pending";
           await this.store.saveRecord(session.record);
         }
+        const requests = this.environmentRequests.get(id) ?? new Set<string>();
+        requests.add(input.requestId);
+        this.environmentRequests.set(id, requests);
         if (journal.creation) {
           const creations = this.environmentCreations.get(id) ?? { active: 0, settled: 0 };
           creations.active++;
@@ -1243,7 +1250,7 @@ export class SessionManager {
       // disprove an earlier accepted request; it stays pending until Core's inventory reconciles it.
       // Bookkeeping failures leave the request pending, so the caller still sees the original error.
       if (prepared.journal) await this.serialize(id, async () => {
-        if (prepared.journal!.creation) this.settleEnvironmentCreation(id);
+        this.settleEnvironmentRequest(id, prepared.journal!);
         if (!prepared.journal!.canConfirmRefusal || !(error instanceof AppContextError) || error.status < 400 || error.status >= 500
           || [408, 429].includes(error.status) || error.code === "environment_outcome_unknown") return;
         const session = await this.requireLive(id);
@@ -1255,7 +1262,7 @@ export class SessionManager {
       throw error;
     }
     return this.serialize(id, async () => {
-      if (prepared.journal?.creation) this.settleEnvironmentCreation(id);
+      if (prepared.journal) this.settleEnvironmentRequest(id, prepared.journal);
       const session = await this.requireLive(id);
       if (action !== "environment-consent" && action !== "environment-api" && action !== "environment-setup") {
         const environments = action === "environment-list" ? (result as { environments: CoreEnvironment[] }).environments.filter(e => e.context?.sessionId === id) : [result as CoreEnvironment];
@@ -1269,7 +1276,11 @@ export class SessionManager {
     });
   }
 
-  private settleEnvironmentCreation(id: string): void {
+  private settleEnvironmentRequest(id: string, request: { requestId: string; creation: boolean }): void {
+    const requests = this.environmentRequests.get(id);
+    requests?.delete(request.requestId);
+    if (!requests?.size) this.environmentRequests.delete(id);
+    if (!request.creation) return;
     const creations = this.environmentCreations.get(id);
     if (!creations) return;
     creations.active--;
