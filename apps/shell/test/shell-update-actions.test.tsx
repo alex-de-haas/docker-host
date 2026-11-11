@@ -65,9 +65,10 @@ function ActionCapture({ dashboard = false }: { dashboard?: boolean }) {
   return dashboard ? <DashboardPage coreOrigin={current.coreOrigin} apps={state.state.apps} status={null}
     coreUpdate={null} coreUpdating={false} onUpdateCore={() => {}} shellAppId={current.shellAppId}
     canManageApps={state.canManageApps} loading={false} busyAction={state.busyAction} pendingAppActions={state.pendingAppActions}
+    updatingAllApps={state.updatingAllApps}
     updateCheck={null} onRefresh={() => {}} onInstall={() => {}}
     onAction={current.runAppAction} onSwitchRuntime={current.switchAppRuntime} onUpdateApp={current.applyUpdateFromRow}
-    onCheckUpdates={() => {}} onUpdateAll={() => {}} onOpenPanel={current.openAppPanel} /> : null;
+    onCheckUpdates={() => {}} onUpdateAll={current.updateAllApps} onOpenPanel={current.openAppPanel} /> : null;
 }
 
 beforeEach(() => {
@@ -348,6 +349,88 @@ it("guards repeated bulk activation while the first app's fresh check is pending
     expect(callsTo(`/api/apps/${app.id}/update/plan`)).toHaveLength(1);
     expect(callsTo(`/api/apps/${app.id}/update`).map(([, init]) => JSON.parse(init.body))).toEqual([{ planDigest: `latest-${app.id}` }]);
   }
+});
+
+it.each(["success", "failure"])("disables both Update all controls during preparation and recovers after %s", async outcome => {
+  const preparation = deferred<Response>();
+  let checks = 0;
+  overrideRequests((path, init) => {
+    if (path.endsWith("/update/plan") && init?.method === "POST" && ++checks === 1) return preparation.promise;
+  });
+  await mount(true);
+  const button = container.querySelector<HTMLButtonElement>('button[title="Update all (1)"]')!;
+  expect(button.disabled).toBe(false);
+  await act(async () => { button.click(); button.click(); });
+  expect(shell.updatingAllApps).toBe(true);
+  expect(button.disabled).toBe(true);
+  expect(button.getAttribute("aria-busy")).toBe("true");
+  expect(button.textContent).toBe("Updating apps…");
+  expect(button.querySelector(".animate-spin")).not.toBeNull();
+  expect(callsTo("/api/apps/routine.app/update/plan")).toHaveLength(1);
+  expect(callsTo("/api/apps/routine.app/update")).toHaveLength(0);
+
+  const menu = container.querySelector('button[aria-label="App actions"]')!;
+  await act(async () => menu.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+  const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(item => item.textContent === "Updating apps…")!;
+  expect(item.hasAttribute("data-disabled")).toBe(true);
+  expect(item.querySelector(".animate-spin")).not.toBeNull();
+  await act(async () => item.click());
+  expect(callsTo("/api/apps/routine.app/update/plan")).toHaveLength(1);
+  await act(async () => item.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+
+  await act(async () => preparation.resolve(outcome === "success" ? Response.json(plan())
+    : Response.json({ message: "Feed unavailable" }, { status: 503 })));
+  expect(shell.updatingAllApps).toBe(false);
+  expect(button.disabled).toBe(false);
+  expect(button.getAttribute("aria-busy")).toBe("false");
+  expect(button.textContent).toBe("Update all (1)");
+  expect(button.querySelector(".animate-spin")).toBeNull();
+  expect(callsTo("/api/apps/routine.app/update")).toHaveLength(outcome === "success" ? 1 : 0);
+  if (outcome === "failure") {
+    await act(async () => button.click());
+    expect(callsTo("/api/apps/routine.app/update/plan")).toHaveLength(2);
+    expect(callsTo("/api/apps/routine.app/update")).toHaveLength(1);
+  }
+});
+
+it("keeps Update all busy until the queued apps have been refreshed", async () => {
+  const observation = deferred<Response>();
+  let queued = false;
+  overrideRequests(path => {
+    if (path.endsWith("/update")) { queued = true; return Response.json({ status: "updating" }); }
+    if (path === "/api/apps" && queued) return observation.promise.then(response => response.clone());
+  });
+  await mount(true);
+  let updating!: Promise<void>;
+  await act(async () => { updating = actions.updateAllApps(); });
+  expect(shell.updatingAllApps).toBe(true);
+  expect(container.querySelector<HTMLButtonElement>('button[aria-busy="true"]')?.disabled).toBe(true);
+  await act(async () => {
+    observation.resolve(Response.json({ apps: [{ ...target, operationStatus: "updating", updateCheck: null }] }));
+    await updating;
+  });
+  expect(shell.updatingAllApps).toBe(false);
+  expect(container.querySelector('button[title^="Update all"]')).toBeNull();
+});
+
+it("keeps bulk feedback visible when all offers disappear while Shell is settling", async () => {
+  apps = [{ ...target, id: "hosty.shell", displayName: "Shell" }];
+  const settlement = deferred<{ kind: "unresolved" }>();
+  fixture.settle.mockReturnValue(settlement.promise);
+  overrideRequests(path => {
+    if (path.endsWith("/update")) {
+      apps = [{ ...apps[0], operationStatus: "updating", updateCheck: null }];
+      return Response.json({ status: "updating" });
+    }
+  });
+  await mount(true);
+  let updating!: Promise<void>;
+  await act(async () => { updating = actions.updateAllApps(); });
+  expect(shell.state.apps[0].updateCheck).toBeNull();
+  expect(container.querySelector<HTMLButtonElement>('button[title="Updating apps…"]')?.disabled).toBe(true);
+  await act(async () => { settlement.resolve({ kind: "unresolved" }); await updating; });
+  expect(shell.updatingAllApps).toBe(false);
+  expect(container.querySelector('button[title="Updating apps…"]')).toBeNull();
 });
 
 it("continues bulk updates after one app exhausts its bounded stale retry without preparing new consent", async () => {

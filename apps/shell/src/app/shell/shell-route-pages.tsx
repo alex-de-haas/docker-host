@@ -34,6 +34,7 @@ export function ShellDashboardRoute() {
         loading={shell.state.loading}
         busyAction={shell.busyAction}
         pendingAppActions={shell.pendingAppActions}
+        updatingAllApps={shell.updatingAllApps}
         updateCheck={shell.state.updateCheck ?? null}
         onRefresh={() => void shellActions.refresh()}
         onInstall={shellActions.openInstallDialog}

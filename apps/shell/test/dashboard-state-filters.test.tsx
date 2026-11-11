@@ -26,7 +26,7 @@ const menuItem = (name: string) => document.querySelector<HTMLElement>(`[role="m
 const rows = () => [...container.querySelectorAll('[role="region"][aria-label="Installed apps"] .dashboard-table tbody tr')].map(row => row.textContent);
 async function render(canManageApps = false) {
   await act(async () => root.render(<DashboardPage coreOrigin="https://core.test" apps={apps} status={null} coreUpdate={null} coreUpdating={false}
-    canManageApps={canManageApps} loading={false} busyAction={null} pendingAppActions={{}} updateCheck={null} shellAppId="shell.app"
+    canManageApps={canManageApps} loading={false} busyAction={null} pendingAppActions={{}} updatingAllApps={false} updateCheck={null} shellAppId="shell.app"
     onUpdateCore={() => {}} onRefresh={() => {}} onInstall={() => {}} onAction={onAction} onSwitchRuntime={() => {}}
     onUpdateApp={() => {}} onCheckUpdates={() => {}} onUpdateAll={() => {}} onOpenPanel={() => {}} />));
 }

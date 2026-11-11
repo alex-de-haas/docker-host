@@ -115,6 +115,7 @@ export function DashboardPage({
   loading,
   busyAction,
   pendingAppActions,
+  updatingAllApps,
   updateCheck,
   onRefresh,
   onInstall,
@@ -138,6 +139,7 @@ export function DashboardPage({
   loading: boolean;
   busyAction: string | null;
   pendingAppActions: Record<string, AppAction>;
+  updatingAllApps: boolean;
   // Server-side fleet-check status: drives the header "Check updates" spinner from server state.
   updateCheck: AppUpdateCheckStatus | null;
   onRefresh: () => void;
@@ -235,7 +237,10 @@ export function DashboardPage({
           </div>
           <div className="dashboard-toolbar-resources min-w-0 px-3 py-2"><ResourceUsage label="All apps" /></div>
           <div className="dashboard-toolbar-actions flex min-w-0 flex-wrap items-center justify-end gap-1 px-3 py-2">
-            {canManageApps && routineUpdateCount > 0 && <Button variant="outline" size="sm" className="shrink-0 text-info-foreground" onClick={onUpdateAll} title={`Update all (${routineUpdateCount})`}>Update all ({routineUpdateCount})</Button>}
+            {canManageApps && (routineUpdateCount > 0 || updatingAllApps) && <Button variant="outline" size="sm" className="shrink-0 text-info-foreground" onClick={onUpdateAll} disabled={updatingAllApps} aria-busy={updatingAllApps} title={updatingAllApps ? "Updating apps…" : `Update all (${routineUpdateCount})`}>
+              {updatingAllApps && <LoaderCircle className="h-4 w-4 animate-spin motion-reduce:animate-none" />}
+              {updatingAllApps ? "Updating apps…" : `Update all (${routineUpdateCount})`}
+            </Button>}
             {canManageApps && (
               <div className="dashboard-toolbar-overflow">
                 <DropdownMenu>
@@ -252,9 +257,10 @@ export function DashboardPage({
                       {checkingUpdates ? <LoaderCircle className="h-4 w-4 animate-spin motion-reduce:animate-none" /> : <ArrowUpCircle className="h-4 w-4" />}
                       {checkingUpdates ? "Checking updates…" : "Check updates"}
                     </DropdownMenuItem>
-                    {routineUpdateCount > 0 && (
-                      <DropdownMenuItem onSelect={onUpdateAll}>
-                        <Download className="h-4 w-4" /> Update all ({routineUpdateCount})
+                    {(routineUpdateCount > 0 || updatingAllApps) && (
+                      <DropdownMenuItem onSelect={onUpdateAll} disabled={updatingAllApps}>
+                        {updatingAllApps ? <LoaderCircle className="h-4 w-4 animate-spin motion-reduce:animate-none" /> : <Download className="h-4 w-4" />}
+                        {updatingAllApps ? "Updating apps…" : `Update all (${routineUpdateCount})`}
                       </DropdownMenuItem>
                     )}
                   </DropdownMenuContent>
