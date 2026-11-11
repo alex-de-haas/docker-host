@@ -1,6 +1,7 @@
 "use client";
 import { TaskLimits } from "@/components/task-limits";
 import { AgentProfiles } from "@/components/agent-profiles";
+import { PromptTemplatesSettings } from "@/components/prompt-templates-settings";
 
 import { useCallback, useEffect, useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -28,11 +29,15 @@ import {
   type SettingsResponse,
 } from "@/lib/api";
 
+type SettingsSection = "tasks" | "profiles" | "providers" | "translation" | "sources" | "skills" | "prompt" | "access" | "templates";
+
 export function GatewaySettings({
   section = "providers",
 }: {
-  section?: "tasks" | "profiles" | "providers" | "translation" | "sources" | "skills" | "prompt" | "access";
+  section?: SettingsSection;
 }) {
+  const [activeSection, setActiveSection] = useState<SettingsSection>(section);
+  const [templatesVisited, setTemplatesVisited] = useState(section === "templates");
   const [data, setData] = useState<SettingsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
@@ -42,24 +47,30 @@ export function GatewaySettings({
   const [workflow, setWorkflow] = useState("");
   const [ordinaryDays, setOrdinaryDays] = useState("");
   const [completedDays, setCompletedDays] = useState("");
+  const needsSettings = activeSection !== "templates";
 
   useEffect(() => {
+    // Personal templates do not depend on access to shared Harness settings.
+    if (!needsSettings || data) return;
+    let active = true;
     // The session first, then the data: a launch code that has not been spent yet means every
     // request below would be answered 401 by an app that is working correctly.
     void loadSettings()
       .then((loaded) => {
+        if (!active) return;
         setData(loaded);
         setPrompt(loaded.settings.systemPrompt);
         setWorkflow(loaded.settings.workflowPrompt ?? "");
         setOrdinaryDays(loaded.settings.retention?.ordinaryDays?.toString() ?? "");
         setCompletedDays(loaded.settings.retention?.completedWorkspaceDays?.toString() ?? "");
       })
-      .catch((reason: unknown) =>
-        setError(
+      .catch((reason: unknown) => {
+        if (active) setError(
           reason instanceof Error ? reason.message : "Could not load settings.",
-        ),
-      );
-  }, []);
+        );
+      });
+    return () => { active = false; };
+  }, [needsSettings, data]);
 
   const refresh = useCallback(async () => {
     try { setData(await loadSettings()); setError(null); }
@@ -93,28 +104,10 @@ export function GatewaySettings({
     }
   }, []);
 
-  if (error && !data) {
-    return (
-      <main className="mx-auto w-full max-w-7xl p-4 sm:p-6">
-        <Alert variant="destructive">
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      </main>
-    );
-  }
-
-  if (!data) {
-    return (
-      <main className="mx-auto w-full max-w-7xl p-4 sm:p-6 text-sm text-muted-foreground">
-        <p role="status" className="flex items-center gap-2"><HostyLoader label={null} className="size-4 shrink-0" />Loading…</p>
-      </main>
-    );
-  }
-
   return (
     <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 p-4 sm:p-6 lg:p-8">
       <h1 className="text-2xl font-semibold tracking-[-0.02em]">Hosty Harness</h1>
-      <Tabs defaultValue={section} className="gap-6">
+      <Tabs value={activeSection} onValueChange={value => { setActiveSection(value as SettingsSection); if (value === "templates") setTemplatesVisited(true); }} className="gap-6">
         <div className="-m-1 overflow-x-auto overflow-y-hidden p-1">
           <TabsList variant="line" aria-label="Hosty Harness settings">
             {(
@@ -123,6 +116,7 @@ export function GatewaySettings({
                 ["tasks", "Tasks"],
                 ["providers", "Agent providers"],
                 ["translation", "Translation providers"],
+                ["templates", "Prompt templates"],
                 ["prompt", "Instructions and retention"],
                 ["skills", "Skills"],
                 ["access", "MCP access"],
@@ -134,6 +128,10 @@ export function GatewaySettings({
             ))}
           </TabsList>
         </div>
+        {templatesVisited && <TabsContent value="templates" forceMount className="data-[state=inactive]:hidden"><PromptTemplatesSettings /></TabsContent>}
+        {needsSettings && !data && (error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>
+          : <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><HostyLoader label={null} className="size-4 shrink-0" />Loading…</p>)}
+        {data && <>
         <TabsContent
           value="providers"
           forceMount
@@ -233,6 +231,7 @@ export function GatewaySettings({
             onSave={save}
           />
         </TabsContent>
+        </>}
       </Tabs>
     </main>
   );

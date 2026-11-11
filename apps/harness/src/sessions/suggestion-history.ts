@@ -22,7 +22,10 @@ export const SUGGESTION_RESOLVED = "prompt_suggestion_resolved";
 
 /** Keep old browser wire readers working without adding a deadline to persisted choice state. */
 export function legacyCompatibleSuggestion(value: HistoricalSuggestion): HistoricalSuggestion & { expiresAt: number } {
-  return { ...value, expiresAt: suggestionCompatibilityExpiresAt() };
+  const resolvedAt = Date.parse(value.resolvedAt ?? ""), createdAt = Date.parse(value.createdAt);
+  // Available hints roll forward; terminal receipts must remain identical on an exact UUID retry.
+  const at = value.state === "available" ? Date.now() : Number.isFinite(resolvedAt) ? resolvedAt : Number.isFinite(createdAt) ? createdAt : 0;
+  return { ...value, expiresAt: suggestionCompatibilityExpiresAt(at) };
 }
 
 /** Only literal, correlated prediction metadata is persisted; this never creates a model turn. */

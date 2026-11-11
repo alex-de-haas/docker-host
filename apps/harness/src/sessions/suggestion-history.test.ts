@@ -42,6 +42,23 @@ it("returns the exact recorded choice after lost replies/restart and rejects com
   await expect(history.action(record, "owner", value.suggestionId, action({ action: "dismissed" }), "context-one")).rejects.toMatchObject({ code: "suggestion_changed" });
   expect((await store.readEvents(record.id)).filter(event => event.type === "prompt_suggestion_resolved")).toHaveLength(1);
 });
+it("keeps terminal compatibility deadlines stable across same-UUID retries and restart", async () => {
+  const value = await create(), input = action();
+  const selected = await history.action(record, "owner", value.suggestionId, input, "context-one");
+  const firstResponse = legacyCompatibleSuggestion(selected);
+  expect(firstResponse.expiresAt).toBe(Date.parse(selected.resolvedAt!) + LEGACY_SUGGESTION_WINDOW_MS);
+  now += 1234; history = build();
+  const replay = await history.action(record, "owner", value.suggestionId, input, "different-context");
+  expect(legacyCompatibleSuggestion(replay)).toEqual(firstResponse);
+  now += 30 * 24 * 60 * 60_000; history = build();
+  expect(legacyCompatibleSuggestion((await history.read(record)).get(value.suggestionId)!)).toEqual(firstResponse);
+  const legacy = { ...selected, resolvedAt: undefined };
+  const legacyResponse = legacyCompatibleSuggestion(legacy);
+  expect(legacyResponse.expiresAt).toBe(Date.parse(selected.createdAt) + LEGACY_SUGGESTION_WINDOW_MS);
+  now += 1000;
+  expect(legacyCompatibleSuggestion(legacy)).toEqual(legacyResponse);
+  expect((await store.readEvents(record.id)).filter(event => event.type === "prompt_suggestion_resolved")).toHaveLength(1);
+});
 it("checks owner and UUID/revision before writing any explicit choice", async () => {
   const value = await create();
   await expect(history.action(record, "other", value.suggestionId, action(), "context-one")).rejects.toMatchObject({ status: 403 });

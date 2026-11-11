@@ -134,6 +134,15 @@ the current work. An actionable suggestion replaces the empty input's placeholde
 typing hides the hint. Tab accepts it into the editable draft and Escape dismisses it. The ordinary
 placeholder returns when no suggestion is actionable. See [Prompt suggestions](../assistant-prompt-suggestions/feature.md).
 
+## Prompt Templates
+
+Personal [prompt templates](../harness-prompt-templates/feature.md) are available through
+**+ → Prompt template** and `!` shortcuts such as `!pr`. Selecting one inserts literal text
+at the caret or replaces the shortcut/selection while preserving the surrounding draft,
+attachments and untouched app mentions. Insertion participates in undo/redo and leaves the text
+editable before Send. The shortcut picker consumes Enter while open; app mentions and transcript
+suggestions keep their existing controls outside it.
+
 ## Dictation
 
 The microphone button starts dictation immediately. Recording uses three compact inline icons:
