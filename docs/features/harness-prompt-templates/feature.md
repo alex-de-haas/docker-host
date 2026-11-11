@@ -57,9 +57,12 @@ an error instead of silently resetting the user's templates.
 
 ## Verification
 
-Windows verification passed: 104 affected unit/component tests with `NODE_ENV=test`,
-`npm run harness:lint`, `npm run harness:build-web`, version consistency and documentation checks.
-Edge also verified normal password login through the isolated child Core URL.
+After integrating `main` through `de6a586`, Windows verification passed: 104 affected unit/component
+tests with `NODE_ENV=test`, `npm run harness:lint`, `npm run harness:build-web`, version consistency
+and documentation checks. Another 29 checks for incoming message rendering, scrolling and local
+runtime changes passed. One incoming local-runtime test failed before exercising runtime behavior:
+Windows denied creation of its fixture symlink with `EPERM`. Edge also verified normal password
+login through the isolated child Core URL before the browser acceptance waiver.
 
 The operator selected **Leave the implementation without browser verification** in Decision
 `aa0a1ebb-9c43-40c7-a602-d85b2feda049` on 2026-11-11. Harness app browser acceptance and runtime
