@@ -153,6 +153,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const contextPickerRef = useRef<AppContextPickerHandle>(null);
   const addButtonRef = useRef<HTMLButtonElement>(null);
   const openContextAfterMenu = useRef(false);
+  const openTemplatesAfterMenu = useRef(false);
   const onSessionChange = useCallback((record: AssistantSession) => {
     const merge = (current: AssistantSession) => current.id !== record.id ? current : {
       ...((record.appContextRevision ?? 0) >= (current.appContextRevision ?? 0)
@@ -1522,10 +1523,15 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                           event.preventDefault(); openContextAfterMenu.current = false;
                           contextPickerRef.current?.open();
                         }
+                        if (openTemplatesAfterMenu.current) {
+                          event.preventDefault(); openTemplatesAfterMenu.current = false;
+                          mentionInputRef.current?.openTemplates();
+                        }
                       }}>
                         <DropdownMenuGroup>
                           <DropdownMenuItem disabled={contextSaving} onSelect={() => { openContextAfterMenu.current = true; }}><Blocks />Add app context</DropdownMenuItem>
                           <DropdownMenuItem onSelect={() => { draftInteracted(); fileInputRef.current?.click(); }}><Paperclip />Attach files</DropdownMenuItem>
+                          <DropdownMenuItem disabled={contextSaving} onSelect={() => { openTemplatesAfterMenu.current = true; }}><Sparkles />Prompt template</DropdownMenuItem>
                           <DropdownMenuCheckboxItem checked={suggestions.preference?.enabled ?? false} disabled={!suggestions.preference || suggestions.saving}
                             onCheckedChange={() => void suggestions.toggle()}>Prompt suggestions</DropdownMenuCheckboxItem>
                           {(suggestions.error || suggestions.availability === "unsupported" || suggestions.availability === "unavailable") &&
