@@ -55,6 +55,18 @@ library; exact replay returns the latest collection without applying the earlier
 Reusing an operation UUID with different input returns a conflict. A damaged stored file surfaces
 an error instead of silently resetting the user's templates.
 
+## Verification
+
+Windows verification passed: 104 affected unit/component tests with `NODE_ENV=test`,
+`npm run harness:lint`, `npm run harness:build-web`, version consistency and documentation checks.
+Edge also verified normal password login through the isolated child Core URL.
+
+The operator selected **Leave the implementation without browser verification** in Decision
+`aa0a1ebb-9c43-40c7-a602-d85b2feda049` on 2026-11-11. Harness app browser acceptance and runtime
+integration checks were not run: its test installation was not approved or applied. This is an
+explicit acceptance waiver, not a successful app runtime check. The child Core is finished, with
+no process or active consumers; the registered source worktree remains available.
+
 ## Testing Expectations
 
 - Store and HTTP tests cover persistence, validation and limits, parallel revision conflicts,
@@ -64,6 +76,6 @@ an error instead of silently resetting the user's templates.
 - Editor tests cover literal multiline Unicode, replacement ranges, mention identity preservation,
   caret placement, undo/redo, keyboard priority, IME, unknown aliases, code boundaries and stale
   picker responses. Existing queue, composer and prompt-suggestion regressions remain covered.
-- Runtime verification uses a separate Core-managed child with synthetic data, normal password
-  login and its advertised Core/app URLs. Remaining acceptance is tracked in the
-  [implementation plan](plan.md).
+- Runtime verification, when selected, uses a separate Core-managed child with synthetic data,
+  normal password login and its advertised Core/app URLs. Report unrun runtime checks separately
+  from unit/component coverage and retain explicit operator acceptance waivers.
