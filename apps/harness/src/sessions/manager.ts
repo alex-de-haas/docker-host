@@ -232,6 +232,10 @@ export class SessionManager {
 
   private readonly queuedDevelopment = new Map<string, () => Promise<unknown>>();
   private readonly deferredGuards = new Map<string, () => Promise<void>>();
+  private readonly environmentRequests = new Map<string, Set<string>>();
+  /** Per session: journaled creations this process is still sending, and the sequence of the last one to settle. */
+  private readonly environmentCreations = new Map<string, { active: number; settled: number }>();
+  private environmentSequence = 0;
   private readonly live = new Map<string, LiveSession>();
   private readonly suggestionEpoch = randomUUID();
   private readonly suggestionPreferenceGenerations = new Map<string, number>();
@@ -1210,27 +1214,59 @@ export class SessionManager {
       } else if (action !== "environment-list" && !session.record.coreEnvironments?.some(e => e.id === input.environmentId))
         throw new AppContextError(403, "environment_forbidden", "The environment is not associated with this session; list environments to recover an uncertain create.");
       // Setup passwords and arbitrary child API bodies never enter the lifecycle recovery journal.
+      let journal: { requestId: string; creation: boolean; canConfirmRefusal: boolean } | null = null;
       if (action !== "environment-consent" && action !== "environment-setup" && action !== "environment-api" && typeof input.requestId === "string") {
         const operations = session.record.coreEnvironmentOperations ?? [];
         const prior = operations.find(o => o.input.requestId === input.requestId);
         if (prior && (prior.action !== action || stableSandboxInput(prior.input) !== stableSandboxInput(input)))
           throw new AppContextError(409, "environment_replay_conflict", "Reuse the original request UUID and arguments.");
+        // One attempt's refusal cannot establish the outcome of a concurrent replay.
+        if (this.environmentRequests.get(id)?.has(input.requestId))
+          throw new AppContextError(409, "environment_request_in_flight", "Wait for the current attempt to finish before retrying its request UUID.");
+        journal = { requestId: input.requestId, creation: action === "environment-create", canConfirmRefusal: !prior || prior.state === "rejected" };
         if (!prior) {
           if (action !== "environment-finish" && operations.filter(o => o.state === "pending").length >= 32) throw new AppContextError(409, "environment_pending_limit", "Observe pending operations first.");
-          session.record.coreEnvironmentOperations = [...operations.filter(o => o.state === "pending"), ...operations.filter(o => o.state === "observed").slice(-99), { action, input, state: "pending" }];
+          session.record.coreEnvironmentOperations = [...operations.filter(o => o.state === "pending"), ...operations.filter(o => o.state !== "pending").slice(-99), { action, input, state: "pending" }];
+          await this.store.saveRecord(session.record);
+        } else if (prior.state === "rejected") {
+          prior.state = "pending";
           await this.store.saveRecord(session.record);
         }
+        const requests = this.environmentRequests.get(id) ?? new Set<string>();
+        requests.add(input.requestId);
+        this.environmentRequests.set(id, requests);
+        if (journal.creation) {
+          const creations = this.environmentCreations.get(id) ?? { active: 0, settled: 0 };
+          creations.active++;
+          this.environmentCreations.set(id, creations);
+        }
       }
-      return { token, input };
+      return { token, input, journal, inventoryFrom: action === "environment-list" && this.development.environmentInventoryCoversUser ? this.environmentSequence : undefined };
     });
-    const result = await this.development!.environment(prepared.token, action, prepared.input);
+    let result: unknown;
+    try { result = await this.development!.environment(prepared.token, action, prepared.input); }
+    catch (error) {
+      // Consent refusal precedes a fresh allocation. Other readable 4xx errors can follow Core's
+      // durable write and remain uncertain, as does any refusal after a previously uncertain call.
+      // Bookkeeping failures leave the request pending, so the caller still sees the original error.
+      if (prepared.journal) await this.serialize(id, async () => {
+        this.settleEnvironmentRequest(id, prepared.journal!);
+        if (!prepared.journal!.canConfirmRefusal || !(error instanceof AppContextError) || error.status < 400 || error.status >= 500
+          || [408, 429].includes(error.status) || error.code !== "environment_consent_required") return;
+        const session = await this.requireLive(id);
+        const operation = session.record.coreEnvironmentOperations?.find(o => o.input.requestId === prepared.input.requestId);
+        if (operation?.state !== "pending") return;
+        operation.state = "rejected";
+        await this.store.saveRecord(session.record);
+      }).catch(() => undefined);
+      throw error;
+    }
     return this.serialize(id, async () => {
+      if (prepared.journal) this.settleEnvironmentRequest(id, prepared.journal);
       const session = await this.requireLive(id);
       if (action !== "environment-consent" && action !== "environment-api" && action !== "environment-setup") {
         const environments = action === "environment-list" ? (result as { environments: CoreEnvironment[] }).environments.filter(e => e.context?.sessionId === id) : [result as CoreEnvironment];
-        const known = new Map((session.record.coreEnvironments ?? []).map(e => [e.id, e]));
-        for (const environment of environments) known.set(environment.id, environment);
-        session.record.coreEnvironments = [...known.values()];
+        this.observeEnvironments(session.record, environments, prepared.inventoryFrom);
         const operation = session.record.coreEnvironmentOperations?.find(o => o.input.requestId === prepared.input.requestId);
         if (operation) operation.state = "observed";
         await this.store.saveRecord(session.record);
@@ -1238,6 +1274,35 @@ export class SessionManager {
       }
       return result;
     });
+  }
+
+  private settleEnvironmentRequest(id: string, request: { requestId: string; creation: boolean }): void {
+    const requests = this.environmentRequests.get(id);
+    requests?.delete(request.requestId);
+    if (!requests?.size) this.environmentRequests.delete(id);
+    if (!request.creation) return;
+    const creations = this.environmentCreations.get(id);
+    if (!creations) return;
+    creations.active--;
+    creations.settled = ++this.environmentSequence;
+  }
+
+  /**
+   * Merges observed children into the record. A canonical user-wide inventory may
+   * also retire pending creations: Harness stamps the session on every creation it journals and Core
+   * persists that context before allocating anything. Core may capture its inventory before an
+   * overlapping creation persists, so only an empty inventory requested after this process's
+   * creations for the session settled (`inventoryFrom`) proves none of them was accepted. Legacy
+   * app-scoped inventories cannot establish absence of a child created through canonical MCP.
+   */
+  private observeEnvironments(record: SessionRecord, environments: CoreEnvironment[], inventoryFrom?: number): void {
+    const known = new Map((record.coreEnvironments ?? []).map(e => [e.id, e]));
+    for (const environment of environments) known.set(environment.id, environment);
+    record.coreEnvironments = [...known.values()];
+    const creations = this.environmentCreations.get(record.id);
+    if (inventoryFrom === undefined || environments.length || creations && (creations.active > 0 || creations.settled > inventoryFrom)) return;
+    for (const operation of record.coreEnvironmentOperations ?? [])
+      if (operation.action === "environment-create" && operation.state === "pending") operation.state = "rejected";
   }
 
   async prepareTaskWorkspace(id: string, dispatch: import("@hosty-sdk/app/providers").TaskDispatchRef, executionId: string, workspaceId: string, source?: import("@hosty-sdk/app/providers").TaskSourceReference): Promise<void> {
@@ -2077,6 +2142,12 @@ export class SessionManager {
       let snapshot = await this.retentionSnapshot(record);
       if (!snapshot.resourcesFinished && !snapshot.independentEnvironments)
         throw new AppContextError(409, "resource_retained", "Finish this session's sandbox resources before deleting its conversation.");
+      if (this.development?.available && record.coreEnvironmentOperations?.some(o => o.action === "environment-create" && o.state === "pending")) {
+        const inventoryFrom = this.environmentSequence;
+        const listed = await this.invokeCoreTool(id, "environment_list", {}) as { environments: CoreEnvironment[] };
+        this.observeEnvironments(record, listed.environments.filter(e => e.context?.sessionId === id), inventoryFrom);
+        await this.store.saveRecord(record);
+      }
       if (record.coreEnvironmentOperations?.some(o => o.state === "pending") || record.associationRequests?.some(o => o.state === "pending" && o.action !== "detach"))
         throw new AppContextError(409, "resource_operation_pending", "Recover outstanding operations before deleting this conversation.");
       if (snapshot.kind === "workspace" && snapshot.workflow?.state !== "deleted") {
@@ -2153,6 +2224,7 @@ export class SessionManager {
       }
       this.proxy?.unregister(id);
       this.developmentMcp.unregister(id);
+      this.environmentCreations.delete(id);
       if (record.skillExportId) await skillRequest(`/exports/${record.skillExportId}`, "DELETE");
       await this.decisions?.deleteSession(record.createdBy, id);
       await this.store.deleteSession(id);

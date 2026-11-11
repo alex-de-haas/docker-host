@@ -32,6 +32,8 @@ beforeEach(async () => {
 });
 afterEach(async () => { await manager.shutdown(); vi.restoreAllMocks(); await rm(dir, { recursive: true, force: true }); });
 const finish = async (id: string) => { starts.at(-1)!.onEvent({ type: "result", status: "success" }); await vi.waitFor(async () => expect((await manager.getSession(id))?.status).toBe("idle")); };
+const listCanonicalEnvironments = (id: string) => client.withCoreMcp(() => ({ sessionId: id }), call => manager.invokeCoreTool(id, call.name, call.arguments),
+  () => manager.workspaceAction(id, "environment-list", {}, "token", "admin"));
 describe("development session coordination", () => {
   it("persists exact source bindings from both adapters so restored sessions cannot reinterpret edit paths", async () => {
     const bound = { ...tree, workspaceId: "b".repeat(64), repository: "https://github.com/example/notes" };
@@ -257,6 +259,167 @@ describe("development session coordination", () => {
     const other = await manager.createSession({ createdBy: "admin" });
     await expect(manager.workspaceAction(other.id, "environment-status", { environmentId: environment.id }, "token", "admin")).rejects.toThrow("not associated");
     await expect(manager.workspaceAction(record.id, "environment-status", { environmentId: environment.id }, "token", "other")).rejects.toThrow("another user");
+  });
+
+  it.each([403, 409])("keeps a chat deletable after a fresh child Core creation refusal (%s)", async status => {
+    vi.mocked(client.retention).mockResolvedValue({ kind: "chat", workflow: null, resourcesFinished: true, workspaceAbsent: true, independentEnvironments: true });
+    const record = await manager.createSession({ createdBy: "admin" });
+    const input = { requestId: "a".repeat(32), label: "QA" };
+    const call = vi.spyOn(client, "environment").mockRejectedValueOnce(new AppContextError(status, "environment_consent_required", "Review consent"));
+    await expect(manager.workspaceAction(record.id, "environment-create", input, "token", "admin")).rejects.toThrow("Review consent");
+    const saved = (await store.readRecord(record.id))!;
+    expect(saved.coreEnvironmentOperations?.[0]?.state).toBe("rejected");
+    expect(retentionBusy(saved)).toBe(false);
+    // The approved retry journals the same request again before sending it.
+    call.mockRejectedValueOnce(new Error("response lost"));
+    await expect(manager.workspaceAction(record.id, "environment-create", input, "token", "admin")).rejects.toThrow("response lost");
+    expect((await store.readRecord(record.id))!.coreEnvironmentOperations?.[0]?.state).toBe("pending");
+    call.mockRejectedValueOnce(new AppContextError(status, "environment_consent_required", "Revoked"));
+    await expect(manager.workspaceAction(record.id, "environment-create", input, "token", "admin")).rejects.toThrow("Revoked");
+    expect((await store.readRecord(record.id))!.coreEnvironmentOperations?.[0]?.state).toBe("pending");
+    vi.spyOn(manager, "invokeCoreTool").mockResolvedValueOnce({ environments: [] });
+    await expect(manager.deleteSession(record.id, "admin", "token")).resolves.toBe(true);
+  });
+
+  it.each([
+    ["environment-create", "refused"], ["environment-create", "uncertain"], ["environment-create", "observed"],
+    ["environment-stop", "refused"], ["environment-stop", "uncertain"], ["environment-stop", "observed"],
+  ] as const)("prevents overlapping retries of %s (%s)", async (action, outcome) => {
+    const record = await manager.createSession({ createdBy: "admin" });
+    const environment = { id: "b".repeat(32), label: "QA", mode: "installed", state: "stopped", revision: 1,
+      port: 1234, previewUrl: "http://core.test/preview", operations: [], context: { sessionId: record.id } };
+    const input = { requestId: randomUUID(), ...(action === "environment-create" ? { label: "QA" } : { environmentId: environment.id, expectedRevision: 1 }) };
+    if (action === "environment-stop") {
+      record.coreEnvironments = [environment];
+      await store.saveRecord(record);
+    }
+    let respond!: (value: unknown) => void, fail!: (error: Error) => void;
+    const call = vi.spyOn(client, "environment").mockRejectedValue(new Error("response lost"))
+      .mockImplementationOnce(() => new Promise((resolve, reject) => { respond = resolve; fail = reject; }));
+    const attempt = manager.workspaceAction(record.id, action, input, "token", "admin").catch(error => error);
+    await vi.waitFor(() => expect(call).toHaveBeenCalledTimes(1));
+    await expect(manager.workspaceAction(record.id, action, input, "fresh-token", "admin"))
+      .rejects.toMatchObject({ code: "environment_request_in_flight" });
+    expect(call).toHaveBeenCalledTimes(1);
+    expect((await store.readRecord(record.id))!.coreEnvironmentOperations?.[0]?.state).toBe("pending");
+    if (outcome === "observed") respond(environment);
+    else fail(outcome === "refused" ? new AppContextError(409, "environment_consent_required", "Review consent") : new Error("response lost"));
+    const result = await attempt;
+    expect(result).toEqual(outcome === "observed" ? environment : expect.any(Error));
+    expect((await store.readRecord(record.id))!.coreEnvironmentOperations?.[0]?.state)
+      .toBe(outcome === "refused" ? "rejected" : outcome === "observed" ? "observed" : "pending");
+    // A settled attempt allows exact replay; a lost response protects its recovery journal.
+    call.mockRejectedValueOnce(new Error("retry response lost"));
+    await expect(manager.workspaceAction(record.id, action, input, "fresh-token", "admin")).rejects.toThrow("retry response lost");
+    expect(call).toHaveBeenCalledTimes(2);
+    if (outcome !== "observed") {
+      const saved = (await store.readRecord(record.id))!;
+      expect(saved.coreEnvironmentOperations?.[0]?.state).toBe("pending");
+      expect(retentionBusy(saved)).toBe(true);
+    }
+  });
+
+  it.each([false, true])("retains a fresh creation after a post-allocation 409 (restart=%s)", async restart => {
+    vi.mocked(client.retention).mockResolvedValue({ kind: "chat", workflow: null, resourcesFinished: true, workspaceAbsent: true, independentEnvironments: true });
+    const record = await manager.createSession({ createdBy: "admin" });
+    let allocated: { id: string; state: string; context: { sessionId: string } } | undefined;
+    vi.spyOn(client, "environment").mockImplementationOnce(async (_credential, action, input) => {
+      expect(action).toBe("environment-create");
+      allocated = { id: "b".repeat(32), state: "stopped", context: input.context as { sessionId: string } };
+      throw new AppContextError(409, "workspace_not_active", "The selected worktree changed after allocation.");
+    });
+    await expect(manager.workspaceAction(record.id, "environment-create", { requestId: randomUUID(), label: "QA" }, "token", "admin"))
+      .rejects.toMatchObject({ code: "workspace_not_active" });
+    expect((await store.readRecord(record.id))!.coreEnvironmentOperations?.[0]?.state).toBe("pending");
+    if (restart) { await manager.shutdown(); manager = build(); }
+    vi.spyOn(manager, "invokeCoreTool").mockResolvedValue({ environments: [allocated!] });
+    await expect(manager.deleteSession(record.id, "admin", "token")).rejects.toMatchObject({ code: "resource_operation_pending" });
+    expect((await store.readRecord(record.id))!.coreEnvironmentOperations?.[0]?.state).toBe("pending");
+  });
+
+  it("retires an uncertain creation only when Core lists no child for the session", async () => {
+    vi.mocked(client.retention).mockResolvedValue({ kind: "chat", workflow: null, resourcesFinished: true, workspaceAbsent: true, independentEnvironments: true });
+    const record = await manager.createSession({ createdBy: "admin" });
+    await manager.shutdown();
+    // Records written before refusals were classified keep a refused creation pending.
+    await store.saveRecord({ ...record, coreEnvironmentOperations: [{ action: "environment-create", input: { requestId: "a".repeat(32), label: "QA", context: { sessionId: record.id } }, state: "pending" }] });
+    manager = build();
+    const own = { id: "b".repeat(32), state: "stopped", context: { sessionId: record.id } };
+    const other = { id: "c".repeat(32), state: "running", context: { sessionId: randomUUID() } };
+    const call = vi.spyOn(manager, "invokeCoreTool").mockResolvedValue({ environments: [own, other] });
+    await expect(manager.deleteSession(record.id, "admin", "token")).rejects.toMatchObject({ code: "resource_operation_pending" });
+    expect(call).toHaveBeenCalledWith(record.id, "environment_list", {});
+    expect((await store.readRecord(record.id))!.coreEnvironmentOperations?.[0]?.state).toBe("pending");
+    call.mockResolvedValue({ environments: [other] });
+    await expect(manager.deleteSession(record.id, "admin", "token")).resolves.toBe(true);
+  });
+
+  it.each([false, true])("protects a canonical creation from app-scoped inventories (restart=%s)", async restart => {
+    vi.mocked(client.retention).mockResolvedValue({ kind: "chat", workflow: null, resourcesFinished: true, workspaceAbsent: true, independentEnvironments: true });
+    const record = await manager.createSession({ createdBy: "admin" });
+    await expect(client.withCoreMcp(() => ({ sessionId: record.id }), async call => {
+      expect(call.name).toBe("environment_create");
+      throw new Error("canonical response lost");
+    }, () => manager.workspaceAction(record.id, "environment-create", { requestId: randomUUID(), label: "QA" }, "token", "admin")))
+      .rejects.toThrow("canonical response lost");
+    if (restart) { await manager.shutdown(); manager = build(); }
+    const child = { id: "b".repeat(32), state: "running", context: { sessionId: record.id } };
+    const legacy = vi.spyOn(client, "environment").mockResolvedValue({ environments: [] });
+    const canonical = vi.spyOn(manager, "invokeCoreTool").mockResolvedValue({ environments: [child] });
+    await expect(manager.deleteSession(record.id, "admin", "token")).rejects.toMatchObject({ code: "resource_operation_pending" });
+    expect(canonical).toHaveBeenCalledWith(record.id, "environment_list", {});
+    expect(legacy).not.toHaveBeenCalled();
+    await manager.workspaceAction(record.id, "environment-list", {}, "token", "admin");
+    expect((await store.readRecord(record.id))!.coreEnvironmentOperations?.[0]?.state).toBe("pending");
+    canonical.mockResolvedValueOnce({ environments: [] });
+    await expect(manager.deleteSession(record.id, "admin", "token")).resolves.toBe(true);
+  });
+
+  it.each([new AppContextError(403, "mcp_tool_disabled", "Canonical inventory disabled"), new Error("Canonical inventory unavailable")])(
+    "retains creation recovery without a legacy fallback when canonical inventory fails (%s)", async failure => {
+      vi.mocked(client.retention).mockResolvedValue({ kind: "chat", workflow: null, resourcesFinished: true, workspaceAbsent: true, independentEnvironments: true });
+      const record = await manager.createSession({ createdBy: "admin" });
+      record.coreEnvironmentOperations = [{ action: "environment-create", input: { requestId: randomUUID() }, state: "pending" }];
+      await store.saveRecord(record);
+      vi.spyOn(manager, "invokeCoreTool").mockRejectedValue(failure);
+      const legacy = vi.spyOn(client, "environment").mockResolvedValue({ environments: [] });
+      await expect(manager.deleteSession(record.id, "admin", "token")).rejects.toThrow(failure.message);
+      expect(legacy).not.toHaveBeenCalled();
+      expect((await store.readRecord(record.id))!.coreEnvironmentOperations?.[0]?.state).toBe("pending");
+    });
+
+  it("does not retire a creation this process is still sending", async () => {
+    const record = await manager.createSession({ createdBy: "admin" });
+    const input = { requestId: "a".repeat(32), label: "QA" };
+    const environment = { id: "b".repeat(32), state: "stopped", context: { sessionId: record.id } };
+    let respond!: (value: unknown) => void;
+    const call = vi.spyOn(client, "environment").mockImplementationOnce(() => new Promise(resolve => { respond = resolve; }));
+    const creating = manager.workspaceAction(record.id, "environment-create", input, "token", "admin");
+    await vi.waitFor(() => expect(call).toHaveBeenCalledTimes(1));
+    call.mockResolvedValueOnce({ environments: [] });
+    await expect(listCanonicalEnvironments(record.id)).resolves.toEqual({ environments: [] });
+    expect((await store.readRecord(record.id))!.coreEnvironmentOperations?.[0]?.state).toBe("pending");
+    respond(environment);
+    await creating;
+    expect((await store.readRecord(record.id))!.coreEnvironmentOperations?.[0]?.state).toBe("observed");
+  });
+
+  it("does not retire a creation that overlapped the inventory request", async () => {
+    const record = await manager.createSession({ createdBy: "admin" });
+    const input = { requestId: "a".repeat(32), label: "QA" };
+    let respond!: (value: unknown) => void;
+    const call = vi.spyOn(client, "environment").mockImplementationOnce(() => new Promise(resolve => { respond = resolve; }));
+    const listing = listCanonicalEnvironments(record.id);
+    await vi.waitFor(() => expect(call).toHaveBeenCalledTimes(1));
+    // Core captured an empty inventory, then accepted this creation and lost its response.
+    call.mockRejectedValueOnce(new Error("response lost"));
+    await expect(manager.workspaceAction(record.id, "environment-create", input, "token", "admin")).rejects.toThrow("response lost");
+    respond({ environments: [] });
+    await expect(listing).resolves.toEqual({ environments: [] });
+    expect((await store.readRecord(record.id))!.coreEnvironmentOperations?.[0]?.state).toBe("pending");
+    call.mockResolvedValueOnce({ environments: [] });
+    await listCanonicalEnvironments(record.id);
+    expect((await store.readRecord(record.id))!.coreEnvironmentOperations?.[0]?.state).toBe("rejected");
   });
 
   it("keeps Finish available when child Core outcomes exhaust the pending journal", async () => {
