@@ -1,6 +1,7 @@
 "use client";
 
 import { DecisionQuestion } from "./decision-question";
+import { UserMessage } from "./user-message";
 import { PromptSuggestionCard } from "./prompt-suggestion";
 import { parseSuggestion, type PromptSuggestion } from "@/lib/prompt-suggestions";
 import { Fragment, useId, useMemo, useRef, useState } from "react";
@@ -150,9 +151,7 @@ export function TranscriptEvent({
       return (
         <div className="space-y-1">
           {card || feedbackReferenceForEvent(event) ? <FeedbackMessageCard card={card} originalText={String(event.text ?? "")} loading={feedbackLoading} />
-            : String(event.text ?? "").trim() && <div className="ml-3 min-w-0 rounded-lg bg-primary/10 px-3 py-2 sm:ml-8">
-            <Markdown text={String(event.text ?? "")} />
-          </div>}
+            : String(event.text ?? "").trim() && <UserMessage text={String(event.text ?? "")} />}
           {names.length > 0 && (
             <AttachmentRow files={names.map((name) => ({ name, displayName: attachmentLabel(name, displayNames[name]), size: attachments?.sizes.get(name) ?? null }))} />
           )}

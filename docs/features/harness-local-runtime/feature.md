@@ -1,6 +1,6 @@
 ---
 created: 2026-10-27
-updated: 2026-11-07
+updated: 2026-11-11
 summary: Harness local production starts reuse isolated compiled API and worker bundles with a static UI and locked runtime dependencies.
 components: [apps/harness]
 ---
@@ -19,6 +19,10 @@ SDK, build scripts, configuration, manifest and root npm package/lock. SHA-256 c
 paths and bytes together with the Node version, operating system and architecture. Test files are
 excluded. An unchanged complete generation skips npm and all compilation. Updated inputs or missing,
 truncated or broken-link output require a new successful preparation.
+
+The snapshot includes `web/public`, so the exported UI contains the adaptive, light and dark SVG
+favicons and the ICO fallback. Changes, additions and removals in public assets invalidate the
+generation alongside source changes.
 
 The production generation contains:
 
@@ -89,6 +93,8 @@ Windows and Linux lifecycle acceptance and paid provider turns were not run.
 - Verify complete unchanged reuse without invoking the builder; source/Node/platform invalidation;
   failed preparation; concurrent preparation; exited-owner and interrupted-recovery cleanup;
   missing/truncated output; and removed dependency links.
+- Verify default source discovery copies public assets into the build snapshot and that changes,
+  additions and removals invalidate cached output. Check exported favicon URLs and content types.
 - Check standalone lock derivation preserves reviewed dependency entries and excludes SDK peers,
   workspace links and the TS loader. Build production output and run Harness lint/unit tests.
 - Run `npm run test:integration -- harness-local` on the target platform. It builds Core/CLI and uses

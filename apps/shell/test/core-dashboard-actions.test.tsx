@@ -21,7 +21,7 @@ let status: CoreStatus, admin: boolean, coreUpdating: boolean;
 let coreUpdate: CoreUpdateStatus | null;
 const primary = () => container.querySelector<HTMLButtonElement>('[data-testid="core-row"] .dashboard-context-action button');
 async function render() {
-  await act(async () => root.render(<DashboardPage coreOrigin="https://core.test" apps={[]} status={status} coreUpdate={coreUpdate} coreUpdating={coreUpdating}
+  await act(async () => root.render(<DashboardPage coreOrigin="https://core.test" apps={[]} updatingAllApps={false} status={status} coreUpdate={coreUpdate} coreUpdating={coreUpdating}
     canManageApps={admin} loading={false} busyAction={null} pendingAppActions={{}} updateCheck={null} shellAppId="shell.app"
     onUpdateCore={fixture.update} onRefresh={() => {}} onInstall={() => {}} onAction={() => {}} onSwitchRuntime={() => {}}
     onUpdateApp={() => {}} onCheckUpdates={() => {}} onUpdateAll={() => {}} onOpenPanel={() => {}} />));
