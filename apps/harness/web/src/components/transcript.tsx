@@ -34,6 +34,7 @@ import { repositoryName, type DevelopmentWorkspace } from "@/lib/development-api
 import { resolveTranscriptReview, type TranscriptReviewReference } from "@/lib/transcript-edits";
 import { commandDuration, commandOutcome, isCommandTool, recordedEditGroups, recordedFileEdits, recordedLineTotals, type CommandOutcome, type RecordedFileEdit, type RecordedLineTotals } from "@/lib/transcript-activity";
 import type { ToolOutput } from "@/lib/tool-output";
+import type { ApprovalDecision } from "@/lib/transcript-items";
 export type TranscriptReviewContext = {
   sessionId: string; workspaces: readonly DevelopmentWorkspace[]; onOpen: (reference: TranscriptReviewReference) => void;
 };
@@ -48,8 +49,9 @@ export type SuggestionTranscriptContext = {
 // User prompts and assistant prose share Markdown presentation. The event log retains the original
 // source text; rendering does not rewrite the submitted prompt or its attachment metadata.
 
-/** How a card was resolved: the verdict, and the operator's reason when a deny carried one. */
-export type ApprovalDecision = { decision: string; message: string | null };
+export type { ApprovalDecision };
+const approvalLabel = ({ decision }: ApprovalDecision) => decision === "allow" ? "Allowed" : decision === "cancelled" ? "Cancelled" : "Denied";
+const refused = (approval?: ApprovalDecision) => !!approval && approval.decision !== "allow";
 
 /** Resolve only requests preceding a recorded cancellation; later turns remain actionable. */
 export function approvalDecisions(events: readonly AssistantEvent[]): Map<string, ApprovalDecision> {
@@ -247,25 +249,29 @@ function AttachmentRow({ files }: { files: { name: string; displayName?: string;
 }
 
 /** Recorded outcomes belong to their factual command; a turn result cannot establish one. */
-export function ToolActivity({ events, appNames, reviewContext, commandResults = {}, toolResults = {} }: {
+export function ToolActivity({ events, appNames, reviewContext, commandResults = {}, toolResults = {}, approvals = {} }: {
   events: AssistantEvent[]; appNames?: Record<string, string>; reviewContext?: TranscriptReviewContext; commandResults?: Readonly<Record<number, CommandOutcome>>; toolResults?: Readonly<Record<number, ToolOutput>>;
+  /** Decided approvals folded into their calls; a refused call never ran, so it shows the refusal. */
+  approvals?: Readonly<Record<number, ApprovalDecision>>;
 }) {
   const [open, setOpen] = useState(false);
   const failedCalls = events.filter(event => {
     const outcome = isCommandTool(event) ? commandResults[event.seq] : toolResults[event.seq];
-    return outcome?.status === "failed" && !outcome.conflict;
+    return !refused(approvals[event.seq]) && outcome?.status === "failed" && !outcome.conflict;
   }).length;
+  const refusals = ["Denied", "Cancelled"].map(label => [label, events.filter(event => refused(approvals[event.seq]) && approvalLabel(approvals[event.seq]!) === label).length] as const);
   return <div className="flex min-w-0 flex-col gap-2">
     <Collapsible open={open} onOpenChange={setOpen} className="min-w-0" data-slot="tool-activity">
       <CollapsibleTrigger asChild><Button type="button" variant="ghost" size="sm" className="h-auto min-h-8 w-full min-w-0 justify-start gap-2 px-2 text-left text-xs text-muted-foreground">
         <Wrench className="size-3.5 shrink-0" aria-hidden />
         <span className="min-w-0 font-medium tabular-nums">{events.length} tool {events.length === 1 ? "call" : "calls"}</span>
         {failedCalls > 0 && <Badge variant="outline" className="shrink-0 tabular-nums text-destructive-foreground">{failedCalls} failed</Badge>}
+        {refusals.map(([label, count]) => count > 0 && <Badge key={label} variant="outline" className="shrink-0 tabular-nums text-destructive-foreground">{count} {label.toLowerCase()}</Badge>)}
         <ChevronDown className={cn("ml-auto size-3.5 shrink-0", open && "rotate-180")} aria-hidden />
       </Button></CollapsibleTrigger>
       <CollapsibleContent className="ml-3 flex min-w-0 flex-col gap-2 border-l pl-3 pt-1">
         {events.map(event => <ToolRow key={event.seq} toolName={String(event.toolName ?? "tool")} input={event.input} appNames={appNames} mcp={event.mcp} output={toolResults[event.seq]}
-          command={isCommandTool(event) ? { outcome: commandResults[event.seq], legacy: !event.toolUseId } : undefined} />)}
+          command={isCommandTool(event) ? { outcome: commandResults[event.seq], legacy: !event.toolUseId } : undefined} approval={approvals[event.seq]} />)}
       </CollapsibleContent>
     </Collapsible>
     <TranscriptChanges events={events} reviewContext={reviewContext} />
@@ -321,6 +327,11 @@ function InvocationResult({ outcome, legacy = false, compact = false }: { outcom
     {!compact && !outcome && legacy && <span className="text-muted-foreground">This older call has no recorded result identity.</span>}
   </Tag>;
 }
+function ApprovalResult({ decision }: { decision: ApprovalDecision }) {
+  return <span data-slot="approval-result" className="ml-auto inline-flex shrink-0 items-center text-xs font-normal">
+    <Badge variant="outline" className={cn("px-1.5 py-0 @sm:px-2", refused(decision) ? "text-destructive-foreground" : "text-muted-foreground")}>{approvalLabel(decision)}</Badge>
+  </span>;
+}
 function TranscriptEditFiles({ edits, reviewContext }: { edits: RecordedFileEdit[]; reviewContext?: TranscriptReviewContext }) {
   const id = useId();
   if (!edits.length) return null;
@@ -351,8 +362,8 @@ function TranscriptEditFiles({ edits, reviewContext }: { edits: RecordedFileEdit
 // thirty rows, so the row carries the model's own description (or the path, the pattern, the query)
 // and the raw input waits behind a click — a transcript that showed every input would be a wall of
 // JSON with the conversation somewhere inside it.
-function ToolRow({ toolName, input, appNames, mcp, output, command }: {
-  toolName: string; input: unknown; appNames?: Record<string, string>; mcp?: unknown; output?: ToolOutput; command?: { outcome?: CommandOutcome; legacy: boolean };
+function ToolRow({ toolName, input, appNames, mcp, output, command, approval }: {
+  toolName: string; input: unknown; appNames?: Record<string, string>; mcp?: unknown; output?: ToolOutput; command?: { outcome?: CommandOutcome; legacy: boolean }; approval?: ApprovalDecision;
 }) {
   const [open, setOpen] = useState(false);
   const summary = useMemo(() => summarizeToolUse(toolName, input, appNames, mcp), [toolName, input, appNames, mcp]);
@@ -372,17 +383,18 @@ function ToolRow({ toolName, input, appNames, mcp, output, command }: {
           <span className="font-medium">{summary.label}</span>
           {summary.detail && <span className={cn("ml-1 font-normal", (["Command", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Glob", "Grep", "WebFetch", "FileChange"].includes(toolName) || toolName === "Bash" && !(typeof description === "string" && description.length > 0)) && "font-mono")}>{summary.detail}</span>}
         </span>
-        {command ? <InvocationResult outcome={command.outcome && {
+        {refused(approval) ? <ApprovalResult decision={approval!} /> : command ? <InvocationResult outcome={command.outcome && {
           ...command.outcome,
           ...(!command.outcome.conflict && command.outcome.durationMs === undefined && !output?.conflict && output?.durationMs !== undefined ? { durationMs: output.durationMs } : {}),
-        }} compact /> : output && <InvocationResult outcome={output} compact />}
+        }} compact /> : output ? <InvocationResult outcome={output} compact /> : approval && <ApprovalResult decision={approval} />}
         <Chevron className="ml-auto size-3 shrink-0" aria-hidden />
       </Button>
       {open && <div className="min-w-0">
+        {refused(approval) && <p className="py-1 text-xs text-destructive-foreground wrap-anywhere">{approvalLabel(approval!)}{approval!.message ? ` · ${approval!.message}` : ""}</p>}
         {command?.outcome?.summary && <p className="py-1 font-mono text-xs tabular-nums text-muted-foreground">{command.outcome.summary}</p>}
-        {command?.legacy && !command.outcome && <p className="py-1 text-xs text-muted-foreground">This older call has no recorded result identity.</p>}
+        {command?.legacy && !command.outcome && !refused(approval) && <p className="py-1 text-xs text-muted-foreground">This older call has no recorded result identity.</p>}
         <ChatCodeBlock code={JSON.stringify(input ?? {}, null, 2)} language="json" title="Tool input" />
-        {!output ? <p className="py-2 text-xs text-muted-foreground">Tool output was not recorded for this call.</p>
+        {!output ? !refused(approval) && <p className="py-2 text-xs text-muted-foreground">Tool output was not recorded for this call.</p>
           : output.conflict ? <p className="py-2 text-xs text-warning-foreground">Conflicting recorded outputs; the result is unavailable.</p>
           : <>
             {!command && output.status !== "completed" && <p className={cn("pt-2 text-xs", output.status === "failed" ? "text-destructive-foreground" : "text-muted-foreground")}>{output.status === "failed" ? "Tool failed" : output.status === "cancelled" ? "Tool cancelled" : "Tool outcome unavailable"}</p>}
@@ -436,9 +448,10 @@ export function ApprovalCard({
   const locked = useRef(false);
   const category = view.kind === "mcp" ? view.server : view.kind === "command" ? "Command" : view.kind === "file" ? "File changes" : "Tool";
   const disabled = busy || submitted;
+  if (decision) return <DecidedApproval view={view} category={category} title={title} reason={reason} decision={decision} />;
 
   const decide = async (verdict: "allow" | "deny") => {
-    if (locked.current || decision) return;
+    if (locked.current) return;
     locked.current = true;
     setBusy(true);
     setError(null);
@@ -452,23 +465,22 @@ export function ApprovalCard({
   };
 
   return (
-    <Card className={cn("min-w-0 gap-3 overflow-hidden py-0", !decision && "border-warning-foreground/40")} data-slot="approval-card" aria-busy={busy}>
-      <CardHeader className={cn("gap-2 border-b px-3 py-3", !decision ? "border-warning-foreground/25 bg-warning-soft" : "bg-muted/35")}>
+    <Card className="min-w-0 gap-3 overflow-hidden border-warning-foreground/40 py-0" data-slot="approval-card" aria-busy={busy}>
+      <CardHeader className="gap-2 border-b border-warning-foreground/25 bg-warning-soft px-3 py-3">
         <div className="flex flex-wrap items-center gap-2">
-          <ShieldCheck className={cn("size-4", !decision ? "text-warning-foreground" : "text-muted-foreground")} aria-hidden />
+          <ShieldCheck className="size-4 text-warning-foreground" aria-hidden />
           <span className="text-xs text-muted-foreground">{category}</span>
-          <Badge variant={decision ? "outline" : "secondary"} className={cn("ml-auto", !decision && "border-warning-foreground/30 bg-warning-soft text-warning-foreground")}>
-            {decision ? (decision.decision === "allow" ? "Allowed" : decision.decision === "cancelled" ? "Cancelled" : "Denied") : submitted ? "Decision sent" : "Needs approval"}
+          <Badge variant="secondary" className="ml-auto border-warning-foreground/30 bg-warning-soft text-warning-foreground">
+            {submitted ? "Decision sent" : "Needs approval"}
           </Badge>
         </div>
         <CardTitle className="text-sm font-semibold wrap-anywhere">{view.heading}</CardTitle>
         {title && title !== view.heading && <CardDescription className="wrap-anywhere">{title}</CardDescription>}
       </CardHeader>
-      <CardContent className={cn("flex min-w-0 flex-col gap-2 px-3", decision && "pb-3")}>
+      <CardContent className="flex min-w-0 flex-col gap-2 px-3">
         <ApprovalBody view={view} />
         {reason && <p className="text-xs text-muted-foreground wrap-anywhere">{reason}</p>}
-        {decision?.message && <p className="text-sm wrap-anywhere">{decision.message}</p>}
-        {!decision && reasonBox && denyOpen && <FieldGroup className="gap-2"><Field>
+        {reasonBox && denyOpen && <FieldGroup className="gap-2"><Field>
           <FieldLabel htmlFor={`${approvalId}-reason`} className="text-xs">Reason for denying (optional)</FieldLabel>
           <Input ref={reasonInput} id={`${approvalId}-reason`} value={why} disabled={disabled}
             aria-describedby={`${approvalId}-reason-hint`} placeholder="Explain what should change…"
@@ -482,7 +494,7 @@ export function ApprovalCard({
         </Field></FieldGroup>}
         {error && <div role="alert"><InlineError message={error} /></div>}
       </CardContent>
-      {!decision && <CardFooter className="flex-wrap justify-end gap-2 border-t px-3 py-3">
+      <CardFooter className="flex-wrap justify-end gap-2 border-t px-3 py-3">
         {submitted ? <span role="status" className="mr-auto text-xs text-muted-foreground">Waiting for confirmation…</span> : <>
           {reasonBox && denyOpen && <Button type="button" size="sm" variant="ghost" disabled={disabled} onClick={() => { setDenyOpen(false); requestAnimationFrame(() => denyButton.current?.focus()); }}>Cancel denial</Button>}
           <Button ref={denyButton} type="button" size="sm" variant="outline" disabled={disabled} aria-expanded={reasonBox ? denyOpen : undefined} aria-controls={reasonBox ? `${approvalId}-reason` : undefined} onClick={() => {
@@ -491,9 +503,35 @@ export function ApprovalCard({
           }}><X data-icon="inline-start" />{reasonBox && !denyOpen ? "Deny…" : "Deny"}</Button>
           <Button type="button" size="sm" disabled={disabled} onClick={() => void decide("allow")}>{busy ? <HostyLoader label={null} className="size-4" /> : <Check data-icon="inline-start" />}Allow once</Button>
         </>}
-      </CardFooter>}
+      </CardFooter>
     </Card>
   );
+}
+
+// A decision no recorded call can carry (an older transcript, an app tool or a refused Codex item)
+// keeps one line and the operator's stated reason; the request itself waits behind a click.
+function DecidedApproval({ view, category, title, reason, decision }: {
+  view: ApprovalView; category: string; title: string | null; reason: string | null; decision: ApprovalDecision;
+}) {
+  const [open, setOpen] = useState(false);
+  const Chevron = open ? ChevronDown : ChevronRight;
+  const stated = decision.decision === "deny" ? decision.message : null;
+  return <div className="@container min-w-0 text-xs text-muted-foreground" data-slot="approval-card">
+    <Button type="button" variant="ghost" size="sm" onClick={() => setOpen(current => !current)} aria-expanded={open}
+      className="h-auto min-h-8 w-full min-w-0 justify-start gap-1.5 px-1 py-1 text-left text-xs text-muted-foreground hover:text-foreground">
+      <ShieldCheck className="size-3 shrink-0" aria-hidden />
+      <span className="min-w-0 flex-1 truncate"><span className="font-medium">{category}</span><span className="ml-1 font-normal">{view.heading}</span></span>
+      <ApprovalResult decision={decision} />
+      <Chevron className="ml-auto size-3 shrink-0" aria-hidden />
+    </Button>
+    {stated && <p className="px-1 pb-1 wrap-anywhere">{stated}</p>}
+    {open && <div className="flex min-w-0 flex-col gap-2 pt-1">
+      {title && title !== view.heading && <p className="wrap-anywhere">{title}</p>}
+      <ApprovalBody view={view} />
+      {reason && <p className="wrap-anywhere">{reason}</p>}
+      {!stated && decision.message && <p className="wrap-anywhere">{decision.message}</p>}
+    </div>}
+  </div>;
 }
 
 function ApprovalBody({ view }: { view: ApprovalView }) {
@@ -611,20 +649,18 @@ function QuestionCard({ questionId, questions, answers, cancelled, onAnswer }: {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally { setSubmitting(false); }
   };
+  if (answers || cancelled) return <ClosedQuestion questions={questions} answers={answers} />;
 
   return <Card className="min-w-0 gap-3 py-3" data-slot="question-card" aria-busy={submitting}>
     <CardHeader className="px-3">
       <div className="flex flex-wrap items-center gap-2">
         <HelpCircle className="size-4 text-muted-foreground" aria-hidden />
-        <CardTitle className="text-sm font-semibold">{answers ? "Your answers" : cancelled ? "Question cancelled" : "Your input is needed"}</CardTitle>
-        <Badge variant="outline" className="ml-auto">{answers ? "Answered" : cancelled ? "Cancelled" : submitted ? "Answer sent" : "Question"}</Badge>
+        <CardTitle className="text-sm font-semibold">Your input is needed</CardTitle>
+        <Badge variant="outline" className="ml-auto">{submitted ? "Answer sent" : "Question"}</Badge>
       </div>
     </CardHeader>
     <CardContent className="min-w-0 px-3">
-      {answers || cancelled ? <dl className="flex flex-col gap-3">{questions.map(question => <div key={question.id ?? question.question} className="min-w-0">
-        <dt className="text-xs text-muted-foreground wrap-anywhere">{question.question}</dt>
-        <dd className="mt-1 text-sm whitespace-pre-wrap wrap-anywhere">{answers?.[question.id ?? question.question] ?? (cancelled ? "The session stopped before this question was answered." : "—")}</dd>
-      </div>)}</dl> : <FieldGroup className="gap-5">{questions.map((question, questionIndex) => {
+      <FieldGroup className="gap-5">{questions.map((question, questionIndex) => {
         const picks = selected[question.id ?? question.question] ?? [];
         const baseId = `${questionId}-${questionIndex}`;
         const choose = (label: string, checked = true) => {
@@ -659,14 +695,35 @@ function QuestionCard({ questionId, questions, answers, cancelled, onAnswer }: {
               }} />
           </Field>}
         </FieldSet>;
-      })}</FieldGroup>}
-      {error && !cancelled && <div className="mt-3" role="alert"><InlineError message={error} /></div>}
+      })}</FieldGroup>
+      {error && <div className="mt-3" role="alert"><InlineError message={error} /></div>}
     </CardContent>
-    {!answers && !cancelled && <CardFooter className="justify-end border-t px-3 pt-3">
+    <CardFooter className="justify-end border-t px-3 pt-3">
       {submitted ? <span role="status" className="mr-auto text-xs text-muted-foreground">Waiting for confirmation…</span>
         : <Button type="button" size="sm" disabled={!complete || disabled} onClick={() => void submit()}>
           {submitting && <HostyLoader label={null} className="size-4" />}Send answer
         </Button>}
-    </CardFooter>}
+    </CardFooter>
   </Card>;
+}
+
+/** A closed question folds to one line like a tool call: the answer first, the question on expansion. */
+function ClosedQuestion({ questions, answers }: { questions: AssistantQuestion[]; answers: Record<string, string> | null }) {
+  const [open, setOpen] = useState(false);
+  const Chevron = open ? ChevronDown : ChevronRight;
+  const summary = answers ? questions.map(question => answers[question.id ?? question.question]).filter(Boolean).join("; ") : "";
+  return <div className="min-w-0 text-xs text-muted-foreground" data-slot="question-card">
+    <Button type="button" variant="ghost" size="sm" aria-expanded={open} onClick={() => setOpen(current => !current)}
+      className="h-auto min-h-8 w-full min-w-0 justify-start gap-1.5 px-1 py-1 text-left text-xs text-muted-foreground hover:text-foreground">
+      <HelpCircle className="size-3 shrink-0" aria-hidden />
+      <span className="min-w-0 flex-1 truncate"><span className="font-medium">{summary || "Not answered"}</span>
+        {questions[0] && <span className="ml-1 font-normal">{questions[0].question}</span>}</span>
+      <Badge variant="outline" className={cn("ml-auto shrink-0 px-1.5 py-0 font-normal", answers ? "text-muted-foreground" : "text-destructive-foreground")}>{answers ? "Answered" : "Cancelled"}</Badge>
+      <Chevron className="size-3 shrink-0" aria-hidden />
+    </Button>
+    {open && <dl className="flex min-w-0 flex-col gap-3 px-1 pt-1">{questions.map(question => <div key={question.id ?? question.question} className="min-w-0">
+      <dt className="wrap-anywhere">{question.question}</dt>
+      <dd className="mt-1 text-sm whitespace-pre-wrap text-foreground wrap-anywhere">{answers?.[question.id ?? question.question] ?? (answers ? "—" : "The session stopped before this question was answered.")}</dd>
+    </div>)}</dl>}
+  </div>;
 }

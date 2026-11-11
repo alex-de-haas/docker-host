@@ -2,10 +2,35 @@ import type { AssistantEvent } from "./assistant-api";
 import { isListedToolUse } from "./tool-display";
 import { commandOutcome, commandResultId, isCommandTool, type CommandOutcome } from "./transcript-activity";
 import { canShowToolOutput, recordedToolOutput, type ToolOutput } from "./tool-output";
+/** How an approval was resolved: the verdict, and the operator's reason when a deny carried one. */
+export type ApprovalDecision = { decision: string; message: string | null };
 export type TranscriptItem =
   | { kind: "event"; key: string; event: AssistantEvent }
-  | { kind: "activity"; key: string; events: AssistantEvent[]; commandResults: Record<number, CommandOutcome>; toolResults: Record<number, ToolOutput> };
+  | { kind: "activity"; key: string; events: AssistantEvent[]; commandResults: Record<number, CommandOutcome>; toolResults: Record<number, ToolOutput>; approvals: Record<number, ApprovalDecision> };
 const identity = commandResultId;
+const turnBoundary = (event: AssistantEvent) => ["user_message", "session_created", "result", "error"].includes(event.type)
+  || event.type === "session_status" && ["idle", "cancelled", "failed", "abandoned"].includes(String(event.status));
+/** Pair an approval with the one listed call of its recorded turn that carries the same identity. */
+function approvalCalls(events: readonly AssistantEvent[]) {
+  const pairs = new Map<string, number>();
+  let calls = new Map<string, AssistantEvent[]>(), requests = new Map<string, AssistantEvent[]>();
+  const settle = () => {
+    for (const [id, [request, ...others]] of requests) {
+      const [call, ...more] = calls.get(id) ?? [];
+      // Either side repeating its identity is ambiguous; such a card stays on its own.
+      if (request && call && !others.length && !more.length && isListedToolUse(String(call.toolName ?? "tool"))) pairs.set(String(request.approvalId), call.seq);
+    }
+    calls = new Map(); requests = new Map();
+  };
+  for (const event of events) {
+    if (turnBoundary(event)) settle();
+    const id = identity(event); if (!id) continue;
+    const bucket = event.type === "tool_use" ? calls : event.type === "approval_request" ? requests : undefined;
+    bucket?.set(id, [...(bucket.get(id) ?? []), event]);
+  }
+  settle();
+  return pairs;
+}
 /** Join only a preceding, uniquely identified command from the same factual user turn. */
 function commandResults(events: readonly AssistantEvent[]) {
   const results: Record<number, CommandOutcome> = {}, matched = new Set<number>();
@@ -13,8 +38,7 @@ function commandResults(events: readonly AssistantEvent[]) {
   const outcomes = new Map<number, string>();
   const matchedByCall = new Map<number, number[]>();
   for (const event of events) {
-    if (["user_message", "session_created", "result", "error"].includes(event.type)
-      || event.type === "session_status" && ["idle", "cancelled", "failed", "abandoned"].includes(String(event.status))) calls = new Map();
+    if (turnBoundary(event)) calls = new Map();
     const id = identity(event); if (!id) continue;
     if (isCommandTool(event)) {
       const prior = calls.get(id) ?? []; prior.push(event); calls.set(id, prior);
@@ -38,8 +62,7 @@ export function toolResults(events: readonly AssistantEvent[]) {
   let calls = new Map<string, AssistantEvent[]>();
   const outcomes = new Map<number, string>(), matchedByCall = new Map<number, number[]>();
   for (const event of events) {
-    if (["user_message", "session_created", "result", "error"].includes(event.type)
-      || event.type === "session_status" && ["idle", "cancelled", "failed", "abandoned"].includes(String(event.status))) calls = new Map();
+    if (turnBoundary(event)) calls = new Map();
     const id = identity(event); if (!id) continue;
     if (event.type === "tool_use") {
       const prior = calls.get(id) ?? []; prior.push(event); calls.set(id, prior);
@@ -57,19 +80,32 @@ export function toolResults(events: readonly AssistantEvent[]) {
   }
   return { results, matched };
 }
-/** Group adjacent calls; prose, decisions and turn boundaries always end a group. */
-export function transcriptItems(events: AssistantEvent[], claimed: ReadonlySet<string>): TranscriptItem[] {
+/**
+ * Group adjacent calls; prose, open decisions and turn boundaries always end a group. A decided
+ * approval paired with its call folds into that call's row, so its card, decision and the status
+ * changes around it no longer split the group.
+ */
+export function transcriptItems(events: AssistantEvent[], claimed: ReadonlySet<string>, decided: ReadonlyMap<string, ApprovalDecision> = new Map()): TranscriptItem[] {
   const items: TranscriptItem[] = [];
-  const joined = commandResults(events), outputs = toolResults(events);
+  const joined = commandResults(events), outputs = toolResults(events), paired = approvalCalls(events);
+  const folded = new Map<number, ApprovalDecision>(), foldedIds = new Set<string>();
+  for (const [approvalId, seq] of paired) {
+    const decision = decided.get(approvalId);
+    if (decision) { folded.set(seq, decision); foldedIds.add(approvalId); }
+  }
   let activity: Extract<TranscriptItem, { kind: "activity" }> | undefined;
   for (const event of events) {
     if (event.type === "command_result" && joined.matched.has(event.seq) || event.type === "tool_result" && outputs.matched.has(event.seq)) continue;
+    if (["approval_request", "approval_decision"].includes(event.type) && foldedIds.has(String(event.approvalId))
+      || event.type === "session_status" && ["running", "awaiting_approval"].includes(String(event.status))) continue;
     if (event.type === "tool_use") {
       if (!isListedToolUse(String(event.toolName ?? "tool"))) continue;
-      if (!activity) { activity = { kind: "activity", key: `activity-${event.seq}`, events: [], commandResults: {}, toolResults: {} }; items.push(activity); }
+      if (!activity) { activity = { kind: "activity", key: `activity-${event.seq}`, events: [], commandResults: {}, toolResults: {}, approvals: {} }; items.push(activity); }
       activity.events.push(event);
       if (joined.results[event.seq]) activity.commandResults[event.seq] = joined.results[event.seq];
       if (outputs.results[event.seq]) activity.toolResults[event.seq] = outputs.results[event.seq];
+      const approval = folded.get(event.seq);
+      if (approval) activity.approvals[event.seq] = approval;
       continue;
     }
     activity = undefined;

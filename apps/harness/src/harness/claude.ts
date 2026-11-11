@@ -435,11 +435,14 @@ class ClaudeRun implements HarnessRun {
     return new Promise((resolve) => {
       const approvalId = randomUUID();
       this.pending.set(approvalId, { toolName, resolve, ...(context?.toolUseID ? { toolUseId: context.toolUseID } : {}) });
+      // The transcript identity of the recorded call this pauses; a reused raw ID names none.
+      const calls = context?.toolUseID ? [...this.toolCalls.values()].filter(tool => tool.rawId === context.toolUseID && tool.name === toolName) : [];
       this.options.onEvent({
         type: "approval_request",
         approvalId,
         toolName,
         input,
+        ...(calls.length === 1 ? { toolUseId: calls[0]!.id } : {}),
         // The SDK's own prompt sentence and its reason for raising the request, when it supplies
         // them — its documentation asks that the sentence be preferred over a reconstruction from
         // name and input. Spread conditionally so an absent value is absent, not a stored undefined.

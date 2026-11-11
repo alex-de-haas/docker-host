@@ -83,6 +83,9 @@ export type HarnessEvent =
    * `title` is the harness's own sentence for the prompt and `reason` its explanation for raising
    * it, each only when the harness offers one; the card shows them over anything reconstructed from
    * name and input, and falls back to that reconstruction when they are absent.
+   *
+   * `toolUseId` names the transcript call being paused, only when the adapter can identify exactly
+   * one; the transcript then folds a decided card into that call's row.
    */
   | {
       type: "approval_request";
@@ -91,6 +94,7 @@ export type HarnessEvent =
       input: unknown;
       title?: string;
       reason?: string;
+      toolUseId?: string;
     }
   /**
    * The harness is asking the operator, paused until resolveQuestion is called. Deliberately not an

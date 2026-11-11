@@ -1,6 +1,6 @@
 ---
 created: 2026-10-21
-updated: 2026-11-10
+updated: 2026-11-11
 summary: Shared web tokens, local fonts and scoped SDK chrome, with Shell, Harness, Marketplace and Telemetry adoption and an in-place credential grid.
 components: [apps/core, apps/shell, apps/desktop, apps/harness, apps/marketplace, apps/documents, apps/telemetry, apps/telemetry-ui, apps/whisper, apps/demo-app, packages/app-sdk, shared/web]
 ---
@@ -378,8 +378,9 @@ outcome; MCP/other tools use their tool result. A failure must be recorded and n
 command output status does not replace missing, unknown or conflicting command metadata. Cancelled,
 unknown, missing and conflicting outcomes are excluded. The section mixes commands, MCP tools, reads and edits in their original order. Expansion reveals flat
 individual rows with each call's input/output and recorded command outcomes, without nested tool-type
-groups. The section retains its first-call identity as its count grows. Prose, approvals, questions
-and turns separate sections; approval cards remain immediately visible outside them. Each activity
+groups. The section retains its first-call identity as its count grows. Prose, unfolded approvals,
+questions and turns separate sections; pending approval cards remain immediately visible outside
+them, and a decided approval folds into its identified call's row. Each activity
 block with edits has an independent collapsible Changes sibling whose header stays visible while
 Tool calls is collapsed. It shows source-bound file counts and confirmed aggregate additions/deletions
 for recorded edit operations, with unknown/overflow totals unavailable. Expansion retains exact-source

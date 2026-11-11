@@ -54,3 +54,19 @@ it("keeps a reused raw ID unknown across turns without disabling a later genuine
   expect(starts[0]!.toolUseId).not.toBe(starts[2]!.toolUseId);
   expect(events.filter(event => event.type === "command_result")).toHaveLength(2); await run.stop();
 });
+it("names the paused call on its approval only when the raw ID identifies one recorded call", async () => {
+  const events: HarnessEvent[] = [];
+  queryMock.mockImplementation((args: { options: { canUseTool: (name: string, input: unknown, context: unknown) => Promise<unknown> } }) => Object.assign((async function* () {
+    yield proposal("asked"); yield proposal("shared"); yield proposal("shared", "child");
+    const permissions = ["asked", "shared"].map(id => args.options.canUseTool("Bash", { command: "fixture" }, { toolUseID: id }));
+    await Promise.all(permissions); yield { type: "result", subtype: "success" };
+  })(), { interrupt: async () => {}, close: () => {} }));
+  const run = new ClaudeHarnessAdapter().start({ sessionId: "test", cwd: "/tmp", onEvent: event => events.push(event) }); run.send("test");
+  await vi.waitFor(() => expect(events.filter(event => event.type === "approval_request")).toHaveLength(2));
+  const [asked, shared] = events.filter((event): event is Extract<HarnessEvent, { type: "approval_request" }> => event.type === "approval_request");
+  const first = events.find(event => event.type === "tool_use");
+  expect(asked!.toolUseId).toBeDefined(); expect(asked!.toolUseId).toBe(first?.type === "tool_use" && first.toolUseId);
+  expect(shared!.toolUseId).toBeUndefined();
+  for (const request of [asked!, shared!]) expect(run.resolveApproval(request.approvalId, "allow")).toBe(true);
+  await vi.waitFor(() => expect(events.find(event => event.type === "result")).toBeDefined()); await run.stop();
+});

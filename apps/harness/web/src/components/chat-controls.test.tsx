@@ -113,7 +113,9 @@ describe("chat action cards", () => {
     await click(container.querySelector('[role="radio"]'));
     expect(button("Send answer").disabled).toBe(false);
     await render(cancelledQuestions(events).has("pending"));
-    expect(container.textContent).toContain("Question cancelled");
+    expect(container.textContent).toBe("Not answeredContinue?Cancelled");
+    await click(container.querySelector("[aria-expanded]"));
+    expect(container.textContent).toContain("The session stopped before this question was answered.");
     expect(button("Send answer")).toBeUndefined();
     expect(container.querySelector('[role="radio"]')).toBeNull();
     expect(container.querySelector("input")).toBeNull();
@@ -147,9 +149,10 @@ describe("chat action cards", () => {
     expect(onAnswer).toHaveBeenLastCalledWith("q", { "Where?": "Staging", "Include?": "Logs, Traces" });
     expect(button("Send answer")).toBeUndefined();
     await render({ "Where?": "Staging", "Include?": "Logs, Traces" });
-    expect(container.textContent).toContain("Answered");
+    expect(container.textContent).toBe("Staging; Logs, TracesWhere?Answered");
     expect(container.querySelector('[role="radio"]')).toBeNull();
-    expect(container.textContent).toContain("Logs, Traces");
+    await click(container.querySelector("[aria-expanded]"));
+    expect([...container.querySelectorAll("dd")].map(dd => dd.textContent)).toEqual(["Staging", "Logs, Traces"]);
   });
 
   it("expands recorded calls and preserves the expanded group as another call arrives", async () => {
@@ -166,5 +169,29 @@ describe("chat action cards", () => {
     expect(container.textContent).toContain("/app/log.txt");
     expect(container.textContent).toContain("error");
     expect(container.textContent).not.toContain("Completed");
+  });
+
+  it("marks folded refusals on the group and the call without claiming it ran", async () => {
+    const calls: AssistantEvent[] = [
+      { seq: 1, ts: "", type: "tool_use", toolName: "Bash", toolUseId: "denied", input: { command: "rm -rf build" } },
+      { seq: 2, ts: "", type: "tool_use", toolName: "PowerShell", toolUseId: "cancelled", input: { command: "Get-Date" } },
+      { seq: 3, ts: "", type: "tool_use", toolName: "Read", toolUseId: "allowed", input: { file_path: "/app/log.txt" } },
+    ];
+    await act(async () => root.render(<ToolActivity events={calls} commandResults={{ 1: { status: "failed", exitCode: 1 } }}
+      approvals={{ 1: { decision: "deny", message: "Use the safe directory" }, 2: { decision: "cancelled", message: "The session stopped before this request was decided." }, 3: { decision: "allow", message: null } }} />));
+    expect(container.textContent).toContain("1 denied"); expect(container.textContent).toContain("1 cancelled"); expect(container.textContent).not.toContain("failed");
+    await click(container.querySelector("button"));
+    const rows = [...container.querySelectorAll('[data-slot="collapsible-content"] button[aria-expanded]')];
+    expect(rows.map(row => row.querySelector('[data-slot="approval-result"], [data-slot="command-result"]')?.textContent)).toEqual(["Denied", "Cancelled", "Allowed"]);
+    await click(rows[0]!);
+    expect(container.textContent).toContain("Denied · Use the safe directory"); expect(container.textContent).not.toContain("Tool output was not recorded");
+  });
+
+  it("collapses an unpaired decided card to one line that keeps the stated reason", async () => {
+    await act(async () => root.render(<TranscriptEvent event={approval} decision={{ decision: "deny", message: "Use the safe directory" }} answers={null} denyReason onDecide={vi.fn()} onAnswer={vi.fn()} />));
+    expect(container.textContent).toContain("Denied"); expect(container.textContent).toContain("Use the safe directory");
+    expect(container.textContent).not.toContain("echo ok");
+    await click(container.querySelector("[aria-expanded]"));
+    expect(container.textContent).toContain("echo ok");
   });
 });
