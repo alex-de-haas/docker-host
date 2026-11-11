@@ -71,9 +71,10 @@ Dirty workspace source and other conversations remain. Live session resources an
 still require reconciliation. Retention never invokes unfinished-work discard or cancels unknown
 external processes. Harness keeps no hidden archive of a deleted conversation.
 
-The child Core lifecycle journal records a readable 4xx refusal of a fresh request (other than 408/429
-or an unknown outcome) as refused, so it no longer protects the conversation; an exact retry journals
-it as pending again. A refusal after an uncertain response cannot disprove that earlier request and
+The child Core lifecycle journal records a fresh `environment_consent_required` refusal as rejected,
+so it no longer protects the conversation; an exact retry journals it as pending again. Other errors
+remain pending: a readable 4xx response can follow durable allocation. A refusal after an uncertain
+response cannot disprove that earlier request and
 leaves it pending. Harness sends only one journaled lifecycle attempt per session and request UUID
 at a time; a concurrent exact replay is refused before dispatch and can be retried after that attempt
 settles. Core persists the session context Harness stamps on each creation before allocating
@@ -146,10 +147,12 @@ Pause alone never establishes completion or starts a completed-workspace retenti
 - Exclude active execution, pending questions/approvals, every pending queue state, editing
   reservations, handoffs and resource operations; reconcile
   sandbox-only sessions before deleting their conversation.
-- Release fresh child Core refusals and pending creations absent from Core's session inventory;
+- Release fresh consent refusals and pending creations absent from Core's session inventory;
   keep in-flight creations, creations overlapping the inventory request and refusals after an
   uncertain response pending. Refuse concurrent exact lifecycle replays before dispatch, release
   the in-flight guard after success or failure, and preserve uncertain outcomes on later retries.
+- Keep a post-allocation 409 pending, including across restart, and block deletion when the
+  canonical inventory still contains the accepted child.
 - Cover response loss for canonical MCP creation across Harness restart: app-scoped empty lists
   cannot retire its receipt, and deletion requires the user-wide inventory without a legacy fallback.
 - Exercise service identity, current installation/session ownership, still-enabled administrator

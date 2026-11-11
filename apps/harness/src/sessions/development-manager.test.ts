@@ -319,6 +319,24 @@ describe("development session coordination", () => {
     }
   });
 
+  it.each([false, true])("retains a fresh creation after a post-allocation 409 (restart=%s)", async restart => {
+    vi.mocked(client.retention).mockResolvedValue({ kind: "chat", workflow: null, resourcesFinished: true, workspaceAbsent: true, independentEnvironments: true });
+    const record = await manager.createSession({ createdBy: "admin" });
+    let allocated: { id: string; state: string; context: { sessionId: string } } | undefined;
+    vi.spyOn(client, "environment").mockImplementationOnce(async (_credential, action, input) => {
+      expect(action).toBe("environment-create");
+      allocated = { id: "b".repeat(32), state: "stopped", context: input.context as { sessionId: string } };
+      throw new AppContextError(409, "workspace_not_active", "The selected worktree changed after allocation.");
+    });
+    await expect(manager.workspaceAction(record.id, "environment-create", { requestId: randomUUID(), label: "QA" }, "token", "admin"))
+      .rejects.toMatchObject({ code: "workspace_not_active" });
+    expect((await store.readRecord(record.id))!.coreEnvironmentOperations?.[0]?.state).toBe("pending");
+    if (restart) { await manager.shutdown(); manager = build(); }
+    vi.spyOn(manager, "invokeCoreTool").mockResolvedValue({ environments: [allocated!] });
+    await expect(manager.deleteSession(record.id, "admin", "token")).rejects.toMatchObject({ code: "resource_operation_pending" });
+    expect((await store.readRecord(record.id))!.coreEnvironmentOperations?.[0]?.state).toBe("pending");
+  });
+
   it("retires an uncertain creation only when Core lists no child for the session", async () => {
     vi.mocked(client.retention).mockResolvedValue({ kind: "chat", workflow: null, resourcesFinished: true, workspaceAbsent: true, independentEnvironments: true });
     const record = await manager.createSession({ createdBy: "admin" });

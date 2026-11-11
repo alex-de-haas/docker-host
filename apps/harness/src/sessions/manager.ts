@@ -1246,13 +1246,13 @@ export class SessionManager {
     let result: unknown;
     try { result = await this.development!.environment(prepared.token, action, prepared.input); }
     catch (error) {
-      // A fresh readable 4xx refusal is final. After an uncertain response, a later refusal cannot
-      // disprove an earlier accepted request; it stays pending until Core's inventory reconciles it.
+      // Consent refusal precedes a fresh allocation. Other readable 4xx errors can follow Core's
+      // durable write and remain uncertain, as does any refusal after a previously uncertain call.
       // Bookkeeping failures leave the request pending, so the caller still sees the original error.
       if (prepared.journal) await this.serialize(id, async () => {
         this.settleEnvironmentRequest(id, prepared.journal!);
         if (!prepared.journal!.canConfirmRefusal || !(error instanceof AppContextError) || error.status < 400 || error.status >= 500
-          || [408, 429].includes(error.status) || error.code === "environment_outcome_unknown") return;
+          || [408, 429].includes(error.status) || error.code !== "environment_consent_required") return;
         const session = await this.requireLive(id);
         const operation = session.record.coreEnvironmentOperations?.find(o => o.input.requestId === prepared.input.requestId);
         if (operation?.state !== "pending") return;
