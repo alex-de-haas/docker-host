@@ -12,10 +12,26 @@ import { ArrowDownIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 
+const MessageReadingContext = React.createContext<(element: HTMLElement) => void>(() => {})
+
+function MessageReadingProvider({ children }: { children: React.ReactNode }) {
+  const { scrollToMessage } = useMessageScroller()
+  const readMessage = React.useCallback((element: HTMLElement) => {
+    const messageId = element.closest<HTMLElement>("[data-message-id]")?.dataset.messageId
+    // Explicit reading disengages bottom-following before a disclosure changes the content height.
+    if (messageId) scrollToMessage(messageId, { align: "nearest", behavior: "instant" })
+  }, [scrollToMessage])
+  return <MessageReadingContext.Provider value={readMessage}>{children}</MessageReadingContext.Provider>
+}
+
+function useMessageReadingPosition() {
+  return React.useContext(MessageReadingContext)
+}
+
 function MessageScrollerProvider(
-  props: React.ComponentProps<typeof MessageScrollerPrimitive.Provider>
+  { children, ...props }: React.ComponentProps<typeof MessageScrollerPrimitive.Provider>
 ) {
-  return <MessageScrollerPrimitive.Provider {...props} />
+  return <MessageScrollerPrimitive.Provider {...props}><MessageReadingProvider>{children}</MessageReadingProvider></MessageScrollerPrimitive.Provider>
 }
 
 function MessageScroller({
@@ -143,4 +159,5 @@ export {
   useMessageScroller,
   useMessageScrollerScrollable,
   useMessageScrollerVisibility,
+  useMessageReadingPosition,
 }

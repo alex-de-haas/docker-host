@@ -36,9 +36,9 @@ vi.mock("@/lib/development-api", async original => ({ ...await original<typeof i
 vi.mock("@/components/speech-input", () => ({ SpeechInput: () => null }));
 vi.mock("@/components/session-credentials", () => ({ SessionCredentials: () => null }));
 vi.mock("@/components/app-context-picker", () => ({ AppContextPicker: () => <button aria-label="Select app context" /> }));
-vi.mock("@/components/ui/message-scroller", () => {
+vi.mock("@/components/ui/message-scroller", async original => {
   const Wrap = ({ children }: { children: ReactNode }) => <div>{children}</div>;
-  return { ...Object.fromEntries(["MessageScroller", "MessageScrollerProvider", "MessageScrollerViewport", "MessageScrollerContent", "MessageScrollerItem"].map(name => [name, Wrap])), MessageScrollerButton: () => null };
+  return { ...await original<object>(), ...Object.fromEntries(["MessageScroller", "MessageScrollerProvider", "MessageScrollerViewport", "MessageScrollerContent", "MessageScrollerItem"].map(name => [name, Wrap])), MessageScrollerButton: () => null };
 });
 
 let root: Root;
