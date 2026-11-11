@@ -101,6 +101,9 @@ with its native attempt and completed answer. Suggestions have no time limit: an
 remains available after waiting, reconnecting or restarting Harness. Restart/read reconciliation
 supersedes suggestions only when their context changes, without generating another prediction.
 Legacy expiry records remain closed and appear as superseded; old deadline fields are ignored.
+Creation events and direct suggestion responses retain a deprecated, bounded future `expiresAt`
+field for already-open older clients. Current clients and persisted choice state do not use it
+to expire suggestions.
 The transient `session_suggestion` projection carries
 optional collection/availability feedback, independent of historical retention.
 

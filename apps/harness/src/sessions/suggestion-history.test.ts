@@ -4,7 +4,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { SessionStore, type SessionRecord } from "./store.js";
-import { SuggestionHistory } from "./suggestion-history.js";
+import { SuggestionHistory, legacyCompatibleSuggestion } from "./suggestion-history.js";
+import { LEGACY_SUGGESTION_WINDOW_MS } from "../harness/prompt-suggestion.js";
 import { project } from "../history/projection.js";
 
 let root: string, store: SessionStore, record: SessionRecord, history: SuggestionHistory, now: number;
@@ -52,7 +53,7 @@ it("keeps suggestions available after long waits and restart, while superseding 
   const first = await create(); now += 30 * 24 * 60 * 60_000; history = build();
   await history.reconcile(record, "context-one");
   expect((await history.read(record)).get(first.suggestionId)?.state).toBe("available");
-  expect((await store.readEvents(record.id)).find(event => event.type === "prompt_suggestion_created")).not.toHaveProperty("expiresAt");
+  expect((await store.readEvents(record.id)).find(event => event.type === "prompt_suggestion_created")).toHaveProperty("expiresAt");
   expect((await store.readEvents(record.id)).filter(event => event.type === "prompt_suggestion_resolved")).toHaveLength(0);
   expect((await history.action(record, "owner", first.suggestionId, action(), "context-one")).state).toBe("selected-for-draft");
   const second = await create("second"); await history.reconcile(record, "context-two");
@@ -65,7 +66,34 @@ it("ignores old deadline fields when reading and selecting unresolved suggestion
   await store.appendEvent(record.id, { type: "prompt_suggestion_created", seq: ++record.lastEventSeq, ts: new Date(now).toISOString(),
     suggestionId: "legacy", sessionId: record.id, userId: "owner", attemptId: "legacy", answerSeq: 1, text: "Continue", contextKey: "context-one", expiresAt: now - 1 });
   history = build(); await history.reconcile(record, "context-one");
+  const restored = (await history.read(record)).get("legacy")!;
+  expect(restored).toMatchObject({ state: "available" });
+  expect(legacyCompatibleSuggestion(restored).expiresAt).toBeGreaterThan(now);
   expect((await history.action(record, "owner", "legacy", action(), "context-one")).state).toBe("selected-for-draft");
+});
+it("keeps created events and REST projections readable by old browser deadline guards", async () => {
+  const value = await create();
+  const created = (await store.readEvents(record.id)).find(event => event.type === "prompt_suggestion_created")!;
+  // Harness 0.96.5 rejects creation events without this finite field, then schedules its timer.
+  const legacyAccepts = (event: Record<string, unknown>) => event.type === "prompt_suggestion_created"
+    && typeof event.suggestionId === "string" && typeof event.sessionId === "string" && typeof event.userId === "string"
+    && typeof event.attemptId === "string" && typeof event.text === "string" && !!event.text.trim() && [...event.text].length <= 2000
+    && typeof event.expiresAt === "number" && Number.isFinite(event.expiresAt);
+  expect(legacyAccepts(created)).toBe(true);
+  const delay = Number(created.expiresAt) - now;
+  expect(delay).toBeGreaterThan(0); expect(delay).toBeLessThanOrEqual(2_147_483_647);
+  const clientClockBehind = now - 10 * 60_000;
+  expect(Number(created.expiresAt) - clientClockBehind).toBeLessThanOrEqual(2_147_483_647);
+  const original = structuredClone(value), firstResponse = legacyCompatibleSuggestion(value);
+  expect(Number.isFinite(firstResponse.expiresAt)).toBe(true);
+  expect(firstResponse.expiresAt - now).toBe(LEGACY_SUGGESTION_WINDOW_MS);
+  now += 30 * 24 * 60 * 60_000; history = build(); await history.reconcile(record, "context-one");
+  const afterRestart = (await history.read(record)).get(value.suggestionId)!;
+  expect(afterRestart).toEqual(original);
+  const nextResponse = legacyCompatibleSuggestion(afterRestart);
+  expect(nextResponse.expiresAt).toBeGreaterThan(now);
+  expect(nextResponse.expiresAt - now).toBeLessThanOrEqual(2_147_483_647);
+  expect(afterRestart).not.toHaveProperty("expiresAt");
 });
 it("reads legacy expiry receipts as terminal supersession without reviving closed choices", async () => {
   const value = await create();

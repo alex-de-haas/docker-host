@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { suggestionText } from "../harness/prompt-suggestion.js";
+import { suggestionText, suggestionCompatibilityExpiresAt } from "../harness/prompt-suggestion.js";
 import { AppContextError } from "./app-context.js";
 import { messageRequestId, type SessionRecord, type SessionStore, type StoredEvent } from "./store.js";
 
@@ -19,6 +19,11 @@ export interface HistoricalSuggestion {
 }
 export const SUGGESTION_CREATED = "prompt_suggestion_created";
 export const SUGGESTION_RESOLVED = "prompt_suggestion_resolved";
+
+/** Keep old browser wire readers working without adding a deadline to persisted choice state. */
+export function legacyCompatibleSuggestion(value: HistoricalSuggestion): HistoricalSuggestion & { expiresAt: number } {
+  return { ...value, expiresAt: suggestionCompatibilityExpiresAt() };
+}
 
 /** Only literal, correlated prediction metadata is persisted; this never creates a model turn. */
 export function historicalSuggestions(events: readonly StoredEvent[]): Map<string, HistoricalSuggestion> {
@@ -57,7 +62,7 @@ export class SuggestionHistory {
     await this.invalidate(record);
     const suggestionId = randomUUID(), answerSeq = events.findLast(event => event.type === "assistant_text")?.seq ?? 0;
     await this.append(record.id, { type: SUGGESTION_CREATED, suggestionId, sessionId: record.id, userId: record.createdBy,
-      attemptId: input.attemptId, answerSeq, text, contextKey: input.contextKey });
+      attemptId: input.attemptId, answerSeq, text, contextKey: input.contextKey, expiresAt: suggestionCompatibilityExpiresAt() });
     return (await this.read(record)).get(suggestionId)!;
   }
 
