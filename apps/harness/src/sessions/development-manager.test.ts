@@ -312,6 +312,24 @@ describe("development session coordination", () => {
     expect((await store.readRecord(record.id))!.coreEnvironmentOperations?.[0]?.state).toBe("observed");
   });
 
+  it("does not retire a creation that overlapped the inventory request", async () => {
+    const record = await manager.createSession({ createdBy: "admin" });
+    const input = { requestId: "a".repeat(32), label: "QA" };
+    let respond!: (value: unknown) => void;
+    const call = vi.spyOn(client, "environment").mockImplementationOnce(() => new Promise(resolve => { respond = resolve; }));
+    const listing = manager.workspaceAction(record.id, "environment-list", {}, "token", "admin");
+    await vi.waitFor(() => expect(call).toHaveBeenCalledTimes(1));
+    // Core captured an empty inventory, then accepted this creation and lost its response.
+    call.mockRejectedValueOnce(new Error("response lost"));
+    await expect(manager.workspaceAction(record.id, "environment-create", input, "token", "admin")).rejects.toThrow("response lost");
+    respond({ environments: [] });
+    await expect(listing).resolves.toEqual({ environments: [] });
+    expect((await store.readRecord(record.id))!.coreEnvironmentOperations?.[0]?.state).toBe("pending");
+    call.mockResolvedValueOnce({ environments: [] });
+    await manager.workspaceAction(record.id, "environment-list", {}, "token", "admin");
+    expect((await store.readRecord(record.id))!.coreEnvironmentOperations?.[0]?.state).toBe("rejected");
+  });
+
   it("keeps Finish available when child Core outcomes exhaust the pending journal", async () => {
     const record = await manager.createSession({ createdBy: "admin" });
     const environment = { id: "b".repeat(32), state: "running", context: { sessionId: record.id } };
