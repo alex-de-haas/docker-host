@@ -228,6 +228,7 @@ export function ShellClient({
   // skip the mount-only auto-review, and (with the panel state wiped on open) render an empty dialog.
   const updateActivations = useRef(new Set<string>());
   const bulkUpdateActivation = useRef(false);
+  const [updatingAllApps, setUpdatingAllApps] = useState(false);
   const installActivation = useRef(false);
   const [installNonce, setInstallNonce] = useState(0);
   const [mountLibrary, setMountLibrary] = useState<{ scope: string | null; mounts: CoreGlobalMount[] | null; loading: boolean; error: string | null }>({
@@ -1860,13 +1861,16 @@ export function ShellClient({
   const updateAllApps = useCallback(async () => {
     if (bulkUpdateActivation.current) return;
     bulkUpdateActivation.current = true;
+    setUpdatingAllApps(true);
     try {
       const routine = state.apps.filter(isRoutineUpdate);
       await reviewUpdatesInOrder(routine, shellAppId, app => prepareAndEnqueueUpdate(app, true));
+      await refresh();
     } finally {
       bulkUpdateActivation.current = false;
+      setUpdatingAllApps(false);
     }
-  }, [prepareAndEnqueueUpdate, shellAppId, state.apps]);
+  }, [prepareAndEnqueueUpdate, refresh, shellAppId, state.apps]);
 
   useEffect(() => {
     void refresh();
@@ -2304,6 +2308,7 @@ export function ShellClient({
       canManageApps: Boolean(canManageApps),
       busyAction,
       pendingAppActions,
+      updatingAllApps,
       settingsTab: shellRoute.settingsTab,
       appSettingsTabs,
       assistantSelection,
@@ -2322,6 +2327,7 @@ export function ShellClient({
       appSettingsTabs,
       busyAction,
       pendingAppActions,
+      updatingAllApps,
       canManageApps,
       shellResolvedTheme,
       shellThemePreference,

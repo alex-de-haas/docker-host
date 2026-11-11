@@ -28,6 +28,7 @@ export type ShellContextValue = {
   canManageApps: boolean;
   busyAction: string | null;
   pendingAppActions: Record<string, AppAction>;
+  updatingAllApps: boolean;
   // Host settings: which tab the URL selected, plus the data the Core and Shared mounts tabs render.
   // A raw string, because the value is either a host tab or the id of an app whose settings page
   // fills the tab (docs/features/app-ui-surfaces/feature.md).

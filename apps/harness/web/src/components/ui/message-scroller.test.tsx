@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
-import { act } from "react";
+import { act, useState } from "react";
 import { createRoot, hydrateRoot, type Root } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   MessageScroller, MessageScrollerButton, MessageScrollerContent,
   MessageScrollerItem, MessageScrollerProvider, MessageScrollerViewport,
+  useMessageReadingPosition,
 } from "./message-scroller";
 
 let root: Root | undefined;
@@ -31,6 +32,25 @@ function LiveFixture({ count }: { count: number }) {
     <MessageScroller>
       <MessageScrollerViewport data-test-scroll-height={count * 100}><MessageScrollerContent>
         {Array.from({ length: count }, (_, index) => <MessageScrollerItem key={index} messageId={`message-${index}`} data-test-message-index={index}>Message {index + 1}</MessageScrollerItem>)}
+      </MessageScrollerContent></MessageScrollerViewport>
+      <MessageScrollerButton aria-label="Jump to latest message" />
+    </MessageScroller>
+  </MessageScrollerProvider>;
+}
+function ExpandMessage({ onExpand }: { onExpand: () => void }) {
+  const keepReadingPosition = useMessageReadingPosition();
+  return <button type="button" onClick={event => { keepReadingPosition(event.currentTarget); onExpand(); }}>Show more</button>;
+}
+function ExpandingFixture({ count }: { count: number }) {
+  const [expanded, setExpanded] = useState(false);
+  return <MessageScrollerProvider autoScroll defaultScrollPosition="end">
+    <MessageScroller>
+      <MessageScrollerViewport data-test-scroll-height={count * 100 + (expanded ? 500 : 0)}><MessageScrollerContent>
+        {Array.from({ length: count }, (_, index) => <MessageScrollerItem key={index} messageId={`message-${index}`}
+          data-test-message-top={index * 100 + (index > 9 && expanded ? 500 : 0)}
+          data-test-message-height={index === 9 && expanded ? 600 : 100}>
+          {index === 9 ? <ExpandMessage onExpand={() => setExpanded(true)} /> : `Message ${index + 1}`}
+        </MessageScrollerItem>)}
       </MessageScrollerContent></MessageScrollerViewport>
       <MessageScrollerButton aria-label="Jump to latest message" />
     </MessageScroller>
@@ -151,4 +171,43 @@ it("opens populated history at the end and follows new messages until the reader
   expect(viewport().scrollTop).toBe(1200);
   expect(scrollTo).toHaveBeenLastCalledWith({ top: 1200, behavior: "auto" });
   expect(jump().getAttribute("data-active")).toBe("false");
+});
+
+it("keeps an expanded message in place until Jump to latest resumes following", async () => {
+  const resizeCallbacks = new Set<() => void>();
+  vi.stubGlobal("ResizeObserver", class {
+    readonly notify: () => void;
+    constructor(callback: ResizeObserverCallback) {
+      this.notify = () => callback([], this as unknown as ResizeObserver);
+      resizeCallbacks.add(this.notify);
+    }
+    observe() {}
+    unobserve() {}
+    disconnect() { resizeCallbacks.delete(this.notify); }
+  });
+  vi.mocked(HTMLElement.prototype.getBoundingClientRect).mockImplementation(function (this: HTMLElement) {
+    const parent = this.closest<HTMLElement>('[data-slot="message-scroller-viewport"]');
+    const top = this.dataset.testMessageTop === undefined ? 0 : Number(this.dataset.testMessageTop) - (parent?.scrollTop ?? 0);
+    const height = Number(this.dataset.testMessageHeight ?? 100);
+    return { x: 0, y: top, top, left: 0, right: 300, bottom: top + height, width: 300, height, toJSON() {} };
+  });
+  root = createRoot(node);
+  await act(async () => root!.render(<ExpandingFixture count={10} />)); await settle();
+  expect(viewport().scrollTop).toBe(900);
+  expect(jump().getAttribute("data-active")).toBe("false");
+
+  scrollTo.mockClear();
+  await act(async () => node.querySelector<HTMLButtonElement>('[data-message-id="message-9"] button')!.click());
+  await act(async () => resizeCallbacks.forEach(notify => notify())); await settle();
+  expect(viewport().scrollHeight).toBe(1500);
+  expect(viewport().scrollTop).toBe(900);
+  expect(scrollTo).not.toHaveBeenCalled();
+  expect(jump().getAttribute("data-active")).toBe("true");
+
+  await act(async () => jump().click()); await settle();
+  expect(viewport().scrollTop).toBe(1400);
+  expect(jump().getAttribute("data-active")).toBe("false");
+  await act(async () => root!.render(<ExpandingFixture count={11} />)); await settle();
+  expect(viewport().scrollTop).toBe(1500);
+  expect(scrollTo).toHaveBeenLastCalledWith({ top: 1500, behavior: "auto" });
 });
