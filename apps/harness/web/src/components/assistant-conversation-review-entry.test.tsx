@@ -26,9 +26,9 @@ vi.mock("./workspace-review", () => ({ WorkspaceReview: ({ workspaceId, tree, ch
 vi.mock("./speech-input", () => ({ SpeechInput: () => null }));
 vi.mock("./session-credentials", () => ({ SessionCredentials: () => null }));
 vi.mock("./app-context-picker", () => ({ AppContextPicker: () => null }));
-vi.mock("./ui/message-scroller", () => {
+vi.mock("./ui/message-scroller", async original => {
   const Wrap = ({ children }: { children: ReactNode }) => <div>{children}</div>;
-  return { ...Object.fromEntries(["MessageScroller", "MessageScrollerProvider", "MessageScrollerViewport", "MessageScrollerContent", "MessageScrollerItem"].map(name => [name, Wrap])), MessageScrollerButton: () => null };
+  return { ...await original<object>(), ...Object.fromEntries(["MessageScroller", "MessageScrollerProvider", "MessageScrollerViewport", "MessageScrollerContent", "MessageScrollerItem"].map(name => [name, Wrap])), MessageScrollerButton: () => null };
 });
 let root: Root, container: HTMLDivElement;
 const workspaceButton = (name: string) => [...container.querySelectorAll<HTMLButtonElement>('nav[aria-label="Sessions"] button')].find(button => [...button.querySelectorAll("span")].some(span => span.textContent === name))!;
