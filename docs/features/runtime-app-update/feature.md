@@ -1,6 +1,6 @@
 ---
 created: 2026-06-04
-updated: 2026-11-07
+updated: 2026-11-09
 summary: Reviewed update plans and their apply behavior, including permission changes and routine updates.
 components: [apps/core, apps/shell]
 ---
@@ -251,6 +251,11 @@ Update activity does not add a line beneath version/source metadata. The primary
 uses actual runtime state and applicable health; update operation progress occupies the line below it.
 
 App actions > Check updates triggers or joins the fleet sweep. "Update all (N)" applies every routine verdict, leaving review-class ones on their rows; the Shell's own app goes last, because its apply restarts the Shell serving the page.
+
+The toolbar and App actions menu disable Update all immediately on activation and show
+"Updating apps…" throughout fresh checks and queue submissions. The action remains visible while
+busy even when no routine offers remain. Completion or failure clears the local busy state;
+repeat activation during the same batch is ignored.
 
 An accepted update follows the existing queue/Core-confirmation flow. An explicit stale, expired or
 digest-mismatch refusal before acceptance permits one fresh preparation and submission, using the
