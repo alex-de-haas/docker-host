@@ -1,4 +1,5 @@
 using Haas.Hosty.Core;
+using Haas.Hosty.Launch;
 
 namespace Haas.Hosty.Core.Tests;
 
@@ -39,27 +40,30 @@ public sealed partial class CoreLifecycleServiceTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task WorkspaceDelete_ClientCancellationDuringManagedStopStillFinishesAcceptedCleanup(bool batch)
+    public async Task WorkspaceDelete_ClientCancellationDuringChildFinishStillFinishesAcceptedCleanup(bool batch)
     {
         using var f = await DiscardFixtureAsync();
         using var caller = new CancellationTokenSource();
-        var app = (await f.F.Apps.GetAppAsync(SourceTestApp))!;
         var store = new CoreEnvironmentStore(f.F.Paths);
-        var environments = new CoreEnvironmentService(store, new ResourceControlRuntime(), f.F.Clock, f.Service);
+        var runtime = new ResourceControlRuntime();
+        var environments = new CoreEnvironmentService(store, runtime, f.F.Clock, f.Service);
         var cleanup = new WorkspaceCleanupService(f.F.Paths, new(f.Service, f.F.Apps, f.F.Clock), f.Service, null!, f.F.Apps,
-            store, environments, new(store, environments), f.F.Service);
+            store, environments, new(store, environments));
         var another = batch ? await f.Service.PrepareAsync(WorkspaceTestOwner(f.F, "second-delete"), WorkspaceRequest("second-delete"), default) : null;
         var targets = another is null ? new[] { f.Tree } : new[] { f.Tree, another };
+        foreach (var target in targets)
+            await environments.CreateAsync(new("admin"), new(Guid.NewGuid().ToString(), "Deletion child",
+                Context: new(WorkspaceId: target.WorkspaceId), WorktreeIds: [target.Id]), default);
         var first = targets.OrderBy(t => t.WorkspaceId, StringComparer.Ordinal).First();
-        await f.F.Apps.UpsertAppAsync(app with { SourceState = app.SourceState! with { LocalOverridePath = first.Path } });
         var requestId = Guid.NewGuid().ToString();
-        f.F.Adapter.StopProbe = async () =>
+        runtime.StopProbe = async () =>
         {
             Assert.Equal("deleting", (await f.Service.WorkflowAsync(first.Owner, default)).State);
             Assert.All(targets, target => Assert.True(Directory.Exists(target.Path)));
             // Harness stops the calling agent when its next activity report sees the deletion fence.
             // Cancel on the first batch target so the remaining target must still be processed.
             caller.Cancel();
+            runtime.StopProbe = null;
         };
 
         if (batch)
@@ -111,20 +115,21 @@ public sealed partial class CoreLifecycleServiceTests
     {
         using var f = await DiscardFixtureAsync();
         using var lifetime = new RestartTestLifetime();
-        var app = (await f.F.Apps.GetAppAsync(SourceTestApp))!;
-        await f.F.Apps.UpsertAppAsync(app with { SourceState = app.SourceState! with { LocalOverridePath = f.Tree.Path } });
         var store = new CoreEnvironmentStore(f.F.Paths);
-        var environments = new CoreEnvironmentService(store, new ResourceControlRuntime(), f.F.Clock, f.Service);
+        var runtime = new ResourceControlRuntime();
+        var environments = new CoreEnvironmentService(store, runtime, f.F.Clock, f.Service);
+        await environments.CreateAsync(new("admin"), new(Guid.NewGuid().ToString(), "Deletion child",
+            Context: new(WorkspaceId: f.Tree.WorkspaceId), WorktreeIds: [f.Tree.Id]), default);
         WorkspaceCleanupService Cleanup(RestartTestLifetime? host = null) => new(f.F.Paths, new(f.Service, f.F.Apps, f.F.Clock),
-            f.Service, null!, f.F.Apps, store, environments, new(store, environments), f.F.Service, host);
+            f.Service, null!, f.F.Apps, store, environments, new(store, environments), host);
         var command = new WorkspaceDeleteCommand(Guid.NewGuid().ToString());
-        f.F.Adapter.StopProbe = () => { lifetime.StopApplication(); return Task.CompletedTask; };
+        runtime.StopProbe = () => { lifetime.StopApplication(); return Task.CompletedTask; };
         var pending = await Cleanup(lifetime).ApplyDeleteAsync(f.Tree.WorkspaceId, "admin", null, command, default);
         Assert.Equal("pending", pending.State);
         Assert.NotNull(pending.Error);
         Assert.Equal(command.RequestId, pending.RequestId);
         Assert.True(Directory.Exists(f.Tree.Path));
-        f.F.Adapter.StopProbe = null;
+        runtime.StopProbe = null;
         var removed = await Cleanup().ApplyDeleteAsync(f.Tree.WorkspaceId, "admin", null, command, default);
         Assert.True(removed.State == "removed", removed.Error);
         Assert.Equal(command.RequestId, removed.RequestId);
@@ -240,13 +245,16 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.True(File.Exists(Path.Combine(unrelated, "keep.txt")));
     }
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task WorkspaceDelete_AnotherUserFinishesOnlyAcceptedResourcesAndRetriesRealFailure(bool legacySessionContext)
+    [InlineData("workspace")]
+    [InlineData("legacy")]
+    [InlineData("source")]
+    public async Task WorkspaceDelete_AnotherUserFinishesOnlyAcceptedResourcesAndRetriesRealFailure(string association)
     {
+        var legacySessionContext = association == "legacy";
         using var f = await DiscardFixtureAsync(external: !legacySessionContext);
         var resourceOwner = legacySessionContext ? new SandboxActor(f.Owner.UserId, f.Owner.AppId, f.Owner.Installation) : new("admin");
-        var context = legacySessionContext ? new SandboxContext(SessionId: f.Owner.SessionId) : new(WorkspaceId: f.Tree.WorkspaceId);
+        var context = legacySessionContext ? new SandboxContext(SessionId: f.Owner.SessionId)
+            : association == "source" ? null : new(WorkspaceId: f.Tree.WorkspaceId);
         var store = new CoreEnvironmentStore(f.F.Paths);
         var runtime = new ResourceControlRuntime();
         var environments = new CoreEnvironmentService(store, runtime, f.F.Clock, f.Service);
@@ -275,7 +283,7 @@ public sealed partial class CoreLifecycleServiceTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task WorkspaceDelete_ReturnsActiveDevRuntimeAndPreservesChangedOrdinaryData(bool running)
+    public async Task WorkspaceDelete_RefusesDevRuntimeUntilExplicitReturnAndPreservesOrdinaryData(bool running)
     {
         var (f, owner, workspaces, tree, _, _) = await LocalHandoffFixture(shortPaths: true);
         try
@@ -291,11 +299,25 @@ public sealed partial class CoreLifecycleServiceTests
             var store = new CoreEnvironmentStore(f.Paths);
             var environments = new CoreEnvironmentService(store, new ResourceControlRuntime(), f.Clock, workspaces);
             var cleanup = new WorkspaceCleanupService(f.Paths, new(workspaces, f.Apps, f.Clock), workspaces, null!, f.Apps,
-                store, environments, new(store, environments), f.Service);
+                store, environments, new(store, environments));
 
-            var removed = await cleanup.ApplyDeleteAsync(tree.WorkspaceId, "another-admin", null,
-                new(Guid.NewGuid().ToString()), default);
+            var command = new WorkspaceDeleteCommand(Guid.NewGuid().ToString());
+            var details = await cleanup.DeleteDetailsAsync(tree.WorkspaceId, "another-admin", null, default);
+            Assert.NotEmpty(details.Blockers);
+            var starts = f.Adapter.StartCount;
+            var stops = f.Adapter.StopCount;
+            var refusal = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+                cleanup.ApplyDeleteAsync(tree.WorkspaceId, "another-admin", null, command, default));
+            Assert.Equal("workspace_in_use", refusal.Code);
+            Assert.True(File.Exists(Path.Combine(tree.Path, "unfinished.txt")));
+            Assert.Equal("active", (await f.Service.GetDevModeAsync("test.created")).Phase);
+            Assert.Equal(starts, f.Adapter.StartCount);
+            Assert.Equal(stops, f.Adapter.StopCount);
+            Assert.Null(await workspaces.ReadDiscardAsync(tree.WorkspaceId, command.RequestId, "another-admin", default));
+            Assert.Equal("in-progress", (await workspaces.WorkflowAsync(owner, default)).State);
 
+            await ApplyReviewedDev(f.Service, DevRequest("return") with { AcceptDataChanges = true }, DevActor(owner));
+            var removed = await cleanup.ApplyDeleteAsync(tree.WorkspaceId, "another-admin", null, command, default);
             Assert.True(removed.State == "removed", removed.Error);
             Assert.False(Directory.Exists(tree.Path));
             Assert.Equal("returned", (await f.Service.GetDevModeAsync("test.created")).Phase);
@@ -308,26 +330,167 @@ public sealed partial class CoreLifecycleServiceTests
     }
 
     [Fact]
-    public async Task WorkspaceDelete_StopsManagedSourceConsumerAndKeepsOrdinaryData()
+    public async Task WorkspaceDelete_RefusesSelectedAppSourceWithoutStoppingIt()
     {
         using var f = await DiscardFixtureAsync();
         var app = (await f.F.Apps.GetAppAsync(SourceTestApp))!;
         await f.F.Apps.UpsertAppAsync(app with { SourceState = app.SourceState! with { LocalOverridePath = f.Tree.Path } });
-        var store = new CoreEnvironmentStore(f.F.Paths);
-        var environments = new CoreEnvironmentService(store, new ResourceControlRuntime(), f.F.Clock, f.Service);
-        var cleanup = new WorkspaceCleanupService(f.F.Paths, new(f.Service, f.F.Apps, f.F.Clock), f.Service, null!, f.F.Apps,
-            store, environments, new(store, environments), f.F.Service);
+        var cleanup = DeleteCleanup(f);
         var command = new WorkspaceDeleteCommand(Guid.NewGuid().ToString());
-        f.F.Adapter.FailOnStopCount = f.F.Adapter.StopCount + 1;
-        var pending = await cleanup.ApplyDeleteAsync(f.Tree.WorkspaceId, "admin", null, command, default);
-        Assert.Equal("pending", pending.State);
+        var stops = f.F.Adapter.StopCount;
+
+        var details = await cleanup.DeleteDetailsAsync(f.Tree.WorkspaceId, "admin", null, default);
+        Assert.NotEmpty(details.Blockers);
+        var refusal = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            cleanup.ApplyDeleteAsync(f.Tree.WorkspaceId, "admin", null, command, default));
+
+        Assert.Equal("workspace_in_use", refusal.Code);
+        Assert.Equal(stops, f.F.Adapter.StopCount);
         Assert.True(Directory.Exists(f.Tree.Path));
-        Assert.DoesNotContain(pending.Activity ?? [], a => a.Kind == "runtime" && a.State == "stopped");
-        f.F.Adapter.FailOnStopCount = null;
-        var removed = await cleanup.ApplyDeleteAsync(f.Tree.WorkspaceId, "admin", null, command, default);
-        Assert.True(removed.State == "removed", removed.Error);
-        Assert.Contains(removed.Activity!, a => a.Reference == SourceTestApp && a.State == "stopped");
-        Assert.NotNull(await f.F.Apps.GetAppAsync(SourceTestApp));
+        Assert.Null(await f.Service.ReadDiscardAsync(f.Tree.WorkspaceId, command.RequestId, "admin", default));
+        Assert.Equal("in-progress", (await f.Service.WorkflowAsync(f.Owner, default)).State);
     }
 
+    [Theory]
+    [InlineData("running")]
+    [InlineData("preparing")]
+    [InlineData("prepared")]
+    [InlineData("core-starting")]
+    [InlineData("active")]
+    [InlineData("return-core-starting")]
+    [InlineData("return-baseline")]
+    public async Task WorkspaceDelete_RefusesRunningReservedAndReturnCoreSource(string kind)
+    {
+        using var f = await DiscardFixtureAsync(external: true);
+        var tree = f.Tree;
+        var project = Path.Combine(tree.Path, "Core.csproj");
+        var core = new CoreDevelopmentService(new(f.F.Paths.DataRoot, Path.Combine(f.F.Paths.CoreRoot, "run"),
+            Path.Combine(f.F.Paths.CoreRoot, "run/control.json"), 7070, "http://localhost:7070", null, "localhost", null, false),
+            new(kind == "running" ? "dev" : "release", kind == "running" ? project : null, null, 123, f.F.Clock.UtcNow));
+        var workspaces = new DevelopmentWorkspaceService(f.F.Paths, f.F.Apps, f.F.Clock, coreDevelopment: core);
+        if (kind != "running")
+        {
+            var baseline = kind == "return-baseline";
+            WorkspaceRuntimeFiles.Save(f.F.Paths.DataRoot, new WorkspaceRuntimeActivation(Guid.NewGuid().ToString(),
+                tree.WorkspaceId, f.Owner.UserId, "review", "instance", "revision", baseline ? "another-tree" : tree.Id,
+                baseline ? Path.Combine(f.F.Root, "another-core", "Core.csproj") : project,
+                new(baseline ? "dev" : "release", baseline ? project : null, null, 1, f.F.Clock.UtcNow), [],
+                baseline ? "active" : kind, CoreReserved: true));
+        }
+        var store = new CoreEnvironmentStore(f.F.Paths);
+        var runtime = new ResourceControlRuntime();
+        var environments = new CoreEnvironmentService(store, runtime, f.F.Clock, workspaces);
+        var child = await environments.CreateAsync(new("admin"), new(Guid.NewGuid().ToString(), "Keep until runtime returns",
+            Context: new(WorkspaceId: tree.WorkspaceId), WorktreeIds: [tree.Id]), default);
+        var cleanup = new WorkspaceCleanupService(f.F.Paths, new(workspaces, f.F.Apps, f.F.Clock), workspaces, null!, f.F.Apps,
+            store, environments, new(store, environments));
+        var command = new WorkspaceDeleteCommand(Guid.NewGuid().ToString());
+
+        Assert.NotEmpty((await cleanup.DeleteDetailsAsync(tree.WorkspaceId, "admin", null, default)).Blockers);
+        var refusal = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            cleanup.ApplyDeleteAsync(tree.WorkspaceId, "admin", null, command, default));
+
+        Assert.Equal("workspace_in_use", refusal.Code);
+        Assert.True(Directory.Exists(tree.Path));
+        Assert.True(Directory.Exists(child.DataRoot));
+        Assert.Equal(0, runtime.Stops);
+        Assert.Null(await workspaces.ReadDiscardAsync(tree.WorkspaceId, command.RequestId, "admin", default));
+        Assert.Equal("in-progress", (await workspaces.WorkflowAsync(f.Owner, default)).State);
+    }
+
+    [Fact]
+    public async Task WorkspaceDelete_BatchPreservesProtectedRuntimeAndDeletesOtherTarget()
+    {
+        using var f = await DiscardFixtureAsync();
+        var other = await f.Service.PrepareAsync(WorkspaceTestOwner(f.F, "unconsumed"), WorkspaceRequest("unconsumed"), default);
+        var app = (await f.F.Apps.GetAppAsync(SourceTestApp))!;
+        await f.F.Apps.UpsertAppAsync(app with { SourceState = app.SourceState! with { LocalOverridePath = f.Tree.Path } });
+        var command = new WorkspaceDeleteBatchCommand(Guid.NewGuid().ToString(), [f.Tree.WorkspaceId, other.WorkspaceId]);
+
+        var result = await DeleteCleanup(f).DeleteBatchAsync("admin", null, command, default);
+
+        var blocked = Assert.Single(result.Targets, t => t.WorkspaceId == f.Tree.WorkspaceId);
+        Assert.Equal("pending", blocked.State);
+        Assert.Contains("source override", blocked.Error);
+        Assert.Equal("removed", Assert.Single(result.Targets, t => t.WorkspaceId == other.WorkspaceId).State);
+        Assert.True(Directory.Exists(f.Tree.Path));
+        Assert.False(Directory.Exists(other.Path));
+        Assert.Equal("in-progress", (await f.Service.WorkflowAsync(f.Owner, default)).State);
+    }
+
+    [Fact]
+    public async Task WorkspaceDelete_RechecksRetainedRequestBeforeFinishingChildResources()
+    {
+        using var f = await DiscardFixtureAsync();
+        var store = new CoreEnvironmentStore(f.F.Paths);
+        var runtime = new ResourceControlRuntime();
+        var environments = new CoreEnvironmentService(store, runtime, f.F.Clock, f.Service);
+        var child = await environments.CreateAsync(new("admin"), new(Guid.NewGuid().ToString(), "Owned test data",
+            Context: new(WorkspaceId: f.Tree.WorkspaceId), WorktreeIds: [f.Tree.Id]), default);
+        var request = new WorkspaceDeleteCommand(Guid.NewGuid().ToString());
+        await f.Service.AdmitDeleteAsync(f.Owner, "admin", request.RequestId,
+            [new(child.Id, "core", "Owned test data", child.DataRoot, "created", 0)], default);
+        var app = (await f.F.Apps.GetAppAsync(SourceTestApp))!;
+        await f.F.Apps.UpsertAppAsync(app with { SourceState = app.SourceState! with { LocalOverridePath = f.Tree.Path } });
+        var cleanup = new WorkspaceCleanupService(f.F.Paths, new(f.Service, f.F.Apps, f.F.Clock), f.Service, null!, f.F.Apps,
+            store, environments, new(store, environments));
+
+        var blocked = await cleanup.ApplyDeleteAsync(f.Tree.WorkspaceId, "admin", null, request, default);
+
+        Assert.Equal("pending", blocked.State);
+        Assert.Contains("source override", blocked.Error);
+        Assert.Equal(0, runtime.Stops);
+        Assert.True(Directory.Exists(child.DataRoot));
+        Assert.True(Directory.Exists(f.Tree.Path));
+    }
+
+    [Fact]
+    public async Task WorkspaceDelete_RechecksCoreConsumerAfterChildFinishAndRetriesOriginalRequest()
+    {
+        using var f = await DiscardFixtureAsync();
+        var store = new CoreEnvironmentStore(f.F.Paths);
+        var runtime = new ResourceControlRuntime();
+        var environments = new CoreEnvironmentService(store, runtime, f.F.Clock, f.Service);
+        var child = await environments.CreateAsync(new("admin"), new(Guid.NewGuid().ToString(), "Owned test data",
+            Context: new(WorkspaceId: f.Tree.WorkspaceId), WorktreeIds: [f.Tree.Id]), default);
+        var activation = new WorkspaceRuntimeActivation(Guid.NewGuid().ToString(), f.Tree.WorkspaceId, f.Owner.UserId,
+            "review", "instance", "revision", f.Tree.Id, Path.Combine(f.Tree.Path, "Core.csproj"),
+            new("release", null, null, 1, f.F.Clock.UtcNow), [], "core-starting");
+        runtime.StopProbe = () => { WorkspaceRuntimeFiles.Save(f.F.Paths.DataRoot, activation); return Task.CompletedTask; };
+        var cleanup = new WorkspaceCleanupService(f.F.Paths, new(f.Service, f.F.Apps, f.F.Clock), f.Service, null!, f.F.Apps,
+            store, environments, new(store, environments));
+        var request = new WorkspaceDeleteCommand(Guid.NewGuid().ToString());
+
+        var blocked = await cleanup.ApplyDeleteAsync(f.Tree.WorkspaceId, "admin", null, request, default);
+
+        Assert.Equal("pending", blocked.State);
+        Assert.Contains("Core consumes", blocked.Error);
+        Assert.True(Directory.Exists(f.Tree.Path));
+        Assert.False(Directory.Exists(child.DataRoot));
+        Assert.Equal(1, runtime.Stops);
+        WorkspaceRuntimeFiles.Save(f.F.Paths.DataRoot, activation with { Phase = "returned", CoreReturned = true });
+        var removed = await cleanup.ApplyDeleteAsync(f.Tree.WorkspaceId, "admin", null, request, default);
+        Assert.True(removed.State == "removed", removed.Error);
+        Assert.Equal(request.RequestId, removed.RequestId);
+        Assert.Equal(1, runtime.Stops);
+        Assert.False(Directory.Exists(f.Tree.Path));
+    }
+
+    [Fact]
+    public async Task WorkspaceDelete_PreservesUnknownSandboxBinding()
+    {
+        using var f = await DiscardFixtureAsync();
+        var sandboxId = Guid.NewGuid().ToString("N");
+        await f.Service.SetSandboxConsumerAsync(f.Tree.Id, sandboxId, true, default);
+        var command = new WorkspaceDeleteCommand(Guid.NewGuid().ToString());
+        var cleanup = DeleteCleanup(f);
+
+        Assert.NotEmpty((await cleanup.DeleteDetailsAsync(f.Tree.WorkspaceId, "admin", null, default)).Blockers);
+        var refusal = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            cleanup.ApplyDeleteAsync(f.Tree.WorkspaceId, "admin", null, command, default));
+
+        Assert.Equal("workspace_in_use", refusal.Code);
+        Assert.True(Directory.Exists(f.Tree.Path));
+        Assert.Null(await f.Service.ReadDiscardAsync(f.Tree.WorkspaceId, command.RequestId, "admin", default));
+    }
 }

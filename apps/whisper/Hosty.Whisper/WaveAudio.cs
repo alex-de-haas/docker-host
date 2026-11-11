@@ -4,7 +4,7 @@ namespace Hosty.Whisper;
 
 internal static class WaveAudio
 {
-    public const int MaxSeconds = 120;
+    public const int MaxSeconds = 600;
     public const int MaxBytes = MaxSeconds * 16000 * 2 + 4096;
 
     public static async Task<float[]> ReadAsync(Stream input, CancellationToken ct)
@@ -14,7 +14,7 @@ internal static class WaveAudio
         int count;
         while ((count = await input.ReadAsync(chunk, ct)) > 0)
         {
-            if (buffer.Length + count > MaxBytes) throw new InvalidDataException("The recording exceeds the two-minute input limit.");
+            if (buffer.Length + count > MaxBytes) throw new InvalidDataException("The recording exceeds the ten-minute input limit.");
             await buffer.WriteAsync(chunk.AsMemory(0, count), ct);
         }
         return Decode(buffer.ToArray());
@@ -53,7 +53,7 @@ internal static class WaveAudio
             at += 8 + (int)size + ((int)size & 1);
         }
         if (at != wave.Length || !format || data.IsEmpty || data.Length % 2 != 0 || data.Length / 2 > MaxSeconds * 16000)
-            throw new InvalidDataException("Provide a nonempty recording of at most two minutes.");
+            throw new InvalidDataException("Provide a nonempty recording of at most ten minutes.");
         var samples = new float[data.Length / 2];
         for (var i = 0; i < samples.Length; i++) samples[i] = BinaryPrimitives.ReadInt16LittleEndian(data[(i * 2)..]) / 32768f;
         return samples;

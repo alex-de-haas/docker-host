@@ -9,13 +9,26 @@ import DevelopmentPage from "../development/page";
 import { WORK_SELECTION_STORAGE_KEY } from "@/lib/work-selection";
 import * as api from "@/lib/assistant-api";
 import * as profilesApi from "@/lib/profiles-api";
+import * as queueApi from "@/lib/message-queue-api";
+import type { PromptSuggestion } from "@/lib/prompt-suggestions";
+import type { OutboxEntry } from "@/lib/message-outbox";
 
 const ui = vi.hoisted(() => ({ reportSurfaceState: vi.fn(), getNavigation: vi.fn(), navigate: vi.fn() }));
+const localQueue = vi.hoisted(() => ({ rows: [] as OutboxEntry[], sequence: 0 }));
+vi.mock("@/lib/message-queue-api", async original => ({ ...await original<object>(), getMessageQueue: vi.fn(), commandMessageQueue: vi.fn(), uploadQueueAttachment: vi.fn() }));
+vi.mock("@/lib/message-outbox", async original => ({ ...await original<object>(),
+  listOutbox: async (scope: string) => localQueue.rows.filter(row => row.scope === scope),
+  stageOutbox: async (entry: Omit<OutboxEntry, "sequence">) => { const row = { ...entry, sequence: ++localQueue.sequence }; localQueue.rows.push(row); return row; },
+  saveOutbox: async (entry: OutboxEntry) => { localQueue.rows = localQueue.rows.map(row => row.id === entry.id && row.scope === entry.scope ? entry : row); },
+  removeOutbox: async (scope: string, id: string) => { localQueue.rows = localQueue.rows.filter(row => row.scope !== scope || row.id !== id); },
+  readEditDraft: async () => undefined,
+  recordOutboxAttempt: async () => true,
+}));
 vi.mock("@hosty-sdk/app/ui/react", () => ({ useHostyUi: () => ui }));
 
 vi.mock("@/lib/assistant-api", async original => ({
   ...await original<typeof api>(),
-  workspaceAction: vi.fn().mockResolvedValue({}), getSuggestionPreference: vi.fn(), setSuggestionPreference: vi.fn(), getHealth: vi.fn(), listSessions: vi.fn(), getSession: vi.fn(), createSession: vi.fn(), deleteSession: vi.fn(),
+  workspaceAction: vi.fn().mockResolvedValue({}), getSuggestionPreference: vi.fn(), setSuggestionPreference: vi.fn(), resolvePromptSuggestion: vi.fn(), getPromptSuggestions: vi.fn(), getHealth: vi.fn(), listSessions: vi.fn(), getSession: vi.fn(), createSession: vi.fn(), deleteSession: vi.fn(),
   listAppNames: vi.fn(), listContextApps: vi.fn(), setSessionApps: vi.fn(), postMessage: vi.fn(), stopSession: vi.fn(), streamEvents: vi.fn(), setSessionAutonomy: vi.fn(), listAgentConnections: vi.fn(), getSessionModels: vi.fn(), renameSession: vi.fn(),
 }));
 vi.mock("@/lib/profiles-api", () => ({ listProfiles: vi.fn(), selectSessionProfile: vi.fn() }));
@@ -33,12 +46,27 @@ let container: HTMLDivElement;
 let record: api.AssistantSession;
 let emit: (event: api.AssistantEvent) => void;
 let connection: (state: api.StreamConnection) => void;
+let queues: Map<string, queueApi.MessageQueue>;
+const queueFor = (id: string) => {
+  let queue = queues.get(id);
+  if (!queue) { queue = { version: 1, revision: 0, ownerId: "owner", installationId: "installation", entries: [], paused: false, updatedAt: "" }; queues.set(id, queue); }
+  return queue;
+};
+const acceptQueueCommand = async (id: string, input: queueApi.QueueCommandInput): Promise<queueApi.QueueCommandReply> => {
+  const previous = queueFor(id), command = input.command;
+  const entries = command.type === "enqueue" ? [...previous.entries, { id: command.entryId, text: command.text, attachments: command.attachments.map(name => ({ id: name, name, size: 0 })), state: "queued" as const, createdAt: "" }] : previous.entries;
+  const queue = { ...previous, revision: previous.revision + 1, entries }; queues.set(id, queue);
+  return { queue, result: { revision: queue.revision, ...(command.type === "enqueue" ? { entryId: command.entryId } : {}) } };
+};
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   localStorage.clear();
+  queues = new Map(); localQueue.rows = []; localQueue.sequence = 0;
+  vi.mocked(queueApi.getMessageQueue).mockImplementation(async id => queueFor(id));
+  vi.mocked(queueApi.commandMessageQueue).mockImplementation(acceptQueueCommand);
   window.history.replaceState({}, "", "/assistant");
-  record = { id: "session-one", title: "Conversation", status: "idle", createdAt: "" };
+  record = { id: "session-one", title: "Conversation", status: "idle", createdAt: "", createdBy: "owner" };
   vi.mocked(api.getSuggestionPreference).mockResolvedValue({ enabled: false, revision: 0 });
   vi.mocked(api.getHealth).mockResolvedValue({ name: "fake", available: true });
   vi.mocked(api.listSessions).mockResolvedValue([record]);
@@ -82,6 +110,10 @@ const submit = () => act(async () => {
   input().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
   container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
 });
+const expectQueued = (text: string, attachments: string[] = []) => {
+  expect(queueApi.commandMessageQueue).toHaveBeenCalledWith(record.id, expect.objectContaining({ requestId: expect.stringMatching(/^[0-9a-f-]{36}$/), command: expect.objectContaining({ type: "enqueue", text, attachments }) }));
+  expect(api.postMessage).not.toHaveBeenCalled();
+};
 
 const openSession = (sessionId: string) => act(async () => window.dispatchEvent(new MessageEvent("message", {
   source: window.parent, data: { type: "hosty:open-assistant-session", sessionId },
@@ -131,42 +163,43 @@ it("preserves exact URL-session readiness when a different session is requested 
   expect(ui.reportSurfaceState).not.toHaveBeenCalled();
 });
 
-it.each(["running", "awaiting_approval", "awaiting_question"])("keeps a draft unsent and shows only composer Stop while %s", async value => {
+it.each(["running", "awaiting_approval", "awaiting_question"])("queues new text with independent Send and Stop while %s", async value => {
   record.status = value;
   await render();
   await type("Next message");
   expect(input().disabled).toBe(false);
-  expect(button("Send")).toBeNull();
+  expect(button("Send")?.disabled).toBe(false);
   expect(container.querySelectorAll('button[aria-label="Stop"]')).toHaveLength(1);
   expect(button("Stop")?.closest("form")).not.toBeNull();
   await submit();
+  expectQueued("Next message"); expect(input().value).toBe("");
   expect(api.postMessage).not.toHaveBeenCalled();
   expect(api.stopSession).not.toHaveBeenCalled();
   await act(async () => button("Stop")!.click());
   expect(api.stopSession).toHaveBeenCalledExactlyOnceWith(record.id);
   await status("cancelled");
-  expect(input().value).toBe("Next message");
+  await type("A later draft");
   expect(button("Stop")).toBeNull();
   expect(button("Send")?.disabled).toBe(false);
-  // Completion never automatically sends the draft.
+  // A status change does not automatically enqueue a newly typed draft.
   expect(api.postMessage).not.toHaveBeenCalled();
   await act(async () => button("Send")!.click());
-  expect(api.postMessage).toHaveBeenCalledExactlyOnceWith(record.id, "Next message", [], 0, false, 0, expect.stringMatching(/^[0-9a-f-]{36}$/));
+  expectQueued("A later draft");
 });
 
-it("locks immediately after sending, including before SSE, and unlocks on completion", async () => {
+it("keeps the composer available after queue acceptance before execution SSE arrives", async () => {
   await render();
   expect(button("Stop")).toBeNull();
   await type("First message");
   await submit();
-  expect(api.postMessage).toHaveBeenCalledTimes(1);
-  expect(button("Stop")?.disabled).toBe(false);
+  expectQueued("First message"); expect(input().disabled).toBe(false);
+  expect(button("Stop")).toBeNull();
   await type("Draft for later");
   await submit();
-  expect(api.postMessage).toHaveBeenCalledTimes(1);
+  expectQueued("Draft for later"); expect(queueApi.commandMessageQueue).toHaveBeenCalledTimes(2);
   await status("idle");
-  expect(button("Send")?.disabled).toBe(false);
-  expect(input().value).toBe("Draft for later");
+  expect(button("Send")?.disabled).toBe(true);
+  expect(input().value).toBe("");
 });
 
 it("preserves the draft after a failed stop and permits retry", async () => {
@@ -181,21 +214,22 @@ it("preserves the draft after a failed stop and permits retry", async () => {
   expect(api.stopSession).toHaveBeenCalledTimes(2);
 });
 
-it("retains the draft and offers receipt Retry when posting has an uncertain outcome", async () => {
-  vi.mocked(api.postMessage).mockRejectedValueOnce(new Error("Send failed"));
+it("retains a failed enqueue on its own row and keeps the composer editable", async () => {
+  vi.mocked(queueApi.commandMessageQueue).mockRejectedValueOnce(new Error("Queue acknowledgement lost"));
   await render(); await type("Try again");
   await act(async () => button("Send")!.click());
   expect(button("Send")?.disabled).toBe(true);
   expect(button("Stop")).toBeNull();
-  expect(input().value).toBe("Try again");
-  expect([...container.querySelectorAll("button")].some(item => item.textContent === "Retry send")).toBe(true);
-  expect(api.postMessage).toHaveBeenCalledOnce();
+  expect(input().value).toBe(""); expect(input().disabled).toBe(false);
+  expect(container.querySelector('[aria-label="Message saving to queue"]')?.textContent).toContain("Try again");
+  expect([...container.querySelectorAll("button")].some(item => item.textContent === "Retry")).toBe(true);
+  expectQueued("Try again");
 });
 
-it("accepts a fast completion before the send response without getting stuck on Stop", async () => {
-  vi.mocked(api.postMessage).mockImplementation(async (...args) => {
+it("accepts fast completion before enqueue acknowledgement without getting stuck on Stop", async () => {
+  vi.mocked(queueApi.commandMessageQueue).mockImplementation(async (id, command) => {
     emit({ type: "session_status", status: "idle", seq: 2, ts: "" });
-    return { clientRequestId: args[6]!, state: "accepted" as const };
+    return acceptQueueCommand(id, command);
   });
   await render(); await type("Quick request");
   await act(async () => button("Send")!.click());
@@ -203,7 +237,7 @@ it("accepts a fast completion before the send response without getting stuck on 
   expect(button("Send")).not.toBeNull();
 });
 
-it("keeps Stop pending through a status change and prevents duplicate requests", async () => {
+it("keeps Stop pending without duplicating cancellation while Send queues independently", async () => {
   record.status = "running";
   let finish!: () => void;
   vi.mocked(api.stopSession).mockImplementation(() => new Promise<void>(resolve => { finish = resolve; }));
@@ -215,8 +249,8 @@ it("keeps Stop pending through a status change and prevents duplicate requests",
   await submit();
   expect(api.postMessage).not.toHaveBeenCalled();
   await act(async () => finish());
-  expect(button("Send")?.disabled).toBe(false);
-  expect(input().value).toBe("Draft");
+  expectQueued("Draft"); expect(input().disabled).toBe(false);
+  expect(input().value).toBe("");
 });
 
 it("opens an error in a fresh session draft without sending or replacing the old draft", async () => {
@@ -295,7 +329,7 @@ it("sends mention text only after the app association commits, with the returned
   await act(async () => resolve({ ...record, appIds: ["media"], appContextRevision: 1 }));
   expect(input().value).toBe("Compare @Media Server ");
   await act(async () => button("Send")!.click());
-  expect(api.postMessage).toHaveBeenCalledExactlyOnceWith(record.id, "Compare @Media Server (media)", [], 1, false, 0, expect.stringMatching(/^[0-9a-f-]{36}$/));
+  expectQueued("Compare @Media Server (media)");
 });
 
 
@@ -694,8 +728,8 @@ it("keeps current busy controls while historical status chunks replay", async ()
   for (const value of ["idle", "running", "cancelled"]) {
     await act(async () => emit({ type: "session_status", seq: 2, ts: "", status: value, historical: true }));
     expect(button("Stop")).not.toBeNull();
-    await submit();
     expect(api.postMessage).not.toHaveBeenCalled();
+    expect(queueApi.commandMessageQueue).not.toHaveBeenCalled();
     expect(input().value).toBe("keep this draft");
   }
   await act(async () => {
@@ -703,6 +737,7 @@ it("keeps current busy controls while historical status chunks replay", async ()
     connection("connected");
   });
   expect(button("Stop")).not.toBeNull();
+  await submit(); expectQueued("keep this draft");
 });
 
 it("preserves an unsent draft and attachments while agent context changes replay after reconnect", async () => {
@@ -766,7 +801,7 @@ it("applies a profile refresh whose saved timestamp precedes its notification", 
   expect(button("Model")?.textContent).toBe("Review model");
   expect(effortLabel()?.textContent).toBe("High");
   await type("Review this snippet"); await submit();
-  expect(api.postMessage).toHaveBeenCalledWith(record.id, "Review this snippet", [], 0, false, 1, expect.any(String));
+  expectQueued("Review this snippet");
 });
 
 
@@ -804,7 +839,7 @@ it.each(["before", "after"])("retains the newer model when a delayed profile sna
   expect(currentProfile()?.textContent).toBe("Reviewer");
   expect(input().value).toBe("Retained review request");
   await submit();
-  expect(api.postMessage).toHaveBeenCalledWith(record.id, "Retained review request", [], 0, false, 2, expect.any(String));
+  expectQueued("Retained review request");
 });
 
 
@@ -841,7 +876,7 @@ it("does not let a delayed profile mutation response replace a newer model event
   await openSettings();
   expect(button("Model")?.textContent).toBe("New model");
   await type("Review after the concurrent update"); await submit();
-  expect(api.postMessage).toHaveBeenCalledWith(record.id, "Review after the concurrent update", [], 0, false, 2, expect.any(String));
+  expectQueued("Review after the concurrent update");
 });
 
 
@@ -888,7 +923,7 @@ it.each(["session_status", "app_context_changed"])("refreshes complete settings 
     expect(button("Model")?.disabled).toBe(true);
   } else {
     await submit();
-    expect(api.postMessage).toHaveBeenCalledWith(record.id, "Retained review request", [], 1, false, 2, expect.any(String));
+    expectQueued("Retained review request");
   }
   const readsAfterSettlement = vi.mocked(api.getSession).mock.calls.length;
   await act(async () => emit({ type: "session_status", status: "idle", seq: 6, ts: "2026-10-26T12:00:05.000Z" }));
@@ -921,40 +956,57 @@ it("keeps admission locks when a delayed profile save arrives before the status 
   expect(currentProvider()).not.toBeNull();
 });
 
-const suggestionEvent = (extra: Partial<api.AssistantEvent> = {}): api.AssistantEvent => ({ type: "session_suggestion", seq: -2, ts: "", epoch: "server1", revision: 2,
-  sessionId: "session-one", userId: "owner", attemptId: "attempt1", state: "available", text: "Review @app literally", expiresAt: Date.now() + 60_000, ...extra });
-const enableSuggestions = () => { record.createdBy = "owner"; vi.mocked(api.getSuggestionPreference).mockResolvedValue({ enabled: true, revision: 0 }); };
+const suggestionEvent = (extra: Partial<api.AssistantEvent> = {}): api.AssistantEvent => ({ type: "prompt_suggestion_created", seq: 2, ts: "", suggestionId: "suggestion-one",
+  sessionId: "session-one", userId: "owner", attemptId: "attempt1", answerSeq: 1, text: "Review @app literally", expiresAt: Date.now() + 60_000, ...extra });
+const enableSuggestions = () => {
+  record.createdBy = "owner"; vi.mocked(api.getSuggestionPreference).mockResolvedValue({ enabled: true, revision: 0 });
+  vi.mocked(api.getPromptSuggestions).mockResolvedValue([]);
+  vi.mocked(api.resolvePromptSuggestion).mockImplementation(async (_sessionId, suggestionId, input) => ({
+    suggestionId, sessionId: record.id, userId: "owner", attemptId: "attempt1", answerSeq: 1, text: "Review @app literally", expiresAt: Date.now() + 60_000,
+    createdAt: "", revision: 2, state: input.action,
+  } as PromptSuggestion));
+};
 it("accepts a suggestion as plain editable text with Tab, supports undo and never sends automatically", async () => {
   enableSuggestions(); await render(); await act(async () => emit(suggestionEvent()));
   expect(container.textContent).toContain("Use suggestion"); expect(input().value).toBe("");
+  expect(container.querySelector('[data-slot="prompt-suggestion"]')).not.toBeNull();
+  expect(container.querySelector('[aria-label="Message composer"] [data-slot="prompt-suggestion"]')).toBeNull();
+  await act(async () => input().focus());
   await act(async () => input().dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true })));
   expect(input().value).toBe("");
   await act(async () => input().dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true })));
   expect(input().value).toBe("Review @app literally"); expect(api.postMessage).not.toHaveBeenCalled(); expect(api.setSessionApps).not.toHaveBeenCalled();
+  expect(container.textContent).toContain("Selected for draft");
   await act(async () => input().dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true, cancelable: true })));
   expect(input().value).toBe(""); expect(container.textContent).not.toContain("Use suggestion");
-  await act(async () => emit(suggestionEvent({ revision: 3 })));
-  expect(container.textContent).not.toContain("Use suggestion");
 });
-it.each(["typing", "escape", "composition"])("%s wins over a suggestion and prevents resurrection after reconnect", async action => {
+it.each(["typing", "composition"])("%s preserves suggestion history without recording dismissal", async action => {
   enableSuggestions(); await render(); await act(async () => emit(suggestionEvent()));
-  if (action === "typing") { await type("My draft"); await type(""); }
-  if (action === "escape") await act(async () => input().dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
+  if (action === "typing") await type("My draft");
   if (action === "composition") await act(async () => input().dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true })));
-  await act(async () => { emit({ type: "user_message", seq: 1, ts: "", text: "replayed" }); emit(suggestionEvent({ revision: 3 })); });
-  expect(container.textContent).not.toContain("Use suggestion"); expect(api.postMessage).not.toHaveBeenCalled();
+  expect(container.textContent).toContain("Review @app literally"); expect(api.resolvePromptSuggestion).not.toHaveBeenCalled(); expect(api.postMessage).not.toHaveBeenCalled();
+  if (action === "typing") {
+    expect([...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent?.includes("Use suggestion"))?.disabled).toBe(true);
+    expect(input().value).toBe("My draft");
+  }
 });
-it("refuses foreign, expired and out-of-order projections and keeps literal text out of messages", async () => {
+it("records explicit Escape dismissal and retains the original card", async () => {
+  enableSuggestions(); await render(); await act(async () => emit(suggestionEvent()));
+  await act(async () => { input().focus(); input().dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); });
+  expect(api.resolvePromptSuggestion).toHaveBeenCalledWith(record.id, "suggestion-one", expect.objectContaining({ action: "dismissed", requestId: expect.any(String) }));
+  expect(container.textContent).toContain("Dismissed"); expect(container.textContent).toContain("Review @app literally"); expect(container.textContent).not.toContain("Use suggestion");
+});
+it("refuses foreign events and retains expired/literal suggestion history as inert text", async () => {
   enableSuggestions(); await render();
   await act(async () => emit(suggestionEvent({ userId: "another-user" })));
   expect(container.textContent).not.toContain("Use suggestion");
-  await act(async () => emit(suggestionEvent({ revision: 3, expiresAt: Date.now() - 1 })));
+  await act(async () => emit(suggestionEvent({ seq: 3, suggestionId: "expired", expiresAt: Date.now() - 1 })));
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)); });
   expect(container.textContent).not.toContain("Use suggestion");
-  await act(async () => emit(suggestionEvent({ revision: 4, text: "<script>test</script>" })));
+  expect(container.textContent).toContain("Expired");
+  await act(async () => emit(suggestionEvent({ seq: 4, suggestionId: "literal", text: "<script>test</script>" })));
   expect(container.textContent).toContain("<script>test</script>"); expect(container.querySelector("script")).toBeNull();
-  await act(async () => emit(suggestionEvent({ revision: 2, text: "stale" })));
-  expect(container.textContent).not.toContain("stale");
-  expect(container.querySelector('[aria-label="Conversation messages"]')?.textContent ?? "").not.toContain("<script>");
+  expect([...container.querySelectorAll('[data-slot="prompt-suggestion"]')].some(card => card.textContent?.includes("<script>test</script>"))).toBe(true);
 });
 
 
@@ -963,10 +1015,10 @@ it("keeps compact selection separate and exposes all creation actions before a w
   window.history.replaceState({}, "", "/development");
   await act(async () => root.render(<AssistantConversation fullPage />));
   expect(api.createSession).not.toHaveBeenCalled();
-  expect(container.textContent).toContain("Choose a workspace or session, create an app or continue building.");
+  expect(container.textContent).toContain("Choose a workspace or session, or create an app.");
   expect(button("Create app")?.disabled).toBe(false);
   expect(button("New session")).not.toBeNull();
-  expect(button("Continue building")).not.toBeNull();
+  expect(button("Continue building")).toBeNull();
   expect(container.querySelector('[aria-label="Message composer"]')).toBeNull();
   await act(async () => button("Create app")!.click());
   expect(api.createSession).toHaveBeenCalledOnce();
@@ -982,7 +1034,7 @@ it.each([
   window.history.replaceState({}, "", path);
   await act(async () => root.render(<Page />));
   expect(input()).not.toBeNull(); expect(button("Create app")).not.toBeNull();
-  expect(button("Continue building")).not.toBeNull(); expect(button("New session")).not.toBeNull();
+  expect(button("Continue building")).toBeNull(); expect(button("New session")).not.toBeNull();
   expect(container.querySelector('nav[aria-label="Sessions"]')).not.toBeNull();
   expect(localStorage.getItem(WORK_SELECTION_STORAGE_KEY)).toBe(JSON.stringify({ sessionId: record.id }));
   expect(window.location.pathname).toBe(path); expect(window.location.search).toBe(`?session=${record.id}`);

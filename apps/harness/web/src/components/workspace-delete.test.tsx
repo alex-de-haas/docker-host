@@ -108,3 +108,18 @@ it("ignores a late status response after the user retries the accepted request",
   expect(document.body.textContent).toContain("Workspace deleted");
   expect(button("Retry deletion")).toBeUndefined();
 });
+
+it("shows runtime blockers and explains Return before sending a deletion request", async () => {
+  vi.mocked(developmentRequest).mockResolvedValueOnce({ ...details(), blockers: ["The running Core uses this worktree.", "An application uses this workspace."] });
+  await render();
+  const alert = document.querySelector('[role="alert"][aria-label="Workspace is in use"]');
+  expect(alert?.textContent).toContain("The running Core uses this worktree.");
+  expect(alert?.textContent).toContain("An application uses this workspace.");
+  expect(alert?.textContent).toContain("Switch Core and applications away from this workspace, or use Return, before deleting it.");
+  expect(button("Delete").disabled).toBe(false);
+  expect(developmentRequest).toHaveBeenCalledTimes(1);
+  expect(localStorage.getItem("hosty.workspace.delete.workspace")).toBeNull();
+  await act(async () => button("Cancel").click());
+  expect(close).toHaveBeenCalledOnce();
+  expect(developmentRequest).toHaveBeenCalledTimes(1);
+});

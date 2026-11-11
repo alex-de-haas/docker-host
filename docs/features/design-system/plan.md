@@ -1,7 +1,7 @@
 ---
 status: In Progress
 created: 2026-10-12
-updated: 2026-10-26
+updated: 2026-11-10
 summary: Remaining Hosty design implementation, acceptance gates and separately reviewed Core/SDK contracts, with stable deliverable IDs.
 components: [apps/shell, apps/shell-swift, packages/app-sdk, apps/core, apps/harness, assets/hosty-brand, apps/documents, apps/telemetry, apps/telemetry-ui, apps/demo-app, apps/marketplace, apps/whisper]
 ---
@@ -37,7 +37,7 @@ restarts, source cleanup, commits or publication.
 | --- | --- |
 | Dashboard | Search and combined state filters; fleet/per-app update checks and review; install; start/stop/restart/autostart; package/source/workspace selection and Return; service state/health/resources and addressable Logs in Manage; Dashboard Logs and More > Console logs entries; configuration, app settings, permissions, backup/restore, removal; addresses/ports/public origins; resources/history and unavailable data; Core source/restart/update controls; environment creation/progress/setup/resume/lifecycle. |
 | Shell chrome and forms | Navigation and current routes, role/permission restrictions, theme and notifications, tools and retained frames, keyboard/focus, unsaved settings and confirmation flows; Apps Open/Standalone and administrator-only Uninstall through Core. |
-| Harness | Sessions, provider/account/model selection, transcript and composer, attachments/speech, approvals, workspace and runtime controls, previews, source/diff/Git/PR/CI/review operations, external workspaces and settings. Workspace/title/app search and activity chips preserve the flat list, ordering and identity; the Sessions heading carries icon-only Create app, Continue building and New session actions with no separate app selector; pinned decisions navigate to the existing card; workspace hiding preserves the mounted context. |
+| Harness | Sessions, provider/account/model selection, transcript and composer, attachments/speech, approvals, workspace and runtime controls, previews, source/diff/Git/PR/CI/review operations, external workspaces and settings. Workspace/title/app search and activity chips preserve the flat list, ordering and identity; the Sessions heading carries icon-only Create app and New session actions with no separate app selector; pinned decisions navigate to the existing card; workspace hiding preserves the mounted context. |
 | Marketplace | Catalog source/settings, refresh/diagnostics, search/category filters, app detail/screenshots/description, feed choice, installed/update states, installation confirmation/cancellation/retry and session-expiry recovery. |
 
 ### Remaining Work And Acceptance Boundary
@@ -1633,9 +1633,10 @@ column; the header's workspace toggle hides and shows it.
 
 ### Sessions
 
-- The Sessions heading and count share a row with icon-only **Create app**, **Continue building**
-  and **New session** actions on the right, in that order, with accessible names and tooltips. Continue building
-  opens its existing chooser. Create app opens its existing form, with creation status and recovery
+- The Sessions heading and count share a row with icon-only **Create app** and **New session**
+  actions on the right, in that order, with accessible names and tooltips. Retained work opens through
+  Sessions; a new development task uses New session and descriptive app context before separate
+  authorized workspace preparation. Create app opens its existing form, with creation status and recovery
   inside the dialog instead of a separate toolbar above the conversation. A search field below matches titles and app context; there is no
   separate application selector.
 - Filter chips — All, Needs you, Working, Failed — each with its count and the state's shape. They

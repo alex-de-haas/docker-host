@@ -26,7 +26,7 @@ internal sealed partial class CoreEnvironmentService(CoreEnvironmentStore store,
     internal async Task<CoreEnvironmentRecord> RequireAsync(SandboxActor actor, string id, CancellationToken ct)
     {
         var record = await store.ReadAsync(id, ct) ?? throw new SandboxException("environment_not_found", "Environment not found.", 404);
-        if (actor.CanDeleteResource(record.Owner, record.Request.Context))
+        if (actor.CanDeleteResource(record.Owner, record.Request.Context, record.Request.WorktreeIds))
         {
             if (workspaces is not null) await workspaces.RequireWorkspaceUserAsync(actor.UserId, ct);
             return record;

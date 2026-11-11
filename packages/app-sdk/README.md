@@ -293,6 +293,11 @@ Select an app ID and interface key explicitly, use `list("speech-to-text")`, `sp
 and `transcribe(selected, wavBlob, { signal })` on the server. Never expose the app service token to
 a browser. Transcription accepts the provider's documented format; the v1 baseline is 16 kHz mono
 PCM16 WAV. Browser microphone consent is separate from Core permission.
+`transcribe` defaults to a five-minute total deadline. Long-recording consumers can supply an integer
+`timeoutMs` between 1 and 930,000 (fifteen minutes thirty seconds); cancellation still applies.
+Speech transport uses a request-owned matching Undici fetch/dispatcher so its response-header and
+body timeouts match the selected deadline. Other SDK operations and the global dispatcher retain
+their existing behavior. Validate the selected provider's duration/byte capabilities before capture.
 
 `assistant(selected, getUserToken)` returns the existing `AssistantClient` with bounded provider
 credentials and the acting user's access. It does not expose general agent execution.

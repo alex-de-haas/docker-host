@@ -2,6 +2,7 @@
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { LoaderCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogBody, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { developmentRequest, repositoryName } from "@/lib/development-api";
@@ -13,6 +14,7 @@ export type DeleteDetails = {
     changedFiles: string[]; untrackedFiles: string[]; ignoredFiles: string[]; unmergedCommits: number }[];
   resources: { id: string; kind: string; state: string; name: string; dataPath?: string }[];
   warnings?: string[];
+  blockers?: string[];
 };
 export type DeleteProgress = { workspaceId: string; requestId: string; state: "pending" | "removed" | "review-required"; error?: string;
   trees: { id: string; state: string }[]; resources: { id: string; kind: string; state: string }[];
@@ -108,6 +110,13 @@ export function WorkspaceDelete({ workspaceId, name, pendingRequestId, onClose, 
         {error && <p role="alert" className="text-sm text-destructive-foreground">{error}</p>}
         {!details && !progress && <p className="text-sm">Source and activity details are {loading ? "still loading" : "unavailable"}. Deletion includes any uncommitted files and unmerged commits. An agent may still be using this directory.</p>}
         {details && !progress && <>
+          {!!details.blockers?.length && <Alert variant="destructive" aria-label="Workspace is in use">
+            <AlertTitle>Workspace is in use</AlertTitle>
+            <AlertDescription>
+              <p>Switch Core and applications away from this workspace, or use Return, before deleting it.</p>
+              <ul className="list-disc pl-5">{details.blockers.map((blocker, index) => <li key={index}>{blocker}</li>)}</ul>
+            </AlertDescription>
+          </Alert>}
           <div className="space-y-3">{details.trees.map(tree => <section key={tree.id} className="space-y-1 rounded-lg border p-3 text-sm">
             <h4 className="font-semibold">{repositoryName(tree.repository)}</h4>
             <p className="break-all font-mono text-xs">{tree.path}</p><p className="break-all font-mono text-xs text-muted-foreground">Local branch: {tree.branch}</p>

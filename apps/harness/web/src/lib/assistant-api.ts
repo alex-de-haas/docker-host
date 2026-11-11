@@ -120,10 +120,6 @@ export async function createSession(input: { profileId?: string | null; profileR
   return (await call("/sessions", { method: "POST", body: JSON.stringify({ ...input, browserDefaults: input.browserDefaults ?? await loadBrowserAgentDefaults() }) })).json() as Promise<AssistantSession>;
 }
 
-export async function newBuildingSession(input: { appId: string; requestId: string; expectedLocalHead: string }): Promise<AssistantSession> {
-  return (await call("/building-sessions", { method: "POST", body: JSON.stringify({ ...input, browserDefaults: await loadBrowserAgentDefaults() }) })).json();
-}
-
 /** Renames a session. An empty title clears the name, and the next message derives one again. */
 export async function renameSession(sessionId: string, title: string): Promise<AssistantSession> {
   return (
@@ -167,8 +163,14 @@ export async function getSuggestionPreference(): Promise<{ enabled: boolean; rev
 export async function setSuggestionPreference(enabled: boolean, revision: number): Promise<{ enabled: boolean; revision: number }> {
   return (await call("/preferences/prompt-suggestions", { method: "PUT", body: JSON.stringify({ enabled, revision }) })).json();
 }
+export async function resolvePromptSuggestion(sessionId: string, suggestionId: string, input: { requestId: string; expectedRevision: number; action: "selected-for-draft" | "dismissed" }): Promise<import("./prompt-suggestions").PromptSuggestion> {
+  return (await call(`/sessions/${encodeURIComponent(sessionId)}/suggestions/${encodeURIComponent(suggestionId)}/actions`, { method: "POST", body: JSON.stringify(input) })).json();
+}
+export async function getPromptSuggestions(sessionId: string): Promise<import("./prompt-suggestions").PromptSuggestion[]> {
+  return (await call(`/sessions/${encodeURIComponent(sessionId)}/suggestions`)).json();
+}
 
-export type StoredAttachment = { name: string; size: number };
+export type StoredAttachment = { name: string; size: number; displayName?: string };
 
 /**
  * Hands the gateway a file for this session. The body is the file itself — no multipart, no

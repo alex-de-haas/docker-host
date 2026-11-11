@@ -1,6 +1,6 @@
 ---
 created: 2026-09-29
-updated: 2026-11-05
+updated: 2026-11-09
 summary: GitHub pull request publication, review, merge and completion for assistant session workspaces.
 components: [apps/core, apps/harness]
 ---
@@ -88,6 +88,10 @@ operation retains its resolved author for recovery. Harness records the contribu
 Core retains contributors and adds missing Co-Authored-By trailers. Recorded contributors are also
 retained in merge/squash messages. Ordinary workspace/native commits keep their explicit attribution.
 Repository commit and merge instructions remain the agent's responsibility.
+
+Publish also updates the title/body of an existing open PR when called again with a new request ID,
+the same expected head and the intended draft state. It preserves the PR number and reconciles the
+existing contribution instead of creating a duplicate.
 
 Publish requires a clean active worktree and exact `expectedHead`, pushes that commit without force,
 and creates or updates the PR title/body. `draft` selects creation posture; `pr_ready` marks an existing
@@ -239,9 +243,24 @@ correct mistaken PR-only requirements to the repository's actual merge-bound val
 workflows, then reobserve and request `merged` completion with cleanup disabled. The installation's
 selected app runtimes and source-workspace completion remain independent.
 
+## Push Rejection And Recovery
+
+GitHub pushes request one exact branch without force and use Git porcelain results to recognize
+explicit ref rejection. Workflow permission, authentication, repository access, branch protection,
+non-fast-forward and other explicit hook rejections return fixed actionable Core messages. Raw Git
+output, provider credentials, authorization headers and credential-bearing URLs are never returned
+or retained. Safe push receipts carry `errorCode` and the same diagnostic message.
+
+A definite rejection marks the operation failed and retains its original request ID for retry after
+the owner corrects access or integrates remote history. Timeouts, transport loss and unrecognized
+outcomes remain pending, with a safe category or exit code and instructions to inspect remote state.
+Renewing the selected source connection preserves its ID and all publication bindings. Retrying the
+original request clears stale diagnostics after success and still reconciles existing PRs.
+
 ## Testing Expectations
 
 - Verify ownership, installation/permission revocation, connection ownership and credential exclusion.
+- Verify classified push rejections, timeout/transport uncertainty, credential-free diagnostics and persisted receipt recovery using the same request ID after connection renewal, without duplicate PRs.
 - Exercise explicit policy correction after source-workspace completion, stale prior-policy/head
   rejection, authority revocation, native-edit and pause races, retained bindings and separate
   completion. Verify identical replay and unchanged legacy fingerprints. Test PR-only check

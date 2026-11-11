@@ -2,7 +2,7 @@ using System.Collections.Concurrent;
 
 namespace Haas.Hosty.Core;
 
-internal sealed class UserConnectionService(UserDirectoryStore users, SourceProviderRegistry providers, IClock clock, AuditStore audit, CoreSettingsService settings)
+internal sealed partial class UserConnectionService(UserDirectoryStore users, SourceProviderRegistry providers, IClock clock, AuditStore audit, CoreSettingsService settings)
 {
     internal SourceProviderRegistry Providers => providers;
 
@@ -25,7 +25,7 @@ internal sealed class UserConnectionService(UserDirectoryStore users, SourceProv
     // Includes provider starts that have not returned a device code yet.
     private readonly SemaphoreSlim attemptSlots = new(256, 256);
     private sealed record Pending(string Id, string UserId, string SessionId, UserConnectionInput Input,
-        string ClientId, ProviderDevice Device, DateTimeOffset ExpiresAt, DateTimeOffset NextPoll, int Interval);
+        string ClientId, ProviderDevice Device, DateTimeOffset ExpiresAt, DateTimeOffset NextPoll, int Interval, RenewalTarget? Renewal = null);
 
     public async Task<UserProfileResponse> ProfileAsync(string userId, CancellationToken ct)
     {
@@ -62,38 +62,55 @@ internal sealed class UserConnectionService(UserDirectoryStore users, SourceProv
         await Audit(userId, "source-identity.updated", userId, ct);
         return await ProfileAsync(userId, ct);
     }
-    public Task<UserConnectionSummary> AddPatAsync(string userId, UserConnectionInput input, CancellationToken ct)
+    public Task<UserConnectionSummary> AddPatAsync(string userId, UserConnectionInput input, CancellationToken ct, string? connectionId = null)
         => Locked(userId, async () =>
         {
             input = Validate(input);
             if (string.IsNullOrWhiteSpace(input.Token) || input.Token.Length > 16384 || input.Token.Any(char.IsControl))
                 throw new UserConnectionException("connection_token_invalid", "Enter a valid provider token.");
-            RequireUser(await users.ReadAsync(ct), userId);
+            var state = await users.ReadAsync(ct);
+            RequireUser(state, userId);
+            Prune(state, userId);
+            var renewal = RenewalFor(state, userId, connectionId, input.Provider);
+            RequireNoPendingRenewal(userId, renewal);
             var identity = await providers.Resolve(input.Provider).IdentityAsync("pat", input.Token.Trim(), ct);
-            var c = NewConnection(userId, input, identity, "pat", new(input.Token.Trim(), null, null), null);
-            await SaveNew(c, ct);
-            await Audit(userId, "connection.added", c.Id, ct);
+            var c = await SaveAuthorizedAsync(userId, input, identity, "pat", new(input.Token.Trim(), null, null), null, renewal, null, ct);
+            await Audit(userId, renewal is null ? "connection.added" : "connection.renewed", c.Id, ct);
             return Summary(c);
         }, ct);
-    public Task<UserDeviceResponse> StartDeviceAsync(string userId, string sessionId, UserConnectionInput input, CancellationToken ct)
+    public Task<UserDeviceResponse> StartDeviceAsync(string userId, string sessionId, UserConnectionInput input, CancellationToken ct, string? connectionId = null)
         => Locked(userId, async () =>
         {
             input = Validate(input) with { Token = null };
             var state = await users.ReadAsync(ct);
             RequireUser(state, userId); RequireSession(state, userId, sessionId);
             Prune(state, userId);
+            var renewal = RenewalFor(state, userId, connectionId, input.Provider);
+            RequireNoPendingRenewal(userId, renewal);
             if (pending.Values.Count(p => p.UserId == userId) >= 3)
                 throw new UserConnectionException("connection_attempt_limit", "Finish or cancel an existing connection attempt first.", 409);
-            if ((state.ProviderConnections ?? []).Count(c => c.UserId == userId) >= 32)
+            if (renewal is null && (state.ProviderConnections ?? []).Count(c => c.UserId == userId) >= 32)
                 throw new UserConnectionException("connection_limit", "Remove an unused connection first.", 409);
-            var clientId = providers.Resolve(input.Provider).ClientId ?? throw new UserConnectionException("provider_not_configured", "The host operator must configure the provider's OAuth client ID.", 409);
+            if (renewal is not null)
+            {
+                var previous = RequireRenewal(state, userId, renewal);
+                if (previous.GrantedScopes is null && input.PrivateRepositories is null)
+                    throw new UserConnectionException("connection_scope_decision_required", "Choose public-only or public-and-private repository access before renewing this connection; its previous permissions are unknown.", 409);
+                if (previous.GrantedScopes?.Contains("repo", StringComparer.Ordinal) == true)
+                    input = input with { PrivateRepositories = true };
+            }
+            var clientId = (renewal is null ? null : RequireRenewal(state, userId, renewal).ClientId)
+                ?? providers.Resolve(input.Provider).ClientId ?? throw new UserConnectionException("provider_not_configured", "The host operator must configure the provider's OAuth client ID.", 409);
             if (!attemptSlots.Wait(0, ct))
                 throw new UserConnectionException("connection_attempt_limit", "Finish or cancel an existing connection attempt first.", 409);
             try
             {
                 var device = await providers.Resolve(input.Provider).StartAsync(input, clientId, ct);
+                var current = await users.ReadAsync(ct);
+                RequireUser(current, userId); RequireSession(current, userId, sessionId);
+                if (renewal is not null) RequireRenewal(current, userId, renewal);
                 var p = new Pending(Guid.NewGuid().ToString("N"), userId, sessionId, input, clientId, device,
-                    clock.UtcNow.AddSeconds(device.ExpiresIn), clock.UtcNow.AddSeconds(device.Interval), device.Interval);
+                    clock.UtcNow.AddSeconds(device.ExpiresIn), clock.UtcNow.AddSeconds(device.Interval), device.Interval, renewal);
                 pending[p.Id] = p;
                 return DeviceResponse(p);
             }
@@ -107,6 +124,11 @@ internal sealed class UserConnectionService(UserDirectoryStore users, SourceProv
                 throw new UserConnectionException("connection_attempt_missing", "This connection attempt expired or was canceled. Start again.", 404);
             var state = await users.ReadAsync(ct);
             RequireUser(state, userId); RequireSession(state, userId, p.SessionId);
+            if (p.Renewal is not null)
+            {
+                try { RequireRenewal(state, userId, p.Renewal); }
+                catch (UserConnectionException) { RemovePending(id); throw; }
+            }
             if (p.NextPoll > clock.UtcNow) return DeviceResponse(p);
             // Reserve the interval before HTTP, including on a transport failure.
             p = UpdatePending(p, p with { NextPoll = clock.UtcNow.AddSeconds(p.Interval) });
@@ -123,13 +145,8 @@ internal sealed class UserConnectionService(UserDirectoryStore users, SourceProv
                 RemovePending(id);
                 var token = result.Token!;
                 var identity = await providers.Resolve(p.Input.Provider).IdentityAsync("oauth", token.AccessToken, ct);
-                var c = NewConnection(userId, p.Input, identity, "oauth", token, p.ClientId);
-                await users.UpdateAsync(s =>
-                {
-                    RequireSession(s, userId, p.SessionId);
-                    return Add(s, c);
-                }, ct);
-                await Audit(userId, "connection.added", c.Id, ct);
+                var c = await SaveAuthorizedAsync(userId, p.Input, identity, "oauth", token, p.ClientId, p.Renewal, p.SessionId, ct);
+                await Audit(userId, p.Renewal is null ? "connection.added" : "connection.renewed", c.Id, ct);
                 return new UserDeviceResponse(id, "connected", Connection: Summary(c));
             }
             catch (UserConnectionException ex) when (ex.Status != 502)
@@ -163,6 +180,7 @@ internal sealed class UserConnectionService(UserDirectoryStore users, SourceProv
                 RequireConnection(s, userId, id);
                 return s with { ProviderConnections = (s.ProviderConnections ?? []).Where(c => c.UserId != userId || c.Id != id).ToArray() };
             }, ct);
+            foreach (var attempt in pending.Values.Where(p => p.UserId == userId && p.Renewal?.ConnectionId == id)) RemovePending(attempt.Id);
             await Audit(userId, "connection.disconnected", id, ct);
             return true;
         }, ct);
@@ -176,7 +194,8 @@ internal sealed class UserConnectionService(UserDirectoryStore users, SourceProv
                 if (c.Method == "oauth" && c.ExpiresAt <= clock.UtcNow.AddMinutes(2))
                 {
                     var token = await provider.RefreshAsync(c, ct);
-                    c = c with { AccessToken = token.AccessToken, RefreshToken = token.RefreshToken, ExpiresAt = token.ExpiresAt };
+                    c = c with { AccessToken = token.AccessToken, RefreshToken = token.RefreshToken, ExpiresAt = token.ExpiresAt,
+                        GrantedScopes = token.GrantedScopes ?? c.GrantedScopes };
                     // Save token rotation even if the subsequent identity check is interrupted.
                     c = await SaveExisting(c, ct);
                 }
@@ -204,7 +223,7 @@ internal sealed class UserConnectionService(UserDirectoryStore users, SourceProv
             {
                 var token = await provider.RefreshAsync(connection, ct);
                 connection = await SaveExisting(connection with { AccessToken = token.AccessToken,
-                    RefreshToken = token.RefreshToken, ExpiresAt = token.ExpiresAt }, ct);
+                    RefreshToken = token.RefreshToken, ExpiresAt = token.ExpiresAt, GrantedScopes = token.GrantedScopes ?? connection.GrantedScopes }, ct);
             }
             if (connection.ExpiresAt <= clock.UtcNow) throw new UserConnectionException("connection_expired", "Reconnect the expired connection.");
             return await action(connection);
@@ -218,7 +237,6 @@ internal sealed class UserConnectionService(UserDirectoryStore users, SourceProv
             var next = c with { Revision = Guid.NewGuid().ToString("N") };
             return (Replace(s, next), next);
         }, ct);
-    private Task SaveNew(UserProviderConnection c, CancellationToken ct) => users.UpdateAsync(s => Add(s, c), ct);
     private static UserDirectoryState Add(UserDirectoryState s, UserProviderConnection c)
     {
         RequireUser(s, c.UserId);
@@ -230,7 +248,7 @@ internal sealed class UserConnectionService(UserDirectoryStore users, SourceProv
         => s with { ProviderConnections = (s.ProviderConnections ?? []).Select(item => item.Id == c.Id ? c : item).ToArray() };
     private UserProviderConnection NewConnection(string userId, UserConnectionInput input, ProviderIdentity identity, string method, ProviderToken token, string? clientId)
         => new(Guid.NewGuid().ToString("N"), userId, ConnectionLabel(input.Label, identity), input.Provider, input.Organization!, input.Tenant!, identity.Id, identity.Name,
-            method, token.AccessToken, token.RefreshToken, token.ExpiresAt, clientId, clock.UtcNow, clock.UtcNow, "connected", Guid.NewGuid().ToString("N"));
+            method, token.AccessToken, token.RefreshToken, token.ExpiresAt, clientId, clock.UtcNow, clock.UtcNow, "connected", Guid.NewGuid().ToString("N"), token.GrantedScopes);
     private static string ConnectionLabel(string? requested, ProviderIdentity identity)
     {
         if (!string.IsNullOrWhiteSpace(requested)) return BoundedName(requested);
@@ -239,7 +257,7 @@ internal sealed class UserConnectionService(UserDirectoryStore users, SourceProv
         return BoundedName(name.Length > 100 ? name[..100] : name);
     }
     internal UserConnectionSummary Summary(UserProviderConnection c)
-        => new(c.Id, c.Label, c.Provider, c.Organization, c.AccountId, c.AccountName, c.Method, c.ExpiresAt, c.CheckedAt, providers.Contains(c.Provider) ? c.Status : "unsupported");
+        => new(c.Id, c.Label, c.Provider, c.Organization, c.AccountId, c.AccountName, c.Method, c.ExpiresAt, c.CheckedAt, providers.Contains(c.Provider) ? c.Status : "unsupported", c.GrantedScopes);
     private UserDeviceResponse DeviceResponse(Pending p)
         => new(p.Id, "pending", p.Device.UserCode, p.Device.VerificationUri, p.ExpiresAt, Math.Max(p.Interval, (int)Math.Ceiling((p.NextPoll - clock.UtcNow).TotalSeconds)));
     private void Prune(UserDirectoryState? state = null, string? userId = null)

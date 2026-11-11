@@ -11,6 +11,7 @@ vi.mock("@/lib/speech-audio", () => ({ recordingWave: api.recordingWave }));
 let container: HTMLDivElement, root: Root;
 const stopTrack = vi.fn(), onText = vi.fn();
 let resolveTranscript: (value: Response) => void;
+const capabilities = { version: 1, mediaTypes: ["audio/wav"], ready: true, maxDurationSeconds: 600, maxBytes: 19_204_096 };
 class Recorder {
   state = "inactive"; mimeType = "audio/webm";
   onstop?: () => void; ondataavailable?: (event: { data: Blob }) => void;
@@ -29,11 +30,11 @@ beforeEach(() => {
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   HTMLElement.prototype.scrollIntoView = vi.fn();
   Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: { getUserMedia: vi.fn().mockResolvedValue({ getTracks: () => [{ stop: stopTrack }] }) } });
-  api.call.mockImplementation(async (path: string) => path === "/speech/providers" ? Response.json({ granted: true, providers: [{ appId: "whisper", key: "default", displayName: "Whisper", available: true }] }) : new Promise<Response>(resolve => { resolveTranscript = resolve; }));
+  api.call.mockImplementation(async (path: string) => path === "/speech/providers" ? Response.json({ granted: true, providers: [{ appId: "whisper", key: "default", displayName: "Whisper", available: true }] }) : path.startsWith("/speech/capabilities?") ? Response.json(capabilities) : new Promise<Response>(resolve => { resolveTranscript = resolve; }));
   api.recordingWave.mockResolvedValue(new Blob(["wave"]));
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
 });
-afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); });
+afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 it("inserts recognized text only after stop and releases the microphone", async () => {
   await render(); await click("Dictate"); expect(onText).not.toHaveBeenCalled();
   await click("Stop recording"); expect(stopTrack).toHaveBeenCalled();
@@ -99,7 +100,7 @@ const chooseProvider = async (label: string) => {
 };
 it("preserves explicit empty and unavailable speech choices and sends the selected identity", async () => {
   const roster = { granted: true, providers: [{ appId: "speech.one", key: "fast", displayName: "Fast speech", available: true }, { appId: "speech.two", key: "accurate", displayName: "Accurate speech", available: true }, { appId: "speech.offline", key: "default", displayName: "Offline speech", available: false }] };
-  api.call.mockImplementation(async (path: string) => path === "/speech/providers" ? Response.json(roster) : new Promise<Response>(resolve => { resolveTranscript = resolve; }));
+  api.call.mockImplementation(async (path: string) => path === "/speech/providers" ? Response.json(roster) : path.startsWith("/speech/capabilities?") ? Response.json(capabilities) : new Promise<Response>(resolve => { resolveTranscript = resolve; }));
   await render();
   const dictate = () => document.querySelector<HTMLButtonElement>('[aria-label="Dictate"]')!;
   expect(dictate().disabled).toBe(true);
@@ -120,7 +121,7 @@ it("preserves explicit empty and unavailable speech choices and sends the select
 });
 it("keeps an unknown speech identity after discovery refresh until an explicit selection", async () => {
   let providers = [{ appId: "speech.one", key: "fast", displayName: "Fast speech", available: true }, { appId: "speech.two", key: "accurate", displayName: "Accurate speech", available: true }];
-  api.call.mockImplementation(async () => Response.json({ granted: true, providers }));
+  api.call.mockImplementation(async (path: string) => Response.json(path.startsWith("/speech/capabilities?") ? capabilities : { granted: true, providers }));
   await render(); await chooseProvider("Accurate speech");
   providers = [{ appId: "speech.one", key: "fast", displayName: "Fast speech", available: true }, { appId: "speech.three", key: "new", displayName: "New speech", available: true }];
   await act(async () => window.dispatchEvent(new Event("focus")));
@@ -187,4 +188,61 @@ it("keeps dictation usable when signal analysis is unavailable", async () => {
   await click("Stop recording");
   await act(async () => resolveTranscript(Response.json({ text: "Recording still works" })));
   expect(onText).toHaveBeenCalledExactlyOnceWith("Recording still works");
+});
+
+it("records past two minutes and stops before ten minutes with elapsed/limit feedback", async () => {
+  vi.useFakeTimers(); await render(); await click("Dictate");
+  await act(async () => { await vi.advanceTimersByTimeAsync(121_000); });
+  expect(container.querySelector('[role="timer"]')?.textContent).toBe("2:01 / 10:00");
+  expect(container.querySelector('[aria-label="Stop recording"]')).not.toBeNull();
+  expect(api.recordingWave).not.toHaveBeenCalled();
+  await act(async () => { await vi.advanceTimersByTimeAsync(478_000); });
+  expect(api.recordingWave).toHaveBeenCalledWith(expect.any(Blob), { maxDurationSeconds: 600, maxBytes: 19_200_044 });
+  expect(stopTrack).toHaveBeenCalled(); expect(container.querySelector('[role="timer"]')).toBeNull();
+});
+
+it("uses a smaller provider byte budget for its auto-stop and WAV conversion", async () => {
+  vi.useFakeTimers();
+  const original = api.call.getMockImplementation()!;
+  api.call.mockImplementation((path: string, ...args: unknown[]) => path.startsWith("/speech/capabilities?")
+    ? Promise.resolve(Response.json({ ...capabilities, maxBytes: 44 + 90 * 16000 * 2 })) : original(path, ...args));
+  await render(); await click("Dictate");
+  expect(container.querySelector('[role="timer"]')?.textContent).toBe("0:00 / 1:30");
+  await act(async () => { await vi.advanceTimersByTimeAsync(89_000); });
+  expect(api.recordingWave).toHaveBeenCalledWith(expect.any(Blob), { maxDurationSeconds: 90, maxBytes: 2_880_044 });
+});
+
+it("waits for trustworthy capabilities and ignores replies after a conversation switch", async () => {
+  let resolveLimits!: (response: Response) => void;
+  const original = api.call.getMockImplementation()!;
+  api.call.mockImplementation((path: string, ...args: unknown[]) => path.startsWith("/speech/capabilities?")
+    ? new Promise<Response>(resolve => { resolveLimits = resolve; }) : original(path, ...args));
+  await render();
+  expect(document.querySelector<HTMLButtonElement>('[aria-label="Dictate"]')!.disabled).toBe(true);
+  const stale = resolveLimits; await render("two");
+  await act(async () => stale(Response.json(capabilities)));
+  expect(document.querySelector<HTMLButtonElement>('[aria-label="Dictate"]')!.disabled).toBe(true);
+  await act(async () => resolveLimits(Response.json({ ...capabilities, ready: false })));
+  expect(document.querySelector<HTMLButtonElement>('[aria-label="Dictate"]')!.disabled).toBe(true);
+  expect(document.querySelector('[aria-label="Dictate"]')?.parentElement?.getAttribute("aria-label")).toContain("Could not check recording limits");
+  expect(navigator.mediaDevices.getUserMedia).not.toHaveBeenCalled();
+});
+
+it("stops a late microphone grant after cancellation without sending audio", async () => {
+  let grant!: (stream: MediaStream) => void;
+  vi.mocked(navigator.mediaDevices.getUserMedia).mockImplementation(() => new Promise(resolve => { grant = resolve; }));
+  await render(); await click("Dictate"); await click("Cancel dictation");
+  await act(async () => grant({ getTracks: () => [{ stop: stopTrack }] } as unknown as MediaStream));
+  expect(stopTrack).toHaveBeenCalled(); expect(api.recordingWave).not.toHaveBeenCalled(); expect(onText).not.toHaveBeenCalled();
+});
+
+it("inserts into the updated draft callback and reports an empty transcription without inserting text", async () => {
+  await render(); await click("Dictate"); await click("Stop recording");
+  const updatedDraft = vi.fn();
+  await act(async () => root.render(<SpeechInput disabled={false} onText={updatedDraft} key="one" />));
+  await act(async () => resolveTranscript(Response.json({ text: "Additional words" })));
+  expect(updatedDraft).toHaveBeenCalledExactlyOnceWith("Additional words"); expect(onText).not.toHaveBeenCalled();
+  await click("Dictate"); await click("Stop recording");
+  await act(async () => resolveTranscript(Response.json({ text: "  " })));
+  expect(updatedDraft).toHaveBeenCalledOnce(); expect(container.querySelector('[role="alert"]')?.textContent).toContain("No speech detected");
 });

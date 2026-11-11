@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-16
-updated: 2026-10-27
+updated: 2026-11-10
 summary: Epic for prompt-driven app creation, live iteration, integration with installed apps and optional publication.
 components: [apps/core, apps/harness, apps/shell]
 ---
@@ -69,7 +69,7 @@ This is working-copy acceptance, not evidence of a merged PR or published releas
 | --- | --- | --- |
 | Durable source | Canonical local Git, one consented bootstrap commit, removal/source-loss review and retained-source reinstall | New no-Git creation is deferred by owner decision; existing no-Git compatibility is retained |
 | Session workspaces | Multi-app worktrees, leases, continuation, local acceptance and protected cleanup | General development-session integration stays in its own plan |
-| Assistant and UI | Codex/Claude Docker worker, Create app/Continue building, recoverable form and guide access | Cross-provider session continuity and broader instruction/approval policy stay separate |
+| Assistant and UI | Codex/Claude Docker worker, Create app, retained work in Sessions, new tasks through New session and descriptive app context, recoverable form and guide access | Authorized source preparation, cross-provider session continuity and broader instruction/approval policy stay separate |
 | Preview | Multi-service Docker in a reusable child Core, separate data/users, optional checks and Finish | Broader host/architecture acceptance belongs to sandbox and mixed-runtime plans |
 | Source publication | Existing remote connection, reviewed commit/push/draft PR and CI/review observation | Hosted repository/release/feed/catalog provisioning belongs to App Publication |
 | App integrations | Dependency discovery/configuration, identity/SDK contracts, app MCP and skills | This umbrella owns guided compatible-interface selection, generated integration and verification |

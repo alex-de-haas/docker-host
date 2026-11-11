@@ -398,7 +398,8 @@ internal sealed partial class DevelopmentWorkspaceService
                 {
                     var tree = await Read(snapshot.Id, null, ct);
                     if (!tree.Owner.SameIdentity(owner)) throw Error("forbidden", "The discard allocation owner changed.");
-                    if (!journal.Direct) await CheckDiscardConsumers(tree, [], ct);
+                    if (journal.Direct) await RequireDeleteRuntimeIdleAsync(tree, ct);
+                    else await CheckDiscardConsumers(tree, [], ct);
                     if (!journal.Direct && tree.Operations.Any(o => (o.State is "pending" or "unknown") && o.Id != "discard-" + input.RequestId))
                         throw Error("operation_pending", "An unrelated source operation blocks removal.");
                     if (tree.State == "released") continue;
@@ -422,7 +423,8 @@ internal sealed partial class DevelopmentWorkspaceService
                     if (tree.State != "released")
                     {
                         var reviewed = plan.Trees.Single(t => t.Id == tree.Id);
-                        if (!journal.Direct) await CheckDiscardConsumers(tree, [], ct);
+                        if (journal.Direct) await RequireDeleteRuntimeIdleAsync(tree, ct);
+                        else await CheckDiscardConsumers(tree, [], ct);
                         var operation = new WorkspaceOperation("discard-" + input.RequestId, "discard", input.Digest, "pending", reviewed.Head);
                         tree = tree with { State = "releasing", Operations = [.. tree.Operations.Where(o => o.Id != operation.Id)
                             .Select(o => journal.Direct && o.State is ("pending" or "unknown") ? o with { State = "failed", Error = "Canceled by workspace deletion." } : o), operation] };
@@ -495,7 +497,8 @@ internal sealed partial class DevelopmentWorkspaceService
             foreach (var tree in result.Snapshots!)
             {
                 if (tree.State != "released" || PathEntryExists(tree.Path)) throw Error("cleanup_pending", "Source absence cannot be verified.");
-                if (!result.Direct) await CheckDiscardConsumers(tree, [], ct);
+                if (result.Direct) await RequireDeleteRuntimeIdleAsync(tree, ct);
+                else await CheckDiscardConsumers(tree, [], ct);
                 var branch = await Git(RepoPath(tree.RepositoryId), ["show-ref", "--verify", "--quiet", "refs/heads/" + tree.Branch], ct, true);
                 if (branch.ExitCode != 1) throw Error("cleanup_pending", "The private branch is present or cannot be verified.");
                 var registrations = await Git(RepoPath(tree.RepositoryId), ["worktree", "list", "--porcelain", "-z"], ct);
