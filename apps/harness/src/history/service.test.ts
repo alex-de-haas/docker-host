@@ -41,13 +41,16 @@ it("keeps other administrators out and excludes native state, tool inputs and ac
 
 it("retains suggestion choices in owned exports and shares them only with explicit extension disclosure", async () => {
   await event(3, "prompt_suggestion_created", { suggestionId: "suggestion", sessionId: record.id, userId: owner.userId,
-    attemptId: "native-attempt", answerSeq: 2, text: "Review <script>literally</script>", contextKey: "private-context", expiresAt: now + 900000 });
+    attemptId: "native-attempt", answerSeq: 2, text: "Review <script>literally</script>", contextKey: "private-context" });
   const initial = await history.read(owner, { conversation: ref() });
   expect(initial.entries.at(-1)?.data).toMatchObject({ kind: "extension", payload: { state: "available" } });
   await share({ selection: { entryIds: [entry(3).id] } });
   await expect(history.get(recipient, { entry: entry(3) })).rejects.toMatchObject({ code: "not_found" });
   const declaration = history.capabilities.extensions.find(extension => extension.name === "hosty.harness/prompt-suggestion");
   expect(declaration).toMatchObject({ version: 1, schema: { type: "object", required: ["suggestionId", "text", "state"] } });
+  expect(declaration).toMatchObject({ schema: { properties: { state: { enum: ["available", "selected-for-draft", "dismissed", "superseded"] } } } });
+  expect(declaration).not.toHaveProperty("schema.properties.expiresAt");
+  expect(initial.entries.at(-1)?.data).not.toHaveProperty("payload.expiresAt");
   expect(initial.entries.at(-1)?.data).toMatchObject({ name: declaration!.name, version: declaration!.version });
   await share({ selection: { entryIds: [entry(3).id] }, extensions: [declaration!.name] });
   expect((await history.get(recipient, { entry: entry(3) })).data).toMatchObject({ kind: "extension", fallbackText: expect.stringContaining("Review <script>literally</script>") });

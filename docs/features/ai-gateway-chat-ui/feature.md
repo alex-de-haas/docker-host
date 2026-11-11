@@ -1,6 +1,6 @@
 ---
 created: 2026-09-22
-updated: 2026-11-09
+updated: 2026-11-11
 summary: The chat components Harness uses for messages, code blocks, attachments, the composer and collapsible activity.
 components: [apps/harness]
 ---
@@ -108,9 +108,11 @@ workspaces or native-exit recovery confirms that release is safe.
 
 After a successful answer, the optional native prediction phase allows a new Send to preempt
 collection and wait for native cleanup. A suggestion appears as its own literal-text card in the
-conversation history. **Use suggestion** or Tab records Selected for draft and inserts an editable
+conversation history and as muted placeholder text in the empty, available composer. Typing hides
+the placeholder hint. **Use suggestion** or Tab records Selected for draft and inserts an editable
 draft when its original empty draft generation still applies. Escape or **Dismiss** records dismissal.
-The original card and recorded choice survive reload and restart. Selection never sends automatically.
+The original card and recorded choice survive reload and restart. Suggestions do not expire with time;
+new messages and context changes supersede them. Selection never sends automatically.
 Typed content, IME, pending decisions, attachments, restored drafts and queue edits take precedence.
 See [Contextual prompt suggestions](../assistant-prompt-suggestions/feature.md)
 for provider availability, personal preference and freshness rules.

@@ -355,6 +355,13 @@ it("persists suggestion history and preempts collection before a new user send",
   const history = await manager.historicalSuggestions(record.id, "owner");
   expect(history).toHaveLength(1);
   expect(history[0]).toMatchObject({ state: "available", text: "Next?", userId: "owner", sessionId: record.id });
+  const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 24 * 60 * 60_000);
+  try {
+    const later = await manager.subscribe(record.id, 0, () => {});
+    expect(later.replay.find(e => e.type === "session_suggestion")).toMatchObject({ state: "available", text: "Next?" });
+    later.unsubscribe();
+    expect((await manager.historicalSuggestions(record.id, "owner"))[0]).toMatchObject({ state: "available" });
+  } finally { clock.mockRestore(); }
   const choice = { requestId: randomUUID(), expectedRevision: 1, action: "selected-for-draft" };
   const selected = await manager.suggestionAction(record.id, "owner", history[0]!.suggestionId, choice);
   expect(selected.state).toBe("selected-for-draft");

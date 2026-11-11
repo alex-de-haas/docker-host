@@ -1,6 +1,5 @@
 /** Native predictions are optional plain text, never another model turn or tool request. */
 export const SUGGESTION_DEADLINE_MS = 30_000;
-export const SUGGESTION_TTL_MS = 15 * 60_000;
 export type SuggestionReason = "unavailable" | "unsupported" | "timeout";
 export type PromptSuggestion = { type: "prompt_suggestion"; text: string | null; reason?: SuggestionReason };
 export function suggestionText(value: unknown): string | null {

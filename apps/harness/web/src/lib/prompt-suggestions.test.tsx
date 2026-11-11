@@ -12,8 +12,8 @@ vi.mock("./assistant-api", () => ({
   AssistantApiError: class extends Error { constructor(public code: string, message: string, public status: number) { super(message); } },
 }));
 const session: AssistantSession = { id: "chat", createdBy: "owner", status: "idle", title: null, createdAt: "" };
-const created: AssistantEvent = { type: "prompt_suggestion_created", seq: 2, ts: "2026-11-09T12:00:00Z", suggestionId: "suggestion", sessionId: "chat", userId: "owner", attemptId: "attempt", text: "Review @app literally", answerSeq: 1, expiresAt: Date.now() + 900000 };
-const result = (state: PromptSuggestion["state"] = "selected-for-draft"): PromptSuggestion => ({ suggestionId: "suggestion", sessionId: "chat", userId: "owner", attemptId: "attempt", text: String(created.text), answerSeq: 1, expiresAt: Number(created.expiresAt), createdAt: created.ts, revision: 2, state });
+const created: AssistantEvent = { type: "prompt_suggestion_created", seq: 2, ts: "2026-11-09T12:00:00Z", suggestionId: "suggestion", sessionId: "chat", userId: "owner", attemptId: "attempt", text: "Review @app literally", answerSeq: 1 };
+const result = (state: PromptSuggestion["state"] = "selected-for-draft"): PromptSuggestion => ({ suggestionId: "suggestion", sessionId: "chat", userId: "owner", attemptId: "attempt", text: String(created.text), answerSeq: 1, createdAt: created.ts, revision: 2, state });
 let root: Root, container: HTMLDivElement, hook: ReturnType<typeof usePromptSuggestions>, occupied: boolean;
 const insert = vi.fn(() => true);
 function Probe() {
@@ -28,7 +28,7 @@ beforeEach(async () => {
   vi.mocked(resolvePromptSuggestion).mockResolvedValue(result());
   container = document.createElement("div"); document.body.append(container); root = createRoot(container); await render(); await receive();
 });
-afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); });
+afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 it("records selection before inserting literal draft text and never inserts on a competing choice", async () => {
   vi.mocked(resolvePromptSuggestion).mockImplementation(async () => { expect(insert).not.toHaveBeenCalled(); return result(); });
   await act(async () => { await hook.select("suggestion"); });
@@ -88,8 +88,17 @@ it("recovers the saved-draft crash window without another insertion or recreatin
   expect(insert).not.toHaveBeenCalled();
 });
 
-it("accepts the authoritative choice even after the UI derived local expiry", () => {
-  const expired = new Map([["suggestion", { ...result("expired"), revision: 1 }]]);
-  const resolved = reduceSuggestion(expired, { type: "prompt_suggestion_resolved", seq: 3, ts: "", suggestionId: "suggestion", state: "selected-for-draft" });
-  expect(resolved.get("suggestion")).toMatchObject({ state: "selected-for-draft", revision: 2 });
+it("keeps the hint and accepts its original text after waiting beyond the old time limit", async () => {
+  vi.useFakeTimers();
+  await act(async () => { await vi.advanceTimersByTimeAsync(24 * 60 * 60_000); });
+  expect(hook.suggestion?.text).toBe(created.text);
+  expect(hook.cards.get("suggestion")?.state).toBe("available");
+  await act(async () => { await hook.select("suggestion"); });
+  expect(insert).toHaveBeenCalledExactlyOnceWith(created.text);
+});
+it("replays legacy expiry as supersession while preserving the terminal revision", () => {
+  const cards = reduceSuggestion(new Map(), created);
+  const closed = reduceSuggestion(cards, { type: "prompt_suggestion_resolved", seq: 3, ts: "", suggestionId: "suggestion", state: "expired" });
+  expect(closed.get("suggestion")).toMatchObject({ state: "superseded", revision: 2 });
+  expect(reduceSuggestion(closed, created).get("suggestion")).toMatchObject({ state: "superseded", revision: 2 });
 });

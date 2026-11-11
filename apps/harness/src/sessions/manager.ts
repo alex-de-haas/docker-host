@@ -7,7 +7,7 @@ import { canonicalAlias } from "../mcp/core-aliases.js";
 import { coreAliases } from "../mcp/core-migration.js";
 import { AgentObservations } from "../agent-sessions/observations.js";
 import { ollamaAttachments } from "../harness/ollama/attachments.js";
-import { SUGGESTION_TTL_MS, suggestionText } from "../harness/prompt-suggestion.js";
+import { suggestionText } from "../harness/prompt-suggestion.js";
 import { SuggestionPreferences } from "./suggestion-preferences.js";
 import { SuggestionHistory } from "./suggestion-history.js";
 import { MessageQueue, type QueueAttempt, type QueueSnapshot } from "./message-queue.js";
@@ -97,8 +97,7 @@ export interface SessionListener {
 interface LiveSession {
   suggestionAllowed?: boolean;
   suggestionContext?: string;
-  suggestion?: { revision: number; attemptId?: string; state: "empty" | "collecting" | "available" | "unavailable"; text?: string; expiresAt?: number; reason?: string };
-  suggestionTimer?: NodeJS.Timeout;
+  suggestion?: { revision: number; attemptId?: string; state: "empty" | "collecting" | "available" | "unavailable"; text?: string; reason?: string };
   activityRunStarted?: boolean;
   toolOutputCalls?: Map<string, string | null>;
   runEpoch?: string;
@@ -256,14 +255,12 @@ export class SessionManager {
       record.workspaceAssociation, record.developmentWorkspaces?.map(tree => [tree.id, tree.state, tree.observation?.head])]);
   }
   private suggestionEvent(session: LiveSession): StoredEvent {
-    const stale = session.suggestionContext !== undefined && session.suggestionContext !== this.suggestionSignature(session)
-      || session.suggestion?.expiresAt !== undefined && session.suggestion.expiresAt <= Date.now();
+    const stale = session.suggestionContext !== undefined && session.suggestionContext !== this.suggestionSignature(session);
     if (stale) this.clearSuggestion(session);
     return { seq: -2, ts: new Date().toISOString(), type: "session_suggestion", epoch: this.suggestionEpoch,
       sessionId: session.record.id, userId: session.record.createdBy, ...session.suggestion ?? { revision: 0, state: "empty" } };
   }
   private clearSuggestion(session: LiveSession): void {
-    clearTimeout(session.suggestionTimer); session.suggestionTimer = undefined;
     session.suggestionAllowed = false; session.suggestionContext = undefined;
     session.suggestion = { revision: (session.suggestion?.revision ?? 0) + 1, state: "empty" };
     this.fanOut(session, this.suggestionEvent(session));
@@ -3268,7 +3265,6 @@ export class SessionManager {
     // must not defer the deadline until after its own pending writes have completed.
     const draining = this.drainHarnessEvents();
     for (const session of this.live.values()) {
-      clearTimeout(session.suggestionTimer);
       if (session.workspaceActivityTimer) clearTimeout(session.workspaceActivityTimer);
       session.workspaceActivityTimer = undefined;
       if (!this.worker && (session.record.developmentLease || session.record.taskExecutionId) && session.run?.stopAndWait) {
@@ -3517,17 +3513,12 @@ export class SessionManager {
         if (!session.suggestionAllowed || session.record.status !== "suggesting"
           || session.suggestionContext !== this.suggestionSignature(session)) return;
         const text = suggestionText(event.text);
-        const expiresAt = Date.now() + SUGGESTION_TTL_MS;
         session.suggestion = { revision: (session.suggestion?.revision ?? 0) + 1, attemptId: event.workerRunId,
-          state: text ? "available" : "unavailable", ...(text ? { text, expiresAt } : { reason: event.reason ?? "unavailable" }) };
+          state: text ? "available" : "unavailable", ...(text ? { text } : { reason: event.reason ?? "unavailable" }) };
         session.suggestionAllowed = false;
         if (text) {
           await this.suggestionHistory.create(session.record, { attemptId: event.workerRunId ?? session.record.workerRun?.id ?? session.runEpoch ?? randomUUID(), text,
-            contextKey: this.suggestionSignature(session), expiresAt });
-          session.suggestionTimer = setTimeout(() => {
-            void this.serialize(id, async () => { await this.suggestionHistory.reconcile(session.record, this.suggestionSignature(session)); this.clearSuggestion(session); }).catch(() => undefined);
-          }, SUGGESTION_TTL_MS);
-          session.suggestionTimer.unref();
+            contextKey: this.suggestionSignature(session) });
         }
         this.fanOut(session, this.suggestionEvent(session));
         return;

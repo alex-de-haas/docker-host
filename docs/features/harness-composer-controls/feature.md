@@ -1,6 +1,6 @@
 ---
 created: 2026-11-03
-updated: 2026-11-10
+updated: 2026-11-11
 summary: Responsive composer controls with a durable message stack, transcript suggestions, shared agent settings and capability-aware dictation.
 components: [apps/harness]
 ---
@@ -126,11 +126,13 @@ the old view cannot continue saving against the transferred reservation.
 ## Suggestions In The Transcript
 
 Suggestions appear as separate cards in the conversation history. Each card retains its literal
-text and selected-for-draft, dismissed, expired or superseded state. Use suggestion inserts into
+text and selected-for-draft, dismissed or superseded state. Suggestions have no time limit.
+Use suggestion inserts into
 an empty ordinary draft, and Dismiss records that choice. Selection never sends a message by
 itself. A populated draft or active queue edit disables insertion and explains how to preserve
-the current work. The inline Tab hint follows the available card; suggestion text is absent
-from the input placeholder/overlay. See [Prompt suggestions](../assistant-prompt-suggestions/feature.md).
+the current work. An actionable suggestion replaces the empty input's placeholder in muted text;
+typing hides the hint. Tab accepts it into the editable draft and Escape dismisses it. The ordinary
+placeholder returns when no suggestion is actionable. See [Prompt suggestions](../assistant-prompt-suggestions/feature.md).
 
 ## Dictation
 

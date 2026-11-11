@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -13,17 +13,18 @@ const build = () => new SuggestionHistory(store, async (id, payload) => {
   await store.appendEvent(id, { seq, ts: new Date(now).toISOString(), ...payload });
   await store.saveRecord(record);
   return seq;
-}, () => now);
+});
 const create = (attemptId = "attempt") => history.create(record, { attemptId, text: "Review @app literally <script>hello</script>", contextKey: "context-one" });
 const action = (extra = {}) => ({ requestId: randomUUID(), expectedRevision: 1, action: "selected-for-draft", ...extra });
 beforeEach(async () => {
   root = await mkdtemp(path.join(tmpdir(), "hosty-suggestion-history-")); now = Date.parse("2026-11-09T12:00:00Z");
+  vi.spyOn(Date, "now").mockImplementation(() => now);
   store = new SessionStore(root);
   record = { id: randomUUID(), createdBy: "owner", title: null, context: null, status: "idle", createdAt: new Date(now).toISOString(), updatedAt: new Date(now).toISOString(), harnessSessionId: null, lastEventSeq: 1 };
   await store.createSession(record); await store.appendEvent(record.id, { seq: 1, ts: record.createdAt, type: "assistant_text", text: "Completed answer." });
   history = build();
 });
-afterEach(async () => { await rm(root, { recursive: true, force: true }); });
+afterEach(async () => { vi.restoreAllMocks(); await rm(root, { recursive: true, force: true }); });
 
 it("retains literal correlated predictions once across duplicate delivery and restart", async () => {
   const first = await create(); history = build();
@@ -31,7 +32,7 @@ it("retains literal correlated predictions once across duplicate delivery and re
   expect(first).toMatchObject({ answerSeq: 1, state: "available", revision: 1, text: "Review @app literally <script>hello</script>" });
   expect((await store.readEvents(record.id)).map(event => event.type)).toEqual(["assistant_text", "prompt_suggestion_created"]);
 });
-it("returns the exact recorded choice after lost replies/restart/expiry and rejects competing choices", async () => {
+it("returns the exact recorded choice after lost replies/restart and rejects competing choices", async () => {
   const value = await create(), input = action();
   const selected = await history.action(record, "owner", value.suggestionId, input, "context-one");
   now += 20 * 60_000; history = build();
@@ -47,15 +48,34 @@ it("checks owner and UUID/revision before writing any explicit choice", async ()
   await expect(history.action(record, "owner", value.suggestionId, action({ expectedRevision: 7 }), "context-one")).rejects.toMatchObject({ status: 409 });
   expect((await history.read(record)).get(value.suggestionId)?.state).toBe("available");
 });
-it("reconciles unresolved deadlines on restart and separates automatic context supersession", async () => {
-  const first = await create(); now += 16 * 60_000; history = build();
+it("keeps suggestions available after long waits and restart, while superseding changed context", async () => {
+  const first = await create(); now += 30 * 24 * 60 * 60_000; history = build();
   await history.reconcile(record, "context-one");
-  expect((await history.read(record)).get(first.suggestionId)?.state).toBe("expired");
+  expect((await history.read(record)).get(first.suggestionId)?.state).toBe("available");
+  expect((await store.readEvents(record.id)).find(event => event.type === "prompt_suggestion_created")).not.toHaveProperty("expiresAt");
+  expect((await store.readEvents(record.id)).filter(event => event.type === "prompt_suggestion_resolved")).toHaveLength(0);
+  expect((await history.action(record, "owner", first.suggestionId, action(), "context-one")).state).toBe("selected-for-draft");
   const second = await create("second"); await history.reconcile(record, "context-two");
   expect((await history.read(record)).get(second.suggestionId)?.state).toBe("superseded");
   await history.reconcile(record, "context-two");
   expect((await store.readEvents(record.id)).filter(event => event.type === "prompt_suggestion_resolved")).toHaveLength(2);
   await expect(history.action(record, "owner", second.suggestionId, action(), "context-two")).rejects.toMatchObject({ code: "suggestion_changed" });
+});
+it("ignores old deadline fields when reading and selecting unresolved suggestions", async () => {
+  await store.appendEvent(record.id, { type: "prompt_suggestion_created", seq: ++record.lastEventSeq, ts: new Date(now).toISOString(),
+    suggestionId: "legacy", sessionId: record.id, userId: "owner", attemptId: "legacy", answerSeq: 1, text: "Continue", contextKey: "context-one", expiresAt: now - 1 });
+  history = build(); await history.reconcile(record, "context-one");
+  expect((await history.action(record, "owner", "legacy", action(), "context-one")).state).toBe("selected-for-draft");
+});
+it("reads legacy expiry receipts as terminal supersession without reviving closed choices", async () => {
+  const value = await create();
+  await store.appendEvent(record.id, { type: "prompt_suggestion_resolved", seq: ++record.lastEventSeq, ts: new Date(now).toISOString(),
+    suggestionId: value.suggestionId, state: "expired" });
+  history = build(); await history.reconcile(record, "context-one");
+  expect((await history.read(record)).get(value.suggestionId)).toMatchObject({ state: "superseded", revision: 2 });
+  await expect(history.action(record, "owner", value.suggestionId, action(), "context-one")).rejects.toMatchObject({ code: "suggestion_changed" });
+  const entries = project(record, await store.readEvents(record.id), { appId: "unrelated.harness", installationId: "install", key: "history" });
+  expect(entries[1]!.data).toMatchObject({ payload: { state: "superseded" }, fallbackText: `Suggested next message: ${value.text}\nSuperseded` });
 });
 it("exports one extension with original text and chosen action without manufacturing a model turn", async () => {
   const value = await create(); now += 1000;

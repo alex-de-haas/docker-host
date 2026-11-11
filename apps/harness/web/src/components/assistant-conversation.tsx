@@ -1466,7 +1466,8 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                 }}
                 rows={2}
                 aria-label="Message"
-                placeholder={session ? "Ask the operator assistant…" : "Waiting for the gateway…"}
+                aria-description={visibleSuggestion ? "Suggested next message. Press Tab to insert or Escape to dismiss." : undefined}
+                placeholder={visibleSuggestion?.text ?? (session ? "Ask the operator assistant…" : "Waiting for the gateway…")}
                 disabled={!session || editLocked}
                 className="max-h-48 min-h-20 w-full px-3"
               />
