@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { suggestionText, SUGGESTION_TTL_MS } from "../harness/prompt-suggestion.js";
+import { suggestionText, suggestionCompatibilityExpiresAt } from "../harness/prompt-suggestion.js";
 import { AppContextError } from "./app-context.js";
 import { messageRequestId, type SessionRecord, type SessionStore, type StoredEvent } from "./store.js";
 
-export type SuggestionState = "available" | "selected-for-draft" | "dismissed" | "expired" | "superseded";
+export type SuggestionState = "available" | "selected-for-draft" | "dismissed" | "superseded";
 export interface HistoricalSuggestion {
   suggestionId: string;
   sessionId: string;
@@ -12,7 +12,6 @@ export interface HistoricalSuggestion {
   answerSeq: number;
   text: string;
   contextKey: string;
-  expiresAt: number;
   revision: number;
   state: SuggestionState;
   createdAt: string;
@@ -20,6 +19,14 @@ export interface HistoricalSuggestion {
 }
 export const SUGGESTION_CREATED = "prompt_suggestion_created";
 export const SUGGESTION_RESOLVED = "prompt_suggestion_resolved";
+
+/** Keep old browser wire readers working without adding a deadline to persisted choice state. */
+export function legacyCompatibleSuggestion(value: HistoricalSuggestion): HistoricalSuggestion & { expiresAt: number } {
+  const resolvedAt = Date.parse(value.resolvedAt ?? ""), createdAt = Date.parse(value.createdAt);
+  // Available hints roll forward; terminal receipts must remain identical on an exact UUID retry.
+  const at = value.state === "available" ? Date.now() : Number.isFinite(resolvedAt) ? resolvedAt : Number.isFinite(createdAt) ? createdAt : 0;
+  return { ...value, expiresAt: suggestionCompatibilityExpiresAt(at) };
+}
 
 /** Only literal, correlated prediction metadata is persisted; this never creates a model turn. */
 export function historicalSuggestions(events: readonly StoredEvent[]): Map<string, HistoricalSuggestion> {
@@ -30,13 +37,15 @@ export function historicalSuggestions(events: readonly StoredEvent[]): Map<strin
       values.set(event.suggestionId, {
         suggestionId: event.suggestionId, sessionId: String(event.sessionId), userId: String(event.userId),
         attemptId: String(event.attemptId), answerSeq: Number(event.answerSeq), text: event.text,
-        contextKey: String(event.contextKey), expiresAt: Number(event.expiresAt), revision: 1,
+        contextKey: String(event.contextKey), revision: 1,
         state: "available", createdAt: event.ts,
       });
     } else if (event.type === SUGGESTION_RESOLVED && typeof event.suggestionId === "string") {
       const previous = values.get(event.suggestionId);
-      if (previous?.state === "available" && ["selected-for-draft", "dismissed", "expired", "superseded"].includes(String(event.state)))
-        values.set(event.suggestionId, { ...previous, state: event.state as SuggestionState, revision: 2, resolvedAt: event.ts });
+      // Old expiry receipts remain terminal; removing the timer must not revive a closed choice.
+      const state = event.state === "expired" ? "superseded" : event.state;
+      if (previous?.state === "available" && ["selected-for-draft", "dismissed", "superseded"].includes(String(state)))
+        values.set(event.suggestionId, { ...previous, state: state as SuggestionState, revision: 2, resolvedAt: event.ts });
     }
   }
   return values;
@@ -45,19 +54,18 @@ export function historicalSuggestions(events: readonly StoredEvent[]): Map<strin
 type Append = (sessionId: string, payload: Record<string, unknown> & { type: string }) => Promise<number | undefined>;
 /** The caller holds the existing session serializer for every operation, including reconciliation. */
 export class SuggestionHistory {
-  constructor(private readonly store: Pick<SessionStore, "readEvents">, private readonly append: Append, private readonly now = Date.now) {}
+  constructor(private readonly store: Pick<SessionStore, "readEvents">, private readonly append: Append) {}
 
-  async create(record: SessionRecord, input: { attemptId: string; text: string; contextKey: string; expiresAt?: number }): Promise<HistoricalSuggestion> {
+  async create(record: SessionRecord, input: { attemptId: string; text: string; contextKey: string }): Promise<HistoricalSuggestion> {
     const text = suggestionText(input.text);
     if (!text || !input.attemptId) throw new AppContextError(400, "invalid_suggestion", "The suggestion is invalid.");
     const events = await this.store.readEvents(record.id);
     const existing = [...historicalSuggestions(events).values()].find(value => value.attemptId === input.attemptId);
     if (existing) return existing;
-    await this.invalidate(record, "superseded");
+    await this.invalidate(record);
     const suggestionId = randomUUID(), answerSeq = events.findLast(event => event.type === "assistant_text")?.seq ?? 0;
-    const expiresAt = input.expiresAt ?? this.now() + SUGGESTION_TTL_MS;
     await this.append(record.id, { type: SUGGESTION_CREATED, suggestionId, sessionId: record.id, userId: record.createdBy,
-      attemptId: input.attemptId, answerSeq, text, contextKey: input.contextKey, expiresAt });
+      attemptId: input.attemptId, answerSeq, text, contextKey: input.contextKey, expiresAt: suggestionCompatibilityExpiresAt() });
     return (await this.read(record)).get(suggestionId)!;
   }
 
@@ -68,14 +76,14 @@ export class SuggestionHistory {
   async reconcile(record: SessionRecord, contextKey: string): Promise<void> {
     for (const value of (await this.read(record)).values()) {
       if (value.state !== "available") continue;
-      const state = value.expiresAt <= this.now() ? "expired" : value.contextKey !== contextKey ? "superseded" : null;
-      if (state) await this.append(record.id, { type: SUGGESTION_RESOLVED, suggestionId: value.suggestionId, state });
+      if (value.contextKey !== contextKey)
+        await this.append(record.id, { type: SUGGESTION_RESOLVED, suggestionId: value.suggestionId, state: "superseded" });
     }
   }
 
-  async invalidate(record: SessionRecord, state: "superseded" | "expired" = "superseded"): Promise<void> {
+  async invalidate(record: SessionRecord): Promise<void> {
     for (const value of (await this.read(record)).values()) if (value.state === "available")
-      await this.append(record.id, { type: SUGGESTION_RESOLVED, suggestionId: value.suggestionId, state });
+      await this.append(record.id, { type: SUGGESTION_RESOLVED, suggestionId: value.suggestionId, state: "superseded" });
   }
 
   async action(record: SessionRecord, actorUserId: string, suggestionId: string, input: Record<string, unknown>, contextKey: string): Promise<HistoricalSuggestion> {

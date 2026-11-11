@@ -86,7 +86,7 @@ try {
     }
     const suggestionId = randomUUID(), answer = appendFixture({ type: 'assistant_text', text: 'Controlled completed answer.' });
     const event = appendFixture({ type: 'prompt_suggestion_created', suggestionId, sessionId: session.id, userId: owner,
-      attemptId: randomUUID(), answerSeq: answer.seq, text, expiresAt: Date.now() + 600000 });
+      attemptId: randomUUID(), answerSeq: answer.seq, text });
     values.set(suggestionId, { ...event, createdAt: event.ts, state: 'available', revision: 1 });
     await page.getByRole('button', { name: /Use suggestion/ }).waitFor();
     return suggestionId;
@@ -94,6 +94,8 @@ try {
   await open();
   const message = page.getByRole('textbox', { name: 'Message', exact: true });
   await emit('Review @app <script>literally</script>');
+  await page.waitForFunction(() => document.querySelector('textarea[aria-label="Message"]')?.placeholder === 'Review @app <script>literally</script>');
+  assert.equal(await message.inputValue(), '');
   const card = page.locator('[data-slot="prompt-suggestion"]').last();
   assert.equal(await card.locator('script').count(), 0);
   assert.ok(await card.evaluate(node => !!node.closest('[aria-label="Assistant conversation"]') && !node.closest('[aria-label="Message composer"]')));
@@ -103,7 +105,11 @@ try {
   await message.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z'); assert.equal(await message.inputValue(), '');
   assert.equal(await page.getByRole('button', { name: /Use suggestion/ }).count(), 0);
   await emit('Suggestion with an existing draft'); await message.fill('Preserve my text');
+  assert.equal(await message.getAttribute('placeholder'), 'Ask the operator assistant…');
   assert.equal(await page.getByRole('button', { name: /Use suggestion/ }).isDisabled(), true);
+  await message.fill('');
+  await page.waitForFunction(() => document.querySelector('textarea[aria-label="Message"]')?.placeholder === 'Suggestion with an existing draft');
+  await message.fill('Preserve my text');
   await page.getByRole('button', { name: 'Dismiss', exact: true }).click();
   await page.waitForFunction(() => [...document.querySelectorAll('[data-slot="prompt-suggestion"]')].some(node => node.textContent.includes('Dismissed')));
   await message.fill(''); await open();

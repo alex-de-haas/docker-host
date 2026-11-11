@@ -29,7 +29,7 @@ export class HistoryService {
   readonly capabilities: HistoryCapabilities = { version: 1, entryKinds: ["message", "tool_call", "tool_result", "usage", "extension"],
     extensions: [{ name: PROMPT_SUGGESTION_EXTENSION, version: 1, schema: { type: "object", required: ["suggestionId", "text", "state"], properties: {
       suggestionId: { type: "string" }, answerSeq: { type: "integer" }, text: { type: "string" },
-      state: { enum: ["available", "selected-for-draft", "dismissed", "expired", "superseded"] }, expiresAt: { type: "number" }, resolvedAt: { type: "string" },
+      state: { enum: ["available", "selected-for-draft", "dismissed", "superseded"] }, resolvedAt: { type: "string" },
     } } }], maxPageSize: 200, snapshotLifetimeSeconds: 900, changeRetentionSeconds: 604800 };
   constructor(readonly sessions: SessionStore, readonly provider: ProviderRef, private readonly now: () => number = Date.now) {
     this.storage = new HistoryStorage(sessions.dataDir);
