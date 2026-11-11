@@ -1241,7 +1241,7 @@ export class SessionManager {
           this.environmentCreations.set(id, creations);
         }
       }
-      return { token, input, journal, inventoryFrom: action === "environment-list" ? this.environmentSequence : undefined };
+      return { token, input, journal, inventoryFrom: action === "environment-list" && this.development.environmentInventoryCoversUser ? this.environmentSequence : undefined };
     });
     let result: unknown;
     try { result = await this.development!.environment(prepared.token, action, prepared.input); }
@@ -1288,11 +1288,12 @@ export class SessionManager {
   }
 
   /**
-   * Merges observed children into the record. A complete inventory of this session's children may
+   * Merges observed children into the record. A canonical user-wide inventory may
    * also retire pending creations: Harness stamps the session on every creation it journals and Core
    * persists that context before allocating anything. Core may capture its inventory before an
    * overlapping creation persists, so only an empty inventory requested after this process's
-   * creations for the session settled (`inventoryFrom`) proves none of them was accepted.
+   * creations for the session settled (`inventoryFrom`) proves none of them was accepted. Legacy
+   * app-scoped inventories cannot establish absence of a child created through canonical MCP.
    */
   private observeEnvironments(record: SessionRecord, environments: CoreEnvironment[], inventoryFrom?: number): void {
     const known = new Map((record.coreEnvironments ?? []).map(e => [e.id, e]));
@@ -2141,10 +2142,9 @@ export class SessionManager {
       let snapshot = await this.retentionSnapshot(record);
       if (!snapshot.resourcesFinished && !snapshot.independentEnvironments)
         throw new AppContextError(409, "resource_retained", "Finish this session's sandbox resources before deleting its conversation.");
-      const environmentToken = credential ?? live.workspaceCredential ?? live.credential;
-      if (environmentToken && this.development?.available && record.coreEnvironmentOperations?.some(o => o.action === "environment-create" && o.state === "pending")) {
+      if (this.development?.available && record.coreEnvironmentOperations?.some(o => o.action === "environment-create" && o.state === "pending")) {
         const inventoryFrom = this.environmentSequence;
-        const listed = await this.development.environment(environmentToken, "environment-list", {}) as { environments: CoreEnvironment[] };
+        const listed = await this.invokeCoreTool(id, "environment_list", {}) as { environments: CoreEnvironment[] };
         this.observeEnvironments(record, listed.environments.filter(e => e.context?.sessionId === id), inventoryFrom);
         await this.store.saveRecord(record);
       }
