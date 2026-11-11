@@ -37,6 +37,8 @@ export interface RetentionSnapshot {
 }
 export class DevelopmentClient {
   private readonly coreCalls = new AsyncLocalStorage<{ context: () => LegacyCoreContext; invoke: (call: CanonicalCall) => Promise<unknown> } | undefined>();
+  /** Canonical MCP lists both user-owned and app-owned children; legacy HTTP lists only this app's. */
+  get environmentInventoryCoversUser(): boolean { return !!this.coreCalls.getStore(); }
   withCoreMcp<T>(context: () => LegacyCoreContext, invoke: (call: CanonicalCall) => Promise<unknown>, action: () => Promise<T>): Promise<T> {
     return this.coreCalls.run({ context, invoke }, action);
   }
