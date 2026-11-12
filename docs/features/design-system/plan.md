@@ -1,9 +1,9 @@
 ---
 status: In Progress
 created: 2026-10-12
-updated: 2026-11-10
+updated: 2026-11-12
 summary: Remaining Hosty design implementation, acceptance gates and separately reviewed Core/SDK contracts, with stable deliverable IDs.
-components: [apps/shell, apps/shell-swift, packages/app-sdk, apps/core, apps/harness, assets/hosty-brand, apps/documents, apps/telemetry, apps/telemetry-ui, apps/demo-app, apps/marketplace, apps/whisper]
+components: [apps/shell, apps/shell-swift, packages/app-sdk, apps/core, apps/harness, assets/hosty-brand, apps/documents, apps/telemetry, apps/telemetry-ui, apps/demo-app, apps/marketplace]
 ---
 
 # Design System
@@ -867,9 +867,9 @@ new `assets/icon.svg` files at their existing `catalogMetadata.icon` paths. This
 the manifest schema nor its icon contract. Core branding and own-app empty illustrations remain
 separate from runtime icon rendering. Complete the remaining accents and empty artwork under D4.
 
-All seven first-party runtime apps now declare their cell SVG through existing manifest metadata,
-including Whisper. Their completed asset/version adoption is recorded in [feature.md](feature.md)
-and the verification archive. D4 retains the unfinished chart/empty-art/accent work, while D19
+The 2026-10-22 adoption covered seven first-party runtime apps, including the since-retired Whisper
+app. The current manifest inventory is recorded in [feature.md](feature.md), and the original
+asset/version verification remains in the archive. D4 retains the unfinished chart/empty-art/accent work, while D19
 retains theme and font adoption in Plans, Telemetry UI and Demo App. Catalog snapshots keep their
 vendored assets until normal publication; no source/runtime switch follows from this cleanup.
 
@@ -1178,7 +1178,6 @@ first-party app takes a free hue and a free mark. Third-party apps keep their ow
 | Plans | `#60A5FA` | `#2563EB` | P | `XXX` `X*X` `X..` |
 | Telemetry | `#A78BFA` | `#7C3AED` | T | `X*X` `.X.` `.X.` |
 | Harness | `#FB923C` | `#C2410C` | A (agent) | `.X.` `X*X` `X.X` |
-| Whisper | `#F472B6` | `#DB2777` | V (voice) | `X.X` `X.X` `.*.` |
 | Marketplace | `#FACC15` | `#A16207` | M | `XXX` `X*X` `X.X` |
 | Demo App | `#E879F9` | `#C026D3` | D | `XX.` `X*X` `XX.` |
 
@@ -1265,7 +1264,7 @@ described by the roles it provides; each role has one icon, used wherever the ap
 | --- | --- | --- |
 | `ui-client` | `app-window` | Shell, once [replaceable UI clients](../replaceable-ui-clients/plan.md) ships the role |
 | `assistant` | `bot` | Harness |
-| `speech-to-text` | `audio-lines` | Whisper |
+| `speech-to-text` | `audio-lines` | Installed speech providers |
 | `otlp-collector` | `radar` | Telemetry |
 | language model (planned) | `cpu` | reserved |
 | `text-to-speech` (planned) | `volume-2` | reserved |
@@ -1713,7 +1712,7 @@ column; the header's workspace toggle hides and shows it.
   reason that is sent with the denial. The canvas also shows Allow for this session; that would be a
   new standing grant beyond today's one-time allow or deny, so it stays out until the open question
   below is settled.
-- The composer keeps attachments, app mentions and Whisper dictation; its bottom row holds the
+- The composer keeps attachments, app mentions and speech dictation; its bottom row holds the
   provider and model and the Normal / Autonomous switch. Keep mode explanations in that menu and
   remove the duplicate footer description. The compact circular Context indicator sits immediately
   after the provider selector in both full-page and embedded chat, with used/maximum tokens,

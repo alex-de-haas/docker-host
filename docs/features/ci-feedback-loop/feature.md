@@ -1,6 +1,6 @@
 ---
 created: 2026-10-20
-updated: 2026-11-10
+updated: 2026-11-12
 summary: Affected component CI, explicit local integration checks and publication of verified main revisions.
 components: [.github, scripts]
 ---
@@ -73,7 +73,6 @@ npm run test:integration -- pull-requests
 npm run test:integration -- tasks
 npm run test:integration -- harness-local
 npm run test:integration -- feedback
-npm run test:integration -- whisper
 npm run test:integration -- opus
 npm run test:integration -- desktop
 npm run test:integration -- shell
@@ -103,7 +102,6 @@ GitHub Actions. Its small command-construction tests remain in the CI policy job
 | pull-requests | Requires .NET, Git, Python and Docker; uses a test-only provider executable in a parent-managed child Core to verify installed repositories, PR reads, scoped SSE, access isolation and Finish cleanup. |
 | sessions | Requires .NET, Git, Python and Docker; builds Core/CLI and both Harness images, then runs multi-user workspace acceptance in a parent-managed child Core with separate password-authenticated users and data. |
 | opus | Requires Node 24 and uv; builds the app, verifies real OPUS-MT Big inference, cancellation and model-cache reuse/recovery. `HOSTY_OPUS_TEST_CACHE` reuses a dedicated cache. |
-| whisper | Requires .NET; explicitly enables only NativeSpeechTests, including pinned-model download and real CPU inference. `HOSTY_WHISPER_TEST_CACHE` can reuse a verified cache. |
 
 The launcher uses `python3` on Unix and `python` on Windows. Existing fixture entry points
 remain available for focused scenarios and supported native modes; see

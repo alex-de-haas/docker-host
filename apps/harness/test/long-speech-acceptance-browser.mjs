@@ -44,7 +44,7 @@ try {
   const exchange = await page.request.post(config.harness+'/api/auth/app-code', { headers: { Origin: config.harness },
     data: { code: (await code.json()).code, codeVerifier: verifier } }); assert.equal(exchange.status(), 200);
   const caps = await page.request.get(`${config.harness}/api/speech/capabilities?${config.speechQuery}`);
-  assert.equal(caps.status(), 200); assert.equal((await caps.json()).maxDurationSeconds, 600);
+  assert.equal(caps.status(), 200); assert.ok((await caps.json()).maxDurationSeconds >= 600);
   const created = await page.request.post(config.harness+'/api/sessions', { headers: { Origin: config.harness },
     data: { title: 'Controlled speech draft acceptance' } });
   assert.equal(created.status(), 200); const session = await created.json();
@@ -97,8 +97,10 @@ try {
       await response.arrayBuffer(); globalThis.fixtureSpeechState = 'completed';
     }).catch(error => { globalThis.fixtureSpeechState = error.name === 'AbortError' ? 'aborted' : 'failed'; });
   }, { russianBase64, query: config.speechQuery });
-  // Probe the real provider slot, so cancellation happens after CPU admission rather than just
-  // discarding a browser promise before the audio reached Harness/Whisper.
+  // This cancellation scenario requires a single-slot provider returning speech_busy and empty
+  // text for silence; it is not a concurrency contract for every speech provider.
+  // Probe the real provider slot, so cancellation happens after provider admission rather than just
+  // discarding a browser promise before the audio reached Harness/provider.
   const silence = Buffer.alloc(44 + 16000 * 2);
   silence.write('RIFF'); silence.writeUInt32LE(silence.length - 8, 4); silence.write('WAVE', 8); silence.write('fmt ', 12);
   silence.writeUInt32LE(16, 16); silence.writeUInt16LE(1, 20); silence.writeUInt16LE(1, 22);
@@ -111,16 +113,16 @@ try {
     const response = await probe();
     if (response.status() === 429) { assert.equal((await response.json()).code, 'speech_busy'); admitted = true; break; }
     assert.equal(response.status(), 200);
-    assert.equal(await page.evaluate(() => globalThis.fixtureSpeechState), 'pending', 'Maximum CPU request finished before cancellation was observed');
+    assert.equal(await page.evaluate(() => globalThis.fixtureSpeechState), 'pending', 'Maximum speech request finished before cancellation was observed');
     await pause(25);
   }
-  assert.ok(admitted, 'Did not observe the real provider recognition slot occupied');
+  assert.ok(admitted, 'This fixture requires an observable single recognition slot (speech_busy)');
   const began = Date.now(); await page.evaluate(() => globalThis.fixtureSpeechAbort.abort());
   await page.waitForFunction(() => globalThis.fixtureSpeechState === 'aborted');
   let recovered = false;
   for (let attempt = 0; attempt < 100; attempt++) {
     const response = await probe();
-    if (response.status() === 200) { assert.equal((await response.json()).text, ''); recovered = true; break; }
+    if (response.status() === 200) { assert.equal((await response.json()).text, '', 'This fixture requires empty recognition for synthetic silence'); recovered = true; break; }
     assert.equal(response.status(), 429); await pause(50);
   }
   assert.ok(recovered, 'Real provider recognition slot did not recover after the HTTP abort');
@@ -132,5 +134,5 @@ try {
     captureWallSeconds: 5.5, capabilityMaxSeconds: 600, microphoneTracksEnded: true, automaticSends: sends,
     cancellation: { maximumPayloadSeconds: 600, actualProviderBusyObserved: true, browserHttpAbortObserved: true, slotRecoveredMs: Date.now()-began },
     limits: 'Short real-time MediaRecorder capture and independent maximum HTTP payload. No physical microphone, ten-minute wall-clock capture, natural speech quality or total renderer/native memory claim.' }));
-  console.log('PASS: Core-advertised password login/launch, production dictation capability and duration UI, real CPU transcript inserted only into draft, microphone release, cancelled maximum HTTP request and real provider slot recovery.');
+  console.log('PASS: Core-advertised password login/launch, production dictation capability and duration UI, real transcript inserted only into draft, microphone release, cancelled maximum HTTP request and real provider slot recovery.');
 } finally { await browser.close(); }

@@ -5,13 +5,13 @@ import { pathToFileURL } from "node:url";
 
 export const BASE_JOBS = Object.freeze(["changes", "versions", "docs", "ci-policy"]);
 export const COMPONENTS = Object.freeze([
-  "shell", "desktop", "app-sdk", "app-sdk-dotnet", "whisper", "opus", "demo-app", "core", "cli",
+  "shell", "desktop", "app-sdk", "app-sdk-dotnet", "opus", "demo-app", "core", "cli",
   "telemetry-backend", "marketplace", "documents", "harness", "telemetry-ui", "swift-shell", "cardputer-shell",
 ]);
 export const PROFILES = Object.freeze(["core-aot"]);
 export const ALL_JOBS = Object.freeze([...BASE_JOBS, "actionlint", ...COMPONENTS, ...PROFILES]);
 const NODE_COMPONENTS = ["opus", "shell", "desktop", "app-sdk", "demo-app", "marketplace", "documents", "harness", "telemetry-ui"];
-const DOTNET_COMPONENTS = ["app-sdk-dotnet", "whisper", "core", "cli", "telemetry-backend"];
+const DOTNET_COMPONENTS = ["app-sdk-dotnet", "core", "cli", "telemetry-backend"];
 const COMPONENT_PATHS = [
   ["apps/opus/", "opus"],
   ["apps/shell/", "shell"], ["apps/desktop/", "desktop"], ["apps/demo-app/", "demo-app"], ["apps/marketplace/", "marketplace"],
@@ -20,7 +20,7 @@ const COMPONENT_PATHS = [
 ];
 const BUILD_CONFIG = /(?:^|\/)(?:[^/]+\.csproj|global\.json|[Nn]u[Gg]et\.[Cc]onfig|appsettings[^/]*\.json)$/;
 const WORKFLOW_COMPONENTS = {
-  "ready-releases.yml": ["core", "cli", "shell", "desktop", "documents", "marketplace", "demo-app", "harness", "telemetry-backend", "telemetry-ui", "whisper", "opus"],
+  "ready-releases.yml": ["core", "cli", "shell", "desktop", "documents", "marketplace", "demo-app", "harness", "telemetry-backend", "telemetry-ui", "opus"],
   "promote-release.yml": [], "platform-bridge.yml": ["core", "cli"],
   "shell-image.yml": ["shell"], "desktop-image.yml": ["desktop"], "demo-app-image.yml": ["demo-app"], "marketplace-image.yml": ["marketplace"],
   "documents-image.yml": ["documents"], "telemetry-ui-image.yml": ["telemetry-ui"],
@@ -95,7 +95,7 @@ export function classifyPaths(paths, { versionOnlyPaths = [] } = {}) {
     } else if (path.startsWith("packages/app-sdk/")) {
       add(NODE_COMPONENTS, reason("shared app SDK"));
     } else if (path.startsWith("packages/app-sdk-dotnet/")) {
-      add(["app-sdk-dotnet", "whisper"], reason("shared .NET app SDK"));
+      add("app-sdk-dotnet", reason("shared .NET app SDK"));
     } else if (path.startsWith("shared/web/")) {
       add(["shell", "harness"], reason("shared web components"));
     } else if (/^shared\/[^/]+\.cs$/.test(path)) {
@@ -105,8 +105,6 @@ export function classifyPaths(paths, { versionOnlyPaths = [] } = {}) {
       if (path.startsWith("apps/core/src/") || BUILD_CONFIG.test(path)) add("core-aot", reason("Core production input"));
     } else if (path.startsWith("apps/cli/")) {
       add("cli", reason("CLI component"));
-    } else if (path.startsWith("apps/whisper/")) {
-      add("whisper", reason("Whisper component"));
     } else if (path.startsWith("apps/telemetry-backend/")) {
       add("telemetry-backend", reason("telemetry backend"));
     } else if (path.startsWith("apps/telemetry/")) {

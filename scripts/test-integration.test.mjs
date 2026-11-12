@@ -12,6 +12,7 @@ test('help, invalid input and dry-run never start processes', () => {
   assert.equal(main([], noRun), 0);
   assert.equal(main(['--help'], noRun), 0);
   assert.equal(main(['all'], noRun), 2);
+  assert.equal(main(['whisper'], noRun), 2);
   assert.equal(main(['activation', '--unknown'], noRun), 2);
   assert.equal(main(['worker', '--dry-run', 'extra'], noRun), 2);
   for (const suite of suites) assert.equal(main([suite, '--dry-run'], { ...noRun, platform: 'win32' }), 0);
@@ -71,24 +72,24 @@ test('failed scenario stops remaining work; paths and arguments are passed witho
 
 test('missing binaries and terminated processes fail instead of reporting success', () => {
   for (const result of [{ error: new Error('ENOENT'), status: null }, { signal: 'SIGTERM', status: null }, { status: null }]) {
-    assert.equal(main(['whisper'], { ...options, run: () => result }), 1);
+    assert.equal(main(['opus'], { ...options, run: () => result }), 1);
   }
 });
 
 test('native inference is opt-in and preserves caller environment without modifying it', () => {
-  const env = { HOSTY_WHISPER_TEST_CACHE: '/cache', PATH: '/bin' };
+  const env = { HOSTY_OPUS_INTEGRATION: 'caller-value', PATH: '/bin' };
   let inference = 0;
-  assert.equal(main(['whisper'], { ...options, env, run(file, args, opts) {
-    if (args[0] === 'test') {
+  assert.equal(main(['opus'], { ...options, env, run(file, args, opts) {
+    if (args.includes('apps/opus/test/native.integration.ts')) {
       inference++;
-      assert.equal(opts.env.HOSTY_WHISPER_INTEGRATION, '1');
-      assert.equal(opts.env.HOSTY_WHISPER_TEST_CACHE, '/cache');
-      assert.deepEqual(args.slice(-2), ['--filter', 'FullyQualifiedName~NativeSpeechTests']);
+      assert.equal(opts.env.HOSTY_OPUS_INTEGRATION, '1');
+      assert.equal(opts.env.PATH, '/bin');
+      assert.deepEqual(args, ['--import', 'tsx', '--test', 'apps/opus/test/native.integration.ts']);
     }
     return { status: 0 };
   } }), 0);
   assert.equal(inference, 1);
-  assert.equal(env.HOSTY_WHISPER_INTEGRATION, undefined);
+  assert.equal(env.HOSTY_OPUS_INTEGRATION, 'caller-value');
 });
 
 test('OPUS builds before inference, uses uv, and opts in without requiring Docker', () => {

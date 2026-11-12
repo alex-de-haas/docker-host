@@ -1,8 +1,8 @@
 ---
 created: 2026-09-29
-updated: 2026-11-09
+updated: 2026-11-12
 summary: Apps discover and call confirmed speech, translation, assistant, task and execution providers with short-lived Core credentials.
-components: [apps/core, packages/app-sdk, packages/app-sdk-dotnet, apps/whisper, apps/harness]
+components: [apps/core, packages/app-sdk, packages/app-sdk-dotnet, apps/harness]
 ---
 
 # Provider Consumption And Speech Recognition
@@ -124,39 +124,17 @@ Methods accept `CancellationToken`. Both SDKs retain stable HTTP status/error co
 versions other than 1. For container callers, loopback provider URLs are rewritten to the Core host's
 `host.docker.internal` address; that address must be reachable from the container runtime.
 
-## Whisper Runtime App
+## Speech Provider Applications
 
-`apps/whisper/manifest.json` installs the independent `hosty.whisper` app (0.2.1) with local and source
-development profiles. It is headless, has no system role and is not bundled into Harness. A .NET 10 SDK
-and network access for NuGet/build and the first model download are needed for the source installation.
-Whisper.net and its CPU native runtime are pinned to 1.9.1. The factory explicitly disables GPU use.
+Speech recognition is supplied by an independently installed application with a reviewed
+`speech-to-text` interface. Core and the SDKs discover the selected provider through the contract
+above; neither requires a particular app ID, engine or model. Provider readiness and advertised
+media, byte and duration limits remain authoritative for consumers.
 
-The native runtime's Windows baseline is Windows 11 / Windows Server 2022 or newer, the Visual C++ 2022
-redistributable and an x64 CPU with AVX, AVX2, FMA and F16C. An AMD processor with those capabilities can
-use this CPU path without a discrete GPU. Linux and macOS use the corresponding packaged native runtime.
-On 2026-10-10 the owner confirmed that the speech provider and text dictation work in their
-deployment. This is owner-reported functional acceptance, not an agent-run hardware test. The report
-does not specify the OS/CPU, selected model, performance measurements or individual failure cases;
-the remaining acceptance evidence is tracked in the [plan](plan.md). No Vulkan acceleration or
-Windows performance claim is made.
-
-`WHISPER_MODEL` selects multilingual `tiny`, `base` or `small` (default). Fixed upstream revision
-`5359861c739e955e79d9a303bcbc70fb988958b1`, sizes and SHA-256 hashes are in `SpeechEngine.cs`. Models are
-verified on load and downloaded into `HOSTY_APP_CACHE_DIR`; an invalid download is rejected and its
-temporary file removed. Restart applies a model change. Audio is processed in memory and is neither
-saved nor logged. Empty/silent recognition returns empty text. The application logs model readiness
-and failure categories without audio content.
-
-The authenticated version-one endpoint is `/api/speech/v1`:
-
-- `GET /capabilities`: version, media types, maximum bytes/duration, actual backend and readiness.
-- `POST /transcriptions?language=ru`: raw `audio/wav`; optional language defaults to `auto`; returns
-  `{ text, language }`, with null language when auto-detection was requested.
-- Baseline audio is mono, 16 kHz, PCM16 WAV, bounded to 600 seconds and 19,204,096 bytes. Invalid formats
-  are refused. There is one active recognition and no queue; additional requests receive 429.
-- Cancellation propagates to native processing. The operation has a fifteen-minute deadline. Missing
-  credentials return 401, revoked access 403, unsupported media 415, busy 429 and unavailable model or
-  Core authorization 503. `/healthz` reports process liveness while a model downloads.
+The repository's former Whisper runtime app is retired in favor of the separately maintained Speech
+application. Its native implementation, model settings and hardware acceptance plan are removed;
+this does not change the generic provider contract or Harness dictation. Provider-specific builds,
+models, inference tests and deployment requirements belong to the provider's own repository.
 
 ## Harness Dictation
 
@@ -202,11 +180,6 @@ and workspace/publication calls; conversations require no additional consent.
   Grant changes in either direction must reject stale update enqueue without changing operation state;
   missing speech and assistant interface contracts must report category-specific validation errors.
 - SDKs: credential separation, denied access, compatibility, cancellation and assistant handoff ownership.
-- Whisper: malformed/oversized WAV, PCM decoding, silence, busy capacity, cancellation and actual native
-  CPU inference. `HOSTY_WHISPER_INTEGRATION=1 dotnet test apps/whisper/Hosty.Whisper.Tests` downloads the
-  pinned tiny model; `HOSTY_WHISPER_TEST_CACHE` optionally reuses a verified cache. The fixture is locally
-  synthesized Russian speech: “Привет. Это проверка голосового ввода. Открой настройки приложения.”
-  Run `npm run test:integration -- whisper` explicitly on the target Windows, Linux or macOS host. GitHub CI and ordinary test runs do not enable native inference.
 - Harness/Shell: optional permission UI, iframe policy, editable insertion, cancelled/late results,
   conversation switching, existing composer actions and attachments.
 - Integration uses Core-managed apps and real Core identity. Local macOS verification exercised Russian
@@ -215,6 +188,6 @@ and workspace/publication calls; conversations require no additional consent.
   Harness transcription. Browser verification confirms optional consent and iframe microphone delegation. Tiny
   recognition contains errors; this is interoperability evidence rather than an accuracy benchmark.
 - Owner acceptance on 2026-10-10 confirms working speech recognition and text dictation. It does not
-  establish the detailed hardware measurements or per-case acceptance results retained in the plan.
+  establish detailed hardware measurements or acceptance of the replacement Speech implementation.
 
 - With immediate handoffs enabled, provider-originated finalization remains a draft, while operator finalization dispatches immediately.

@@ -1,8 +1,8 @@
 ---
 created: 2026-11-09
-updated: 2026-11-09
-summary: Chat dictation supports capability-aware recordings up to ten minutes with bounded CPU transcription and cancellation.
-components: [apps/harness, apps/whisper, packages/app-sdk]
+updated: 2026-11-12
+summary: Chat dictation supports capability-aware recordings up to ten minutes with bounded transcription and cancellation.
+components: [apps/harness, packages/app-sdk]
 ---
 
 # Longer Chat Speech Recordings
@@ -31,11 +31,11 @@ and two-minute WAV conversion limits.
 
 ## Provider And Transport
 
-Whisper 0.2.1 accepts at most 600 seconds and 19,204,096 bytes, including its existing bounded WAV
-header allowance. Its capabilities endpoint reports these actual limits. PCM/sample validation
-rejects even one extra sample, including a payload still within the header byte allowance.
-Recognition has one active slot, returns 429 when occupied and propagates cancellation into native
-CPU processing. Its operation deadline is fifteen minutes.
+An independently installed speech provider reports its own media, duration, byte and readiness
+limits. Harness does not infer a model, backend, capacity or native-runtime behavior from the app's
+identity. The managed maximum-payload acceptance requires a selected provider advertising at least
+600 seconds and 19,200,044 bytes; providers with lower limits remain supported by the consumer's
+capability-aware capture path.
 
 Harness uses a fifteen-minute-thirty-second total request deadline. TypeScript SDK 0.47.0 exposes
 an optional `timeoutMs` integer in `transcribe` between 1 and 930,000 milliseconds, preserving the
@@ -50,7 +50,11 @@ the apps' direct HTTP origins. Core adds no transcription proxy deadline. Extern
 operator-supplied reverse proxy can impose its own response limits and requires deployment-specific
 verification; local transport evidence does not establish those external limits.
 
-## Verification Evidence
+## Historical Verification Evidence
+
+The following 2026-11-09 measurements use the former repository-local Whisper implementation,
+retired on 2026-11-12. They describe that baseline and do not establish the replacement Speech
+provider's latency, memory, quality, hardware support or cancellation behavior.
 
 On 2026-11-09, local macOS Arm64 unit checks cover ten-minute PCM encoding/decoding, one extra
 sample, malformed and oversized audio, provider byte/duration limits, auto-stop, late replies and
@@ -97,24 +101,37 @@ It does not establish cancellation, natural speech quality or deployed authentic
   memory measurement in a real browser. Existing draft text/attachments and changed drafts survive.
 - Harness rejects unavailable capabilities, unauthorized providers and both Content-Length and
   streamed overflow; disconnects cancel the provider request.
-- Whisper tests accept 600 seconds, reject one extra sample, byte overflow and malformed/unsupported
-  WAV, and preserve silence/capacity/cancellation behavior. `npm run test:integration -- whisper`
-  explicitly enables native CPU inference, including the long synthetic Russian fixture.
+- Provider-specific inference, malformed-audio, silence and capacity tests belong to the selected
+  provider's repository. Harness and SDK checks retain maximum payload, one-extra-sample, byte
+  overflow, unsupported capabilities and cancellation coverage without a repository-local engine.
 - SDK tests preserve default deadlines, validate custom deadlines, refuse redirects, propagate
   aborts and exercise actual delayed HTTP responses with a lower independent transport timeout.
   After the SDK build, run `node packages/app-sdk/scripts/check-overlay-upgrade.mjs`; its isolated
   published consumer includes all declared runtime dependencies and preserves SSR/hydration.
-- Core-managed child checks use normal password login, independent Whisper data and advertised
-  Harness preview/microphone URLs; record model, machine, duration, latency and peak memory.
+- Core-managed child checks use normal password login, independent provider data/cache and advertised
+  Harness preview/microphone URLs; record provider, model, machine, duration, latency and peak memory.
 - Run `HOSTY_LONG_SPEECH_ACCEPTANCE=1 npm run test:integration -- harness-local` for the opt-in
-  production-runtime path. It downloads a verified tiny model into independent child cache,
-  reviews only optional speech access, sends the repeated 600-second Russian WAV through Harness
-  and Whisper, then uses Chromium's controlled WAV microphone for real MediaRecorder/draft-only
-  insertion and HTTP cancellation/CPU-slot recovery. `HOSTY_SPEECH_PLAYWRIGHT_MODULE` selects an
-  installed Playwright module and `HOSTY_SPEECH_BROWSER_CHANNEL` an installed Chromium channel.
-  Distinguish the short real-time UI recording from the maximum payload and keep sampled
-  process-tree CPU/RSS evidence separate from full native peaks. The parent fixture owns cleanup.
+  production-runtime path. Set `HOSTY_SPEECH_ACCEPTANCE_MANIFEST` to the absolute provider manifest
+  path and `HOSTY_SPEECH_ACCEPTANCE_WAV` to an absolute synthetic Russian mono 16 kHz PCM16 WAV.
+  A source-bound manifest comes from an explicitly prepared registered provider worktree; its source
+  binding is preserved. `HOSTY_SPEECH_ACCEPTANCE_RUNTIME` selects its declared profile (default
+  `local`). The fixture installs that manifest as declared into the child, without source overrides,
+  repository substitution or model-setting mutations. It requires ready WAV capabilities covering
+  the maximum payload, reviews only optional speech access, sends the repeated 600-second WAV
+  through Harness and the selected provider, then uses Chromium's controlled WAV microphone for
+  MediaRecorder/draft-only insertion and HTTP cancellation checks. This cancellation scenario requires
+  a compatible single-slot provider returning `429 speech_busy` while occupied and empty text for
+  synthetic silence; it does not define concurrency behavior for every speech provider. Model
+  downloads and caches stay in the child. `HOSTY_SPEECH_PLAYWRIGHT_MODULE` selects an installed Playwright module and
+  `HOSTY_SPEECH_BROWSER_CHANNEL` an installed Chromium channel. Distinguish the short real-time UI
+  recording from the maximum payload and keep sampled process-tree CPU/RSS evidence separate from
+  full native peaks. The parent fixture owns cleanup.
 - Run `node apps/harness/test/long-speech-browser.mjs` with Playwright and Chrome installed. An
   existing Playwright module can be selected with `HOSTY_SPEECH_PLAYWRIGHT_MODULE`; an alternate
   installed browser channel uses `HOSTY_SPEECH_BROWSER_CHANNEL`. Keep sampled heap/backing-storage
   measurements distinct from total native/process memory and managed-runtime acceptance.
+
+External-fixture input checks run with
+`PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s apps/harness/test -p test_long_speech_fixture.py`.
+Native process metrics require one observed `localCommand` service; Docker or multi-service runtimes
+report no native process-tree metrics.
