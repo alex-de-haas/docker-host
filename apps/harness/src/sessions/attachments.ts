@@ -1,8 +1,7 @@
-import { createWriteStream } from "node:fs";
-import { mkdir, readdir, rename, rm, stat } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
+import { durableMkdir, durableWriteFile } from "../persistence.js";
 import path from "node:path";
 import type { Readable } from "node:stream";
-import { pipeline } from "node:stream/promises";
 
 // What an operator may hand a session, and what happens to the name they gave it.
 //
@@ -184,7 +183,7 @@ async function storeUnderLock(
   declaredBytes: number,
   body: Readable,
 ): Promise<AttachmentInfo> {
-  await mkdir(workspace, { recursive: true });
+  await durableMkdir(workspace);
   const existing = await listAttachments(workspace);
   if (existing.length >= MAX_ATTACHMENTS_PER_SESSION) {
     throw new AttachmentRefusedError({ code: "too_many_attachments", limit: MAX_ATTACHMENTS_PER_SESSION });
@@ -199,26 +198,18 @@ async function storeUnderLock(
 
   const name = dedupeAttachmentName(safe, new Set(existing.map((file) => file.name)));
   const finalPath = path.join(workspace, name);
-  const tempPath = path.join(workspace, `.upload-${process.pid}-${Date.now()}-${name}`);
 
   let received = 0;
-  const guard = async function* (source: Readable): AsyncGenerator<Buffer> {
-    for await (const chunk of source) {
-      received += (chunk as Buffer).length;
-      if (received > MAX_ATTACHMENT_BYTES) {
-        throw new AttachmentRefusedError({ code: "attachment_too_large", limit: MAX_ATTACHMENT_BYTES });
-      }
-      yield chunk as Buffer;
-    }
-  };
-
-  try {
-    await pipeline(guard(body), createWriteStream(tempPath, { flags: "wx" }));
-    await rename(tempPath, finalPath);
-  } catch (error) {
-    await rm(tempPath, { force: true });
-    throw error;
+  const parts: Buffer[] = [];
+  for await (const chunk of body) {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    received += bytes.length;
+    if (received > MAX_ATTACHMENT_BYTES) throw new AttachmentRefusedError({ code: "attachment_too_large", limit: MAX_ATTACHMENT_BYTES });
+    if (used + received > MAX_SESSION_ATTACHMENT_BYTES) throw new AttachmentRefusedError({ code: "session_attachments_too_large", limit: MAX_SESSION_ATTACHMENT_BYTES });
+    parts.push(bytes);
   }
+  // A 201 upload response follows file flush and atomic publication, including its directory entry.
+  await durableWriteFile(finalPath, Buffer.concat(parts));
 
   return { name, size: received };
 }

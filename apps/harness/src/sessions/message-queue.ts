@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, writeFile, rename, stat, open, rm } from "node:fs/promises";
+import { readFile, readdir, stat, open, rm } from "node:fs/promises";
 import { constants } from "node:fs";
 import path from "node:path";
 import type { Readable } from "node:stream";
@@ -8,7 +8,7 @@ import { MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS_PER_SESSION, MAX_SESSION_ATTACHME
 import { messageRequestId, type SessionRecord, type SessionStore, type MessageReceipt } from "./store.js";
 
 export interface QueueAttachment { id: string; name: string; size: number; displayName?: string }
-interface StoredQueueAttachment extends QueueAttachment { digest: string }
+export interface StoredQueueAttachment extends QueueAttachment { digest: string }
 export interface QueueDraft { text: string; attachments: QueueAttachment[] }
 export interface QueueAttempt {
   clientRequestId: string; text: string; attachments: string[]; appContextRevision: number;
@@ -104,7 +104,7 @@ export class MessageQueue {
       return fail("queue_attachment_capacity", "This conversation already has 20 retained queue attachments.", 413);
   }
   private async collect(record: SessionRecord): Promise<void> {
-    const state = this.state(record), referenced = new Set<string>();
+    const state = this.state(record), referenced = new Set<string>((record.sourceAttachments ?? []).map(file => file.digest));
     for (const entry of state.entries) for (const file of [...entry.attachments, ...entry.edit?.attachments ?? [], ...entry.edit?.stashedDraft.attachments ?? []]) referenced.add(file.digest);
     for (const draft of Object.values(state.draftAttachments)) for (const file of draft) referenced.add(file.digest);
     const uploadRoot = path.join(this.root(record.id), "uploads");
@@ -124,18 +124,19 @@ export class MessageQueue {
   }
   private async retain(id: string, bytes: Buffer): Promise<string> {
     const digest = createHash("sha256").update(bytes).digest("hex"), target = this.filePath(id, digest);
-    await mkdir(path.dirname(target), { recursive: true });
     try {
       const existing = await readFile(target);
-      if (existing.length === bytes.length && createHash("sha256").update(existing).digest("hex") === digest) return digest;
+      if (existing.length === bytes.length && createHash("sha256").update(existing).digest("hex") === digest) {
+        await this.store.settleSourcePublication(id, target); return digest;
+      }
       return fail("queue_attachment_changed", "A retained attachment failed verification. Preserve the queue for recovery.", 503);
     } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-    const files = await readdir(path.dirname(target));
+    // saveSourceFile creates the missing chain durably, preserving its highest new parent entry.
+    const files = await readdir(path.dirname(target)).catch((error: NodeJS.ErrnoException) => error.code === "ENOENT" ? [] : Promise.reject(error));
     const sizes = await Promise.all(files.filter(f => /^[a-f0-9]{64}$/.test(f)).map(f => stat(path.join(path.dirname(target), f))));
     if (sizes.length >= MAX_ATTACHMENTS_PER_SESSION || sizes.reduce((sum, f) => sum + f.size, 0) + bytes.length > MAX_SESSION_ATTACHMENT_BYTES)
       return fail("queue_attachment_capacity", "This conversation's durable attachment allowance is full.", 413);
-    const temporary = target + "." + randomUUID() + ".tmp";
-    await writeFile(temporary, bytes, { flag: "wx" }); await rename(temporary, target);
+    await this.store.saveSourceFile(id, target, bytes, true);
     return digest;
   }
   /** Raw uploads have their own stable identity; a lost reply never creates another filename. */
@@ -160,13 +161,13 @@ export class MessageQueue {
       // an earlier queued entry was retired and its queue-only bytes were collected.
       if (this.state(record).claimedAttachments[id]) await this.change(record, next => { delete next.claimedAttachments[id]; });
       await this.retain(record.id, bytes); await this.attachmentBytes(record.id, prior);
+      await this.store.settleSourcePublication(record.id, receiptPath);
       return { id: prior.id, name: prior.name, size: prior.size, displayName: prior.displayName };
     }
     await this.attachmentCapacity(record, id);
     await this.retain(record.id, bytes);
     const attachment = { id, name: fitToBytes(`q-${id}-${safe}`, 200), displayName: safe, size, digest, originalName };
-    await mkdir(path.dirname(receiptPath), { recursive: true });
-    await writeFile(receiptPath + ".tmp", JSON.stringify(attachment), "utf8"); await rename(receiptPath + ".tmp", receiptPath);
+    await this.store.saveSourceFile(record.id, receiptPath, JSON.stringify(attachment));
     return { id, name: attachment.name, size, displayName: safe };
   }
   private async attachmentBytes(id: string, file: StoredQueueAttachment): Promise<Buffer> {
@@ -203,11 +204,31 @@ export class MessageQueue {
       const snapshot = { id, name: fitToBytes(`q-${id}-${name}`, 200), displayName: name,
         size: bytes.length, digest, originalName: name };
       const receiptPath = path.join(this.root(record.id), "uploads", id + ".json");
-      await mkdir(path.dirname(receiptPath), { recursive: true });
-      await writeFile(receiptPath + ".tmp", JSON.stringify(snapshot), "utf8"); await rename(receiptPath + ".tmp", receiptPath);
+      await this.store.saveSourceFile(record.id, receiptPath, JSON.stringify(snapshot));
       result.push(snapshot);
     }
     return result;
+  }
+  /** Preserve the exact admitted input independently of mutable/cache working files. */
+  async retainAcceptedAttachments(record: SessionRecord, input: string[]): Promise<void> {
+    if (!input.length) return;
+    const admittedNames = names(input), retained = await this.attachments(record, admittedNames);
+    const next = [...record.sourceAttachments ?? []];
+    for (const [index, file] of retained.entries()) {
+      const admitted = { ...file, name: admittedNames[index]! };
+      const previous = next.findIndex(candidate => candidate.name === admitted.name && candidate.digest === admitted.digest);
+      // Keep each immutable version's identity while making the latest admission the name lookup target.
+      next.push(previous < 0 ? admitted : next.splice(previous, 1)[0]!);
+    }
+    const messageQueue = structuredClone(this.state(record));
+    for (const file of retained) messageQueue.claimedAttachments[file.id] = true;
+    // Publish ownership with the admitted snapshot so accepted files no longer count as pending uploads.
+    await this.store.saveRecord({ ...record, sourceAttachments: next, messageQueue });
+    record.sourceAttachments = next; record.messageQueue = messageQueue;
+  }
+  async acceptedAttachment(record: SessionRecord, name: string): Promise<Buffer | null> {
+    const file = record.sourceAttachments?.findLast(candidate => candidate.name === name);
+    return file ? this.attachmentBytes(record.id, file) : null;
   }
   async attachment(record: SessionRecord, attachmentId: string): Promise<{ attachment: QueueAttachment; bytes: Buffer }> {
     const retained = this.state(record).entries.flatMap(entry => [...entry.attachments, ...entry.edit?.attachments ?? [], ...entry.edit?.stashedDraft.attachments ?? []]);
@@ -232,8 +253,7 @@ export class MessageQueue {
       if (!previous && existing.length >= MAX_ATTACHMENTS_PER_SESSION
         || existing.reduce((sum, candidate) => sum + candidate.size, 0) - (previous?.size ?? 0) + bytes.length > MAX_SESSION_ATTACHMENT_BYTES)
         return fail("queue_attachment_capacity", "The conversation workspace attachment allowance is full.", 413);
-      const temporary = target + "." + randomUUID() + ".tmp";
-      await writeFile(temporary, bytes, { flag: "wx" }); await rename(temporary, target); result.push(name);
+      await this.store.saveSourceFile(record.id, target, bytes); result.push(name);
     }
     return result;
   }

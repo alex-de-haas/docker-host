@@ -15,12 +15,14 @@ export class WorkerEngine {
   private active = new Map<string, { run: HarnessRun; release: () => void; request: WorkerRunRequest; collecting?: NodeJS.Timeout; suggestions?: boolean }>();
   private admitted = new Set<string>();
   private disabledSuggestions = new Set<string>();
+  private readonly quarantined = new Set<string>();
+  private readonly failureFinalizations = new Map<string, Promise<void>>();
   private starts = new Set<Promise<void>>();
   private closing = false;
   private readonly usageTimer: NodeJS.Timeout;
   constructor(readonly journal: WorkerJournal, private readonly execution: WorkerExecution, private readonly capacity: number) {
     this.usageTimer = setInterval(() => {
-      void this.journal.exclusive(async () => { for (const id of this.admitted) await this.journal.sample(id); }).catch(error => {
+      void this.journal.exclusive(async () => { for (const id of this.admitted) if (!this.quarantined.has(id)) await this.journal.sample(id); }).catch(error => {
         // A failed durable sample cannot become successful usage or exit evidence. The journal
         // already retries transient sharing violations before this permanent admission fence.
         if (!this.closing) {
@@ -81,7 +83,7 @@ export class WorkerEngine {
         const run = adapter!.start({ ...request.options, promptSuggestions: suggestions, sessionId: request.conversationId, cwd, resource: request.resource, workerRunId: id,
           ...request.selection,
           isAutoAllowed: tool => request.autoAllowedPrefixes.some(prefix => tool.startsWith(prefix)),
-          onEvent: event => { void this.event(id, event); } });
+          onEvent: event => { void this.event(id, event).catch(error => console.warn("[worker] Provider event finalization remains unconfirmed.", { code: journalErrorCode(error) })); } });
         const claim = release!; let released = false;
         this.active.set(id, { run, request, suggestions, release: () => { if (!released) { released = true; claim(); } } }); release = undefined; started = true;
         run.send(request.input);
@@ -94,6 +96,7 @@ export class WorkerEngine {
   private async event(id: string, event: HarnessEvent): Promise<void> {
     try {
       await this.journal.exclusive(async () => {
+        if (this.quarantined.has(id)) return;
         const state = (await this.journal.load(id)).receipt.state;
         if (terminal(state)) return;
         const active = this.active.get(id);
@@ -115,7 +118,7 @@ export class WorkerEngine {
         await this.journal.append(id, event);
         if (event.type === "approval_request" || event.type === "question_request" && event.blocking !== false) await this.journal.update(id, "awaiting_input");
         if (event.type === "result" && successfulResult(event.status) && active?.suggestions && state !== "cancelling") {
-          active.collecting = setTimeout(() => { void this.finishSuggestion(id, true); }, SUGGESTION_DEADLINE_MS);
+          active.collecting = setTimeout(() => { void this.finishSuggestion(id, true).catch(error => console.warn("[worker] Prediction finalization remains unconfirmed.", { code: journalErrorCode(error) })); }, SUGGESTION_DEADLINE_MS);
           active.collecting.unref();
           await this.journal.update(id, "suggesting");
           await this.journal.append(id, { type: "answer_complete" });
@@ -137,7 +140,7 @@ export class WorkerEngine {
     active.release(); this.active.delete(id); this.disabledSuggestions.delete(id);
   }
   private async finishSuggestionLocked(id: string, timeout = false): Promise<void> {
-    if ((await this.journal.load(id)).receipt.state !== "suggesting") return;
+    if (this.quarantined.has(id) || (await this.journal.load(id)).receipt.state !== "suggesting") return;
     if (timeout) await this.journal.append(id, { type: "prompt_suggestion", text: null, reason: "timeout" });
     await this.stopNative(id);
     await this.journal.update(id, "completed");
@@ -148,15 +151,35 @@ export class WorkerEngine {
     catch { await this.fail(id, "Prediction cleanup could not confirm native execution exit."); }
   }
   private async fail(id: string, message: string): Promise<void> {
-    const active = this.active.get(id);
-    let stopped = !active;
-    if (active) {
-      clearTimeout(active.collecting);
-      try { if (active.run.stopAndWait) await active.run.stopAndWait(); else await active.run.stop(); stopped = true; }
-      catch { /* Preserve occupied capacity and the connection claim when exit is uncertain. */ }
-    }
-    await this.journal.exclusive(async () => { await this.journal.update(id, stopped ? "failed" : "interrupted", message); });
-    if (stopped) { active?.release(); this.active.delete(id); this.admitted.delete(id); this.disabledSuggestions.delete(id); }
+    const pending = this.failureFinalizations.get(id);
+    if (pending) return pending;
+    // Quarantine before native cleanup yields: usage ticks and late callbacks must not retry a
+    // fenced journal or turn one run's storage failure into a Worker-wide shutdown.
+    this.quarantined.add(id);
+    const finalization = (async () => {
+      const active = this.active.get(id);
+      let stopped = !active;
+      if (active) {
+        clearTimeout(active.collecting); delete active.collecting;
+        try {
+          if (active.run.stopAndWait) { await active.run.stopAndWait(); stopped = true; }
+          else await active.run.stop(); // Best-effort Stop does not attest native exit.
+        }
+        catch { /* Preserve occupied capacity and the connection claim when exit is uncertain. */ }
+      }
+      try {
+        await this.journal.exclusive(async () => { await this.journal.update(id, stopped ? "failed" : "interrupted", message); });
+        this.quarantined.delete(id);
+      } catch (error) {
+        // The journal keeps its original identity and uncertainty fence. Native exit alone does
+        // not authorize a replacement receipt, a new execution or another physical control.
+        console.warn("[worker] Run finalization requires storage recovery.", { code: journalErrorCode(error) });
+      }
+      if (stopped) { active?.release(); this.active.delete(id); this.admitted.delete(id); this.disabledSuggestions.delete(id); }
+    })();
+    this.failureFinalizations.set(id, finalization);
+    try { await finalization; }
+    finally { if (this.failureFinalizations.get(id) === finalization) this.failureFinalizations.delete(id); }
   }
   async respond(id: string, input: WorkerControl): Promise<WorkerReceipt> {
     if (!input || !Number.isSafeInteger(input.eventId) || !Number.isSafeInteger(input.expectedRevision) || typeof input.id !== "string"
@@ -270,6 +293,11 @@ export class WorkerEngine {
   }
 
   async cancel(id: string, controlId: string): Promise<WorkerReceipt> {
+    if (this.quarantined.has(id)) {
+      // An explicit Stop may retry the retained native handle; its sealed receipt stays unavailable.
+      if (this.active.has(id)) await this.fail(id, "Cancellation could not durably finalize this execution.");
+      return (await this.journal.load(id)).receipt;
+    }
     const receipt = await this.journal.exclusive(async () => {
       await this.journal.control(id, controlId, { kind: "cancel" }, async () => {});
       const current = (await this.journal.load(id)).receipt;
@@ -317,6 +345,7 @@ export class WorkerEngine {
     });
   }
   async configure(id: string, servers: Record<string, unknown>, prefixes: string[] = []): Promise<{ applied: boolean }> {
+    if (this.quarantined.has(id)) throw new WorkerApiError(503, "run_storage_uncertain", "Reconcile the retained execution before changing its native configuration.");
     const active = this.active.get(id);
     if (!active) throw new WorkerApiError(409, "run_inactive", "Run is no longer active.");
     validateMcpServers(servers);

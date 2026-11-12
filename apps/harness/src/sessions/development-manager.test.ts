@@ -1101,7 +1101,10 @@ it.each(["activation-apply", "execution-select"] as const)("reuses confirmed Loc
   vi.mocked(client.call).mockClear();
   await manager.workspaceAction(record.id, action, input, undefined, undefined, guard);
   await finish(record.id);
-  await vi.waitFor(async () => expect((await store.readRecord(record.id))!.workspaceActivation?.state).toBe("dispatched"));
+  // Source checkpoints can publish before the native callback revokes its deferred guard.
+  // Receipt lookup crosses that callback's mutation queue before asserting final cleanup.
+  await manager.messageReceipt(record.id, executionId, "admin");
+  expect((await store.readRecord(record.id))!.workspaceActivation?.state).toBe("dispatched");
   expect((await manager.getSession(record.id))?.taskRun).toMatchObject({ started: true, exitConfirmed: true });
   expect(manager.hasLiveTaskRun(record.id)).toBe(false);
   expect(client.call).toHaveBeenCalledWith(record.id, "token", action, input);

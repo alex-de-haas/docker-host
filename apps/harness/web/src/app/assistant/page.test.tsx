@@ -31,6 +31,7 @@ vi.mock("@/lib/assistant-api", async original => ({
   ...await original<typeof api>(),
   workspaceAction: vi.fn().mockResolvedValue({}), getSuggestionPreference: vi.fn(), setSuggestionPreference: vi.fn(), resolvePromptSuggestion: vi.fn(), getPromptSuggestions: vi.fn(), getHealth: vi.fn(), listSessions: vi.fn(), getSession: vi.fn(), createSession: vi.fn(), deleteSession: vi.fn(),
   listAppNames: vi.fn(), listContextApps: vi.fn(), setSessionApps: vi.fn(), postMessage: vi.fn(), stopSession: vi.fn(), streamEvents: vi.fn(), setSessionAutonomy: vi.fn(), listAgentConnections: vi.fn(), getSessionModels: vi.fn(), renameSession: vi.fn(),
+  getStorageRecovery: vi.fn(),
 }));
 vi.mock("@/lib/profiles-api", () => ({ listProfiles: vi.fn(), selectSessionProfile: vi.fn() }));
 vi.mock("@/lib/prompt-templates-api", () => ({ loadPromptTemplates: vi.fn() }));
@@ -71,6 +72,7 @@ beforeEach(() => {
   record = { id: "session-one", title: "Conversation", status: "idle", createdAt: "", createdBy: "owner" };
   vi.mocked(api.getSuggestionPreference).mockResolvedValue({ enabled: false, revision: 0 });
   vi.mocked(api.getHealth).mockResolvedValue({ name: "fake", available: true });
+  vi.mocked(api.getStorageRecovery).mockResolvedValue({ issues: [] });
   vi.mocked(api.listSessions).mockResolvedValue([record]);
   vi.mocked(api.getSession).mockImplementation(async () => ({ ...record }));
   vi.mocked(api.createSession).mockResolvedValue(record);

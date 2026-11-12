@@ -225,6 +225,23 @@ describe("gateway", () => {
     return fetch(`${origin}${pathName}`, { ...init, headers });
   }
 
+  it("reports unavailable session storage to administrators without hiding healthy chats or exposing payloads", async () => {
+    const healthy = await manager.createSession({ createdBy: "user_admin", title: "Healthy" });
+    const damaged = await manager.createSession({ createdBy: "user_admin", title: "Never expose this private title" });
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(path.join(dataDir, "sessions", damaged.id, "record.json"), "\0".repeat(64));
+    expect((await call("/api/storage-recovery", {}, null)).status).toBe(401);
+    expect((await call("/api/storage-recovery", {}, "host.user")).status).toBe(401);
+    const response = await call("/api/storage-recovery"); expect(response.status).toBe(200);
+    const issue = await response.json();
+    expect(issue).toMatchObject({ issues: [expect.objectContaining({ sessionId: damaged.id, code: "session_storage_corrupt" })] });
+    expect(JSON.stringify(issue)).not.toContain("Never expose");
+    expect(JSON.stringify(issue)).not.toContain(dataDir);
+    const listed = await (await call("/api/sessions")).json() as { sessions: { id: string }[] };
+    expect(listed.sessions.map(item => item.id)).toContain(healthy.id);
+    expect((await call(`/api/sessions/${healthy.id}`)).status).toBe(200);
+  });
+
   it("limits execution recovery to the owning interactive operator with same-origin writes", async () => {
     const session = await manager.createSession({ createdBy: "user_admin" });
     const foreign = await manager.createSession({ createdBy: "someone_else" });
@@ -278,8 +295,11 @@ describe("gateway", () => {
   });
 
   it("serves health and ordinary APIs after a rejected startup sweep", async () => {
-    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const log = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const sweep = vi.spyOn(HandoffStore.prototype, "sweep").mockRejectedValueOnce(new Error("temporary storage outage"));
+    const runs = vi.spyOn(manager, "recoverWorkerRuns").mockResolvedValue();
+    const approvals = vi.spyOn(manager, "recoverMcpApprovals").mockResolvedValue();
+    const queue = vi.spyOn(manager, "recoverMessageQueues").mockResolvedValue();
     const recovering = createGatewayServer(manager, new FakeHarnessAdapter(), settings, directory);
     try {
       await new Promise<void>(resolve => recovering.listen(0, resolve));
@@ -287,7 +307,8 @@ describe("gateway", () => {
       const base = `http://127.0.0.1:${(recovering.address() as AddressInfo).port}`;
       expect((await fetch(base + "/healthz")).status).toBe(200);
       expect((await fetch(base + "/api/sessions", { headers: { authorization: `Bearer ${mintToken("host.admin")}` } })).status).toBe(200);
-      expect(log).toHaveBeenCalledWith("[handoff] startup recovery failed", expect.any(Error));
+      expect(log).toHaveBeenCalledWith("[recovery] Startup stage requires attention.", { stage: "handoffs", code: "unavailable" });
+      expect(runs).toHaveBeenCalled(); expect(approvals).toHaveBeenCalled(); expect(queue).toHaveBeenCalled();
     } finally {
       await new Promise(resolve => recovering.close(resolve)); sweep.mockRestore(); log.mockRestore();
     }

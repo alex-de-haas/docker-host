@@ -70,8 +70,9 @@ describe("abandoning a session nobody returned to", () => {
     // lazily, so one nobody reopened would sit in the list — and in the attention count — as blocked
     // forever.
     const id = await waitingSession();
-    // A fresh manager over the same store is what a restart looks like from here.
-    const restarted = new SessionManager(
+    // Stop and drain the previous owner before reopening; two live writers are not a restart.
+    await manager.shutdown();
+    manager = new SessionManager(
       new SessionStore(dataDir),
       new FakeHarnessAdapter(),
       new AuditReporter(null, null, "hosty.harness"),
@@ -80,10 +81,10 @@ describe("abandoning a session nobody returned to", () => {
     );
 
     try {
-      expect(await restarted.sweepAbandoned(DAY, Date.now() + DAY + 1)).toEqual([id]);
+      expect(await manager.sweepAbandoned(DAY, Date.now() + DAY + 1)).toEqual([id]);
       expect((await store.readRecord(id))?.status).toBe("abandoned");
     } finally {
-      await restarted.shutdown();
+      await manager.shutdown();
     }
   });
 
@@ -92,7 +93,8 @@ describe("abandoning a session nobody returned to", () => {
     // abandonment as having waited about zero — the one number the record exists for.
     const id = await waitingSession();
     const reports: Record<string, string>[] = [];
-    const manager2 = new SessionManager(
+    await manager.shutdown();
+    manager = new SessionManager(
       new SessionStore(dataDir),
       new FakeHarnessAdapter(),
       { report: (_action: string, details: Record<string, string>) => reports.push(details) } as unknown as AuditReporter,
@@ -101,10 +103,10 @@ describe("abandoning a session nobody returned to", () => {
     );
 
     try {
-      await manager2.sweepAbandoned(DAY, Date.parse((await store.readRecord(id))!.updatedAt) + 2 * DAY);
+      await manager.sweepAbandoned(DAY, Date.parse((await store.readRecord(id))!.updatedAt) + 2 * DAY);
       expect(Number(reports[0]?.waitedMs ?? 0)).toBeGreaterThan(DAY);
     } finally {
-      await manager2.shutdown();
+      await manager.shutdown();
     }
   });
 

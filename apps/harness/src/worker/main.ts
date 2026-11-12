@@ -1,8 +1,10 @@
 import { createProviderService } from "./service.js";
 import { managedWorkspacePaths } from "./resources.js";
+import { acquireStorageOwner } from "../storage-owner.js";
 
 const data = process.env.HOSTY_APP_DATA_DIR, cache = process.env.HOSTY_APP_CACHE_DIR, auth = process.env.HOSTY_WORKER_AUTH_DIR;
 if (!data || !cache || !auth) throw new Error("Worker requires declared data, cache and service-auth storage.");
+await acquireStorageOwner(data, "worker");
 const mode = process.env.HOSTY_HARNESS_RUNTIME === "docker" ? "docker" : "native";
 const mounts = managedWorkspacePaths(process.env.HOSTY_MOUNT_DEVELOPMENT);
 const skills: string | undefined = process.env.HOSTY_MOUNT_SKILLS ? JSON.parse(process.env.HOSTY_MOUNT_SKILLS).skills : undefined;

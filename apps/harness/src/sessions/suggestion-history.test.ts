@@ -21,8 +21,9 @@ beforeEach(async () => {
   root = await mkdtemp(path.join(tmpdir(), "hosty-suggestion-history-")); now = Date.parse("2026-11-09T12:00:00Z");
   vi.spyOn(Date, "now").mockImplementation(() => now);
   store = new SessionStore(root);
-  record = { id: randomUUID(), createdBy: "owner", title: null, context: null, status: "idle", createdAt: new Date(now).toISOString(), updatedAt: new Date(now).toISOString(), harnessSessionId: null, lastEventSeq: 1 };
+  record = { id: randomUUID(), createdBy: "owner", title: null, context: null, status: "idle", createdAt: new Date(now).toISOString(), updatedAt: new Date(now).toISOString(), harnessSessionId: null, lastEventSeq: 0 };
   await store.createSession(record); await store.appendEvent(record.id, { seq: 1, ts: record.createdAt, type: "assistant_text", text: "Completed answer." });
+  record.lastEventSeq = 1; await store.saveRecord(record);
   history = build();
 });
 afterEach(async () => { vi.restoreAllMocks(); await rm(root, { recursive: true, force: true }); });

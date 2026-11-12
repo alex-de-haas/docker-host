@@ -109,14 +109,15 @@ it("refuses an origin mismatch and a credential revoked after ticket admission",
 });
 
 it("preserves delegated credential casing and the durable cursor while closing live subscriptions", async () => {
-  const old = { seq: 1, ts: new Date().toISOString(), type: "assistant_text", text: "old" };
-  const recent = { ...old, seq: 2, text: "recent" };
+  const highWater = (await store.readRecord(sessionId))!.lastEventSeq;
+  const old = { seq: highWater + 1, ts: new Date().toISOString(), type: "assistant_text", text: "old" };
+  const recent = { ...old, seq: highWater + 2, text: "recent" };
   await store.appendEvent(sessionId, old); await store.appendEvent(sessionId, recent);
   const unsubscribe = vi.fn(), original = manager.subscribe.bind(manager);
   vi.spyOn(manager, "subscribe").mockImplementation(async (...args) => {
     const value = await original(...args); return { ...value, unsubscribe: () => { unsubscribe(); value.unsubscribe(); } };
   });
-  const admission = await ticket(`/api/sessions/${sessionId}/events?after=1`, { authorization: `bearer ${delegated()}` });
+  const admission = await ticket(`/api/sessions/${sessionId}/events?after=${old.seq}`, { authorization: `bearer ${delegated()}` });
   const view = await connected(admission);
   await vi.waitFor(() => expect(events(view.chunks).some(event => event.type === "session_status")).toBe(true));
   expect(events(view.chunks).filter(event => event.type === "assistant_text")).toEqual([recent]);
@@ -125,7 +126,7 @@ it("preserves delegated credential casing and the durable cursor while closing l
 
 it("replays a durable Unicode record larger than one MiB without truncation or blocking ordinary API requests", async () => {
   const text = "prefix" + "🟢漢🙂".repeat(140_000);
-  const record = { seq: 1, ts: new Date().toISOString(), type: "assistant_text", text };
+  const record = { seq: (await store.readRecord(sessionId))!.lastEventSeq + 1, ts: new Date().toISOString(), type: "assistant_text", text };
   expect(Buffer.byteLength(JSON.stringify(record))).toBeGreaterThan(1_048_576);
   await store.appendEvent(sessionId, record);
   const view = await connected(await ticket());
@@ -227,7 +228,7 @@ it("recovers a bounded live queue overflow through durable replay without losing
   });
   const view = await connected(await ticket());
   await vi.waitFor(() => expect(view.chunks.join("")).toContain("session_status"));
-  const record = { seq: 1, ts: new Date().toISOString(), type: "assistant_text", text: "🟢".repeat(300_000) };
+  const record = { seq: (await store.readRecord(sessionId))!.lastEventSeq + 1, ts: new Date().toISOString(), type: "assistant_text", text: "🟢".repeat(300_000) };
   await store.appendEvent(sessionId, record);
   const ended = new Promise<number>(resolve => view.socket.once("close", resolve));
   live(record); expect(await ended).toBe(1013);

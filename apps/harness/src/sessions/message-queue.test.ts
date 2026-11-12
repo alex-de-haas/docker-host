@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { Readable } from "node:stream";
 import path from "node:path";
@@ -30,9 +31,15 @@ const build = (development: DevelopmentClient | null = null) => {
 };
 const command = (value: QueueCommand, target = record) => ({ requestId: randomUUID(), expectedRevision: queue.state(target).revision, command: value });
 const enqueue = (text: string, attachments: string[] = []) => ({ type: "enqueue" as const, entryId: randomUUID(), text, attachments });
-const liveCommand = async (value: QueueCommand, credential = "fixture-current-authority") => manager.messageQueueCommand(record.id, "owner", {
-  requestId: randomUUID(), expectedRevision: (await manager.messageQueue(record.id, "owner")).revision, command: value,
-}, credential);
+const liveCommand = async (value: QueueCommand, credential = "fixture-current-authority") => {
+  // A background admission may settle between GET and command. Refresh only definitive stale revisions;
+  // uncertain writes retain their exact request identity and must never be replaced here.
+  for (let attempt = 0; ; attempt++) {
+    const input = { requestId: randomUUID(), expectedRevision: (await manager.messageQueue(record.id, "owner")).revision, command: value };
+    try { return await manager.messageQueueCommand(record.id, "owner", input, credential); }
+    catch (error) { if ((error as { code?: string }).code !== "queue_revision_conflict" || attempt >= 5) throw error; }
+  }
+};
 const finish = async () => { starts.at(-1)!.onEvent({ type: "result", status: "success" }); };
 beforeEach(async () => {
   dir = await mkdtemp(path.join(os.tmpdir(), "hosty-message-queue-")); store = new SessionStore(dir, path.join(dir, "cache")); queue = new MessageQueue(store);
@@ -92,6 +99,52 @@ describe("durable queue commands and immutable attachments", () => {
     expect(JSON.stringify(queue.snapshot(record))).not.toContain("digest");
     expect((await queue.attachment(record, current.attachments[0]!.id)).bytes.toString()).toBe("operator upload");
   });
+  it("binds repeated A-B-A admissions to the bytes sent and retains the latest version after reopen", async () => {
+    const workspace = (await store.ensureWorkspace(record.id))!, file = path.join(workspace, "input.txt");
+    const digest = (value: string) => createHash("sha256").update(value).digest("hex");
+    const values = ["attachment A", "attachment B", "attachment A"], received: string[] = [];
+    const originalStart = adapter.start.bind(adapter);
+    vi.spyOn(adapter, "start").mockImplementationOnce(options => {
+      const run = originalStart(options), send = run.send.bind(run);
+      run.send = text => { received.push(readFileSync(file, "utf8")); send(text); };
+      return run;
+    });
+    let originalAId: string | undefined;
+    for (const [index, value] of values.entries()) {
+      await writeFile(file, value);
+      await manager.postMessage(record.id, `Inspect version ${index}`, undefined, ["input.txt"], { clientRequestId: randomUUID(), actorUserId: "owner" });
+      if (index === 0) originalAId = (await store.readRecord(record.id))!.sourceAttachments![0]!.id;
+      await finish();
+      await vi.waitFor(async () => expect((await manager.getSession(record.id))?.status).toBe("idle"));
+      await manager.messageQueue(record.id, "owner");
+    }
+    expect(received).toEqual(values);
+    const events = (await store.readEvents(record.id)).filter(event => event.type === "user_message");
+    expect(events.map(event => event.attachmentDigests)).toEqual(values.map(value => ({ "input.txt": digest(value) })));
+    await manager.shutdown();
+    store = new SessionStore(dir, path.join(dir, "cache")); queue = new MessageQueue(store);
+    record = (await store.readRecord(record.id))!; manager = build();
+    expect((await manager.acceptedAttachment(record.id, "input.txt"))?.toString()).toBe(values[2]);
+    expect((await store.acceptedAttachment(record.id, "input.txt"))?.bytes.toString()).toBe(values[2]);
+    expect((await store.acceptedAttachment(record.id, "input.txt", digest(values[1]!)))?.bytes.toString()).toBe(values[1]);
+    expect(record.sourceAttachments).toHaveLength(2);
+    expect(record.sourceAttachments!.find(value => value.digest === digest(values[0]!))!.id).toBe(originalAId);
+    expect((await readdir(path.join(store.messageQueueDirectory(record.id), "files"))).sort()).toEqual([digest(values[0]!), digest(values[1]!)].sort());
+  });
+
+  it("normalizes repeated input names before binding distinct admitted attachment bytes", async () => {
+    const workspace = (await store.ensureWorkspace(record.id))!;
+    await writeFile(path.join(workspace, "a.txt"), "bytes A"); await writeFile(path.join(workspace, "b.txt"), "bytes B");
+    await manager.postMessage(record.id, "Inspect both", undefined, ["a.txt", "a.txt", "b.txt"], { clientRequestId: randomUUID(), actorUserId: "owner" });
+    const event = (await store.readEvents(record.id)).find(value => value.type === "user_message")!;
+    expect(event.attachmentDigests).toEqual({ "a.txt": createHash("sha256").update("bytes A").digest("hex"),
+      "b.txt": createHash("sha256").update("bytes B").digest("hex") });
+    const saved = (await store.readRecord(record.id))!;
+    expect(saved.sourceAttachments!.map(value => value.name).sort()).toEqual(["a.txt", "b.txt"]);
+    expect((await store.acceptedAttachment(record.id, "a.txt"))?.bytes.toString()).toBe("bytes A");
+    expect((await store.acceptedAttachment(record.id, "b.txt"))?.bytes.toString()).toBe("bytes B");
+  });
+
   it("reconciles stable upload identities without duplicate filenames and rejects changed bytes", async () => {
     const uploadId = randomUUID();
     const first = await queue.upload(record, uploadId, "файл.txt", Readable.from(["bytes"]));
@@ -134,6 +187,26 @@ describe("durable queue commands and immutable attachments", () => {
     await expect(queue.upload(record, randomUUID(), "over.txt", Readable.from(["same bytes"]))).rejects.toMatchObject({ code: "queue_attachment_capacity" });
     await queue.command(record, command({ type: "delete", entryId: rows[0]!.entryId }));
     await expect(queue.upload(record, randomUUID(), "replacement.txt", Readable.from(["same bytes"]))).resolves.toMatchObject({ size: 10 });
+  });
+  it("claims direct-send snapshots durably so repeated filenames do not consume the pending upload quota", async () => {
+    const workspace = await store.ensureWorkspace(record.id);
+    await writeFile(path.join(workspace!, "source.txt"), "accepted bytes");
+    for (let index = 0; index < 25; index++) {
+      if (index === 12) {
+        await manager.shutdown(); store = new SessionStore(dir, path.join(dir, "cache"));
+        queue = new MessageQueue(store); record = (await store.readRecord(record.id))!; manager = build();
+      }
+      await queue.retainAcceptedAttachments(record, ["source.txt"]);
+    }
+    expect(record.sourceAttachments).toHaveLength(1);
+    expect((await queue.acceptedAttachment(record, "source.txt"))?.toString()).toBe("accepted bytes");
+    const persisted = (await store.readRecord(record.id))!;
+    const uploads = await readdir(path.join(store.messageQueueDirectory(record.id), "uploads"));
+    for (const name of uploads) {
+      const upload = JSON.parse(await readFile(path.join(store.messageQueueDirectory(record.id), "uploads", name), "utf8")) as { id: string };
+      expect(persisted.messageQueue?.claimedAttachments[upload.id]).toBe(true);
+    }
+    await expect(queue.upload(record, randomUUID(), "new.txt", Readable.from(["pending bytes"]))).resolves.toMatchObject({ size: 13 });
   });
   it("reuses materialized attachment paths across turns and preserves the workspace quota", async () => {
     const file = await queue.upload(record, randomUUID(), "file.txt", Readable.from(["bytes"]));

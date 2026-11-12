@@ -1,6 +1,6 @@
 ---
 created: 2026-10-31
-updated: 2026-10-31
+updated: 2026-11-12
 summary: Provider-owned conversation history with Core API/MCP read, sharing, lexical search, attachment access and explicit consumer-bound exports.
 components: [apps/core, apps/harness, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -75,6 +75,11 @@ Harness projects public transcript fields, checks current ownership/shares again
 sending content, and removes deleted payloads from retained projections and snapshots. Internal
 credentials, execution handles and provider-private state are excluded. Provider notifications describe
 invalidation; they do not substitute for a fresh authorized source read.
+
+Harness stores its projections in separate conversation partitions and publishes authority through
+a durable payload-free manifest. Its fresh format, commit boundaries and corruption isolation are
+described in [Harness history durability](../harness-history-durability/feature.md). Incomplete source
+inventory never implies deletion, and unavailable authority never restores an older share.
 
 ## Testing Expectations
 

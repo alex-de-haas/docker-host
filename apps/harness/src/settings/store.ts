@@ -1,5 +1,5 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { durableMkdir, durableWriteFile, isUncertainWrite } from "../persistence.js";
 import path from "node:path";
 import { validRules, validDefaults, type ToolRule, type ProviderDefault } from "../mcp/policy.js";
 import { validCoreMigration, type CorePolicyMigration } from "../mcp/core-migration.js";
@@ -217,15 +217,9 @@ export class SettingsStore {
       mcpAutoAllow: patch.mcpAutoAllow ?? current.mcpAutoAllow,
     };
 
-    await mkdir(this.dataDir, { recursive: true });
-    // Unique per write, not per process: two concurrent updates sharing one temp path race, and the
-    // loser's rename fails with ENOENT after the winner moved the file out from under it — a settings
-    // save that throws for a reason nothing in the caller can explain.
-    // Temp file plus rename: a crash mid-write must not leave a truncated settings file that the
-    // next start silently reads as "everything disabled, prompt gone".
-    const temporary = `${this.file}.${process.pid}.${randomUUID()}.tmp`;
-    await writeFile(temporary, JSON.stringify(next, null, 2), "utf8");
-    await rename(temporary, this.file);
+    await durableMkdir(this.dataDir);
+    try { await durableWriteFile(this.file, JSON.stringify(next, null, 2)); }
+    catch (error) { if (isUncertainWrite(error)) this.cached = null; throw error; }
     this.cached = withCoreDefaults(next);
     return this.cached;
   }
