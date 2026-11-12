@@ -77,6 +77,33 @@ it("deduplicates repeated output, preserves empty output and marks conflicting r
   expect(transcriptItems([call, result, { ...result, seq: 3, output: "different" }], new Set())[0]).toMatchObject({ toolResults: { 1: { status: "unknown", output: "", conflict: true } } });
 });
 
+describe("decided approvals", () => {
+  const call = (seq: number, toolUseId = "call") => event(seq, "tool_use", { toolName: "Bash", toolUseId });
+  const request = (seq: number, approvalId = "a", toolUseId: string | null = "call") => event(seq, "approval_request", { approvalId, toolName: "Bash", ...(toolUseId ? { toolUseId } : {}) });
+  const decided = new Map([["a", { decision: "deny", message: "Use the safe directory" }]]);
+  const approvalFlow = (first: AssistantEvent, second: AssistantEvent) => [event(1, "user_message"), first, second, event(4, "session_status", { status: "awaiting_approval" }),
+    event(5, "approval_decision", { approvalId: "a", decision: "deny" }), event(6, "session_status", { status: "running" }), call(7, "next")];
+
+  it.each([["call first (Claude)", call(2), request(3)], ["approval first (Codex)", request(2), call(3)]])("folds into its call and keeps one group: %s", (_, first, second) => {
+    const items = transcriptItems(approvalFlow(first, second), new Set(), decided);
+    expect(items.map(item => item.key)).toEqual(["event-1", `activity-${first.type === "tool_use" ? 2 : 3}`]);
+    const seq = first.type === "tool_use" ? first.seq : second.seq;
+    expect(items[1]).toMatchObject({ events: [{ seq }, { seq: 7 }], approvals: { [seq]: { decision: "deny", message: "Use the safe directory" } } });
+  });
+  it("keeps an open, unidentified, ambiguous or hidden-call approval as its own card", () => {
+    const open = transcriptItems(approvalFlow(call(2), request(3)), new Set());
+    expect(open.map(item => item.key)).toEqual(["event-1", "activity-2", "event-3", "activity-7"]);
+    expect(transcriptItems([call(1), request(2, "a", null)], new Set(), decided).map(item => item.key)).toEqual(["activity-1", "event-2"]);
+    expect(transcriptItems([call(1), call(2), request(3)], new Set(), decided).map(item => item.key)).toEqual(["activity-1", "event-3"]);
+    expect(transcriptItems([call(1), request(2), request(3)], new Set(), decided).filter(item => item.kind === "event")).toHaveLength(2);
+    expect(transcriptItems([event(1, "tool_use", { toolName: "ToolSearch", toolUseId: "call" }), request(2)], new Set(), decided).map(item => item.key)).toEqual(["event-2"]);
+  });
+  it("never pairs an approval with a call from another recorded turn", () => {
+    const items = transcriptItems([call(1), event(2, "result", { status: "success" }), event(3, "user_message"), request(4)], new Set(), decided);
+    expect(items.map(item => item.key)).toEqual(["activity-1", "event-3", "event-4"]);
+  });
+});
+
 it("never shows hidden setup output or assigns a hidden duplicate identity to a visible call", () => {
   const visible = event(1, "tool_use", { toolName: "Read", toolUseId: "same" });
   const hidden = event(2, "tool_use", { toolName: "ToolSearch", toolUseId: "same" });

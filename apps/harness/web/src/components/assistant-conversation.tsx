@@ -1185,7 +1185,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   // Which message each uploaded file belongs to, so a claimed file is drawn under its message and
   // nowhere else.
   const attachmentIndex = useMemo(() => indexAttachments(events), [events]);
-  const items = useMemo(() => transcriptItems(events, attachmentIndex.claimed), [events, attachmentIndex]);
+  const items = useMemo(() => transcriptItems(events, attachmentIndex.claimed, decidedApprovals), [events, attachmentIndex, decidedApprovals]);
   const feedbackTranscript = useFeedbackTranscript(session?.id, events, !historyLoading && !showSessions);
   const mcpActivity = useMemo(() => contextDetailsOpen ? observedMcpActivity(events) : EMPTY_MCP_ACTIVITY, [events, contextDetailsOpen]);
 
@@ -1334,7 +1334,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
 
                   {items.map((item) => item.kind === "activity" ? (
                     <MessageScrollerItem key={item.key} messageId={item.key}>
-                      <ToolActivity events={item.events} appNames={appNames} reviewContext={transcriptReviewContext} commandResults={item.commandResults} toolResults={item.toolResults} />
+                      <ToolActivity events={item.events} appNames={appNames} reviewContext={transcriptReviewContext} commandResults={item.commandResults} toolResults={item.toolResults} approvals={item.approvals} />
                     </MessageScrollerItem>
                   ) : (
                     <MessageScrollerItem key={item.key} messageId={item.key}>

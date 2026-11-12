@@ -35,3 +35,15 @@ it("never claims a locally denied command executed, including duplicated complet
     expect(events.filter(event => event.type === "command_result" || event.type === "tool_use")).toEqual([]);
   } finally { await run.stop(); }
 });
+it("names the started command on its approval, so the later recorded call carries the decision", async () => {
+  const events: HarnessEvent[] = []; const run = start(events);
+  try {
+    run.send("allowed"); await vi.waitFor(() => expect(events.find(event => event.type === "approval_request")).toBeDefined());
+    const approval = events.find(event => event.type === "approval_request")!;
+    expect(approval.type === "approval_request" && approval.toolUseId).toMatch(/^command:/);
+    expect(approval.type === "approval_request" && run.resolveApproval(approval.approvalId, "allow")).toBe(true);
+    await vi.waitFor(() => expect(events.find(event => event.type === "result")).toBeDefined());
+    const calls = events.filter(event => event.type === "tool_use");
+    expect(calls).toHaveLength(1); expect(calls[0]!.type === "tool_use" && calls[0]!.toolUseId).toBe(approval.type === "approval_request" && approval.toolUseId);
+  } finally { await run.stop(); }
+});

@@ -618,11 +618,15 @@ class CodexRun implements HarnessRun {
         const proposal = message.method === "item/fileChange/requestApproval" ? this.takeFileChangeProposal(params) : undefined;
         const { toolName, input } = describeApproval(message.method, proposal && !Array.isArray(params.changes)
           ? { ...params, changes: proposal } : params);
+        // A started command in this live turn already owns the identity its later tool_use carries.
+        const command = typeof params.itemId === "string" ? this.commandCalls.get(params.itemId) : undefined;
+        const toolUseId = command && params.threadId === this.threadId && params.turnId === command.turnId ? command.id : undefined;
         this.emit({
           type: "approval_request",
           approvalId,
           toolName,
           input,
+          ...(toolUseId ? { toolUseId } : {}),
           // Codex sends its own reason for needing to escalate; the card shows it where the Claude
           // side shows the SDK's decision reason.
           ...(typeof params.reason === "string" && params.reason ? { reason: params.reason } : {}),

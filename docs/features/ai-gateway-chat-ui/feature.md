@@ -170,7 +170,8 @@ denial reason. Resolved cards retain the decision and its recorded reason.
 Question cards use labeled radio groups for single choices, checkboxes for multiple
 choices, and a free-text answer. A single choice and free text are mutually exclusive;
 multiple choices can include additional free text. Submission requires every question
-to have an answer. Resolved cards display the recorded answers.
+to have an answer. Resolved cards fold to one line like a tool call, with the recorded answers
+first and each question's answer on expansion.
 
 Both cards disable duplicate submissions while a request is pending or accepted, and
 display request failures locally while preserving the operator's input for retry.
