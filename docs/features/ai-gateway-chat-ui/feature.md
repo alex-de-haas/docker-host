@@ -1,6 +1,6 @@
 ---
 created: 2026-09-22
-updated: 2026-11-06
+updated: 2026-11-11
 summary: The chat components Harness uses for messages, code blocks, attachments, the composer and collapsible activity.
 components: [apps/harness]
 ---
@@ -49,6 +49,14 @@ their visual alignment while rendering headings, emphasis, lists, block quotes, 
 and fenced code. Single line breaks remain visible. The composer and stored/sent message text retain
 the original Markdown source; formatting also applies to messages restored from history.
 
+Long submitted user prompts initially show a five-line prose-height preview. **Show more** reveals
+the complete Markdown message and **Show less** restores the preview. Short prompts have no toggle.
+The preview follows rendered wrapping when the panel width changes. Keyboard focus on a clipped
+link or code control expands the message, keeping the focused control visible. Attachments remain
+outside the preview and each message has its own expansion state.
+Toggling a prompt pauses automatic following before its height changes; **Jump to latest message**
+resumes following new content.
+
 Raw HTML stays inert. Links use the existing allowed URL schemes and open separately; Markdown
 image references remain links instead of fetching remote images. Uploaded attachments retain their
 existing message association, including attachment-only prompts.
@@ -76,30 +84,45 @@ One Input Group contains the full-width text field, selected attachments and a b
 action row. A single leftmost **+** menu contains **Add app context**, **Attach files** and the
 personal **Prompt suggestions** preference,
 followed by the provider selector. Dictation sits immediately
-before Send on the right. While the agent is running or waiting for approval/an answer, the same button
-shows Stop and cancels the active run through the existing session cancellation API.
+before Send on the right. While the agent is running or waiting for approval/an answer, a separate
+Stop action cancels the active run through the existing session cancellation API. Send remains
+available to enqueue the next message.
 Every SSE subscription finishes its persisted replay with the current session status, including
 when no new persisted events exist, so reconnecting cannot leave Stop stuck after a completed turn.
 The separate header Stop button is absent. History is retained, and the next message
-can continue the conversation after cancellation. The composer remains editable during
-a response, but neither Enter nor form submission sends another message until the run
-finishes or stops. Drafts are not queued or sent automatically. The messages API rejects
-busy sessions with HTTP 409 (`session_busy`) before recording another user message.
-When idle, Enter sends, Shift+Enter inserts a newline, and IME composition does not send.
+can continue the conversation after cancellation. A bounded message stack above the composer holds
+submitted snapshots while the next draft remains editable. The browser stages text and file blobs
+before clearing the submitted draft; late acknowledgements preserve newer content. Enter and form
+submission enqueue a message during a response, Shift+Enter inserts a newline, and IME composition
+does not send. The legacy immediate messages API still rejects busy sessions with HTTP 409
+(`session_busy`) and cannot overtake accepted queue entries.
 
-A confirmed workspace writer-admission refusal keeps the draft and uploaded files editable. The
-operator can recover or Return the app transition and intentionally send again in the same chat
-without restarting Harness. A lost acknowledgement retains the original send UUID; Retry checks
+Waiting rows expose Edit, Delete and accessible move controls. Edit reserves the row, restores its
+text and attachments and stashes the existing draft. Save preserves position; Cancel restores the
+original row. Another view can explicitly recover an interrupted reservation. Sending rows show
+neutral inline progress; failed or uncertain rows retain their own Retry state. Queue advancement
+pauses on Stop or execution failure and requires explicit Resume queue. An approval or question
+holds the active turn; successful completion advances the eligible head. See
+[Harness Message Queue](../harness-message-queue/feature.md) for storage, authority and recovery.
+
+A confirmed workspace writer-admission refusal preserves the queued message and uploaded files for
+review and corrected retry. The operator can recover or Return the app transition and intentionally
+send again in the same chat without restarting Harness. A lost acknowledgement retains the original
+send UUID; Retry checks
 its serialized receipt before replaying that exact request. A receipt-read failure alone never
 settles an uncertain send, and an unknown or already accepted request is never dispatched again.
 Partial source lease admission retains its original lease until a retry admits the remaining
 workspaces or native-exit recovery confirms that release is safe.
 
 After a successful answer, the optional native prediction phase allows a new Send to preempt
-collection and wait for native cleanup. A current suggestion appears above an empty connected
-composer as literal text. **Use suggestion** or Tab inserts an editable draft; Escape or **Dismiss**
-hides it. Acceptance never sends automatically. Typed content, IME, pending decisions and restored
-drafts take precedence. See [Contextual prompt suggestions](../assistant-prompt-suggestions/feature.md)
+collection and wait for native cleanup. A suggestion appears as its own literal-text card in the
+conversation history and as muted placeholder text in the empty, available composer. Typing hides
+the placeholder hint. **Use suggestion** or Tab records Selected for draft and inserts an editable
+draft when its original empty draft generation still applies. Escape or **Dismiss** records dismissal.
+The original card and recorded choice survive reload and restart. Suggestions do not expire with time;
+new messages and context changes supersede them. Selection never sends automatically.
+Typed content, IME, pending decisions, attachments, restored drafts and queue edits take precedence.
+See [Contextual prompt suggestions](../assistant-prompt-suggestions/feature.md)
 for provider availability, personal preference and freshness rules.
 
 The app-context popover retains search, paging, the 16-app limit and revision-conflict
@@ -124,16 +147,19 @@ undo/redo, with mention metadata saved alongside the local draft.
 ## Attachments
 
 Selected files show their name, size, local image preview where applicable, and removal
-action. Uploads begin on Send. The active upload shows progress; a failed upload shows
-an error and can be retried by sending again. Removal is disabled while sending.
-Successfully stored files survive a failed send and are not uploaded a second time.
+action. Send moves their snapshot into the browser outbox, whose row distinguishes uploading,
+saving to the server and sending to the agent. Transfer errors and Retry remain on that row; stable
+upload identities reconcile lost replies. Files in the next draft remain removable while earlier
+messages upload or wait. Editing a queued message restores its server snapshots and pending local
+files without overwriting the stashed draft.
 The composer attachment area is height-bounded and scrolls independently.
 
-Transcript cards use stored file names and sizes, associated with the message that names
+Transcript cards use attachment display names and sizes, associated with the message that names
 them. Claimed upload events do not render a duplicate card. Stored cards do not fetch
 remote images or imply a download action. Local preview object URLs are released when
 the selection changes or unmounts. The underlying
-[attachment API and limits](../assistant-attachments/feature.md) are unchanged.
+[attachment API and limits](../assistant-attachments/feature.md) describe the retained legacy
+upload endpoints and durable queue snapshots.
 
 ## Interactive Requests
 
@@ -144,7 +170,8 @@ denial reason. Resolved cards retain the decision and its recorded reason.
 Question cards use labeled radio groups for single choices, checkboxes for multiple
 choices, and a free-text answer. A single choice and free text are mutually exclusive;
 multiple choices can include additional free text. Submission requires every question
-to have an answer. Resolved cards display the recorded answers.
+to have an answer. Resolved cards fold to one line like a tool call, with the recorded answers
+first and each question's answer on expansion.
 
 Both cards disable duplicate submissions while a request is pending or accepted, and
 display request failures locally while preserving the operator's input for retry.
@@ -215,6 +242,8 @@ installation has only a Codex connection.
 
 - User prompt rendering covers Markdown structure, literal code and preserved line breaks, allowed
   links and inert HTML/image references, plus attachment-only turns and unchanged source text.
+- Compact prompt coverage checks rendered overflow, width changes, independent expansion, keyboard
+  focus recovery and attachments outside the preview without changing the stored prompt.
 - Feedback-card coverage checks exact message identity, historical/live loading, session and focus
   recovery, unavailable-data fallback, collapsed details/original request and retained attachments.
 - Verify aligned command/MCP rows, per-call failure badges and a separately labeled execution-time

@@ -306,6 +306,8 @@ describe("sessions with provider connections", () => {
     const legacy = {
       ...(await manager.createSession({ createdBy: "operator" })),
       id: "legacy",
+      // A new retained identity has no committed source events until the legacy prompt is appended.
+      lastEventSeq: 0,
       providerLocked: undefined,
       harnessSessionId: "legacy-native-thread",
     };

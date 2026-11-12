@@ -3,9 +3,9 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { DecisionRecord } from "@hosty-sdk/app/decisions";
-import { DecisionAnswerForm } from "./decision-question";
-import { resolveDecision, readDecision } from "@/lib/decisions";
-vi.mock("@/lib/decisions", () => ({ resolveDecision: vi.fn(), readDecision: vi.fn() }));
+import { DecisionAnswerForm, DecisionQuestion } from "./decision-question";
+import { resolveDecision, readDecision, readDecisionWait, subscribeDecisionUpdates } from "@/lib/decisions";
+vi.mock("@/lib/decisions", () => ({ resolveDecision: vi.fn(), readDecision: vi.fn(), readDecisionWait: vi.fn(), retryDecision: vi.fn(), subscribeDecisionUpdates: vi.fn() }));
 let root: Root, element: HTMLDivElement;
 const row = (): DecisionRecord => ({ id: crypto.randomUUID(), revision: 1, sequence: 1, userId: "alice", sourceAppId: "requester", sourceInstallation: "one", sourcePrincipal: "source", correlationHash: "hash",
   createdAt: "2026-11-03T10:00:00Z", updatedAt: "2026-11-03T10:00:00Z", state: "pending", resolution: null, delivery: null, continuation: null,
@@ -59,4 +59,47 @@ it("renders an immutable saved answer and a separate blocked continuation withou
   expect(element.textContent).toContain("Answer saved"); expect(element.textContent).toContain("Continuation: blocked · unknown stop");
   expect([...element.querySelectorAll("button")].some(b => b.textContent === "Submit answer")).toBe(false);
   expect(readDecision).not.toHaveBeenCalled();
+});
+it("collapses a closed question to its saved answer and keeps every option behind a disclosure", async () => {
+  const record = row(); record.state = "withdrawn"; record.reason = "The originating work was cancelled.";
+  record.resolution = { revision: 2, userId: "alice", principalId: "alice", answers: { q1: { optionIds: ["b"], text: "Extra detail" } }, answeredAt: record.createdAt };
+  record.continuation = { revision: 2, commandId: null, state: "cancelled", reason: "cancelled", updatedAt: record.createdAt };
+  await act(async () => root.render(<DecisionAnswerForm record={record} onSaved={async () => {}} />));
+  expect(element.querySelectorAll("input, textarea, fieldset")).toHaveLength(0);
+  const answers = [...element.querySelectorAll("dd")].map(dd => [...dd.querySelectorAll(":scope > p")].map(p => p.textContent));
+  expect(answers).toEqual([["Same label · Second option", "Extra detail"], ["Not answered"]]);
+  expect(element.querySelectorAll("details li")).toHaveLength(4);
+  expect(element.textContent).toContain("Continuation: cancelled"); expect(element.textContent).not.toContain("cancelled · cancelled");
+});
+it("folds a closed chat question to one line, links back only outside that chat and shows a repeated notice once", async () => {
+  const record = row(); record.state = "withdrawn"; record.reason = "The originating work was cancelled or deleted.";
+  record.input = { ...record.input!, waitReference: "a".repeat(64) };
+  record.resolution = { revision: 2, userId: "alice", principalId: "alice", answers: { q1: { optionIds: ["b"] }, q2: { text: "Own words" } }, answeredAt: record.createdAt };
+  vi.mocked(readDecision).mockResolvedValue(record);
+  vi.mocked(readDecisionWait).mockResolvedValue({ id: "a".repeat(64), sessionId: "chat", questionId: "q", state: "cancelled", core: record, error: record.reason, reason: null });
+  vi.mocked(subscribeDecisionUpdates).mockImplementation(refresh => { void refresh(); return () => {}; });
+  const link = () => [...element.querySelectorAll("a")].find(a => a.textContent === "Open originating chat");
+  const notices = () => element.textContent!.split("The originating work was cancelled or deleted.").length - 1;
+  await act(async () => root.render(<DecisionQuestion waitId={"a".repeat(64)} />));
+  const toggle = element.querySelector<HTMLButtonElement>('[data-slot="decision-row"] > button[aria-expanded]')!;
+  expect(toggle.textContent).toBe("Same label; Own wordsSame wording?Withdrawn"); expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  expect(element.querySelector("section")).toBeNull();
+  await act(async () => toggle.click());
+  expect(element.querySelector('section[aria-label="Agent question"]')).not.toBeNull(); expect(link()).toBeUndefined(); expect(notices()).toBe(1);
+  await act(async () => root.render(<DecisionQuestion decisionId={record.id} />));
+  expect(element.querySelector('[data-slot="decision-row"]')).toBeNull();
+  expect(link()?.getAttribute("href")).toBe("/development?session=chat"); expect(notices()).toBe(1);
+});
+it("keeps a pending chat question open and marks a blocked continuation on its folded line", async () => {
+  const record = row(), wait = { id: "b".repeat(64), sessionId: "chat", questionId: "q", state: "waiting", core: record, error: null, reason: null };
+  vi.mocked(readDecision).mockResolvedValue(record); vi.mocked(readDecisionWait).mockResolvedValue(wait);
+  vi.mocked(subscribeDecisionUpdates).mockImplementation(refresh => { void refresh(); return () => {}; });
+  await act(async () => root.render(<DecisionQuestion waitId={wait.id} />));
+  expect(element.querySelector('[data-slot="decision-row"]')).toBeNull(); expect(element.querySelectorAll("fieldset")).toHaveLength(2);
+  const answered = { ...record, state: "answered" as const, resolution: { revision: 2, userId: "alice", principalId: "alice", answers: { q1: { optionIds: ["a"] }, q2: { optionIds: ["a"] } }, answeredAt: record.createdAt },
+    continuation: { revision: 2, commandId: "command", state: "blocked" as const, reason: "missing_provider" as const, updatedAt: record.createdAt } };
+  vi.mocked(readDecision).mockResolvedValue(answered); vi.mocked(readDecisionWait).mockResolvedValue({ ...wait, state: "blocked", core: answered, error: "Run not found." });
+  await act(async () => root.render(<DecisionQuestion key="answered" waitId={wait.id} />));
+  const badge = element.querySelector('[data-slot="decision-row"] [data-slot="badge"]');
+  expect(badge?.textContent).toBe("Blocked"); expect(badge?.className).toContain("text-warning-foreground");
 });

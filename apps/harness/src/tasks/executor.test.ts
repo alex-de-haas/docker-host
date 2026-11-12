@@ -152,9 +152,8 @@ it("reserves the task's first message for its executor even when a caller knows 
   expect(sent.mock.calls[0]?.[0]).toContain(input.content.markdown);
 });
 
-it.each(["workspace", "adapter"] as const)("recovers a definite local %s startup rejection without replacing its attempt", async failure => {
-  if (failure === "workspace") vi.spyOn(manager.store, "ensureWorkspace").mockRejectedValueOnce(new Error("Workspace preparation failed"));
-  else vi.spyOn(adapter, "start").mockImplementationOnce(() => { throw new Error("Native startup failed"); });
+it("recovers a definite local workspace preparation rejection without replacing its attempt", async () => {
+  vi.spyOn(manager.store, "ensureWorkspace").mockRejectedValueOnce(new Error("Workspace preparation failed"));
   const id = randomUUID(), accepted = await executor.accept(id, input, actor);
   await executor.tick();
   expect(await manager.messageReceipt(accepted.sessionRef!.id, id, "owner")).toMatchObject({ state: "rejected" });
@@ -168,6 +167,24 @@ it.each(["workspace", "adapter"] as const)("recovers a definite local %s startup
   await executor.tick();
   expect(sent).toHaveBeenCalledTimes(1);
 });
+it("keeps an adapter startup throw uncertain and never retries its physical attempt", async () => {
+  let starts = 0;
+  vi.spyOn(adapter, "start").mockImplementation(() => {
+    starts++; // A native process may already exist when its adapter loses the startup acknowledgement.
+    throw new Error("Native startup acknowledgement lost");
+  });
+  const id = randomUUID(), accepted = await executor.accept(id, input, actor);
+  await executor.tick();
+  expect(await manager.messageReceipt(accepted.sessionRef!.id, id, "owner")).toMatchObject({ state: "unknown" });
+  expect(await executor.get(id, actor)).toMatchObject({ state: "interrupted", stopConfirmed: false });
+  expect((await manager.getSession(accepted.sessionRef!.id))?.sourceAdmission).toMatchObject({ state: "dispatching" });
+  executor = new HarnessTaskExecutor(manager);
+  await executor.accept(id, input, actor); await executor.tick(); await executor.tick();
+  expect(await executor.get(id, actor)).toMatchObject({ state: "interrupted", stopConfirmed: false });
+  expect(await manager.messageReceipt(accepted.sessionRef!.id, id, "owner")).toMatchObject({ state: "unknown" });
+  expect(starts).toBe(1); expect(sent).not.toHaveBeenCalled();
+});
+
 it("keeps failed local send admission uncertain until native exit is confirmed", async () => {
   sent.mockImplementationOnce(() => { throw new Error("Lost send acknowledgement"); });
   const id = randomUUID(), accepted = await executor.accept(id, input, actor);
@@ -209,10 +226,12 @@ it("recovers persisted no-run proof even when the failed-status update did not c
     await saveReceipt(sessionId, receipt);
     if (receipt.state === "rejected") throw new Error("Stopped before updating the session status");
   });
-  vi.spyOn(adapter, "start").mockImplementationOnce(() => { throw new Error("Native startup failed"); });
+  // This failure is before adapter.start: unlike a thrown start(), it proves no native effect.
+  vi.spyOn(manager.store, "ensureWorkspace").mockRejectedValueOnce(new Error("Workspace preparation failed"));
   vi.spyOn(manager, "messageReceipt").mockRejectedValueOnce(new Error("Receipt temporarily unavailable"));
   const id = randomUUID(), accepted = await executor.accept(id, input, actor); await executor.tick();
   expect((await manager.getSession(accepted.sessionRef!.id))?.status).toBe("running");
+  expect((await manager.getSession(accepted.sessionRef!.id))?.taskRun).toEqual({ started: false, exitConfirmed: true });
   executor = new HarnessTaskExecutor(manager);
   await executor.tick();
   expect(await executor.get(id, actor)).toMatchObject({ state: "failed", stopConfirmed: true });

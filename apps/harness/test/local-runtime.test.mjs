@@ -1,8 +1,8 @@
 import { afterEach, expect, it } from "vitest";
-import { mkdtemp, mkdir, writeFile, readFile, rm, readdir } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, rm, readdir, cp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { prepare, fingerprint, completeBundle, buildEnvironment } from "../scripts/local-runtime.mjs";
+import { prepare, fingerprint, completeBundle, buildEnvironment, sourceFiles, repository } from "../scripts/local-runtime.mjs";
 
 const roots = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
@@ -25,6 +25,55 @@ it("reuses complete output without installing or building and preserves source f
   expect(await prepare({ ...f.options, buildBundle: () => { throw new Error("must not build"); } })).toBe(first);
   expect(f.builds()).toBe(1);
   expect(await readFile(path.join(f.root, "input"), "utf8")).toBe("first");
+});
+it("snapshots public favicons and invalidates cached bundles when public assets change", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "harness-public-")); roots.push(root);
+  // Derive config inputs from production discovery, leaving recursive source trees empty so
+  // each preparation copies only the files relevant to this test.
+  const sourceDirectories = ["apps/harness/src", "apps/harness/shared", "apps/harness/web/src",
+    "apps/harness/web/public", "packages/app-sdk/src", "shared/web"];
+  for (const directory of sourceDirectories)
+    await mkdir(path.join(root, directory), { recursive: true });
+  for (const file of (await sourceFiles(repository)).filter(file =>
+    !sourceDirectories.some(directory => file.startsWith(directory + "/")))) {
+    await mkdir(path.dirname(path.join(root, file)), { recursive: true });
+    await writeFile(path.join(root, file), "fixture source");
+  }
+  const publicDirectory = "apps/harness/web/public";
+  const icons = ["favicon.svg", "favicon-light.svg", "favicon-dark.svg", "favicon.ico"];
+  await mkdir(path.join(root, publicDirectory), { recursive: true });
+  for (const icon of icons)
+    await writeFile(path.join(root, publicDirectory, icon), await readFile(path.join(repository, publicDirectory, icon)));
+  expect(await sourceFiles(root)).toEqual(expect.arrayContaining(icons.map(icon => publicDirectory + "/" + icon)));
+  let builds = 0;
+  const options = { root, store: path.join(root, "bundles"), log: () => {}, buildBundle: async dir => {
+    builds++;
+    await mkdir(path.join(dir, "web/assistant"), { recursive: true });
+    for (const file of ["api.mjs", "worker.mjs", "web/index.html", "web/assistant/index.html"])
+      await writeFile(path.join(dir, file), "built");
+    await cp(path.join(dir, publicDirectory), path.join(dir, "web"), { recursive: true });
+  } };
+  const first = await prepare(options);
+  for (const icon of icons)
+    expect(await readFile(path.join(first, "web", icon))).toEqual(await readFile(path.join(root, publicDirectory, icon)));
+  expect(await prepare(options)).toBe(first);
+  expect(builds).toBe(1);
+
+  const original = await readFile(path.join(first, "web/favicon.svg"));
+  const changed = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><rect width="16" height="16"/></svg>');
+  await writeFile(path.join(root, publicDirectory, "favicon.svg"), changed);
+  const second = await prepare(options);
+  expect(second).not.toBe(first);
+  expect(await readFile(path.join(second, "web/favicon.svg"))).toEqual(changed);
+  expect(await readFile(path.join(first, "web/favicon.svg"))).toEqual(original);
+
+  await writeFile(path.join(root, publicDirectory, "robots.txt"), "User-agent: *");
+  const third = await prepare(options);
+  expect(third).not.toBe(second);
+  expect(await readFile(path.join(third, "web/robots.txt"), "utf8")).toBe("User-agent: *");
+  await rm(path.join(root, publicDirectory, "robots.txt"));
+  expect(await prepare(options)).toBe(second);
+  expect(builds).toBe(3);
 });
 it("invalidates changed bytes, Node versions and platforms while preserving the previous bundle", async () => {
   const f = await fixture(), first = await prepare(f.options);

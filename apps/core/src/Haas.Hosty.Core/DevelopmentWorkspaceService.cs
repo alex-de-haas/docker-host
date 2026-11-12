@@ -12,9 +12,11 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
     LocalCommandProcessRegistry? processes = null, ILogger<DevelopmentWorkspaceService>? logger = null,
     IDockerCommandRunner? docker = null, ISourceGitAccess? privateSources = null,
     SourceRepositoryFetchCoordinator? fetches = null, CoreDevelopmentService? coreDevelopment = null,
-    WorkspaceObservationState? observationState = null, UserDirectoryStore? participantUsers = null)
+    WorkspaceObservationState? observationState = null, UserDirectoryStore? participantUsers = null,
+    HostyCoreRuntimeConfig? runtimeConfig = null)
 {
     private readonly ConcurrentDictionary<string, SemaphoreSlim> gates = new(StringComparer.Ordinal);
+    private readonly string instanceId = runtimeConfig?.InstanceId ?? "";
     internal SourceRepositoryFetchCoordinator Fetches { get; } = fetches ?? new(clock);
     private readonly WorkspaceRecordCache recordCache = new();
     private readonly AsyncLocal<string?> readRoot = new();
@@ -759,11 +761,20 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
         deadline.CancelAfter(TimeSpan.FromSeconds(10));
         try
         {
-            var list = await docker!.RunAsync(["ps", "--filter", "label=hosty.app.id=" + app.Id, "--format", "{{.ID}}"], cancellationToken: deadline.Token);
+            var list = await docker!.RunAsync(["ps", "--filter", "label=hosty.app.id=" + app.Id, "--format", "{{.ID}}\t{{.Label \"hosty.instance\"}}"], cancellationToken: deadline.Token);
             if (list.ExitCode != 0) throw Error("consumer_unavailable", "Cannot verify running Docker source consumers.");
-            var ids = list.StandardOutput.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+            // App IDs can recur in child Cores. Only this instance's ordinary runtimes block
+            // deletion; owned children are finished separately. An absent label belongs to the
+            // default instance, matching its legacy containers rather than every environment.
+            var ids = list.StandardOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(line =>
+            {
+                var fields = line.TrimEnd('\r').Split('\t');
+                if (fields.Length != 2 || fields[0].Length is 0 or > 64 || !fields[0].All(char.IsAsciiHexDigit))
+                    throw Error("consumer_unavailable", "Docker returned invalid container identities.");
+                return fields[1] == instanceId ? fields[0] : null;
+            }).OfType<string>().ToArray();
             if (ids.Length == 0) return;
-            if (ids.Length > 256 || ids.Any(id => id.Length > 64 || !id.All(char.IsAsciiHexDigit))) throw Error("consumer_unavailable", "Docker returned invalid container identities.");
+            if (ids.Length > 256) throw Error("consumer_unavailable", "Docker returned too many source consumers.");
             var hasCollection = manifest.ExternalMounts.Values.Any(mount => mount.Kind is "managed-workspaces" or "agent-skills");
             var mounts = await docker.RunAsync(["inspect", "--format", hasCollection ? "{{json .}}" : "{{json .Mounts}}", .. ids], cancellationToken: deadline.Token);
             if (mounts.ExitCode != 0) throw Error("consumer_unavailable", "Cannot verify running Docker mounts.");

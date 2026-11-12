@@ -10,8 +10,12 @@ import { HostyLoader } from "../../../../../shared/web/hosty-states";
 import { cn } from "@/lib/utils";
 import { AssistantApiError, getSession, listContextApps, setSessionApps, type AssistantSession, type ContextApp } from "@/lib/assistant-api";
 import { editMentionDraft, insertMention, mentionQuery, readMentionDraft, writeMentionDraft, serializeMentions, type MentionDraft } from "@/lib/app-mentions";
+import { insertPromptTemplate, promptTemplateQuery, templateQueryKey } from "@/lib/prompt-template-insertion";
+import { usePromptTemplatePicker } from "@/lib/use-prompt-template-picker";
+import { PromptTemplateOptions } from "@/components/prompt-template-options";
+import type { PromptTemplate } from "@/lib/prompt-templates-api";
 
-export type AppMentionInputHandle = { serialize: () => string; insertPlainText: (text: string) => void };
+export type AppMentionInputHandle = { serialize: () => string; insertPlainText: (text: string) => boolean; openTemplates: () => void };
 
 type Props = Omit<ComponentProps<"textarea">, "value" | "onChange" | "ref"> & {
   ref?: Ref<AppMentionInputHandle>;
@@ -38,18 +42,35 @@ export function AppMentionInput({ ref, value, onChange, session, inputRef, conte
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
+  const [templateMenu, setTemplateMenu] = useState<{ value: string; start: number; end: number } | null>(null);
+  if (templateMenu && templateMenu.value !== value) setTemplateMenu(null);
+  const [templateSearch, setTemplateSearch] = useState("");
+  const [templateDismissed, setTemplateDismissed] = useState<string | null>(null);
   const generation = useRef(0);
   const pending = useRef(false);
+  const templateCaret = useRef<{ value: string; position: number } | null>(null);
   const mounted = useRef(true);
   const latest = useRef({ value, session, onChange, onContextChange, onBusyChange });
   useLayoutEffect(() => { latest.current = { value, session, onChange, onContextChange, onBusyChange }; });
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; latest.current.onBusyChange(false); }; }, []);
   useEffect(() => { if (session) writeMentionDraft(session.id, current); }, [current, session]);
+  useLayoutEffect(() => {
+    const target = templateCaret.current;
+    if (!target) return;
+    templateCaret.current = null;
+    if (target.value === value) { inputRef.current?.focus(); inputRef.current?.setSelectionRange(target.position, target.position); }
+  });
   const wrapper = useRef<HTMLDivElement>(null);
   const mirror = useRef<HTMLDivElement>(null);
   const suggestions = useRef<HTMLDivElement>(null);
   const listId = useId();
-  const query = focused && !composing && !disabled ? mentionQuery(value, caret.start, caret.end, current.mentions) : null;
+  const templateQuery = focused && !composing && !disabled && !props.readOnly ? promptTemplateQuery(current, caret.start, caret.end) : null;
+  const templateKey = templateQueryKey(templateQuery);
+  const menuRange = templateMenu?.value === value ? templateMenu : null;
+  const templatesOpen = !!session && !disabled && !props.readOnly && !saving && !composing &&
+    (!!menuRange || !!templateQuery && templateDismissed !== templateKey);
+  const templatePicker = usePromptTemplatePicker(templatesOpen, menuRange ? templateSearch : templateQuery?.search ?? "");
+  const query = focused && !composing && !disabled && !templatesOpen ? mentionQuery(value, caret.start, caret.end, current.mentions) : null;
   const key = query ? `${query.start}:${query.end}:${query.search}` : "";
   const open = !!session && !!query && dismissed !== key;
   const search = open ? query!.search : null;
@@ -74,6 +95,9 @@ export function AppMentionInput({ ref, value, onChange, session, inputRef, conte
   useEffect(() => {
     if (open) document.getElementById(`${listId}-${active}`)?.scrollIntoView?.({ block: "nearest" });
   }, [active, listId, open]);
+  useEffect(() => {
+    if (templatesOpen) document.getElementById(`${listId}-template-${templatePicker.active}`)?.scrollIntoView?.({ block: "nearest" });
+  }, [templatesOpen, templatePicker.active, listId]);
   useLayoutEffect(() => {
     const textarea = inputRef.current;
     const layer = mirror.current;
@@ -95,10 +119,29 @@ export function AppMentionInput({ ref, value, onChange, session, inputRef, conte
     historyIndex.current = history.current.length - 1;
     setDraft(nextDraft); onChange(nextDraft.text);
   };
-  useImperativeHandle(ref, () => ({ serialize: () => serializeMentions(current), insertPlainText: text => {
-    if (value || composing || disabled || saving || pending.current) return;
+  const closeTemplates = () => { setTemplateMenu(null); setTemplateDismissed(templateKey); };
+  const chooseTemplate = (template: PromptTemplate) => {
+    if (!templatesOpen || composing || disabled || props.readOnly || saving || pending.current || contextBusy) return;
+    const range = menuRange ?? templateQuery;
+    if (!range) return;
+    const nextDraft = insertPromptTemplate(current, range.start, range.end, template.text);
+    const position = range.start + template.text.length;
+    templateCaret.current = { value: nextDraft.text, position };
+    record(nextDraft); setTemplateMenu(null);
+    const literalMention = mentionQuery(nextDraft.text, position, position, nextDraft.mentions);
+    setDismissed(literalMention ? `${literalMention.start}:${literalMention.end}:${literalMention.search}` : "");
+    setTemplateDismissed(templateQueryKey(promptTemplateQuery(nextDraft, position, position)));
+    setCaret({ start: position, end: position });
+  };
+  useImperativeHandle(ref, () => ({ serialize: () => serializeMentions(current), openTemplates: () => {
+    if (!session || composing || disabled || props.readOnly || saving || pending.current || contextBusy) return;
+    const start = inputRef.current?.selectionStart ?? caret.start, end = inputRef.current?.selectionEnd ?? caret.end;
+    setTemplateMenu({ value, start, end }); setTemplateSearch(""); setTemplateDismissed(null);
+  }, insertPlainText: text => {
+    if (value || composing || disabled || saving || pending.current) return false;
     record({ text, mentions: [] });
     requestAnimationFrame(() => { if (mounted.current) { inputRef.current?.focus(); inputRef.current?.setSelectionRange(text.length, text.length); } });
+    return true;
   } }));
   const undo = (redo: boolean) => {
     if (!redo && history.current[historyIndex.current].text !== current.text) {
@@ -108,7 +151,7 @@ export function AppMentionInput({ ref, value, onChange, session, inputRef, conte
     const index = historyIndex.current + (redo ? 1 : -1);
     if (index < 0 || index >= history.current.length) return;
     historyIndex.current = index;
-    const restored = history.current[index]; setDraft(restored); onChange(restored.text); setDismissed(key);
+    const restored = history.current[index]; setDraft(restored); onChange(restored.text); setDismissed(key); closeTemplates();
   };
   const undoHandler = useRef(undo);
   useLayoutEffect(() => { undoHandler.current = undo; });
@@ -163,7 +206,27 @@ export function AppMentionInput({ ref, value, onChange, session, inputRef, conte
     </mark>];
   });
   const outside = current.mentions.filter(mention => !session?.appIds?.includes(mention.id));
-  return <Popover open={open} onOpenChange={nextOpen => { if (!nextOpen) setDismissed(key); }}>
+  const templateKeys = (event: import("react").KeyboardEvent) => {
+    if (!templatesOpen || composing || event.nativeEvent.isComposing || event.keyCode === 229) return false;
+    if (event.key === "Escape") {
+      event.preventDefault(); closeTemplates(); inputRef.current?.focus(); return true;
+    }
+    if (!event.altKey && !event.ctrlKey && !event.metaKey && ["ArrowDown", "ArrowUp"].includes(event.key)) {
+      event.preventDefault(); templatePicker.setActive(index => templatePicker.templates.length
+        ? (index + (event.key === "ArrowDown" ? 1 : templatePicker.templates.length - 1)) % templatePicker.templates.length : 0); return true;
+    }
+    if (event.key === "Enter" && !event.shiftKey && (event.altKey || event.ctrlKey || event.metaKey)) {
+      event.preventDefault(); return true;
+    }
+    if (!event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey &&
+      (event.key === "Enter" || event.key === "Tab" && !!templatePicker.templates[templatePicker.active])) {
+      event.preventDefault();
+      if (templatePicker.templates[templatePicker.active]) chooseTemplate(templatePicker.templates[templatePicker.active]);
+      return true;
+    }
+    return false;
+  };
+  return <Popover open={open || templatesOpen} onOpenChange={nextOpen => { if (!nextOpen) { setDismissed(key); closeTemplates(); } }}>
     <PopoverPrimitive.Anchor asChild>
       <div ref={wrapper} className="relative w-full min-w-0">
         <div ref={mirror} data-slot="app-mention-mirror" aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-3 py-3 text-base text-transparent md:text-sm">
@@ -171,8 +234,8 @@ export function AppMentionInput({ ref, value, onChange, session, inputRef, conte
         </div>
         <InputGroupTextarea {...props} ref={inputRef} value={value} disabled={disabled} readOnly={saving || props.readOnly} aria-busy={saving}
           className={cn("relative max-h-48 min-h-20 w-full px-3", className)}
-          aria-autocomplete="list" aria-controls={open ? listId : undefined} aria-expanded={open}
-          aria-activedescendant={open && apps[active] ? `${listId}-${active}` : undefined}
+          aria-autocomplete="list" aria-controls={open || templatesOpen ? listId : undefined} aria-expanded={open || templatesOpen}
+          aria-activedescendant={templatesOpen && templatePicker.templates[templatePicker.active] ? `${listId}-template-${templatePicker.active}` : open && apps[active] ? `${listId}-${active}` : undefined}
           aria-describedby={outside.length ? `${listId}-outside` : undefined}
           onCopy={event => {
             props.onCopy?.(event);
@@ -190,7 +253,7 @@ export function AppMentionInput({ ref, value, onChange, session, inputRef, conte
             record(editMentionDraft(current, value.slice(0, start) + value.slice(end)));
             requestAnimationFrame(() => { if (mounted.current) inputRef.current?.setSelectionRange(start, start); });
           }}
-          onChange={event => { record(editMentionDraft(current, event.target.value)); setCaret({ start: event.target.selectionStart, end: event.target.selectionEnd }); setDismissed(null); }}
+          onChange={event => { record(editMentionDraft(current, event.target.value)); setCaret({ start: event.target.selectionStart, end: event.target.selectionEnd }); setDismissed(null); setTemplateDismissed(null); setTemplateMenu(null); }}
           onSelect={event => { setCaret({ start: event.currentTarget.selectionStart, end: event.currentTarget.selectionEnd }); onSelect?.(event); }}
           onFocus={event => { setFocused(true); onFocus?.(event); }}
           onBlur={event => {
@@ -204,6 +267,7 @@ export function AppMentionInput({ ref, value, onChange, session, inputRef, conte
             if ((event.metaKey || event.ctrlKey) && ["z", "y"].includes(event.key.toLowerCase())) {
               event.preventDefault(); undo(event.shiftKey || event.key.toLowerCase() === "y"); return;
             }
+            if (templateKeys(event)) return;
             if (open) {
               if (event.key === "Escape") { event.preventDefault(); setDismissed(key); return; }
               if (["ArrowDown", "ArrowUp"].includes(event.key)) {
@@ -218,9 +282,14 @@ export function AppMentionInput({ ref, value, onChange, session, inputRef, conte
         {outside.length > 0 && <p id={`${listId}-outside`} className="px-3 pb-1 text-xs text-muted-foreground">Mention outside current app context: {[...new Set(outside.map(m => m.id))].join(", ")}</p>}
       </div>
     </PopoverPrimitive.Anchor>
-    <PopoverContent ref={suggestions} aria-label="Mention an app" side="top" align="start" sideOffset={8} collisionPadding={12} className="w-[min(22rem,calc(100vw-1.5rem))] p-2"
-      onOpenAutoFocus={event => event.preventDefault()} onCloseAutoFocus={event => event.preventDefault()}
+    <PopoverContent ref={suggestions} aria-label={templatesOpen ? "Insert a prompt template" : "Mention an app"} side="top" align="start" sideOffset={8} collisionPadding={12} className="w-[min(22rem,calc(100vw-1.5rem))] p-2"
+      onKeyDown={event => { if (event.target instanceof HTMLInputElement && templateKeys(event)) event.stopPropagation(); }}
+      onOpenAutoFocus={event => {
+        event.preventDefault();
+        if (menuRange) suggestions.current?.querySelector<HTMLInputElement>("input")?.focus();
+      }} onCloseAutoFocus={event => event.preventDefault()}
       onInteractOutside={event => { if (wrapper.current?.contains(event.target as Node)) event.preventDefault(); }}>
+      {templatesOpen ? <PromptTemplateOptions picker={templatePicker} listId={listId} search={menuRange ? templateSearch : undefined} onSearch={setTemplateSearch} onChoose={chooseTemplate} /> : <>
       <p className="px-2 pb-2 text-sm font-medium">Mention an app</p>
       <div id={listId} role="listbox" aria-label="Apps to mention" aria-busy={waiting || saving} className="max-h-60 overflow-y-auto">
         {apps.map((app, index) => <button key={app.id} id={`${listId}-${index}`} type="button" role="option" tabIndex={-1}
@@ -238,6 +307,7 @@ export function AppMentionInput({ ref, value, onChange, session, inputRef, conte
         void listContextApps(search ?? "", next).then(page => { if (generation.current === request) setResults(previous => ({ key, apps: [...previous.apps, ...page.apps], next: page.nextOffset })); })
           .catch(cause => { if (generation.current === request) setError(String(cause)); }).finally(() => { if (generation.current === request) setLoading(false); });
       }}>Load more</Button>}
+      </>}
     </PopoverContent>
   </Popover>;
 }

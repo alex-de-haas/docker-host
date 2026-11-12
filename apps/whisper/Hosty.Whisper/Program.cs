@@ -26,7 +26,7 @@ app.MapPost("/api/speech/v1/transcriptions", async (HttpContext context, HostyPr
         return Results.Json(new { code = "speech_format_unsupported", message = "Use a 16 kHz mono PCM16 WAV recording." }, statusCode: 415);
     if (!await engine.TryEnterAsync(context.RequestAborted)) return Results.Json(new { code = "speech_busy", message = "Speech recognition is busy. Try again shortly." }, statusCode: 429);
     using var deadline = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);
-    deadline.CancelAfter(TimeSpan.FromMinutes(5));
+    deadline.CancelAfter(TimeSpan.FromMinutes(15));
     try
     {
         var samples = await WaveAudio.ReadAsync(context.Request.Body, deadline.Token);
@@ -36,7 +36,7 @@ app.MapPost("/api/speech/v1/transcriptions", async (HttpContext context, HostyPr
         var text = await engine.TranscribeAsync(samples, language, deadline.Token);
         return Results.Json(new HostySpeechResult(text, language == "auto" ? null : language));
     }
-    catch (BadHttpRequestException ex) when (ex.StatusCode == 413) { return Results.Json(new { code = "speech_audio_too_large", message = "The recording exceeds the two-minute input limit." }, statusCode: 413); }
+    catch (BadHttpRequestException ex) when (ex.StatusCode == 413) { return Results.Json(new { code = "speech_audio_too_large", message = "The recording exceeds the ten-minute input limit." }, statusCode: 413); }
     catch (InvalidDataException ex) { return Results.Json(new { code = "speech_audio_invalid", message = ex.Message }, statusCode: 400); }
     catch (OperationCanceledException) { return Results.StatusCode(context.RequestAborted.IsCancellationRequested ? 499 : 504); }
     catch (Exception ex)

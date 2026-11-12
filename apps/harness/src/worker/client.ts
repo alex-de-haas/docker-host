@@ -234,8 +234,14 @@ class RemoteRun implements HarnessRun {
   async interrupt(): Promise<void> {
     if (!this.id || this.confirmed) return;
     if (this.submitted) {
-      const current = await this.client.request<WorkerReceipt>(`/v1/runs/${this.id}`).catch(error => {
+      const retainedRunId = this.id;
+      const current = await this.client.request<WorkerReceipt>(`/v1/runs/${retainedRunId}`).catch(async error => {
         if (error instanceof WorkerApiError && error.code === "run_not_found") return null;
+        if (error instanceof WorkerApiError && error.status === 503 && ["run_storage_uncertain", "run_storage_unavailable"].includes(error.code)) {
+          // A damaged receipt must not prevent Stop of the known run, or authorize another input PUT.
+          // Request retries retain one control UUID; even a response cannot settle the original receipt fence.
+          await this.client.request(`/v1/runs/${retainedRunId}/cancel`, "POST", { controlId: randomUUID() }, true).catch(() => undefined);
+        }
         throw error;
       });
       if (current && (current.runId !== this.id || current.conversationId !== this.options.sessionId))

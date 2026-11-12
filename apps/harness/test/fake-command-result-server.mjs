@@ -2,7 +2,7 @@
 // Exact v2 lifecycle fields from the pinned app-server generate-ts command; never a live provider.
 import readline from "node:readline";
 const input = readline.createInterface({ input: process.stdin });
-let turn = 0, deniedTurn;
+let turn = 0, deniedTurn, allowedTurn;
 const send = value => process.stdout.write(JSON.stringify(value) + "\n");
 const event = (method, item, turnId) => send({ method, params: { threadId: "thread", turnId, item } });
 const complete = (id, nativeTurn, extra = {}) => event("item/completed", { type: "commandExecution", id, command: "fixture", status: "completed", exitCode: 0, durationMs: 4200, aggregatedOutput: "secret\nTests 14 passed (14)\nsecret", ...extra }, nativeTurn);
@@ -22,6 +22,11 @@ input.on("line", line => {
       send({ id: "approve", method: "item/commandExecution/requestApproval", params: { threadId: "thread", turnId: nativeTurn, itemId: "denied", command: "fixture" } });
       return;
     }
+    if (prompt === "allowed") {
+      start("allowed", nativeTurn); allowedTurn = nativeTurn;
+      send({ id: "approve-allowed", method: "item/commandExecution/requestApproval", params: { threadId: "thread", turnId: nativeTurn, itemId: "allowed", command: "fixture" } });
+      return;
+    }
     // A stray previous turn start must not replace the current factual turn identity.
     send({ method: "turn/started", params: { threadId: "thread", turn: { id: "previous" } } });
     start("old", "previous"); complete("old", "previous");
@@ -36,5 +41,6 @@ input.on("line", line => {
     // Even a provider that reports a refused command twice as completed cannot override Hosty denial.
     complete("denied", deniedTurn); complete("denied", deniedTurn); finish(deniedTurn); return;
   }
+  if (message.id === "approve-allowed") { complete("allowed", allowedTurn); finish(allowedTurn); return; }
   if (message.method === "turn/interrupt") return send({ id: message.id, result: {} });
 });

@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
+import { randomUUID } from "node:crypto";
 import { WorkerClient } from "../worker/client.js";
 import { WorkerEngine } from "../worker/engine.js";
 import { WorkerJournal } from "../worker/journal.js";
@@ -325,7 +326,7 @@ it("recovers a command result appended before the worker cursor without duplicat
   expect(f.starts()).toBe(1); expect(f.stopped()).toBe(1);
 });
 
-it("publishes ephemeral suggestions and preempts collection before a new user send", async () => {
+it("persists suggestion history and preempts collection before a new user send", async () => {
   const { SessionManager } = await import("./manager.js");
   const { SessionStore } = await import("./store.js");
   const { AuditReporter } = await import("../audit.js");
@@ -351,9 +352,25 @@ it("publishes ephemeral suggestions and preempts collection before a new user se
   expect(subscription.replay.find(e => e.type === "session_suggestion")).toMatchObject({ state: "available", text: "Next?", userId: "owner", sessionId: record.id });
   subscription.unsubscribe();
   expect((await store.readEvents(record.id)).some(e => ["prompt_suggestion", "session_suggestion", "answer_complete"].includes(e.type))).toBe(false);
+  const history = await manager.historicalSuggestions(record.id, "owner");
+  expect(history).toHaveLength(1);
+  expect(history[0]).toMatchObject({ state: "available", text: "Next?", userId: "owner", sessionId: record.id });
+  const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 24 * 60 * 60_000);
+  try {
+    const later = await manager.subscribe(record.id, 0, () => {});
+    expect(later.replay.find(e => e.type === "session_suggestion")).toMatchObject({ state: "available", text: "Next?" });
+    later.unsubscribe();
+    expect((await manager.historicalSuggestions(record.id, "owner"))[0]).toMatchObject({ state: "available" });
+  } finally { clock.mockRestore(); }
+  const choice = { requestId: randomUUID(), expectedRevision: 1, action: "selected-for-draft" };
+  const selected = await manager.suggestionAction(record.id, "owner", history[0]!.suggestionId, choice);
+  expect(selected.state).toBe("selected-for-draft");
+  expect(await manager.suggestionAction(record.id, "owner", history[0]!.suggestionId, choice)).toEqual(selected);
   await manager.setSuggestionPreference("owner", { enabled: false, revision: 0 });
   const cleared = await manager.subscribe(record.id, 0, () => {}); cleared.unsubscribe();
   expect(cleared.replay.find(e => e.type === "session_suggestion")).toMatchObject({ state: "empty" });
+  expect(cleared.replay.find(e => e.type === "prompt_suggestion_created")).toMatchObject({ text: "Next?" });
+  expect(cleared.replay.find(e => e.type === "prompt_suggestion_resolved")).toMatchObject({ state: "selected-for-draft" });
   expect(await manager.suggestionPreference("other-user")).toEqual({ enabled: true, revision: 0 });
   await expect(manager.setSuggestionPreference("owner", { enabled: true, revision: 0 })).rejects.toMatchObject({ code: "preference_changed" });
 });

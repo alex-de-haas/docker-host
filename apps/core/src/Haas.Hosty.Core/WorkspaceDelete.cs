@@ -1,5 +1,3 @@
-using Haas.Hosty.Launch;
-
 namespace Haas.Hosty.Core;
 
 internal sealed record WorkspaceDeleteCommand(string RequestId);
@@ -10,6 +8,16 @@ internal sealed record WorkspaceDeleteBatch(string Actor, WorkspaceDeleteBatchCo
 
 internal sealed partial class DevelopmentWorkspaceService
 {
+    // Delete may retire unfinished source and external activity claims. Runtime bindings remain
+    // dependencies until their owner explicitly switches away; owned test environments Finish first.
+    internal Task RequireDeleteRuntimeIdleAsync(DevelopmentWorkspace tree, CancellationToken ct, IEnumerable<string>? finishingResources = null)
+        => CheckConsumers(tree with { Leases = [], SandboxConsumers = tree.SandboxConsumers.Except(finishingResources ?? []).ToArray() }, ct);
+
+    private async Task RequireDeleteRuntimeIdleAsync(IEnumerable<DevelopmentWorkspace> trees, CancellationToken ct, IEnumerable<string> finishingResources)
+    {
+        foreach (var tree in trees) await RequireDeleteRuntimeIdleAsync(tree, ct, finishingResources);
+    }
+
     private Task ValidateDeleteTreeAsync(DevelopmentWorkspace tree, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
@@ -35,16 +43,25 @@ internal sealed partial class DevelopmentWorkspaceService
             var prior = await ReadDiscardAsync(id, requestId, actor, ct);
             if (prior is not null)
             {
-                if (prior.State == "pending") await EnsureDiscardFence(owner, prior, ct);
+                if (prior.State == "pending")
+                {
+                    await RequireDeleteRuntimeIdleAsync(prior.Snapshots ?? [], ct, prior.Resources.Select(r => r.Id));
+                    await EnsureDiscardFence(owner, prior, ct);
+                }
                 return prior;
             }
             var pending = (await PendingDiscardJournalsAsync(actor, ct)).FirstOrDefault(j => j.WorkspaceId == id);
-            if (pending is not null) return pending;
+            if (pending is not null)
+            {
+                await RequireDeleteRuntimeIdleAsync(pending.Snapshots ?? [], ct, pending.Resources.Select(r => r.Id));
+                return pending;
+            }
             var trees = await DiscardTrees(owner, ct);
             if (expectedAllocations is not null && !trees.Select(WorkspaceCleanupService.DeleteAllocation)
                 .Order(StringComparer.Ordinal).SequenceEqual(expectedAllocations))
                 throw Error("allocation_changed", "The original workspace allocation was replaced; the replacement is preserved.");
             if (trees.Length == 0) throw Error("not_found", "Workspace not found.");
+            await RequireDeleteRuntimeIdleAsync(trees, ct, resources.Select(r => r.Id));
             var workflow = await WorkflowAsync(owner, ct);
             // Admission records identities, not a human review of mutable source bytes. Inspection
             // is optional and cannot veto deletion when Git status or an external writer is unknown.
@@ -79,7 +96,10 @@ internal sealed partial class WorkspaceCleanupService
     private async Task<WorkspaceDiscardResource[]> DeleteResourcesAsync(string workspaceId, WorkspaceOwner owner, CancellationToken ct)
     {
         var resources = new List<WorkspaceDiscardResource>();
-        foreach (var child in (await environments.ListAsync(ct)).Where(e => Belongs(e.Owner, e.Request.Context, owner, workspaceId)))
+        var worktreeIds = (await workspaces.ListAsync(null, true, ct)).Workspaces.Where(t => t.WorkspaceId == workspaceId && t.Owner.SameIdentity(owner))
+            .Select(t => t.Id).ToHashSet(StringComparer.Ordinal);
+        foreach (var child in (await environments.ListAsync(ct)).Where(e => Belongs(e.Owner, e.Request.Context, owner, workspaceId)
+            || e.Request.WorktreeIds?.Any(worktreeIds.Contains) == true))
             if (child.State != "finished" || DevelopmentWorkspaceService.PathEntryExists(environments.Root(child.Id)))
                 resources.Add(new(child.Id, "core", child.Request.Label, environments.Root(child.Id), child.State, child.Revision));
         return resources.OrderBy(r => r.Kind).ThenBy(r => r.Id).ToArray();
@@ -90,11 +110,14 @@ internal sealed partial class WorkspaceCleanupService
         await RequireDeleteAuthorityAsync(userId, caller, ct);
         var owner = await inspection.WorkflowOwnerAsync(workspaceId, userId, ct);
         var plan = await workspaces.DeleteDetailsAsync(owner, await DeleteResourcesAsync(workspaceId, owner, ct), ct);
-        var warnings = (plan.Warnings ?? []).ToList();
+        var blockers = new List<string>();
         foreach (var tree in (await workspaces.ListAsync(null, true, ct)).Workspaces.Where(t => t.WorkspaceId == workspaceId))
-            foreach (var app in await workspaces.DevConsumerAppsAsync(tree, ct))
-                warnings.Add("Managed runtime " + app + " uses this source. Deletion requests its shutdown; the result is reported separately.");
-        return plan with { Blockers = [], Warnings = warnings.ToArray() };
+        {
+            try { await workspaces.RequireDeleteRuntimeIdleAsync(tree, ct, plan.Resources.Select(r => r.Id)); }
+            catch (Exception ex) when (ex is AppLifecycleException or IOException or UnauthorizedAccessException)
+            { blockers.Add(tree.Repository + ": " + ex.Message); }
+        }
+        return plan with { Blockers = blockers.ToArray() };
     }
 
     public async Task<WorkspaceDiscardProgress> DeleteStatusAsync(string workspaceId, string userId, string? caller, string requestId, CancellationToken ct)
@@ -152,7 +175,8 @@ internal sealed partial class WorkspaceCleanupService
                     if (resource.Kind == "core")
                     {
                         var record = await environments.ReadAsync(resource.Id, ct);
-                        if (record is null || !Belongs(record.Owner, record.Request.Context, removalOwner, workspaceId))
+                        if (record is null || !Belongs(record.Owner, record.Request.Context, removalOwner, workspaceId)
+                            && record.Request.WorktreeIds?.Any(id => journal.Snapshots?.Any(t => t.Id == id) == true) != true)
                             throw DevelopmentWorkspaceService.Error("consumer_unavailable", "The accepted child Core cannot be identified.");
                         recorded = record.Operations?.Any(o => o.Id == CoreEnvironmentService.RequestId(resource.RequestId)) == true;
                         if (!recorded && record.Revision != resource.Revision)
@@ -162,7 +186,8 @@ internal sealed partial class WorkspaceCleanupService
                             journal = journal with { Cleanup = journal.Cleanup.Select(r => r.Id == resource.Id && r.Kind == resource.Kind ? resource : r).ToArray() };
                             await workspaces.SaveDiscardAsync(journal);
                         }
-                        var result = record.State == "finished" ? null : await environmentService.CommandAsync(new(userId) { DeletingWorkspace = workspaceId, DeletingOwner = removalOwner }, resource.Id,
+                        var result = record.State == "finished" ? null : await environmentService.CommandAsync(new(userId) { DeletingWorkspace = workspaceId, DeletingOwner = removalOwner,
+                            DeletingWorktreeIds = journal.Snapshots?.Select(t => t.Id).ToArray() }, resource.Id,
                             "finish", new(resource.RequestId, revision), ct);
                         if (result is not null && result.State != "finished") throw DevelopmentWorkspaceService.Error("cleanup_pending", "Child Core shutdown remains pending.");
                         if (DevelopmentWorkspaceService.PathEntryExists(environments.Root(resource.Id))) throw DevelopmentWorkspaceService.Error("cleanup_pending", "Child Core data removal remains pending.");
@@ -171,7 +196,6 @@ internal sealed partial class WorkspaceCleanupService
                     journal = journal with { Resources = journal.Resources.Select(r => r.Id == resource.Id && r.Kind == resource.Kind ? r with { State = "removed" } : r).ToArray() };
                     await workspaces.SaveDiscardAsync(journal);
                 }
-                journal = await StopDeleteConsumersAsync(journal, userId, ct);
                 await RequireFinishedResourcesAsync(workspaceId, removalOwner, ct);
                 var finished = await workspaces.FinishDiscardAsync(removalOwner, userId, journal.Command, ct);
                 return finished.Progress();
@@ -185,44 +209,6 @@ internal sealed partial class WorkspaceCleanupService
             }
         }
         finally { gate.Release(); }
-    }
-
-    private async Task<WorkspaceDiscardJournal> StopDeleteConsumersAsync(WorkspaceDiscardJournal journal, string userId, CancellationToken ct)
-    {
-        var activity = (journal.Activity ?? []).ToList();
-        foreach (var tree in journal.Snapshots ?? [])
-        {
-            var consumers = await inspection.ConsumersAsync(tree, await apps.ListAppRecordsAsync(ct), ct);
-            foreach (var appId in consumers.Select(c => c.Reference.Split('/')[0]).Distinct(StringComparer.Ordinal))
-            {
-                if (activity.Any(a => a.Kind == "runtime" && a.Reference == appId && a.State == "stopped")) continue;
-                if (appId == "hosty:core" || lifecycle is null || (await apps.GetAppAsync(appId, ct)) is null)
-                {
-                    activity.RemoveAll(a => a.Kind == "runtime" && a.Reference == appId);
-                    activity.Add(new("runtime", appId, "unknown", "Source removal does not establish that this runtime stopped."));
-                    continue;
-                }
-                var status = await lifecycle.GetDevModeAsync(appId, ct);
-                if (status.WorktreeId == tree.Id && status.Phase != "inactive")
-                {
-                    var actor = new AppDevActor(userId, "workspace-delete", WorkspaceOwner.ForExternal(userId, "workspace-delete", journal.Command.RequestId, "Workspace deletion"));
-                    var request = new AppDevRequest(WorkspaceRuntimeFiles.ChildId(journal.Command.RequestId, appId), "return", AcceptDataChanges: true);
-                    var plan = await lifecycle.PlanDevModeAsync(appId, request, actor, ct);
-                    await lifecycle.ApplyDevModeAsync(appId, request with { PlanDigest = plan.PlanDigest }, actor, ct);
-                    var returned = await lifecycle.GetDevModeAsync(appId, ct);
-                    if (returned.WorktreeId == tree.Id && returned.Phase is not ("inactive" or "returned"))
-                        throw DevelopmentWorkspaceService.Error("cleanup_pending", "Managed runtime return remains pending: " + appId);
-                }
-                else await lifecycle.StopAsync(appId, ct);
-                activity.RemoveAll(a => a.Kind == "runtime" && a.Reference == appId);
-                activity.Add(new("runtime", appId, "stopped", "The source consumer was stopped through its lifecycle owner."));
-                journal = journal with { Activity = activity.ToArray() };
-                await workspaces.SaveDiscardAsync(journal);
-            }
-        }
-        journal = journal with { Activity = activity.ToArray() };
-        await workspaces.SaveDiscardAsync(journal);
-        return journal;
     }
 
     internal static string DeleteAllocation(DevelopmentWorkspace tree)

@@ -20,7 +20,10 @@ const adapter: HarnessAdapter = {
 };
 const finishTurn = async (id: string) => {
   starts.at(-1)!.onEvent({ type: "result", status: "success" });
-  await vi.waitFor(async () => expect((await manager.getSession(id))?.status).toBe("idle"));
+  await vi.waitFor(async () => {
+    expect((await manager.getSession(id))?.status).toBe("idle");
+    expect((await store.readRecord(id))?.status).toBe("idle");
+  });
 };
 const build = () => new SessionManager(store, adapter, new AuditReporter(null, null, "gateway"), dir, null, directory);
 beforeEach(async () => {
@@ -150,11 +153,15 @@ it("resynchronizes current state and distinguishes historical transitions during
   await manager.postMessage(record.id, "inspect");
   expect((await manager.getSession(record.id))?.status).toBe("running");
   await finishTurn(record.id);
+  // Idle metadata precedes its durable status event; cross the native callback queue before capturing the cursor.
+  await manager.messageQueue(record.id, "admin");
   const current = (await manager.getSession(record.id))!;
   const subscription = await manager.subscribe(record.id, current.lastEventSeq, () => {});
   expect(subscription.replay).toEqual([
     expect.objectContaining({ type: "session_activity", seq: -1, activity: null }),
     expect.objectContaining({ type: "session_suggestion", seq: -2, state: "empty", sessionId: record.id, userId: "admin" }),
+    expect.objectContaining({ type: "session_message_queue", seq: -3, sessionId: record.id,
+      queue: expect.objectContaining({ ownerId: "admin", entries: [], revision: 0 }) }),
     expect.objectContaining({ type: "session_status", status: "idle", seq: current.lastEventSeq }),
   ]);
   subscription.unsubscribe();

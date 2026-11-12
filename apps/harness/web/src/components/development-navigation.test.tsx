@@ -149,14 +149,14 @@ it("keeps decorative status shapes, factual chip counts and each filter's existi
 });
 
 
-it("offers all three creation actions beside one mixed Sessions list", async () => {
+it("offers app and session creation beside one mixed Sessions list", async () => {
   const session = { ...disposable, id: "attached", title: "Implementation" };
   const workspace = { id: "workspace", name: "Shared project", state: "active", owner: { kind: "assistant", appId: "hosty.harness", reference: session.id, label: "Owned" }, workflow: { state: "in-progress", revision: 0 }, worktrees: [] } as DevelopmentWorkspace;
   await act(async () => root.render(<DevelopmentNavigation sessions={[session, disposable]} workspaces={[workspace]} activeId={session.id} onPick={vi.fn()} onNew={vi.fn()} onDelete={vi.fn()} createAppAction={<button>Create app</button>} />));
   expect(container.querySelector('nav[aria-label="Sessions"]')).not.toBeNull();
   expect(container.textContent).not.toContain("Implementation"); expect(container.textContent).toContain("Disposable chat");
   expect(container.textContent).toContain("Shared project"); expect(container.textContent).toContain("Create app");
-  expect(container.querySelector('[aria-label="Continue building"]')).not.toBeNull();
+  expect(container.querySelector('[aria-label="Continue building"]')).toBeNull();
   expect(container.querySelector('[aria-label="New session"]')).not.toBeNull();
   expect(container.querySelector('[aria-current="page"]')?.textContent).toContain("Shared project");
 });

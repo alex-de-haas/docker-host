@@ -1,24 +1,16 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, rename, open, unlink } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { MAX_EVENT_BYTES, REPLAY_MS, WorkerApiError, safeIdentity, terminal, type WorkerEvent, type WorkerReceipt, type WorkerRecovery, type WorkerRunRequest } from "./contracts.js";
 import type { HarnessEvent } from "../harness/adapter.js";
 import { sanitizeToolResult } from "../harness/tool-result.js";
 import { sanitizeCommandResult } from "../harness/command-result.js";
 import { sanitizeWorkerCommandFrame, sanitizeWorkerCommandReceipt } from "./command-events.js";
+import { durableMkdir, durableWriteFile, isUncertainWrite, retrySharingViolation } from "../persistence.js";
 
 type StoredRun = { version: 1; hash: string; receipt: WorkerReceipt; events: WorkerEvent[]; bytes: number; replayExpired?: boolean; controls: Record<string, { hash: string; applied: boolean }> };
 export const digest = (value: unknown): string => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
-async function retrySharingViolation<T>(action: () => Promise<T>): Promise<T> {
-  for (let attempt = 0; ; attempt++) {
-    try { return await action(); }
-    catch (error) {
-      if (attempt >= 3 || !["EACCES", "EPERM", "EBUSY"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
-      await new Promise(resolve => setTimeout(resolve, 25 * 2 ** attempt));
-    }
-  }
-}
 type UsageClock = { at: number; active: boolean; carry: number };
 
 /** Atomic per-run records retain acceptance tombstones independently from bounded replay data. */
@@ -27,6 +19,7 @@ export class WorkerJournal {
   private tail: Promise<unknown> = Promise.resolve();
   private readonly usageClocks = new Map<string, UsageClock>();
   private readonly chargedClocks = new WeakMap<StoredRun, UsageClock>();
+  private readonly uncertain = new Set<string>();
   private activeState(state: WorkerReceipt["state"]) { return ["accepted", "running", "parking", "cancelling"].includes(state); }
   private charge(record: StoredRun, next = record.receipt.state): void {
     const now = performance.now(), anchor = this.usageClocks.get(record.receipt.runId);
@@ -52,7 +45,8 @@ export class WorkerJournal {
     if (!safeIdentity(id)) throw new WorkerApiError(400, "invalid_run_id", "Invalid run identity.");
     return path.join(this.directory, id + ".json");
   }
-  async load(id: string): Promise<StoredRun> {
+  async load(id: string, normalizeReplay = true): Promise<StoredRun> {
+    if (this.uncertain.has(id)) throw new WorkerApiError(503, "run_storage_uncertain", "Reopen the Worker to reconcile the retained execution before reporting its admission.");
     try {
       const record = JSON.parse(await retrySharingViolation(() => readFile(this.file(id), "utf8"))) as StoredRun;
       if (record.version !== 1 || record.receipt.runId !== id || !Array.isArray(record.events) || !record.controls) throw new Error("Invalid worker journal record.");
@@ -63,31 +57,45 @@ export class WorkerJournal {
       });
       record.receipt = sanitizeWorkerCommandReceipt(record.receipt);
       record.bytes = record.events.reduce((bytes, frame) => bytes + Buffer.byteLength(JSON.stringify(frame)), 0);
-      if (terminal(record.receipt.state) && record.receipt.state !== "parked" && Date.now() - Date.parse(record.receipt.updatedAt) > this.replayMs) {
+      if (normalizeReplay && terminal(record.receipt.state) && record.receipt.state !== "parked" && Date.now() - Date.parse(record.receipt.updatedAt) > this.replayMs) {
         record.events = []; record.bytes = 0; record.replayExpired = true;
       }
       return record;
     }
-    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new WorkerApiError(404, "run_not_found", "Run not found."); throw error; }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new WorkerApiError(404, "run_not_found", "Run not found.");
+      if (error instanceof WorkerApiError) throw error;
+      throw new WorkerApiError(503, "run_storage_unavailable", "The retained execution record requires storage recovery. Its identity cannot be resubmitted.");
+    }
   }
   private async save(record: StoredRun): Promise<void> {
-    const file = this.file(record.receipt.runId), temp = `${file}.${randomUUID()}.tmp`;
+    const id = record.receipt.runId;
+    if (this.uncertain.has(id)) throw new WorkerApiError(503, "run_storage_uncertain", "Reopen the Worker to reconcile the retained execution before another write.");
     try {
-      const handle = await open(temp, "wx", 0o600);
-      try { await handle.writeFile(JSON.stringify(record)); await handle.sync(); }
-      finally { await handle.close(); }
-      await retrySharingViolation(() => rename(temp, file));
+      await durableWriteFile(this.file(id), JSON.stringify(record));
       const clock = this.chargedClocks.get(record);
-      if (clock) { this.usageClocks.set(record.receipt.runId, clock); this.chargedClocks.delete(record); }
-      if (process.platform !== "win32") { const directory = await open(this.directory, "r"); try { await directory.sync(); } finally { await directory.close(); } }
-      this.listeners.get(record.receipt.runId)?.forEach(listener => listener());
-    } finally { await unlink(temp).catch(() => {}); }
+      if (clock) { this.usageClocks.set(id, clock); this.chargedClocks.delete(record); }
+      for (const listener of this.listeners.get(id) ?? []) {
+        try { listener(); } catch { console.warn("[worker] A retained event observer failed after commit."); }
+      }
+    } catch (error) {
+      if (isUncertainWrite(error)) this.uncertain.add(id);
+      throw error;
+    }
   }
   async initialize(): Promise<void> {
-    await mkdir(this.directory, { recursive: true, mode: 0o700 });
+    await durableMkdir(this.directory);
     for (const file of await readdir(this.directory)) {
       if (!file.endsWith(".json")) continue;
-      const record = await this.load(file.slice(0, -5));
+      if (!safeIdentity(file.slice(0, -5))) continue;
+      let record: StoredRun;
+      try { record = await this.load(file.slice(0, -5)); }
+      catch (error) {
+        if (!(error instanceof WorkerApiError) || error.code !== "run_storage_unavailable") throw error;
+        // Keep the file at its identity: moving it away would allow the same ID to be admitted.
+        console.warn("[worker] Retained execution requires storage recovery.", { runId: file.slice(0, -5), code: error.code });
+        continue;
+      }
       if (!terminal(record.receipt.state)) {
         const usage = record.receipt.usage ??= { sequence: 0, activeMs: 0, unknown: true };
         if (this.activeState(record.receipt.state)) usage.unknown = true;
@@ -122,7 +130,13 @@ export class WorkerJournal {
     await this.exclusive(async () => {
       for (const file of await readdir(this.directory)) {
         if (!file.endsWith(".json")) continue;
-        const record = JSON.parse(await readFile(path.join(this.directory, file), "utf8")) as StoredRun;
+        if (!safeIdentity(file.slice(0, -5))) continue;
+        let record: StoredRun;
+        try { record = await this.load(file.slice(0, -5), false); }
+        catch (error) {
+          if (error instanceof WorkerApiError && error.code === "run_storage_unavailable") continue;
+          throw error;
+        }
         if (!record.replayExpired && terminal(record.receipt.state) && record.receipt.state !== "parked" && Date.now() - Date.parse(record.receipt.updatedAt) > this.replayMs) {
           record.events = []; record.bytes = 0; record.replayExpired = true; await this.save(record);
         }
@@ -223,7 +237,8 @@ export class WorkerJournal {
     if (event.type === "context_usage") snapshot.contextUsage = frame;
     if (event.type === "harness_session") snapshot.nativeSessionId = event.harnessSessionId;
     if (event.type === "result" || event.type === "error") snapshot.result = event;
-    if (event.type === "approval_request" || event.type === "question_request") (record.receipt.pending ??= []).push(frame);
+    // A message-delivered question has no native callback left to answer.
+    if (event.type === "approval_request" || event.type === "question_request" && event.delivery !== "message") (record.receipt.pending ??= []).push(frame);
     record.bytes += bytes; record.events.push(frame); record.receipt.revision = frame.sequence;
     record.receipt.updatedAt = new Date().toISOString(); await this.save(record); return frame;
   }

@@ -1,6 +1,6 @@
 ---
 created: 2026-10-21
-updated: 2026-10-29
+updated: 2026-11-09
 summary: Core-owned first-run initialization selects applications, persists automatic ports and opens ordinary administrator setup from CLI or Dashboard environments.
 components: [apps/core, apps/cli, apps/shell, packages/app-sdk, scripts]
 ---
@@ -154,6 +154,21 @@ Related contracts: [CLI bootstrap](../cli-bootstrap/feature.md),
 [automatic app ports](../automatic-runtime-app-ports/feature.md),
 [local password login](../local-password-login/feature.md), and
 [child environments](../app-sandbox-runtimes/feature.md).
+
+## Published Installation Evidence
+
+The [2026-10-25 macOS acceptance report](../../reviews/2026-10-25-published-initialization-acceptance.md)
+records the published CLI/Core 0.152.3 download and default Shell 0.112.5/Marketplace 0.12.2
+catalog on macOS ARM64. Ordinary primary/child registration, recommended and Core-only children,
+resource limits, restart preservation, removed-app choices and owned Finish cleanup are verified.
+The report leaves survival after closing a normal terminal unverified.
+
+The [2026-10-25 Linux CLI report](../../reviews/2026-10-25-linux-published-initialization-cli-acceptance.md)
+records published installation, app readiness, guest-command detachment, restart preservation and
+durable app removal on Ubuntu ARM64 in UTM. Browser registration and Dashboard child acceptance
+are outside that partial run's verified results. These archives describe their dated artifacts and
+fixtures; they do not establish acceptance of later releases or the later Dashboard presentation.
+The active plan records the subsequent owner scope decisions and remaining Windows evidence.
 
 ## Testing Expectations
 
