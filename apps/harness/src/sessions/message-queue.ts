@@ -212,11 +212,13 @@ export class MessageQueue {
   /** Preserve the exact admitted input independently of mutable/cache working files. */
   async retainAcceptedAttachments(record: SessionRecord, input: string[]): Promise<void> {
     if (!input.length) return;
-    const retained = await this.attachments(record, input);
+    const admittedNames = names(input), retained = await this.attachments(record, admittedNames);
     const next = [...record.sourceAttachments ?? []];
     for (const [index, file] of retained.entries()) {
-      const admitted = { ...file, name: input[index]! };
-      if (!next.some(candidate => candidate.name === admitted.name && candidate.digest === admitted.digest)) next.push(admitted);
+      const admitted = { ...file, name: admittedNames[index]! };
+      const previous = next.findIndex(candidate => candidate.name === admitted.name && candidate.digest === admitted.digest);
+      // Keep each immutable version's identity while making the latest admission the name lookup target.
+      next.push(previous < 0 ? admitted : next.splice(previous, 1)[0]!);
     }
     const messageQueue = structuredClone(this.state(record));
     for (const file of retained) messageQueue.claimedAttachments[file.id] = true;

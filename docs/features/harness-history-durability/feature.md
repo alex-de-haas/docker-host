@@ -26,6 +26,9 @@ same-session UUID recovers its original receipt instead of creating another send
 Accepted attachment receipts become claimed in the same source checkpoint as
 their immutable snapshot, so repeated direct sends do not consume pending-upload
 slots. Distinct retained bytes still respect the conversation's storage limits.
+Re-admitting an older immutable version makes it the latest filename lookup target
+without changing its identity or losing later historical versions. Input names
+are normalized before binding each admitted digest, including duplicate references.
 History metadata reconciliation reuses a bounded, payload-free integrity proof
 for an unchanged physical attachment generation. Initial verification and every
 actual content read check the full digest; file identity, size and nanosecond
@@ -134,7 +137,7 @@ Verified in a registered local Core workspace on macOS ARM64 with Node 24.18.0,
 .NET 10.0.402 and Docker 29.9.3:
 
 - `npm run harness:lint` passes backend/web TypeScript and ESLint.
-- `npm run harness:test` covers 3,016 tests across 255 files. Four child-process
+- `npm run harness:test` covers 3,018 tests across 255 files. Four child-process
   crash probes stop after preparation, input commit, native-effect simulation and
   accepted-receipt commit; reopening never duplicates the synthetic effect.
 - `npm run harness:build-web` and
@@ -176,6 +179,8 @@ ILCompiler advisory/analyzer warnings and complete without errors.
   monotonic deletion of a damaged partition and bounded partial coverage.
 - Verify accepted attachment identity after cache loss or same-name replacement,
   and repeated direct references without exhausting pending-upload capacity.
+  Cover A-to-B-to-A admissions and duplicate names, comparing actual native input,
+  transcript digests and retained bytes after reopening.
 - Count payload reads across repeated history metadata/streaming updates. Verify
   actual content reads still hash bytes and physical-generation changes, exact
   restored-mtime corruption and missing cached files require recovery. Bound

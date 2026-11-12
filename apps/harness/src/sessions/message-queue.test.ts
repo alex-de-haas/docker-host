@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { Readable } from "node:stream";
 import path from "node:path";
@@ -98,6 +99,52 @@ describe("durable queue commands and immutable attachments", () => {
     expect(JSON.stringify(queue.snapshot(record))).not.toContain("digest");
     expect((await queue.attachment(record, current.attachments[0]!.id)).bytes.toString()).toBe("operator upload");
   });
+  it("binds repeated A-B-A admissions to the bytes sent and retains the latest version after reopen", async () => {
+    const workspace = (await store.ensureWorkspace(record.id))!, file = path.join(workspace, "input.txt");
+    const digest = (value: string) => createHash("sha256").update(value).digest("hex");
+    const values = ["attachment A", "attachment B", "attachment A"], received: string[] = [];
+    const originalStart = adapter.start.bind(adapter);
+    vi.spyOn(adapter, "start").mockImplementationOnce(options => {
+      const run = originalStart(options), send = run.send.bind(run);
+      run.send = text => { received.push(readFileSync(file, "utf8")); send(text); };
+      return run;
+    });
+    let originalAId: string | undefined;
+    for (const [index, value] of values.entries()) {
+      await writeFile(file, value);
+      await manager.postMessage(record.id, `Inspect version ${index}`, undefined, ["input.txt"], { clientRequestId: randomUUID(), actorUserId: "owner" });
+      if (index === 0) originalAId = (await store.readRecord(record.id))!.sourceAttachments![0]!.id;
+      await finish();
+      await vi.waitFor(async () => expect((await manager.getSession(record.id))?.status).toBe("idle"));
+      await manager.messageQueue(record.id, "owner");
+    }
+    expect(received).toEqual(values);
+    const events = (await store.readEvents(record.id)).filter(event => event.type === "user_message");
+    expect(events.map(event => event.attachmentDigests)).toEqual(values.map(value => ({ "input.txt": digest(value) })));
+    await manager.shutdown();
+    store = new SessionStore(dir, path.join(dir, "cache")); queue = new MessageQueue(store);
+    record = (await store.readRecord(record.id))!; manager = build();
+    expect((await manager.acceptedAttachment(record.id, "input.txt"))?.toString()).toBe(values[2]);
+    expect((await store.acceptedAttachment(record.id, "input.txt"))?.bytes.toString()).toBe(values[2]);
+    expect((await store.acceptedAttachment(record.id, "input.txt", digest(values[1]!)))?.bytes.toString()).toBe(values[1]);
+    expect(record.sourceAttachments).toHaveLength(2);
+    expect(record.sourceAttachments!.find(value => value.digest === digest(values[0]!))!.id).toBe(originalAId);
+    expect((await readdir(path.join(store.messageQueueDirectory(record.id), "files"))).sort()).toEqual([digest(values[0]!), digest(values[1]!)].sort());
+  });
+
+  it("normalizes repeated input names before binding distinct admitted attachment bytes", async () => {
+    const workspace = (await store.ensureWorkspace(record.id))!;
+    await writeFile(path.join(workspace, "a.txt"), "bytes A"); await writeFile(path.join(workspace, "b.txt"), "bytes B");
+    await manager.postMessage(record.id, "Inspect both", undefined, ["a.txt", "a.txt", "b.txt"], { clientRequestId: randomUUID(), actorUserId: "owner" });
+    const event = (await store.readEvents(record.id)).find(value => value.type === "user_message")!;
+    expect(event.attachmentDigests).toEqual({ "a.txt": createHash("sha256").update("bytes A").digest("hex"),
+      "b.txt": createHash("sha256").update("bytes B").digest("hex") });
+    const saved = (await store.readRecord(record.id))!;
+    expect(saved.sourceAttachments!.map(value => value.name).sort()).toEqual(["a.txt", "b.txt"]);
+    expect((await store.acceptedAttachment(record.id, "a.txt"))?.bytes.toString()).toBe("bytes A");
+    expect((await store.acceptedAttachment(record.id, "b.txt"))?.bytes.toString()).toBe("bytes B");
+  });
+
   it("reconciles stable upload identities without duplicate filenames and rejects changed bytes", async () => {
     const uploadId = randomUUID();
     const first = await queue.upload(record, uploadId, "файл.txt", Readable.from(["bytes"]));
