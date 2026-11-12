@@ -80,7 +80,7 @@ export class WorkerEngine {
         }
         await this.journal.update(id, "running");
         const suggestions = request.options.promptSuggestions === true && adapter!.capabilities.promptSuggestions === true && !this.disabledSuggestions.has(id);
-        const run = adapter!.start({ ...request.options, promptSuggestions: suggestions, sessionId: request.conversationId, cwd, resource: request.resource, workerRunId: id,
+        const run = adapter!.start({ ...request.options, skillExportId: request.skillExportId, promptSuggestions: suggestions, sessionId: request.conversationId, cwd, resource: request.resource, workerRunId: id,
           ...request.selection,
           isAutoAllowed: tool => request.autoAllowedPrefixes.some(prefix => tool.startsWith(prefix)),
           onEvent: event => { void this.event(id, event).catch(error => console.warn("[worker] Provider event finalization remains unconfirmed.", { code: journalErrorCode(error) })); } });

@@ -428,6 +428,11 @@ class CodexRun implements HarnessRun {
     });
     this.predictionRuntime = codexPredictionSupport.key(resolveCodexCommand(), (initialized as { userAgent?: unknown })?.userAgent);
     this.notify(CODEX_METHODS.initialized, {});
+    if (this.options.nativeHome && this.options.skillExportId) {
+      // Windows native discovery uses the OS profile directory rather than HOME. Register the
+      // selected export for this process without changing shared CODEX_HOME/auth/history.
+      await this.request("skills/extraRoots/set", { extraRoots: [path.join(this.options.nativeHome, ".agents", "skills")] });
+    }
     void this.readUsage().then(usage => { if (!this.stopped) this.emit({ type: "provider_usage", usage }); });
     this.selectedModel = this.options.model ?? null;
     this.selectedEffort = this.options.reasoningEffort ?? null;

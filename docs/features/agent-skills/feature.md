@@ -1,6 +1,6 @@
 ---
 created: 2026-10-26
-updated: 2026-10-30
+updated: 2026-11-12
 summary: A shared library of Core, Git and app skill packages with stable selections, current-file exports and platform context for native agents.
 components: [apps/core, apps/cli, apps/harness]
 ---
@@ -112,6 +112,10 @@ omitted. `DELETE .../exports/{id}` releases an unused export. Content reads acce
 Core stages complete exports and the next state file before publication. Preparation failures leave
 current contents available; after commit, publication finishes despite caller cancellation. Core
 keeps one current package state and updates selected export directories after publication.
+Exported root `SKILL.md` files omit leading UTF-8 byte-order marks so native agents recognize
+the YAML frontmatter. Stored package bytes and content reads retain the original source, and
+reference files and other assets are exported unchanged. Recovery and package updates apply the
+same normalization to existing exports.
 The export parent remains stable for existing bind mounts. Each package uses a complete-directory
 replacement; native readers can briefly observe a missing path between renames. Package replacement removes stale
 files; startup recovery reconstructs registered exports and clears temporary staging/fetch data.
@@ -138,7 +142,11 @@ its selection while receiving current contents whenever Core updates those packa
 credential connections do not own skill selections. Deleted IDs do not block session creation.
 
 The worker resolves an export ID inside its app-scoped collection. Codex discovers the selected
-directory through a per-run `HOME/.agents/skills` link, retaining the connection's `CODEX_HOME`.
+directory through a per-run `HOME/.agents/skills` link and registers that absolute root with
+Codex's process-local `skills/extraRoots/set` API before starting or resuming a native thread.
+This also covers Windows, where native home discovery uses the Known Folder API instead of the
+process `HOME` override. The connection's `CODEX_HOME`, authorization, history and configuration
+remain unchanged; a failed root registration stops startup with a visible error.
 Claude receives a per-run `CLAUDE_CONFIG_DIR/skills` link and shared connection history. Docker
 workers use their existing isolated native profiles and the read-only collection mount. Two runs
 using one provider connection can have different Hosty selections without rewriting shared
@@ -216,8 +224,42 @@ the final metadata-reader adjustment, all 50 affected skill/audit tests pass aga
 publish and startup smoke pass on osx-arm64 without new trim/AOT warnings. The full Core suite
 is not repeated after that isolated adjustment; Windows and Linux runtime checks are not run.
 
+### Native Codex root registration and BOM exports (2026-11-12)
+
+Verified on macOS for Core/CLI 0.179.2 → 0.179.3 and Harness 0.98.0 → 0.98.1:
+
+- The pinned Codex 0.162.1 uses the Windows Known Folder profile for native home discovery,
+  which does not follow the process `HOME` override. Explicit process-local root registration
+  precedes fresh and resumed threads; the connection configuration remains shared and unchanged.
+- Four adapter/Worker regressions fail before the fix. The focused Codex adapter and Worker
+  protocol suites pass 101 tests afterwards, including registration refusal before dispatch.
+- Four Core export regressions fail before normalization. The affected skill package and HTTP
+  suites pass 55 tests afterwards, including source-byte preservation, recovery and refresh.
+- `npm run harness:test` passes all 3,039 tests in 258 files after the static UI build.
+- `npm run harness:lint` and `npm run harness:build-web` pass. Core and CLI Debug builds pass
+  with the existing NuGet compiler-package advisory warning.
+- `npm run test:integration -- skills` passes real Git imports, normal test-user login, CLI
+  add/list/read/export/release and a live upstream import in a parent-managed child Core.
+  The native probe starts with no selected skill in its process home, registers the separate
+  export root, starts a real thread and observes the enabled skill and current reference files
+  after initial import and refresh. It submits no inference and uses no provider credentials.
+  Parent Finish confirms removal of child resources; fixture processes and data are removed.
+- The current public `ex-ussr-kinship-research` entry at source commit
+  `60be9579c5a42959f0386f6da1d6f4f3d345b578` also passes native catalog discovery.
+  Its file has no BOM; BOM normalization covers a separate reproduced compatibility case.
+- A native Windows runtime trial and browser verification of an existing Windows conversation
+  are not performed. Native root registration is checked against the pinned protocol and real
+  macOS binary; these results do not claim a live Windows deployment.
+
 ## Testing Expectations
 
+- Register the selected native Codex root before fresh and resumed threads, preserve connection
+  state, and surface registration failures before dispatch. Verify discovery with an empty
+  process home so the test does not rely on Unix-specific home lookup.
+- Accept BOM-prefixed skill metadata and preserve its original stored bytes while exporting a
+  native-readable root `SKILL.md`; cover existing export recovery, updates, plain UTF-8, and
+  unchanged reference assets. Verify native Codex discovery against the exported package without
+  provider credentials or inference.
 - Cover the CLI's default and explicit table output, literal package text, abbreviated descriptions,
   complete JSON output, empty catalogs and argument errors without a running Core.
 - Cover selected public imports, repeated selectors, ref/path propagation, large upstream catalogs,
