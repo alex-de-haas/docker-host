@@ -28,6 +28,8 @@ export type AssistantQuestion = {
 export type AssistantSession = {
   workerRun?: { id: string; sequence: number; generation?: string };
   workerRecovery?: { state: "pending" | "completed" };
+  storageRecovery?: { state: "required"; code: string; message: string };
+  sourceAdmission?: { clientRequestId?: string; runId?: string; state: "preparing" | "dispatching" };
   agentProfile?: import("../../../src/profiles/types").AgentProfile | null;
   profileLocked?: boolean;
   taskExecutionId?: string;
@@ -110,6 +112,29 @@ export async function listAppNames(): Promise<Record<string, string>> {
 export async function listSessions(): Promise<AssistantSession[]> {
   const body = (await (await call("/sessions")).json()) as { sessions?: AssistantSession[] };
   return body.sessions ?? [];
+}
+
+export type StorageRecoveryIssue = { sessionId: string; code: string; message: string };
+export type StorageRecoveryReport = { issues: StorageRecoveryIssue[]; projectionIssues?: StorageRecoveryIssue[] };
+/** Missing on older Harness versions; unavailable status is never interpreted as an empty inventory. */
+export async function getStorageRecovery(signal?: AbortSignal): Promise<StorageRecoveryReport | null> {
+  let response: Response;
+  try { response = await call("/storage-recovery", { cache: "no-store", signal }); }
+  catch (error) {
+    if (error instanceof AssistantApiError && [404, 405, 501].includes(error.status ?? 0)) return null;
+    throw error;
+  }
+  const value = await response.json() as Partial<StorageRecoveryReport> | null;
+  const readIssues = (items: unknown): StorageRecoveryIssue[] => {
+    if (!Array.isArray(items)) throw new AssistantApiError("invalid_storage_recovery", "Storage recovery status could not be verified.");
+    return items.slice(0, 50).map(item => {
+      if (!item || typeof item.sessionId !== "string" || !/^[a-zA-Z0-9-]{1,256}$/.test(item.sessionId)
+        || typeof item.code !== "string" || !/^[a-zA-Z0-9_-]{1,80}$/.test(item.code) || typeof item.message !== "string")
+        throw new AssistantApiError("invalid_storage_recovery", "Storage recovery status could not be verified.");
+      return { sessionId: item.sessionId, code: item.code, message: item.message.replace(/[\u0000-\u001f\u007f]/g, " ").slice(0, 500) };
+    });
+  };
+  return { issues: readIssues(value?.issues), ...(value?.projectionIssues === undefined ? {} : { projectionIssues: readIssues(value.projectionIssues) }) };
 }
 
 export async function createWorkspaceSession(input: { workspaceId: string; requestId: string; expectedRevision: number }): Promise<AssistantSession> {
@@ -417,7 +442,7 @@ export async function setSessionModel(id: string, selection: NonNullable<Assista
 }
 
 export type ExecutionRecoveryRequest = { requestId: string; runId: string; generation: string; expectedRevision: number; consumerExitConfirmed: true };
-export type ExecutionRecoveryReview = { runId: string; generation: string; expectedRevision: number; recoverable: boolean; pending?: ExecutionRecoveryRequest };
+export type ExecutionRecoveryReview = { runId: string; generation: string; expectedRevision: number; recoverable: boolean; sourceOnly?: boolean; pending?: ExecutionRecoveryRequest };
 export async function getExecutionRecovery(id: string): Promise<ExecutionRecoveryReview | null> {
   return (await call(`/sessions/${encodeURIComponent(id)}/execution-recovery`)).json();
 }

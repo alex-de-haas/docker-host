@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, expect, it } from "vitest";
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { SessionStore, type SessionRecord, type StoredEvent } from "../sessions/store.js";
 import { HistoryService, type HistoryActor } from "./service.js";
 import type { HistoryShareCreate } from "@hosty-sdk/app/history";
@@ -116,7 +116,8 @@ it("removes deleted source payloads from the projection and all snapshots withou
   await history.read(owner, { conversation: ref(), limit: 1 });
   expect((await readdir(history.storage.root)).some(f => f.startsWith("snapshot-"))).toBe(true);
   await sessions.deleteSession(record.id);
-  for (const name of await readdir(history.storage.root)) {
+  for (const name of await readdir(history.storage.root, { recursive: true })) {
+    if (!name.endsWith(".json")) continue;
     const text = await readFile(path.join(history.storage.root, name), "utf8");
     expect(text).not.toContain("public needle"); expect(text).not.toContain("unselected secret");
   }
@@ -261,4 +262,99 @@ it.each([false, true])("requires a notification rescan after overlapping disclos
   const current = await history.read(recipient, { conversation: ref() });
   expect(current.entries.map(e => e.ref.id)).toEqual([entry(1).id]);
   expect(JSON.stringify(current)).not.toContain('"type":"attachment"');
+});
+
+
+it("keeps healthy conversations and global receipts available when one committed shard is corrupt", async () => {
+  const receipt = await share();
+  const second = { ...record, id: randomUUID(), title: "Healthy second" }; await sessions.createSession(second);
+  await sessions.appendEvent(second.id, { seq: 1, type: "user_message", ts: new Date(now).toISOString(), text: "healthy transcript" });
+  const state = await history.storage.read(), broken = state.partitions![record.id]!;
+  await writeFile(path.join(history.storage.root, "partitions", `${broken.hash}.json`), "\0".repeat(100));
+  history.close(); history = new HistoryService(sessions, provider, () => now);
+  const page = await history.list(owner, { provider });
+  expect(page.conversations.map(value => value.ref.id)).toEqual([second.id]);
+  expect(page.coverage.reasons).toContain("Some source history requires storage recovery and is omitted.");
+  await expect(history.read(owner, { conversation: ref() })).rejects.toMatchObject({ code: "history_recovery_required", status: 503 });
+  await expect(history.read(recipient, { conversation: ref() })).rejects.toMatchObject({ code: "history_recovery_required", status: 503 });
+  await expect(history.read({ ...recipient, userId: "unrelated" }, { conversation: ref() })).rejects.toMatchObject({ code: "not_found" });
+  await sessions.appendEvent(second.id, { seq: 2, type: "user_message", ts: new Date(now).toISOString(), text: "healthy update" });
+  const next = await history.storage.read(); expect(next.partitions![record.id]).toEqual(broken);
+  expect(next.receipts[0]!.result).toEqual(receipt); expect(next.shares).toHaveLength(1);
+  expect(next.changes.filter(change => change.conversation === record.id && change.type === "access_reset")).toHaveLength(1);
+});
+
+it("does not infer deletion or revoke sharing from a corrupt source record", async () => {
+  const grant = await share(), before = await history.storage.read();
+  await writeFile(path.join(root, "sessions", record.id, "record.json"), "\0".repeat(100));
+  expect((await history.list(owner, { provider })).conversations).toEqual([]);
+  const next = await history.storage.read(); expect(next.shares[0]!.id).toBe(grant.grant.id);
+  expect(next.sequence).toBe(before.sequence); expect(next.partitions![record.id]).toEqual(before.partitions![record.id]);
+  await expect(history.get(owner, { entry: entry(1) })).rejects.toMatchObject({ code: "history_recovery_required" });
+});
+
+it("isolates malformed query snapshots and expires their continuations without blocking source deletion", async () => {
+  const first = await history.read(owner, { conversation: ref(), limit: 1 });
+  await writeFile(path.join(history.storage.root, `snapshot-${first.snapshotId}.json`), "{broken");
+  await expect(history.read(owner, { conversation: ref(), limit: 1, cursor: first.nextCursor! })).rejects.toMatchObject({ code: "cursor_expired" });
+  expect((await history.read(owner, { conversation: ref() })).entries).toHaveLength(2);
+  const bad = path.join(history.storage.root, `snapshot-${"0".repeat(32)}.json`); await writeFile(bad, "\0");
+  await sessions.deleteSession(record.id); expect((await history.storage.read()).conversations).toEqual({});
+  await expect(readFile(bad)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("retains one global sharing request namespace across conversation partitions and restart", async () => {
+  const requestId = randomUUID(); await share({ requestId });
+  const second = { ...record, id: randomUUID(), title: "Second" }; await sessions.createSession(second);
+  const secondRef = { provider, id: second.id }, revision = (await history.conversation(owner, secondRef)).revision;
+  history.close(); history = new HistoryService(sessions, provider, () => now);
+  await expect(history.share(owner, { ref: secondRef, requestId, expectedRevision: revision, selection: { includeFutureEntries: true }, recipientUserIds: [recipient.userId], includeAttachments: false })).rejects.toMatchObject({ code: "request_conflict" });
+  expect((await history.storage.read()).receipts).toHaveLength(1);
+});
+
+it("serves accepted attachment generations after cache removal and preserves earlier same-name bytes", async () => {
+  const bytes = [Buffer.from("original accepted bytes"), Buffer.from("second accepted bytes")];
+  const digests = bytes.map(value => createHash("sha256").update(value).digest("hex"));
+  const directory = path.join(sessions.messageQueueDirectory(record.id), "files"); await mkdir(directory, { recursive: true });
+  for (const [index, digest] of digests.entries()) await writeFile(path.join(directory, digest), bytes[index]!);
+  const saved = (await sessions.readRecord(record.id))!;
+  saved.sourceAttachments = digests.map((digest, index) => ({ id: `file-${index}`, name: "same.txt", digest, size: bytes[index]!.length }));
+  await sessions.saveRecord(saved);
+  await event(3, "user_message", { text: "first", attachments: ["same.txt"], attachmentDigests: { "same.txt": digests[0] } });
+  await event(4, "user_message", { text: "second", attachments: ["same.txt"], attachmentDigests: { "same.txt": digests[1] } });
+  history.close(); history = new HistoryService(new SessionStore(root), provider, () => now);
+  for (const [index, digest] of digests.entries()) {
+    const revision = BigInt("0x" + digest.slice(0, 32)).toString();
+    const input = { entry: entry(index + 3), attachmentId: "same.txt", revision };
+    expect(await history.attachment(owner, input)).toMatchObject({ revision, sizeBytes: bytes[index]!.length });
+    expect(await history.attachment(owner, { ...input, offset: 0, length: bytes[index]!.length }, true)).toEqual(bytes[index]);
+  }
+});
+
+
+it("deletes a corrupt shard using its trusted monotonic revision and revokes access", async () => {
+  await share();
+  await event(3, "user_message", { text: "advance metadata revision" });
+  const state = await history.storage.read(), pointer = state.partitions![record.id]!;
+  expect(BigInt(pointer.revision)).toBeGreaterThan(1n);
+  await writeFile(path.join(history.storage.root, "partitions", `${pointer.hash}.json`), "\0");
+  await sessions.deleteSession(record.id);
+  const deleted = await history.storage.read();
+  expect(deleted.partitions![record.id]).toBeUndefined(); expect(deleted.shares).toEqual([]);
+  expect(deleted.changes.at(-1)).toMatchObject({ type: "access_reset", conversation: record.id, revision: String(BigInt(pointer.revision) + 1n) });
+  await expect(readFile(path.join(history.storage.root, "partitions", `${pointer.hash}.json`))).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+
+it("marks missing admitted attachment identity as recovery instead of resolving a recreated cache file", async () => {
+  history.close(); sessions = new SessionStore(root, path.join(root, "cache")); history = new HistoryService(sessions, provider, () => now);
+  await sessions.ensureWorkspace(record.id);
+  const recreated = sessions.attachmentPath(record.id, "original.txt")!; await writeFile(recreated, "different recreated cache bytes");
+  const before = await history.storage.read();
+  await event(3, "user_message", { text: "accepted attachment", attachments: ["original.txt"], attachmentDigests: { "original.txt": "a".repeat(64) } });
+  await expect(history.get(owner, { entry: entry(3) })).rejects.toMatchObject({ code: "history_recovery_required", status: 503 });
+  const listed = await history.list(owner, { provider }); expect(listed.conversations).toEqual([]);
+  expect(listed.coverage.reasons).toContain("Some source history requires storage recovery and is omitted.");
+  const retained = await history.storage.read(); expect(retained.partitions![record.id]).toEqual(before.partitions![record.id]);
+  expect(await readFile(recreated, "utf8")).toBe("different recreated cache bytes");
 });

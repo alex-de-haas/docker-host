@@ -15,7 +15,7 @@ import { fail, missing, uuid, revision, id, HistoryStorage, type HistoryState, t
 
 export type HistoryActor = Pick<MediatedProviderInvocation, "userId" | "principalId" | "hostRole">;
 const features = ["history.read", "history.search.text", "history.sharing", "history.attachments", "history.changes", "history.tool-events", "history.usage"];
-const coverage = (changed = false): HistoryCoverage => ({ state: "partial", reasons: ["Only public Harness transcript fields are represented; native state and tool inputs are omitted.", ...(changed ? ["Source content or current access changed during enumeration."] : [])] });
+const coverage = (changed = false, unavailable = false): HistoryCoverage => ({ state: "partial", reasons: ["Only public Harness transcript fields are represented; native state and tool inputs are omitted.", ...(changed ? ["Source content or current access changed during enumeration."] : []), ...(unavailable ? ["Some source history requires storage recovery and is omitted."] : [])] });
 const referenceKey = (ref: ProviderRef) => `${ref.appId}\0${ref.installationId}\0${ref.key}`;
 const byteSize = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
 
@@ -104,18 +104,38 @@ export class HistoryService {
   }
   private async sync(changedId?: string): Promise<HistoryState> {
     const state = await this.storage.read();
-    const changed = changedId ? await this.sessions.readRecord(changedId) : null;
-    const records = changedId ? changed ? [changed] : [] : await this.sessions.listRecords();
-    const seen = new Set<string>(), removed = new Set<string>(); let dirty = false;
-    for (const record of records) {
-      seen.add(record.id); const previous = state.conversations[record.id];
-      const projected = project(record, await this.sessions.readEvents(record.id), this.provider);
+    const inventory = changedId ? await (async () => {
+      try { const record = await this.sessions.readRecord(changedId); return { records: record ? [record] : [], unavailableIds: record?.storageRecovery ? [changedId] : [] }; }
+      catch (error) { if ((error as { code?: string }).code?.startsWith("session_storage_")) return { records: [], unavailableIds: [changedId] }; throw error; }
+    })() : await this.sessions.listRecordInventory();
+    const unavailable = new Set([...state.unavailable ?? [], ...inventory.unavailableIds]);
+    const seen = new Set(inventory.unavailableIds), removed = new Set<string>(); let dirty = false;
+    for (const record of inventory.records) {
+      seen.add(record.id);
+      // An unreadable committed partition cannot be rebuilt with reset revisions or ACLs.
+      if (unavailable.has(record.id)) continue;
+      const previous = state.conversations[record.id];
+      let events;
+      try { events = await this.sessions.readEvents(record.id); }
+      catch (error) {
+        if (!(error as { code?: string }).code?.startsWith("session_storage_")) throw error;
+        unavailable.add(record.id); continue;
+      }
+      const projected = project(record, events, this.provider);
+      let attachmentUnavailable = false;
       for (const entry of projected) if ("parts" in entry.data) for (const part of entry.data.parts) if (part.type === "attachment") {
         try {
-          const file = await attachmentFile(this.sessions, record.id, part.attachmentId);
+          const source = events.find(event => `event-${event.seq}` === entry.ref.id);
+          const identities = source?.attachmentDigests as Record<string, string> | undefined;
+          const identity = identities?.[part.attachmentId];
+          const file = await attachmentFile(this.sessions, record.id, part.attachmentId, undefined, identity);
           if (!Buffer.isBuffer(file)) { part.revision = file.revision; part.sizeBytes = file.sizeBytes; }
-        } catch (error) { if (!(error instanceof ProviderError) || error.code !== "not_found") throw error; }
+        } catch (error) {
+          if ((error as { code?: string }).code?.startsWith("session_storage_") || error instanceof ProviderError && error.code === "history_recovery_required") { attachmentUnavailable = true; continue; }
+          if (!(error instanceof ProviderError) || error.code !== "not_found") throw error;
+        }
       }
+      if (attachmentUnavailable) { unavailable.add(record.id); continue; }
       const stamp = fingerprint({ title: record.title, owner: record.createdBy, createdAt: record.createdAt, projected });
       if (stamp === previous?.fingerprint) continue;
       const ownershipChanged = previous && previous.metadata.ownerUserId !== record.createdBy;
@@ -139,15 +159,21 @@ export class HistoryService {
         ownerUserId: record.createdBy, createdAt: record.createdAt, updatedAt: new Date(this.now()).toISOString(), capabilities: features };
       state.conversations[record.id] = { metadata, entries, fingerprint: stamp, acl: (previous?.acl ?? 0) + (ownershipChanged ? 1 : 0) }; dirty = true;
     }
-    for (const [key, conversation] of Object.entries(state.conversations)) if ((!changedId || changedId === key) && !seen.has(key)) {
+    const known = new Set([...Object.keys(state.conversations), ...Object.keys(state.partitions ?? {})]);
+    for (const key of known) if ((!changedId || changedId === key) && !seen.has(key)) {
+      const conversation = state.conversations[key], owner = conversation?.metadata.ownerUserId ?? state.partitions![key]!.owner;
       removed.add(`${key}\0*`);
-      for (const entry of conversation.entries) {
+      for (const entry of conversation?.entries ?? []) {
         removed.add(`${key}\0${entry.ref.id}`);
-        this.change(state, { type: "delete", owner: conversation.metadata.ownerUserId, conversation: key, entry: entry.ref.id, revision: String(BigInt(entry.revision) + 1n) });
+        this.change(state, { type: "delete", owner, conversation: key, entry: entry.ref.id, revision: String(BigInt(entry.revision) + 1n) });
       }
-      this.change(state, { type: "access_reset", owner: conversation.metadata.ownerUserId, conversation: key, revision: String(BigInt(conversation.metadata.revision) + 1n) });
-      delete state.conversations[key]; state.shares = state.shares.filter(g => g.ref.id !== key); dirty = true;
+      this.change(state, { type: "access_reset", owner, conversation: key, revision: String(BigInt(conversation?.metadata.revision ?? state.partitions?.[key]?.revision ?? "0") + 1n) });
+      delete state.conversations[key]; delete state.partitions?.[key]; unavailable.delete(key);
+      state.shares = state.shares.filter(g => g.ref.id !== key); dirty = true;
     }
+    // Preserve authority pointers but never serve an old projection when its source is unreadable.
+    state.unavailable = [...unavailable];
+    for (const key of unavailable) delete state.conversations[key];
     const cutoff = this.now() - 604800000;
     while (state.changes.length && Date.parse(state.changes[0]!.at) < cutoff) { state.floor = Number(state.changes.shift()!.sequence); dirty = true; }
     if (removed.size) await this.purgeSnapshots(removed);
@@ -164,6 +190,8 @@ export class HistoryService {
   }
   private visible(state: HistoryState, conversation: string, actor: HistoryActor): SourceConversation {
     const value = state.conversations[conversation];
+    if (state.unavailable?.includes(conversation) && (state.partitions?.[conversation]?.owner === actor.userId || this.grants(state, conversation, actor).length))
+      return fail("history_recovery_required", "This conversation history requires storage recovery.", 503);
     if (!value || value.metadata.ownerUserId !== actor.userId && !this.grants(state, conversation, actor).length) return missing();
     return value;
   }
@@ -203,7 +231,9 @@ export class HistoryService {
     const entry = await this.get(actor, { entry: input.entry });
     const disclosed = "parts" in entry.data && entry.data.parts.some(p => p.type === "attachment" && p.attachmentId === input.attachmentId && p.revision === input.revision);
     if (!disclosed) return missing();
-    const result = await attachmentFile(this.sessions, input.entry.conversation.id, input.attachmentId, content ? { revision: input.revision, offset: input.offset!, length: input.length! } : undefined);
+    const source = (await this.sessions.readEvents(input.entry.conversation.id)).find(event => `event-${event.seq}` === input.entry.id);
+    const identities = source?.attachmentDigests as Record<string, string> | undefined;
+    const result = await attachmentFile(this.sessions, input.entry.conversation.id, input.attachmentId, content ? { revision: input.revision, offset: input.offset!, length: input.length! } : undefined, identities?.[input.attachmentId]);
     this.deliveryGuards.set(result, this.deliveryGuards.get(entry)!); return result;
   }
   async list(actor: HistoryActor, input: SourceConversationQuery) {
@@ -262,16 +292,17 @@ export class HistoryService {
     if (input.cursor) {
       const match = /^([a-f0-9]{32})\.([0-9]{1,9})$/.exec(input.cursor);
       if (!match) return fail("cursor_expired", "Start a new history query.", 410);
-      try { snapshot = JSON.parse(await readFile(path.join(this.storage.root, `snapshot-${match[1]}.json`), "utf8")); }
-      catch { return fail("cursor_expired", "This snapshot is unavailable.", 410); }
+      const saved = await this.loadSnapshot(`snapshot-${match[1]}.json`);
+      if (!saved) return fail("cursor_expired", "This snapshot is unavailable.", 410);
+      snapshot = saved;
       if (snapshot.user !== actor.userId || snapshot.principal !== actor.principalId || snapshot.query !== query || snapshot.expires <= this.now()) fail("cursor_expired", "The caller, query or snapshot lifetime changed.", 410);
       offset = Number(match[2]);
       if (offset > snapshot.items.length) fail("cursor_expired", "Invalid continuation offset.", 410);
     } else {
       const files = await this.snapshots(); let count = 0;
       for (const file of files) {
-        const old = JSON.parse(await readFile(path.join(this.storage.root, file), "utf8")) as Snapshot;
-        if (old.expires <= this.now()) await rm(path.join(this.storage.root, file)); else if (old.user === actor.userId) count++;
+        const old = await this.loadSnapshot(file);
+        if (!old || old.expires <= this.now()) await rm(path.join(this.storage.root, file), { force: true }); else if (old.user === actor.userId) count++;
       }
       if (count >= 256 || byteSize(items) > 64 * 1024 * 1024) fail("budget_exceeded", "The history snapshot budget is exhausted.", 429);
       snapshot = { id: randomUUID().replaceAll("-", ""), user: actor.userId, principal: actor.principalId, query, expires: this.now() + 900000,
@@ -293,15 +324,29 @@ export class HistoryService {
       const size = byteSize(item); if (bytes + size > 800 * 1024) break;
       bytes += size; page.push(item); offset++;
     }
-    return { items: page, rest: { nextCursor: offset < snapshot.items.length ? `${snapshot.id}.${offset}` : null, snapshotId: snapshot.id, highWater: snapshot.highWater, coverage: coverage(changed) } };
+    return { items: page, rest: { nextCursor: offset < snapshot.items.length ? `${snapshot.id}.${offset}` : null, snapshotId: snapshot.id, highWater: snapshot.highWater, coverage: coverage(changed, !!state.unavailable?.length) } };
   }
   private async snapshots(): Promise<string[]> {
     try { return (await readdir(this.storage.root)).filter(n => /^snapshot-[a-f0-9]{32}\.json$/.test(n)); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return []; throw error; }
   }
+  private async loadSnapshot(name: string): Promise<Snapshot | null> {
+    try {
+      const raw = await readFile(path.join(this.storage.root, name));
+      if (raw.length > 64 * 1024 * 1024) return null;
+      const envelope = JSON.parse(raw.toString("utf8")) as { version?: number; checksum?: string; data?: Snapshot };
+      if (envelope.version !== 1 || !envelope.data || envelope.checksum !== fingerprint(envelope.data)) return null;
+      const value = envelope.data;
+      return value && typeof value.id === "string" && typeof value.user === "string" && typeof value.principal === "string"
+        && typeof value.query === "string" && Number.isFinite(value.expires) && typeof value.highWater === "string"
+        && value.acls && typeof value.acls === "object" && Array.isArray(value.items)
+        && value.items.every(item => item && typeof item.conversation === "string" && (!item.entry || item.entry.ref && typeof item.entry.ref.id === "string")) ? value : null;
+    } catch { return null; }
+  }
   private async purgeSnapshots(removed: Set<string>): Promise<void> {
     for (const name of await this.snapshots()) {
-      const snapshot = JSON.parse(await readFile(path.join(this.storage.root, name), "utf8")) as Snapshot;
+      const snapshot = await this.loadSnapshot(name);
+      if (!snapshot) { await rm(path.join(this.storage.root, name), { force: true }); continue; }
       // Preserve offsets without preserving deleted bytes: invalidate the affected snapshot entirely.
       if (snapshot.expires <= this.now() || snapshot.items.some(i => removed.has(`${i.conversation}\0*`) || i.entry && removed.has(`${i.conversation}\0${i.entry.ref.id}`))) await rm(path.join(this.storage.root, name));
     }
@@ -314,6 +359,8 @@ export class HistoryService {
     const stamp = fingerprint(binding), selected = scope!.conversationIds;
     const limit = input.limit ?? 50; if (!Number.isInteger(limit) || limit < 1 || limit > 200) fail("invalid_input", "Use page size 1–200.");
     return this.synchronized(actor, async state => {
+      if (state.unavailable?.some(key => (!selected || selected.includes(key)) && (!state.partitions?.[key] || state.partitions[key].owner === actor.userId)))
+        return fail("history_recovery_required", "The approved export includes history requiring storage recovery.", 503);
       if (!changes) {
         const items: Snapshot["items"] = [];
         for (const [key, source] of Object.entries(state.conversations)) {

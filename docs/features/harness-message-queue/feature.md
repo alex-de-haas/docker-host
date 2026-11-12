@@ -1,6 +1,6 @@
 ---
 created: 2026-11-09
-updated: 2026-11-10
+updated: 2026-11-12
 summary: Harness persists ordered messages, immutable attachments and edit reservations while keeping the composer available during background delivery.
 components: [apps/harness]
 ---
@@ -162,9 +162,12 @@ identity evidence. An exact reopened upload re-pins its original bytes. Executio
 stored paths and the ordinary workspace count/byte limits, so repeated attempts do not multiply
 cache copies. Display names remain separate from internal identities.
 
-App backups include retained queue metadata and pending/edit/draft snapshots. Ordinary sent-message
-execution copies retain the existing cache lifecycle; queue-only blob collection does not turn the
-sent cache into backed-up storage. See [Assistant Attachments](../assistant-attachments/feature.md).
+App backups include retained queue metadata, pending/edit/draft snapshots and immutable bytes
+referenced by admitted source messages. Native execution copies retain their cache lifecycle;
+their loss does not remove the admitted attachment identity. Accepted source attachments retain
+their blobs after a queue row is retired. See
+[Harness history durability](../harness-history-durability/feature.md) and
+[Assistant Attachments](../assistant-attachments/feature.md).
 
 Any queue entry, including paused, editing, failed or unknown work, protects the conversation from
 automatic expiry. Explicit conversation deletion removes its queue, upload receipts and snapshots

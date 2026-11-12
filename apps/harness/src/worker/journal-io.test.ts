@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { mkdtemp, rename, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { WorkerJournal } from "./journal.js";
@@ -20,10 +20,10 @@ const request = (): WorkerRunRequest => ({ conversationId: "chat", binding: { co
 async function fixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), "harness-journal-io-")); cleanup.push(() => rm(root, { recursive: true, force: true }));
   const journal = new WorkerJournal(root); await journal.initialize();
-  return journal;
+  return { journal, root };
 }
 it("retries a temporary Windows sharing violation without changing run identity or usage certainty", async () => {
-  const journal = await fixture(), clock = vi.spyOn(performance, "now").mockReturnValue(0);
+  const { journal } = await fixture(), clock = vi.spyOn(performance, "now").mockReturnValue(0);
   await journal.accept("run", request()); await journal.update("run", "running");
   clock.mockReturnValue(1000);
   const before = vi.mocked(rename).mock.calls.length;
@@ -32,15 +32,19 @@ it("retries a temporary Windows sharing violation without changing run identity 
   expect(vi.mocked(rename).mock.calls.length - before).toBe(2);
   expect((await journal.load("run")).receipt).toMatchObject({ state: "running", usage: { activeMs: 1000, unknown: false } });
 });
-it("does not lose elapsed usage when a sample cannot commit", async () => {
-  const journal = await fixture(), clock = vi.spyOn(performance, "now").mockReturnValue(0);
+it("fences uncertain samples and retains committed usage with explicit uncertainty after restart", async () => {
+  const { journal, root } = await fixture(), clock = vi.spyOn(performance, "now").mockReturnValue(0);
   await journal.accept("run", request()); await journal.update("run", "running");
   clock.mockReturnValue(1000);
   vi.mocked(rename).mockRejectedValue(Object.assign(new Error("disk unavailable"), { code: "ENOSPC" }));
-  await expect(journal.sample("run")).rejects.toMatchObject({ code: "ENOSPC" });
-  expect((await journal.load("run")).receipt.usage?.activeMs).toBe(0);
+  await expect(journal.sample("run")).rejects.toMatchObject({ uncertain: true, cause: { code: "ENOSPC" } });
+  await expect(journal.load("run")).rejects.toMatchObject({ code: "run_storage_uncertain" });
+  expect(JSON.parse(await readFile(path.join(root, "run.json"), "utf8")).receipt.usage.activeMs).toBe(0);
   vi.mocked(rename).mockImplementation((await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises")).rename);
   clock.mockReturnValue(2000);
-  await journal.sample("run");
-  expect((await journal.load("run")).receipt.usage).toMatchObject({ activeMs: 2000, unknown: false });
+  await expect(journal.sample("run")).rejects.toMatchObject({ code: "run_storage_uncertain" });
+  const reopened = new WorkerJournal(root); await reopened.initialize();
+  expect((await reopened.load("run")).receipt).toMatchObject({ state: "interrupted", usage: { activeMs: 0, unknown: true } });
+  await reopened.sample("run");
+  expect((await reopened.load("run")).receipt.usage).toMatchObject({ activeMs: 0, unknown: true });
 });

@@ -88,6 +88,13 @@ def check(context):
             assert response.status == 200 and len(response.read()) > 0
     say('PASS: production API/worker, password login, Core launch-code identity, sessions API and compiled static assets')
 
+    if os.environ.get('HOSTY_HISTORY_DURABILITY'):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('history_durability_acceptance', workspace/'apps/harness/test/history_durability_acceptance.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        module.check(context, app, app_origin, client, call, timed)
+
     if os.environ.get('HOSTY_LONG_SPEECH_ACCEPTANCE'):
         import importlib.util
         spec = importlib.util.spec_from_file_location('long_speech_acceptance', workspace/'apps/harness/test/long_speech_acceptance.py')

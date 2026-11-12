@@ -49,7 +49,9 @@ export function SessionExecutionRecovery({ sessionId, refreshKey, onRecovered }:
   };
   if (!review) return error ? <p role="alert" className="px-3 text-sm text-destructive-foreground">{error}</p> : null;
   return <section aria-label="Interrupted execution recovery" className="shrink-0 space-y-2 border-b p-3 text-sm">
-    <p>This execution was interrupted and its process exit is unconfirmed. Retry Stop first. Recover only after verifying that the old agent and all commands it started have stopped.</p>
+    <p>{review.sourceOnly
+      ? "Message admission was interrupted before a Worker execution receipt was recorded. Its execution outcome is unconfirmed. Recover only after verifying that no agent or command is still running for this request."
+      : "This execution was interrupted and its process exit is unconfirmed. Retry Stop first. Recover only after verifying that the old agent and all commands it started have stopped."}</p>
     <p>Recovery preserves this chat and its source files. It does not stop processes or repeat work.</p>
     {!pending && <label className="flex items-start gap-2"><input type="checkbox" checked={confirmed} disabled={busy}
       onChange={event => setConfirmed(event.target.checked)} />I verified that the agent and its commands have stopped.</label>}

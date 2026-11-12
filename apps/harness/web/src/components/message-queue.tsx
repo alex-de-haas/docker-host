@@ -80,7 +80,7 @@ export function MessageQueue({ queue, outbox, transcriptRequestIds, busy, editin
         {legacyBusy && <Loader2 className="size-4 shrink-0 motion-safe:animate-spin" aria-hidden />}
         <p className="min-w-0 flex-1 truncate">{legacySend.draftText || legacySend.text}</p>
         <span className="sr-only">Checking the previous send preserves its original request.</span>
-        <Button type="button" size="sm" className="h-7 text-xs" variant="ghost" disabled={legacyBusy} onClick={onLegacyRetry}>Retry send</Button>
+        <Button type="button" size="sm" className="h-7 text-xs" variant="ghost" disabled={legacyBusy || busy} onClick={onLegacyRetry}>Retry send</Button>
       </li>}
       {visible.map((entry, index) => {
         const locked = entry.state === "sending" || entry.state === "unknown";

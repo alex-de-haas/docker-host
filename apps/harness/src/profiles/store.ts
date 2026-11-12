@@ -1,4 +1,5 @@
-import { mkdir, readFile, writeFile, rename, rm } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
+import { durableMkdir, durableWriteFile } from "../persistence.js";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { AppContextError } from "../sessions/app-context.js";
@@ -32,10 +33,8 @@ export class ProfileStore {
     const task = this.queue.then(action); this.queue = task.catch(() => {}); return task;
   }
   private async write(state: ProfileDirectory): Promise<void> {
-    await mkdir(path.dirname(this.file), { recursive: true });
-    const temporary = `${this.file}.${randomUUID()}.tmp`;
-    try { await writeFile(temporary, JSON.stringify({ version: 1, ...state }, null, 2) + "\n", { mode: 0o600 }); await rename(temporary, this.file); }
-    finally { await rm(temporary, { force: true }); }
+    await durableMkdir(path.dirname(this.file));
+    await durableWriteFile(this.file, JSON.stringify({ version: 1, ...state }, null, 2) + "\n");
   }
   private async load(): Promise<ProfileDirectory> {
     let raw: string;

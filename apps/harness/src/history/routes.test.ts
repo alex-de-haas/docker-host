@@ -20,7 +20,7 @@ beforeEach(async () => {
   root = await mkdtemp(path.join(tmpdir(), "hosty-history-route-")); conversation = randomUUID();
   const sessions = new SessionStore(root); history = new HistoryService(sessions, provider);
   const now = new Date().toISOString();
-  await sessions.createSession({ id: conversation, createdBy: "owner", title: "Private title", context: null, status: "idle", createdAt: now, updatedAt: now, harnessSessionId: null, lastEventSeq: 1 });
+  await sessions.createSession({ id: conversation, createdBy: "owner", title: "Private title", context: null, status: "idle", createdAt: now, updatedAt: now, harnessSessionId: null, lastEventSeq: 0 });
   await sessions.appendEvent(conversation, { type: "user_message", seq: 1, ts: now, text: "private content" });
   server = createServer((request, response) => { void historyRoute(request, response, new URL(request.url!, "http://local"), history).catch(() => response.writeHead(500).end()); });
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));

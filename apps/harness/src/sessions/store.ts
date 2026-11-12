@@ -1,4 +1,6 @@
-import { mkdir, readdir, readFile, rm, writeFile, appendFile, rename } from "node:fs/promises";
+import { readdir, readFile, rm, stat } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { durableWriteFile, durableAppendFile, durableCreateFile, durableMkdir, syncDirectory, DurableWriteError, isUncertainWrite } from "../persistence.js";
 import path from "node:path";
 
 // Session records and transcripts live in the gateway's app data directory (decision 2026-08-08):
@@ -28,6 +30,11 @@ export type SessionStatus =
 export type SessionAutonomy = "normal" | "autonomous";
 
 export interface SessionRecord {
+  /** Immutable admitted input versions remain available independently of working-file cache. */
+  sourceAttachments?: import("./message-queue.js").StoredQueueAttachment[];
+  /** Unsettled durable input never authorizes a new physical execution after reopening. */
+  sourceAdmission?: { clientRequestId?: string; runId: string; state: "preparing" | "dispatching" };
+  storageRecovery?: { state: "required"; code: SessionStorageError["code"]; message: string };
   messageQueue?: import("./message-queue.js").MessageQueueRecord;
   suggestionHistoryVersion?: 1;
   /** Provider-owned execution attempt identity; distinct from chat and native session IDs. */
@@ -148,207 +155,351 @@ export interface StoredEvent {
   [key: string]: unknown;
 }
 
+export class SessionStorageError extends Error {
+  readonly status = 503;
+  constructor(readonly sessionId: string, readonly code: "session_storage_corrupt" | "session_storage_uncertain", message: string, options?: ErrorOptions) {
+    super(message, options); this.name = "SessionStorageError";
+  }
+}
+interface JournalRead { missing?: boolean; events: StoredEvent[]; raw: Buffer; keepBytes: number; repair: boolean; needsNewline: boolean }
+const absent = (error: unknown): boolean => (error as NodeJS.ErrnoException)?.code === "ENOENT";
+const statuses = new Set<SessionStatus>(["idle", "running", "suggesting", "awaiting_approval", "awaiting_question", "cancelled", "abandoned", "failed"]);
+
+/** Only a syntactically valid JSON prefix at EOF, or an all-NUL suffix, is repairable. */
+function incompleteTail(line: string): boolean {
+  const prefix = line.replace(/\0+$/, "");
+  if (prefix !== line && !prefix.trim()) return true;
+  if (!prefix.trimStart().startsWith("{")) return false;
+  try { JSON.parse(prefix); return prefix !== line; }
+  catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    const position = /at position (\d+)/.exec(message);
+    return /Unexpected end of JSON input/.test(message) || !!position && Number(position[1]) === prefix.length;
+  }
+}
+
+/** Recognize only an unfinished valid UTF-8 scalar at physical EOF. Invalid interior bytes stay corrupt. */
+function utf8TailStart(raw: Buffer): number | null {
+  let start = raw.length - 1;
+  while (start >= 0 && (raw[start]! & 0xc0) === 0x80) start--;
+  if (start < 0) return null;
+  const lead = raw[start]!, count = raw.length - start;
+  const width = lead >= 0xc2 && lead <= 0xdf ? 2 : lead >= 0xe0 && lead <= 0xef ? 3 : lead >= 0xf0 && lead <= 0xf4 ? 4 : 0;
+  if (!width || count >= width) return null;
+  for (let index = start + 1; index < raw.length; index++) if ((raw[index]! & 0xc0) !== 0x80) return null;
+  const second = raw[start + 1];
+  if (second !== undefined && (lead === 0xe0 && second < 0xa0 || lead === 0xed && second > 0x9f
+    || lead === 0xf0 && second < 0x90 || lead === 0xf4 && second > 0x8f)) return null;
+  return start;
+}
+
+/** A raw multibyte scalar is legal only inside a JSON string, outside an escape sequence. */
+function utf8StringPosition(text: string): boolean {
+  let string = false, escaped = false, unicode = 0;
+  for (const char of text) {
+    if (!string) { if (char === '"') string = true; continue; }
+    if (unicode) { unicode--; continue; }
+    if (escaped) { escaped = false; if (char === "u") unicode = 4; continue; }
+    if (char === "\\") escaped = true; else if (char === '"') string = false;
+  }
+  return string && !escaped && !unicode;
+}
+
 export class SessionStore {
-  /**
-   * @param workspaceRoot Where per-session working directories live — the app's cache directory,
-   * so uploads are never copied into a backup and the harness's cwd is nowhere near a transcript.
-   * Null when nothing was injected; sessions then have no workspace of their own.
-   */
-  constructor(
-    readonly dataDir: string,
-    private readonly workspaceRoot: string | null = null,
-  ) {}
+  constructor(readonly dataDir: string, private readonly workspaceRoot: string | null = null) {}
+  private sessionsRoot(): string { return path.join(this.dataDir, "sessions"); }
+  private readonly writes = new Map<string, Promise<unknown>>();
+  private readonly sealed = new Map<string, SessionStorageError>();
+  private readonly issues = new Map<string, SessionStorageError>();
+  private readonly observerFailures = new Map<string, string>();
+  private readonly observers = new Set<(id: string) => Promise<void>>();
 
-  private sessionsRoot(): string {
-    return path.join(this.dataDir, "sessions");
+  recoveryIssues(): { sessionId: string; code: SessionStorageError["code"]; message: string }[] {
+    return [...this.issues.values()].map(({ sessionId, code, message }) => ({ sessionId, code, message }));
+  }
+  projectionIssues(): { sessionId: string; code: "history_projection_unavailable"; message: string }[] {
+    return [...this.observerFailures].map(([sessionId, message]) => ({ sessionId, code: "history_projection_unavailable", message }));
+  }
+  private problem(id: string, error: unknown, message = "This conversation's retained source needs recovery."): SessionStorageError {
+    const issue = error instanceof SessionStorageError ? error : new SessionStorageError(id,
+      isUncertainWrite(error) ? "session_storage_uncertain" : "session_storage_corrupt", message, { cause: error });
+    this.issues.set(id, issue); this.sealed.set(id, issue); return issue;
+  }
+  private async serialize<T>(id: string, work: () => Promise<T>, mutation = false, deleting = false): Promise<T> {
+    this.sessionDir(id);
+    const previous = this.writes.get(id) ?? Promise.resolve();
+    const task = previous.catch(() => undefined).then(async () => {
+      if (mutation && this.sealed.has(id)) throw this.sealed.get(id)!;
+      if (mutation && !deleting && await this.deleted(id)) throw new SessionStorageError(id, "session_storage_corrupt", "This conversation was deleted; its identity cannot be reused.");
+      try { return await work(); }
+      catch (error) {
+        if (isUncertainWrite(error)) { const issue = this.problem(id, error, "A source write has an uncertain outcome. Reopen and reconcile this conversation before continuing."); this.sealed.set(id, issue); throw issue; }
+        throw error;
+      }
+    });
+    this.writes.set(id, task);
+    try { return await task; }
+    finally { if (this.writes.get(id) === task) this.writes.delete(id); }
+  }
+  assertWritable(id: string): void { if (this.sealed.has(id)) throw this.sealed.get(id)!; }
+  /** Authoritative attachment/upload bytes use the same uncertain-write fence as records. */
+  async saveSourceFile(id: string, target: string, content: string | Buffer, create = false): Promise<void> {
+    await this.serialize(id, async () => {
+      await durableMkdir(path.dirname(target));
+      await (create ? durableCreateFile(target, content) : durableWriteFile(target, content));
+    }, true);
+  }
+  /** Derived failures are diagnostic; they cannot reject an already durable source operation. */
+  observeChanges(observer: (id: string) => Promise<void>): () => void { this.observers.add(observer); return () => this.observers.delete(observer); }
+  private async changed(id: string): Promise<void> {
+    const results = await Promise.allSettled([...this.observers].map(observer => Promise.resolve().then(() => observer(id))));
+    const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+    if (failure) this.observerFailures.set(id, "Derived conversation history is unavailable; source data remains committed.");
+    else this.observerFailures.delete(id);
   }
 
-  /**
-   * The session's working directory, created on demand: `<cache>/sessions/<id>/workspace`. Under a
-   * different root from the records deliberately — from here, `..` is the session's own directory
-   * and `../..` the sessions root, where every sibling is a workspace and none is a transcript.
-   */
   async ensureWorkspace(id: string): Promise<string | null> {
-    if (this.workspaceRoot === null) {
-      return null;
-    }
-
-    const dir = this.workspaceDir(id);
-    await mkdir(dir, { recursive: true });
-    return dir;
+    if (this.workspaceRoot === null) return null;
+    const dir = this.workspaceDir(id); await durableMkdir(dir); return dir;
   }
-
-  private workspaceDir(id: string): string {
-    // The same segment check the records get; the id is trusted nowhere as a path.
-    if (!/^[a-zA-Z0-9-]+$/.test(id)) {
-      throw new Error(`invalid session id: ${id}`);
-    }
-    return path.join(this.workspaceRoot!, "sessions", id, "workspace");
-  }
-
-  /**
-   * A file inside the session's workspace, by its stored name — null when there is no workspace.
-   * The name is required to already be a stored name (see `sanitizeAttachmentName`); a separator or
-   * a parent reference is refused here again rather than trusted to have been cleaned upstream.
-   */
+  private workspaceDir(id: string): string { this.sessionDir(id); return path.join(this.workspaceRoot!, "sessions", id, "workspace"); }
   attachmentPath(id: string, name: string): string | null {
-    if (this.workspaceRoot === null) {
-      return null;
-    }
-    // A separator or a leading dot is what the sanitiser never produces; an inner `..` it does
-    // (`report..txt`), and refusing that here made a stored file unusable through both routes.
-    // An empty name would resolve to the workspace directory itself.
-    if (!name || name !== path.basename(name) || name.startsWith(".")) {
-      throw new Error(`invalid attachment name: ${name}`);
-    }
+    if (this.workspaceRoot === null) return null;
+    if (!name || name !== path.basename(name) || name.startsWith(".")) throw new Error(`invalid attachment name: ${name}`);
     return path.join(this.workspaceDir(id), name);
   }
-
-  /** Removes the workspace and the session directory that holds it; a no-op without a root. */
   private async removeWorkspace(id: string): Promise<void> {
-    if (this.workspaceRoot !== null) {
-      await rm(path.join(this.workspaceRoot, "sessions", id), { recursive: true, force: true });
-    }
+    if (this.workspaceRoot !== null) await rm(path.join(this.workspaceRoot, "sessions", id), { recursive: true, force: true });
   }
-
+  private deletionRoot(): string { return path.join(this.dataDir, "session-deletions"); }
+  private async deleted(id: string): Promise<boolean> {
+    let raw: string;
+    try { raw = await readFile(path.join(this.deletionRoot(), id + ".json"), "utf8"); }
+    catch (error) { if (absent(error)) return false; throw this.problem(id, error); }
+    try {
+      const marker = JSON.parse(raw) as { version?: unknown; sessionId?: unknown };
+      if (!marker || marker.version !== 1 || marker.sessionId !== id) throw new Error("invalid source deletion marker");
+      return true;
+    } catch (error) { throw this.problem(id, error, "The source deletion evidence needs recovery. Keep its conversation unavailable."); }
+  }
   private sessionDir(id: string): string {
-    // Ids are gateway-generated UUIDs, but never trust a path segment from a request.
-    if (!/^[a-zA-Z0-9-]+$/.test(id)) {
-      throw new Error(`invalid session id: ${id}`);
-    }
+    if (!/^[a-zA-Z0-9-]+$/.test(id)) throw new Error(`invalid session id: ${id}`);
     return path.join(this.sessionsRoot(), id);
   }
-
   async createSession(record: SessionRecord): Promise<void> {
-    const dir = this.sessionDir(record.id);
-    await mkdir(dir, { recursive: true });
-    await this.saveRecord(record);
+    const content = JSON.stringify(record, null, 2);
+    await this.serialize(record.id, async () => {
+      await durableMkdir(this.sessionDir(record.id));
+      await durableCreateFile(path.join(this.sessionDir(record.id), "record.json"), content);
+    }, true);
+    await this.changed(record.id);
   }
-
   messageQueueDirectory(id: string): string { return path.join(this.sessionDir(id), "message-queue"); }
 
-  private readonly writes = new Map<string, Promise<void>>();
-  private readonly observers = new Set<(id: string) => Promise<void>>();
-  /** Source projections observe durable writes and deletion; they never become source authority. */
-  observeChanges(observer: (id: string) => Promise<void>): () => void {
-    this.observers.add(observer); return () => this.observers.delete(observer);
+  async acceptedAttachment(id: string, nameOrId: string, identity?: string): Promise<{ name: string; size: number; bytes: Buffer; digest: string; revision: string } | null> {
+    const record = await this.readRecord(id);
+    const revision = (digest: string) => /^[a-f0-9]{64}$/.test(digest) ? BigInt("0x" + digest.slice(0, 32)).toString() : "invalid";
+    const file = record?.sourceAttachments?.findLast(candidate => (candidate.name === nameOrId || candidate.id === nameOrId)
+      && (!identity || candidate.digest === identity || revision(candidate.digest) === identity));
+    if (!file) return null;
+    if (!/^[a-f0-9]{64}$/.test(file.digest)) throw this.problem(id, new Error("invalid admitted attachment digest"));
+    let bytes: Buffer;
+    try { bytes = await readFile(path.join(this.messageQueueDirectory(id), "files", file.digest)); }
+    catch (error) { throw this.problem(id, error, "The admitted attachment bytes are unavailable. Preserve this conversation for recovery."); }
+    if (bytes.length !== file.size || createHash("sha256").update(bytes).digest("hex") !== file.digest) throw this.problem(id, new Error("damaged admitted attachment"));
+    return { name: file.name, size: file.size, bytes, digest: file.digest, revision: revision(file.digest) };
   }
-  private async changed(id: string): Promise<void> { for (const observer of this.observers) await observer(id); }
-
 
   async saveRecord(record: SessionRecord): Promise<void> {
-    const content = JSON.stringify(record, null, 2);
-    const previous = this.writes.get(record.id) ?? Promise.resolve();
-    const task = previous.catch(() => undefined).then(async () => {
+    // Capture mutable callers before entering the lane; preserve committed journal high water.
+    const next = structuredClone(record);
+    await this.serialize(record.id, async () => {
+      const journal = await this.journal(record.id);
       const target = path.join(this.sessionDir(record.id), "record.json");
-      await writeFile(`${target}.tmp`, content, "utf8");
-      await rename(`${target}.tmp`, target);
-    });
-    this.writes.set(record.id, task);
-    try { await task; await this.changed(record.id); } finally { if (this.writes.get(record.id) === task) this.writes.delete(record.id); }
+      let committedHigh = 0;
+      try {
+        const committed = JSON.parse(await readFile(target, "utf8")) as SessionRecord;
+        if (!committed || committed.id !== record.id || typeof committed.createdBy !== "string" || !committed.createdBy
+          || !statuses.has(committed.status) || !Number.isSafeInteger(committed.lastEventSeq) || committed.lastEventSeq < 0
+          || typeof committed.createdAt !== "string" || typeof committed.updatedAt !== "string") throw new Error("invalid committed record");
+        committedHigh = committed.lastEventSeq;
+      } catch (error) { if (!absent(error)) throw this.problem(record.id, error); }
+      const journalHigh = journal.events.at(-1)?.seq ?? 0;
+      if (committedHigh > journalHigh && !(next.appContextEvent && next.appContextEvent.seq >= committedHigh))
+        throw this.problem(record.id, new Error("checkpoint exceeds retained transcript"), "The checkpoint references missing transcript input. Preserve this conversation for recovery.");
+      next.lastEventSeq = Math.max(next.lastEventSeq, committedHigh, journal.events.at(-1)?.seq ?? 0);
+      await durableWriteFile(path.join(this.sessionDir(record.id), "record.json"), JSON.stringify(next, null, 2));
+      record.lastEventSeq = Math.max(record.lastEventSeq, next.lastEventSeq);
+    }, true);
+    await this.changed(record.id);
   }
-
-  private messageReceiptPath(id: string, requestId: string): string {
-    return path.join(this.sessionDir(id), "message-requests", messageRequestId(requestId) + ".json");
-  }
-
-  /** Fixed-size receipts follow transcript retention; never evict an old ID and allow its replay. */
+  private messageReceiptPath(id: string, requestId: string): string { return path.join(this.sessionDir(id), "message-requests", messageRequestId(requestId) + ".json"); }
   async saveMessageReceipt(id: string, receipt: StoredMessageReceipt): Promise<void> {
-    const target = this.messageReceiptPath(id, receipt.clientRequestId);
-    await mkdir(path.dirname(target), { recursive: true });
-    await writeFile(`${target}.tmp`, JSON.stringify(receipt), "utf8");
-    await rename(`${target}.tmp`, target);
+    const content = JSON.stringify(receipt), target = this.messageReceiptPath(id, receipt.clientRequestId);
+    await this.serialize(id, async () => { await durableMkdir(path.dirname(target)); await durableWriteFile(target, content); }, true);
   }
-
   async readMessageReceipt(id: string, requestId: string): Promise<StoredMessageReceipt | null> {
+    this.sessionDir(id);
+    if (await this.deleted(id)) return null;
     let content: string;
     try { content = await readFile(this.messageReceiptPath(id, requestId), "utf8"); }
-    catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-      throw error;
-    }
-    // Corrupt or unreadable evidence must never be interpreted as permission to send again.
-    if (content.length > 4096) throw new Error("invalid message receipt");
-    const receipt = JSON.parse(content) as StoredMessageReceipt;
-    if (!receipt || receipt.clientRequestId !== messageRequestId(requestId)
-      || typeof receipt.actorUserId !== "string" || !receipt.actorUserId || receipt.actorUserId.length > 512
-      || typeof receipt.fingerprint !== "string" || !/^[a-f0-9]{64}$/.test(receipt.fingerprint)
-      || !["unknown", "accepted", "rejected"].includes(receipt.state)
-      || (receipt.eventSeq !== undefined && (!Number.isSafeInteger(receipt.eventSeq) || receipt.eventSeq < 1))
-      || (receipt.error !== undefined && (typeof receipt.error?.code !== "string" || receipt.error.code.length > 80
-        || typeof receipt.error.message !== "string" || receipt.error.message.length > 500)))
-      throw new Error("invalid message receipt");
-    return receipt;
+    catch (error) { if (absent(error)) return null; throw this.problem(id, error); }
+    try {
+      if (content.length > 4096) throw new Error("invalid message receipt");
+      const receipt = JSON.parse(content) as StoredMessageReceipt;
+      if (!receipt || receipt.clientRequestId !== messageRequestId(requestId)
+        || typeof receipt.actorUserId !== "string" || !receipt.actorUserId || receipt.actorUserId.length > 512
+        || typeof receipt.fingerprint !== "string" || !/^[a-f0-9]{64}$/.test(receipt.fingerprint)
+        || !["unknown", "accepted", "rejected"].includes(receipt.state)
+        || (receipt.eventSeq !== undefined && (!Number.isSafeInteger(receipt.eventSeq) || receipt.eventSeq < 1))
+        || (receipt.error !== undefined && (typeof receipt.error?.code !== "string" || receipt.error.code.length > 80
+          || typeof receipt.error.message !== "string" || receipt.error.message.length > 500))) throw new Error("invalid message receipt");
+      return receipt;
+    } catch (error) { throw this.problem(id, error, "The saved admission receipt needs recovery; do not submit this request again."); }
   }
-
   async readRecord(id: string): Promise<SessionRecord | null> {
-    try {
-      const record = JSON.parse(await readFile(path.join(this.sessionDir(id), "record.json"), "utf8")) as SessionRecord;
-      return { ...record, appIds: record.appIds ?? [], appContextRevision: record.appContextRevision ?? 0 };
-    } catch {
-      return null;
-    }
-  }
-
-  async listRecords(): Promise<SessionRecord[]> {
-    let entries: string[];
-    try {
-      entries = await readdir(this.sessionsRoot());
-    } catch {
-      return [];
-    }
-
-    const records: SessionRecord[] = [];
-    for (const entry of entries) {
-      const record = await this.readRecord(entry).catch(() => null);
-      if (record) {
-        records.push(record);
-      }
-    }
-
-    return records.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  }
-
-  async appendEvent(id: string, event: StoredEvent): Promise<void> {
-    await appendFile(
-      path.join(this.sessionDir(id), "events.ndjson"),
-      `${JSON.stringify(event)}\n`,
-      "utf8",
-    );
-    await this.changed(id);
-  }
-
-  async readEvents(id: string, afterSeq = 0): Promise<StoredEvent[]> {
-    let raw: string;
-    try {
-      raw = await readFile(path.join(this.sessionDir(id), "events.ndjson"), "utf8");
-    } catch {
-      return [];
-    }
-
-    const events: StoredEvent[] = [];
-    for (const line of raw.split("\n")) {
-      if (!line.trim()) {
-        continue;
-      }
-      try {
-        const event = JSON.parse(line) as StoredEvent;
-        if (event.seq > afterSeq) {
-          events.push(event);
+    return this.serialize(id, async () => {
+      if (await this.deleted(id)) return null;
+      let raw: string;
+      try { raw = await readFile(path.join(this.sessionDir(id), "record.json"), "utf8"); }
+      catch (error) {
+        if (absent(error)) {
+          try { await stat(this.sessionDir(id)); } catch (directoryError) { if (absent(directoryError)) return null; throw this.problem(id, directoryError); }
         }
-      } catch {
-        // A torn tail line from a crash mid-append is expected; skip it rather than fail the read.
+        throw this.problem(id, error);
       }
-    }
-
-    return events;
+      let record: SessionRecord;
+      try {
+        record = JSON.parse(raw) as SessionRecord;
+        if (!record || record.id !== id || typeof record.createdBy !== "string" || !record.createdBy
+          || !statuses.has(record.status) || !Number.isSafeInteger(record.lastEventSeq) || record.lastEventSeq < 0
+          || typeof record.createdAt !== "string" || typeof record.updatedAt !== "string") throw new Error("invalid session record");
+      } catch (error) { throw this.problem(id, error); }
+      try {
+        const journal = await this.journal(id);
+        const journalHigh = journal.events.at(-1)?.seq ?? 0;
+        if (record.lastEventSeq > journalHigh && !(record.appContextEvent && record.appContextEvent.seq >= record.lastEventSeq))
+          throw this.problem(id, new Error("checkpoint exceeds retained transcript"), "The checkpoint references missing transcript input. Preserve this conversation for recovery.");
+        record.lastEventSeq = Math.max(record.lastEventSeq, journal.events.at(-1)?.seq ?? 0);
+        const issue = this.sealed.get(id);
+        if (issue) record.storageRecovery = { state: "required", code: issue.code, message: issue.message };
+      } catch (error) {
+        const issue = this.problem(id, error); record.storageRecovery = { state: "required", code: issue.code, message: issue.message };
+      }
+      return { ...record, appIds: record.appIds ?? [], appContextRevision: record.appContextRevision ?? 0 };
+    });
   }
+  async listRecordInventory(): Promise<{ records: SessionRecord[]; unavailableIds: string[] }> {
+    const records: SessionRecord[] = [], unavailable = new Set<string>();
+    let markers: string[];
+    try { markers = await readdir(this.deletionRoot()); }
+    catch (error) { if (absent(error)) markers = []; else throw this.problem("inventory", error, "The source deletion inventory is unavailable."); }
+    for (const marker of markers) {
+      const id = /^([a-zA-Z0-9-]+)\.json$/.exec(marker)?.[1];
+      if (id) try { await this.deleted(id); } catch { unavailable.add(id); }
+    }
+    let entries;
+    try { entries = await readdir(this.sessionsRoot(), { withFileTypes: true }); }
+    catch (error) {
+      if (absent(error)) return { records, unavailableIds: [...unavailable] };
+      throw this.problem("inventory", error, "The source conversation inventory is unavailable.");
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory() || !/^[a-zA-Z0-9-]+$/.test(entry.name)) continue;
+      try {
+        const record = await this.readRecord(entry.name);
+        if (record) { records.push(record); if (record.storageRecovery) unavailable.add(entry.name); }
+      } catch { unavailable.add(entry.name); }
+    }
+    return { records: records.sort((a, b) => b.createdAt.localeCompare(a.createdAt)), unavailableIds: [...unavailable] };
+  }
+  async listRecords(): Promise<SessionRecord[]> { return (await this.listRecordInventory()).records; }
 
-  /** Removes one session's directory — its record, transcript and everything else it kept. */
-  async deleteSession(id: string): Promise<void> {
-    await this.removeWorkspace(id);
-    await rm(this.sessionDir(id), { recursive: true, force: true });
+  private async journal(id: string): Promise<JournalRead> {
+    if (await this.deleted(id)) return { missing: true, events: [], raw: Buffer.alloc(0), keepBytes: 0, repair: false, needsNewline: false };
+    let raw: Buffer;
+    try { raw = await readFile(path.join(this.sessionDir(id), "events.ndjson")); }
+    catch (error) { if (absent(error)) return { missing: true, events: [], raw: Buffer.alloc(0), keepBytes: 0, repair: false, needsNewline: false }; throw this.problem(id, error); }
+    let text: string, partialUtf8 = false;
+    try { text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(raw); }
+    catch (error) {
+      const start = utf8TailStart(raw);
+      if (start === null) throw this.problem(id, error, "The transcript contains damaged text bytes. Preserve its source for recovery.");
+      try {
+        text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(raw.subarray(0, start));
+        if (!utf8StringPosition(text)) throw new Error("truncated UTF-8 outside a JSON string");
+        partialUtf8 = true;
+      }
+      catch (prefixError) { throw this.problem(id, prefixError, "The transcript contains damaged interior text bytes. Preserve its source for recovery."); }
+    }
+    const lines = text.split("\n"), events: StoredEvent[] = [];
+    let offset = 0;
+    for (let index = 0; index < lines.length; index++) {
+      const line = lines[index]!, bytes = Buffer.byteLength(line) + (index < lines.length - 1 ? 1 : 0);
+      if (!line.trim()) { offset += bytes; continue; }
+      let event: StoredEvent | undefined, tailStart: number | undefined;
+      try { event = JSON.parse(line) as StoredEvent; }
+      catch (error) {
+        if (index === lines.length - 1) {
+          const prefix = line.replace(/\0+$/, "");
+          if (prefix !== line && prefix.trim()) {
+            try { event = JSON.parse(prefix) as StoredEvent; tailStart = offset + Buffer.byteLength(prefix); } catch { /* Only the valid prefix grammar below permits repair. */ }
+          }
+          if (!event && incompleteTail(line))
+            return { events, raw, keepBytes: offset, repair: true, needsNewline: offset > 0 && raw[offset - 1] !== 10 };
+        }
+        if (!event) throw this.problem(id, error, "This conversation contains an invalid interior or unproven journal record. Preserve its source for recovery.");
+      }
+      if (partialUtf8 && index === lines.length - 1) throw this.problem(id, new Error("unproven UTF-8 tail"));
+      if (!event || !Number.isSafeInteger(event.seq) || event.seq < 1 || typeof event.type !== "string" || !event.type || typeof event.ts !== "string"
+        || event.seq <= (events.at(-1)?.seq ?? 0))
+        throw this.problem(id, new Error("invalid event sequence"), "This conversation has conflicting or invalid transcript identities. Preserve its source for recovery.");
+      events.push(event); offset += bytes;
+      if (tailStart !== undefined) return { events, raw, keepBytes: tailStart, repair: true, needsNewline: true };
+    }
+    if (partialUtf8) throw this.problem(id, new Error("unproven UTF-8 tail"));
+    return { events, raw, keepBytes: raw.length, repair: false, needsNewline: raw.length > 0 && raw.at(-1) !== 10 };
+  }
+  async eventHighWater(id: string): Promise<number> { return this.serialize(id, async () => (await this.journal(id)).events.at(-1)?.seq ?? 0); }
+  async appendEvent(id: string, event: StoredEvent, allocation?: { after: number }): Promise<void> {
+    await this.serialize(id, async () => {
+      const journal = await this.journal(id), high = journal.events.at(-1)?.seq ?? 0;
+      let checkpoint: SessionRecord;
+      try {
+        checkpoint = JSON.parse(await readFile(path.join(this.sessionDir(id), "record.json"), "utf8")) as SessionRecord;
+        if (!checkpoint || checkpoint.id !== id || !Number.isSafeInteger(checkpoint.lastEventSeq) || checkpoint.lastEventSeq < 0) throw new Error("invalid source checkpoint");
+      } catch (error) { throw this.problem(id, error); }
+      const pendingOutbox = checkpoint.appContextEvent;
+      const completingOutbox = !allocation && checkpoint.lastEventSeq === high + 1 && pendingOutbox?.seq === checkpoint.lastEventSeq
+        && JSON.stringify(pendingOutbox) === JSON.stringify(event);
+      if (checkpoint.lastEventSeq > high && !completingOutbox)
+        throw this.problem(id, new Error("checkpoint exceeds retained transcript"), "The checkpoint references missing transcript input. Preserve this conversation for recovery.");
+      if (allocation) event.seq = Math.max(high, allocation.after) + 1;
+      if (!Number.isSafeInteger(event.seq) || event.seq <= high) throw this.problem(id, new Error("event sequence conflict"));
+      const target = path.join(this.sessionDir(id), "events.ndjson");
+      if (journal.repair) {
+        const recovery = path.join(this.sessionDir(id), "recovery"); await durableMkdir(recovery);
+        await durableWriteFile(path.join(recovery, `events-tail-${randomUUID()}.bin`), journal.raw.subarray(journal.keepBytes));
+        await durableWriteFile(target, journal.raw.subarray(0, journal.keepBytes));
+      }
+      await durableAppendFile(target, `${journal.needsNewline ? "\n" : ""}${JSON.stringify(event)}\n`);
+    }, true);
     await this.changed(id);
   }
-
+  async readEvents(id: string, afterSeq = 0): Promise<StoredEvent[]> { return this.serialize(id, async () => (await this.journal(id)).events.filter(event => event.seq > afterSeq)); }
+  async deleteSession(id: string): Promise<void> {
+    await this.serialize(id, async () => {
+      await durableMkdir(this.deletionRoot());
+      if (!await this.deleted(id)) await durableCreateFile(path.join(this.deletionRoot(), id + ".json"), JSON.stringify({ version: 1, sessionId: id }));
+      try {
+        await this.removeWorkspace(id);
+        await rm(this.sessionDir(id), { recursive: true, force: true });
+        try { await syncDirectory(this.sessionsRoot()); } catch (error) { if (!absent(error)) throw error; }
+        if (this.workspaceRoot) {
+          try { await syncDirectory(path.join(this.workspaceRoot, "sessions")); } catch (error) { if (!absent(error)) throw error; }
+        }
+      } catch (error) { throw new DurableWriteError(this.sessionDir(id), error); }
+    }, true, true);
+    this.issues.delete(id); await this.changed(id);
+  }
 }

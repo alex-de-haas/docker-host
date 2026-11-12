@@ -1,7 +1,7 @@
 ---
 created: 2026-09-03
-updated: 2026-11-09
-summary: Composer files use immutable queue snapshots before delivery, ordinary execution copies in the session cache and explicit transcript attachment references.
+updated: 2026-11-12
+summary: Composer files retain immutable accepted snapshots in app data and use ordinary per-session cache copies for native execution.
 components: [apps/harness]
 ---
 
@@ -10,7 +10,8 @@ components: [apps/harness]
 An operator hands the assistant a file from the composer. The
 [message queue](../harness-message-queue/feature.md) retains an immutable snapshot before accepting
 delivery; execution receives a copy in the session workspace and records its reference in the
-transcript. The legacy immediate-upload API still stores ordinary cache files.
+transcript. The legacy immediate-upload API stores a flushed cache upload; admission
+retains the exact referenced bytes in app data before execution.
 Cross-cuts [ai-gateway](../ai-gateway/feature.md) and
 [agent-background-sessions](../agent-background-sessions/feature.md); the storage it stands on is
 the [cache](../app-cache-storage/feature.md) kind of the
@@ -31,14 +32,15 @@ and is deleted with the app: ordinary workspace copies are absent from a backup 
 workspace and none is a transcript. An external mount would have had the opposite lifecycle — never
 deleted, surviving app removal — and would have orphaned uploads on the host.
 
-The contract describes `cache` as "derived, rebuildable data", and an attachment is not rebuildable.
-It is used here by its properties; the naming mismatch is stated rather than resolved.
+Accepted attachment bytes are retained separately in app data. Execution cache
+copies can be materialized from those immutable identities, so cache loss does not
+remove the input attached to an accepted message.
 
 The workspace goes where the session goes and nowhere else: removed on delete and on retention
 expiry, kept through abandonment, because an abandoned session resumes and a resumed turn may refer
-to the file. A restored backup contains retained queue/edit/draft snapshots in app data, while
-ordinary sent execution copies remain absent because the cache is not backed up. The transcript's
-`attachment_added` event explains a sent file whose cache copy no longer exists.
+to the file. A restored backup contains retained queue/edit/draft and admitted-message
+snapshots in app data, while ordinary execution copies remain absent because the
+cache is not backed up. Unsubmitted legacy uploads retain their cache lifecycle.
 
 An on-demand backup is reachable, but not from Shell. `apps/harness/manifest.json` declares
 `data.enabled: true` but `capabilities: ["logs"]`, and Shell shows the Backups entry — its only way
@@ -57,7 +59,7 @@ entry is a Shell affordance gap rather than a platform one.
 Whichever route takes it, the archive is the same. `CreateBackupAsync` is the single entry point for
 every backup — `manual`, `pre-update`, `pre-restore`, `pre-development-mode`, `pre-runtime-switch` —
 and it archives the app's data directory, branching on `reason` only for the backup's id and its
-retention class. The archive includes queue-owned snapshots under data; ordinary execution
+retention class. The archive includes queue-owned and admitted-message snapshots under data; ordinary execution
 copies live under `cache`, which the archive never reaches.
 
 ## Queue Snapshots And Upload Recovery
@@ -79,6 +81,10 @@ Missing or altered snapshots block delivery. Authorized retained-snapshot downlo
 The durable store enforces 25 MiB per file, 20 retained attachment identities and 100 MiB of content.
 Active queued/edit references, unclaimed uploads and restored-draft pins retain bytes. Accepting or
 deleting the last queue-only reference collects its blob while retaining the upload UUID receipt.
+An admitted source message pins its original digest through conversation retention;
+accepting its queue row does not collect those bytes. Transcript attachment identities
+cannot resolve to a later workspace file with the same name. See
+[Harness history durability](../harness-history-durability/feature.md).
 Reopening that exact upload restores and re-pins its original bytes. Restored-draft pins accumulate
 through conversation retention because another view can still hold the same draft. They count
 toward the 20-identity and 100 MiB allowances and have no separate release command. Conversation

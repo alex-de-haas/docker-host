@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import * as persistence from "../persistence.js";
 import { SessionManager } from "./manager.js";
 import { SessionStore } from "./store.js";
 import { AuditReporter } from "../audit.js";
@@ -73,9 +74,9 @@ describe("durable message admission", () => {
   it("persists unknown before any transcript publication or provider start", async () => {
     const session = await manager.createSession({ createdBy: "admin" }); const original = request();
     const append = store.appendEvent.bind(store);
-    vi.spyOn(store, "appendEvent").mockImplementation(async (id, event) => {
+    vi.spyOn(store, "appendEvent").mockImplementation(async (id, event, allocation) => {
       if (event.type === "user_message") expect(await store.readMessageReceipt(id, original.clientRequestId)).toMatchObject({ state: "unknown", actorUserId: "admin" });
-      await append(id, event);
+      await append(id, event, allocation);
     });
     const receipt = await manager.postMessage(session.id, "text", undefined, [], original);
     expect(receipt).toMatchObject({ state: "accepted", eventSeq: expect.any(Number) });
@@ -86,15 +87,16 @@ describe("durable message admission", () => {
     const session = await manager.createSession({ createdBy: "admin" });
     await manager.postMessage(session.id, "first", undefined, [], request()); await finishTurn(session.id);
     const append = store.appendEvent.bind(store);
-    vi.spyOn(store, "appendEvent").mockImplementation(async (id, event) => {
-      await append(id, event);
-      if (event.type === "user_message" && event.text === "second") {
-        await manager.addAttachment(id, { name: "concurrent.txt", size: 0, path: "concurrent.txt" });
-        expect((await manager.getSession(id))!.lastEventSeq).toBeGreaterThan(event.seq);
-      }
+    let upload: Promise<void> | undefined;
+    vi.spyOn(store, "appendEvent").mockImplementation(async (id, event, allocation) => {
+      await append(id, event, allocation);
+      if (event.type === "user_message" && event.text === "second")
+        upload = manager.addAttachment(id, { name: "concurrent.txt", size: 0, path: "concurrent.txt" });
     });
     const receipt = await manager.postMessage(session.id, "second", undefined, [], request());
+    await upload;
     const message = (await store.readEvents(session.id)).find(event => event.type === "user_message" && event.text === "second");
+    expect((await manager.getSession(session.id))!.lastEventSeq).toBeGreaterThan(message!.seq);
     expect(receipt).toMatchObject({ state: "accepted", eventSeq: message!.seq });
   });
 
@@ -137,8 +139,8 @@ describe("durable message admission", () => {
 
   it("retains a definite pre-send rejection and allows only an explicit distinct request", async () => {
     const session = await manager.createSession({ createdBy: "admin" }); const original = request();
-    vi.spyOn(adapter, "start").mockImplementationOnce(() => { throw new Error("synthetic provider start failure"); });
-    await expect(manager.postMessage(session.id, "text", undefined, [], original)).rejects.toThrow("synthetic provider start failure");
+    vi.spyOn(store, "appendEvent").mockRejectedValueOnce(new Error("synthetic known pre-effect failure"));
+    await expect(manager.postMessage(session.id, "text", undefined, [], original)).rejects.toThrow("synthetic known pre-effect failure");
     expect(await manager.messageReceipt(session.id, original.clientRequestId, "admin")).toMatchObject({ state: "rejected", error: { code: "message_dispatch_failed" } });
     await expect(manager.postMessage(session.id, "text", undefined, [], original)).rejects.toMatchObject({ code: "message_request_rejected" });
     await manager.postMessage(session.id, "text", undefined, [], request());
@@ -184,4 +186,123 @@ describe("durable message admission", () => {
     await expect(manager.postMessage(session.id, "text", undefined, [], original)).rejects.toThrow();
     expect(sent).toEqual(["text"]);
   });
+  it("fences a distinct request after an uncertain adapter start and only explicit recovery clears it", async () => {
+    const session = await manager.createSession({ createdBy: "admin" }), original = request();
+    vi.spyOn(adapter, "start").mockImplementationOnce(() => { throw new Error("start may already have spawned native work"); });
+    await expect(manager.postMessage(session.id, "original", undefined, [], original)).rejects.toThrow("may already have spawned");
+    expect(await manager.messageReceipt(session.id, original.clientRequestId, "admin")).toMatchObject({ state: "unknown" });
+    await manager.shutdown(); store = new SessionStore(dir, path.join(dir, "cache")); manager = build();
+    await expect(manager.postMessage(session.id, "new", undefined, [], request())).rejects.toMatchObject({ code: "source_admission_recovery_required" });
+    const review = await manager.executionRecovery(session.id, "admin");
+    expect(review).toMatchObject({ sourceOnly: true, generation: "source-admission", expectedRevision: 0 });
+    const input = { ...review!, requestId: randomUUID(), consumerExitConfirmed: true };
+    await manager.recoverExecution(session.id, "admin", input);
+    await manager.recoverExecution(session.id, "admin", input);
+    expect(await manager.messageReceipt(session.id, original.clientRequestId, "admin")).toMatchObject({ state: "unknown" });
+    await manager.postMessage(session.id, "new", undefined, [], request());
+    expect(sent).toEqual(["new"]);
+  });
+
+  it("preserves immutable accepted attachment versions when mutable cache files disappear", async () => {
+    const session = await manager.createSession({ createdBy: "admin" });
+    const workspace = await store.ensureWorkspace(session.id);
+    await writeFile(path.join(workspace!, "input.txt"), "first input");
+    await manager.postMessage(session.id, "inspect", undefined, ["input.txt"], request()); await finishTurn(session.id);
+    const first = await store.acceptedAttachment(session.id, "input.txt");
+    await writeFile(path.join(workspace!, "input.txt"), "second input");
+    await manager.postMessage(session.id, "inspect", undefined, ["input.txt"], request()); await finishTurn(session.id);
+    await rm(workspace!, { recursive: true });
+    expect((await store.acceptedAttachment(session.id, "input.txt", first!.revision))?.bytes.toString()).toBe("first input");
+    expect((await store.acceptedAttachment(session.id, "input.txt"))?.bytes.toString()).toBe("second input");
+    const messages = (await store.readEvents(session.id)).filter(e => e.type === "user_message");
+    expect(messages[0]!.attachmentDigests).toEqual({ "input.txt": first!.digest });
+  });
+
+  it("does not start native work or acknowledge input before its durable transcript barrier", async () => {
+    const session = await manager.createSession({ createdBy: "admin" });
+    let entered = false, release!: () => void;
+    const barrier = new Promise<void>(resolve => { release = resolve; });
+    const append = persistence.durableAppendFile;
+    vi.spyOn(persistence, "durableAppendFile").mockImplementation(async (target, bytes) => {
+      if (String(bytes).includes('"type":"user_message"')) { entered = true; await barrier; }
+      await append(target, bytes);
+    });
+    let settled = false;
+    const pending = manager.postMessage(session.id, "durable first", undefined, [], request()).finally(() => { settled = true; });
+    await vi.waitFor(() => expect(entered).toBe(true));
+    expect(starts).toEqual([]); expect(sent).toEqual([]); expect(settled).toBe(false);
+    release(); await expect(pending).resolves.toMatchObject({ state: "accepted" });
+    expect(sent).toEqual(["durable first"]);
+  });
+
+  it("keeps an uncertain native handle fenced until supported Stop confirms exit", async () => {
+    const session = await manager.createSession({ createdBy: "admin" }), original = request();
+    let writers = 0, maximumWriters = 0;
+    const stop = vi.fn(async () => { writers--; }).mockRejectedValueOnce(new Error("native exit remains unconfirmed"));
+    vi.spyOn(adapter, "start").mockImplementation(options => {
+      starts.push(options); writers++; maximumWriters = Math.max(maximumWriters, writers);
+      const first = starts.length === 1;
+      return { send: text => { sent.push(text); if (first) throw new Error("provider acted before losing acknowledgement"); },
+        stop: async () => {}, stopAndWait: first ? stop : async () => { writers--; }, interrupt: async () => {},
+        setMcpServers: async () => false, resolveApproval: () => false, resolveQuestion: () => false };
+    });
+    await expect(manager.postMessage(session.id, "original", undefined, [], original)).rejects.toThrow("acted before losing");
+    const admission = (await manager.getSession(session.id))!.sourceAdmission!;
+    const input = { requestId: randomUUID(), runId: admission.runId, generation: "source-admission", expectedRevision: 0, consumerExitConfirmed: true };
+    await expect(manager.executionRecovery(session.id, "admin")).rejects.toMatchObject({ code: "recovery_active" });
+    await expect(manager.recoverExecution(session.id, "admin", input)).rejects.toMatchObject({ code: "recovery_active" });
+    await expect(manager.postMessage(session.id, "overlap", undefined, [], request())).rejects.toMatchObject({ code: "source_admission_recovery_required" });
+    await expect(manager.cancelSession(session.id)).rejects.toThrow("exit remains unconfirmed");
+    await expect(manager.executionRecovery(session.id, "admin")).rejects.toMatchObject({ code: "recovery_active" });
+    await expect(manager.recoverExecution(session.id, "admin", input)).rejects.toMatchObject({ code: "recovery_active" });
+    expect((await manager.getSession(session.id))!.sourceAdmission).toEqual(admission);
+    expect(await manager.messageReceipt(session.id, original.clientRequestId, "admin")).toMatchObject({ state: "unknown" });
+    expect(writers).toBe(1);
+    await manager.cancelSession(session.id); expect(writers).toBe(0);
+    expect(await manager.executionRecovery(session.id, "admin")).toMatchObject({ sourceOnly: true, runId: admission.runId });
+    await manager.recoverExecution(session.id, "admin", input);
+    await manager.postMessage(session.id, "next", undefined, [], request());
+    expect(sent).toEqual(["original", "next"]); expect(maximumWriters).toBe(1);
+    expect(await manager.messageReceipt(session.id, original.clientRequestId, "admin")).toMatchObject({ state: "unknown" });
+  });
+
+  it("projects a live storage fence after an uncertain queue-file write without a message admission", async () => {
+    const session = await manager.createSession({ createdBy: "admin" });
+    const write = persistence.durableWriteFile;
+    vi.spyOn(persistence, "durableWriteFile").mockImplementationOnce(async (target, bytes) => {
+      await write(target, bytes); throw new persistence.DurableWriteError(target, new Error("lost publication acknowledgement"));
+    });
+    await expect(store.saveSourceFile(session.id, path.join(store.messageQueueDirectory(session.id), "retained-input"), "input"))
+      .rejects.toMatchObject({ code: "session_storage_uncertain" });
+    const visible = (await manager.getSession(session.id))!;
+    expect(visible.sourceAdmission).toBeUndefined();
+    expect(visible.storageRecovery).toMatchObject({ state: "required", code: "session_storage_uncertain" });
+    expect((await manager.listSessions()).find(record => record.id === session.id)?.storageRecovery).toEqual(visible.storageRecovery);
+    await expect(manager.postMessage(session.id, "blocked", undefined, [], request())).rejects.toMatchObject({ code: "session_storage_uncertain" });
+    expect(starts).toEqual([]);
+  });
+
+  it("does not release native approvals or answers through a sealed live source store", async () => {
+    const session = await manager.createSession({ createdBy: "admin" });
+    const approval = vi.fn(() => true), question = vi.fn(async () => true);
+    vi.spyOn(adapter, "start").mockImplementationOnce(options => {
+      starts.push(options);
+      return { send: text => { sent.push(text); }, stop: async () => {}, interrupt: async () => {},
+        setMcpServers: async () => false, resolveApproval: approval, resolveQuestion: question };
+    });
+    await manager.postMessage(session.id, "ask", undefined, [], request());
+    starts[0]!.onEvent({ type: "approval_request", approvalId: "approval", toolName: "write", input: {} });
+    starts[0]!.onEvent({ type: "question_request", questionId: "question", questions: [{ header: "Choice", question: "Choose?", multiSelect: false, options: [] }] });
+    await vi.waitFor(async () => expect((await manager.getSession(session.id))?.status).toBe("awaiting_question"));
+    const write = persistence.durableWriteFile;
+    vi.spyOn(persistence, "durableWriteFile").mockImplementationOnce(async (target, bytes) => {
+      await write(target, bytes); throw new persistence.DurableWriteError(target, new Error("uncertain source publication"));
+    });
+    await expect(store.saveSourceFile(session.id, path.join(store.messageQueueDirectory(session.id), "control-fence"), "input"))
+      .rejects.toMatchObject({ code: "session_storage_uncertain" });
+    await expect(manager.resolveApproval(session.id, "approval", "allow", undefined, "admin")).rejects.toMatchObject({ code: "session_storage_uncertain" });
+    await expect(manager.resolveQuestion(session.id, "question", { "Choose?": "answer" })).rejects.toMatchObject({ code: "session_storage_uncertain" });
+    expect(approval).not.toHaveBeenCalled(); expect(question).not.toHaveBeenCalled();
+  });
+
 });

@@ -30,9 +30,15 @@ const build = (development: DevelopmentClient | null = null) => {
 };
 const command = (value: QueueCommand, target = record) => ({ requestId: randomUUID(), expectedRevision: queue.state(target).revision, command: value });
 const enqueue = (text: string, attachments: string[] = []) => ({ type: "enqueue" as const, entryId: randomUUID(), text, attachments });
-const liveCommand = async (value: QueueCommand, credential = "fixture-current-authority") => manager.messageQueueCommand(record.id, "owner", {
-  requestId: randomUUID(), expectedRevision: (await manager.messageQueue(record.id, "owner")).revision, command: value,
-}, credential);
+const liveCommand = async (value: QueueCommand, credential = "fixture-current-authority") => {
+  // A background admission may settle between GET and command. Refresh only definitive stale revisions;
+  // uncertain writes retain their exact request identity and must never be replaced here.
+  for (let attempt = 0; ; attempt++) {
+    const input = { requestId: randomUUID(), expectedRevision: (await manager.messageQueue(record.id, "owner")).revision, command: value };
+    try { return await manager.messageQueueCommand(record.id, "owner", input, credential); }
+    catch (error) { if ((error as { code?: string }).code !== "queue_revision_conflict" || attempt >= 5) throw error; }
+  }
+};
 const finish = async () => { starts.at(-1)!.onEvent({ type: "result", status: "success" }); };
 beforeEach(async () => {
   dir = await mkdtemp(path.join(os.tmpdir(), "hosty-message-queue-")); store = new SessionStore(dir, path.join(dir, "cache")); queue = new MessageQueue(store);

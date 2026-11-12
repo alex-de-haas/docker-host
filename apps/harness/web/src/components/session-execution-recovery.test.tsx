@@ -39,3 +39,14 @@ it("shows no recovery action for an active or already stopped run", async () => 
   vi.mocked(api.getExecutionRecovery).mockResolvedValue(null); await render(); expect(container.textContent).toBe("");
   expect(api.recoverExecution).not.toHaveBeenCalled();
 });
+it("describes an interrupted source admission without inventing a Worker receipt and still requires exit confirmation", async () => {
+  vi.mocked(api.getExecutionRecovery).mockResolvedValue({ ...review, sourceOnly: true });
+  await render();
+  expect(container.textContent).toContain("before a Worker execution receipt was recorded");
+  expect(container.textContent).not.toContain("Retry Stop first");
+  expect(container.querySelector('button')!.disabled).toBe(true);
+  expect(api.recoverExecution).not.toHaveBeenCalled();
+  await act(async () => container.querySelector('input')!.click());
+  await act(async () => container.querySelector('button')!.click());
+  expect(api.recoverExecution).toHaveBeenCalledExactlyOnceWith("chat", expect.objectContaining({ runId: "run", consumerExitConfirmed: true }));
+});

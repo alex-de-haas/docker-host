@@ -1,5 +1,6 @@
-import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { durableMkdir, durableWriteFile } from "../persistence.js";
 import path from "node:path";
 import { AppContextError } from "./app-context.js";
 
@@ -27,10 +28,9 @@ export class SuggestionPreferences {
     const current = await this.get(userId);
     if (input.revision !== current.revision) throw new AppContextError(409, "preference_changed", "Your preference changed in another view. Reload before saving.");
     const next = { enabled: input.enabled, revision: current.revision + 1 };
-    const file = this.file(userId), temporary = file + "." + randomUUID();
-    await mkdir(path.dirname(file), { recursive: true });
-    await writeFile(temporary, JSON.stringify(next), { mode: 0o600 });
-    await rename(temporary, file);
+    const file = this.file(userId);
+    await durableMkdir(path.dirname(file));
+    await durableWriteFile(file, JSON.stringify(next));
     return next;
   }
 }

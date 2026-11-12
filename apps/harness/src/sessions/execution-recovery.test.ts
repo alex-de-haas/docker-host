@@ -226,3 +226,18 @@ it("recovers a still-live unknown admission without resubmitting through its rec
     .toMatchObject({ state: "cancelled", stopConfirmed: true });
   expect(JSON.stringify(warning.mock.calls)).not.toContain("run_conflict");
 });
+
+it("settles an unresolved source fence only from durable confirmed native exit without resending its UUID", async () => {
+  const f = await freshFixture(), runId = randomUUID(), clientRequestId = randomUUID();
+  await f.journal.accept(runId, { conversationId: f.session.id, binding: { connectionId: "fixture", connectionRevision: 1, harnessKind: "codex" },
+    selection: { model: null, reasoningEffort: null }, resource: { kind: "conversation", id: f.session.id }, input: "Retained input", options: {}, autoAllowedPrefixes: [] });
+  await f.journal.update(runId, "failed");
+  await f.store.appendEvent(f.session.id, { seq: 2, ts: new Date().toISOString(), type: "user_message", text: "Retained input", clientRequestId });
+  await f.store.saveMessageReceipt(f.session.id, { clientRequestId, actorUserId: "owner", fingerprint: "a".repeat(64), state: "unknown", eventSeq: 2 });
+  await f.store.saveRecord({ ...(await f.store.readRecord(f.session.id))!, status: "failed", sourceAdmission: { runId, clientRequestId, state: "dispatching" } });
+  await f.restart();
+  expect(await f.manager().executionRecovery(f.session.id, "owner")).toBeNull();
+  expect((await f.store.readRecord(f.session.id))!.sourceAdmission).toBeUndefined();
+  expect(await f.store.readMessageReceipt(f.session.id, clientRequestId)).toMatchObject({ state: "unknown", eventSeq: 2 });
+  expect(f.started).not.toHaveBeenCalled();
+});

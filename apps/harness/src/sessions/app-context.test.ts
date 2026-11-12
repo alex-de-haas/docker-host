@@ -20,7 +20,10 @@ const adapter: HarnessAdapter = {
 };
 const finishTurn = async (id: string) => {
   starts.at(-1)!.onEvent({ type: "result", status: "success" });
-  await vi.waitFor(async () => expect((await manager.getSession(id))?.status).toBe("idle"));
+  await vi.waitFor(async () => {
+    expect((await manager.getSession(id))?.status).toBe("idle");
+    expect((await store.readRecord(id))?.status).toBe("idle");
+  });
 };
 const build = () => new SessionManager(store, adapter, new AuditReporter(null, null, "gateway"), dir, null, directory);
 beforeEach(async () => {

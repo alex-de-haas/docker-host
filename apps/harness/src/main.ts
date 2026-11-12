@@ -15,6 +15,7 @@ import { loadConfig } from "./config.js";
 import { AuditReporter } from "./audit.js";
 import { SessionStore } from "./sessions/store.js";
 import { SessionManager } from "./sessions/manager.js";
+import { acquireStorageOwner } from "./storage-owner.js";
 import { createGatewayServer } from "./server.js";
 import { SettingsStore } from "./settings/store.js";
 import { TokenExchange } from "./mcp/exchange.js";
@@ -26,6 +27,8 @@ import type { HarnessAdapter } from "./harness/adapter.js";
 
 const config = loadConfig();
 await mkdir(config.dataDir, { recursive: true });
+// Hold the OS writer lock before any settings, sessions or recovery can mutate the store.
+await acquireStorageOwner(config.dataDir, "coordinator");
 
 const serviceIdentity = await ensureServiceIdentity(path.join(config.dataDir, "service-auth"));
 const workerUrl = process.env.HOSTY_SERVICE_WORKER_URL;

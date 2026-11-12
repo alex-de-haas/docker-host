@@ -47,6 +47,7 @@ import { serveStaticSite } from "./settings/static-site.js";
 // cookie is re-validated per request, but a stream is one request, so it gets an explicit ceiling.
 const APP_SESSION_STREAM_SECONDS = 3600;
 import { SessionBusyError, SessionNotFoundError, type SessionManager } from "./sessions/manager.js";
+import { SessionStorageError } from "./sessions/store.js";
 import type { HarnessAdapter } from "./harness/adapter.js";
 import { MAX_SYSTEM_PROMPT_CHARS, type SettingsStore } from "./settings/store.js";
 import { validRetention } from "./settings/store.js";
@@ -89,17 +90,26 @@ export function createGatewayServer(
   const handoffs = new HandoffStore(manager, settings, providers);
   const eventStreams = new EventStreamTransport(manager, Date.now, connections, tasks);
   const translations = connections && settings ? new TranslationService(connections, settings) : null;
-  const recovered = handoffs.sweep().then(() => manager.recoverWorkerRuns()).then(() => manager.recoverMcpApprovals()).then(() => manager.recoverMessageQueues()).catch(error => {
-    // A transient directory/storage failure is retried by the periodic sweep. Keep unrelated
-    // endpoints available and attach the handler immediately, before the first request arrives.
-    console.error("[handoff] startup recovery failed", error);
-  });
+  const recovered = (async () => {
+    const stages: Array<[string, () => Promise<unknown>]> = [
+      ["handoffs", () => handoffs.sweep()], ["runs", () => manager.recoverWorkerRuns()],
+      ["approvals", () => manager.recoverMcpApprovals()], ["queue", () => manager.recoverMessageQueues()],
+    ];
+    for (const [stage, recover] of stages) {
+      try { await recover(); }
+      catch (error) {
+        const code = (error as NodeJS.ErrnoException)?.code;
+        console.warn("[recovery] Startup stage requires attention.", { stage, code: typeof code === "string" ? code.slice(0, 60) : "unavailable" });
+      }
+    }
+  })();
   const timer = setInterval(() => { void handoffs.sweep().catch(error => console.error("[handoff] cleanup failed", error)); }, 60_000);
   timer.unref();
   const server = createServer((request, response) => {
     void recovered.then(async () => { if (await internal?.(request, response)) return; return route(request, response, manager, adapter, settings, providers, proxy, facade, connections, handoffs, translations, eventStreams, tasks, feedback, history, execution, promptTemplates); }).catch((error) => {
       if (response.destroyed) return;
       if (error instanceof ProviderError || error instanceof FeedbackError) { sendJson(response, error.status, { code: error.code, message: error.message }); return; }
+      if (error instanceof SessionStorageError) { sendJson(response, error.status, { code: error.code, message: error.message }); return; }
       if (error instanceof SessionBusyError) {
         sendJson(response, 409, { code: "session_busy", message: error.message });
         return;
@@ -127,7 +137,7 @@ export function createGatewayServer(
   eventStreams.attach(server);
   const taskServer = Object.assign(server, { stopTaskDispatch: async () => { await manager.decisions?.close(); await tasks.close(); await feedback.close(); } });
   const close = server.close.bind(server);
-  server.close = ((callback?: (error?: Error) => void) => { void tasks.close(); eventStreams.close(); return close(callback); }) as typeof server.close;
+  server.close = ((callback?: (error?: Error) => void) => { history.close(); void tasks.close(); eventStreams.close(); return close(callback); }) as typeof server.close;
   server.on("close", () => { void manager.decisions?.close(); history.close(); clearInterval(timer); tasks.close(); void feedback.close(); });
   return taskServer;
 }
@@ -712,6 +722,15 @@ async function route(
       browserDefaults: body.browserDefaults,
     });
     sendJson(response, 200, record);
+    return;
+  }
+
+  if (url.pathname === "/api/storage-recovery" && method === "GET") {
+    // The common route gate requires a current host administrator. Unknown-owner storage
+    // issues reveal only an opaque identity and bounded diagnostics, never transcript content.
+    await manager.store.listRecordInventory();
+    sendJson(response, 200, { issues: (await manager.store.recoveryIssues()).slice(0, 50),
+      projectionIssues: (await manager.store.projectionIssues()).slice(0, 50) });
     return;
   }
 
