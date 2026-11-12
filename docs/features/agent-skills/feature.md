@@ -259,6 +259,14 @@ Harness rerun reports 3,038 passed and one 5-second timeout in the existing Olla
 removal test; its cleanup also reports `kill EPERM`. The exact test passes in isolation, and an
 isolated rerun of its complete file passes all 36 tests. Ollama source and tests are unchanged.
 
+The subsequent target update `1432f8e0f125c3256333fd7b1c4052fa7e199832` independently
+releases Core/CLI 0.179.3, so this fix advances the platform to 0.179.4. The combined skill
+package/HTTP and MCP-directory HTTP filter passes 69 tests on the integrated source. Core/CLI
+Debug builds and the complete managed `skills` integration suite pass again, including the
+Codex 0.167.0 native catalog checks and verified child-resource removal. Harness source and
+its dependency set are unchanged from the preceding verified candidate, whose full GitHub
+Harness check passed.
+
 ## Testing Expectations
 
 - Register the selected native Codex root before fresh and resumed threads, preserve connection
