@@ -1,13 +1,15 @@
-"""Opt-in real CPU speech acceptance inside the existing parent-managed Harness child.
+"""Opt-in real speech acceptance inside the existing parent-managed Harness child.
 
-Uses synthetic repeated repository audio, disposable users/data and the provider's own verified
-model download. This module does not launch a Core, seed identity, or use an ordinary installation.
+Uses explicitly selected synthetic audio, disposable users/data and the provider's own verified
+model download. The cancellation scenario requires a single-slot provider returning speech_busy
+and empty text for silence. This module does not launch a Core, seed identity, or use an ordinary installation.
 """
 import array
 import io
 import json
 import os
 import platform
+from pathlib import Path
 import re
 import shutil
 import subprocess
@@ -32,13 +34,44 @@ def repeated_wave(source, seconds=600):
     return output.getvalue()
 
 
+def load_fixture(environment=None):
+    """Validate explicit provider/audio inputs before installing any acceptance application."""
+    environment = os.environ if environment is None else environment
+    selected = []
+    for key in ('HOSTY_SPEECH_ACCEPTANCE_MANIFEST', 'HOSTY_SPEECH_ACCEPTANCE_WAV'):
+        value = environment.get(key, '')
+        path = Path(value)
+        if not value or not path.is_absolute() or not path.is_file():
+            raise ValueError(key + ' must name an existing absolute fixture file')
+        selected.append(path)
+    manifest_path, source = selected
+    manifest = json.loads(manifest_path.read_text())
+    if not manifest.get('id') or 'speech-to-text' not in manifest.get('provides', []):
+        raise ValueError('The acceptance manifest must declare a speech-to-text provider')
+    runtime = environment.get('HOSTY_SPEECH_ACCEPTANCE_RUNTIME', 'local')
+    if not any(item.get('key') == runtime and not item.get('development', False)
+               for item in manifest.get('runtimeProfiles', [])):
+        raise ValueError('Select a declared production speech runtime for the child')
+    # Reject unusable audio before installing or starting the selected application.
+    repeated_wave(source, 1)
+    return manifest_path, manifest, source, runtime
+
+
+def native_process_id(health):
+    """A Docker daemon PID is not necessarily a PID on the acceptance client's host."""
+    services = health.get('services', [])
+    if len(services) != 1 or services[0].get('runtimeType') != 'localCommand':
+        return None
+    return services[0].get('processId')
+
+
 def process_sample(root_pid):
     """Sample only the selected disposable runtime's descendants from native ps metadata.
 
     Summed RSS can count shared pages twice and samples can miss peaks. It is not an allocation
     profile or a full-system/native peak. Unsupported platforms return no measurement.
     """
-    if os.name == 'nt' or not shutil.which('ps'):
+    if root_pid is None or os.name == 'nt' or not shutil.which('ps'):
         return None
     result = subprocess.run(['ps', '-axo', 'pid=,ppid=,rss=,time='], capture_output=True, text=True, timeout=5)
     if result.returncode:
@@ -69,20 +102,20 @@ def check(context, harness_id, app_origin, client, call, link):
     assert context.get('managed') and context.get('child_id'), 'Long speech acceptance requires the existing managed child'
     base, root, workspace = (context[key] for key in ('base', 'root', 'workspace'))
     request, run, say, wait_for = (context[key] for key in ('request', 'run', 'say', 'wait_for'))
-    manifest = json.loads((workspace/'apps/whisper/manifest.json').read_text())
+    target, manifest, source, runtime = load_fixture()
     speech_id = manifest['id']
-    manifest['source']['repository'] = context['repository']
-    # Fixture metadata selects a supported model; production source and installed live settings
-    # stay untouched. The runtime downloads/checks its own model into this child's empty cache.
-    next(item for item in manifest['settings'] if item['key'] == 'WHISPER_MODEL')['default'] = 'tiny'
+    assert speech_id != harness_id, 'Speech acceptance requires an independent provider application'
     fixture = base/'long-speech-fixture'; fixture.mkdir()
-    target = fixture/'manifest.json'; target.write_text(json.dumps(manifest))
-    shutil.copytree(workspace/'apps/whisper/assets', fixture/'assets')
     speech_root = root/'apps'/speech_id
     assert not speech_root.exists(), 'Speech acceptance must begin with independent app data and cache'
-    run([context['cli'], '--data-root', root, 'apps', 'install', target, '--runtime', 'local', '--no-autostart'])
+    # Install exactly the declared external fixture. Source, settings and model selection are
+    # owned by that provider; never substitute the Harness repository or ordinary app data.
+    run([context['cli'], '--data-root', root, 'apps', 'install', target, '--runtime', runtime, '--no-autostart'])
     run([context['cli'], '--data-root', root, 'apps', 'start', speech_id])
-    wait_for(lambda: request('/api/apps/'+speech_id+'/health')['status'] == 'healthy', 180)
+    def healthy():
+        state = request('/api/apps/'+speech_id+'/health')
+        return state if state['status'] == 'healthy' else None
+    health = wait_for(healthy, 180)
 
     core = context['origin']
     with client.open(core+'/install/permissions/'+urllib.parse.quote(harness_id, safe=''), timeout=30) as response:
@@ -105,13 +138,13 @@ def check(context, harness_id, app_origin, client, call, link):
     provider = next(item for item in roster['providers'] if item['appId'] == speech_id and item['available'])
     query = urllib.parse.urlencode({'appId':provider['appId'], 'key':provider['key']})
     capabilities_route = '/api/speech/capabilities?'+query
-    caps = wait_for(lambda: call(app_origin, capabilities_route), 900)
-    assert caps['ready'] and caps['maxDurationSeconds'] == 600 and caps['maxBytes'] == 19_204_096
-    assert caps['backend'] == 'whisper.cpp/cpu' and caps['version'] == 1 and 'audio/wav' in caps['mediaTypes']
-    assert (speech_root/'cache/ggml-tiny.bin').stat().st_size == 77_691_713
-    say('PASS: child-only Whisper tiny CPU model, normal Core review grants only optional speech, real authenticated capabilities advertise 600 seconds')
-
-    source = workspace/'apps/whisper/Hosty.Whisper.Tests/Fixtures/russian.wav'
+    def capabilities_ready():
+        value = call(app_origin, capabilities_route)
+        return value if value.get('ready') else None
+    caps = wait_for(capabilities_ready, 900)
+    assert caps['maxDurationSeconds'] >= 600 and caps['maxBytes'] >= 19_200_044
+    assert caps['version'] == 1 and 'audio/wav' in caps['mediaTypes']
+    say('PASS: independent child speech provider, normal Core review grants only optional speech, real authenticated capabilities support 600 seconds')
     payload = repeated_wave(source)
     assert len(payload) == 19_200_044
     route = '/api/speech/transcriptions?'+query
@@ -119,12 +152,14 @@ def check(context, harness_id, app_origin, client, call, link):
         with client.open(urllib.request.Request(app_origin+route, data=data,
             headers={'Content-Type':'audio/wav', 'Origin':app_origin}), timeout=930) as response:
             return json.load(response)
-    receipt = context['read_receipt'](speech_root/'run/api.json')
-    before = process_sample(receipt['pid'])
+    # Native metrics use observed service state, without an application-internal receipt path.
+    # Multiple services or container-only processes have no single native root to sample.
+    root_pid = native_process_id(health)
+    before = process_sample(root_pid)
     samples, stop = [], threading.Event()
     def sample():
         while not stop.is_set():
-            value = process_sample(receipt['pid'])
+            value = process_sample(root_pid)
             if value:
                 samples.append(value)
             stop.wait(.1)
@@ -135,8 +170,8 @@ def check(context, harness_id, app_origin, client, call, link):
     finally:
         elapsed = time.monotonic()-began
         stop.set(); observer.join(timeout=6)
-    assert 'привет' in result['text'].lower(), 'Real CPU recognition did not recognize the synthetic Russian fixture'
-    after = process_sample(receipt['pid'])
+    assert 'привет' in result['text'].lower(), 'Real recognition did not recognize the synthetic Russian fixture'
+    after = process_sample(root_pid)
     memory = {'sampledPeakSummedRssBytes':max((value['rssBytes'] for value in samples), default=None),
         'beforeSummedRssBytes':before['rssBytes'] if before else None,
         'afterSummedRssBytes':after['rssBytes'] if after else None,
@@ -144,7 +179,7 @@ def check(context, harness_id, app_origin, client, call, link):
         'cpuSecondsDelta':round(after['cpuSeconds']-before['cpuSeconds'], 3) if before and after and after['cpuSeconds'] >= before['cpuSeconds'] else None,
         'limits':'Sampled runtime process-tree RSS can double-count shared pages and miss short peaks; CPU delta is process-tree accounting, not complete native allocation or system peak.'}
     say('LONG_SPEECH_MEASUREMENT: '+json.dumps({'platform':platform.platform(), 'architecture':platform.machine(),
-        'model':'tiny/cpu', 'seconds':600, 'bytes':len(payload), 'httpWallSeconds':round(elapsed, 3),
+        'provider':speech_id, 'backend':caps.get('backend'), 'seconds':600, 'bytes':len(payload), 'httpWallSeconds':round(elapsed, 3),
         'recognizedCharacters':len(result['text']), 'processMetrics':memory}))
     # Exercise early Content-Length admission without racing a 19 MB upload against the
     # server's correct refusal/connection close. Streamed overflow has separate unit coverage.
@@ -173,4 +208,4 @@ def check(context, harness_id, app_origin, client, call, link):
     assert result.returncode == 0, 'Long speech browser acceptance failed'
     assert not list((speech_root/'data').rglob('*.wav')), 'Provider persisted transient audio'
     run([context['cli'], '--data-root', root, 'apps', 'stop', speech_id])
-    say('PASS: maximum Russian WAV crossed authenticated Harness→Whisper HTTP; overflow rejected, browser draft-only insertion and HTTP cancellation verified; parent owns child Finish')
+    say('PASS: maximum Russian WAV crossed authenticated Harness→provider HTTP; overflow rejected, browser draft-only insertion and HTTP cancellation verified; parent owns child Finish')

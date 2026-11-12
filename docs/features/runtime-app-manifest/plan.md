@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-11-05
-updated: 2026-11-09
+updated: 2026-11-12
 summary: Review app.0.2 around package execution, simple native setup/command and one Git-workspace development workflow while retaining Docker tags and optional feeds.
 ---
 
@@ -70,8 +70,8 @@ This planning review is not runtime acceptance or approval to implement the prop
 - `LocalCommandRuntimeAdapter` runs setup on ordinary starts unless preparation for that operation
   already covered the service. This is not a durable platform-wide build cache across restarts.
 - Harness Local already implements its own input/platform fingerprint, isolated compiled output,
-  output verification and warm reuse. Whisper declares a Release build in setup; OPUS declares
-  dependency installation and compilation in setup. These are different app-level preparation
+  output verification and warm reuse. OPUS declares dependency installation and compilation in
+  setup. These are different app-level preparation
   contracts, not evidence that generic localCommand guarantees one build per update.
 - Core/CLI already publish prebuilt native packages through their separate platform release model.
   Runtime apps support immutable local-folder prebuilt delivery. Downloadable URL/Git-release
@@ -319,7 +319,7 @@ need a runtime deployment. The following are future implementation acceptance, n
 - Docker, native and mixed workspace execution, native-only system/device cases, scoped authority,
   dirty source preservation, package Return and old original-operation recovery.
 - Native fixtures with command only and with setup plus command; setup ordering, failure logs,
-  missing executable diagnostics and supported retry. Preserve the existing Whisper/OPUS native
+  missing executable diagnostics and supported retry. Preserve OPUS and third-party native
   contracts; the focus on Harness does not remove or silently convert other installations.
 - Harness app-level regression for cold preparation, warm reuse and its existing missing-output
   recovery; verify a third-party native app needs no special identity, build hook or SDK declaration.

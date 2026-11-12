@@ -71,12 +71,6 @@ if (demoFeeds.schemaVersion !== "app-feeds.0.1") {
   problems.push(`demo-app feeds schema: expected app-feeds.0.1, got ${demoFeeds.schemaVersion ?? "(missing)"}`);
 }
 
-expectEqual("whisper version", {
-  manifest: json("apps/whisper/manifest.json").version,
-  project: capture(read("apps/whisper/Hosty.Whisper/Hosty.Whisper.csproj"), /<Version>([^<]+)<\/Version>/),
-});
-expectEqual("whisper feed identity", { manifest: json("apps/whisper/manifest.json").id, feeds: json("apps/whisper/feeds.json").appId });
-
 expectEqual("opus version", { manifest: json("apps/opus/manifest.json").version, packageJson: json("apps/opus/package.json").version });
 expectEqual("opus feed identity", { manifest: json("apps/opus/manifest.json").id, feeds: json("apps/opus/feeds.json").appId });
 if (json("apps/opus/feeds.json").schemaVersion !== "app-feeds.0.1") problems.push("opus feeds schema must be app-feeds.0.1");

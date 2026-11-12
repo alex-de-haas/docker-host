@@ -10,7 +10,7 @@ const cli = 'apps/cli/src/Haas.Hosty.Cli/Haas.Hosty.Cli.csproj';
 const coreTests = 'apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj';
 const cliTests = 'apps/cli/tests/Haas.Hosty.Cli.Tests/Haas.Hosty.Cli.Tests.csproj';
 const windowsFilter = 'FullyQualifiedName~CorePlatformFeedServiceTests|FullyQualifiedName~WindowsProcessControlTests|FullyQualifiedName~StopAsync_OnWindowsKillsAdoptedJobDescendantAfterShellExited|FullyQualifiedName~CoreDevelopmentTests|FullyQualifiedName~ExplicitStop|FullyQualifiedName~SourceDocuments_ReferenceMetadataSupportsLfAndCrLf|FullyQualifiedName~WorkspaceGit_|FullyQualifiedName~WorkspaceDelete_|FullyQualifiedName~JsonStorageTests|FullyQualifiedName~NativeProcessEnvironmentTests|FullyQualifiedName~CoreEnvironmentLaunchTests|FullyQualifiedName~LocalCommandRuntimeAdapterTests.InjectEnvironment_';
-export const suites = Object.freeze(['activation', 'dependencies', 'sessions', 'tasks', 'windows', 'transport', 'worker', 'whisper', 'opus', 'documents', 'desktop', 'harness-local', 'feedback', 'shell', 'observability', 'skills', 'pull-requests']);
+export const suites = Object.freeze(['activation', 'dependencies', 'sessions', 'tasks', 'windows', 'transport', 'worker', 'opus', 'documents', 'desktop', 'harness-local', 'feedback', 'shell', 'observability', 'skills', 'pull-requests']);
 const usage = 'Usage: npm run test:integration -- <' + suites.join('|') + '> [--dry-run]\n'
   + 'Runs one explicitly selected local suite. Builds its fixtures first; no automatic retries.\n'
   + 'activation: .NET, Git, Python, Docker; isolated managed Core Return and recovery\n'
@@ -28,7 +28,6 @@ const usage = 'Usage: npm run test:integration -- <' + suites.join('|') + '> [--
   + 'skills: .NET, Git, Python, Docker; selected Git imports and CLI exports in a managed Core\n'
   + 'harness-local: .NET, Git, Python, Node/npm, Docker; managed Core production local startup and recovery\n'
   + 'worker: Docker; builds the manifest-matching worker image and checks its lifecycle\n'
-  + 'whisper: .NET; downloads the pinned model and runs native CPU inference\n'
   + 'opus: Node 24 and uv; builds the app and runs pinned native OPUS-MT Big inference\n'
   + '--dry-run prints prerequisites and commands without running them.';
 
@@ -138,10 +137,6 @@ export function suitePlan(suite, { platform = process.platform, node = process.e
         command(node, ['apps/opus/scripts/build.mjs']),
         command(node, ['--import', 'tsx', '--test', 'apps/opus/test/native.integration.ts'], { HOSTY_OPUS_INTEGRATION: '1' }),
       ] };
-    case 'whisper':
-      return { prerequisites: [dotnet], steps: [command('dotnet', [
-        'test', 'apps/whisper/Hosty.Whisper.Tests/Hosty.Whisper.Tests.csproj', '--filter', 'FullyQualifiedName~NativeSpeechTests',
-      ], { HOSTY_WHISPER_INTEGRATION: '1' })] };
   }
 }
 
