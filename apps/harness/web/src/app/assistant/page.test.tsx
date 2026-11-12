@@ -10,6 +10,7 @@ import { WORK_SELECTION_STORAGE_KEY } from "@/lib/work-selection";
 import * as api from "@/lib/assistant-api";
 import * as profilesApi from "@/lib/profiles-api";
 import * as queueApi from "@/lib/message-queue-api";
+import { loadPromptTemplates } from "@/lib/prompt-templates-api";
 import type { PromptSuggestion } from "@/lib/prompt-suggestions";
 import type { OutboxEntry } from "@/lib/message-outbox";
 
@@ -32,6 +33,7 @@ vi.mock("@/lib/assistant-api", async original => ({
   listAppNames: vi.fn(), listContextApps: vi.fn(), setSessionApps: vi.fn(), postMessage: vi.fn(), stopSession: vi.fn(), streamEvents: vi.fn(), setSessionAutonomy: vi.fn(), listAgentConnections: vi.fn(), getSessionModels: vi.fn(), renameSession: vi.fn(),
 }));
 vi.mock("@/lib/profiles-api", () => ({ listProfiles: vi.fn(), selectSessionProfile: vi.fn() }));
+vi.mock("@/lib/prompt-templates-api", () => ({ loadPromptTemplates: vi.fn() }));
 vi.mock("@/lib/development-api", async original => ({ ...await original<typeof import("@/lib/development-api")>(), useDevelopmentInventory: () => ({ workspaces: [], error: "", refresh: () => {} }) }));
 vi.mock("@/components/speech-input", () => ({ SpeechInput: () => null }));
 vi.mock("@/components/session-credentials", () => ({ SessionCredentials: () => null }));
@@ -957,18 +959,21 @@ it("keeps admission locks when a delayed profile save arrives before the status 
 });
 
 const suggestionEvent = (extra: Partial<api.AssistantEvent> = {}): api.AssistantEvent => ({ type: "prompt_suggestion_created", seq: 2, ts: "", suggestionId: "suggestion-one",
-  sessionId: "session-one", userId: "owner", attemptId: "attempt1", answerSeq: 1, text: "Review @app literally", expiresAt: Date.now() + 60_000, ...extra });
+  sessionId: "session-one", userId: "owner", attemptId: "attempt1", answerSeq: 1, text: "Review @app literally", ...extra });
 const enableSuggestions = () => {
   record.createdBy = "owner"; vi.mocked(api.getSuggestionPreference).mockResolvedValue({ enabled: true, revision: 0 });
   vi.mocked(api.getPromptSuggestions).mockResolvedValue([]);
   vi.mocked(api.resolvePromptSuggestion).mockImplementation(async (_sessionId, suggestionId, input) => ({
-    suggestionId, sessionId: record.id, userId: "owner", attemptId: "attempt1", answerSeq: 1, text: "Review @app literally", expiresAt: Date.now() + 60_000,
+    suggestionId, sessionId: record.id, userId: "owner", attemptId: "attempt1", answerSeq: 1, text: "Review @app literally",
     createdAt: "", revision: 2, state: input.action,
   } as PromptSuggestion));
 };
 it("accepts a suggestion as plain editable text with Tab, supports undo and never sends automatically", async () => {
   enableSuggestions(); await render(); await act(async () => emit(suggestionEvent()));
   expect(container.textContent).toContain("Use suggestion"); expect(input().value).toBe("");
+  expect(input().placeholder).toBe("Review @app literally");
+  expect(input().getAttribute("aria-description")).toContain("Press Tab to insert");
+  expect(localStorage.getItem("hosty.assistant.draft.session-one") ?? "").toBe("");
   expect(container.querySelector('[data-slot="prompt-suggestion"]')).not.toBeNull();
   expect(container.querySelector('[aria-label="Message composer"] [data-slot="prompt-suggestion"]')).toBeNull();
   await act(async () => input().focus());
@@ -976,9 +981,53 @@ it("accepts a suggestion as plain editable text with Tab, supports undo and neve
   expect(input().value).toBe("");
   await act(async () => input().dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true })));
   expect(input().value).toBe("Review @app literally"); expect(api.postMessage).not.toHaveBeenCalled(); expect(api.setSessionApps).not.toHaveBeenCalled();
+  expect(queueApi.commandMessageQueue).not.toHaveBeenCalled();
+  expect(input().placeholder).toBe("Ask the operator assistant…");
+  expect(input().getAttribute("aria-description")).toBeNull();
   expect(container.textContent).toContain("Selected for draft");
   await act(async () => input().dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true, cancelable: true })));
   expect(input().value).toBe(""); expect(container.textContent).not.toContain("Use suggestion");
+  expect(input().placeholder).toBe("Ask the operator assistant…");
+});
+it("gives the template picker Tab and Escape precedence over an empty composer's suggestion", async () => {
+  const template = { id: "review", name: "Review template", shortcut: "review", text: "Review this draft\n@literal" };
+  vi.mocked(loadPromptTemplates).mockResolvedValue({ revision: 1, templates: [template] });
+  enableSuggestions(); await render(); await act(async () => emit(suggestionEvent()));
+  const openTemplates = async () => {
+    await act(async () => button("Add to message")!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true })));
+    const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(node => node.textContent === "Prompt template")!;
+    expect(item).toBeDefined();
+    await act(async () => item.click());
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+    const search = document.querySelector<HTMLInputElement>('input[aria-label="Search prompt templates"]')!;
+    expect(search).not.toBeNull();
+    return search;
+  };
+  const firstSearch = await openTemplates();
+  expect(input().value).toBe("");
+  await act(async () => firstSearch.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
+  expect(document.querySelector('input[aria-label="Search prompt templates"]')).toBeNull();
+  expect(input().placeholder).toBe("Review @app literally");
+  expect(api.resolvePromptSuggestion).not.toHaveBeenCalled();
+
+  const secondSearch = await openTemplates();
+  await act(async () => secondSearch.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true })));
+  expect(input().value).toBe(template.text);
+  expect(input().placeholder).toBe("Ask the operator assistant…");
+  expect(api.resolvePromptSuggestion).not.toHaveBeenCalled();
+  expect(api.setSessionApps).not.toHaveBeenCalled();
+  expect(api.listContextApps).not.toHaveBeenCalled();
+  expect(queueApi.commandMessageQueue).not.toHaveBeenCalled();
+  expect(api.postMessage).not.toHaveBeenCalled();
+
+  await type("");
+  expect(input().placeholder).toBe("Review @app literally");
+  await act(async () => input().dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
+  expect(api.resolvePromptSuggestion).toHaveBeenCalledExactlyOnceWith(record.id, "suggestion-one", expect.objectContaining({ action: "dismissed" }));
+  expect(input().value).toBe("");
+  expect(input().placeholder).toBe("Ask the operator assistant…");
+  expect(queueApi.commandMessageQueue).not.toHaveBeenCalled();
+  expect(api.postMessage).not.toHaveBeenCalled();
 });
 it.each(["typing", "composition"])("%s preserves suggestion history without recording dismissal", async action => {
   enableSuggestions(); await render(); await act(async () => emit(suggestionEvent()));
@@ -988,6 +1037,10 @@ it.each(["typing", "composition"])("%s preserves suggestion history without reco
   if (action === "typing") {
     expect([...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent?.includes("Use suggestion"))?.disabled).toBe(true);
     expect(input().value).toBe("My draft");
+    expect(input().placeholder).toBe("Ask the operator assistant…");
+    expect(input().getAttribute("aria-description")).toBeNull();
+    await type("");
+    expect(input().placeholder).toBe("Review @app literally");
   }
 });
 it("records explicit Escape dismissal and retains the original card", async () => {
@@ -995,17 +1048,21 @@ it("records explicit Escape dismissal and retains the original card", async () =
   await act(async () => { input().focus(); input().dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); });
   expect(api.resolvePromptSuggestion).toHaveBeenCalledWith(record.id, "suggestion-one", expect.objectContaining({ action: "dismissed", requestId: expect.any(String) }));
   expect(container.textContent).toContain("Dismissed"); expect(container.textContent).toContain("Review @app literally"); expect(container.textContent).not.toContain("Use suggestion");
+  expect(input().placeholder).toBe("Ask the operator assistant…");
 });
-it("refuses foreign events and retains expired/literal suggestion history as inert text", async () => {
+it("refuses foreign events, ignores old deadlines and preserves literal suggestion text", async () => {
   enableSuggestions(); await render();
   await act(async () => emit(suggestionEvent({ userId: "another-user" })));
   expect(container.textContent).not.toContain("Use suggestion");
-  await act(async () => emit(suggestionEvent({ seq: 3, suggestionId: "expired", expiresAt: Date.now() - 1 })));
-  await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)); });
-  expect(container.textContent).not.toContain("Use suggestion");
-  expect(container.textContent).toContain("Expired");
-  await act(async () => emit(suggestionEvent({ seq: 4, suggestionId: "literal", text: "<script>test</script>" })));
+  await act(async () => emit(suggestionEvent({ seq: 3, suggestionId: "legacy", expiresAt: Date.now() - 1 })));
+  expect(input().placeholder).toBe("Review @app literally");
+  expect(container.textContent).toContain("Use suggestion");
+  expect(container.textContent).not.toContain("Expired");
+  await act(async () => emit({ type: "prompt_suggestion_resolved", seq: 4, ts: "", suggestionId: "legacy", state: "superseded" }));
+  expect(input().placeholder).toBe("Ask the operator assistant…");
+  await act(async () => emit(suggestionEvent({ seq: 5, suggestionId: "literal", text: "<script>test</script>" })));
   expect(container.textContent).toContain("<script>test</script>"); expect(container.querySelector("script")).toBeNull();
+  expect(input().placeholder).toBe("<script>test</script>"); expect(input().value).toBe("");
   expect([...container.querySelectorAll('[data-slot="prompt-suggestion"]')].some(card => card.textContent?.includes("<script>test</script>"))).toBe(true);
 });
 

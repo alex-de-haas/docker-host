@@ -7,7 +7,7 @@ import { transcriptItems } from "@/lib/transcript-items";
 import { reduceSuggestion } from "@/lib/prompt-suggestions";
 import type { AssistantEvent } from "@/lib/assistant-api";
 
-const created: AssistantEvent = { type: "prompt_suggestion_created", seq: 2, ts: "", suggestionId: "suggestion", sessionId: "chat", userId: "owner", attemptId: "attempt", answerSeq: 1, text: "Review @app <script>literally</script>", expiresAt: 9999999999999 };
+const created: AssistantEvent = { type: "prompt_suggestion_created", seq: 2, ts: "", suggestionId: "suggestion", sessionId: "chat", userId: "owner", attemptId: "attempt", answerSeq: 1, text: "Review @app <script>literally</script>" };
 let root: Root, container: HTMLDivElement;
 beforeEach(() => { vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); container = document.createElement("div"); document.body.append(container); root = createRoot(container); });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); });
@@ -30,10 +30,11 @@ it("preserves an occupied draft while keeping explicit dismissal available and n
   expect(container.textContent).not.toContain("Tab"); await act(async () => buttons[1].click());
   expect(dismiss).toHaveBeenCalledWith("suggestion"); expect(select).not.toHaveBeenCalled();
 });
-it("distinguishes expiry and supersession from operator dismissal", async () => {
-  for (const [state, label] of [["expired", "Expired"], ["superseded", "Superseded"], ["dismissed", "Dismissed"]]) {
+it("distinguishes supersession from dismissal and maps old expiry receipts to supersession", async () => {
+  for (const [state, label] of [["expired", "Superseded"], ["superseded", "Superseded"], ["dismissed", "Dismissed"]]) {
     await render([created, { type: "prompt_suggestion_resolved", seq: 3, ts: "", suggestionId: "suggestion", state }]);
     expect(container.textContent).toContain(label); expect(container.querySelectorAll("button")).toHaveLength(0);
+    expect(container.textContent).not.toContain("Expired");
   }
 });
 it("uses safe original attachment labels while retaining stored identities", async () => {

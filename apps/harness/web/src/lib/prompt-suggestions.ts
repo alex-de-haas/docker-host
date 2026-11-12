@@ -5,26 +5,27 @@ import { SuggestionInsertion, insertionScope, type SuggestionInsertionIntent } f
 
 export type PromptSuggestion = {
   suggestionId: string; revision: number; sessionId: string; userId: string; attemptId: string;
-  answerSeq: number; text: string; expiresAt: number; createdAt: string;
-  state: "available" | "selected-for-draft" | "dismissed" | "expired" | "superseded";
+  answerSeq: number; text: string; createdAt: string;
+  state: "available" | "selected-for-draft" | "dismissed" | "superseded";
   resolvedAt?: string;
 };
 export const suggestionKey = (value: { userId: string; sessionId: string }) => `hosty.prompt-suggestion.v1.${encodeURIComponent(value.userId)}.${encodeURIComponent(value.sessionId)}`;
 export function parseSuggestion(event: AssistantEvent): PromptSuggestion | null {
   if (event.type !== "prompt_suggestion_created" || typeof event.suggestionId !== "string"
     || typeof event.sessionId !== "string" || typeof event.userId !== "string" || typeof event.attemptId !== "string"
-    || typeof event.text !== "string" || !event.text.trim() || [...event.text].length > 2000
-    || typeof event.expiresAt !== "number" || !Number.isFinite(event.expiresAt)) return null;
+    || typeof event.text !== "string" || !event.text.trim() || [...event.text].length > 2000) return null;
   return { suggestionId: event.suggestionId, sessionId: event.sessionId, userId: event.userId, attemptId: event.attemptId,
-    answerSeq: Number(event.answerSeq), text: event.text, expiresAt: event.expiresAt, createdAt: event.ts, revision: 1, state: "available" };
+    answerSeq: Number(event.answerSeq), text: event.text, createdAt: event.ts, revision: 1, state: "available" };
 }
 export function reduceSuggestion(cards: ReadonlyMap<string, PromptSuggestion>, event: AssistantEvent): Map<string, PromptSuggestion> {
   const created = parseSuggestion(event), next = new Map(cards);
   if (created && !next.has(created.suggestionId)) next.set(created.suggestionId, created);
   if (event.type === "prompt_suggestion_resolved" && typeof event.suggestionId === "string") {
     const value = next.get(event.suggestionId);
-    if (value?.revision === 1 && ["selected-for-draft", "dismissed", "expired", "superseded"].includes(String(event.state)))
-      next.set(value.suggestionId, { ...value, revision: 2, state: event.state as PromptSuggestion["state"], resolvedAt: event.ts });
+    // Replay legacy expiry receipts as closed choices without exposing the retired status.
+    const state = event.state === "expired" ? "superseded" : event.state;
+    if (value?.revision === 1 && ["selected-for-draft", "dismissed", "superseded"].includes(String(state)))
+      next.set(value.suggestionId, { ...value, revision: 2, state: state as PromptSuggestion["state"], resolvedAt: event.ts });
   }
   return next;
 }
@@ -37,7 +38,6 @@ export function usePromptSuggestions(session: AssistantSession | null, ready: bo
   const [insertionError, setInsertionError] = useState<string | null>(null);
   const [cards, setCards] = useState<Map<string, PromptSuggestion>>(new Map());
   const [availability, setAvailability] = useState<string | null>(null);
-  const [now, setNow] = useState(Date.now);
   const current = useRef({ session, occupied, adapter, cards });
   useLayoutEffect(() => { current.current = { session, occupied, adapter, cards }; });
   const insertion = useRef<SuggestionInsertion | null>(null);
@@ -99,7 +99,7 @@ export function usePromptSuggestions(session: AssistantSession | null, ready: bo
   }, []);
   const select = useCallback(async (suggestionId: string) => {
     const latest = current.current, value = latest.cards.get(suggestionId), controller = insertion.current;
-    if (!latest.session || !controller || latest.occupied || !latest.adapter || actionBusy.current || value?.state !== "available" || value.expiresAt <= Date.now()) return;
+    if (!latest.session || !controller || latest.occupied || !latest.adapter || actionBusy.current || value?.state !== "available") return;
     actionBusy.current = true; setActing(true); setError(null); setInsertionError(null);
     let intent: SuggestionInsertionIntent | undefined;
     try { intent = controller.stage(value); await resolveIntent(controller, intent, latest.session.id); }
@@ -148,16 +148,6 @@ export function usePromptSuggestions(session: AssistantSession | null, ready: bo
     if (ready && session?.id && hasAdapter) void Promise.resolve().then(() => { if (active) return recover(); });
     return () => { active = false; };
   }, [ready, session?.id, adapter?.scope, hasAdapter, recover]);
-  useEffect(() => {
-    const deadlines = [...cards.values()].filter(value => value.state === "available").map(value => value.expiresAt);
-    if (!deadlines.length) return;
-    const timer = setTimeout(() => {
-      const time = Date.now(); setNow(time);
-      setCards(previous => new Map([...previous].map(([key, value]) => [key,
-        value.state === "available" && value.expiresAt <= time ? { ...value, state: "expired" as const } : value])));
-    }, Math.max(0, Math.min(...deadlines) - Date.now()));
-    return () => clearTimeout(timer);
-  }, [cards]);
   const toggle = async () => {
     if (!preference || saving) return;
     setSaving(true); setError(null);
@@ -167,7 +157,7 @@ export function usePromptSuggestions(session: AssistantSession | null, ready: bo
       void getSuggestionPreference().then(setPreference).catch(() => {});
     } finally { setSaving(false); }
   };
-  const suggestion = !occupied ? [...cards.values()].findLast(value => value.state === "available" && value.expiresAt > now) ?? null : null;
+  const suggestion = !occupied ? [...cards.values()].findLast(value => value.state === "available") ?? null : null;
   return { suggestion, cards, receive, interact, select, dismiss, toggle, preference, saving, acting, error, availability,
     insertionError, retryInsertion: () => recover(true) };
 }

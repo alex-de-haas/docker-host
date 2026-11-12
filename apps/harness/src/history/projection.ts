@@ -44,10 +44,10 @@ export function project(record: SessionRecord, events: StoredEvent[], provider: 
       const value = suggestions.get(String(event.suggestionId));
       if (!value) continue;
       finish("complete");
-      const label = { available: "Available", "selected-for-draft": "Selected for draft", dismissed: "Dismissed", expired: "Expired", superseded: "Superseded" }[value.state];
+      const label = { available: "Available", "selected-for-draft": "Selected for draft", dismissed: "Dismissed", superseded: "Superseded" }[value.state];
       add(event, { kind: "extension", name: PROMPT_SUGGESTION_EXTENSION, version: 1,
         payload: { suggestionId: value.suggestionId, answerSeq: value.answerSeq, text: value.text, state: value.state,
-          expiresAt: value.expiresAt, ...(value.resolvedAt ? { resolvedAt: value.resolvedAt } : {}) },
+          ...(value.resolvedAt ? { resolvedAt: value.resolvedAt } : {}) },
         fallbackText: `Suggested next message: ${value.text}\n${label}`, disclosure: "complete" }, { kind: "system" });
       if (value.resolvedAt) entries.at(-1)!.updatedAt = value.resolvedAt;
     } else if (event.type === "assistant_text" && typeof event.text === "string") {

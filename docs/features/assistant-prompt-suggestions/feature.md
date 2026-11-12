@@ -1,6 +1,6 @@
 ---
 created: 2026-10-28
-updated: 2026-11-09
+updated: 2026-11-11
 summary: Native next-message suggestions retained in Harness conversation history with explicit recorded choices, guarded draft insertion and bounded collection.
 components: [apps/harness]
 ---
@@ -20,9 +20,15 @@ reasoning effort and autonomy. Older clients that omit the opt-in retain ordinar
 Task execution and translation cannot opt in to prediction work.
 
 The transcript displays a plain-text card with **Use suggestion** and **Dismiss**. Its original text
-remains readable after selection, dismissal, expiry, context changes and Harness restart. Resolved
-cards show **Selected for draft**, **Dismissed**, **Expired** or **Superseded**. Selection records an
+remains readable after selection, dismissal, context changes and Harness restart. Resolved
+cards show **Selected for draft**, **Dismissed** or **Superseded**. Selection records an
 operator choice; it is not evidence of local insertion or message delivery.
+
+An actionable suggestion also replaces the empty composer's ordinary placeholder in muted text.
+It remains a hint, not draft content, until accepted. Typing hides it; clearing the draft restores
+the hint while that suggestion remains actionable. Attachments, queue editing and a blocked or
+disconnected composer retain the ordinary placeholder. An accessible description explains Tab
+acceptance and Escape dismissal.
 
 Tab selects an actionable suggestion while an empty textarea is focused; Shift+Tab keeps normal
 focus navigation. Escape explicitly dismisses the current actionable suggestion.
@@ -91,9 +97,15 @@ generates a missed prediction.
 
 The existing authenticated event transport delivers durable `prompt_suggestion_created` and
 `prompt_suggestion_resolved` events. A stable suggestion ID correlates the original literal text
-with its native attempt and completed answer. Actions expire after 15 minutes; expiry removes
-actions while preserving the card. Restart/read reconciliation closes overdue or superseded cards
-without generating another prediction. The transient `session_suggestion` projection carries
+with its native attempt and completed answer. Suggestions have no time limit: an unchanged suggestion
+remains available after waiting, reconnecting or restarting Harness. Restart/read reconciliation
+supersedes suggestions only when their context changes, without generating another prediction.
+Legacy expiry records remain closed and appear as superseded; old deadline fields are ignored.
+Creation events retain a deprecated, bounded future `expiresAt` field for already-open older
+clients. Available suggestion responses refresh that compatibility value; resolved responses
+derive it from the recorded resolution time, or creation time for legacy records, so exact retries
+remain identical. Current clients and persisted choice state do not use it to expire suggestions.
+The transient `session_suggestion` projection carries
 optional collection/availability feedback, independent of historical retention.
 
 New messages, provider/model/effort changes, app context and workspace changes supersede an
@@ -152,9 +164,9 @@ receipt persistence. Production cold/warm/missing-output recovery and owner-mana
   duplicate notifications and an unavailable-version-to-working-version transition.
 - Worker and coordinator tests cover thirty-second collection expiry, confirmed-exit receipts, cancellation,
   disabling during the primary and optional phases, foreground preemption, failure recovery,
-  durable correlation, choice UUID replay, ownership, expiry/context reconciliation,
+  durable correlation, choice UUID replay, ownership, availability after elapsed time and context reconciliation,
   transient availability and task/translation exclusion. Mixed protocol versions fail explicitly.
-- Composer tests cover Tab/Shift+Tab, Escape, IME, literal mentions, undo, foreign/expired
+- Composer tests cover Tab/Shift+Tab, Escape, IME, literal mentions, undo, foreign/legacy
   events, draft precedence, concurrent choices, lost replies, guarded insertion and dismissal across reload.
   History tests cover extension capability, exports, safe attachment labels and explicit sharing disclosure. Managed browser acceptance covers
   normal Core login, draft-only acceptance, authenticated transport, mobile dark layout and restore.

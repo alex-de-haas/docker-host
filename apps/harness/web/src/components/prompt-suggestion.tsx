@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import type { PromptSuggestion } from "@/lib/prompt-suggestions";
 
 const labels: Record<PromptSuggestion["state"], string> = {
-  available: "", "selected-for-draft": "Selected for draft", dismissed: "Dismissed", expired: "Expired", superseded: "Superseded",
+  available: "", "selected-for-draft": "Selected for draft", dismissed: "Dismissed", superseded: "Superseded",
 };
 /** Literal text stays in history; a selection is not a delivery receipt. */
 export function PromptSuggestionCard({ text, state = "available", canInsert = true, actionable = true, busy = false, tabHint = false, onAccept, onDismiss }:
