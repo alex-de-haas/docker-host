@@ -110,6 +110,15 @@ without reopening and reconciliation. Neither recovery path repeats accepted
 work automatically. Existing explicit native-exit confirmation remains necessary
 for interrupted execution.
 
+A provider-output write failure quarantines its live Worker run before asynchronous
+cleanup. Late events, prediction deadlines and usage sampling do not retry the
+sealed run or shut down healthy runs. Failed receipt finalization is contained;
+confirmed native exit releases only volatile capacity/connection ownership, while
+an unconfirmed stop retains both and its journal remains fenced. Native
+configuration changes are refused during quarantine. An explicit Stop still
+reaches the retained native handle through a storage-fenced preliminary receipt
+read, and returns the original storage error without inventing durable exit proof.
+
 The assistant shows bounded storage diagnostics to current administrators. A
 valid owned session with a storage/admission fence retains its visible draft and
 attachments while Send and mutation controls are blocked. Source-only admission
@@ -137,7 +146,7 @@ Verified in a registered local Core workspace on macOS ARM64 with Node 24.18.0,
 .NET 10.0.402 and Docker 29.9.3:
 
 - `npm run harness:lint` passes backend/web TypeScript and ESLint.
-- `npm run harness:test` covers 3,018 tests across 255 files. Four child-process
+- `npm run harness:test` covers the complete backend and web suites. Four child-process
   crash probes stop after preparation, input commit, native-effect simulation and
   accepted-receipt commit; reopening never duplicates the synthetic effect.
 - `npm run harness:build-web` and
@@ -192,6 +201,11 @@ ILCompiler advisory/analyzer warnings and complete without errors.
   child or Worker while retaining durable recovery evidence and source leases.
 - Attach during normal admission, settle it through authoritative refresh, and
   preserve the draft and newer live status without automatic send or recovery.
+- Run real Worker subprocesses under strict unhandled-rejection handling with a
+  one-shot journal rename failure. Keep healthy runs alive, coalesce cleanup and
+  preserve occupancy for rejected, pending or unsupported exit confirmation.
+- Exercise the normal Worker client Stop path through real storage-fenced HTTP
+  reads; retain run/control identity, reject unrelated errors and never resend input.
 - Exercise real Windows sharing/replace behavior and writer death in a private
   temporary fixture; separate this from physical power-loss evidence.
 - Run affected unit/HTTP/component suites, Harness lint and production builds,
