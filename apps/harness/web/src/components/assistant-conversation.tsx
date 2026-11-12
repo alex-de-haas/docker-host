@@ -111,6 +111,8 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   // Retain the expected message-selected session even if fetching it fails.
   const [surfaceSessionId, setSurfaceSessionId] = useState<string | null>(null);
   const [session, setSession] = useState<AssistantSession | null>(null);
+  const sessionSnapshot = useRef<AssistantSession | null>(null);
+  useLayoutEffect(() => { sessionSnapshot.current = session; }, [session]);
   useEffect(() => {
     const route = new URL(window.location.href);
     const expected = route.searchParams.get("session");
@@ -474,6 +476,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     setContextUsage(emptyContextUsage(record.id));
     setContextDetailsOpen(false);
     setSession(record);
+    sessionSnapshot.current = record;
     setHealth(null);
     void getHealth(record.id).then(value => { if (activeSessionId.current === record.id) setHealth(value); }).catch(() => {});
     setError(null);
@@ -564,10 +567,11 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
           }
           return;
         }
-        // A status/context update can make an in-flight settings snapshot too old to merge.
-        // Replace only pending reads; ordinary conversation activity does not poll settings.
-        if (settingsPending && (event.type === "user_message" || event.type === "app_context_changed"
-          || event.type === "session_status" && event.historical !== true)) refreshSettings();
+        // A status/context update can make an in-flight snapshot too old to merge. A live
+        // status also rechecks any admission fence captured before normal dispatch settled.
+        const liveStatus = event.type === "session_status" && event.historical !== true;
+        if (settingsPending && (event.type === "user_message" || event.type === "app_context_changed" || liveStatus)
+          || liveStatus && sessionSnapshot.current?.sourceAdmission) refreshSettings();
         if (event.type === "user_message") {
           const lock = (current: AssistantSession) => current.id === record.id
             ? { ...current, ...(current.providerLocked !== undefined ? { providerLocked: true } : {}), ...(current.profileLocked !== undefined ? { profileLocked: true } : {}) } : current;
@@ -599,6 +603,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
             updatedAt: activityTime({ updatedAt: event.ts }) > activityTime(item) ? event.ts : item.updatedAt } : item;
           setSessions(current => current.map(applyStatus));
           setSession(current => current ? applyStatus(current) : current);
+          if (sessionSnapshot.current) sessionSnapshot.current = applyStatus(sessionSnapshot.current);
           if (!["running", "awaiting_approval", "awaiting_question"].includes(String(event.status))) {
             setActivity(null);
             setStreamed("");
@@ -1310,7 +1315,12 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
       {session && (session.workerRun || session.workerRecovery?.state === "pending" || session.sourceAdmission) && <SessionExecutionRecovery key={session.id}
         sessionId={session.id} refreshKey={`${session.workerRun?.id ?? session.sourceAdmission?.runId ?? ""}:${session.sourceAdmission?.state ?? ""}:${status}:${error ?? ""}`} onRecovered={async () => {
           const current = await getSession(session.id);
-          if (activeSessionId.current === session.id) { onSessionChange(current); setStatus(current.status); setError(null); }
+          if (activeSessionId.current === session.id) {
+            const latest = sessionSnapshot.current;
+            onSessionChange(current);
+            if (!latest || activityTime(current) >= activityTime(latest) && (current.lastEventSeq ?? 0) >= (latest.lastEventSeq ?? 0)) setStatus(current.status);
+            setError(null);
+          }
         }} />}
 
 

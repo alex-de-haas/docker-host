@@ -217,7 +217,11 @@ export class MessageQueue {
       const admitted = { ...file, name: input[index]! };
       if (!next.some(candidate => candidate.name === admitted.name && candidate.digest === admitted.digest)) next.push(admitted);
     }
-    await this.store.saveRecord({ ...record, sourceAttachments: next }); record.sourceAttachments = next;
+    const messageQueue = structuredClone(this.state(record));
+    for (const file of retained) messageQueue.claimedAttachments[file.id] = true;
+    // Publish ownership with the admitted snapshot so accepted files no longer count as pending uploads.
+    await this.store.saveRecord({ ...record, sourceAttachments: next, messageQueue });
+    record.sourceAttachments = next; record.messageQueue = messageQueue;
   }
   async acceptedAttachment(record: SessionRecord, name: string): Promise<Buffer | null> {
     const file = record.sourceAttachments?.findLast(candidate => candidate.name === name);

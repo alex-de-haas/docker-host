@@ -141,6 +141,26 @@ describe("durable queue commands and immutable attachments", () => {
     await queue.command(record, command({ type: "delete", entryId: rows[0]!.entryId }));
     await expect(queue.upload(record, randomUUID(), "replacement.txt", Readable.from(["same bytes"]))).resolves.toMatchObject({ size: 10 });
   });
+  it("claims direct-send snapshots durably so repeated filenames do not consume the pending upload quota", async () => {
+    const workspace = await store.ensureWorkspace(record.id);
+    await writeFile(path.join(workspace!, "source.txt"), "accepted bytes");
+    for (let index = 0; index < 25; index++) {
+      if (index === 12) {
+        await manager.shutdown(); store = new SessionStore(dir, path.join(dir, "cache"));
+        queue = new MessageQueue(store); record = (await store.readRecord(record.id))!; manager = build();
+      }
+      await queue.retainAcceptedAttachments(record, ["source.txt"]);
+    }
+    expect(record.sourceAttachments).toHaveLength(1);
+    expect((await queue.acceptedAttachment(record, "source.txt"))?.toString()).toBe("accepted bytes");
+    const persisted = (await store.readRecord(record.id))!;
+    const uploads = await readdir(path.join(store.messageQueueDirectory(record.id), "uploads"));
+    for (const name of uploads) {
+      const upload = JSON.parse(await readFile(path.join(store.messageQueueDirectory(record.id), "uploads", name), "utf8")) as { id: string };
+      expect(persisted.messageQueue?.claimedAttachments[upload.id]).toBe(true);
+    }
+    await expect(queue.upload(record, randomUUID(), "new.txt", Readable.from(["pending bytes"]))).resolves.toMatchObject({ size: 13 });
+  });
   it("reuses materialized attachment paths across turns and preserves the workspace quota", async () => {
     const file = await queue.upload(record, randomUUID(), "file.txt", Readable.from(["bytes"]));
     await queue.command(record, command(enqueue("inspect", [file.name])));

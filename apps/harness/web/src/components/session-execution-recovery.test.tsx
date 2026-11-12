@@ -37,7 +37,7 @@ it("restores a server-retained confirmed request without inventing a new acknowl
 });
 it("shows no recovery action for an active or already stopped run", async () => {
   vi.mocked(api.getExecutionRecovery).mockResolvedValue(null); await render(); expect(container.textContent).toBe("");
-  expect(api.recoverExecution).not.toHaveBeenCalled();
+  expect(api.recoverExecution).not.toHaveBeenCalled(); expect(changed).toHaveBeenCalledOnce();
 });
 it("describes an interrupted source admission without inventing a Worker receipt and still requires exit confirmation", async () => {
   vi.mocked(api.getExecutionRecovery).mockResolvedValue({ ...review, sourceOnly: true });

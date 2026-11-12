@@ -3315,25 +3315,61 @@ export class SessionManager {
   }
 
   async cancelSession(id: string): Promise<void> {
-    await this.serialize(id, async () => {
-      const session = await this.requireLive(id);
-      if (session.record.messageQueue?.entries.length) {
-        await this.messageQueues.change(session.record, next => { next.paused = true; next.reason = "Response stopped. Resume the queue when ready."; });
-        this.publishMessageQueue(session);
+    try {
+      await this.serialize(id, async () => {
+        const session = await this.requireLive(id);
+        if (session.record.messageQueue?.entries.length) {
+          await this.messageQueues.change(session.record, next => { next.paused = true; next.reason = "Response stopped. Resume the queue when ready."; });
+          this.publishMessageQueue(session);
+        }
+      });
+      const session = this.live.get(id);
+      if (session?.record.status === "suggesting") {
+        if (session.record.workspaceActivation?.state === "queued" || session.record.workflowCompletion?.state === "queued") this.mcpPolicy.cancel(id);
+        this.clearSuggestion(session); await this.endSuggestions(id); return;
       }
-    });
-    const session = this.live.get(id);
-    if (session?.record.status === "suggesting") {
-      if (session.record.workspaceActivation?.state === "queued" || session.record.workflowCompletion?.state === "queued") this.mcpPolicy.cancel(id);
-      this.clearSuggestion(session); await this.endSuggestions(id); return;
+    } catch (error) {
+      if (error instanceof SessionStorageError) return this.stopAfterStorageFailure(id, error);
+      throw error;
     }
     await this.serialize(id, () => this.cancelSessionLocked(id));
   }
 
+  /** Stop retained execution even when its source mutation lane cannot record cancellation. */
+  private async stopAfterStorageFailure(id: string, error: SessionStorageError): Promise<never> {
+    const session = this.live.get(id), run = session?.run;
+    if (!session || !run) throw error;
+    // Revoke transient authority without inventing a saved status or releasing durable source claims.
+    session.runEpoch = undefined;
+    this.clearRefresh(session);
+    this.proxy?.unregister(id);
+    this.developmentMcp.unregister(id);
+    let confirmed = false;
+    try {
+      if (run.stopAndWait) { await run.stopAndWait(); confirmed = true; }
+      else await run.stop();
+    } catch { /* A failed stop retains the handle; this request never retries the native operation. */ }
+    if (confirmed && session.run === run) {
+      session.run = null;
+      session.pendingApprovals.clear(); session.pendingQuestions.clear();
+      this.setActivity(session, null);
+    }
+    // Persisted status, run identity, admission receipts and source leases remain unchanged.
+    throw new WorkerError(error.code, confirmed
+      ? "Native execution stopped, but cancellation could not be saved. Reopen and reconcile this conversation before continuing."
+      : "Source storage is unavailable and native exit is unconfirmed. Keep this execution fenced and retry Stop after inspection.", 503);
+  }
+
   private async cancelSessionLocked(id: string): Promise<void> {
-    const session = await this.requireLive(id);
-    session.record.decisionGeneration = (session.record.decisionGeneration ?? 0) + 1;
-    await this.store.saveRecord(session.record);
+    let session: LiveSession;
+    try {
+      session = await this.requireLive(id);
+      session.record.decisionGeneration = (session.record.decisionGeneration ?? 0) + 1;
+      await this.store.saveRecord(session.record);
+    } catch (error) {
+      if (error instanceof SessionStorageError) return this.stopAfterStorageFailure(id, error);
+      throw error;
+    }
     this.decisions?.kick();
     this.clearSuggestion(session);
     if (this.worker || session.record.developmentLease || session.record.taskExecutionId) await this.finishExecution(session);

@@ -10,12 +10,17 @@ export function SessionExecutionRecovery({ sessionId, refreshKey, onRecovered }:
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<ExecutionRecoveryRequest | null>(null);
   const executing = useRef(false);
+  const refreshed = useRef(onRecovered);
+  useEffect(() => { refreshed.current = onRecovered; }, [onRecovered]);
   const key = `hosty.execution-recovery.${sessionId}`;
   useEffect(() => {
     let cancelled = false;
-    void getExecutionRecovery(sessionId).then(value => {
+    void getExecutionRecovery(sessionId).then(async value => {
       if (cancelled) return;
       setReview(value); setError(null); setConfirmed(false); setPending(null);
+      // An ordinary admission can settle while this tab holds its earlier fence. A null
+      // recovery review requires the current session snapshot, never a local assumption.
+      if (value === null) { await refreshed.current(); return; }
       // A server-retained request is authoritative after a lost response or browser restart.
       if (value?.pending) setPending(value.pending);
       else try {

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { spawn, type ChildProcess } from "node:child_process";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import * as persistence from "../persistence.js";
@@ -303,6 +304,53 @@ describe("durable message admission", () => {
     await expect(manager.resolveApproval(session.id, "approval", "allow", undefined, "admin")).rejects.toMatchObject({ code: "session_storage_uncertain" });
     await expect(manager.resolveQuestion(session.id, "question", { "Choose?": "answer" })).rejects.toMatchObject({ code: "session_storage_uncertain" });
     expect(approval).not.toHaveBeenCalled(); expect(question).not.toHaveBeenCalled();
+  });
+
+  it.each(["record", "queue", "reconciliation", "stop-failure"])("stops a retained native child despite sealed source storage (%s)", async stage => {
+    const session = await manager.createSession({ createdBy: "admin" }), original = request();
+    let child!: ChildProcess, ready!: Promise<void>, exited!: Promise<void>;
+    const nativeStop = vi.fn(async () => {
+      if (stage === "stop-failure" && nativeStop.mock.calls.length === 1) throw new Error("Native exit is not confirmed");
+      child.kill("SIGTERM"); await exited;
+    });
+    vi.spyOn(adapter, "start").mockImplementationOnce(options => {
+      starts.push(options);
+      child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+      ready = new Promise((resolve, reject) => { child.once("spawn", resolve); child.once("error", reject); });
+      exited = new Promise(resolve => child.once("exit", () => resolve()));
+      return { send: text => { sent.push(text); }, stop: async () => { child.kill("SIGTERM"); }, stopAndWait: nativeStop,
+        interrupt: async () => {}, setMcpServers: async () => false, resolveApproval: () => false, resolveQuestion: () => false };
+    });
+    await manager.postMessage(session.id, "running work", undefined, [], original); await ready;
+    if (stage === "queue") await manager.messageQueueCommand(session.id, "admin", { requestId: randomUUID(), expectedRevision: 0,
+      command: { type: "enqueue", entryId: randomUUID(), text: "Keep this queued input", attachments: [] } });
+    if (stage === "reconciliation") {
+      // A retained accepted admission still needs a checkpoint cleanup before ordinary requireLive returns.
+      session.sourceAdmission = { clientRequestId: original.clientRequestId, runId: randomUUID(), state: "dispatching" };
+      await store.saveRecord(session);
+    }
+    const recordPath = path.join(dir, "sessions", session.id, "record.json"), checkpoint = await readFile(recordPath, "utf8");
+    const append = persistence.durableAppendFile;
+    vi.spyOn(persistence, "durableAppendFile").mockImplementationOnce(async (target, bytes) => {
+      await append(target, bytes); throw new persistence.DurableWriteError(target, new Error("Uncertain transcript checkpoint"));
+    });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    starts[0]!.onEvent({ type: "assistant_text", text: "A write lost its acknowledgement" });
+    await vi.waitFor(() => expect(store.recoveryIssues()).toContainEqual(expect.objectContaining({ sessionId: session.id, code: "session_storage_uncertain" })));
+    await expect(manager.cancelSession(session.id)).rejects.toMatchObject({ status: 503, code: "session_storage_uncertain" });
+    expect(nativeStop).toHaveBeenCalledTimes(1);
+    if (stage === "stop-failure") {
+      expect(child.signalCode).toBeNull();
+      // No implicit retry occurred; a new operator Stop is required.
+      await expect(manager.cancelSession(session.id)).rejects.toMatchObject({ status: 503, code: "session_storage_uncertain" });
+      expect(nativeStop).toHaveBeenCalledTimes(2);
+    }
+    expect(child.signalCode).toBe("SIGTERM");
+    expect(await readFile(recordPath, "utf8")).toBe(checkpoint);
+    expect(await manager.messageReceipt(session.id, original.clientRequestId, "admin")).toMatchObject({ state: "accepted" });
+    expect((await manager.getSession(session.id))?.storageRecovery).toMatchObject({ state: "required", code: "session_storage_uncertain" });
+    await expect(manager.postMessage(session.id, "must remain fenced", undefined, [], request())).rejects.toMatchObject({ code: "session_storage_uncertain" });
+    expect(starts).toHaveLength(1);
   });
 
 });

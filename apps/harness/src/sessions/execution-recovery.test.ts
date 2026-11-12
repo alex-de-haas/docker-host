@@ -1,8 +1,9 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
+import * as persistence from "../persistence.js";
 import { SessionStore } from "./store.js";
 import { SessionManager } from "./manager.js";
 import { FakeHarnessAdapter } from "../harness/fake.js";
@@ -240,4 +241,30 @@ it("settles an unresolved source fence only from durable confirmed native exit w
   expect((await f.store.readRecord(f.session.id))!.sourceAdmission).toBeUndefined();
   expect(await f.store.readMessageReceipt(f.session.id, clientRequestId)).toMatchObject({ state: "unknown", eventSeq: 2 });
   expect(f.started).not.toHaveBeenCalled();
+});
+
+
+it("stops retained Worker execution through a sealed coordinator while preserving its source receipt", async () => {
+  const f = await freshFixture();
+  await f.manager().postMessage(f.session.id, "ask before continuing");
+  await expect.poll(() => f.started.mock.calls.length).toBe(1);
+  const recordPath = path.join(f.store.dataDir, "sessions", f.session.id, "record.json");
+  const before = JSON.parse(await readFile(recordPath, "utf8"));
+  const runId = before.workerRun.id as string;
+  await expect.poll(async () => (await f.journal.load(runId)).receipt.state).toBe("awaiting_input");
+  await expect.poll(async () => (await f.store.readRecord(f.session.id))?.status).toBe("awaiting_question");
+  const checkpoint = await readFile(recordPath, "utf8"), write = persistence.durableWriteFile;
+  const inputPath = path.join(f.store.messageQueueDirectory(f.session.id), "retained-input");
+  vi.spyOn(persistence, "durableWriteFile").mockImplementation(async (target, bytes) => {
+    await write(target, bytes);
+    if (target === inputPath) throw new persistence.DurableWriteError(target, new Error("Coordinator source publication uncertain"));
+  });
+  await expect(f.store.saveSourceFile(f.session.id, inputPath, "input"))
+    .rejects.toMatchObject({ code: "session_storage_uncertain" });
+  await expect(f.manager().cancelSession(f.session.id)).rejects.toMatchObject({ status: 503, code: "session_storage_uncertain" });
+  expect((await f.journal.load(runId)).receipt).toMatchObject({ state: "cancelled", exitConfirmed: true });
+  expect(await readFile(recordPath, "utf8")).toBe(checkpoint);
+  expect((await f.store.readRecord(f.session.id))!.workerRun?.id).toBe(runId);
+  expect(f.started).toHaveBeenCalledTimes(1);
+  expect(f.released).not.toHaveBeenCalled();
 });

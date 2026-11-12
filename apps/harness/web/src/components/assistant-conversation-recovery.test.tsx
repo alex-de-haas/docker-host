@@ -310,3 +310,63 @@ it("keeps Stop available when a failed admission still needs native exit confirm
   expect(message().value).toBe(original.draftText);
   expect(api.recoverExecution).not.toHaveBeenCalled(); expect(api.postMessage).not.toHaveBeenCalled();
 });
+
+
+it.each(["preparing", "dispatching"] as const)("refreshes a settled %s admission after a null recovery review without reopening the chat", async state => {
+  session.sourceAdmission = { state, clientRequestId: original.clientRequestId, runId: "normal-run" };
+  const initial = { ...session };
+  vi.mocked(api.getSession).mockResolvedValueOnce(initial).mockResolvedValue({ ...initial, sourceAdmission: undefined });
+  localStorage.setItem(draftKey, original.draftText);
+  await mount();
+  expect(api.getExecutionRecovery).toHaveBeenCalledWith(session.id);
+  expect(vi.mocked(api.getSession).mock.calls.length).toBeGreaterThan(1);
+  expect(message().value).toBe(original.draftText); expect(message().readOnly).toBe(false);
+  expect(container.querySelector('[aria-label="Session storage recovery"]')).toBeNull();
+  expect(localStorage.getItem(draftKey)).toBe(original.draftText);
+  expect(api.recoverExecution).not.toHaveBeenCalled(); expect(api.postMessage).not.toHaveBeenCalled();
+  expect(queueApi.commandMessageQueue).not.toHaveBeenCalled();
+});
+
+it("refreshes the admission fence on a live completion even when recovery review is still unavailable", async () => {
+  session.status = "running";
+  session.sourceAdmission = { state: "dispatching", runId: "normal-run" };
+  vi.mocked(api.getExecutionRecovery).mockRejectedValue(new api.AssistantApiError("recovery_active", "The execution is active.", 409));
+  localStorage.setItem(draftKey, original.draftText); await mount();
+  const field = message(); expect(field.readOnly).toBe(true);
+  const emit = vi.mocked(api.streamEvents).mock.calls.at(-1)![1];
+  const completed = { ...session, status: "idle", sourceAdmission: undefined, lastEventSeq: 4, updatedAt: "2026-11-12T12:00:00Z" };
+  vi.mocked(api.getSession).mockResolvedValue(completed);
+  await act(async () => emit({ type: "session_status", status: "idle", seq: 4, ts: completed.updatedAt }));
+  expect(message()).toBe(field); expect(field.value).toBe(original.draftText); expect(field.readOnly).toBe(false);
+  expect(container.querySelector('[aria-label="Session storage recovery"]')).toBeNull();
+  expect(api.recoverExecution).not.toHaveBeenCalled(); expect(api.postMessage).not.toHaveBeenCalled();
+  expect(queueApi.commandMessageQueue).not.toHaveBeenCalled();
+});
+
+
+it("keeps the admission fence when the authoritative refresh still reports it", async () => {
+  session.sourceAdmission = { state: "preparing", runId: "unresolved-run" };
+  localStorage.setItem(draftKey, original.draftText); await mount();
+  expect(vi.mocked(api.getSession).mock.calls.length).toBeGreaterThan(1);
+  expect(message().readOnly).toBe(true); expect(message().value).toBe(original.draftText);
+  expect(container.querySelector('[aria-label="Session storage recovery"]')).not.toBeNull();
+  expect(api.recoverExecution).not.toHaveBeenCalled(); expect(queueApi.commandMessageQueue).not.toHaveBeenCalled();
+});
+
+it("does not let a delayed null-review refresh roll back a newer live status", async () => {
+  session.sourceAdmission = { state: "preparing", runId: "normal-run" };
+  let finish!: (value: api.AssistantSession) => void;
+  const initial = { ...session };
+  vi.mocked(api.getSession).mockResolvedValueOnce(initial).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  localStorage.setItem(draftKey, original.draftText); await mount();
+  const current = { ...session, status: "running", sourceAdmission: undefined, lastEventSeq: 4, updatedAt: "2026-11-12T12:00:00Z" };
+  vi.mocked(api.getSession).mockResolvedValue(current);
+  const emit = vi.mocked(api.streamEvents).mock.calls.at(-1)![1];
+  await act(async () => {
+    emit({ type: "session_status", status: "running", seq: 4, ts: current.updatedAt });
+    finish({ ...initial, sourceAdmission: undefined, lastEventSeq: 2, updatedAt: "2026-11-12T11:59:00Z" });
+  });
+  expect(container.querySelector("header")?.textContent).toContain("running");
+  expect(message().value).toBe(original.draftText); expect(message().readOnly).toBe(false);
+  expect(api.recoverExecution).not.toHaveBeenCalled(); expect(queueApi.commandMessageQueue).not.toHaveBeenCalled();
+});

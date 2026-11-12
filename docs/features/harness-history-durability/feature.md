@@ -23,6 +23,9 @@ upload receipts and admitted immutable attachments have durable source evidence.
 An incomplete or uncertain admission keeps its execution fence; an idle process
 or a failed response does not prove that a model/tool call never started. A
 same-session UUID recovers its original receipt instead of creating another send.
+Accepted attachment receipts become claimed in the same source checkpoint as
+their immutable snapshot, so repeated direct sends do not consume pending-upload
+slots. Distinct retained bytes still respect the conversation's storage limits.
 
 The API and Worker each hold an OS-backed exclusive writer lock for their data
 role before startup recovery or mutation. The lock file contains no conversations.
@@ -96,7 +99,14 @@ attachments while Send and mutation controls are blocked. Source-only admission
 recovery uses the same explicit operator confirmation and stable recovery UUID
 as interrupted-execution recovery; it preserves the transcript and original
 message receipt. A retained native handle blocks attestation until supported Stop
-confirms exit; Stop remains available for a failed admission.
+confirms exit; Stop remains available for a failed admission. Live status changes
+and a settled admission review refresh the authoritative session snapshot, so a
+temporary admission fence does not permanently block a tab's preserved draft.
+If source storage cannot record cancellation, Stop still attempts to stop the
+retained native handle. Confirmed process exit clears only volatile execution;
+the durable admission, run and source leases remain fenced for reconciliation.
+The request reports the storage error instead of claiming a saved cancellation.
+An unconfirmed Stop retains its handle and is not automatically retried.
 
 Corrupt or expired paging snapshots invalidate their own continuation rather than
 unrelated queries. Cursor keys are created exclusively from flushed bytes. Deleted
@@ -110,7 +120,7 @@ Verified in a registered local Core workspace on macOS ARM64 with Node 24.18.0,
 .NET 10.0.402 and Docker 29.9.3:
 
 - `npm run harness:lint` passes backend/web TypeScript and ESLint.
-- `npm run harness:test` passes 2,996 tests across 253 files. Four child-process
+- `npm run harness:test` passes 3,007 tests across 253 files. Four child-process
   crash probes stop after preparation, input commit, native-effect simulation and
   accepted-receipt commit; reopening never duplicates the synthetic effect.
 - `npm run harness:build-web` and
@@ -122,8 +132,8 @@ Verified in a registered local Core workspace on macOS ARM64 with Node 24.18.0,
   passes normal child Core password login and launch-code identity, compiled
   assets, accepted paused input/attachment and UUID replay after real API/Worker
   restart, isolated corrupt session/run records and the controlled Chrome UI
-  scenarios. Cold start is 28.518 s, warm restart 2.123 s and missing-output
-  recovery 25.040 s. Parent Finish confirms resource removal.
+  scenarios. Cold start is 45.301 s, warm restart 2.044 s and missing-output
+  recovery 40.117 s. Parent Finish confirms resource removal.
 - Version consistency, documentation links/index and whitespace checks pass.
 
 Standalone storage checks on Windows with Node 24.19.0 pass 11 scenarios plus a
@@ -150,7 +160,12 @@ ILCompiler advisory/analyzer warnings and complete without errors.
   duplicate sequences, missing records and per-session/run failure isolation.
 - Verify lost manifest replies, revoked shares, global receipt UUID conflicts,
   monotonic deletion of a damaged partition and bounded partial coverage.
-- Verify accepted attachment identity after cache loss or same-name replacement.
+- Verify accepted attachment identity after cache loss or same-name replacement,
+  and repeated direct references without exhausting pending-upload capacity.
+- Seal source storage during execution and verify Stop reaches the real native
+  child or Worker while retaining durable recovery evidence and source leases.
+- Attach during normal admission, settle it through authoritative refresh, and
+  preserve the draft and newer live status without automatic send or recovery.
 - Exercise real Windows sharing/replace behavior and writer death in a private
   temporary fixture; separate this from physical power-loss evidence.
 - Run affected unit/HTTP/component suites, Harness lint and production builds,

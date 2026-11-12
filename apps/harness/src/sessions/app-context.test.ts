@@ -153,6 +153,8 @@ it("resynchronizes current state and distinguishes historical transitions during
   await manager.postMessage(record.id, "inspect");
   expect((await manager.getSession(record.id))?.status).toBe("running");
   await finishTurn(record.id);
+  // Idle metadata precedes its durable status event; cross the native callback queue before capturing the cursor.
+  await manager.messageQueue(record.id, "admin");
   const current = (await manager.getSession(record.id))!;
   const subscription = await manager.subscribe(record.id, current.lastEventSeq, () => {});
   expect(subscription.replay).toEqual([
