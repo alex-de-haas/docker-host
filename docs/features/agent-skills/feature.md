@@ -251,6 +251,14 @@ Verified on macOS for Core/CLI 0.179.2 → 0.179.3 and Harness 0.98.0 → 0.98.1
   are not performed. Native root registration is checked against the pinned protocol and real
   macOS binary; these results do not claim a live Windows deployment.
 
+After integrating `main` at `977985b452d3261864324a0715e52a10d00fe5a7`, the locked
+Codex dependency is 0.167.0. `npm run harness:lint`, `npm run harness:build-web` and
+`npm run test:integration -- skills` pass again, including real native root registration,
+initial export discovery, reference refresh and parent-managed child cleanup. The full local
+Harness rerun reports 3,038 passed and one 5-second timeout in the existing Ollama selected-model
+removal test; its cleanup also reports `kill EPERM`. The exact test passes in isolation, and an
+isolated rerun of its complete file passes all 36 tests. Ollama source and tests are unchanged.
+
 ## Testing Expectations
 
 - Register the selected native Codex root before fresh and resumed threads, preserve connection
