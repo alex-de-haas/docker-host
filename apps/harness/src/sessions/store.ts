@@ -168,6 +168,9 @@ const attachmentGeneration = (info: BigIntStats) => [info.dev, info.ino, info.si
 const MAX_VERIFIED_ATTACHMENT_GENERATIONS = 256;
 
 interface JournalRead { missing?: boolean; events: StoredEvent[]; raw: Buffer; keepBytes: number; repair: boolean; needsNewline: boolean }
+interface JournalTail { high: number; bytes: number; needsNewline: boolean; generation?: string; identity?: string; repair?: JournalRead }
+const MAX_VALIDATED_JOURNAL_TAILS = 256;
+const fileIdentity = (info: BigIntStats) => [info.dev, info.ino].join(":");
 const absent = (error: unknown): boolean => (error as NodeJS.ErrnoException)?.code === "ENOENT";
 const statuses = new Set<SessionStatus>(["idle", "running", "suggesting", "awaiting_approval", "awaiting_question", "cancelled", "abandoned", "failed"]);
 
@@ -220,6 +223,8 @@ export class SessionStore {
   private readonly observerFailures = new Map<string, string>();
   // Cache only an integrity-checked physical generation, never attachment payload buffers.
   private readonly verifiedAttachments = new Map<string, string>();
+  // Retain only clean-tail identity/high water; transcript payloads remain on disk.
+  private readonly journalTails = new Map<string, JournalTail>();
   private readonly observers = new Set<(id: string) => Promise<void>>();
 
   recoveryIssues(): { sessionId: string; code: SessionStorageError["code"]; message: string }[] {
@@ -229,6 +234,7 @@ export class SessionStore {
     return [...this.observerFailures].map(([sessionId, message]) => ({ sessionId, code: "history_projection_unavailable", message }));
   }
   private problem(id: string, error: unknown, message = "This conversation's retained source needs recovery."): SessionStorageError {
+    this.journalTails.delete(id);
     const issue = error instanceof SessionStorageError ? error : new SessionStorageError(id,
       isUncertainWrite(error) ? "session_storage_uncertain" : "session_storage_corrupt", message, { cause: error });
     this.issues.set(id, issue); this.sealed.set(id, issue); return issue;
@@ -374,7 +380,7 @@ export class SessionStore {
     // Capture mutable callers before entering the lane; preserve committed journal high water.
     const next = structuredClone(record);
     await this.serialize(record.id, async () => {
-      const journal = await this.journal(record.id);
+      const journal = await this.journalTail(record.id);
       const target = path.join(this.sessionDir(record.id), "record.json");
       let committedHigh = 0;
       try {
@@ -384,10 +390,10 @@ export class SessionStore {
           || typeof committed.createdAt !== "string" || typeof committed.updatedAt !== "string") throw new Error("invalid committed record");
         committedHigh = committed.lastEventSeq;
       } catch (error) { if (!absent(error)) throw this.problem(record.id, error); }
-      const journalHigh = journal.events.at(-1)?.seq ?? 0;
-      if (committedHigh > journalHigh && !(next.appContextEvent && next.appContextEvent.seq >= committedHigh))
+      const journalHigh = journal.high;
+      if (committedHigh > journalHigh && !(committedHigh === journalHigh + 1 && next.appContextEvent?.seq === committedHigh))
         throw this.problem(record.id, new Error("checkpoint exceeds retained transcript"), "The checkpoint references missing transcript input. Preserve this conversation for recovery.");
-      next.lastEventSeq = Math.max(next.lastEventSeq, committedHigh, journal.events.at(-1)?.seq ?? 0);
+      next.lastEventSeq = Math.max(next.lastEventSeq, committedHigh, journal.high);
       await durableWriteFile(path.join(this.sessionDir(record.id), "record.json"), JSON.stringify(next, null, 2));
       record.lastEventSeq = Math.max(record.lastEventSeq, next.lastEventSeq);
     }, true);
@@ -436,11 +442,11 @@ export class SessionStore {
           || typeof record.createdAt !== "string" || typeof record.updatedAt !== "string") throw new Error("invalid session record");
       } catch (error) { throw this.problem(id, error); }
       try {
-        const journal = await this.journal(id);
-        const journalHigh = journal.events.at(-1)?.seq ?? 0;
-        if (record.lastEventSeq > journalHigh && !(record.appContextEvent && record.appContextEvent.seq >= record.lastEventSeq))
+        const journal = await this.journalTail(id);
+        const journalHigh = journal.high;
+        if (record.lastEventSeq > journalHigh && !(record.lastEventSeq === journalHigh + 1 && record.appContextEvent?.seq === record.lastEventSeq))
           throw this.problem(id, new Error("checkpoint exceeds retained transcript"), "The checkpoint references missing transcript input. Preserve this conversation for recovery.");
-        record.lastEventSeq = Math.max(record.lastEventSeq, journal.events.at(-1)?.seq ?? 0);
+        record.lastEventSeq = Math.max(record.lastEventSeq, journal.high);
         const issue = this.sealed.get(id);
         if (issue) record.storageRecovery = { state: "required", code: issue.code, message: issue.message };
       } catch (error) {
@@ -475,6 +481,36 @@ export class SessionStore {
   }
   async listRecords(): Promise<SessionRecord[]> { return (await this.listRecordInventory()).records; }
 
+  private rememberJournalTail(id: string, tail: JournalTail): void {
+    this.journalTails.delete(id);
+    if (this.sealed.has(id) || !tail.generation || tail.repair) return;
+    this.journalTails.set(id, tail);
+    if (this.journalTails.size > MAX_VALIDATED_JOURNAL_TAILS) this.journalTails.delete(this.journalTails.keys().next().value!);
+  }
+  private async journalTail(id: string): Promise<JournalTail> {
+    if (await this.deleted(id)) { this.journalTails.delete(id); return { high: 0, bytes: 0, needsNewline: false }; }
+    const target = path.join(this.sessionDir(id), "events.ndjson");
+    let before: BigIntStats;
+    try { before = await lstat(target, { bigint: true }); }
+    catch (error) {
+      this.journalTails.delete(id);
+      if (absent(error)) return { high: 0, bytes: 0, needsNewline: false };
+      throw this.problem(id, error);
+    }
+    if (!before.isFile() || before.isSymbolicLink()) throw this.problem(id, new Error("invalid transcript source file"));
+    const generation = attachmentGeneration(before), cached = this.journalTails.get(id);
+    if (cached?.generation === generation) { this.rememberJournalTail(id, cached); return cached; }
+    this.journalTails.delete(id);
+    const journal = await this.journal(id);
+    let after: BigIntStats;
+    try { after = await lstat(target, { bigint: true }); }
+    catch (error) { throw this.problem(id, error); }
+    if (attachmentGeneration(after) !== generation) throw this.problem(id, new Error("transcript changed during reconciliation"));
+    const tail: JournalTail = { high: journal.events.at(-1)?.seq ?? 0, bytes: journal.raw.length,
+      needsNewline: journal.needsNewline, generation, identity: fileIdentity(after) };
+    if (journal.repair) return { ...tail, repair: journal };
+    this.rememberJournalTail(id, tail); return tail;
+  }
   private async journal(id: string): Promise<JournalRead> {
     if (await this.deleted(id)) return { missing: true, events: [], raw: Buffer.alloc(0), keepBytes: 0, repair: false, needsNewline: false };
     let raw: Buffer;
@@ -520,10 +556,10 @@ export class SessionStore {
     if (partialUtf8) throw this.problem(id, new Error("unproven UTF-8 tail"));
     return { events, raw, keepBytes: raw.length, repair: false, needsNewline: raw.length > 0 && raw.at(-1) !== 10 };
   }
-  async eventHighWater(id: string): Promise<number> { return this.serialize(id, async () => (await this.journal(id)).events.at(-1)?.seq ?? 0); }
+  async eventHighWater(id: string): Promise<number> { return this.serialize(id, async () => (await this.journalTail(id)).high); }
   async appendEvent(id: string, event: StoredEvent, allocation?: { after: number }): Promise<void> {
     await this.serialize(id, async () => {
-      const journal = await this.journal(id), high = journal.events.at(-1)?.seq ?? 0;
+      const journal = await this.journalTail(id), high = journal.high;
       let checkpoint: SessionRecord;
       try {
         checkpoint = JSON.parse(await readFile(path.join(this.sessionDir(id), "record.json"), "utf8")) as SessionRecord;
@@ -535,20 +571,32 @@ export class SessionStore {
       if (checkpoint.lastEventSeq > high && !completingOutbox)
         throw this.problem(id, new Error("checkpoint exceeds retained transcript"), "The checkpoint references missing transcript input. Preserve this conversation for recovery.");
       if (allocation) event.seq = Math.max(high, allocation.after) + 1;
-      if (!Number.isSafeInteger(event.seq) || event.seq <= high) throw this.problem(id, new Error("event sequence conflict"));
+      const encoded = JSON.stringify(event), appended = JSON.parse(encoded) as StoredEvent;
+      if (!Number.isSafeInteger(appended.seq) || appended.seq <= high || appended.seq !== event.seq
+        || typeof appended.type !== "string" || !appended.type || typeof appended.ts !== "string")
+        throw this.problem(id, new Error("event sequence conflict"));
       const target = path.join(this.sessionDir(id), "events.ndjson");
       if (journal.repair) {
-        const recovery = path.join(this.sessionDir(id), "recovery"); await durableMkdir(recovery);
-        await durableWriteFile(path.join(recovery, `events-tail-${randomUUID()}.bin`), journal.raw.subarray(journal.keepBytes));
-        await durableWriteFile(target, journal.raw.subarray(0, journal.keepBytes));
+        const repair = journal.repair, recovery = path.join(this.sessionDir(id), "recovery"); await durableMkdir(recovery);
+        await durableWriteFile(path.join(recovery, `events-tail-${randomUUID()}.bin`), repair.raw.subarray(repair.keepBytes));
+        await durableWriteFile(target, repair.raw.subarray(0, repair.keepBytes));
       }
-      await durableAppendFile(target, `${journal.needsNewline ? "\n" : ""}${JSON.stringify(event)}\n`);
+      const content = `${journal.needsNewline ? "\n" : ""}${encoded}\n`;
+      await durableAppendFile(target, content);
+      try {
+        const after = await lstat(target, { bigint: true }), bytes = (journal.repair?.keepBytes ?? journal.bytes) + Buffer.byteLength(content);
+        if (!after.isFile() || after.isSymbolicLink() || after.size !== BigInt(bytes)
+          || !journal.repair && journal.identity && fileIdentity(after) !== journal.identity)
+          throw new Error("transcript changed during durable append");
+        this.rememberJournalTail(id, { high: appended.seq, bytes, needsNewline: false, generation: attachmentGeneration(after), identity: fileIdentity(after) });
+      } catch (error) { throw new DurableWriteError(target, error); }
     }, true);
     await this.changed(id);
   }
   async readEvents(id: string, afterSeq = 0): Promise<StoredEvent[]> { return this.serialize(id, async () => (await this.journal(id)).events.filter(event => event.seq > afterSeq)); }
   async deleteSession(id: string): Promise<void> {
     await this.serialize(id, async () => {
+      this.journalTails.delete(id);
       await durableMkdir(this.deletionRoot());
       if (!await this.deleted(id)) await durableCreateFile(path.join(this.deletionRoot(), id + ".json"), JSON.stringify({ version: 1, sessionId: id }));
       try {

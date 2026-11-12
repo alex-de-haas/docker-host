@@ -88,7 +88,16 @@ A proven incomplete terminal append is preserved as recovery evidence before
 repair; another append cannot concatenate with it. Interior damage or conflicting
 sequences require recovery instead of silently dropping messages. The next event
 uses reconciled durable high water even if the record checkpoint lagged behind
-the journal when the process stopped.
+the journal when the process stopped. Only one exactly identified pending context
+event may explain a checkpoint one sequence ahead of the journal; an outbox does
+not excuse missing earlier input.
+
+The single writer retains a bounded, payload-free cache of validated journal
+high water, byte count and physical generation. Clean append/checkpoint pairs
+reuse it after a generation check; confirmed appends advance it only after the
+flush and expected file identity/size checks. A changed or missing file, torn
+tail, corruption, uncertain write or deletion invalidates the proof. Actual
+history reads still parse and validate the complete retained transcript.
 
 Source deletion first commits an identity-only tombstone outside the removed
 conversation directory. A stale restored directory or delayed callback cannot
@@ -180,6 +189,11 @@ ILCompiler advisory/analyzer warnings and complete without errors.
 
 - Inject failed/delayed writes, sync, replacement and publication; check the
   acknowledgement/dispatch boundary and the affected mutation fence.
+- Count full journal reads across repeated append/checkpoint pairs. Keep validated
+  high-water reuse bounded and payload-free; revalidate replaced, missing or
+  modified files, and keep torn tails uncached until their evidence is repaired.
+  Reject multi-event checkpoint gaps even when an outbox is present, while allowing
+  the exact one-ahead outbox to reopen and complete.
 - Kill an isolated writer and reopen its store. Preserve exact request identity,
   committed journal high water, queue pause, attachment bytes and unknown effects.
 - Cover incomplete/NUL terminal appends, missing newline, interior corruption,
