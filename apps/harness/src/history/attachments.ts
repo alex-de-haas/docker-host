@@ -8,9 +8,12 @@ import { fail, missing } from "./storage.js";
 const stamp = (info: { dev: number; ino: number; size: number; mtimeMs: number; ctimeMs: number }) => BigInt("0x" + fingerprint([info.dev, info.ino, info.size, info.mtimeMs, info.ctimeMs]).slice(0, 32)).toString();
 /** Open a regular source-owned cache file without following a tool-created link. No path leaves Harness. */
 export async function attachmentFile(sessions: SessionStore, conversation: string, name: string, read?: { revision: string; offset: number; length: number }, identity?: string) {
-  const accepted = await sessions.acceptedAttachment(conversation, name, identity ?? read?.revision);
+  const accepted = read
+    ? await sessions.acceptedAttachment(conversation, name, identity ?? read.revision)
+    : await sessions.acceptedAttachmentMetadata(conversation, name, identity);
   if (accepted) {
     if (!read) return { attachmentId: name, revision: accepted.revision, name: accepted.name, mediaType: "application/octet-stream", sizeBytes: accepted.size };
+    if (!("bytes" in accepted) || !Buffer.isBuffer(accepted.bytes)) return fail("history_recovery_required", "The accepted attachment content requires verification.", 503);
     if (accepted.revision !== read.revision) fail("revision_conflict", "The accepted attachment revision differs.", 409);
     if (!Number.isSafeInteger(read.offset) || !Number.isSafeInteger(read.length) || read.offset < 0 || read.length < 0 || read.length > 1024 * 1024 || read.offset + read.length > accepted.size) fail("invalid_range", "Use one available range of at most 1 MiB.", 416);
     return Buffer.from(accepted.bytes.subarray(read.offset, read.offset + read.length));

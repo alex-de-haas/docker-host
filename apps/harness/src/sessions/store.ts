@@ -1,4 +1,5 @@
-import { readdir, readFile, rm, stat } from "node:fs/promises";
+import { lstat, open, readdir, readFile, rm, stat } from "node:fs/promises";
+import { constants, type BigIntStats } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { durableWriteFile, durableAppendFile, durableCreateFile, durableMkdir, syncDirectory, DurableWriteError, isUncertainWrite } from "../persistence.js";
 import path from "node:path";
@@ -161,6 +162,11 @@ export class SessionStorageError extends Error {
     super(message, options); this.name = "SessionStorageError";
   }
 }
+type AcceptedAttachmentMetadata = { name: string; size: number; digest: string; revision: string };
+type AcceptedAttachment = AcceptedAttachmentMetadata & { bytes: Buffer };
+const attachmentGeneration = (info: BigIntStats) => [info.dev, info.ino, info.size, info.mtimeNs, info.ctimeNs].join(":");
+const MAX_VERIFIED_ATTACHMENT_GENERATIONS = 256;
+
 interface JournalRead { missing?: boolean; events: StoredEvent[]; raw: Buffer; keepBytes: number; repair: boolean; needsNewline: boolean }
 const absent = (error: unknown): boolean => (error as NodeJS.ErrnoException)?.code === "ENOENT";
 const statuses = new Set<SessionStatus>(["idle", "running", "suggesting", "awaiting_approval", "awaiting_question", "cancelled", "abandoned", "failed"]);
@@ -212,6 +218,8 @@ export class SessionStore {
   private readonly sealed = new Map<string, SessionStorageError>();
   private readonly issues = new Map<string, SessionStorageError>();
   private readonly observerFailures = new Map<string, string>();
+  // Cache only an integrity-checked physical generation, never attachment payload buffers.
+  private readonly verifiedAttachments = new Map<string, string>();
   private readonly observers = new Set<(id: string) => Promise<void>>();
 
   recoveryIssues(): { sessionId: string; code: SessionStorageError["code"]; message: string }[] {
@@ -296,18 +304,49 @@ export class SessionStore {
   }
   messageQueueDirectory(id: string): string { return path.join(this.sessionDir(id), "message-queue"); }
 
-  async acceptedAttachment(id: string, nameOrId: string, identity?: string): Promise<{ name: string; size: number; bytes: Buffer; digest: string; revision: string } | null> {
+  async acceptedAttachment(id: string, nameOrId: string, identity?: string): Promise<AcceptedAttachment | null> {
+    return this.loadAcceptedAttachment(id, nameOrId, identity, true);
+  }
+  async acceptedAttachmentMetadata(id: string, nameOrId: string, identity?: string): Promise<AcceptedAttachmentMetadata | null> {
+    return this.loadAcceptedAttachment(id, nameOrId, identity, false);
+  }
+  private loadAcceptedAttachment(id: string, nameOrId: string, identity: string | undefined, content: true): Promise<AcceptedAttachment | null>;
+  private loadAcceptedAttachment(id: string, nameOrId: string, identity: string | undefined, content: false): Promise<AcceptedAttachmentMetadata | null>;
+  private async loadAcceptedAttachment(id: string, nameOrId: string, identity: string | undefined, content: boolean): Promise<AcceptedAttachmentMetadata | AcceptedAttachment | null> {
     const record = await this.readRecord(id);
     const revision = (digest: string) => /^[a-f0-9]{64}$/.test(digest) ? BigInt("0x" + digest.slice(0, 32)).toString() : "invalid";
     const file = record?.sourceAttachments?.findLast(candidate => (candidate.name === nameOrId || candidate.id === nameOrId)
       && (!identity || candidate.digest === identity || revision(candidate.digest) === identity));
     if (!file) return null;
-    if (!/^[a-f0-9]{64}$/.test(file.digest)) throw this.problem(id, new Error("invalid admitted attachment digest"));
-    let bytes: Buffer;
-    try { bytes = await readFile(path.join(this.messageQueueDirectory(id), "files", file.digest)); }
-    catch (error) { throw this.problem(id, error, "The admitted attachment bytes are unavailable. Preserve this conversation for recovery."); }
-    if (bytes.length !== file.size || createHash("sha256").update(bytes).digest("hex") !== file.digest) throw this.problem(id, new Error("damaged admitted attachment"));
-    return { name: file.name, size: file.size, bytes, digest: file.digest, revision: revision(file.digest) };
+    if (!/^[a-f0-9]{64}$/.test(file.digest) || !Number.isSafeInteger(file.size) || file.size < 0 || file.size > 25 * 1024 * 1024)
+      throw this.problem(id, new Error("invalid admitted attachment metadata"));
+    const target = path.join(this.messageQueueDirectory(id), "files", file.digest), key = `${id}\0${file.digest}`;
+    const metadata = { name: file.name, size: file.size, digest: file.digest, revision: revision(file.digest) };
+    try {
+      const before = await lstat(target, { bigint: true }), generation = attachmentGeneration(before);
+      if (!before.isFile() || before.isSymbolicLink() || before.size !== BigInt(file.size)) throw new Error("invalid admitted attachment file");
+      if (!content && this.verifiedAttachments.get(key) === generation) {
+        this.verifiedAttachments.delete(key); this.verifiedAttachments.set(key, generation);
+        return metadata;
+      }
+      const handle = await open(target, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+      let bytes: Buffer;
+      try {
+        if (attachmentGeneration(await handle.stat({ bigint: true })) !== generation) throw new Error("admitted attachment generation changed");
+        bytes = await handle.readFile();
+        if (bytes.length !== file.size || createHash("sha256").update(bytes).digest("hex") !== file.digest
+          || attachmentGeneration(await handle.stat({ bigint: true })) !== generation
+          || attachmentGeneration(await lstat(target, { bigint: true })) !== generation)
+          throw new Error("damaged or changed admitted attachment");
+      } finally { await handle.close(); }
+      this.verifiedAttachments.delete(key); this.verifiedAttachments.set(key, generation);
+      if (this.verifiedAttachments.size > MAX_VERIFIED_ATTACHMENT_GENERATIONS)
+        this.verifiedAttachments.delete(this.verifiedAttachments.keys().next().value!);
+      return content ? { ...metadata, bytes } : metadata;
+    } catch (error) {
+      this.verifiedAttachments.delete(key);
+      throw this.problem(id, error, "The admitted attachment bytes are unavailable or failed verification. Preserve this conversation for recovery.");
+    }
   }
 
   async saveRecord(record: SessionRecord): Promise<void> {

@@ -26,6 +26,10 @@ same-session UUID recovers its original receipt instead of creating another send
 Accepted attachment receipts become claimed in the same source checkpoint as
 their immutable snapshot, so repeated direct sends do not consume pending-upload
 slots. Distinct retained bytes still respect the conversation's storage limits.
+History metadata reconciliation reuses a bounded, payload-free integrity proof
+for an unchanged physical attachment generation. Initial verification and every
+actual content read check the full digest; file identity, size and nanosecond
+modification/change times invalidate the metadata proof after replacement or damage.
 
 The API and Worker each hold an OS-backed exclusive writer lock for their data
 role before startup recovery or mutation. The lock file contains no conversations.
@@ -120,7 +124,7 @@ Verified in a registered local Core workspace on macOS ARM64 with Node 24.18.0,
 .NET 10.0.402 and Docker 29.9.3:
 
 - `npm run harness:lint` passes backend/web TypeScript and ESLint.
-- `npm run harness:test` passes 3,007 tests across 253 files. Four child-process
+- `npm run harness:test` passes 3,010 tests across 254 files. Four child-process
   crash probes stop after preparation, input commit, native-effect simulation and
   accepted-receipt commit; reopening never duplicates the synthetic effect.
 - `npm run harness:build-web` and
@@ -132,8 +136,8 @@ Verified in a registered local Core workspace on macOS ARM64 with Node 24.18.0,
   passes normal child Core password login and launch-code identity, compiled
   assets, accepted paused input/attachment and UUID replay after real API/Worker
   restart, isolated corrupt session/run records and the controlled Chrome UI
-  scenarios. Cold start is 45.301 s, warm restart 2.044 s and missing-output
-  recovery 40.117 s. Parent Finish confirms resource removal.
+  scenarios. Cold start is 41.648 s, warm restart 2.137 s and missing-output
+  recovery 27.940 s. Parent Finish confirms resource removal.
 - Version consistency, documentation links/index and whitespace checks pass.
 
 Standalone storage checks on Windows with Node 24.19.0 pass 11 scenarios plus a
@@ -162,6 +166,9 @@ ILCompiler advisory/analyzer warnings and complete without errors.
   monotonic deletion of a damaged partition and bounded partial coverage.
 - Verify accepted attachment identity after cache loss or same-name replacement,
   and repeated direct references without exhausting pending-upload capacity.
+- Count payload reads across repeated history metadata/streaming updates. Verify
+  actual content reads still hash bytes and physical-generation changes, exact
+  restored-mtime corruption and missing cached files require recovery.
 - Seal source storage during execution and verify Stop reaches the real native
   child or Worker while retaining durable recovery evidence and source leases.
 - Attach during normal admission, settle it through authoritative refresh, and
